@@ -19,7 +19,9 @@
  *  - six tools are *declared* to the model — `android_status`, `android_ui`, `android_app`,
  *    `android_io`, `android_fs`, `android_shell` — and every finer-grained tool they expand
  *    into stays registered with `exposure: "deferred"`, so `tool_search` can still reach it
- *    without its schema and description being paid for on every turn;
+ *    without its schema and description being paid for on every turn; the six wave-2 tools
+ *    (输入法 / 设备管理员 / 通知监听 / 自动化 / 本地 VPN / 投屏) are `deferred` as well — the
+ *    declared six are unchanged;
  *  - every tool truncates its own output with pi's own utilities (50KB / 2000
  *    lines) and says when it did;
  *  - string enums use `StringEnum` for Google API compatibility.
@@ -163,15 +165,16 @@ function badParam(tool: string, param: string, allowed: string[], got: unknown):
 
 /**
  * 设备能力分组的 id，与 App 侧 `bridge/DeviceCapability.kt` 的 `id` 一一对应
- * （`basic` / `accessibility` / `shell`，共 3 组）。原来的 `storage` 与 `sensors`
- * 两组已并入 `basic`，所以文件、位置、传感器、手电筒这些工具现在都挂在 `basic` 上。
+ * （`basic` / `accessibility` / `ime` / `admin` / `shell`，共 5 组）。原来的 `storage` 与
+ * `sensors` 两组已并入 `basic`，所以文件、位置、传感器、手电筒这些工具现在都挂在 `basic` 上；
+ * 通知监听、自动化、VPN、投屏四种能力也归 `basic`，不另开开关。
  *
  * 这里是一份**抄写**，不是第二份真相：注册时拿它去 `/app/health` 的
  * `capabilities[].id` 里查状态，而那份 JSON 就是授权页和桥端点共用的
  * `DeviceCapabilityState`（`DeviceBridgeRouter.kt` 的 `/app/health` 分支）。App 侧加一组
  * 能力时这里会查不到、对应工具不会注册（而不是猜着注册），所以错法是保守的。
  */
-type DeviceCapabilityId = "basic" | "storage" | "accessibility" | "sensors" | "shell";
+type DeviceCapabilityId = "basic" | "storage" | "accessibility" | "sensors" | "ime" | "admin" | "shell";
 
 interface DeviceToolSpec {
 	name: string;
@@ -440,6 +443,145 @@ const FsAction = Type.Union(
 	{ description: "list/read/write = authorized (SAF) dirs; download = public Download (needs op)." },
 );
 
+/**
+ * 波2 六个新工具（输入法 / 设备管理员 / 通知监听 / 自动化 / 本地 VPN / 投屏）的 action。
+ *
+ * 与上面四个合并工具同一形状：`Type.Union` + `Type.Literal`，每个字面量单独摆出来，
+ * 模型看到的才是闭集。
+ */
+const ImeAction = Type.Union(
+	[
+		Type.Literal("insert"),
+		Type.Literal("replace"),
+		Type.Literal("delete"),
+		Type.Literal("surround"),
+		Type.Literal("submit"),
+		Type.Literal("history"),
+		Type.Literal("text"),
+	],
+	{ description: "text=read the field, surround=read the text around the caret, insert/replace=write, delete=chars around the caret, submit=editor action, history=past input." },
+);
+
+const AdminAction = Type.Union(
+	[
+		Type.Literal("status"),
+		Type.Literal("capabilities"),
+		Type.Literal("grant"),
+		Type.Literal("hidden"),
+		Type.Literal("suspend"),
+		Type.Literal("uninstall-blocked"),
+		Type.Literal("install-ca"),
+		Type.Literal("always-on-vpn"),
+		Type.Literal("lock-task"),
+		Type.Literal("update-policy"),
+		Type.Literal("status-bar"),
+		Type.Literal("keyguard"),
+		Type.Literal("camera"),
+		Type.Literal("reboot"),
+		Type.Literal("wipe"),
+	],
+	{ description: "status/capabilities=read; the rest are Device Owner / Profile Owner policy changes (reboot, wipe and lock-task are irreversible)." },
+);
+
+const NotifyAction = Type.Union(
+	[
+		Type.Literal("status"),
+		Type.Literal("recent"),
+		Type.Literal("reply"),
+		Type.Literal("dismiss"),
+		Type.Literal("dismiss-all"),
+		Type.Literal("snooze"),
+		Type.Literal("events"),
+	],
+	{ description: "status/recent/events=read; reply/dismiss/dismiss-all/snooze=act on one notification by its key." },
+);
+
+const AutomationAction = Type.Union(
+	[
+		Type.Literal("status"),
+		Type.Literal("list"),
+		Type.Literal("add"),
+		Type.Literal("remove"),
+		Type.Literal("apply"),
+		Type.Literal("history"),
+	],
+	{ description: "status/list/history=read; add/remove=edit the rule set; apply=start the engine." },
+);
+
+const NetAction = Type.Union(
+	[
+		Type.Literal("status"),
+		Type.Literal("start"),
+		Type.Literal("stop"),
+		Type.Literal("queries"),
+		Type.Literal("blocklist"),
+	],
+	{ description: "status/queries=read the local VPN; start/stop=turn the tunnel on/off; blocklist=replace the DNS blocklist." },
+);
+
+const CaptureAction = Type.Union(
+	[
+		Type.Literal("status"),
+		Type.Literal("consent"),
+		Type.Literal("grab"),
+	],
+	{ description: "status=MediaProjection state; consent=show the system capture dialog on the device; grab=one JPEG frame." },
+);
+
+/**
+ * `android_automation` 的 `add` 参数，镜像 `PiAutomation.Trigger` / `Condition` / `Action` / `Rule`。
+ *
+ * 字面量与 App 侧同名：`type` 的取值就是 `PiAutomation.TRIGGER_TYPES` / `ACTION_TYPES`，
+ * 这里列成闭集，模型不会写出一个引擎认不出的 type 再等一句运行期报错。
+ */
+const AutomationTrigger = Type.Object({
+	type: StringEnum(["time", "notification", "battery", "network", "screen", "app"] as const, {
+		description: "What fires the rule.",
+	}),
+	intervalMinutes: Type.Optional(Type.Number({ description: "time: every N minutes; <=0 off." })),
+	dailyAt: Type.Optional(Type.String({ description: "time: daily HH:mm." })),
+	packageName: Type.Optional(Type.String({ description: "notification/app: limit to this package (app requires it)." })),
+	keyword: Type.Optional(Type.String({ description: "notification: regex (substring when it does not compile) matched on title/text." })),
+	below: Type.Optional(Type.Number({ description: "battery: fire below this percent, -1 off." })),
+	above: Type.Optional(Type.Number({ description: "battery: fire above this percent, -1 off." })),
+	network: Type.Optional(
+		StringEnum(["wifi", "mobile", "ethernet", "none", "any"] as const, { description: "network: which kind fires it." }),
+	),
+	screenOn: Type.Optional(Type.Boolean({ description: "screen: true = screen on, false = screen off." })),
+});
+
+const AutomationCondition = Type.Object({
+	logic: Type.Optional(StringEnum(["and", "or"] as const, { description: "How timeWindow and the battery bounds combine, default and." })),
+	timeWindow: Type.Optional(Type.String({ description: "\"HH:mm-HH:mm\"; crosses midnight." })),
+	batteryMin: Type.Optional(Type.Number({ description: "Battery >= this, -1 off." })),
+	batteryMax: Type.Optional(Type.Number({ description: "Battery <= this, -1 off." })),
+});
+
+const AutomationRuleAction = Type.Object({
+	id: Type.Optional(Type.String({ description: "Idempotency key; repeats inside idempotencyWindowMs are dropped." })),
+	type: StringEnum(["notify", "shell", "ui", "toast", "vibrate"] as const, { description: "What the action does." }),
+	title: Type.Optional(Type.String({ description: "notify: title." })),
+	text: Type.Optional(Type.String({ description: "notify: body. toast: text." })),
+	command: Type.Optional(Type.String({ description: "shell: the command, under the same policy as android_shell." })),
+	timeoutMs: Type.Optional(Type.Number({ description: "shell: timeout ms, default 15000." })),
+	operation: Type.Optional(
+		StringEnum(["key", "input", "scroll", "dump", "tap", "longPress", "swipe"] as const, {
+			description: "ui: which screen primitive to run.",
+		}),
+	),
+	params: Type.Optional(
+		Type.Record(Type.String(), Type.String(), {
+			description: "ui: that primitive's arguments by name (e.g. { key: \"home\" }, { text: \"hi\", index: \"3\" }, selectorText, x1/y1/x2/y2/durationMs).",
+		}),
+	),
+	milliseconds: Type.Optional(Type.Number({ description: "vibrate: duration ms, default 1500." })),
+	pattern: Type.Optional(Type.Array(Type.Number(), { description: "vibrate: off-on-off-on pattern; overrides milliseconds." })),
+	longDuration: Type.Optional(Type.Boolean({ description: "toast: use LENGTH_LONG." })),
+	retries: Type.Optional(Type.Number({ description: "Retry count for a failed action, default 2." })),
+	retryBackoffMs: Type.Optional(Type.Number({ description: "Retry backoff base in ms, default 500." })),
+	idempotencyWindowMs: Type.Optional(Type.Number({ description: "Drop repeated runs of the same id inside this window, default 5000." })),
+});
+
 /** `android_ui` / `android_io` 的 action → 它展开成哪个细粒度工具。 */
 const UI_ACTIONS: Record<string, string> = {
 	dump: "android_ui_dump",
@@ -530,6 +672,95 @@ async function dispatch(
 	if (target === undefined) throw badParam(tool, "action", Object.keys(actions), params.action);
 	requireText(tool, action, params, required[action] ?? []);
 	return deviceTool(target).run(withoutAction(params), ctx);
+}
+
+/** 一个状态字段的显示值：缺字段显示 `?`（而不是 `undefined`），对象按 JSON 摆出来。 */
+function show(value: unknown): string {
+	if (value === undefined || value === null) return "?";
+	if (typeof value === "object") return JSON.stringify(value);
+	return String(value);
+}
+
+/** 与 [requireText] 同一件事，给数字参数用；返回校验过的数字。 */
+function requireNumber(tool: string, action: string, params: Record<string, unknown>, name: string): number {
+	const value = params[name];
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		throw new Error(
+			`[BAD_PARAM] ${tool} 的 action="${action}" 需要数字参数 ${name}。\n提示：补上 ${name} 后重新调用 ${tool}。`,
+		);
+	}
+	return value;
+}
+
+/**
+ * 与 [requireText] 同一件事，给布尔参数用。
+ *
+ * 不给默认值：`hidden` / `disabled` / `suspended` 这些参数只可能默认成其中一个方向，猜错
+ * 就是替用户做了相反的决定（把「恢复应用」当成「隐藏应用」）。
+ */
+function requireBoolean(tool: string, action: string, params: Record<string, unknown>, name: string): boolean {
+	const value = params[name];
+	if (typeof value !== "boolean") {
+		throw new Error(
+			`[BAD_PARAM] ${tool} 的 action="${action}" 需要布尔参数 ${name}（true 或 false）。\n提示：补上 ${name} 后重新调用 ${tool}。`,
+		);
+	}
+	return value;
+}
+
+/** 字符串数组参数；非法项丢掉，由调用方按「必填的列表不能为空」报 BAD_PARAM。 */
+function stringList(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+/** 波1 动作函数的返回形状：成功 `{ok:true,…}`，失败 `{ok:false, reason, hint}`。 */
+interface ActionPayload {
+	ok?: boolean;
+	reason?: string;
+	hint?: string;
+	note?: string;
+}
+
+/**
+ * 把 `{ok:false}` 当失败报出去。
+ *
+ * 波1 的动作函数（`PiInputMethodService.withConnection`、`DeviceAdmin.denied`、
+ * `PiNotificationListener.failure`）**不抛异常**，而是把失败写进返回值；端点若原样透传
+ * 这个对象，这里就必须自己收下它。“把 `ok:false` 渲染成已完成”是这一层唯一会骗到模型的错：
+ * 模型会据此认定操作生效，然后既不再试也不告诉用户。端点若已经把失败翻译成 denial，
+ * `bridgePost` 就先抛了 `BridgeError`，根本走不到这里。
+ */
+function requireActionOk(tool: string, data: ActionPayload): void {
+	if (data.ok !== false) return;
+	const reason = data.reason ?? `${tool} 被设备拒绝，但没有给出原因。`;
+	const hint = data.hint ? `\n提示：${data.hint}` : "";
+	throw new Error(`[ACTION_FAILED] ${reason}${hint}`);
+}
+
+/**
+ * 列表类端点的取值：把载荷里那个数组拿出来交给调用方渲染。
+ *
+ * 取「数组本身」而不是猜一个键名，是因为键名由 App 侧端点决定（波1 的 `recent()` / `events()`
+ * / `history()` / `readQueries()` 返回的都是 JSONArray）。猜错的代价不是报错，而是把一屏通知
+ * 渲染成「0 条」—— 看起来像设备上真的没有通知，模型会据此回答用户。
+ */
+function listField(data: Record<string, unknown>): unknown[] | null {
+	for (const value of Object.values(data)) {
+		if (Array.isArray(value)) return value;
+	}
+	return null;
+}
+
+/** 列表为空时报「0 条」而不是空正文；条目怎么渲染由调用方给，因为它才知道字段含义。 */
+function listText(
+	label: string,
+	entries: unknown[],
+	render: (entry: Record<string, unknown>, index: number) => string,
+): string {
+	if (entries.length === 0) return `${label}：0 条。`;
+	const lines = entries.map((entry, index) => render((entry ?? {}) as Record<string, unknown>, index + 1));
+	return `${label}：${entries.length} 条\n${lines.join("\n")}`;
 }
 
 const DEVICE_TOOLS: DeviceToolSpec[] = [
@@ -1678,6 +1909,829 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				});
 			}),
 	},
+
+	// ------------------------------------------------------------ 输入法 ----
+	//
+	// PI 自己就是输入法（`PiInputMethodService`）：这些动作只在「PI 是当前输入法、且某个
+	// 输入框有焦点」时成立。密码框读不到内容 —— App 侧连长度都不报，所以 `text` 读到空
+	// 不等于输入框是空的。
+	{
+		name: "android_ime",
+		capability: "ime",
+		exposure: "deferred",
+		label: "输入法",
+		description: "PI as the active IME: action=insert|replace|delete|surround|submit|history|text on the focused field.",
+		promptSnippet: "Read/write the focused field via PI's IME",
+		promptGuidelines: [
+			"Needs PI selected as the system input method; a password field reads as empty, not as an error.",
+			"action=text reads the field, action=submit sends the editor action (send/search/done).",
+		],
+		parameters: Type.Object({
+			action: ImeAction,
+			text: Type.Optional(Type.String({ description: "insert/replace: the text to write." })),
+			before: Type.Optional(Type.Number({ description: "delete: characters before the caret, default 0." })),
+			after: Type.Optional(Type.Number({ description: "delete: characters after the caret, default 0." })),
+			editorAction: Type.Optional(
+				Type.Number({ description: "submit: an explicit EditorInfo.IME_ACTION_* code; omit to use the field's imeOptions (enter)." }),
+			),
+			limit: Type.Optional(Type.Number({ description: "history: entries, default 20." })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as {
+					action?: string;
+					text?: string;
+					before?: number;
+					after?: number;
+					editorAction?: number;
+					limit?: number;
+				};
+				const action = typeof p.action === "string" ? p.action : "";
+				switch (action) {
+					case "insert":
+					case "replace": {
+						requireText("android_ime", action, params, ["text"]);
+						const text = p.text ?? "";
+						const data = await bridgePost<ActionPayload>(`/app/ime/${action}`, { text });
+						requireActionOk("android_ime", data);
+						return textResult(
+							action === "insert"
+								? `已在光标处插入 ${text.length} 个字符。`
+								: `已整体替换输入框内容（${text.length} 字符）。`,
+							data,
+						);
+					}
+					case "delete": {
+						const data = await bridgePost<ActionPayload>("/app/ime/delete", { before: p.before, after: p.after });
+						requireActionOk("android_ime", data);
+						return textResult(`已删除光标前 ${p.before ?? 0} 个、后 ${p.after ?? 0} 个字符。`, data);
+					}
+					case "surround": {
+						const data = await bridgePost<
+							ActionPayload & {
+								selectionStart?: number;
+								selectionEnd?: number;
+								before?: string | null;
+								after?: string | null;
+								fieldKind?: string;
+								isPassword?: boolean;
+							}
+						>("/app/ime/surround", {});
+						const before = typeof data.before === "string" ? data.before : "（读不到）";
+						const after = typeof data.after === "string" ? data.after : "（读不到）";
+						const field = `${show(data.fieldKind)}${data.isPassword === true ? "，密码框" : ""}`;
+						const lines = [
+							`光标位置：${show(data.selectionStart)} → ${show(data.selectionEnd)}（${field}）`,
+							`光标前：${before}`,
+							`光标后：${after}`,
+						];
+						if (typeof data.note === "string") lines.push("", data.note);
+						return textResult(lines.join("\n"), data);
+					}
+					case "submit": {
+						const data = await bridgePost<ActionPayload>("/app/ime/submit", { action: p.editorAction });
+						requireActionOk("android_ime", data);
+						return textResult(
+							typeof p.editorAction === "number"
+								? `已提交编辑器动作码 ${p.editorAction}。`
+								: "已提交编辑器动作（用输入框的 imeOptions；普通输入框里等于回车）。",
+							data,
+						);
+					}
+					case "history": {
+						const data = await bridgePost<ActionPayload & Record<string, unknown>>("/app/ime/history", { limit: p.limit });
+						const entries = listField(data);
+						if (entries === null) return textResult(`输入历史：设备没有返回列表。\n${JSON.stringify(data)}`, data);
+						return textResult(
+							listText("输入历史", entries, (entry) => {
+								const when = typeof entry.at === "number" ? new Date(entry.at).toISOString() : "?";
+								if (entry.redacted === true) return `- ${when} ${show(entry.source)}：密码框，只记录了「发生了一次输入」`;
+								const detail = typeof entry.detail === "string" ? `（${entry.detail}）` : "";
+								return `- ${when} ${show(entry.source)}：${show(entry.inserted)}${detail}`;
+							}),
+							data,
+						);
+					}
+					case "text": {
+						const data = await bridgeGet<ActionPayload & { text?: string | null; chars?: number }>("/app/ime/text");
+						if (typeof data.text !== "string") {
+							// null 不等于空：密码框与「还没有快照」都是 null，端点把原因写在 note 里。
+							const note = typeof data.note === "string" ? `\n${data.note}` : "";
+							return textResult(`读不到输入框文本：没有可读的输入框（密码框一律不返回内容）。${note}`, data);
+						}
+						if (data.text.length === 0) return textResult("当前输入框是空的（0 字符）。", data);
+						return textResult(
+							`当前输入框（${data.chars ?? data.text.length} 字符）：\n\n${truncateForModel(data.text, "输入框文本")}`,
+							data,
+						);
+					}
+					default:
+						throw badParam("android_ime", "action", ["insert", "replace", "delete", "surround", "submit", "history", "text"], p.action);
+				}
+			}),
+	},
+
+	// -------------------------------------------------------- 设备管理员 ----
+	//
+	// `DeviceAdmin`（Device Owner / Profile Owner / 普通设备管理员）里的策略动作。身份决定
+	// 能力：普通设备管理员几乎什么都做不了，`action=capabilities` 会如实报出当前身份下每项
+	// 能不能做 —— 不要用一次失败的调用去倒推。
+	//
+	// **不可逆、或影响其他应用的动作**（调用前要在正文里向用户说明后果，被拒绝就停）：
+	//  - reboot：设备立刻重启，未保存的内容丢失；
+	//  - wipe：Device Owner 下等于恢复出厂设置，Profile Owner 下清空工作资料；执行后数据不再
+	//    存在，系统立即重启；
+	//  - grant：直接改写**别的应用**的运行时权限授予状态（授予/拒绝/交回系统），等于替用户
+	//    回答系统权限弹窗；
+	//  - hidden：目标应用从启动器消失（数据保留），用户会以为它被卸载了；
+	//  - suspend：目标应用被强制停止、通知被抑制、无法启动；
+	//  - install-ca：装一张**系统级且持久**的 CA 证书，卸载本应用也不会移除，之后设备信任
+	//    该证书签发的任何站点；
+	//  - lock-task：把设备锁进专用设备（Kiosk）模式，只有清单里的应用能启动；空清单解除。
+	{
+		name: "android_admin",
+		capability: "admin",
+		exposure: "deferred",
+		label: "设备管理员",
+		description: "Device Owner policies: action=status|capabilities|grant|hidden|suspend|uninstall-blocked|install-ca|always-on-vpn|lock-task|update-policy|status-bar|keyguard|camera|reboot|wipe.",
+		promptSnippet: "Device admin / Device Owner policies",
+		promptGuidelines: [
+			"Read action=capabilities first: most actions need Device Owner or Profile Owner.",
+			"wipe = factory reset and reboot = reboot now: state the consequence in the reply before calling.",
+			"grant rewrites another app's runtime permission; install-ca is system-wide and persistent; hidden/suspend change what the user sees.",
+		],
+		parameters: Type.Object({
+			action: AdminAction,
+			package: Type.Optional(
+				Type.String({ description: "grant/hidden/uninstall-blocked/always-on-vpn: the target package (always-on-vpn: omit to turn it off)." }),
+			),
+			permission: Type.Optional(Type.String({ description: "grant: the runtime permission, e.g. android.permission.CAMERA." })),
+			state: Type.Optional(Type.Number({ description: "grant: 0 = hand back to the system, 1 = grant, 2 = deny." })),
+			hidden: Type.Optional(Type.Boolean({ description: "hidden: true = hide the app, false = unhide." })),
+			packages: Type.Optional(Type.Array(Type.String(), { description: "suspend/lock-task: the package list (lock-task: empty = off)." })),
+			suspended: Type.Optional(Type.Boolean({ description: "suspend: true = suspend, false = unsuspend." })),
+			blocked: Type.Optional(Type.Boolean({ description: "uninstall-blocked: true = block, false = allow." })),
+			base64: Type.Optional(
+				Type.String({ description: "install-ca: the DER certificate, base64-encoded (installCaCert takes DER, not PEM)." }),
+			),
+			lockdown: Type.Optional(Type.Boolean({ description: "always-on-vpn: block all networking while the VPN is down, default false." })),
+			mode: Type.Optional(
+				StringEnum(["automatic", "postpone", "windowed", "clear"] as const, {
+					description: "update-policy: which system-update policy to set.",
+				}),
+			),
+			windowStartMinutes: Type.Optional(Type.Number({ description: "update-policy windowed: start minute of day (0-1439)." })),
+			windowEndMinutes: Type.Optional(Type.Number({ description: "update-policy windowed: end minute of day." })),
+			disabled: Type.Optional(Type.Boolean({ description: "status-bar/keyguard/camera: true = disable, false = restore." })),
+			flags: Type.Optional(Type.Number({ description: "wipe: extra DevicePolicyManager flags, default 0." })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as {
+					action?: string;
+					package?: string;
+					permission?: string;
+					state?: number;
+					hidden?: boolean;
+					packages?: string[];
+					suspended?: boolean;
+					blocked?: boolean;
+					base64?: string;
+					lockdown?: boolean;
+					mode?: string;
+					windowStartMinutes?: number;
+					windowEndMinutes?: number;
+					disabled?: boolean;
+					flags?: number;
+				};
+				const action = typeof p.action === "string" ? p.action : "";
+				switch (action) {
+					case "status": {
+						const data = await bridgeGet<ActionPayload & { deviceOwner?: boolean; profileOwner?: boolean; adminActive?: boolean }>("/app/admin/status");
+						const role = data.deviceOwner === true
+							? "Device Owner"
+							: data.profileOwner === true
+								? "Profile Owner"
+								: data.adminActive === true
+									? "普通设备管理员（现代策略需要 Device Owner / Profile Owner）"
+									: "没有设备管理员身份";
+						return textResult(`设备管理员身份：${role}\n${typeof data.note === "string" ? data.note : ""}`, data);
+					}
+					case "capabilities": {
+						const data = await bridgeGet<Record<string, unknown>>("/app/admin/capabilities");
+						const table = Object.entries(data).filter(([, value]) => typeof value === "boolean");
+						if (table.length === 0) return textResult(`设备管理员能力：设备没有返回能力表。\n${JSON.stringify(data)}`, data);
+						const lines = table.map(([name, allowed]) => `- ${name}：${allowed === true ? "可执行" : "不可执行"}`);
+						return textResult(`设备管理员能力（当前身份下）：\n${lines.join("\n")}`, data);
+					}
+					case "grant": {
+						requireText("android_admin", action, params, ["package", "permission"]);
+						const state = requireNumber("android_admin", action, params, "state");
+						const data = await bridgePost<ActionPayload>("/app/admin/grant", {
+							package: p.package,
+							permission: p.permission,
+							state,
+						});
+						requireActionOk("android_admin", data);
+						const label = state === 0 ? "交回系统" : state === 1 ? "授予" : state === 2 ? "拒绝" : `state=${state}`;
+						return textResult(`已把 ${p.package} 的 ${p.permission} 改为「${label}」（等于替用户回答了系统权限弹窗）。`, data);
+					}
+					case "hidden": {
+						requireText("android_admin", action, params, ["package"]);
+						const hidden = requireBoolean("android_admin", action, params, "hidden");
+						const data = await bridgePost<ActionPayload>("/app/admin/hidden", { package: p.package, hidden });
+						requireActionOk("android_admin", data);
+						return textResult(
+							`已${hidden ? "隐藏" : "恢复"}应用 ${p.package}${hidden ? "（用户从启动器看不到它，数据保留）" : ""}。`,
+							data,
+						);
+					}
+					case "suspend": {
+						const packages = stringList(p.packages);
+						if (packages.length === 0) {
+							throw new Error("[BAD_PARAM] android_admin 的 action=\"suspend\" 需要非空的 packages（包名数组）。\n提示：补上 packages 后重新调用 android_admin。");
+						}
+						const suspended = requireBoolean("android_admin", action, params, "suspended");
+						const data = await bridgePost<ActionPayload>("/app/admin/suspend", { packages, suspended });
+						// 部分失败（系统回一个「没能挂起」的包名列表）在端点那里已经变成 denial，并把
+						// 包名写在正文里，所以这里不需要再分一次支。
+						requireActionOk("android_admin", data);
+						return textResult(`已${suspended ? "挂起" : "恢复"} ${packages.length} 个应用。`, data);
+					}
+					case "uninstall-blocked": {
+						requireText("android_admin", action, params, ["package"]);
+						const blocked = requireBoolean("android_admin", action, params, "blocked");
+						const data = await bridgePost<ActionPayload>("/app/admin/uninstall-blocked", { package: p.package, blocked });
+						requireActionOk("android_admin", data);
+						return textResult(`已${blocked ? "阻止" : "允许"}卸载 ${p.package}。`, data);
+					}
+					case "install-ca": {
+						requireText("android_admin", action, params, ["base64"]);
+						const data = await bridgePost<ActionPayload & { bytes?: number }>("/app/admin/install-ca", { base64: p.base64 });
+						requireActionOk("android_admin", data);
+						return textResult(
+							`已安装 CA 证书（${show(data.bytes)} 字节）—— 系统级且持久，卸载 pi-android 也不会移除。`,
+							data,
+						);
+					}
+					case "always-on-vpn": {
+						const target = typeof p.package === "string" && p.package.trim().length > 0 ? p.package : null;
+						const data = await bridgePost<ActionPayload>("/app/admin/always-on-vpn", { package: target, lockdown: p.lockdown === true });
+						requireActionOk("android_admin", data);
+						return textResult(
+							target === null
+								? "已关闭常驻（Always-on）VPN。"
+								: `已把常驻 VPN 设为 ${target}${p.lockdown === true ? "（lockdown：VPN 断开时阻断全部网络）" : ""}。`,
+							data,
+						);
+					}
+					case "lock-task": {
+						if (!Array.isArray(p.packages)) {
+							throw new Error("[BAD_PARAM] android_admin 的 action=\"lock-task\" 需要 packages（包名数组；空数组表示关闭 Lock Task）。\n提示：补上 packages 后重新调用 android_admin。");
+						}
+						const packages = stringList(p.packages);
+						const data = await bridgePost<ActionPayload>("/app/admin/lock-task", { packages });
+						requireActionOk("android_admin", data);
+						return textResult(
+							packages.length === 0
+								? "Lock Task 清单已设为空（等于关闭专用设备模式）。"
+								: `已把 ${packages.length} 个应用加入 Lock Task 清单：${packages.join("、")}。`,
+							data,
+						);
+					}
+					case "update-policy": {
+						requireText("android_admin", action, params, ["mode"]);
+						const data = await bridgePost<ActionPayload>("/app/admin/update-policy", {
+							mode: p.mode,
+							windowStartMinutes: p.windowStartMinutes,
+							windowEndMinutes: p.windowEndMinutes,
+						});
+						requireActionOk("android_admin", data);
+						const window = typeof p.windowStartMinutes === "number" && typeof p.windowEndMinutes === "number"
+							? `（安装窗口：每天第 ${p.windowStartMinutes}–${p.windowEndMinutes} 分钟）`
+							: "";
+						return textResult(`系统更新策略已设为「${p.mode}」${window}。`, data);
+					}
+					case "status-bar":
+					case "keyguard":
+					case "camera": {
+						const disabled = requireBoolean("android_admin", action, params, "disabled");
+						const data = await bridgePost<ActionPayload>(`/app/admin/${action}`, { disabled });
+						requireActionOk("android_admin", data);
+						const what = action === "status-bar" ? "状态栏" : action === "keyguard" ? "锁屏" : "相机";
+						return textResult(`${what}已${disabled ? "禁用" : "恢复"}。`, data);
+					}
+					case "reboot": {
+						const data = await bridgePost<ActionPayload>("/app/admin/reboot", {});
+						requireActionOk("android_admin", data);
+						return textResult("重启指令已交给系统：设备会立即重启，未保存的内容会丢失。", data);
+					}
+					case "wipe": {
+						const data = await bridgePost<ActionPayload>("/app/admin/wipe", { flags: p.flags });
+						requireActionOk("android_admin", data);
+						return textResult(`擦除指令已被系统接受（flags=${p.flags ?? 0}）：设备会立即重启，被擦除的数据不再存在。`, data);
+					}
+					default:
+						throw badParam(
+							"android_admin",
+							"action",
+							[
+								"status",
+								"capabilities",
+								"grant",
+								"hidden",
+								"suspend",
+								"uninstall-blocked",
+								"install-ca",
+								"always-on-vpn",
+								"lock-task",
+								"update-policy",
+								"status-bar",
+								"keyguard",
+								"camera",
+								"reboot",
+								"wipe",
+							],
+							p.action,
+						);
+				}
+			}),
+	},
+
+	// ------------------------------------------------------------ 通知 ----
+	//
+	// 通知监听（`PiNotificationListener`）：只有在系统「通知使用权」里勾选过 PI、且服务已连上
+	// 时才有内容。`recent` 是当前缓冲区（按 key 去重，最新在末），`events` 是到达/移除/应答的
+	// 流水；回复、撤销、延后要的是**当前那条**通知的 key，它只存在于这两个列表的输出里。
+	{
+		name: "android_notify",
+		capability: "basic",
+		exposure: "deferred",
+		label: "通知监听",
+		description: "Notification listener: action=status|recent|reply|dismiss|dismiss-all|snooze|events.",
+		promptSnippet: "Read/reply/dismiss notifications",
+		promptGuidelines: [
+			"reply needs a notification with a RemoteInput action; action=recent marks those as 可回复.",
+			"dismiss/snooze take the key printed by recent or events; a stale key is refused, do not retry it.",
+		],
+		parameters: Type.Object({
+			action: NotifyAction,
+			key: Type.Optional(Type.String({ description: "reply/dismiss/snooze: the notification key from action=recent." })),
+			text: Type.Optional(Type.String({ description: "reply: the text to send." })),
+			ms: Type.Optional(Type.Number({ description: "snooze: milliseconds to postpone it, >0 and capped at 24h." })),
+			limit: Type.Optional(Type.Number({ description: "recent/events: entries, default 20 / 50." })),
+			since: Type.Optional(
+				Type.Number({ description: "events: only events newer than this sequence number (the cursor the previous call printed)." }),
+			),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as { action?: string; key?: string; text?: string; ms?: number; limit?: number; since?: number };
+				const action = typeof p.action === "string" ? p.action : "";
+				switch (action) {
+					case "status": {
+						const data = await bridgeGet<
+							ActionPayload & {
+								connected?: boolean;
+								enabledInSettings?: boolean;
+								state?: string;
+								activeCount?: number;
+								replyableCount?: number;
+								eventCount?: number;
+							}
+						>("/app/notify/status");
+						const state = data.connected === true
+							? "已连接"
+							: data.enabledInSettings === true
+								? "已授权，但系统还没绑定服务（稍等约 1 秒）"
+								: "没有通知使用权";
+						const lines = [
+							`通知监听：${state}（${show(data.state)}）`,
+							`当前通知 ${show(data.activeCount)} 条，其中可回复 ${show(data.replyableCount)} 条；事件流水 ${show(data.eventCount)} 条`,
+						];
+						if (typeof data.note === "string") lines.push("", data.note);
+						return textResult(lines.join("\n"), data);
+					}
+					case "recent": {
+						const data = await bridgePost<ActionPayload & Record<string, unknown>>("/app/notify/recent", { limit: p.limit });
+						const entries = listField(data);
+						if (entries === null) return textResult(`最近通知：设备没有返回列表。\n${JSON.stringify(data)}`, data);
+						return textResult(
+							listText("最近通知", entries, (entry) => {
+								const body = typeof entry.text === "string" && entry.text.length > 0 ? `：${entry.text}` : "";
+								const flags = [
+									entry.replyable === true ? "可回复" : "",
+									entry.isOngoing === true ? "常驻" : "",
+									entry.isClearable === false ? "不可撤销" : "",
+								].filter((flag) => flag.length > 0);
+								return `- [${show(entry.key)}] ${show(entry.packageName)}｜${show(entry.title)}${body}${flags.length > 0 ? `（${flags.join("、")}）` : ""}`;
+							}),
+							data,
+						);
+					}
+					case "reply": {
+						requireText("android_notify", action, params, ["key", "text"]);
+						const text = p.text ?? "";
+						const data = await bridgePost<ActionPayload & { chars?: number }>("/app/notify/reply", { key: p.key, text });
+						requireActionOk("android_notify", data);
+						return textResult(`已回复通知「${p.key}」（${data.chars ?? text.length} 字符）。`, data);
+					}
+					case "dismiss": {
+						requireText("android_notify", action, params, ["key"]);
+						const data = await bridgePost<ActionPayload>("/app/notify/dismiss", { key: p.key });
+						requireActionOk("android_notify", data);
+						return textResult(`已撤销通知「${p.key}」。`, data);
+					}
+					case "dismiss-all": {
+						const data = await bridgePost<ActionPayload>("/app/notify/dismiss-all", {});
+						requireActionOk("android_notify", data);
+						return textResult("已撤销所有可撤销的通知。", data);
+					}
+					case "snooze": {
+						requireText("android_notify", action, params, ["key"]);
+						const ms = requireNumber("android_notify", action, params, "ms");
+						const data = await bridgePost<ActionPayload & { durationMs?: number }>("/app/notify/snooze", { key: p.key, ms });
+						requireActionOk("android_notify", data);
+						return textResult(`已把通知「${p.key}」延后 ${data.durationMs ?? ms} 毫秒。`, data);
+					}
+					case "events": {
+						const data = await bridgePost<ActionPayload & { cursor?: number } & Record<string, unknown>>("/app/notify/events", {
+							limit: p.limit,
+							since: p.since,
+						});
+						const entries = listField(data);
+						if (entries === null) return textResult(`通知事件：设备没有返回列表。\n${JSON.stringify(data)}`, data);
+						const cursor = typeof data.cursor === "number" ? `\n（cursor=${data.cursor}；下次带 since 只取增量）` : "";
+						return textResult(
+							listText("通知事件", entries, (entry) => {
+								const when = typeof entry.at === "number" ? new Date(entry.at).toISOString() : "?";
+								const detail = typeof entry.detail === "string" ? `：${entry.detail}` : "";
+								return `- ${when} [${show(entry.seq)}] ${show(entry.type)} ${show(entry.packageName)} ${show(entry.title)}${detail}`;
+							}) + cursor,
+							data,
+						);
+					}
+					default:
+						throw badParam(
+							"android_notify",
+							"action",
+							["status", "recent", "reply", "dismiss", "dismiss-all", "snooze", "events"],
+							p.action,
+						);
+				}
+			}),
+	},
+
+	// ------------------------------------------------------------ 自动化 ----
+	//
+	// 规则引擎（`PiAutomation`）：规则落盘，引擎启动后才会真的触发；触发器与动作的
+	// 可用条件（通知监听、无障碍、Shell 后端）由 `status` 的 readiness 如实报出。每个端点
+	// 自己都会先 `apply`（幂等），所以 `add` 之后不需要再手动启动一次。
+	{
+		name: "android_automation",
+		capability: "basic",
+		exposure: "deferred",
+		label: "自动化",
+		description: "Automation rules: action=status|list|add|remove|apply|history.",
+		promptSnippet: "Automation rules (trigger → actions)",
+		promptGuidelines: [
+			"add takes name + trigger + actions; every endpoint starts the engine itself, so the rule takes effect at once.",
+			"A rule's actions run under the same device policy as the tools they mirror (shell, ui, notify…).",
+		],
+		parameters: Type.Object({
+			action: AutomationAction,
+			id: Type.Optional(Type.String({ description: "remove: the rule id from action=list." })),
+			name: Type.Optional(Type.String({ description: "add: rule name." })),
+			enabled: Type.Optional(Type.Boolean({ description: "add: whether the rule is active, default true." })),
+			priority: Type.Optional(Type.Number({ description: "add: higher runs first, default 0." })),
+			cooldownMs: Type.Optional(Type.Number({ description: "add: per-rule dedup window in ms, default 60000." })),
+			trigger: Type.Optional(AutomationTrigger),
+			condition: Type.Optional(AutomationCondition),
+			actions: Type.Optional(Type.Array(AutomationRuleAction, { description: "add: what to do when the trigger fires." })),
+			limit: Type.Optional(Type.Number({ description: "history: entries, default 20." })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as {
+					action?: string;
+					id?: string;
+					name?: string;
+					enabled?: boolean;
+					priority?: number;
+					cooldownMs?: number;
+					trigger?: Record<string, unknown>;
+					condition?: Record<string, unknown>;
+					actions?: Array<Record<string, unknown>>;
+					limit?: number;
+				};
+				const action = typeof p.action === "string" ? p.action : "";
+				switch (action) {
+					case "status": {
+						const data = await bridgeGet<
+							ActionPayload & {
+								started?: boolean;
+								ruleCount?: number;
+								enabledCount?: number;
+								historyCount?: number;
+								readiness?: Record<string, unknown> | null;
+							}
+						>("/app/automation/status");
+						const lines = [
+							`自动化引擎：${data.started === true ? "已启动" : "未启动（用 action=apply 启动）"}`,
+							`规则 ${show(data.ruleCount)} 条（启用 ${show(data.enabledCount)}）；触发记录 ${show(data.historyCount)} 条`,
+						];
+						const readiness = data.readiness;
+						if (readiness !== undefined && readiness !== null) {
+							const facts = Object.entries(readiness).map(([name, value]) => `${name}=${show(value)}`);
+							lines.push(`可用条件：${facts.join(" ")}`);
+						}
+						if (typeof data.note === "string") lines.push("", data.note);
+						return textResult(lines.join("\n"), data);
+					}
+					case "list": {
+						const data = await bridgePost<ActionPayload & Record<string, unknown>>("/app/automation/list", {});
+						const entries = listField(data);
+						if (entries === null) return textResult(`自动化规则：设备没有返回列表。\n${JSON.stringify(data)}`, data);
+						return textResult(
+							listText("自动化规则", entries, (entry) => {
+								const trigger = (entry.trigger ?? {}) as Record<string, unknown>;
+								const actions = Array.isArray(entry.actions) ? entry.actions : [];
+								const kinds = actions.map((item) => show((item as Record<string, unknown>).type)).join("+");
+								const state = entry.enabled === false ? "已停用" : "启用";
+								return `- [${show(entry.id)}] ${show(entry.name)}（${state}，priority ${show(entry.priority)}）${show(trigger.type)} → ${kinds.length > 0 ? kinds : "无动作"}`;
+							}),
+							data,
+						);
+					}
+					case "add": {
+						requireText("android_automation", action, params, ["name"]);
+						const actions = Array.isArray(p.actions) ? p.actions : [];
+						if (actions.length === 0) {
+							throw new Error("[BAD_PARAM] android_automation 的 action=\"add\" 需要至少一个 actions 项（type=notify|shell|ui|toast|vibrate）。\n提示：补上 actions 后重新调用 android_automation。");
+						}
+						const data = await bridgePost<ActionPayload & { rule?: { id?: string; name?: string } }>("/app/automation/add", {
+							name: p.name,
+							enabled: p.enabled ?? true,
+							priority: p.priority ?? 0,
+							cooldownMs: p.cooldownMs,
+							trigger: p.trigger,
+							condition: p.condition,
+							actions,
+						});
+						requireActionOk("android_automation", data);
+						// 端点在 `rule` 里回真正入库的那份副本（id 由它补齐）。
+						const stored = data.rule ?? {};
+						return textResult(
+							`已添加规则「${stored.name ?? p.name}」${typeof stored.id === "string" ? `（id=${stored.id}）` : ""}。`,
+							data,
+						);
+					}
+					case "remove": {
+						requireText("android_automation", action, params, ["id"]);
+						const data = await bridgePost<ActionPayload & { id?: string }>("/app/automation/remove", { id: p.id });
+						// 没有这条规则时端点是 NOT_FOUND denial（那里才有 hint），不在这里重报一次。
+						requireActionOk("android_automation", data);
+						return textResult(`已删除规则 ${p.id}。`, data);
+					}
+					case "apply": {
+						const data = await bridgePost<ActionPayload>("/app/automation/apply", {});
+						requireActionOk("android_automation", data);
+						return textResult("自动化引擎已启动：规则会按触发器与条件执行，可用条件见 action=status 的 readiness。", data);
+					}
+					case "history": {
+						const data = await bridgePost<ActionPayload & Record<string, unknown>>("/app/automation/history", { limit: p.limit });
+						const entries = listField(data);
+						if (entries === null) return textResult(`触发记录：设备没有返回列表。\n${JSON.stringify(data)}`, data);
+						return textResult(
+							listText("触发记录", entries, (entry) => {
+								const when = typeof entry.at === "number" ? new Date(entry.at).toISOString() : "?";
+								const actions = Array.isArray(entry.actions) ? entry.actions.length : 0;
+								return `- ${when} ${show(entry.ruleName)}（${show(entry.ruleId)}）${show(entry.reason)}，${actions} 个动作`;
+							}),
+							data,
+						);
+					}
+					default:
+						throw badParam(
+							"android_automation",
+							"action",
+							["status", "list", "add", "remove", "apply", "history"],
+							p.action,
+						);
+				}
+			}),
+	},
+
+	// ---------------------------------------------------------------- VPN ----
+	//
+	// 本地 VPN（`PiVpnService`）：TUN 只看得见明文 DNS 与 TCP/UDP 的目的地址，HTTPS 载荷没有
+	// root 解不了（status 的 note 会复述这条边界）。`start` 需要用户先在设备上给过一次 VPN
+	// 授权；没有授权时 App 侧会拒，原因写在 status 的 lastError 里。
+	{
+		name: "android_net",
+		capability: "basic",
+		exposure: "deferred",
+		label: "本地 VPN",
+		description: "Local VPN: action=status|start|stop|queries|blocklist (plaintext DNS + flow metadata only).",
+		promptSnippet: "Local VPN / DNS log",
+		promptGuidelines: [
+			"start needs the VPN authorization the user gives on the device; a refusal names it in status.lastError.",
+			"queries shows domains and whether the blocklist matched; https payloads stay invisible.",
+		],
+		parameters: Type.Object({
+			action: NetAction,
+			sessionName: Type.Optional(Type.String({ description: "start: tunnel name shown in the system VPN dialog." })),
+			dnsServers: Type.Optional(Type.Array(Type.String(), { description: "start: DNS servers handed to the system, default [\"10.0.0.2\"]." })),
+			upstreamDns: Type.Optional(Type.String({ description: "start: the resolver the tunnel asks, default 8.8.8.8." })),
+			routes: Type.Optional(Type.Array(Type.String(), { description: "start: routes like 10.0.0.0/24; derived from the address when empty." })),
+			allowedPackages: Type.Optional(Type.Array(Type.String(), { description: "start: only these apps go through the tunnel (allowlist)." })),
+			disallowedPackages: Type.Optional(Type.Array(Type.String(), { description: "start: these apps bypass the tunnel." })),
+			mtu: Type.Optional(Type.Number({ description: "start: MTU, default 1500." })),
+			interceptDns: Type.Optional(Type.Boolean({ description: "start: answer blocked queries locally instead of only logging them, default true." })),
+			blocklist: Type.Optional(Type.Array(Type.String(), { description: "start: domains to block (suffix match), added alongside action=blocklist." })),
+			limit: Type.Optional(Type.Number({ description: "queries: entries, default 100." })),
+			domains: Type.Optional(Type.Array(Type.String(), { description: "blocklist: the domains to block; replaces the current list (empty clears it)." })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as {
+					action?: string;
+					sessionName?: string;
+					dnsServers?: string[];
+					upstreamDns?: string;
+					routes?: string[];
+					allowedPackages?: string[];
+					disallowedPackages?: string[];
+					mtu?: number;
+					interceptDns?: boolean;
+					blocklist?: string[];
+					limit?: number;
+					domains?: string[];
+				};
+				const action = typeof p.action === "string" ? p.action : "";
+				switch (action) {
+					case "status": {
+						const data = await bridgeGet<
+							ActionPayload & {
+								running?: boolean;
+								sessionName?: string;
+								address?: string;
+								proxyPort?: number;
+								seenDomains?: number;
+								blockedCount?: number;
+								lastError?: string;
+								dns?: { servers?: string[]; upstream?: string; intercept?: boolean; blocklist?: number };
+								split?: { mode?: string; allowed?: string[]; disallowed?: string[] };
+							}
+						>("/app/vpn/status");
+						const dns = data.dns ?? {};
+						const split = data.split ?? {};
+						const lines = [
+							`本地 VPN：${data.running === true ? "运行中" : "未运行"}${typeof data.sessionName === "string" ? `（${data.sessionName}）` : ""}`,
+							`地址 ${show(data.address)}；DNS ${Array.isArray(dns.servers) ? dns.servers.join("、") : "?"} → 上游 ${show(dns.upstream)}（拦截 ${dns.intercept === true ? "开" : "关"}，黑名单 ${show(dns.blocklist)} 条）`,
+							`分应用 ${show(split.mode)}；已见域名 ${show(data.seenDomains)} 个；累计拦截 ${show(data.blockedCount)} 次；本地代理端口 ${show(data.proxyPort)}`,
+						];
+						if (typeof data.lastError === "string" && data.lastError.length > 0) lines.push(`上次错误：${data.lastError}`);
+						if (typeof data.note === "string") lines.push("", data.note);
+						return textResult(lines.join("\n"), data);
+					}
+					case "start": {
+						const data = await bridgePost<
+							ActionPayload & { running?: boolean; requested?: boolean; proxyPort?: number; lastError?: string }
+						>("/app/vpn/start", {
+							sessionName: p.sessionName,
+							dnsServers: p.dnsServers,
+							upstreamDns: p.upstreamDns,
+							routes: p.routes,
+							allowedPackages: p.allowedPackages,
+							disallowedPackages: p.disallowedPackages,
+							mtu: p.mtu,
+							interceptDns: p.interceptDns,
+							blocklist: p.blocklist,
+						});
+						requireActionOk("android_net", data);
+						// 端点不说「已启动」：隧道是服务在另一次调用里建立的，「running」才是事实。
+						const port = typeof data.proxyPort === "number" && data.proxyPort > 0 ? `，本地代理端口 ${data.proxyPort}` : "";
+						const started = data.running === true
+							? `本地 VPN 隧道已建立${port}。`
+							: `已请求启动本地 VPN，但隧道还没建立（running=${show(data.running)}）${port}；用 action=status 确认，几秒后还是 false 就是系统没建立它。`;
+						const error = typeof data.lastError === "string" && data.lastError.length > 0 ? `\n上次错误：${data.lastError}` : "";
+						return textResult(`${started}${error}`, data);
+					}
+					case "stop": {
+						const data = await bridgePost<ActionPayload & { wasRunning?: boolean }>("/app/vpn/stop", {});
+						requireActionOk("android_net", data);
+						return textResult(`已停止本地 VPN${data.wasRunning === false ? "（它本来就没在运行）" : ""}。`, data);
+					}
+					case "queries": {
+						const data = await bridgePost<ActionPayload & Record<string, unknown>>("/app/vpn/queries", { limit: p.limit });
+						const entries = listField(data);
+						if (entries === null) return textResult(`DNS 查询：设备没有返回列表。\n${JSON.stringify(data)}`, data);
+						return textResult(
+							listText("DNS 查询", entries, (entry) => {
+								const when = typeof entry.at === "number" ? new Date(entry.at).toISOString() : "?";
+								return `- ${when} ${show(entry.name)} ${show(entry.type)} 来自 ${show(entry.client)}${entry.blocked === true ? "（已拦截）" : ""}`;
+							}),
+							data,
+						);
+					}
+					case "blocklist": {
+						if (!Array.isArray(p.domains)) {
+							throw new Error("[BAD_PARAM] android_net 的 action=\"blocklist\" 需要 domains（域名数组；空数组表示清空）。\n提示：补上 domains 后重新调用 android_net。");
+						}
+						const domains = stringList(p.domains);
+						const data = await bridgePost<ActionPayload & { count?: number }>("/app/vpn/blocklist", { domains });
+						requireActionOk("android_net", data);
+						return textResult(
+							domains.length === 0
+								? "DNS 黑名单已清空。"
+								: `DNS 黑名单已设为 ${show(data.count)} 条：${domains.join("、")}。`,
+							data,
+						);
+					}
+					default:
+						throw badParam("android_net", "action", ["status", "start", "stop", "queries", "blocklist"], p.action);
+				}
+			}),
+	},
+
+	// -------------------------------------------------------------- 投屏 ----
+	//
+	// MediaProjection（`PiScreenCapture`）：必须先由用户在 pi-android 的界面上点一次系统授权
+	// 对话框，否则 `grab` 没有帧。`consent` 只回答「现在需不需要授权」—— 授权这一下模型和设
+	// 备桥都代替不了用户；Android 14+ 还需要 mediaProjection 类型的前台服务。
+	{
+		name: "android_capture",
+		capability: "basic",
+		exposure: "deferred",
+		label: "投屏截图",
+		description: "MediaProjection capture: action=status|consent|grab (one JPEG frame; system audio has its own limits).",
+		promptSnippet: "Projection capture / audio",
+		promptGuidelines: [
+			"consent only reports whether authorization is still needed; the user must tap the system dialog in the pi-android UI.",
+			"grab returns one image, or says the screen did not change (pass force=true to re-encode anyway).",
+		],
+		parameters: Type.Object({
+			action: CaptureAction,
+			quality: Type.Optional(Type.Number({ description: "grab: JPEG quality 20-100, default 70." })),
+			force: Type.Optional(Type.Boolean({ description: "grab: re-encode even when the picture did not change, default false." })),
+			waitMs: Type.Optional(Type.Number({ description: "grab: how long to wait for the first frame, default 800 ms." })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as { action?: string; quality?: number; force?: boolean; waitMs?: number };
+				const action = typeof p.action === "string" ? p.action : "";
+				switch (action) {
+					case "status": {
+						const data = await bridgeGet<
+							ActionPayload & {
+								capturing?: boolean;
+								width?: number;
+								height?: number;
+								frameCount?: number;
+								fps?: number;
+								audio?: { recording?: boolean; bytes?: number; file?: string };
+							}
+						>("/app/capture/status");
+						const audio = data.audio ?? {};
+						const lines = [
+							`投屏：${data.capturing === true ? `进行中（${show(data.width)}×${show(data.height)}）` : "未授权或未开始（用 action=consent 授权）"}`,
+							`帧 ${show(data.frameCount)} 个，${show(data.fps)} fps；音频录制 ${audio.recording === true ? `进行中（${show(audio.bytes)} 字节 → ${show(audio.file)}）` : "未开始"}`,
+						];
+						if (typeof data.note === "string") lines.push("", data.note);
+						return textResult(lines.join("\n"), data);
+					}
+					case "consent": {
+						const data = await bridgePost<ActionPayload & { capturing?: boolean }>("/app/capture/consent", {});
+						requireActionOk("android_capture", data);
+						return textResult(
+							typeof data.note === "string"
+								? data.note
+								: "投屏授权只能由用户在 pi-android 界面上点一次系统对话框；模型与设备桥都代替不了这一下。",
+							data,
+						);
+					}
+					case "grab": {
+						const data = await bridgePost<ActionPayload & { grabbed?: boolean; base64?: string; mimeType?: string; bytes?: number }>(
+							"/app/capture/grab",
+							{ quality: p.quality, force: p.force === true, waitMs: p.waitMs },
+							60_000,
+						);
+						if (typeof data.base64 !== "string" || data.base64.length === 0) {
+							const why = data.note ?? data.reason ?? "画面没有变化，或还没投屏授权";
+							return textResult(
+								`没有取到新的一帧：${why}。\n提示：先看 action=status 的 capturing；没有授权就先 action=consent。`,
+								data,
+							);
+						}
+						const size = typeof data.bytes === "number" ? `（${formatSize(data.bytes)}）` : "";
+						return imageResult(data.base64, data.mimeType ?? "image/jpeg", `投屏截图${size}。`, data);
+					}
+					default:
+						throw badParam("android_capture", "action", ["status", "consent", "grab"], p.action);
+				}
+			}),
+	},
 ];
 
 // ---------------------------------------------------------------------------
@@ -1748,9 +2802,27 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | \`android_fs\` | 文件 | list、read、write（授权目录 SAF）、download（公共 Download，要 op） |
 | \`android_shell\` | 设备命令 | — |
 
-- 能力组三组：basic（基础，默认开）/ accessibility（屏幕，默认关）/ shell（默认关）。关着的那组，它的工具既不注册也不进提示词。
+- 能力组五组：basic（基础，默认开）/ accessibility（屏幕，默认关）/ ime（输入法，默认关）/ admin（设备管理员，默认关）/ shell（默认关）。关着的那组，它的工具既不注册也不进提示词。
 - [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
 - 危险动作会弹确认；用户拒绝就停。
+
+## 另外六个工具（不进提示词，用 tool_search 激活）
+
+上面那张表是常驻的六个；下面这六个注册着但不声明，它们的参数 schema 平时不占提示词。
+
+| 工具 | 能力组 | 覆盖 | action |
+|---|---|---|---|
+| \`android_ime\` | ime | 经 PI 输入法读/写当前聚焦的输入框 | insert / replace / delete / surround / submit / history / text |
+| \`android_admin\` | admin | 设备管理员 / Device Owner 策略 | status / capabilities / grant / hidden / suspend / uninstall-blocked / install-ca / always-on-vpn / lock-task / update-policy / status-bar / keyguard / camera / reboot / wipe |
+| \`android_notify\` | basic | 通知监听：读、回复、撤销、延后、事件流水 | status / recent / reply / dismiss / dismiss-all / snooze / events |
+| \`android_automation\` | basic | 自动化规则（触发器 + 条件 + 动作） | status / list / add / remove / apply / history |
+| \`android_net\` | basic | 本地 VPN：隧道、DNS 查询记录、黑名单 | status / start / stop / queries / blocklist |
+| \`android_capture\` | basic | 投屏（MediaProjection）截图与系统音频 | status / consent / grab |
+
+- 不可逆、或影响其他应用的动作：\`android_admin\` 的 reboot / wipe / grant / hidden / suspend / install-ca / lock-task。调用前先在正文里说明后果；被拒绝就停，别换条路再试。
+- \`android_ime\` 只在 PI 是当前输入法时有内容可读；密码框读不到（连长度都不报）；surround 读的是光标前后的文本，不是改选区。
+- \`android_capture\` 的 consent 只回答「现在需不需要授权」；真正那一下要用户在 pi-android 界面上点系统对话框，然后 grab。
+- \`android_automation\` 的每个端点自己会先启动引擎（apply 幂等），add 之后不用再手动启动。
 `,
 
 	"references/shell.md": `# 设备 Shell（android_shell）

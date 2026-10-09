@@ -1,7 +1,10 @@
 package app.pi.ui.device
 
 import android.Manifest
+import android.app.Activity
+import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -23,6 +26,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
@@ -51,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.bridge.DeviceAccessibilityService
+import app.pi.bridge.DeviceAdmin
 import app.pi.bridge.DeviceApprovalLedger
 import app.pi.bridge.DeviceBridgeController
 import app.pi.bridge.DeviceCapability
@@ -60,6 +66,10 @@ import app.pi.bridge.DeviceSafStore
 import app.pi.bridge.DeviceShellGuard
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
+import app.pi.bridge.PiCaptureService
+import app.pi.bridge.PiInputMethodService
+import app.pi.bridge.PiScreenCapture
+import app.pi.bridge.PiVpnService
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiMixedLine
@@ -139,6 +149,18 @@ fun DeviceCapabilityScreen(
     var shizuku by remember { mutableStateOf(DeviceShizuku.status(context)) }
     var workspace by remember { mutableStateOf(DeviceWorkspace.summary()) }
     var storagePermissionsNeeded by remember { mutableStateOf(!store.hasLegacyStoragePermission()) }
+    // 输入法与设备管理器的三态读数。两者都不是「开关打开就能用」的能力：输入法要用户
+    // 在系统里启用并切成当前输入法，管理员要一档身份 —— 卡片必须能把缺的那一步说出来，
+    // 否则一个「待授权」徽标等于什么都没说。这里的三个布尔与
+    // `DeviceCapabilityStore.androidPrecondition` 读的是同一组事实，所以卡片与端点不会分叉。
+    var imeEnabled by remember { mutableStateOf(PiInputMethodService.available(context)) }
+    var imeDefault by remember { mutableStateOf(PiInputMethodService.isDefaultInputMethod(context)) }
+    var imeRunning by remember { mutableStateOf(PiInputMethodService.running() != null) }
+    // 整份身份自述（哪一档身份、每项策略能不能做）由组件给，卡片不自己拼。
+    var admin by remember { mutableStateOf(DeviceAdmin.status(context)) }
+    // VPN 与投屏这两条授权只能由界面发起，所以这一屏得知道它们当前是不是在跑。
+    var vpnRunning by remember { mutableStateOf(PiVpnService.available(context)) }
+    var capturing by remember { mutableStateOf(PiScreenCapture.isCapturing()) }
     // The endpoint-level grants the cards have to state: CAMERA gates the torch
     // (DeviceCapabilityStore.kt:268-278), the location pair gates android_device_state
     // (:207-211, what="location"), POST_NOTIFICATIONS gates android_say (:239-245,
@@ -209,6 +231,38 @@ fun DeviceCapabilityScreen(
         revision += 1
     }
 
+    // VPN 与投屏的授权对话框**只能**由一个 Activity 拉起：`VpnService.prepare()` 与
+    // `createScreenCaptureIntent()` 返回的就是那个系统对话框的 Intent，而波1 的两个
+    // 后台组件（PiVpnService / PiScreenCapture）明确不持有 Activity。
+    // 没有这两个 launcher，`/app/vpn/start` 与 `/app/capture/grab` 在真机上永远拿不到
+    // 授权 —— 那正是它们此前只会回 NO_PERMISSION 的原因。
+    val vpnConsent = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        note = if (result.resultCode == Activity.RESULT_OK) {
+            if (PiVpnService.start(context)) "VPN 已启动。" else "系统已授权，但隧道没起 —— 原因见上面的状态行。"
+        } else {
+            "VPN 授权被拒绝；用户可以在需要时再点一次「授权 VPN」。"
+        }
+        vpnRunning = PiVpnService.available(context)
+        revision += 1
+    }
+    val captureConsent = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        // 顺序不能反：Android 14 要求 mediaProjection 类型的前台服务在该次
+        // getMediaProjection() 之前就已经在跑。所以先起 PiCaptureService，再接授权。
+        note = if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            PiCaptureService.start(context)
+            val attached = PiScreenCapture.attach(context, result.resultCode, result.data)
+            if (attached.optBoolean("ok", false)) "投屏已开始。" else "投屏失败：${attached.optString("error")}"
+        } else {
+            "投屏授权被拒绝；用户可以在需要时再点一次「开始投屏」。"
+        }
+        capturing = PiScreenCapture.isCapturing()
+        revision += 1
+    }
+
     // Registered once per entry into this screen, separately from the refresh loop
     // below on purpose: `DeviceShizuku.addPermissionResultListener` has no removal
     // API (it appends to a list), so re-registering it on every foreground/background
@@ -251,6 +305,12 @@ fun DeviceCapabilityScreen(
                 DeviceWorkspace.refresh(context)
                 workspace = DeviceWorkspace.summary()
                 storagePermissionsNeeded = !store.hasLegacyStoragePermission()
+                imeEnabled = PiInputMethodService.available(context)
+                imeDefault = PiInputMethodService.isDefaultInputMethod(context)
+                imeRunning = PiInputMethodService.running() != null
+                admin = DeviceAdmin.status(context)
+                vpnRunning = PiVpnService.available(context)
+                capturing = PiScreenCapture.isCapturing()
                 cameraPermission = store.hasCameraPermission()
                 locationPermission = store.hasLocationPermission()
                 notificationPermission = store.hasNotificationPermission()
@@ -360,6 +420,54 @@ fun DeviceCapabilityScreen(
                         relaxed = enabled
                         store.setShellSyntaxRelaxed(enabled)
                         revision += 1
+                    },
+                    imeEnabled = imeEnabled,
+                    imeDefault = imeDefault,
+                    imeRunning = imeRunning,
+                    // 与无障碍那张卡同一个套路：用户要做的动作在系统设置里，那就得给一扇门，
+                    // 而门打不开时要说话 —— 有些 ROM 没有对应的设置页，静默失败等于按钮是死的。
+                    onOpenInputMethodSettings = {
+                        val opened = runCatching {
+                            context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                        }.isSuccess
+                        if (!opened) {
+                            note = "无法打开系统的输入法设置页。请手动进入 系统设置 → 系统 → 语言和输入法，" +
+                                "启用「PI 设备桥」并把它选为当前输入法。"
+                        }
+                    },
+                    admin = admin,
+                    vpnRunning = vpnRunning,
+                    onRequestVpn = {
+                        // `prepare()` 返回 null 有两种含义：已经授权，或系统没有 VPN 服务。
+                        // 两种都不需要弹窗，直接尝试启动并让状态行说实话。
+                        val consent = PiVpnService.consentIntent(context)
+                        if (consent == null) {
+                            note = if (PiVpnService.start(context)) "VPN 已启动。" else "VPN 已授权，但启动失败。"
+                            vpnRunning = PiVpnService.available(context)
+                            revision += 1
+                        } else {
+                            vpnConsent.launch(consent)
+                        }
+                    },
+                    capturing = capturing,
+                    onStartCapture = {
+                        val consent = PiScreenCapture.consentIntent(context)
+                        if (consent == null) {
+                            note = "系统没有投屏服务（MediaProjectionManager 不可用）。"
+                        } else {
+                            captureConsent.launch(consent)
+                        }
+                    },
+                    onOpenDeviceAdminSettings = {
+                        // 公开 API 里没有「设备管理应用列表」这个 action，安全设置页是它所在的那一层
+                        // （AOSP 在 安全 → 更多安全设置 → 设备管理应用）。
+                        val opened = runCatching {
+                            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+                        }.isSuccess
+                        if (!opened) {
+                            note = "无法打开系统的安全设置页。请手动进入 系统设置 → 安全 → 设备管理应用，" +
+                                "激活「PI 设备桥」。"
+                        }
                     },
                     shizuku = shizuku,
                     onRequestShizuku = {
@@ -579,6 +687,16 @@ private fun DeviceCapabilityCard(
     onOpenSystemSettings: () -> Unit,
     relaxed: Boolean,
     onRelaxedChange: (Boolean) -> Unit,
+    imeEnabled: Boolean,
+    imeDefault: Boolean,
+    imeRunning: Boolean,
+    onOpenInputMethodSettings: () -> Unit,
+    admin: JSONObject,
+    onOpenDeviceAdminSettings: () -> Unit,
+    vpnRunning: Boolean,
+    onRequestVpn: () -> Unit,
+    capturing: Boolean,
+    onStartCapture: () -> Unit,
     shizuku: JSONObject,
     onRequestShizuku: () -> Unit,
     onOpenShizuku: () -> Unit,
@@ -780,6 +898,56 @@ private fun DeviceCapabilityCard(
                 }
             }
 
+            DeviceCapability.Ime -> {
+                Spacer(Modifier.height(PiSpacing.inline))
+                // 三种状态，不是一个布尔：在系统里启用、被选为当前输入法、服务被绑定，是三件
+                // 不同的事，缺哪一件用户要做的动作都不同（启用→去系统设置；切换→去键盘选择器；
+                // 绑定→等一两秒）。读数与 DeviceCapabilityStore 的组级前置同一组事实。
+                val ready = imeEnabled && imeDefault
+                Text(
+                    when {
+                        !imeEnabled ->
+                            "输入法：未在系统中启用 —— 即使上面的开关打开，Agent 也读不到、改不了你正在输入的内容。"
+                        !imeDefault ->
+                            "输入法：已启用，但当前输入法不是它 —— 读取或改写输入框前，需要先把它切成当前输入法。"
+                        imeRunning -> "输入法：已是当前输入法，服务已连上。"
+                        else -> "输入法：已是当前输入法，服务正在连上（通常一两秒内就绪，稍等重试即可）。"
+                    },
+                    style = PiTheme.text.meta,
+                    // 未就绪不是错误，只是还差用户一步；用错误色会把「就差一步」读成「出故障了」。
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "密码框一律不读内容（只留一条「发生过输入」的记录）；输入历史只留在内存里，进程结束即消失。",
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!ready) {
+                    TextButton(onClick = onOpenInputMethodSettings) { Text("前往输入法设置") }
+                }
+            }
+
+            DeviceCapability.Admin -> {
+                Spacer(Modifier.height(PiSpacing.inline))
+                // 身份那一句直接由 DeviceAdmin.status(context) 给：它按当前是哪一档身份
+                // （Device Owner / Profile Owner / 普通设备管理员 / 都没有）说哪一档能做什么。
+                // 卡片再抄一遍就一定会跟它分叉。
+                Text(
+                    admin.optString("note"),
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!admin.optBoolean("owner")) {
+                    Text(
+                        "现在只能读状态：改策略需要 Device Owner 或 Profile Owner（隐藏/挂起应用、CA 证书、" +
+                            "常驻 VPN、Lock Task、更新策略、权限授予状态、擦除），状态栏、锁屏与重启只有 Device Owner 能做。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                }
+                TextButton(onClick = onOpenDeviceAdminSettings) { Text("打开系统设备管理设置") }
+            }
+
             DeviceCapability.Basic -> {
                 Spacer(Modifier.height(PiSpacing.inline))
                 // 基础 is on by default, so its badge reads 「可用」 out of the box —
@@ -884,6 +1052,32 @@ private fun DeviceCapabilityCard(
                         onClick = { onRequestPermission(listOf(Manifest.permission.CAMERA)) },
                     ) { Text("授予相机权限") }
                 }
+
+                // VPN 与投屏（并入 基础）：两者的授权都只能在这里发起 —— 系统对话框
+                // 需要一个 Activity，而波1 的后台组件不持有 Activity。这两个按钮是
+                // `/app/vpn/start` 与 `/app/capture/grab` 在真机上唯一的授权入口。
+                Spacer(Modifier.height(PiSpacing.inline))
+                Text(
+                    if (vpnRunning) {
+                        "本地 VPN：运行中（DNS 拦截与流量可见性生效）。"
+                    } else {
+                        "本地 VPN：未运行 —— 先点「授权 VPN」过一次系统对话框。"
+                    },
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onRequestVpn) { Text("授权 VPN") }
+                Spacer(Modifier.height(PiSpacing.small))
+                Text(
+                    if (capturing) {
+                        "投屏：进行中。"
+                    } else {
+                        "投屏：未开始 —— 先点「开始投屏」过一次系统对话框。"
+                    },
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onStartCapture) { Text("开始投屏") }
             }
         }
 
@@ -1109,6 +1303,9 @@ private fun iconFor(capability: DeviceCapability): ImageVector = when (capabilit
     DeviceCapability.Basic -> Icons.Filled.PhoneAndroid
     DeviceCapability.Accessibility -> Icons.Filled.TouchApp
     DeviceCapability.Shell -> Icons.Filled.Terminal
+    // 输入法用键盘、管理员用盾牌：两张卡在列表里紧挨着，图标不一样才不用读标题。
+    DeviceCapability.Ime -> Icons.Filled.Keyboard
+    DeviceCapability.Admin -> Icons.Filled.AdminPanelSettings
 }
 
 /** Open the Shizuku manager app, if this device has one. */

@@ -25,6 +25,7 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -634,6 +635,9 @@ object DeviceUiAutomation {
                         hint = "先用 android_ui_dump 看屏幕，或用 waitFor 等它出现。",
                     ),
                 )
+            // 记下目标身份，动作完成后由 ActionContext 复核它是否还在——
+            // 「点了且手势成功」不等于「点中了会导航的东西」。
+            action.markTarget(selector = selector)
             val bounds = Rect().also { node.getBoundsInScreen(it) }
             val target = if (longPress) nearestLongClickable(node) ?: node else nearestClickable(node) ?: node
             val performed = target.performAction(
@@ -678,6 +682,7 @@ object DeviceUiAutomation {
                         hint = "重新 dump 取新编号，或给 text/desc/resourceId。",
                     ),
                 )
+            action.markTarget(path = record.path)
             val node = resolve(service, record)
             if (node != null) {
                 val clickable = if (longPress) {
@@ -787,9 +792,12 @@ object DeviceUiAutomation {
             )
         }
         val action = beginAction(service)
+        if (selector != null && !selector.isEmpty) action.markTarget(selector = selector)
+        val indexed = if (index != null) lastSnapshot.firstOrNull { it.index == index } else null
+        if (indexed != null) action.markTarget(path = indexed.path)
         val start: AccessibilityNodeInfo? = when {
             selector != null && !selector.isEmpty -> bestMatch(service, selector)
-            index != null -> lastSnapshot.firstOrNull { it.index == index }?.let { resolve(service, it) }
+            indexed != null -> resolve(service, indexed)
             else -> service.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         }
         val target = when {
@@ -953,19 +961,19 @@ object DeviceUiAutomation {
         selector: Selector? = null,
     ): JSONObject {
         val action = beginAction(service)
+        if (selector != null && !selector.isEmpty) action.markTarget(selector = selector)
+        val indexed = if (index != null) lastSnapshot.firstOrNull { it.index == index } else null
+        if (indexed != null) action.markTarget(path = indexed.path)
         val target: AccessibilityNodeInfo? = when {
             selector != null && !selector.isEmpty && index == null -> bestMatch(service, selector)
-            index != null -> {
-                val record = lastSnapshot.firstOrNull { it.index == index }
-                    ?: throw DeviceActionException(
-                        DeviceDenial(
-                            code = DeviceDenial.NOT_FOUND,
-                            reason = "找不到编号 $index 的输入框：屏幕已变化。",
-                            hint = "重新 dump 后写入最新输入框，或用 resourceId/text。",
-                        ),
-                    )
-                resolve(service, record)
-            }
+            index != null -> indexed?.let { resolve(service, it) }
+                ?: throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.NOT_FOUND,
+                        reason = "找不到编号 $index 的输入框：屏幕已变化。",
+                        hint = "重新 dump 后写入最新输入框，或用 resourceId/text。",
+                    ),
+                )
             else -> activeRoot(service)?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         }
 
@@ -1471,6 +1479,26 @@ object DeviceUiAutomation {
         val before: String?,
         private val beforeSignature: String,
     ) {
+        /** The selector an action was aimed at, if its call site recorded one. */
+        private var targetSelector: Selector? = null
+
+        /** The child-index path an action was aimed at, if its call site recorded one. */
+        private var targetPath: List<Int>? = null
+
+        /**
+         * Record what the action was aimed at, so [finish] can answer「目标还在吗」.
+         *
+         * This is the missing half of「动作后验证」: `before`/`after` says whether the
+         * *screen* moved, but not whether the control the caller asked for is still
+         * there — a navigation that consumed the tapped row is the normal, correct
+         * outcome, and it must read differently from a tap that hit an overlay.
+         */
+        fun markTarget(selector: Selector? = null, path: List<Int>? = null): ActionContext {
+            if (selector != null && !selector.isEmpty) targetSelector = selector
+            if (path != null) targetPath = path
+            return this
+        }
+
         fun finish(payload: JSONObject): JSONObject {
             // Qualified: a nested class has no implicit receiver for the enclosing
             // object's members.
@@ -1480,6 +1508,26 @@ object DeviceUiAutomation {
             payload.put("after", after ?: JSONObject.NULL)
             payload.put("changed", before != after || beforeSignature != afterSignature)
             payload.put("coordinateSpace", SPACE)
+            val selector = targetSelector
+            val path = targetPath
+            if (selector != null || path != null) {
+                // 能标记目标，说明动作前它就在屏幕上——所以 before 恒为 true，只有 after
+                // 需要实时复核。
+                val presentAfter = when {
+                    selector != null -> runCatching {
+                        DeviceUiAutomation.liveMatches(service, selector, limit = 1).isNotEmpty()
+                    }.getOrDefault(false)
+
+                    path != null -> DeviceUiAutomation.pathExists(service, path)
+                    else -> false
+                }
+                payload.put("targetPresentBefore", true)
+                payload.put("targetPresentAfter", presentAfter)
+                payload.put("targetDisappeared", !presentAfter)
+            } else {
+                payload.put("targetPresentBefore", JSONObject.NULL)
+                payload.put("targetPresentAfter", JSONObject.NULL)
+            }
             return payload
         }
     }
@@ -1550,14 +1598,22 @@ object DeviceUiAutomation {
      * Re-walk the stored child-index path. The tree may have changed since the
      * dump; a null result is normal and callers fall back to coordinates.
      */
-    private fun resolve(service: AccessibilityService, record: NodeRecord): AccessibilityNodeInfo? {
+    private fun resolve(service: AccessibilityService, record: NodeRecord): AccessibilityNodeInfo? =
+        resolvePath(service, record.path)
+
+    /** The same child-index walk as [resolve], but from a raw path (macros and diffs keep paths). */
+    private fun resolvePath(service: AccessibilityService, path: List<Int>): AccessibilityNodeInfo? {
         var node = activeRoot(service) ?: return null
-        for (step in record.path) {
+        for (step in path) {
             if (step >= node.childCount) return null
             node = node.getChild(step) ?: return null
         }
         return node
     }
+
+    /** Whether the node a recorded path pointed at still exists (used by target verification). */
+    private fun pathExists(service: AccessibilityService, path: List<Int>): Boolean =
+        resolvePath(service, path) != null
 
     private fun nearestClickable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = node
@@ -1595,6 +1651,1338 @@ object DeviceUiAutomation {
         put("nodeCount", lastSnapshot.size)
         put("gestureBusy", gestureBusy.get())
     }
+
+    // =====================================================================
+    // 代理B · 无障碍可靠性层
+    //
+    // 上面是「能 dump / 能点 / 能输入」的原语；这一层把它们变成可验证、可自愈的
+    // 操作面：结构化元素表、差分指纹、多策略选择器、事件驱动的等待、动作后校验、
+    // UI 宏与 App 记忆。全部只依赖本文件已有的工具（DeviceUiText /
+    // DeviceAccessibilitySignals / DeviceDenial / 手势与树遍历），不引第三方依赖，
+    // 也不改动上面任何公开签名。
+    // =====================================================================
+
+    /**
+     * 等待原语用尽的超时码。
+     *
+     * 为什么是第二个码而不是复用 `NOT_FOUND`：`DeviceDenial.code` 本来就是自由
+     * 字符串，[DeviceDenial] 又是公共文件不能改。而「屏幕上没有」和「等超时了仍没有」
+     * 对上层是两个动作——前者该换选择器，后者该调大 timeoutMs 或先清弹窗——所以
+     * 旧代码把两者都写成 `NOT_FOUND` 的做法在这里被拆开。
+     */
+    const val TIMEOUT = "TIMEOUT"
+
+    /** 宏单步默认重试次数：有界，不是无脑循环。 */
+    private const val DEFAULT_STEP_RETRIES = 3
+    private const val MAX_STEP_RETRIES = 5
+
+    /**
+     * 一个多策略查询。字段本身就是自愈的候选顺序，越靠前优先级越高：
+     * [resourceId]（精确）→ [text]（精确）→ [description]（精确）→ [anchorText]
+     * （邻居文本）→ [className]/[occurrence]/[direction]（相对位置）→ [x]/[y]（坐标）。
+     *
+     * 为什么不是一个 [Selector]：屏幕改版时最稳的键会变——今天有 resourceId，明天
+     * 变纯文本；本地化又会反过来让文本失配。带多个键，解析器就能在某个键失效时
+     * 退到下一个，而不是让整步失败——这正是 DroidRun 那一类 90% 成功率系统的核心。
+     */
+    data class Query(
+        val resourceId: String? = null,
+        val text: String? = null,
+        val description: String? = null,
+        val packageName: String? = null,
+        val className: String? = null,
+        val anchorText: String? = null,
+        val direction: String? = null,
+        val occurrence: Int? = null,
+        val clickableOnly: Boolean = false,
+        val x: Int? = null,
+        val y: Int? = null,
+    ) {
+        val isEmpty: Boolean
+            get() = resourceId == null && text == null && description == null && className == null &&
+                anchorText == null && direction == null && x == null && y == null
+
+        fun describe(): String = buildList {
+            resourceId?.let { add("id=\"$it\"") }
+            text?.let { add("text=\"$it\"") }
+            description?.let { add("desc=\"$it\"") }
+            className?.let { add("class=\"$it\"" + (occurrence?.let { n -> "#$n" } ?: "")) }
+            anchorText?.let { add("anchor=\"$it\"") }
+            direction?.let { add("direction=$it") }
+            packageName?.let { add("pkg=$it") }
+            x?.let { add("x=$it") }
+            y?.let { add("y=$it") }
+            if (clickableOnly) add("clickable")
+        }.joinToString(" & ").ifEmpty { "（空查询）" }
+    }
+
+    /** 命中结果：哪个策略命中的 + 命中的元素（记录带 path，可直接 resolve）。 */
+    private class SelectHit(val strategy: String, val record: NodeRecord)
+
+    /** 一次 [selectOnce] 的完整结果：命中（可能为 null）+ 每个策略的成败原因。 */
+    private class SelectAttemptResult(val hit: SelectHit?, val attempts: JSONArray)
+
+    /** 一次差分的元素引用，用来比对前后字段。 */
+    private class ElementRef(
+        val json: JSONObject,
+        val key: String,
+        val text: String,
+        val description: String,
+        val bounds: String,
+    ) {
+        fun brief(): JSONObject = JSONObject().apply {
+            put("key", key)
+            put("text", text)
+            put("bounds", bounds)
+            put("resourceId", json.opt("resourceId") ?: JSONObject.NULL)
+        }
+    }
+
+    /** 屏幕指纹：包名单列，指纹是排序后元素表描述的哈希。 */
+    private class ScreenFingerprint(val packageName: String, val value: String, val elementCount: Int)
+
+    @Volatile
+    private var lastElementsJson: JSONObject? = null
+
+    @Volatile
+    private var lastElementFingerprint: String = ""
+
+    @Volatile
+    private var lastElementPackage: String = ""
+
+    @Volatile
+    private var lastElementCount: Int = 0
+
+    // ----------------------------------------------------- 结构化屏幕模型 ----
+
+    /**
+     * 把节点树压成「可操作元素表」：只留可见、去掉纯装饰节点。
+     *
+     * 解决的失败模式：dump 出来的几百个节点里绝大多数是布局容器（FrameLayout、
+     * ViewGroup…），模型在噪声里挑可点项既慢又容易挑错。这里在设备侧就把「不可见」
+     * 与「没有任何语义/交互」的节点剔除，并把每个元素的中心点算好，模型直接读表即可。
+     *
+     * 元素字段：index / text / description / resourceId / class / bounds / center /
+     * clickable / editable / scrollable / enabled / packageName / key。
+     */
+    fun elements(
+        service: AccessibilityService,
+        maxNodes: Int = DEFAULT_MAX_NODES,
+        maxDepth: Int = DEFAULT_MAX_DEPTH,
+    ): JSONObject {
+        val limit = maxNodes.coerceIn(1, MAX_NODES_LIMIT)
+        val depthLimit = maxDepth.coerceIn(1, 64)
+        val root = activeRoot(service)
+            ?: throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.NOT_FOUND,
+                    reason = "没有可读窗口，无法建立元素表（可能锁屏或没有前台界面）。",
+                    hint = "让用户解锁并回到可见界面后重试。",
+                ),
+            )
+        val packageName = root.packageName?.toString().orEmpty()
+        val records = ArrayList<NodeRecord>()
+        collectActionable(root, packageName, emptyList(), 0, limit, depthLimit, records)
+        val metrics = service.resources.displayMetrics
+        val occurrences = HashMap<String, Int>()
+        val elements = JSONArray()
+        val lines = StringBuilder()
+        for (record in records) {
+            val key = elementKey(record, occurrences)
+            elements.put(elementToJson(record, key, elementSignature(record)))
+            lines.append('[').append(record.index).append("] ").append(render(record))
+                .append("  (key=").append(key).append(')').append('\n')
+        }
+        val descriptorList = elementDescriptors(records, metrics.widthPixels, metrics.heightPixels)
+        val fingerprint = fingerprintOf(descriptorList)
+        val payload = JSONObject().apply {
+            put("packageName", packageName)
+            put("count", records.size)
+            put("fingerprint", fingerprint)
+            put("coordinateSpace", SPACE)
+            put("screen", JSONObject().put("width", metrics.widthPixels).put("height", metrics.heightPixels))
+            put("elements", elements)
+            put("text", lines.toString().trimEnd('\n').ifEmpty { "（没有可操作元素）" })
+            put("truncated", records.size >= limit)
+            put("empty", records.isEmpty())
+        }
+        synchronized(this) {
+            lastElementsJson = payload
+            lastElementFingerprint = fingerprint
+            lastElementPackage = packageName
+            lastElementCount = records.size
+        }
+        rememberScreen(packageName, records)
+        return payload
+    }
+
+    /** Only for `waitForIdle` / `screenFingerprint`: the same table, no JSON building. */
+    private fun collectActionable(
+        node: AccessibilityNodeInfo,
+        packageName: String,
+        path: List<Int>,
+        depth: Int,
+        limit: Int,
+        depthLimit: Int,
+        out: MutableList<NodeRecord>,
+    ) {
+        if (out.size >= limit || depth > depthLimit) return
+        // 不可见节点的子树也不可见：整枝剪掉，既快又不会把离屏内容带进指纹。
+        if (!node.isVisibleToUser) return
+        val rect = Rect().also { node.getBoundsInScreen(it) }
+        val text = DeviceUiText.clip(node.text)
+        val description = DeviceUiText.clip(node.contentDescription)
+        val actionable = node.isClickable || node.isLongClickable || node.isEditable ||
+            node.isScrollable || node.isCheckable || node.isFocused ||
+            text.isNotEmpty() || description.isNotEmpty()
+        if (actionable && !rect.isEmpty) {
+            out.add(
+                NodeRecord(
+                    index = out.size,
+                    path = path,
+                    bounds = rect,
+                    text = text,
+                    description = description,
+                    viewId = node.viewIdResourceName,
+                    className = DeviceUiText.simpleClassName(node.className),
+                    packageName = node.packageName?.toString() ?: packageName,
+                    clickable = node.isClickable,
+                    longClickable = node.isLongClickable,
+                    scrollable = node.isScrollable,
+                    editable = node.isEditable,
+                    enabled = node.isEnabled,
+                ),
+            )
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectActionable(child, packageName, path + i, depth + 1, limit, depthLimit, out)
+        }
+    }
+
+    /**
+     * 元素身份：优先 resourceId，否则 class + 同类出现序号。
+     *
+     * 刻意**不**把 text 放进身份：文本变化应该被 diff 报成「属性变化」，而不是
+     * 一条「消失」加一条「新增」。重复的无 id 同 class 节点按先后顺序区分，这是
+     * 一个够用的启发式（局限在 KDoc 里说明，不假装是唯一解）。
+     */
+    private fun elementKey(record: NodeRecord, occurrences: MutableMap<String, Int>): String {
+        val base = record.viewId?.takeIf { it.isNotEmpty() } ?: record.className.ifEmpty { "Node" }
+        val count = (occurrences[base] ?: 0) + 1
+        occurrences[base] = count
+        return "$base#$count"
+    }
+
+    /** 属性指纹：文本 / 描述 / 边界。用于「位置或文本变化」的判定。 */
+    private fun elementSignature(record: NodeRecord): String = buildString {
+        append(record.text).append('|').append(record.description).append('|')
+        append(record.bounds.left).append(',').append(record.bounds.top).append(',')
+        append(record.bounds.right).append(',').append(record.bounds.bottom)
+    }
+
+    /**
+     * 元素描述串（供整表指纹用）：`resourceId|class|归一化bounds|文本哈希`。
+     *
+     * bounds 归一化到千分比，是为了让指纹对绝对像素不敏感：同一屏幕在不同分辨率/
+     * 密度下应得到同一个指纹「这是一样的界面」。
+     */
+    private fun elementDescriptor(record: NodeRecord, screenWidth: Int, screenHeight: Int): String {
+        val b = record.bounds
+        val normalized = buildString {
+            append(normalize(b.left, screenWidth)).append(',')
+            append(normalize(b.top, screenHeight)).append(',')
+            append(normalize(b.right, screenWidth)).append(',')
+            append(normalize(b.bottom, screenHeight))
+        }
+        val label = record.text + "/" + record.description
+        return record.viewId.orEmpty() + "|" + record.className + "|" + normalized + "|" + label.hashCode()
+    }
+
+    /** 排序后的整表描述：指纹与元素出现顺序无关。 */
+    private fun elementDescriptors(records: List<NodeRecord>, screenWidth: Int, screenHeight: Int): List<String> =
+        records.map { elementDescriptor(it, screenWidth, screenHeight) }.sorted()
+
+    private fun normalize(value: Int, size: Int): Long =
+        if (size <= 0) value.toLong() else value.toLong() * 1000L / size
+
+    private fun fingerprintOf(descriptors: List<String>): String =
+        descriptors.size.toString() + ":" + descriptors.joinToString("\n").hashCode()
+
+    private fun elementToJson(record: NodeRecord, key: String, signature: String): JSONObject = JSONObject().apply {
+        val rect = record.bounds
+        put("index", record.index)
+        put("key", key)
+        put("signature", signature)
+        put("class", record.className)
+        put("resourceId", record.viewId ?: JSONObject.NULL)
+        put("text", record.text)
+        put("description", record.description)
+        put("packageName", record.packageName)
+        put("bounds", JSONArray(listOf(rect.left, rect.top, rect.right, rect.bottom)))
+        put("center", JSONArray(listOf(rect.centerX(), rect.centerY())))
+        put("clickable", record.clickable)
+        put("longClickable", record.longClickable)
+        put("editable", record.editable)
+        put("scrollable", record.scrollable)
+        put("enabled", record.enabled)
+    }
+
+    // --------------------------------------------------------- 差分跟踪 ----
+
+    /**
+     * 比对两张元素表，只回报三类：新增 / 消失 / 属性变化（每类都带前后值）。
+     *
+     * 解决的失败模式：模型记不住上一屏，于是每一步都要重 dump 整棵树。带着上一次的
+     * 元素表，就能只告诉它「多了什么、少了什么、哪个按钮挪了位」，prompt 短、模型稳。
+     */
+    fun diff(previous: JSONObject, current: JSONObject): JSONObject {
+        val before = indexElements(previous)
+        val after = indexElements(current)
+        val added = JSONArray()
+        val removed = JSONArray()
+        val changed = JSONArray()
+        for ((key, currentRef) in after) {
+            val previousRef = before[key]
+            if (previousRef == null) {
+                added.put(JSONObject().put("before", JSONObject.NULL).put("after", currentRef.brief()))
+                continue
+            }
+            val fields = JSONArray()
+            if (previousRef.text != currentRef.text) fields.put("text")
+            if (previousRef.description != currentRef.description) fields.put("description")
+            if (previousRef.bounds != currentRef.bounds) fields.put("bounds")
+            if (fields.length() > 0) {
+                changed.put(
+                    JSONObject()
+                        .put("key", key)
+                        .put("fields", fields)
+                        .put("before", previousRef.brief())
+                        .put("after", currentRef.brief()),
+                )
+            }
+        }
+        for ((key, previousRef) in before) {
+            if (!after.containsKey(key)) {
+                removed.put(JSONObject().put("before", previousRef.brief()).put("after", JSONObject.NULL))
+            }
+        }
+        val packageBefore = previous.optString("packageName")
+        val packageAfter = current.optString("packageName")
+        return JSONObject().apply {
+            put("packageName", packageAfter)
+            put("packageChanged", packageBefore != packageAfter)
+            put("fingerprintBefore", previous.optString("fingerprint"))
+            put("fingerprintAfter", current.optString("fingerprint"))
+            put(
+                "same",
+                added.length() == 0 && removed.length() == 0 && changed.length() == 0 &&
+                    packageBefore == packageAfter,
+            )
+            put("added", added)
+            put("removed", removed)
+            put("changed", changed)
+            put(
+                "counts",
+                JSONObject().put("added", added.length()).put("removed", removed.length())
+                    .put("changed", changed.length()),
+            )
+        }
+    }
+
+    /**
+     * 对「上一次建过元素表」做差分：先取当前屏，再和记忆里的指纹比。
+     *
+     * 这是给「每一步之后我该知道屏幕怎么变了」用的：一次调用返回新增/消失/属性变化，
+     * 而不是让上层自己保存并比对两份 dump。
+     */
+    fun diffSinceLast(
+        service: AccessibilityService,
+        maxNodes: Int = DEFAULT_MAX_NODES,
+        maxDepth: Int = DEFAULT_MAX_DEPTH,
+    ): JSONObject {
+        val previous = synchronized(this) { lastElementsJson }
+        val current = elements(service, maxNodes, maxDepth)
+        if (previous == null) {
+            return JSONObject().apply {
+                put("first", true)
+                put("packageName", current.optString("packageName"))
+                put("fingerprint", current.optString("fingerprint"))
+                put("counts", JSONObject().put("added", current.optInt("count")).put("removed", 0).put("changed", 0))
+            }
+        }
+        return diff(previous, current).put("first", false)
+    }
+
+    private fun indexElements(payload: JSONObject): LinkedHashMap<String, ElementRef> {
+        val out = LinkedHashMap<String, ElementRef>()
+        val array = payload.optJSONArray("elements") ?: JSONArray()
+        for (i in 0 until array.length()) {
+            val json = array.optJSONObject(i) ?: continue
+            val key = json.optString("key")
+            if (key.isEmpty()) continue
+            out[key] = ElementRef(
+                json = json,
+                key = key,
+                text = json.optString("text"),
+                description = json.optString("description"),
+                bounds = json.optJSONArray("bounds")?.toString().orEmpty(),
+            )
+        }
+        return out
+    }
+
+    // --------------------------------------------- 多策略选择器 + 自愈 ----
+
+    /** 一次性把整棵树读成记录表（选择器需要几何信息，所以用记录而不是节点）。 */
+    private fun readTreeAll(service: AccessibilityService): List<NodeRecord> {
+        val root = activeRoot(service) ?: return emptyList()
+        val out = ArrayList<NodeRecord>()
+        collect(root, root.packageName?.toString().orEmpty(), emptyList(), 0, MAX_NODES_LIMIT, 64, out)
+        return out
+    }
+
+    private fun isActionable(record: NodeRecord): Boolean =
+        record.clickable || record.longClickable || record.editable || record.scrollable
+
+    /** 匹配池里挑最小（最具体）的一个：更可能是真正被点的那个控件。 */
+    private fun pickBest(matches: List<NodeRecord>): NodeRecord? {
+        if (matches.isEmpty()) return null
+        val enabled = matches.filter { it.enabled }
+        val pool = enabled.ifEmpty { matches }
+        val actionable = pool.filter { isActionable(it) }
+        return actionable.ifEmpty { pool }.minByOrNull {
+            it.bounds.width().toLong() * it.bounds.height().toLong()
+        }
+    }
+
+    private fun packageMatches(actual: String, wanted: String): Boolean =
+        actual == wanted || actual.endsWith(".$wanted")
+
+    /**
+     * 单一轮的自愈选择：按稳定性从高到低依次尝试，每个策略失败都记下原因。
+     *
+     * 顺序（资源 ID 精确 → 文本精确 → 描述精确 → 邻居文本 → 相对位置 → 坐标）就是
+     * 这里的 when/if 顺序；屏幕改版时，前一个键失效会让解析器退到下一个，而不是
+     * 直接失败。
+     */
+    private fun selectOnce(service: AccessibilityService, query: Query): SelectAttemptResult {
+        val attempts = JSONArray()
+        val all = readTreeAll(service)
+        val nodes = if (query.packageName != null) {
+            all.filter { packageMatches(it.packageName, query.packageName) }
+        } else {
+            all
+        }
+
+        fun succeeded(strategy: String, record: NodeRecord): SelectAttemptResult {
+            attempts.put(JSONObject().put("strategy", strategy).put("ok", true).put("matched", recordToJson(record)))
+            return SelectAttemptResult(SelectHit(strategy, record), attempts)
+        }
+
+        fun failed(strategy: String, reason: String) {
+            attempts.put(JSONObject().put("strategy", strategy).put("ok", false).put("reason", reason))
+        }
+
+        fun eligible(record: NodeRecord, predicate: (NodeRecord) -> Boolean): Boolean {
+            if (!record.enabled) return false
+            if (query.clickableOnly && !record.clickable) return false
+            return predicate(record)
+        }
+
+        query.resourceId?.let { wanted ->
+            val hit = pickBest(
+                nodes.filter { eligible(it) { record ->
+                    val id = record.viewId ?: return@eligible false
+                    id == wanted || id.endsWith("/$wanted")
+                } },
+            )
+            if (hit != null) return succeeded("resourceId", hit)
+            failed("resourceId", "没有 resourceId 精确等于「$wanted」的可用元素")
+        }
+        query.text?.let { wanted ->
+            val hit = pickBest(nodes.filter { eligible(it) { record -> record.text == wanted } })
+            if (hit != null) return succeeded("text", hit)
+            failed("text", "没有 text 精确等于「$wanted」的可用元素")
+        }
+        query.description?.let { wanted ->
+            val hit = pickBest(nodes.filter { eligible(it) { record -> record.description == wanted } })
+            if (hit != null) return succeeded("description", hit)
+            failed("description", "没有 contentDescription 精确等于「$wanted」的可用元素")
+        }
+        query.anchorText?.let { anchor ->
+            val hit = neighborByText(nodes, anchor, query.direction)
+            if (hit != null) return succeeded("neighbor", hit)
+            failed("neighbor", "找不到「$anchor」附近（${query.direction ?: "任意方向"}）的可操作元素")
+        }
+        if (query.className != null || query.direction != null) {
+            val hit = relativePosition(nodes, query)
+            if (hit != null) return succeeded("relative", hit)
+            val why = if (query.className != null) {
+                "同屏没有第 ${query.occurrence ?: 1} 个「${query.className}」可操作元素"
+            } else {
+                "参考元素${query.direction}方向没有可操作元素"
+            }
+            failed("relative", why)
+        }
+        if (query.x != null && query.y != null) {
+            val hit = coordinateHit(nodes, query.x, query.y)
+            if (hit != null) return succeeded("coordinate", hit)
+            failed("coordinate", "坐标 (${query.x}, ${query.y}) 上没有元素")
+        }
+        return SelectAttemptResult(null, attempts)
+    }
+
+    /**
+     * 公开的多策略选择。失败**不抛异常**，而是返回 `found=false` 与每个策略的失败原因——
+     * 「按 ID 没找到、按文本也没找到…」正是上层切换手段所需的信息，抛出去反而丢了。
+     */
+    fun select(service: AccessibilityService, query: Query, timeoutMs: Int = 0): JSONObject {
+        if (query.isEmpty) {
+            throw DeviceActionException(
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "select 需要一个选择器：resourceId/text/desc/anchor/class/坐标。"),
+            )
+        }
+        val timeout = timeoutMs.coerceIn(0, 60_000)
+        val started = System.currentTimeMillis()
+        var result = selectOnce(service, query)
+        while (result.hit == null && timeout > 0) {
+            val remaining = timeout - (System.currentTimeMillis() - started)
+            if (remaining <= 0) break
+            // 事件驱动：等一次界面变化再重试，而不是固定 sleep。
+            DeviceAccessibilitySignals.awaitChange(DeviceAccessibilitySignals.current, min(remaining, 200L))
+            result = selectOnce(service, query)
+        }
+        return JSONObject().apply {
+            put("query", query.describe())
+            put("elapsedMs", System.currentTimeMillis() - started)
+            put("attempts", result.attempts)
+            put("coordinateSpace", SPACE)
+            val hit = result.hit
+            if (hit != null) {
+                put("found", true)
+                put("strategy", hit.strategy)
+                put("node", recordToJson(hit.record))
+            } else {
+                put("found", false)
+                put("code", if (timeout > 0) TIMEOUT else DeviceDenial.NOT_FOUND)
+                put("reason", "所有选择器策略都没命中：${query.describe()}。")
+                put("visualFallbackAvailable", true)
+                put("hint", "可以调 visualFallback 生成一次视觉兜底请求，交给上层视觉模型再决定坐标。")
+            }
+        }
+    }
+
+    /**
+     * 邻居文本策略：先用锚点文本定位参照元素，再找它最近的可操作祖先（列表行常常
+     * 就是文字节点的父节点），否则退到方向最近的兄弟/表亲。
+     */
+    private fun neighborByText(nodes: List<NodeRecord>, anchorText: String, direction: String?): NodeRecord? {
+        val anchors = nodes.filter { it.text == anchorText || it.description == anchorText }
+            .ifEmpty {
+                nodes.filter {
+                    it.text.contains(anchorText, ignoreCase = true) ||
+                        it.description.contains(anchorText, ignoreCase = true)
+                }
+            }
+        if (anchors.isEmpty()) return null
+        for (anchor in anchors.sortedBy { it.path.size }) {
+            val ancestor = nodes
+                .filter {
+                    it.path.size < anchor.path.size &&
+                        anchor.path.take(it.path.size) == it.path &&
+                        isActionable(it) && it.enabled
+                }
+                .maxByOrNull { it.path.size }
+            if (ancestor != null) return ancestor
+        }
+        val anchor = anchors.minByOrNull { it.bounds.width().toLong() * it.bounds.height().toLong() } ?: return null
+        return nearestInDirection(nodes, anchor.bounds, direction, anchor.path)
+    }
+
+    /**
+     * 相对位置策略：同屏同类第 N 个（[Query.occurrence]，1 起），或按方向最近。
+     *
+     * 解决的失败模式：控件既没 id 也没稳定文本（自绘/无标签图标），但「从右到左
+     * 第二个 ImageButton」是稳定的——用类名 + 序号定位。
+     */
+    private fun relativePosition(nodes: List<NodeRecord>, query: Query): NodeRecord? {
+        query.className?.let { wanted ->
+            val sameClass = nodes
+                .filter { it.className == wanted && it.enabled && isActionable(it) }
+                .sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+            if (sameClass.isNotEmpty()) {
+                val ordinal = (query.occurrence ?: 1).coerceIn(1, sameClass.size)
+                return sameClass[ordinal - 1]
+            }
+        }
+        val direction = query.direction ?: return null
+        val reference = query.anchorText?.let { anchor ->
+            nodes.firstOrNull { it.text == anchor || it.description == anchor }?.bounds
+        } ?: return null
+        return nearestInDirection(nodes, reference, direction, null)
+    }
+
+    /** 在参照矩形的某个方向里挑中心最近的可操作元素。 */
+    private fun nearestInDirection(
+        nodes: List<NodeRecord>,
+        reference: Rect,
+        direction: String?,
+        excludePath: List<Int>?,
+    ): NodeRecord? {
+        val dir = direction?.lowercase()
+        val refX = reference.centerX()
+        val refY = reference.centerY()
+        val candidates = nodes.filter { record ->
+            if (!isActionable(record) || !record.enabled) return@filter false
+            if (excludePath != null && record.path == excludePath) return@filter false
+            when (dir) {
+                "above", "up" -> record.bounds.bottom <= reference.top
+                "below", "down" -> record.bounds.top >= reference.bottom
+                "left" -> record.bounds.right <= reference.left
+                "right" -> record.bounds.left >= reference.right
+                else -> true
+            }
+        }
+        return candidates.minByOrNull { record ->
+            abs(record.bounds.centerX() - refX).toLong() + abs(record.bounds.centerY() - refY).toLong()
+        }
+    }
+
+    /** 坐标策略：命中最深的、包含该点的元素（与 verify 的命中判定一致）。 */
+    private fun coordinateHit(nodes: List<NodeRecord>, x: Int, y: Int): NodeRecord? =
+        nodes.filter { it.bounds.contains(x, y) }.maxByOrNull { it.path.size }
+
+    /** 给宏回放用：只要命中元素，不要中间 JSON。 */
+    private fun resolveQuery(service: AccessibilityService, query: Query): SelectHit? {
+        if (query.isEmpty) return null
+        return selectOnce(service, query).hit
+    }
+
+    // ------------------------------------------------------ 等待原语 ----
+
+    /**
+     * 通用的「等一个条件成立」：事件驱动轮询 + 明确超时。
+     *
+     * 区分两种失败：[probe] 一次也没成立且超时为 0 → `NOT_FOUND`（现在就看看有没有）；
+     * 超时用尽 → [TIMEOUT]。这就是「明确的 NOT_FOUND / TIMEOUT」。
+     */
+    private fun awaitCondition(
+        what: String,
+        timeoutMs: Int,
+        hint: String,
+        probe: () -> JSONObject?,
+    ): JSONObject {
+        val timeout = timeoutMs.coerceIn(0, 60_000)
+        val started = System.currentTimeMillis()
+        val deadline = started + timeout
+        var polls = 0
+        while (true) {
+            val revision = DeviceAccessibilitySignals.current
+            polls++
+            val detail = probe()
+            if (detail != null) {
+                return JSONObject().apply {
+                    put("ok", true)
+                    put("elapsedMs", System.currentTimeMillis() - started)
+                    put("polls", polls)
+                    put("coordinateSpace", SPACE)
+                    put("match", detail)
+                }
+            }
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) break
+            DeviceAccessibilitySignals.awaitChange(revision, min(remaining, 200L))
+        }
+        val waited = System.currentTimeMillis() - started
+        val tail = if (timeout <= 0) "：当前屏幕上没有" else "超时（${waited}ms）：仍然没有"
+        throw DeviceActionException(
+            DeviceDenial(
+                code = if (timeout <= 0) DeviceDenial.NOT_FOUND else TIMEOUT,
+                reason = "等待$what$tail。",
+                hint = hint,
+            ),
+        )
+    }
+
+    /**
+     * 等屏幕空闲：用「元素表指纹连续两次相同」判定，而不是固定 sleep。
+     *
+     * 解决的失败模式：动作之后的动画/加载有长有短，`Thread.sleep(500)` 对慢设备太短、
+     * 对快设备又白等。指纹法只在真正稳定时返回，且用无障碍事件唤醒，快的界面几乎
+     * 立刻返回。
+     */
+    fun waitForIdle(service: AccessibilityService, timeoutMs: Int = 5000): JSONObject {
+        val timeout = timeoutMs.coerceIn(200, 60_000)
+        val started = System.currentTimeMillis()
+        val deadline = started + timeout
+        var previous = screenFingerprint(service)
+        var reads = 1
+        while (true) {
+            val revision = DeviceAccessibilitySignals.current
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) break
+            DeviceAccessibilitySignals.awaitChange(revision, min(remaining, 200L))
+            val current = screenFingerprint(service)
+            reads++
+            if (current.value == previous.value && current.packageName == previous.packageName) {
+                return JSONObject().apply {
+                    put("idle", true)
+                    put("elapsedMs", System.currentTimeMillis() - started)
+                    put("reads", reads)
+                    put("elementCount", current.elementCount)
+                    put("fingerprint", current.value)
+                    put("packageName", current.packageName)
+                }
+            }
+            previous = current
+        }
+        throw DeviceActionException(
+            DeviceDenial(
+                code = TIMEOUT,
+                reason = "屏幕在 ${timeout}ms 内没有出现连续两次相同的指纹（一直在变）。",
+                hint = "等动画/加载结束再试，或调大 timeoutMs；一直不停说明有轮播或视频。",
+            ),
+        )
+    }
+
+    /** 等文本出现；[exact] 为真时要求完全相等（本地化/前后缀敏感时用）。 */
+    fun waitForText(
+        service: AccessibilityService,
+        text: String,
+        timeoutMs: Int = 5000,
+        exact: Boolean = false,
+    ): JSONObject {
+        val needle = text.trim()
+        if (needle.isEmpty()) {
+            throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "waitForText 需要非空文本。"))
+        }
+        return awaitCondition(
+            what = "文本「$needle」出现",
+            timeoutMs = timeoutMs,
+            hint = "确认文本没变（本地化/大小写），或先用 elements() 看当前屏幕。",
+        ) {
+            val hit = readTreeAll(service).firstOrNull { record ->
+                if (record.bounds.isEmpty) return@firstOrNull false
+                if (exact) {
+                    record.text == needle || record.description == needle
+                } else {
+                    record.text.contains(needle, ignoreCase = true) ||
+                        record.description.contains(needle, ignoreCase = true)
+                }
+            }
+            hit?.let {
+                JSONObject().put("text", it.text.ifEmpty { it.description }).put("node", recordToJson(it))
+            }
+        }
+    }
+
+    /** 等某个 resourceId 出现（精确匹配，或匹配 `pkg:id/xxx` 的尾部）。 */
+    fun waitForId(service: AccessibilityService, resourceId: String, timeoutMs: Int = 5000): JSONObject {
+        val needle = resourceId.trim()
+        if (needle.isEmpty()) {
+            throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "waitForId 需要非空 resourceId。"))
+        }
+        return awaitCondition(
+            what = "resourceId「$needle」出现",
+            timeoutMs = timeoutMs,
+            hint = "resourceId 可能已改名，改用 waitForText 或 select 的多策略。",
+        ) {
+            val hit = readTreeAll(service).firstOrNull { record ->
+                val id = record.viewId ?: return@firstOrNull false
+                id == needle || id.endsWith("/$needle")
+            }
+            hit?.let { JSONObject().put("resourceId", it.viewId).put("node", recordToJson(it)) }
+        }
+    }
+
+    /** 等前台包名切换（例如等一个 App 真正起来）。 */
+    fun waitForWindow(service: AccessibilityService, packageName: String, timeoutMs: Int = 5000): JSONObject {
+        val wanted = packageName.trim()
+        if (wanted.isEmpty()) {
+            throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "waitForWindow 需要非空包名。"))
+        }
+        return awaitCondition(
+            what = "前台切到「$wanted」",
+            timeoutMs = timeoutMs,
+            hint = "确认包名；当前前台包名见 /app/health 的 foreground。",
+        ) {
+            val current = foregroundPackage(service)
+            if (current != null && packageMatches(current, wanted)) {
+                JSONObject().put("packageName", current)
+            } else {
+                null
+            }
+        }
+    }
+
+    /** 只读一次当前指纹（供 waitForIdle 与诊断用）。 */
+    private fun screenFingerprint(service: AccessibilityService): ScreenFingerprint {
+        val root = activeRoot(service)
+        val packageName = root?.packageName?.toString().orEmpty()
+        val metrics = service.resources.displayMetrics
+        val records = ArrayList<NodeRecord>()
+        if (root != null) {
+            collectActionable(root, packageName, emptyList(), 0, MAX_NODES_LIMIT, 64, records)
+        }
+        if (records.isEmpty()) {
+            // 元素表为空（比如全屏画布）时退回整棵树签名；否则「空 == 空」会让
+            // waitForIdle 在任何界面上都立刻误判 idle。
+            return ScreenFingerprint(packageName, "tree:" + signature(service), 0)
+        }
+        return ScreenFingerprint(
+            packageName,
+            fingerprintOf(elementDescriptors(records, metrics.widthPixels, metrics.heightPixels)),
+            records.size,
+        )
+    }
+
+    // -------------------------------------------------------- UI 宏 ----
+
+    @Volatile
+    private var recording = false
+
+    @Volatile
+    private var recordingName = ""
+
+    @Volatile
+    private var recordingStartedAt = 0L
+
+    private val recordedSteps = java.util.Collections.synchronizedList(ArrayList<JSONObject>())
+
+    @Volatile
+    private var lastRecipeJson: JSONObject? = null
+
+    /** 开始录制。已经在录时不打断，明确回报。 */
+    fun startRecording(name: String): JSONObject {
+        synchronized(recordedSteps) {
+            if (recording) {
+                return JSONObject().apply {
+                    put("recording", true)
+                    put("name", recordingName)
+                    put("steps", recordedSteps.size)
+                    put("note", "已经在录制「$recordingName」；先 stopRecording 再开新的。")
+                }
+            }
+            recordedSteps.clear()
+            recording = true
+            recordingName = name.ifBlank { "recipe" }
+            recordingStartedAt = System.currentTimeMillis()
+            return JSONObject().apply {
+                put("recording", true)
+                put("name", recordingName)
+                put("steps", 0)
+            }
+        }
+    }
+
+    /**
+     * 追加一条「选择器 + 动作」。
+     *
+     * 录的是**选择器**而不是坐标：屏幕一换分辨率或布局，坐标就失效，而选择器可以在
+     * 回放时按当前屏幕重新解析（锚点自愈）。
+     */
+    fun recordStep(step: JSONObject): JSONObject {
+        if (!recording) {
+            return JSONObject().apply {
+                put("recorded", false)
+                put("reason", "当前没有在录制；先调用 startRecording(name)。")
+            }
+        }
+        val copy = JSONObject(step.toString())
+        synchronized(recordedSteps) { recordedSteps.add(copy) }
+        return JSONObject().apply {
+            put("recorded", true)
+            put("name", recordingName)
+            put("steps", synchronized(recordedSteps) { recordedSteps.size })
+        }
+    }
+
+    /** 停止录制并返回 recipe（写入内存，见 [recipe]）。 */
+    fun stopRecording(): JSONObject {
+        val active = recording
+        val steps = synchronized(recordedSteps) { ArrayList(recordedSteps) }
+        recording = false
+        val result = JSONObject().apply {
+            put("name", recordingName)
+            put("steps", JSONArray(steps))
+            put("packageName", lastElementPackage)
+            put("recordedAt", recordingStartedAt)
+            put("durationMs", System.currentTimeMillis() - recordingStartedAt)
+        }
+        lastRecipeJson = result
+        synchronized(recordedSteps) { recordedSteps.clear() }
+        if (!active) result.put("note", "当时并没有在录制，recipe 为空。")
+        return result
+    }
+
+    fun recordingState(): JSONObject = JSONObject().apply {
+        put("recording", recording)
+        put("name", recordingName)
+        put("steps", synchronized(recordedSteps) { recordedSteps.size })
+        put("since", recordingStartedAt)
+    }
+
+    /** 最近一次 [stopRecording] 的 recipe，或 null。 */
+    fun recipe(): JSONObject? = lastRecipeJson
+
+    /**
+     * 回放一串 recipe 步骤，每一步都按当前屏幕重新解析选择器（锚点自愈）。
+     *
+     * 有界重试：单步失败最多重试 [DEFAULT_STEP_RETRIES]（可用步骤里的 `retries` 调，
+     * 上限 [MAX_STEP_RETRIES]），重试之间先等 UI 空闲，**不**无脑死循环。步骤可标
+     * `optional: true` 允许跳过；未标 optional 的步骤失败即中止，返回已完成到哪一步。
+     */
+    suspend fun play(recipe: JSONObject, service: AccessibilityService): JSONObject {
+        val steps = recipe.optJSONArray("steps") ?: JSONArray()
+        val results = JSONArray()
+        val started = System.currentTimeMillis()
+        var completed = 0
+        var ok = true
+        var abortedAt = -1
+        for (i in 0 until steps.length()) {
+            val step = steps.optJSONObject(i) ?: continue
+            val optional = step.optBoolean("optional", false)
+            val maxAttempts = step.optInt("retries", DEFAULT_STEP_RETRIES).coerceIn(1, MAX_STEP_RETRIES)
+            val stepResult = JSONObject()
+            var succeeded = false
+            var lastError = "未知失败"
+            var attempt = 0
+            while (attempt < maxAttempts) {
+                attempt++
+                val payload: JSONObject? = try {
+                    executeMacroStep(service, step)
+                } catch (error: Throwable) {
+                    // 协程取消必须原样传出，不能被重试逻辑吞掉。
+                    if (error is kotlin.coroutines.cancellation.CancellationException) throw error
+                    lastError = describeError(error)
+                    null
+                }
+                if (payload != null && payload.optBoolean("ok", false)) {
+                    succeeded = true
+                    stepResult.put("result", payload)
+                    break
+                }
+                if (payload != null) {
+                    lastError = payload.optString("error").ifEmpty { "步骤返回失败" }
+                }
+                if (attempt < maxAttempts) {
+                    // 有界重试前先给界面一个稳定窗口；超时说明还在动，直接进入下一轮。
+                    try {
+                        waitForIdle(service, timeoutMs = 300 * attempt)
+                    } catch (_: Throwable) {
+                        // 还在变化：重试本身已经是兜底，这里不打断流程。
+                    }
+                }
+            }
+            stepResult.put("index", i)
+            stepResult.put("action", step.optString("action"))
+            stepResult.put("attempts", attempt)
+            stepResult.put("ok", succeeded)
+            if (!succeeded) stepResult.put("error", lastError)
+            results.put(stepResult)
+            if (succeeded) {
+                completed++
+            } else if (!optional) {
+                ok = false
+                abortedAt = i
+                break
+            }
+        }
+        return JSONObject().apply {
+            put("ok", ok)
+            put("name", recipe.optString("name"))
+            put("steps", steps.length())
+            put("completed", completed)
+            put("abortedAt", if (abortedAt >= 0) abortedAt else JSONObject.NULL)
+            put("elapsedMs", System.currentTimeMillis() - started)
+            put("results", results)
+        }
+    }
+
+    /** 把一步执行里的异常翻译成一句可回报的中文原因。 */
+    private fun describeError(error: Throwable): String =
+        (error as? DeviceActionException)?.denial?.toMessage()
+            ?: (error.message ?: error.javaClass.simpleName)
+
+    /** 把 recipe 的一步真正执行掉；失败以 `ok=false` 或异常回报，交给 [play] 重试。 */
+    private suspend fun executeMacroStep(service: AccessibilityService, step: JSONObject): JSONObject {
+        val action = step.optString("action").trim().lowercase().replace("_", "")
+        val query = queryFromStep(step)
+        return when (action) {
+            "tap", "click" -> {
+                val hit = resolveQuery(service, query)
+                when {
+                    hit != null -> performTap(service, hit, query, longPress = false)
+                    query.x != null && query.y != null -> {
+                        dispatchTap(service, query.x, query.y, longPress = false)
+                        JSONObject().apply {
+                            put("ok", true)
+                            put("mode", "gesture_tap")
+                            put("strategy", "coordinate")
+                            put("x", query.x)
+                            put("y", query.y)
+                        }
+                    }
+
+                    else -> stepFailure("找不到可点元素：${query.describe()}", query)
+                }
+            }
+
+            "longpress", "longclick" -> {
+                val hit = resolveQuery(service, query)
+                when {
+                    hit != null -> performTap(service, hit, query, longPress = true)
+                    query.x != null && query.y != null -> {
+                        dispatchTap(service, query.x, query.y, longPress = true)
+                        JSONObject().apply {
+                            put("ok", true)
+                            put("mode", "gesture_long_press")
+                            put("strategy", "coordinate")
+                            put("x", query.x)
+                            put("y", query.y)
+                        }
+                    }
+
+                    else -> stepFailure("找不到可长按元素：${query.describe()}", query)
+                }
+            }
+
+            "input", "settext", "type" -> {
+                val hit = resolveQuery(service, query)
+                val selector = hit?.let { selectorOf(it.record) } ?: selectorFrom(query)
+                if (selector.isEmpty) return stepFailure("input 步骤缺少目标选择器", query)
+                val written = input(
+                    service = service,
+                    text = step.optString("text"),
+                    index = null,
+                    submit = step.optBoolean("submit", false),
+                    selector = selector,
+                )
+                if (hit != null) rememberObservedAction(hit.record.packageName, hit.record, "input")
+                written.put("ok", true).put("strategy", hit?.strategy ?: "fallback")
+            }
+
+            "swipe" -> swipe(
+                service = service,
+                x1 = step.optInt("x1"),
+                y1 = step.optInt("y1"),
+                x2 = step.optInt("x2"),
+                y2 = step.optInt("y2"),
+                durationMs = step.optInt("durationMs", 300),
+            ).put("ok", true)
+
+            "scroll" -> {
+                val hit = resolveQuery(service, query)
+                val selector = hit?.let { selectorOf(it.record) } ?: selectorFrom(query)
+                val result = scroll(
+                    service = service,
+                    selector = selector.takeUnless { it.isEmpty },
+                    index = null,
+                    direction = step.optString("direction", "forward"),
+                )
+                if (hit != null) rememberObservedAction(hit.record.packageName, hit.record, "scroll")
+                result.put("ok", true)
+            }
+
+            "key", "press" -> key(service, step.optString("key").ifEmpty { step.optString("keyName") })
+                .put("ok", true)
+
+            "waittext" -> waitForText(
+                service,
+                step.optString("text"),
+                step.optInt("timeoutMs", 5000),
+                step.optBoolean("exact", false),
+            ).put("ok", true)
+
+            "waitid" -> waitForId(service, step.optString("resourceId", step.optString("id")), step.optInt("timeoutMs", 5000))
+                .put("ok", true)
+
+            "waitwindow" -> waitForWindow(
+                service,
+                step.optString("packageName", step.optString("package")),
+                step.optInt("timeoutMs", 5000),
+            ).put("ok", true)
+
+            "waitidle" -> waitForIdle(service, step.optInt("timeoutMs", 5000)).put("ok", true)
+
+            else -> stepFailure("未知动作类型「$action」", query)
+        }
+    }
+
+    /** 对命中元素执行点按，优先真实 `ACTION_CLICK`，否则退回中心点手势。 */
+    private suspend fun performTap(
+        service: AccessibilityService,
+        hit: SelectHit,
+        query: Query,
+        longPress: Boolean,
+    ): JSONObject {
+        val node = resolve(service, hit.record)
+        val clickable = if (node == null) {
+            null
+        } else if (longPress) {
+            nearestLongClickable(node) ?: node
+        } else {
+            nearestClickable(node) ?: node
+        }
+        val performed = clickable?.performAction(
+            if (longPress) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK,
+        ) ?: false
+        val mode = if (performed) {
+            if (longPress) "action_long_click" else "action_click"
+        } else {
+            val rect = if (node != null) Rect().also { node.getBoundsInScreen(it) } else hit.record.bounds
+            if (rect.isEmpty) return stepFailure("目标不可点击且没有可见区域（${hit.record.className}）", query)
+            dispatchTap(service, rect.centerX(), rect.centerY(), longPress)
+            if (longPress) "gesture_long_press" else "gesture_tap"
+        }
+        rememberObservedAction(hit.record.packageName, hit.record, if (longPress) "longPress" else "tap")
+        return JSONObject().apply {
+            put("ok", true)
+            put("mode", mode)
+            put("strategy", hit.strategy)
+            put("target", recordToJson(hit.record))
+            put("center", JSONArray(listOf(hit.record.bounds.centerX(), hit.record.bounds.centerY())))
+        }
+    }
+
+    private fun stepFailure(reason: String, query: Query): JSONObject = JSONObject().apply {
+        put("ok", false)
+        put("error", reason)
+        if (!query.isEmpty) put("query", query.describe())
+    }
+
+    /**
+     * 从步骤里取查询。优先嵌套的 `query` 对象；否则只认扁平的选择器字段，**不会**
+     * 把 input 的 `text`（要输入的内容）当成选择器。
+     */
+    private fun queryFromStep(step: JSONObject): Query {
+        step.optJSONObject("query")?.let { return parseQuery(it) }
+        val flat = JSONObject()
+        for (key in listOf(
+            "resourceId", "id", "description", "desc", "className", "class",
+            "anchorText", "anchor", "direction", "occurrence", "packageName",
+            "package", "clickableOnly", "x", "y",
+        )) {
+            if (step.has(key)) flat.put(key, step.get(key))
+        }
+        return parseQuery(flat)
+    }
+
+    private fun parseQuery(raw: JSONObject): Query = Query(
+        resourceId = raw.optString("resourceId").takeIf { it.isNotEmpty() }
+            ?: raw.optString("id").takeIf { it.isNotEmpty() },
+        text = raw.optString("text").takeIf { it.isNotEmpty() },
+        description = raw.optString("description").takeIf { it.isNotEmpty() }
+            ?: raw.optString("desc").takeIf { it.isNotEmpty() },
+        packageName = raw.optString("packageName").takeIf { it.isNotEmpty() }
+            ?: raw.optString("package").takeIf { it.isNotEmpty() },
+        className = raw.optString("className").takeIf { it.isNotEmpty() }
+            ?: raw.optString("class").takeIf { it.isNotEmpty() },
+        anchorText = raw.optString("anchorText").takeIf { it.isNotEmpty() }
+            ?: raw.optString("anchor").takeIf { it.isNotEmpty() },
+        direction = raw.optString("direction").takeIf { it.isNotEmpty() },
+        occurrence = if (raw.has("occurrence")) raw.optInt("occurrence") else null,
+        clickableOnly = raw.optBoolean("clickableOnly", false),
+        x = if (raw.has("x")) raw.optInt("x") else null,
+        y = if (raw.has("y")) raw.optInt("y") else null,
+    )
+
+    private fun selectorFrom(query: Query): Selector = Selector(
+        text = query.text,
+        description = query.description,
+        resourceId = query.resourceId,
+        packageName = query.packageName,
+        className = query.className,
+        clickableOnly = query.clickableOnly,
+    )
+
+    /** 用命中元素重造一个选择器：回放输入/滚动时复用现有装置做第二次解析。 */
+    private fun selectorOf(record: NodeRecord): Selector = Selector(
+        text = record.text.takeIf { it.isNotEmpty() },
+        description = record.description.takeIf { it.isNotEmpty() },
+        resourceId = record.viewId?.substringAfterLast('/')?.takeIf { it.isNotEmpty() },
+        className = record.className.takeIf { it.isNotEmpty() },
+    )
+
+    // --------------------------------------------------------- App 记忆 ----
+
+    /**
+     * 以包名为键记住「某 App 里见过哪些元素、它们能做什么」。
+     *
+     * 解决的失败模式：同一个 App 每一步都从头猜控件。记住元素 → 动作后，下一次
+     * 可以先查表再决定，少 dump、少猜。内存态即可（会话级），不落盘、不跨用户。
+     */
+    private val elementMemory =
+        java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>>()
+
+    private fun memoryFor(packageName: String): java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>> =
+        elementMemory.computeIfAbsent(packageName) { java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>() }
+
+    private fun memoryKey(record: NodeRecord): String =
+        (record.viewId?.takeIf { it.isNotEmpty() } ?: record.className).ifEmpty { "Node" }
+
+    /** 读一屏元素表时顺手记下：每个元素可以执行哪些动作。 */
+    private fun rememberScreen(packageName: String, records: List<NodeRecord>) {
+        if (packageName.isEmpty()) return
+        for (record in records) {
+            val inferred = buildList {
+                if (record.clickable) add("tap")
+                if (record.longClickable) add("longPress")
+                if (record.editable) add("input")
+                if (record.scrollable) add("scroll")
+            }
+            if (inferred.isEmpty()) continue
+            val actions = memoryFor(packageName).computeIfAbsent(memoryKey(record)) {
+                java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+            }
+            actions.addAll(inferred)
+        }
+    }
+
+    /** 一次动作真的执行成功后，把「这个元素被这样用过」记下来。 */
+    private fun rememberObservedAction(packageName: String, record: NodeRecord, action: String) {
+        if (packageName.isEmpty()) return
+        val actions = memoryFor(packageName).computeIfAbsent(memoryKey(record)) {
+            java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        }
+        actions.add(action)
+    }
+
+    /** 导出记忆；给 [packageName] 则只看那一个 App。 */
+    fun appMemory(packageName: String? = null): JSONObject {
+        var total = 0
+        return JSONObject().apply {
+            val apps = JSONObject()
+            for ((pkg, entries) in elementMemory) {
+                if (packageName != null && pkg != packageName) continue
+                val actions = JSONObject()
+                var count = 0
+                for ((key, actionSet) in entries) {
+                    actions.put(key, JSONArray(actionSet.toList().sorted()))
+                    count++
+                }
+                total += count
+                apps.put(pkg, JSONObject().put("elements", count).put("actions", actions))
+            }
+            put("apps", apps)
+            put("elementCount", total)
+        }
+    }
+
+    // --------------------------------------------------- 视觉兜底接口 ----
+
+    /**
+     * 把「截图 + 目标描述」打包成一次视觉兜底的*请求*，交给上层去问视觉模型。
+     *
+     * 为什么只做打包、不在这里调模型：DeviceUiAutomation 的职责是设备事实，模型调用
+     * 是上层（扩展）的事，也是整个项目里唯一该出现模型调用的地方。这里只负责在
+     * 「结构化元素表为空」或「一次点击后 changed=false」时，把视觉模型需要的全部输入
+     * ——屏幕、目标、已有元素表、坐标换算——一次性备好，让上层决定要不要问、问谁。
+     */
+    fun visualFallback(
+        service: AccessibilityService,
+        target: String,
+        screenshotBase64: String? = null,
+        maxDimension: Int = 1280,
+    ): JSONObject {
+        val wanted = target.trim().ifEmpty { "（未指定目标描述）" }
+        var image: String? = screenshotBase64
+        var captureNote: String? = null
+        if (image == null) {
+            image = runCatching {
+                screenshot(service, format = "jpeg", maxDimension = maxDimension, quality = 80)
+                    .optString("base64")
+            }.getOrElse { error ->
+                captureNote = (error as? DeviceActionException)?.denial?.reason
+                    ?: (error.message ?: "截图失败")
+                null
+            }
+        }
+        val metrics = service.resources.displayMetrics
+        return JSONObject().apply {
+            put("target", wanted)
+            put("screenshotBase64", image ?: JSONObject.NULL)
+            put("mimeType", "image/jpeg")
+            put("coordinateSpace", SPACE)
+            put("screen", JSONObject().put("width", metrics.widthPixels).put("height", metrics.heightPixels))
+            // lastElementsJson 是 @Volatile，直接读即可；不要在这里 synchronized(this) ——
+            // apply 里的 this 是正在构造的 JSONObject，不是本对象。
+            put("elements", lastElementsJson?.optJSONArray("elements") ?: JSONArray())
+            put("fingerprint", lastElementFingerprint)
+            put("packageName", foregroundPackage(service) ?: lastElementPackage)
+            put("maxDimension", maxDimension)
+            if (captureNote != null) put("captureNote", captureNote)
+            put("candidates", JSONArray())
+            put(
+                "promptHint",
+                "让视觉模型只返回 JSON：{\"candidates\":[{\"x\":<display像素>,\"y\":<display像素>," +
+                    "\"confidence\":0..1,\"label\":\"...\"}]}。坐标必须是 coordinateSpace=display " +
+                    "的像素；拿到回复后用 visualFallbackCandidates 归一化。",
+            )
+        }
+    }
+
+    /**
+     * 把视觉模型的回复归一化成「带置信度的候选坐标列表」，让上层决定点哪个。
+     *
+     * 归一化放在设备侧：越界、排序、坐标系这些校验只依赖本机事实，在这里做一次，
+     * 上层拿到的就是可直接点按的 display 像素。
+     */
+    fun visualFallbackCandidates(reply: JSONObject, screenWidth: Int, screenHeight: Int): JSONArray {
+        val raw = reply.optJSONArray("candidates") ?: reply.optJSONArray("points") ?: JSONArray()
+        val out = ArrayList<JSONObject>()
+        for (i in 0 until raw.length()) {
+            val item = raw.optJSONObject(i) ?: continue
+            if (!item.has("x") || !item.has("y")) continue
+            val x = item.optInt("x")
+            val y = item.optInt("y")
+            val confidence = if (item.has("confidence")) {
+                item.optDouble("confidence", 0.0)
+            } else {
+                item.optDouble("score", 0.0)
+            }
+            out.add(
+                JSONObject().apply {
+                    put("x", x)
+                    put("y", y)
+                    put("confidence", confidence)
+                    put("inScreen", x >= 0 && y >= 0 && x < screenWidth && y < screenHeight)
+                    put("label", item.optString("label", item.optString("text")))
+                    put("coordinateSpace", SPACE)
+                },
+            )
+        }
+        out.sortByDescending { it.optDouble("confidence", 0.0) }
+        return JSONArray(out)
+    }
+
+    // ------------------------------------------------- 对接面（/app/health）----
+
+    /** 给 `/app/health` 用的自述：当前模式、手势占用、记忆与录制状态。 */
+    fun status(): JSONObject = JSONObject().apply {
+        put("component", "DeviceUiAutomation")
+        put("running", DeviceAccessibilityService.isRunning())
+        put("gestureBusy", gestureBusy.get())
+        put("snapshotId", snapshotId)
+        put("lastPackage", lastPackage)
+        put("lastSnapshotNodes", lastSnapshot.size)
+        put("elementFingerprint", lastElementFingerprint)
+        put("elementCount", lastElementCount)
+        put("recording", recording)
+        put("recordedSteps", synchronized(recordedSteps) { recordedSteps.size })
+        put("memorizedPackages", elementMemory.size)
+        put("coordinateSpace", SPACE)
+        put("timeoutCode", TIMEOUT)
+    }
+
+    /**
+     * 这个组件现在能不能用：无障碍已启用（含「已启用但平台还没连上」这段宽限期）。
+     * 与 `DeviceAccessibilityService.State.NOT_ENABLED` 严格区分——「没开」和「在重连」
+     * 需要用户做相反的事。
+     */
+    fun available(context: android.content.Context): Boolean =
+        DeviceAccessibilityService.state(context) != DeviceAccessibilityService.State.NOT_ENABLED
 }
 
 /** A bridge failure that already knows how to describe itself to the model. */

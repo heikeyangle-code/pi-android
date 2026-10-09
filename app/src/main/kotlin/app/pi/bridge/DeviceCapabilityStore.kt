@@ -252,6 +252,55 @@ class DeviceCapabilityStore private constructor(context: Context) {
                     hint = "让用户在「设置 → 设备能力 → 基础」点「授予存储权限」。",
                 )
             }
+
+        // 输入法：组级问两件事 —— 系统里启用了吗、它是不是当前输入法。两者必须分开说，
+        // 因为用户要做的动作不同：前者去系统设置里启用，后者只要在键盘切换器里切一下。
+        //
+        // 「已启用但不是当前输入法」当 denial，而不是放行，理由与无障碍那条一样：这一组
+        // 的每个读/写动作都先得有当前输入框，放行只会换来一串「没有可写的输入框」
+        // （PiInputMethodService.withConnection），而那句话说不清用户该做什么。注意它与
+        // 无障碍的 NOT_CONNECTED 不同：这里不会自己好，必须有人在键盘选择器里点一下，
+        // 所以不是 retryable。
+        DeviceCapability.Ime -> when {
+            !PiInputMethodService.available(appContext) -> DeviceDenial(
+                code = DeviceDenial.NO_PERMISSION,
+                reason = "本应用的输入法还没在系统里启用，读不到也改不了输入框。",
+                hint = "让用户在「设置 → 系统 → 语言和输入法」里启用「PI 设备桥」，再把它选为当前输入法。",
+            )
+
+            !PiInputMethodService.isDefaultInputMethod(appContext) -> DeviceDenial(
+                code = DeviceDenial.NO_PERMISSION,
+                reason = "本应用的输入法已启用，但当前输入法不是它：输入框还没交给它。",
+                hint = "让用户在键盘切换器里切到「PI 设备桥」（输入框弹出键盘时下方那颗键盘图标），再重试。",
+            )
+
+            else -> null
+        }
+
+        // 管理员：契约指定的前置就是 Device Owner。[DeviceAdmin] 里那张表说明为什么：
+        // 能改策略的动作（应用隐藏/挂起、CA 证书、常驻 VPN、Lock Task、更新策略、权限
+        // 授予状态、擦除）需要 Owner 身份，状态栏/锁屏/重启只有 Device Owner 能做，普通
+        // 设备管理员身份只够当成升级到 DO/PO 的前置。所以组级先把「不是 DO」拦下，并
+        // 按契约说清只剩读的部分（身份与可执行性仍从 /app/capabilities 的 admin 条目
+        // 与 App 的能力页读得到）。
+        //
+        // 代价写在明处：Profile Owner（工作资料）设备上，这一组也会被这条前置拦住 ——
+        // 包括 PO 真能做的隐藏/挂起应用。要让 PO 也放行，得把这条前置改成
+        // [DeviceAdmin.available]，并把差异交给每个端点的身份检查（DeviceAdmin 的
+        // ownerDenial / deviceOwnerDenial），那是名单另一档的事。
+        DeviceCapability.Admin ->
+            if (DeviceAdmin.isDeviceOwner(appContext)) {
+                null
+            } else {
+                DeviceDenial(
+                    code = DeviceDenial.NO_PERMISSION,
+                    reason = "本应用不是 Device Owner：管理员这一组只能读状态，改策略的端点会被拒绝。",
+                    hint = "读状态见 /app/capabilities 的 admin 条目（usable/reason）与 App 的「设置 → 设备能力」页；" +
+                        "要改策略先让用户在系统设置里激活设备管理员，并把本应用设为 Device Owner：" +
+                        "`adb shell dpm set-device-owner ${appContext.packageName}/${PiDeviceAdminReceiver::class.java.name}`" +
+                        "（设备必须没有已登录账号、且从未设置过 Device Owner）。",
+                )
+            }
     }
 
     /** True when the app already holds the location runtime permission. */

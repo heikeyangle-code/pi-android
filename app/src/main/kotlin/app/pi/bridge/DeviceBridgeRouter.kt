@@ -329,6 +329,606 @@ class DeviceBridgeRouter(
                     )
                 }
 
+                // ------------------------------------------------ 输入法（「输入法」组）----
+                //
+                // 这一组全经 PiInputMethodService：组件自己已经把「读不到输入框」翻译成明确
+                // 原因，也把密码框的内容挡在写历史之前。路由这里只做两件事 —— 能力闸门，以及
+                // 把组件的 `{ok:false,reason}` 变成 DeviceDenial（桥的约定是失败带 code）。
+
+                "/app/ime/status" -> withCapability(DeviceCapability.Ime) {
+                    PiInputMethodService.status(context)
+                }
+
+                "/app/ime/text" -> withCapability(DeviceCapability.Ime) {
+                    val text = requireInputMethod().currentText()
+                    JSONObject()
+                        .put("ok", true)
+                        .put("text", text ?: JSONObject.NULL)
+                        .put("chars", text?.length ?: 0)
+                        // null 的两个来源必须说清，否则读到的「空」会被当成「输入框是空的」。
+                        .put(
+                            "note",
+                            if (text == null) {
+                                "text 为 null：密码框一律不返回内容；或还没有可读的输入框快照。"
+                            } else {
+                                "text 是当前输入框的文本（密码框永远为 null）。"
+                            },
+                        )
+                }
+
+                "/app/ime/history" -> withCapability(DeviceCapability.Ime) {
+                    val history = requireInputMethod().readHistory(params.int("limit", 20))
+                    JSONObject().put("ok", true).put("count", history.length()).put("history", history)
+                }
+
+                "/app/ime/insert" -> withCapability(DeviceCapability.Ime) {
+                    okOrDenial(
+                        result = requireInputMethod().insertText(params.strRequired("text")),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "在光标处插入文本",
+                    )
+                }
+
+                "/app/ime/replace" -> withCapability(DeviceCapability.Ime) {
+                    okOrDenial(
+                        result = requireInputMethod().replaceText(params.strRequired("text")),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "替换输入框内容",
+                    )
+                }
+
+                "/app/ime/delete" -> withCapability(DeviceCapability.Ime) {
+                    val before = params.int("before", 0)
+                    val after = params.int("after", 0)
+                    if (before < 0 || after < 0) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "before/after 必须 >= 0，收到 $before/$after。",
+                            ),
+                        )
+                    }
+                    if (before == 0 && after == 0) {
+                        // 「删 0 个字符」不能报成功：那会让模型以为删除生效了，而输入框一个
+                        // 字符都没少。
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "before 与 after 都是 0，没有要删的字符。",
+                                hint = "传 before（光标前）或 after（光标后）要删的字符数。",
+                            ),
+                        )
+                    }
+                    okOrDenial(
+                        result = requireInputMethod().deleteSurrounding(before, after),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "删除光标前后的文本",
+                    )
+                }
+
+                "/app/ime/surround" -> withCapability(DeviceCapability.Ime) {
+                    // 光标前后的文本。组件没有单独暴露 getSurroundingText，所以这里用它的两个
+                    // 公开读数拼：整段快照（currentText，真正的文本）与选区（status 的
+                    // selection*，是绝对偏移）。不能用 status 的 currentText —— 那份被截到
+                    // 400 字符，拿它切片等于把偏移量对到被截断的串上。
+                    val ime = requireInputMethod()
+                    val status = ime.status()
+                    val snapshot = ime.currentText()
+                    val start = status.optInt("selectionStart", -1)
+                    val end = status.optInt("selectionEnd", -1)
+                    val inside = snapshot != null && start in 0..snapshot.length && end in start..snapshot.length
+                    JSONObject().apply {
+                        put("ok", true)
+                        put("text", snapshot ?: JSONObject.NULL)
+                        put("chars", snapshot?.length ?: 0)
+                        put("selectionStart", start)
+                        put("selectionEnd", end)
+                        put("package", status.opt("package") ?: JSONObject.NULL)
+                        put("fieldKind", status.optString("fieldKind", "unknown"))
+                        put("isPassword", status.optBoolean("isPassword"))
+                        put(
+                            "before",
+                            if (snapshot != null && inside) snapshot.substring(0, start) else JSONObject.NULL,
+                        )
+                        put("after", if (snapshot != null && inside) snapshot.substring(end) else JSONObject.NULL)
+                        put("partial", snapshot != null && start >= 0 && !inside)
+                        put(
+                            "note",
+                            when {
+                                start < 0 -> "还没有光标位置（输入框可能没有焦点）。"
+                                inside -> "before/after 是光标前后的文本；text 是当前快照。"
+                                else ->
+                                    "输入框比读取窗口（2000 字符）长，选区落在窗口之外：before/after 只能为 null，" +
+                                        "text 也只是窗口内的一段。"
+                            },
+                        )
+                    }
+                }
+
+                "/app/ime/submit" -> withCapability(DeviceCapability.Ime) {
+                    val ime = requireInputMethod()
+                    // `action` 可选：不传就用输入框自己的 imeOptions（普通输入框里等于回车），
+                    // 传了就是明确的 EditorInfo.IME_ACTION_* 码。
+                    val action = params.intOrNull("action")
+                    okOrDenial(
+                        result = if (action != null && action > 0) {
+                            ime.performEditorAction(action)
+                        } else {
+                            ime.submit()
+                        },
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "提交输入框",
+                    )
+                }
+
+                // ------------------------------------------ 设备管理员（「管理员」组）----
+                //
+                // 身份与「能不能做」由 DeviceAdmin 回答（它的 capabilities() 就是给端点做「先问
+                // 再做」的那张表），路由只负责三件事：能力闸门、参数整理、把它的
+                // `{ok:false,reason}` 变成带 code 的 denial。
+                //
+                // 不可逆的那两个（reboot / wipe）的「二次确认」在 pi 侧的审批闸门里，不在这里：
+                // 桥这一层没有能和用户说话的界面，在这里加一个确认参数只会变成一个永远为 true
+                // 的开关。
+
+                "/app/admin/status" -> withCapability(DeviceCapability.Admin) {
+                    DeviceAdmin.status(context)
+                }
+
+                "/app/admin/capabilities" -> withCapability(DeviceCapability.Admin) {
+                    DeviceAdmin.capabilities(context)
+                }
+
+                "/app/admin/grant" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setPermissionGrantState(
+                            context = context,
+                            pkg = params.strRequiredAny("package", "packageName", "pkg"),
+                            perm = params.strRequiredAny("permission", "perm"),
+                            state = params.intRequired("state"),
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "修改运行时权限的授予状态",
+                    )
+                }
+
+                "/app/admin/hidden" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setApplicationHidden(
+                            context = context,
+                            pkg = params.strRequiredAny("package", "packageName", "pkg"),
+                            hidden = params.boolRequired("hidden"),
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "隐藏/恢复应用",
+                    )
+                }
+
+                "/app/admin/suspend" -> withCapability(DeviceCapability.Admin) {
+                    val packages = params.stringList("packages")
+                        .ifEmpty { listOfNotNull(params.strAny("package", "packageName", "pkg")) }
+                    if (packages.isEmpty()) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "缺少必填参数「packages」（或单个「package」）。",
+                            ),
+                        )
+                    }
+                    val suspended = params.boolRequired("suspended")
+                    okOrDenial(
+                        result = DeviceAdmin.setPackagesSuspended(
+                            context = context,
+                            pkgs = packages,
+                            suspended = suspended,
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = if (suspended) "挂起应用" else "恢复应用",
+                    )
+                }
+
+                "/app/admin/uninstall-blocked" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setUninstallBlocked(
+                            context = context,
+                            pkg = params.strRequiredAny("package", "packageName", "pkg"),
+                            blocked = params.boolRequired("blocked"),
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "阻止/允许卸载应用",
+                    )
+                }
+
+                "/app/admin/install-ca" -> withCapability(DeviceCapability.Admin) {
+                    // 只收 DER 的 base64：`DevicePolicyManager.installCaCert` 要的就是 DER，
+                    // 收 PEM 文本等于把带护头的一串字符当 DER 传下去（必然失败，而失败原因
+                    // 看着像证书本身有问题）。
+                    val encoded = params.strRequiredAny("base64", "certificate")
+                    val bytes = runCatching {
+                        android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+                    }.getOrElse {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "base64 解不开：这不是合法的 base64（应该传 DER 证书的 base64）。",
+                            ),
+                        )
+                    }
+                    okOrDenial(
+                        result = DeviceAdmin.installCaCert(context, bytes),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "安装 CA 证书",
+                    )
+                }
+
+                "/app/admin/always-on-vpn" -> withCapability(DeviceCapability.Admin) {
+                    // 不传包名就是关闭常驻 VPN（DeviceAdmin 的约定：null = 关）。
+                    val pkg = params.strAny("package", "packageName", "pkg")
+                    okOrDenial(
+                        result = DeviceAdmin.setAlwaysOnVpn(
+                            context = context,
+                            pkg = pkg,
+                            lockdown = params.bool("lockdown", false),
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = if (pkg == null) "关闭常驻 VPN" else "设置常驻 VPN",
+                    )
+                }
+
+                "/app/admin/lock-task" -> withCapability(DeviceCapability.Admin) {
+                    // 这里空列表是合法输入（关闭 Lock Task），所以不能把「参数缺失」当成空列表：
+                    // 打错参数名会让设备静默退出专用设备模式。
+                    if (!params.has("packages") && !params.has("package")) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "缺少参数「packages」。",
+                                hint = "传允许启动的包名列表；传空列表即关闭 Lock Task。",
+                            ),
+                        )
+                    }
+                    okOrDenial(
+                        result = DeviceAdmin.setLockTaskPackages(
+                            context = context,
+                            pkgs = params.stringList("packages"),
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "设置 Lock Task 应用清单",
+                    )
+                }
+
+                "/app/admin/update-policy" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setSystemUpdatePolicy(
+                            context = context,
+                            mode = params.strRequired("mode"),
+                            windowStartMinutes = params.int("windowStartMinutes", -1),
+                            windowEndMinutes = params.int("windowEndMinutes", -1),
+                        ),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "设置系统更新策略",
+                    )
+                }
+
+                "/app/admin/status-bar" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setStatusBarDisabled(context, params.requiredDisabled()),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "禁用/恢复状态栏",
+                    )
+                }
+
+                "/app/admin/keyguard" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setKeyguardDisabled(context, params.requiredDisabled()),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "禁用/恢复锁屏",
+                    )
+                }
+
+                "/app/admin/camera" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.setCameraDisabled(context, params.requiredDisabled()),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "禁用/恢复相机",
+                    )
+                }
+
+                "/app/admin/reboot" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.reboot(context),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "重启设备",
+                    )
+                }
+
+                "/app/admin/wipe" -> withCapability(DeviceCapability.Admin) {
+                    okOrDenial(
+                        result = DeviceAdmin.wipeData(context, params.int("flags", 0)),
+                        code = DeviceDenial.NO_PERMISSION,
+                        action = "擦除设备/工作资料",
+                    )
+                }
+
+                // -------------------------------------------- 通知监听（并入「基础」组）----
+                //
+                // 归属是契约定的：「基础开着」不等于「通知监听连上了」—— 后者还要用户在系统里
+                // 勾选通知使用权。所以除 status 之外的每个端点都先问一次服务在不在，并把
+                // 「已授权但还没绑定」与「没有使用权」分开说：一个等 1 秒，一个要去设置。
+
+                "/app/notify/status" -> withCapability(DeviceCapability.Basic) {
+                    PiNotificationListener.status(context)
+                }
+
+                "/app/notify/recent" -> withCapability(DeviceCapability.Basic) {
+                    requireNotificationListener()
+                    val notifications = JSONArray(PiNotificationListener.recent(params.int("limit", 20)))
+                    JSONObject()
+                        .put("ok", true)
+                        .put("count", notifications.length())
+                        .put("notifications", notifications)
+                }
+
+                "/app/notify/events" -> withCapability(DeviceCapability.Basic) {
+                    requireNotificationListener()
+                    // `since` 是游标：带上上次的 cursor 只取增量，而不是把整段流水再拉一遍。
+                    val since = params.longOrNull("since") ?: 0L
+                    val events = if (since > 0L) {
+                        PiNotificationListener.eventsSince(since)
+                    } else {
+                        PiNotificationListener.events(params.int("limit", 50))
+                    }
+                    val array = JSONArray(events)
+                    JSONObject()
+                        .put("ok", true)
+                        .put("count", array.length())
+                        .put("events", array)
+                        .put("cursor", PiNotificationListener.latestSequence())
+                }
+
+                "/app/notify/reply" -> withCapability(DeviceCapability.Basic) {
+                    requireNotificationListener()
+                    okOrDenial(
+                        result = PiNotificationListener.reply(
+                            key = params.strRequiredAny("key", "id"),
+                            text = params.strRequired("text"),
+                        ),
+                        code = DeviceDenial.ERROR,
+                        action = "回复通知",
+                    )
+                }
+
+                "/app/notify/dismiss" -> withCapability(DeviceCapability.Basic) {
+                    requireNotificationListener()
+                    okOrDenial(
+                        result = PiNotificationListener.dismiss(params.strRequiredAny("key", "id")),
+                        code = DeviceDenial.ERROR,
+                        action = "撤销通知",
+                    )
+                }
+
+                "/app/notify/dismiss-all" -> withCapability(DeviceCapability.Basic) {
+                    requireNotificationListener()
+                    okOrDenial(
+                        result = PiNotificationListener.dismissAll(),
+                        code = DeviceDenial.ERROR,
+                        action = "撤销全部通知",
+                    )
+                }
+
+                "/app/notify/snooze" -> withCapability(DeviceCapability.Basic) {
+                    requireNotificationListener()
+                    val ms = params.longOrNull("ms") ?: params.longOrNull("milliseconds")
+                        ?: throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "缺少必填参数「ms」。",
+                                hint = "延后的毫秒数；组件会把它夹到 0…24 小时。",
+                            ),
+                        )
+                    if (ms <= 0L) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "ms 必须 > 0，收到 $ms。",
+                                hint = "要立刻看到这条通知就别延后（不调这个端点）。",
+                            ),
+                        )
+                    }
+                    okOrDenial(
+                        result = PiNotificationListener.snooze(params.strRequiredAny("key", "id"), ms),
+                        code = DeviceDenial.ERROR,
+                        action = "延后通知",
+                    )
+                }
+
+                // ------------------------------------------- 自动化（并入「基础」组）----
+                //
+                // 引擎必须先 apply() 才会注册网络/屏幕接收器、订阅通知事件、起工作线程 ——
+                // 没启动时规则落盘了也永远不会触发。所以每个入口都先 apply（幂等），而不是把
+                // 「谁应该调 apply」留给一个没人负责的假设。
+
+                "/app/automation/status" -> withCapability(DeviceCapability.Basic) {
+                    PiAutomation.apply(context)
+                }
+
+                "/app/automation/apply" -> withCapability(DeviceCapability.Basic) {
+                    PiAutomation.apply(context)
+                }
+
+                "/app/automation/list" -> withCapability(DeviceCapability.Basic) {
+                    PiAutomation.apply(context)
+                    val rules = JSONArray(PiAutomation.list().map { it.toJson() })
+                    JSONObject().put("ok", true).put("count", rules.length()).put("rules", rules)
+                }
+
+                "/app/automation/add" -> withCapability(DeviceCapability.Basic) {
+                    PiAutomation.apply(context)
+                    // 规则形状与 PiAutomation.Rule.toJson 一致；`rule` 嵌一层也认 —— 两端并行
+                    // 接线时，一处写外层、一处写内层是最容易出现的分歧。
+                    val raw = params.body().optJSONObject("rule") ?: params.body()
+                    if (raw.length() == 0) {
+                        // 空对象会让 Rule.fromJson 造出一条「time 触发器 + 空动作」的无意义规则；
+                        // 报错比默默落盘一条永远不触发的规则诚实。
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "规则是空的。",
+                                hint = "至少传 trigger 与 actions（形状见 /app/automation/status 的 triggerTypes/actionTypes）。",
+                            ),
+                        )
+                    }
+                    val stored = PiAutomation.add(PiAutomation.Rule.fromJson(raw))
+                    JSONObject().put("ok", true).put("rule", stored.toJson())
+                }
+
+                "/app/automation/remove" -> withCapability(DeviceCapability.Basic) {
+                    PiAutomation.apply(context)
+                    val id = params.strRequired("id")
+                    if (!PiAutomation.remove(id)) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.NOT_FOUND,
+                                reason = "没有 id 为「$id」的规则，未删除任何东西。",
+                                hint = "先用 /app/automation/list 看现有规则 id。",
+                            ),
+                        )
+                    }
+                    JSONObject().put("ok", true).put("id", id)
+                }
+
+                "/app/automation/history" -> withCapability(DeviceCapability.Basic) {
+                    PiAutomation.apply(context)
+                    val history = JSONArray(PiAutomation.history(params.int("limit", 20)))
+                    JSONObject().put("ok", true).put("count", history.length()).put("history", history)
+                }
+
+                // ----------------------------------------- 本地 VPN（并入「基础」组）----
+                //
+                // 授权不能由端点代替：VpnService.prepare 的结果只能由用户在系统对话框里点一下
+                // （consentIntent 要一个 Activity）。所以未授权时 /app/vpn/start 如实回
+                // NO_PERMISSION，并把用户该点哪里说清。
+
+                "/app/vpn/status" -> withCapability(DeviceCapability.Basic) {
+                    PiVpnService.status(context)
+                }
+
+                "/app/vpn/start" -> withCapability(DeviceCapability.Basic) {
+                    val raw = params.body().optJSONObject("config") ?: params.body()
+                    val config = PiVpnService.TunnelConfig.fromJson(raw.toString())
+                    if (!PiVpnService.start(context, config)) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.NO_PERMISSION,
+                                reason = "VPN 没有启动：系统还没把 VPN 授权给本应用，或拒绝了这个配置。",
+                                hint = "让用户在 pi-android 里点一次「授权 VPN」并在系统弹窗里同意；" +
+                                    "授权是一次性的，之后 /app/vpn/start 可以直接调。",
+                            ),
+                        )
+                    }
+                    // 不说「已启动」：隧道是服务在另一个调用里建立的，`running` 才是事实。
+                    PiVpnService.status(context).put("requested", true)
+                }
+
+                "/app/vpn/stop" -> withCapability(DeviceCapability.Basic) {
+                    val wasRunning = PiVpnService.stop(context)
+                    PiVpnService.status(context).put("wasRunning", wasRunning)
+                }
+
+                "/app/vpn/queries" -> withCapability(DeviceCapability.Basic) {
+                    val queries = PiVpnService.readQueries(params.int("limit", 100))
+                    JSONObject()
+                        .put("ok", true)
+                        .put("count", queries.length())
+                        .put("queries", queries)
+                        .put("blockedCount", PiVpnService.blockedCount())
+                }
+
+                "/app/vpn/blocklist" -> withCapability(DeviceCapability.Basic) {
+                    // 参数缺失与「空列表」必须分开：后者是「清空黑名单」这个合法动作，前者是
+                    // 打错了参数名 —— 一律按清空处理，会让一次手滑静默解除全部拦截。
+                    if (!params.has("domains") && !params.has("blocklist")) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.BAD_REQUEST,
+                                reason = "缺少参数「domains」。",
+                                hint = "传域名列表（JSON 数组或逗号分隔）；传空列表即清空现有黑名单。",
+                            ),
+                        )
+                    }
+                    PiVpnService.setBlocklist(
+                        params.stringList("domains").ifEmpty { params.stringList("blocklist") },
+                    )
+                }
+
+                // --------------------------------------------- 投屏（并入「基础」组）----
+                //
+                // 授权只能由用户点，而点的那一下必须在 App 自己的前台界面上发生：系统只把
+                // MediaProjection 的同意结果交给一个 Activity，桥和模型都代替不了。所以
+                // /app/capture/consent 不假装能授权，它如实回答「现在需不需要授权、以及那一
+                // 下只能在哪里点」。
+
+                "/app/capture/status" -> withCapability(DeviceCapability.Basic) {
+                    PiScreenCapture.status().put("available", PiScreenCapture.available(context))
+                }
+
+                "/app/capture/consent" -> withCapability(DeviceCapability.Basic) {
+                    val capturing = PiScreenCapture.isCapturing()
+                    JSONObject()
+                        .put("ok", true)
+                        .put("capturing", capturing)
+                        .put("consentNeeded", !capturing)
+                        .put("consentEntryInApp", CAPTURE_CONSENT_ENTRY_IN_APP)
+                        .put(
+                            "note",
+                            if (capturing) {
+                                "已经在投屏，不需要重新授权。"
+                            } else if (CAPTURE_CONSENT_ENTRY_IN_APP) {
+                                "投屏授权只能由用户在 pi-android 的界面上点系统对话框同意：系统只把 " +
+                                    "MediaProjection 的同意结果交给一个前台 Activity，设备桥与模型都代替不了这一下。"
+                            } else {
+                                "投屏授权只能由用户在 App 的前台界面上点系统对话框同意，而本应用目前没有这个入口" +
+                                    "（也没有 mediaProjection 类型的前台服务在跑）；所以在接入之前，这一项一律回 NO_PERMISSION，" +
+                                    "不要把用户引到一个不存在的按钮上。"
+                            },
+                        )
+                }
+
+                "/app/capture/grab" -> withCapability(DeviceCapability.Basic) {
+                    if (!PiScreenCapture.isCapturing()) {
+                        throw DeviceActionException(
+                            DeviceDenial(
+                                code = DeviceDenial.NO_PERMISSION,
+                                reason = "还没有投屏授权（或还没建立虚拟显示），没有可抓的帧。",
+                                hint = "先看 /app/capture/consent：授权必须由用户在 App 界面上点一次系统对话框。" +
+                                    "Android 14+ 还要求已有一个 mediaProjection 类型的前台服务在跑。",
+                            ),
+                        )
+                    }
+                    val quality = params.int("quality", 70)
+                    val force = params.bool("force", false)
+                    val bytes = PiScreenCapture.grabJpeg(
+                        quality = quality,
+                        force = force,
+                        waitMs = params.int("waitMs", 800).toLong(),
+                    )
+                    if (bytes == null) {
+                        // 组件是增量语义：画面没变或首帧还没到都会返回 null。这不是失败，
+                        // 也不是「屏幕是黑的」，所以如实说「没拿到新帧」，并给出 force。
+                        JSONObject()
+                            .put("ok", true)
+                            .put("grabbed", false)
+                            .put("note", "没拿到新帧：画面自上次抓取后没有变化（增量语义），或首帧还没到；需要强制重编码时传 force=true。")
+                    } else {
+                        JSONObject()
+                            .put("ok", true)
+                            .put("grabbed", true)
+                            .put("mimeType", "image/jpeg")
+                            .put("base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                            .put("bytes", bytes.size)
+                    }
+                }
+
                 // The pi-side permission gate reports what it has approved. Display
                 // only: nothing here changes policy (the gate's own memory is the
                 // enforcement), and the UI labels it as extension-reported.
@@ -404,6 +1004,81 @@ class DeviceBridgeRouter(
                 )
             }
         }
+
+    /**
+     * 输入法服务的活实例。
+     *
+     * 组级前置已经保证「已启用且是当前输入法」，所以走到这里拿不到实例只剩一种情况：
+     * 刚切过去，系统还没把输入法服务绑起来（与无障碍的 NOT_CONNECTED 同一类，一两秒
+     * 自己就好）。报 NO_PERMISSION 会把用户再赶去一次设置，而他已经设好了。
+     */
+    private fun requireInputMethod(): PiInputMethodService =
+        PiInputMethodService.running() ?: throw DeviceActionException(
+            DeviceDenial(
+                code = DeviceDenial.NOT_CONNECTED,
+                reason = "输入法服务还没连上（刚被选为当前输入法）。",
+                hint = "等约 1 秒后原样重试同一次调用，不用改设置。",
+                retryable = true,
+            ),
+        )
+
+    /**
+     * 通知监听这一路的前置。
+     *
+     * 「没有通知使用权」和「已授权但系统还没绑定」是两种状态、两种修法：前者要用户去
+     * 系统设置里勾选，后者一两秒后就绪。把它们报成同一句话，就会有一半的时候让人去做
+     * 一件已经做过的事（无障碍那一支当初就是这个毛病）。/app/notify/status 不走这里：
+     * 它的存在意义就是回答「为什么没连上」。
+     */
+    private fun requireNotificationListener() {
+        if (PiNotificationListener.isConnected()) return
+        if (PiNotificationListener.stateName(context) == "enabled_not_connected") {
+            throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.NOT_CONNECTED,
+                    reason = "通知使用权已授权，但系统还没绑定通知监听服务。",
+                    hint = "等约 1 秒重试；仍失败让用户重启 pi-android。",
+                    retryable = true,
+                ),
+            )
+        }
+        throw DeviceActionException(
+            DeviceDenial(
+                code = DeviceDenial.NO_PERMISSION,
+                reason = "本应用没有通知使用权，读不到也操作不了通知。",
+                hint = "让用户在 系统设置 → 通知 → 设备与应用通知 → 通知使用权 里勾选「PI 设备桥」。",
+            ),
+        )
+    }
+
+    /**
+     * 波1 组件的动作失败约定是 `{ok:false, reason:…}`（[DeviceAdmin]、
+     * [PiNotificationListener]、[PiInputMethodService] 都是这个形状），而桥的约定是
+     * 「失败必须带 code」。这里做唯一一处翻译：ok=false 时抛 [DeviceActionException]，
+     * 由 [withCapability] 统一转成 denial —— 组件不必为了端点的形状多包一层。
+     *
+     * [code] 由调用点给：管理员那一路的失败基本都是身份/前置（NO_PERMISSION），
+     * 通知那一路基本都是「这条通知已经被系统收回了」（ERROR）。
+     */
+    private fun okOrDenial(result: JSONObject, code: String, action: String): JSONObject {
+        if (result.optBoolean("ok", false)) return result
+        // setPackagesSuspended 的部分失败没有 reason，只有 failed 列表 —— 那才是用户
+        // 要知道的细节，丢了它，用户只知道「没成功」而不知道该看哪个包。
+        val failed = result.optJSONArray("failed")
+        val detail = if (failed != null && failed.length() > 0) {
+            failed.joinToString("、") { it.toString() }
+        } else {
+            null
+        }
+        throw DeviceActionException(
+            DeviceDenial(
+                code = code,
+                reason = result.optString("reason").ifEmpty { "$action 没有成功。" } +
+                    (if (detail != null) "（未生效：$detail）" else ""),
+                hint = result.optString("hint").ifEmpty { null },
+            ),
+        )
+    }
 
     private fun health(): JSONObject = JSONObject().apply {
         put("service", "pi-android-device-bridge")
@@ -549,6 +1224,51 @@ class DeviceBridgeRouter(
             DeviceDenial(DeviceDenial.BAD_REQUEST, "缺少必填参数「$name」。"),
         )
 
+        /**
+         * 同一含义的多种拼写。
+         *
+         * 契约钉的是路径，没钉参数名，而接线两端是并行写的 —— 端点能同时听懂两种拼写，
+         * 比事后追一个「两端各自以为是另一个词」的 bug 便宜得多（既有的 selector 也是这个
+         * 做法：`desc`/`description`、`packageName`/`pkg` 都收）。
+         */
+        fun strAny(vararg names: String): String? {
+            for (name in names) str(name)?.let { return it }
+            return null
+        }
+
+        fun strRequiredAny(vararg names: String): String =
+            strAny(*names) ?: throw DeviceActionException(
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "缺少必填参数「${names.first()}」。"),
+            )
+
+        /** 字符串列表：JSON 数组，或逗号分隔的字符串。 */
+        fun stringList(name: String): List<String> {
+            val raw = value(name) ?: return emptyList()
+            if (raw is JSONArray) {
+                return (0 until raw.length()).mapNotNull { index ->
+                    raw.optString(index).takeIf { it.isNotEmpty() }
+                }
+            }
+            return raw.toString().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        }
+
+        /** 参数是否存在（空数组也算存在）：用来区分「清空」与「参数名打错了」。 */
+        fun has(name: String): Boolean = value(name) != null
+
+        /**
+         * 「禁用/恢复」这类参数：`disabled` 与反义的 `enabled` 都认，缺一个就报错。
+         *
+         * 不猜默认值：猜错方向会让「禁用相机」变成「启用相机」，而这三个端点的每个方向
+         * 都真改变设备行为。
+         */
+        fun requiredDisabled(): Boolean {
+            boolOrNull("disabled")?.let { return it }
+            boolOrNull("enabled")?.let { return !it }
+            throw DeviceActionException(
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "缺少必填布尔参数「disabled」。"),
+            )
+        }
+
         fun int(name: String, default: Int): Int = intOrNull(name) ?: default
 
         fun intOrNull(name: String): Int? {
@@ -598,6 +1318,28 @@ class DeviceBridgeRouter(
                         DeviceDenial(DeviceDenial.BAD_REQUEST, "参数「$name」不是布尔值：$raw"),
                     )
                 }
+            }
+        }
+
+        /** [boolRequired] 的可空版：没传返回 null，而不是报错（给「两种拼写都认」用）。 */
+        fun boolOrNull(name: String): Boolean? {
+            val raw = value(name) ?: return null
+            return when (raw) {
+                is Boolean -> raw
+                is Number -> raw.toInt() != 0
+                else -> when (raw.toString().trim().lowercase()) {
+                    "true", "1", "yes", "on" -> true
+                    "false", "0", "no", "off" -> false
+                    else -> null
+                }
+            }
+        }
+
+        fun longOrNull(name: String): Long? {
+            val raw = value(name) ?: return null
+            return when (raw) {
+                is Number -> raw.toLong()
+                else -> raw.toString().trim().toLongOrNull()
             }
         }
 
@@ -677,6 +1419,16 @@ class DeviceBridgeRouter(
         const val BRIDGE_VERSION = "2"
 
         /**
+         * 投屏授权在 App 界面上有没有入口（拉起系统授权对话框的那一下）。
+         *
+         * 系统只把 `MediaProjection` 的同意结果交给一个前台 Activity，模型与设备桥都没有
+         * 替代品 —— 所以没有这个入口时，`/app/capture/consent` 只能说「需要用户在 App 里
+         * 点一次」，绝不能把用户指向一个不存在的按钮；`/app/capture/grab` 也会如实回
+         * NO_PERMISSION。接上入口时改这一处，并同步 `DeviceCapabilityScreen` 上投屏那一段。
+         */
+        const val CAPTURE_CONSENT_ENTRY_IN_APP = false
+
+        /**
          * The port the bridge listens on. Deliberately not 3090: the shipping DSH
          * app on this device owns that port, and two local bridges answering the
          * same paths on one phone is a debugging trap with a security smell.
@@ -721,6 +1473,54 @@ class DeviceBridgeRouter(
             "POST /app/files/write",
             "POST /app/shell",
             "POST /app/gate/report",
+            // 「输入法」组
+            "GET  /app/ime/status",
+            "GET  /app/ime/text",
+            "GET  /app/ime/history",
+            "POST /app/ime/insert",
+            "POST /app/ime/replace",
+            "POST /app/ime/delete",
+            "GET  /app/ime/surround",
+            "POST /app/ime/submit",
+            // 「管理员」组
+            "GET  /app/admin/status",
+            "GET  /app/admin/capabilities",
+            "POST /app/admin/grant",
+            "POST /app/admin/hidden",
+            "POST /app/admin/suspend",
+            "POST /app/admin/uninstall-blocked",
+            "POST /app/admin/install-ca",
+            "POST /app/admin/always-on-vpn",
+            "POST /app/admin/lock-task",
+            "POST /app/admin/update-policy",
+            "POST /app/admin/status-bar",
+            "POST /app/admin/keyguard",
+            "POST /app/admin/camera",
+            "POST /app/admin/reboot",
+            "POST /app/admin/wipe",
+            // 以下四路并入「基础」组（契约规定，不另开开关）
+            "GET  /app/notify/status",
+            "GET  /app/notify/recent",
+            "POST /app/notify/reply",
+            "POST /app/notify/dismiss",
+            "POST /app/notify/dismiss-all",
+            "POST /app/notify/snooze",
+            "GET  /app/notify/events",
+            "GET  /app/automation/status",
+            "GET  /app/automation/list",
+            "POST /app/automation/add",
+            "POST /app/automation/remove",
+            "POST /app/automation/apply",
+            "GET  /app/automation/history",
+            "GET  /app/vpn/status",
+            "POST /app/vpn/start",
+            "POST /app/vpn/stop",
+            "GET  /app/vpn/queries",
+            "GET  /app/vpn/blocklist",
+            "POST /app/vpn/blocklist",
+            "GET  /app/capture/status",
+            "POST /app/capture/consent",
+            "POST /app/capture/grab",
         )
     }
 }

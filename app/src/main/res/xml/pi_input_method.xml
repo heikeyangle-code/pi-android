@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  本应用输入法服务的声明，由 AndroidManifest 的
+  `<service android:name=".PiInputMethodService">` 里的
+  meta-data android:name="android.view.im" 指向这里。
+
+  刻意保持最小：这个输入法的意义是让 PI 读得到「用户正在输入什么」并能替用户改写，
+  不是给用户一个顺手的键盘（键盘 UI 只有一行提示 + 一个「完成」键，在
+  PiInputMethodService.onCreateInputView 里用代码搭出来）。所以这里不开任何需要用户
+  额外开关的扩展能力，也不设 settingsActivity —— 它没有可配置项。
+-->
+<input-method xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsSwitchingToNextInputMethod="true" />

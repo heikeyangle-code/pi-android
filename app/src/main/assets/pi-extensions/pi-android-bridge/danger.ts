@@ -87,6 +87,19 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	android_open: "control",
 	android_download: "control",
 	android_files: "control",
+
+	// 波2 的六个新工具（输入法 / 设备管理员 / 通知监听 / 自动化 / 本地 VPN / 投屏）按上面
+	// 同一条规则记 `control`：每一个都是多 action 的合并体，既有「看一眼状态」的分支，也有
+	// 改设备策略的分支；整块记成 `dangerous` 会让每次读通知都弹一次确认，确认也就贬值了。
+	// 其中不可逆的分支（`android_admin` 的 wipe / reboot）由 App 侧端点在执行前取人工确认 ——
+	// `DeviceAdmin.wipeData` 的 KDoc 明确要求波2 这么做；闸门这一层仍然只有一条判据：
+	// 只有 `android_shell` 是 `dangerous`。
+	android_ime: "control",
+	android_admin: "control",
+	android_notify: "control",
+	android_automation: "control",
+	android_net: "control",
+	android_capture: "control",
 };
 
 export const DANGEROUS_TOOLS: readonly string[] = Object.entries(DANGER_LEVELS)

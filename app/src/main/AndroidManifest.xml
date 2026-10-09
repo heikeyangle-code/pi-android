@@ -11,6 +11,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!--
+      投屏（MediaProjection）。
+
+      权限与服务类型是**同一件事的两半**，缺一半系统就拒绝：Android 10 起，
+      `getMediaProjection` 之前 App 必须有一个 `foregroundServiceType="mediaProjection"`
+      的前台服务在跑；Android 14+ 把它变成了硬校验，没有就直接失败
+      （`PiScreenCapture.attach` 的失败文案里写着这一条）。所以这条权限在本文件里
+      与下面 PiCaptureService 的 `mediaProjection` 类型成对出现 —— 只加一半等于没加。
+
+      与 CAMERA 一样，这是一条普通权限，没有运行时弹窗：真正的「用户同意」是
+      系统投屏授权对话框那一次（`PiScreenCapture.consentIntent` → RESULT_OK）。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -220,6 +233,104 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!--
+          输入法（「输入法」能力组，端点 `/app/ime/*`）。
+
+          三处都必须有，少一处系统就不认这个组件：
+            - `permission=BIND_INPUT_METHOD`：只有平台能绑定它，别的应用不能；
+            - `android.view.InputMethod` 的 intent-filter：这是「一个输入法」的身份；
+            - meta-data → `@xml/pi_input_method`：输入法自己的声明（最小，见那个文件）。
+
+          `exported="true"` 不是放松：系统（另一个 uid 的 input method manager）必须能
+          绑定它，而绑定被上面那条 BIND_INPUT_METHOD 权限挡着，普通应用绑不上。
+
+          这个输入法的用途是让 pi 读得到/改得了用户正在输入的内容，不是给用户一个
+          顺手键盘 —— 用户必须在系统里手动启用并切换过来，改不改由用户决定。
+        -->
+        <service
+            android:name=".bridge.PiInputMethodService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/pi_input_method" />
+        </service>
+
+        <!--
+          设备管理员接收器（「管理员」能力组，端点 `/app/admin/*`）。
+
+          它只是**身份**：系统用它把「激活/停用」告诉本应用，能做的动作在
+          `DeviceAdmin` 里（那才是被 `/app/admin/*` 调用的地方）。
+          `BIND_DEVICE_ADMIN` 让只有系统能给它发广播；`android.app.device_admin`
+          meta-data 指向的策略声明决定激活页面上问用户要什么（见那个文件，只有
+          相机与锁屏两条，其余策略要在 Device Owner 身份下才有效、不需要 uses-policy）。
+
+          激活/取消由用户在系统设置里操作，本应用不主动弹激活页。
+        -->
+        <receiver
+            android:name=".bridge.PiDeviceAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/pi_device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          通知监听（并入「基础」能力组，端点 `/app/notify/*`）。
+
+          它没有别的入口：系统只把通知内容交给自己绑定过的 listener，而绑定要求
+          用户先在 系统设置 → 通知 → 通知使用权 里勾选本应用。`BIND_NOTIFICATION_LISTENER_SERVICE`
+          保证只有系统能绑它。
+        -->
+        <service
+            android:name=".bridge.PiNotificationListener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!--
+          VPN（并入「基础」能力组，端点 `/app/vpn/*`）。
+
+          非 root 设备上这是唯一能看到别人出站流量的入口（`VpnService` 把包交给本
+          服务建的 TUN）。`BIND_VPN_SERVICE` 让只有系统能绑定；第一次启动前必须由
+          用户在系统授权对话框里点同意（入口在能力页的「授权 VPN」按钮）。
+        -->
+        <service
+            android:name=".bridge.PiVpnService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!--
+          投屏专用的前台服务（并入「基础」能力组，端点 `/app/capture/*`）。
+
+          它不持有投影（那是 `PiScreenCapture` 的），只负责让平台的强制条件成立：
+          「有一个 mediaProjection 类型的前台服务在跑」。**不能**把这个类型挂到
+          `PiEngineService` 上：那个服务开机就起，而 Android 14 在没有投屏授权时
+          用 mediaProjection 类型 `startForeground` 会抛异常 —— 等于让开机去撞一条
+          必然失败的检查，把引擎一起打挂。所以这里单独一个服务，而且只在用户点完
+          授权对话框之后才由能力页启动。
+
+          `exported="false"`：只有本应用（一个已经在跑的前台 Activity）会启动它。
+        -->
+        <service
+            android:name=".bridge.PiCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
     </application>
 

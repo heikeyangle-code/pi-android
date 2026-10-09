@@ -1,7 +1,7 @@
 package app.pi.bridge
 
 /**
- * The three device-capability groups of the authorization page
+ * The five device-capability groups of the authorization page
  * (docs/pi-android-ui-spec.md §5.6, docs/pi-android-app-design.md §21.4).
  *
  * Every group is an explicit user opt-in. The bridge never infers consent from
@@ -11,8 +11,12 @@ package app.pi.bridge
  *
  * [defaultEnabled] exists because the spec draws one deliberate line — the
  * basic group (clipboard, notifications, links, sharing, plus the former 存储 /
- * 位置·传感器·相机 endpoints) is on out of the box, and the two control groups
- * (屏幕 / Shell) are off until the user says otherwise.
+ * 位置·传感器·相机 endpoints) is on out of the box, and the control groups
+ * (屏幕 / Shell / 输入法 / 管理员) are off until the user says otherwise.
+ *
+ * 通知监听、自动化、VPN 与投屏没有各自的分组：它们并入 基础（contract 里写死的那条）。
+ * 把「通知监听」单开一个开关看起来更缜密，但它与 android_say（同一个通知权限/同一个
+ * 用户预期）拆成两组之后，用户要对两个开关做同一个决定 —— 分组多一层，判断反而多一层。
  */
 enum class DeviceCapability(
     val id: String,
@@ -72,6 +76,36 @@ enum class DeviceCapability(
             "执行日常读命令（getprop、dumpsys、pm list、logcat、ls、cat、df、ps 等）",
             "执行日常写命令（cp、mv、rm、mkdir、sed、tar、curl 等），但只能写工作区之内",
             "在装有 Shizuku 的设备上以 ADB 身份（uid=2000）运行，从而使用 input、pm、am、settings get 等",
+        ),
+        defaultEnabled = false,
+    ),
+
+    Ime(
+        id = "ime",
+        title = "输入法",
+        summary = "读取并改写你正在输入的内容，以及替你提交（发送/搜索）—— 密码框不读、不记内容",
+        allows = listOf(
+            "读取当前输入框里的文本、光标位置与所属应用（密码框一律不读，只留一条「发生过输入」的记录）",
+            "在光标处插入文字、整框替换、删除光标前后的文字",
+            "提交当前输入框的动作（发送 / 搜索 / 完成 / 回车）",
+            "读取最近的输入历史与剪贴板历史，最旧的自动丢弃",
+        ),
+        defaultEnabled = false,
+    ),
+
+    Admin(
+        id = "admin",
+        title = "管理员",
+        summary = "设备管理员 / Device Owner 策略：应用隐藏与挂起、CA 证书、常驻 VPN、锁屏、擦除",
+        allows = listOf(
+            "读取当前身份下每项策略能不能执行（Device Owner / Profile Owner / 普通设备管理员）",
+            "隐藏 / 恢复、挂起 / 恢复应用，阻止用户卸载某个应用",
+            "修改某个应用运行时权限的授予状态",
+            "安装 CA 证书（系统级且持久：卸载本应用也不会移除）",
+            "设置常驻 VPN（可选「断开即断网」）与 Lock Task 应用清单",
+            "设置系统更新策略（自动 / 推迟 / 每日安装时间窗）",
+            "禁用状态栏、锁屏、相机（前两者只有 Device Owner 才能做）",
+            "重启设备；擦除设备或工作资料（不可逆：执行后系统立即重启，数据不再有）",
         ),
         defaultEnabled = false,
     ),
