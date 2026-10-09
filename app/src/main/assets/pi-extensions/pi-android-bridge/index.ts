@@ -185,6 +185,14 @@ interface DeviceToolSpec {
 	 * `withCapability(...)` 包着，以及能力卡上 `DeviceCapability.kt` 的 `allows` 文案。
 	 */
 	capability: DeviceCapabilityId | null;
+	/**
+	 * `hidden` = 注册但不声明给模型。给的是那些「已经被某个合并入口转交」的细粒度工具：
+	 * `android_ui` / `android_io` 的 action 表、`android_fs` 与 `android_status` 的
+	 * `deviceTool(...)` 都直接调它们，所以能力一个不少，只是同一件事不在提示词里写两遍。
+	 * 省略即 `direct`。与 `deferred` 的区别：`hidden` 不进提示词也不再需要任何
+	 * 「抳回来」的机制（`tool_search`），因为调用入口本来就在。
+	 */
+	exposure?: "hidden";
 	label: string;
 	description: string;
 	promptSnippet: string;
@@ -775,6 +783,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_bridge_status",
+		exposure: "hidden",
 		capability: null,
 		label: "设备桥状态",
 		description: "Bridge + capability state: groups on/usable, accessibility, missing permissions, screenshot support.",
@@ -953,6 +962,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_ui_dump",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "读取屏幕",
 		description: "Read the screen node tree (indexed); indices feed android_tap and android_input. Coordinates are display pixels.",
@@ -1018,6 +1028,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_tap",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "点按",
 		description: "Tap by dump index (most reliable), x/y, or text/desc/resourceId resolved on-device. longPress for long press.",
@@ -1059,6 +1070,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_input",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "输入文本",
 		description: "Type into the focused field or a dump index; falls back to clipboard paste (replaces the clipboard) when refused.",
@@ -1098,6 +1110,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_key",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "系统按键",
 		description: "Run a system global action. For raw keys (enter/delete/arrows) use android_keyevent (needs Shizuku).",
@@ -1117,6 +1130,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_keyevent",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "注入原始按键",
 		description: "Inject raw keys into the focused window via Shizuku (ADB uid=2000); refuses without it.",
@@ -1140,6 +1154,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_swipe",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "滑动 / 滚动",
 		description: "Swipe in display pixels, or scroll the node at index/selector with direction (accessibility scroll action).",
@@ -1210,6 +1225,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_screenshot",
+		exposure: "hidden",
 		capability: "accessibility",
 		label: "截屏",
 		description: "Capture the screen (Android 11+); region crops it, marks draws the last dump's indices. Secure windows fail.",
@@ -1407,6 +1423,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_say",
+		exposure: "hidden",
 		capability: "basic",
 		label: "通知 / 短提示 / 朗读",
 		description: "Post a notification, show a short on-screen message, or read text with TTS.",
@@ -1463,6 +1480,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_vibrate",
+		exposure: "hidden",
 		capability: "basic",
 		label: "震动",
 		description: "Vibrate the phone.",
@@ -1482,6 +1500,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_share",
+		exposure: "hidden",
 		capability: "basic",
 		label: "分享",
 		description: "Share text or a link via the system sheet; to open a URL use android_open.",
@@ -1504,6 +1523,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_open",
+		exposure: "hidden",
 		capability: "basic",
 		label: "打开链接",
 		description: "Open a URL/deep link with the default app; intent: URLs fall back to browser_fallback_url.",
@@ -1525,6 +1545,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ------------------------------------------------------------ 剪贴板 ----
 	{
 		name: "android_clipboard",
+		exposure: "hidden",
 		capability: "basic",
 		label: "剪贴板",
 		description: "Pass text to write the clipboard, omit it to read; reads work only in the foreground (Android 10+).",
@@ -1591,6 +1612,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_download",
+		exposure: "hidden",
 		capability: "basic",
 		label: "公共 Download 读写",
 		description: "Read/write the public Download folder; user-authorized dirs use android_files. write: no permission on API 29+, storage permission on 8/9. read: own exports only on 33+, storage permission on 30-32.",
@@ -1647,6 +1669,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_files_list",
+		exposure: "hidden",
 		capability: "basic",
 		label: "已授权目录",
 		description: "List user-authorized (SAF) dirs; omit path for root names. Read/write them with android_files.",
@@ -1678,6 +1701,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_files",
+		exposure: "hidden",
 		capability: "basic",
 		label: "授权目录读写",
 		description: "Read/write files under a user-authorized (SAF) dir. write: creates parent dirs, overwrites. read: text direct, binary as base64. Public Download uses android_download.",
@@ -2942,6 +2966,7 @@ export default async function (pi: ExtensionAPI) {
 			promptGuidelines: tool.promptGuidelines,
 			parameters: tool.parameters,
 			namespace: DEVICE_NAMESPACE,
+			...(tool.exposure === undefined ? {} : { exposure: tool.exposure }),
 			async execute(
 				_toolCallId: string,
 				params: Static<TSchema>,
