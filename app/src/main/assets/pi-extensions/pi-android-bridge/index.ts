@@ -2862,58 +2862,29 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 9. 危险操作会确认：用户拒绝就停，别换条路再试。
 `,
 
-	"references/elevate.md": `# 拿到 ADB 身份（uid 2000）：本机无线调试自连
+	"references/elevate.md": `# ADB identity (uid 2000)
 
-设备能力里最强的一档不是某个开关，而是以「ADB 身份」（uid 2000）执行命令：input、pm install/uninstall、am、settings get、dumpsys、screencap 这些系统操作只有它放行。
+input / pm / am / settings need uid 2000. Trigger: those fail as the app uid.
+Alternative: the user starts Shizuku from Wireless debugging; android_status then reports uid 2000.
 
-两条路：
+## 0. Client (once per rootfs)
+    command -v adb || apt-get install -y adb
 
-- **Shizuku**（应用自己的通道）：用户在「设置 → 设备能力 → Shell」里打开 Shizuku，并在 Shizuku 里用系统「无线调试」启动它（Android 11+，全程在手机上，不需要电脑）。之后 android_status 会显示「Shizuku：已就绪（ADB 身份，uid=2000）」。
-- **本机无线调试自连**（下面这一步）：在 guest 里用 adb 客户端连 127.0.0.1 上的无线调试端口，直接得到一个 uid 2000 的 shell。
+## 1. Pair (once)
+Drive Settings with android_ui; read the screen with android_ui(action="dump").
+  a. About phone -> tap "OS version" x7 (skip if Developer options exist)
+  b. Developer options -> Wireless debugging -> ON (needs Wi-Fi)
+  c. Tap "Pair device with pairing code" -> dump -> read the code and ip:port
+  d. adb pair <ip>:<pairport> <code>
 
-## 前置：guest 里要有 adb 客户端
+## 2. Connect (every session)
+  a. Wireless debugging page -> dump -> read "IP address & port"
+  b. adb connect <ip>:<connectport>
+  c. adb shell id   ->   uid=2000(shell)
 
-android_shell 的白名单里没有 adb，所以配对与连接都在 guest 的 bash 里做，先装一次：
-
-\`\`\`bash
-apt-get install -y adb        # Ubuntu guest（Termux 里是 pkg install android-tools）
-adb version
-\`\`\`
-
-装不上就走 Shizuku 那条路。
-
-## 第一次：配对（只做一次）
-
-1. 用户打开「设置 → 开发者选项 → 无线调试」（先连一次 Wi-Fi，端口才会出现）。
-2. 点「使用配对码配对设备」：屏幕给出 6 位配对码，以及一个 IP:端口（配对端口）。先试页面上的地址；很多设备上 127.0.0.1:端口 也能自连。
-3. 在 guest 里配对：
-
-\`\`\`bash
-adb pair 127.0.0.1:<配对端口>     # 提示时输入那 6 位配对码
-\`\`\`
-
-4. 配对成功后，回到无线调试页看**连接端口**（与配对端口不同，每次重开无线调试都会变）。
-
-## 之后：重连（不用再配对）
-
-\`\`\`bash
-adb connect 127.0.0.1:<连接端口>
-adb devices                      # 列表里出现 127.0.0.1:<连接端口>  device
-adb shell id                     # uid=2000(shell) 就是 ADB 身份
-\`\`\`
-
-## 连上之后能跑什么
-
-- \`input keyevent …\`、\`input text …\`、\`input tap/swipe\`：坐标级与原始按键输入（无障碍通道只能做那几个全局动作）。
-- \`pm list packages / install / uninstall\`、\`am start / force-stop\`、\`settings get\`、\`dumpsys\`、\`screencap\`、\`logcat -d\`。
-- android_keyevent 走的就是这条身份；android_status 的「Shizuku：已就绪（ADB 身份，uid=2000）」是它在应用侧对应的读数。
-- 走 android_shell 时仍然过它的命令头白名单与工作区写入边界；adb 本身不在白名单里，所以自连从 guest 的 bash 发起。
-
-## 注意
-
-- 无线调试端口每次重开都会变；连不上先回设置页确认端口。
-- 断开 Wi-Fi 会关掉无线调试（本机自连也要 Wi-Fi 开着）。
-- 这是用户自己的设备、自己的身份，不需要 root；开不开无线调试由用户决定。
+## 3. Fallback
+Ask the user to open Wireless debugging and read out the code / port.
+Ports change every time; Wi-Fi off = wireless debugging off.
 `,
 };
 
