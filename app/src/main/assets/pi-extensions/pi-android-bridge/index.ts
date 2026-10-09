@@ -2782,7 +2782,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 |---|---|---|
 | 屏幕与输入 | 读屏、点按、输入、滑动、按键、截图 | \`references/ui.md\` |
 | 工具总表 | 有哪些工具、属于哪组、某个 action 怎么用 | \`references/tools.md\` |
-| 设备 Shell | 要在设备上跑命令、看 uid 与写入边界 | \`references/shell.md\` |
+| 设备 Shell | 要在设备上跑命令、想弄清它跑在什么身份上 | \`references/shell.md\` |
 | 路径 | /workspace、/sdcard、agentDir 各是什么 | \`references/paths.md\` |
 | 常见坑 | 报 [DISABLED] / NOT_FOUND / 截断时 | \`references/pitfalls.md\` |
 | ADB 身份 | 要 input/pm/am/settings，要 uid 2000 | \`references/elevate.md\` |
@@ -2903,7 +2903,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | \`/tmp\` | 可写临时目录 |
 
 - 设备策略只管 android_* 工具；工作区里的 bash/read/write 不受限。
-- android_shell 以工作区为写入边界；guest 里工作区的挂载点有两个拼写，看 android_status 的「Shell 写入边界」行。
+- 工作区**不再是写入边界**：android_shell 不限制写哪里，工作区只是 agent 的默认落点。guest 里工作区的挂载点有两个拼写，看 android_status 的「工作区」行。
 - 本技能的附件在 <agentDir>/skills/pi-android-device/ 下（上面表格里的路径都相对该目录）。
 `,
 
