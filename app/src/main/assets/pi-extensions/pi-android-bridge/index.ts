@@ -2599,18 +2599,18 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 	"references/tools.md": `# 工具
 
-声明给模型的是 15 个：表一的 6 个合并入口，表二的 9 个没有合并入口的直连工具。另外还有 16 个细粒度工具（\`android_tap\`、\`android_files\`、\`android_bridge_status\` 等）被合并入口转交，同样注册着但不单独声明 —— 它们的动作都在表一的 action 里。开关打开的那一组才有它的工具；**五组默认全关**。
+声明给模型的是 14 个：表一的 6 个合并入口，表二的 8 个没有合并入口的直连工具。另外还有 16 个细粒度工具（\`android_tap\`、\`android_files\`、\`android_bridge_status\` 等）被合并入口转交，同样注册着但不单独声明 —— 它们的动作都在表一的 action 里。开关打开的那一组才有它的工具；**五组默认全关**。
 
 | 工具 | 覆盖 | action |
 |---|---|---|
-| \`android_status\` | 桥、能力组、前台、权限、Shell 后端与 uid、SAF 目录、工作区边界 | — |
+| \`android_status\` | 桥、能力组、前台、权限、Shell 后端与 uid、SAF 目录、工作区路径 | — |
 | \`android_ui\` | 屏幕 | dump / elements / diff / select / idle / wait / verify / tap / swipe / input / key / keyevent / screenshot / memory / visual / macroStart / macroStep / macroStop / macroPlay |
 | \`android_app\` | 应用 | list / launch（**结束应用不是它**，见下表的 \`android_stop_app\`：那一步要屏幕能力，basic 开不出来） |
 | \`android_io\` | 用户可见的输出 | clipboard / say / vibrate / share / open |
 | \`android_fs\` | 文件 | list、read、write（授权目录 SAF）、download（公共 Download，要 op） |
 | \`android_shell\` | 设备命令 | — |
 
-- 能力组五组：basic（基础）/ accessibility（屏幕）/ ime（输入法）/ admin（设备管理员）/ shell。**五组默认全关**：一组都不开时只有 android_status 会注册，其余工具既不注册也不进提示词；要用哪组在「设置 → 设备能力」里开。
+- 能力组四组：basic（基础）/ accessibility（屏幕）/ ime（输入法）/ shell。**四组默认全关**：一组都不开时只有 android_status 会注册，其余工具既不注册也不进提示词；要用哪组在「设置 → 设备能力」里开。
 - [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
 - 危险动作会弹确认；用户拒绝就停。
 
@@ -2620,7 +2620,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 | 工具 | 能力组 | 覆盖 | action |
 |---|---|---|---|
-| \`android_ime\` | ime | 经 PI 输入法读/写当前聚焦的输入框 | insert / replace / delete / surround / submit / history / text | status / capabilities / grant / hidden / suspend / uninstall-blocked / install-ca / always-on-vpn / lock-task / update-policy / status-bar / keyguard / camera / reboot / wipe |
+| \`android_ime\` | ime | 经 PI 输入法读/写当前聚焦的输入框 | insert / replace / delete / surround / submit / history / text |
 | \`android_notify\` | basic | 通知监听：读、回复、撤销、延后、事件流水 | status / recent / reply / dismiss / dismiss-all / snooze / events |
 | \`android_automation\` | basic | 自动化规则（触发器 + 条件 + 动作） | status / list / add / remove / apply / history |
 | \`android_net\` | basic | 本地 VPN：隧道、DNS 查询记录、黑名单 | status / start / stop / queries / blocklist |

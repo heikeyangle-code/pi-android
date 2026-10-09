@@ -226,6 +226,18 @@ class PiVpnService : VpnService() {
         super.onDestroy()
     }
 
+    /**
+     * 拆隧道，不结束服务。幂等；供 companion 的 [Companion.stop] 在 `stopSelf()` 之前调。
+     *
+     * 写这个薄封装只因为 [tearDown] 是 private 而 companion 需要它 —— 不要把它当成第二个
+     * 拆卸路径：两边调的仍是同一个 [tearDown]，重复调用是安全的（它只清引用与标志位）。
+     */
+    /**
+     * 供 companion 的 stop() 调用（见那里的注释）。internal 而不是 private：同模块内的
+     * companion 拿不到实例的 private 成员。这不是暴露给外部的 API —— 它只转发到 tearDown。
+     */
+    internal fun stopTunnelNow() = tearDown()
+
     // ------------------------------------------------------------ 建立隧道 ----
 
     private fun establishTunnel(config: TunnelConfig) {
@@ -1016,10 +1028,21 @@ class PiVpnService : VpnService() {
             }.getOrDefault(false)
         }
 
-        /** 停止隧道（服务自停）。返回停止前是否在运行。 */
+        /**
+         * 停止隧道。返回停止前是否在跑。
+         *
+         * **不能只调 `stopSelf()`。** 实测（HyperOS / Android 14）：VPN 成为当前 VPN 之后，
+         * 系统会*绑定*这个服务（`AppBindRecord{…PiVpnService:system}`）。带绑定的服务上，
+         * `stopSelf()` / `context.stopService()` 只清掉 started 状态，**`onDestroy` 不会跑**——
+         * 于是 [tearDown] 不执行，`tunRunning` 保持 true，TUN 与代理线程还在，用户看到的是
+         * “点了停止，VPN 图标还在”。所以这里自己先把隧道拆了（幂等），再请求服务结束：
+         * 拆下来之后系统就会松绑，`onDestroy` 随后真的会跑，而它会再调一次 [tearDown]
+         * （幂等，安全）。
+         */
         fun stop(): Boolean {
             val service = instance ?: return false
             val wasRunning = service.tunRunning
+            service.stopTunnelNow()
             runCatching { service.stopSelf() }
             return wasRunning
         }
@@ -1027,6 +1050,8 @@ class PiVpnService : VpnService() {
         /** 停止隧道（按 context）。返回停止前是否在运行。 */
         fun stop(context: Context): Boolean {
             val wasRunning = running()
+            // 同 [stop()]：先拆隧道再请求结束，否则绑定会让 onDestroy 不跑。
+            instance?.stopTunnelNow()
             runCatching { context.stopService(Intent(context, PiVpnService::class.java)) }
             return wasRunning
         }

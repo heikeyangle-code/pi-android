@@ -1326,8 +1326,16 @@ class DeviceBridgeRouter(
          * 替代品 —— 所以没有这个入口时，`/app/capture/consent` 只能说「需要用户在 App 里
          * 点一次」，绝不能把用户指向一个不存在的按钮；`/app/capture/grab` 也会如实回
          * NO_PERMISSION。接上入口时改这一处，并同步 `DeviceCapabilityScreen` 上投屏那一段。
-         */
-        const val CAPTURE_CONSENT_ENTRY_IN_APP = false
+                  *
+         * **这个常量曾经是 false，而入口早就有了** —— `DeviceCapabilityScreen` 的投屏卡片上
+         * 摆着「开始投屏」（`ActivityResultContracts.StartActivityForResult` +
+         * `PiScreenCapture.consentIntent`），而 `/app/capture/consent` 一直回答
+         * 「本应用没有这个入口」，把一个存在的按钮说成不存在。这是实测发现的：用户问投屏
+         * 能不能用，端点说不能，而界面上就摆着那个按钮。
+         *
+         * 改这个常量时同步检查 `DeviceCapabilityScreen` 上投屏那一段。
+*/
+        const val CAPTURE_CONSENT_ENTRY_IN_APP = true
 
         /**
          * The port the bridge listens on. Deliberately not 3090: the shipping DSH
