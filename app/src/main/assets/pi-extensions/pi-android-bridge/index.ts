@@ -2896,7 +2896,7 @@ function environmentGuidance(): string {
 		"",
 		"pi runs in proot Ubuntu; tools are android_*.",
 		"- `/workspace` fast, `/sdcard` slow; device policy covers only android_* tools, workspace bash unrestricted.",
-		"- ADB identity (uid 2000, what input/pm/am/settings need) is reachable by a local wireless-debug self-connect; read references/elevate.md when needed.",
+		"- When input/pm/am/settings fail (they need the ADB identity, uid 2000), that identity is reachable by a local wireless-debug self-connect - read references/elevate.md and follow it. The first time it needs the user to open Wireless debugging and hand over the pairing code.",
 		"- If only the six resident android_* tools show up, `tool_search` is off: add it (and optionally `codemode`) to `defaultTools` in `/root/.pi/agent/settings.json` and restart the engine — that list is a full whitelist, extend it, never overwrite it.",
 		"- Dangerous device actions confirm; on refusal, stop.",
 	].join("\n");
