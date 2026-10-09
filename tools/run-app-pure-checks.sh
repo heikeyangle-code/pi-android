@@ -316,6 +316,15 @@ run_harness shell-policy-mirror \
   app.pi.bridge.ShellPolicyMirrorCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/bridge/ShellPolicyMirrorCheck.kt"
 
+# app.pi.bridge: the `endpoints` array in the token file is a hand-written second copy of
+# the endpoints the router serves. It had already drifted — eleven wave-1 endpoints
+# answered a live bridge while the advertised list omitted them — and nothing in the
+# build could notice. This reads both facts out of `DeviceBridgeRouter.kt` as source text
+# and compares the sets.
+run_harness endpoint-broadcast \
+  app.pi.bridge.EndpointBroadcastCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/bridge/EndpointBroadcastCheck.kt"
+
 # app.pi.ui.chat: the pure half of the `@` file-mention completion (trigger
 # boundaries, pi's fd argv and shell quoting, pi's scorer and ordering, and what a
 # pick inserts). Android-free: it imports only the Kotlin stdlib. Registered late -

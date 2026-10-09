@@ -1534,7 +1534,22 @@ class DeviceBridgeRouter(
             "POST /app/ui/key",
             "POST /app/ui/keyevent",
             "POST /app/ui/swipe",
+            // wave-1 的可靠性端点（元素表 / 差分 / 自愈选择器 / 空闲等待 / App 记忆 /
+            // 视觉交接 / UI 宏）。这批加进路由时漏了同步这份清单，少了 11 条，而端点
+            // 本身全部正常（实测 200）—— 发现方式是手工拿它和现场比对。现在有
+            // EndpointBroadcastCheck 盯着，不会再漂。
+            "POST /app/ui/elements",
+            "POST /app/ui/diff",
+            "POST /app/ui/select",
+            "POST /app/ui/idle",
+            "POST /app/ui/memory",
+            "POST /app/ui/visual",
+            "POST /app/ui/macro/start",
+            "POST /app/ui/macro/step",
+            "POST /app/ui/macro/stop",
+            "POST /app/ui/macro/play",
             "POST /app/screenshot",
+            "POST /app/ui/screenshot",
             "GET  /app/apps",
             "POST /app/apps/launch",
             "POST /app/apps/stop",
