@@ -2525,7 +2525,7 @@ const SKILL_NAME = "pi-android-device";
 const SKILL_FILES: Record<string, string> = {
 	"SKILL.md": `---
 name: ${SKILL_NAME}
-description: "pi-android device tools (android_*): screen, apps, files, clipboard/notify/share, device shell, IME, device admin, automation, local VPN, screen capture. Read before acting on this phone."
+description: "How to drive this phone with the android_* tools. Read before acting on it."
 ---
 
 # pi-android 设备环境
@@ -2713,16 +2713,39 @@ Rebooting the phone drops the connection — step 2 is the per-session part.
 `,
 };
 
-/** The system-prompt block appended for every turn. */
+/**
+ * 技能被写到磁盘上的哪个目录。
+ *
+ * 用 `PI_CODING_AGENT_DIR`（App 侧 `PiRuntime.agentDir` 就是 `<rootfs>/root/.pi/agent`），
+ * **不涉及工作区** —— 换工作区不影响这个路径，也不需要为工作区准备第二份。
+ *
+ * 写（`resources_discover`）和删（能力全关时的清理）两边共用它，免得各算一遍算歪。
+ */
+async function skillDirectory(): Promise<string> {
+	const { join } = await import("node:path");
+	const home = process.env.HOME && process.env.HOME.trim().length > 0 ? process.env.HOME.trim() : "/root";
+	const agentDir = process.env.PI_CODING_AGENT_DIR && process.env.PI_CODING_AGENT_DIR.trim().length > 0
+		? process.env.PI_CODING_AGENT_DIR.trim()
+		: join(home, ".pi", "agent");
+	return join(agentDir, "skills", SKILL_NAME);
+}
+
+/**
+ * The system-prompt block appended for every turn — **only while something is usable**.
+ *
+ * 这里只留“这台手机有 android_* 工具”这一句。另外三条（/workspace 与 /sdcard 的快慢、
+ * uid 2000 怎么拿、危险动作会确认）都是 skill 附件里写得更详细的内容（
+ * references/elevate.md 整整一篇讲无线调试，比这里一句话详细十倍）—— 常驻段重复它们
+ * 只是在每轮里白占位置。
+ *
+ * 全关时不注入：那由 [hasDeclaredDeviceTools] 决定，见 before_agent_start 那个钩子。
+ */
 function environmentGuidance(): string {
 	return [
 		"",
 		"## Android device environment (pi-android)",
 		"",
-		"pi runs in proot Ubuntu; tools are android_*.",
-		"- `/workspace` fast, `/sdcard` slow; device policy covers only android_* tools, workspace bash unrestricted.",
-		"- When input/pm/am/settings fail (they need the ADB identity, uid 2000), that identity is reachable by a local wireless-debug self-connect - read references/elevate.md and follow it. The first time it needs the user to open Wireless debugging and hand over the pairing code.",
-		"- Dangerous device actions confirm; on refusal, stop.",
+		"pi runs in proot Ubuntu; the `android_*` tools drive this phone. Read the pi-android-device skill before acting on it.",
 	].join("\n");
 }
 
@@ -2795,8 +2818,35 @@ export default async function (pi: ExtensionAPI) {
 	// App 侧 `ui/device/DeviceCapabilityScreen.kt` 在「能力授权」标题下写了同一句话，
 	// 用户和模型看到的是同一个口径。
 	const usable = await usableCapabilities();
+
+	// 能力全关（或桥根本没起来）时，把上一轮写出去的技能目录清掉 —— **必须在这里删**。
+	//
+	// 时机是全部理由：扩展工厂跑在 `ResourceLoader.reload()` 的 `loadFinalExtensionSet()`
+	// 里（`core/resource-loader.js:410`），而磁盘上的技能是紧接着在 `updateSkillsFromPaths()`
+	// （`:424`）被扫进列表的。**工厂在前，扫盘在后** —— 所以在这里删，这一次启动就干净了。
+	//
+	// 曾经把这段放在 `resources_discover` 里，那是错的：那个钩子在扫盘**之后**才跑
+	// （`core/agent-session.js:2628`），删掉的目录已经被扫进技能列表，而且因为返回的
+	// `skillPaths` 为空，`extendResources()` 不会重扫（`core/resource-loader.js:333`）——
+	// 结果是「关了还要再启动一次才不显示」。实测发现（用户问「不开开关不显示吗？现在也显示啊」）。
+	//
+	// pi 只认磁盘：技能是靠扫目录发现的，不是靠钩子返回什么。所以「不显示」只能靠删。
+	// 删的是本扩展自己那一个目录（`<agentDir>/skills/pi-android-device`），别的技能不碰。
+	if (usable === null || usable.size === 0) {
+		try {
+			const { rm } = await import("node:fs/promises");
+			await rm(await skillDirectory(), { recursive: true, force: true });
+		} catch {
+			// 尽力而为：清不掉只是技能多显示一会儿，不该让扩展加载不了。
+		}
+	}
+
+	// 这一轮到底有没有真正可用的设备工具。`android_status` 的能力是 `null`（它的职责就是
+	// 解释「为什么不能用」，所以永远注册），不能拿它当证据 —— 否则全关时也会以为有工具。
+	let anyDeviceToolRegistered = false;
 	for (const tool of DEVICE_TOOLS) {
 		if (!shouldRegister(tool, usable)) continue;
+		if (tool.capability !== null && tool.exposure !== "hidden") anyDeviceToolRegistered = true;
 		pi.registerTool({
 			name: tool.name,
 			label: tool.label,
@@ -2974,42 +3024,42 @@ export default async function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Tell the agent what environment it woke up in, every turn. The sentinel
-	// guards against double-appending if this extension is loaded twice.
+	// Tell the agent what environment it woke up in — **but only while it can act on it**.
+	//
+	// 这里曾经无条件追加：全关时那段文字照样每轮进请求，告诉模型一套它根本调不到的工具。
+	// 现在的条件是「这一轮至少注册了一个非 hidden 的设备工具」（就是上面那个
+	// anyDeviceToolRegistered）。全关 = 只剩 android_status（它永远注册，用来解释为什么不能
+	// 用）—— 那种情况下不说环境，因为模型真的做不了任何设备操作。
+	//
+	// Sentinel 防的是「扩展被加载两次」时的重复追加，不能替代上面那个条件。
 	pi.on("before_agent_start", async (event) => {
-		// Sentinel must match the heading `environmentGuidance()` emits, or the
-		// block is appended twice per turn.
+		if (!anyDeviceToolRegistered) return undefined;
 		if (event.systemPrompt.includes("## Android device environment (pi-android)")) return undefined;
 		return { systemPrompt: event.systemPrompt + environmentGuidance() };
 	});
 
 	// Contribute the environment skill: SKILL.md plus its references/. `resources_discover`
-	// can only hand back *paths*, so every file is written on the way in. A group of
-	// capabilities that is not usable contributes nothing — with no group open the android_*
-	// tools are not registered either, and a skill describing tools the model does not have is
-	// worse than no skill. A write failure is still silent by design: the system-prompt block
-	// above carries the essentials.
-	pi.on("resources_discover", async () => {
-		try {
-			const usable = await usableCapabilities();
-			if (usable === null || usable.size === 0) return {};
-			const { mkdir, writeFile } = await import("node:fs/promises");
-			const { dirname, join } = await import("node:path");
-			const home = process.env.HOME && process.env.HOME.trim().length > 0 ? process.env.HOME.trim() : "/root";
-			const agentDir = process.env.PI_CODING_AGENT_DIR && process.env.PI_CODING_AGENT_DIR.trim().length > 0
-				? process.env.PI_CODING_AGENT_DIR.trim()
-				: join(home, ".pi", "agent");
-			const skillDir = join(agentDir, "skills", SKILL_NAME);
-			for (const [relativePath, content] of Object.entries(SKILL_FILES)) {
-				const target = join(skillDir, relativePath);
-				await mkdir(dirname(target), { recursive: true });
-				await writeFile(target, content, "utf8");
-			}
-			return { skillPaths: [skillDir] };
-		} catch {
-			return {};
+// can only hand back *paths*, so every file is written on the way in.
+//
+// 这里**只管写**。能力全关时那份残留在工厂里就被删掉了（那里删才赶得上扫盘，见上面的长注释）。
+// 写失败静默：技能没写出来只会让模型少一份参考，不该让扩展加载不了。
+pi.on("resources_discover", async () => {
+	try {
+		const usable = await usableCapabilities();
+		if (usable === null || usable.size === 0) return {};
+		const { mkdir, writeFile } = await import("node:fs/promises");
+		const { dirname, join } = await import("node:path");
+		const skillDir = await skillDirectory();
+		for (const [relativePath, content] of Object.entries(SKILL_FILES)) {
+			const target = join(skillDir, relativePath);
+			await mkdir(dirname(target), { recursive: true });
+			await writeFile(target, content, "utf8");
 		}
-	});
+		return { skillPaths: [skillDir] };
+	} catch {
+		return {};
+	}
+});
 
 	// On session start the app shows nothing at the bottom of the screen — and in RPC
 	// mode it does not even probe: device health is *persistent* state with a
