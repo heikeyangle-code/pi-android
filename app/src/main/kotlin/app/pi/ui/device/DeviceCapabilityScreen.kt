@@ -874,28 +874,23 @@ private fun DeviceCapabilityCard(
                 }
 
                 Spacer(Modifier.height(PiSpacing.gutter))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "放宽模式（命令替换与嵌套执行）",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            "开启后，\$() 与反引号、以及 sh/bash/eval/source 都会被允许。",
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = relaxed, onCheckedChange = onRelaxedChange)
-                }
-                if (relaxed) {
-                    Text(
-                        DeviceShellGuard.relaxedCost(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = PiTheme.palette.warning,
-                    )
-                }
+                // 这里原本是「放宽模式」开关。它控制的两件事 —— 命令替换检查与白名单 ——
+                // 在 DeviceShellGuard.inspect 里都已取消（用户要求「没有白名单这一说，
+                // 只剩一个黑名单」），所以开关留着也拨不动任何东西。一个拨了没反应的
+                // 开关比没有开关更糟，因此换成一句现状说明。
+                //
+                // relaxed / onRelaxedChange 保留在签名里不动，免得改动 Shell 这一屏的
+                // 调用点（它们现在没人读，只剩下编译器的一条未使用警告）。
+                Text(
+                    "命令替换与嵌套执行：已无条件放行",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "\$() 与反引号不再被检查；sh/bash/eval/source 也不再需要单独开关。",
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             DeviceCapability.Ime -> {

@@ -208,27 +208,27 @@ interface ShellWriteBoundary {
 /**
  * The policy guard for the `android_shell` capability (design §23.3).
  *
- * Four refusals, and that is the whole list:
+ * **One refusal, and it is currently empty.** 按用户要求（「没有白名单这一说，只剩一个
+ * 黑名单，然后清空」），这个守卫不再按命令名拒绝任何东西。剩下的是 [hardBlocks] ——
+ * 唯一的策略点 —— 它是一个空列表。所以 [inspect] 实际上只拒绝形状不对的请求
+ * （空命令、超过 4000 字符），其余全部放行。
  *
- *  1. **Command substitution** (`$(...)`, backticks) unless 放宽模式 is on. It
- *     smuggles a command past the per-segment validation below.
- *  2. **The hard blocklist** — ten things, matched anywhere in the command text,
- *     each earning its place by "needs root we do not have, so it can only fail"
- *     or "irreversible device damage if it ever ran". See [hardBlocks].
- *  3. **Unknown commands.** An unrecognised head is refused rather than attempted,
- *     because a blocklist over a device with thousands of binaries is unbounded.
- *     The set is the everyday read *and write* vocabulary of a coding agent — the
- *     user's complaint was that it had grown read-mostly by caution.
- *  4. **Writes outside the workspace.** See [ShellWriteBoundary] for why the
- *     workspace is the boundary and why this replaced the old hardcoded path list.
+ * 曾经在这里的三道拒绝，以及它们去了哪：
  *
- * The hard blocks are matched against the raw text *including inside quotes*.
- * That is intentional: `xargs mount`, `env dd of=/dev/block/...` and
- * `echo | sh -c "settings put ..."` reach a blocked command through an allowed
- * head, and with a widened whitelist only a text-level scan closes that. The cost
- * is that a command which merely mentions one of the tokens (for example
- * `grep mount /proc/mounts`) is refused too; the denial names the rule, so the
- * model can rephrase rather than guess.
+ *  1. **命令替换**（`$(...)`、反引号）——除非开「放宽模式」。**已去掉**，放宽模式
+ *     不再是策略输入。
+ *  2. **白名单**（约 95 个命令头，其余一律拒）。**已去掉**。它比黑名单更常是真正的
+ *     边界：`mount`、`dd`、`setprop`、`su` 都在这里先被拒了，所以只清黑名单从来
+ *     没真的让它们能跑。
+ *  3. **工作区外写入**。**已去掉**。[ShellWriteBoundary] 与 `extractWriteTargets`
+ *     还留在文件里，但不再被调用。
+ *
+ * 守卫去掉**不会**改变命令跑在什么身份上：有 Shizuku 才是 uid 2000，否则是应用自身。
+ * 没有特权就是没有特权 —— `pm`、`dumpsys`、`input`、`screencap` 本来就在旧白名单里，
+ * 以应用身份跑依然报 `SecurityException`。
+ *
+ * [hardBlocks] 的条目匹配的是原文本，**包括引号之内** —— 将来要加回规则，这是能抓到
+ * `xargs mount` 或 `echo | sh -c "..."` 的那一层。
  */
 object DeviceShellGuard {
 
@@ -303,13 +303,13 @@ object DeviceShellGuard {
     private val hardBlocks: List<HardBlock> = emptyList()
 
     /**
-     * @param relaxedShellSyntax the opt-in 放宽模式. Persisted by
-     *   [DeviceCapabilityStore] and reported on `/app/health`, so the Kotlin guard
-     *   and the TypeScript gate read one switch, not two.
-     * @param boundary the workspace. `null` (or an unknown workspace) means the
-     *   write rule cannot be applied and is skipped — the class-2 hard blocks are
-     *   path-independent and still apply.
-     * @return `null` when [command] may run, otherwise the denial to hand back.
+     * @param relaxedShellSyntax 保留在签名里，是为了不动调用点与 `/app/health` 的形状。
+     *   它曾经决定要不要做替换检查；那条检查已经去掉，所以这个值现在**不参与判定**。
+     * @param boundary 工作区。同上：写入边界已去掉，这个值不再参与判定。
+     * @return `null` 表示 [command] 可以跑；否则返回要递交的拒绝。
+     *
+     * 现在只剩一件事会拒绝：[hardBlocks] —— 它是空列表，所以这里实际上只拦形状不对的
+     * 请求（空命令、超长）。类注释里写了去掉的那三道以及为什么。
      */
     fun inspect(
         command: String,
@@ -326,15 +326,8 @@ object DeviceShellGuard {
                 reason = "命令过长（${trimmed.length} 字符，上限 4000）。",
             )
         }
-        if (!relaxedShellSyntax) {
-            if (trimmed.contains('`')) {
-                return substitutionDenial("反引号")
-            }
-            if (trimmed.contains("\$(")) {
-                return substitutionDenial("\$(...)")
-            }
-        }
 
+        // 唯一的策略点。空 —— 所以下面这个循环现在什么也不拦。要加规则往 hardBlocks 里加。
         for (block in hardBlocks) {
             if (block.pattern.containsMatchIn(trimmed)) {
                 return DeviceDenial(
@@ -343,29 +336,6 @@ object DeviceShellGuard {
                     hint = "改用只读查询或其他工具，或告诉用户这步做不到。",
                 )
             }
-        }
-
-        // Split on shell separators and validate every segment's head token, so
-        // `getprop x; rm -rf x` cannot ride on an allowed first head.
-        val segments = splitSegments(trimmed)
-        if (segments.isEmpty()) {
-            return DeviceDenial(DeviceDenial.BAD_REQUEST, "命令为空。")
-        }
-        val heads = if (relaxedShellSyntax) allowedHeads + relaxedOnlyHeads else allowedHeads
-        for (segment in segments) {
-            val head = segment.split(Regex("\\s+")).firstOrNull()?.trim().orEmpty()
-            val normalized = normalizeHead(head)
-            if (normalized.isEmpty() || normalized !in heads) {
-                return DeviceDenial(
-                    code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "命令「$head」不在白名单内，未知命令默认拦截。",
-                    hint = "设备 Shell 只跑白名单；git/npm/构建用工作区内置 bash。",
-                )
-            }
-        }
-
-        if (boundary != null && boundary.isKnown()) {
-            writeBoundaryDenial(trimmed, boundary)?.let { return it }
         }
         return null
     }
@@ -563,29 +533,30 @@ object DeviceShellGuard {
     /** Human-readable hard blocklist, shown verbatim on the authorization page. */
     fun blockedSummary(): List<String> = hardBlocks.map { "${it.what} —— ${it.why}" }
 
-    /** The whitelist, rendered as one line so the page can show what *is* allowed. */
-    fun allowedSummary(): String = allowedCommands.joinToString("、")
+    /**
+     * 白名单已经不参与判定。[allowedCommands] 留着只作目录 —— 它记录了改之前那些
+     * 曾被放行的命令，方便对照，但 `inspect` 不再读它。
+     */
+    fun allowedSummary(): String =
+        "白名单已取消：任何命令头都放行（不再按命令名拒绝）。" +
+            "下面这 ${allowedCommands.size} 个只是改之前放行过的清单，现在不参与判定。"
 
-    /** What the write rule now is, and what it deliberately stopped being. */
+    /** What the write rule now is. */
     fun writeBoundarySummary(): List<String> = listOf(
-        "写入边界 = 用户选定的工作区：工作区之内（含它本身就是 DCIM、Pictures、Download、Android/data 之类目录时）一律不拦。",
-        "工作区之外的写入会被拒。原先那张写死的 DCIM / Pictures / Android-data 黑名单已经删掉 —— 它既挡了用户本来就交出去的东西，也没说明工作区之外还有什么。",
-        "读取不受此限：dumpsys、getprop、ls /sdcard 这类查询指向哪里都可以。",
-        "android_download 与 android_files（SAF）是独立端点，各自的确认与授权覆盖它们，不受这条写入边界约束。",
+        "写入边界已取消：不再限制只能写工作区。",
+        "ShellWriteBoundary 与 extractWriteTargets 仍在代码里，但 inspect 不再调用它们。",
+        "android_download 与 android_files（SAF）是独立端点，一直不受这条约束。",
     )
 
     /** Where the syntax policy stands right now. */
-    fun syntaxSummary(relaxedShellSyntax: Boolean): List<String> =
-        if (relaxedShellSyntax) {
-            listOf("放宽模式：已开启。$RELAXED_COST")
-        } else {
-            listOf(
-                "放宽模式：已关闭（默认）。\$(...) 与反引号会被拒绝；sh/bash/eval/source 也不在白名单里。",
-            )
-        }
+    fun syntaxSummary(relaxedShellSyntax: Boolean): List<String> = listOf(
+        "命令替换检查已取消：\$(...) 与反引号一律放行，与放宽模式开关无关。",
+        "sh/bash/dash/ash/busybox/eval/exec/source 也不再需要单独开关。",
+    )
 
     /** The sentence the UI shows next to the relaxed-mode switch. */
-    fun relaxedCost(): String = RELAXED_COST
+    fun relaxedCost(): String =
+        "放宽模式已无作用：它控制的那两条（命令替换检查、白名单）都已取消。"
 
     private fun splitSegments(command: String): List<String> = command
         .replace("&&", ";")

@@ -1224,7 +1224,17 @@ class DeviceBridgeRouter(
         put("gate", DeviceApprovalLedger.toJson())
         // The whole policy, so a model (and the diagnostics page) can see exactly
         // what is permitted instead of inferring it from refusals.
+        //
+        // `enforced=false` is the headline now: the whitelist, the substitution rule
+        // and the write boundary were all removed from `DeviceShellGuard.inspect` at
+        // the user's request, leaving `hardBlocks` (empty) as the only policy point.
+        // `allowedCommands` stays as a catalog of what used to be allowed — the guard
+        // no longer reads it, and saying so is the difference between a model that
+        // knows it may run anything and one that keeps rephrasing to fit a list that
+        // is not being consulted.
         put("shellPolicy", JSONObject().apply {
+            put("enforced", false)
+            put("note", "白名单、命令替换检查、写入边界均已取消；唯一策略点 hardBlocks 当前为空，因此不再按命令拒绝任何东西。")
             put("allowedCommands", JSONArray(DeviceShellGuard.allowedCommands))
             put("blocked", JSONArray(DeviceShellGuard.blockedSummary()))
             put("writeBoundary", JSONArray(DeviceShellGuard.writeBoundarySummary()))
