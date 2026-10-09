@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.util.Size
 import android.view.Gravity
 import android.view.KeyEvent
@@ -17,13 +18,13 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedText
 import android.view.inputmethod.ExtractedTextRequest
-import android.view.inputmethod.InlinePresentationSpec
 import android.view.inputmethod.InlineSuggestionsRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.inline.InlinePresentationSpec
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.ArrayDeque
@@ -525,6 +526,52 @@ class PiInputMethodService : InputMethodService() {
         synchronized(lock) {
             buffer.addLast(entry)
             while (buffer.size > MAX_HISTORY) buffer.removeFirst()
+        }
+    }
+
+    /**
+     * 把一个 EditorInfo.inputType 归纳成给模型看的字段类型。
+     *
+     * 只有一条判断是安全相关的：**是不是密码框** —— 它决定这一路的输入内容要不要抹掉
+     * （见 [Entry] 的 redacted 字段：密码框的审计只留「发生过一次输入」，不留文本）。
+     * 所以密码的判定必须盖住平台全部写法：文本类的 PASSWORD 与 VISIBLE_PASSWORD、
+     * 文本类 Web 的 WEB_PASSWORD、以及数字类的 PASSWORD。漏掉任何一种，那条输入就会
+     * 带着明文落到历史里 —— 这是本文件唯一“漏一个就出事”的地方。
+     *
+     * 其余取值只是给模型一个提示（number / phone / email 还是单纯的 text），猜错了不
+     * 影响任何行为。
+     */
+    private fun fieldKind(inputType: Int): String {
+        val cls = inputType and InputType.TYPE_MASK_CLASS
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        if (cls == InputType.TYPE_CLASS_TEXT) {
+            return when (variation) {
+                InputType.TYPE_TEXT_VARIATION_PASSWORD,
+                InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+                InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+                -> "password"
+
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+                InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
+                -> "email"
+
+                InputType.TYPE_TEXT_VARIATION_URI -> "uri"
+                InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE -> "message"
+                InputType.TYPE_TEXT_VARIATION_LONG_MESSAGE -> "longMessage"
+                InputType.TYPE_TEXT_VARIATION_PERSON_NAME -> "personName"
+                InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS -> "address"
+                else -> "text"
+            }
+        }
+        return when (cls) {
+            // 数字类也有密码变体（PIN 码输入框就是它）。
+            InputType.TYPE_CLASS_NUMBER ->
+                if (variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD) "password" else "number"
+
+            InputType.TYPE_CLASS_PHONE -> "phone"
+            InputType.TYPE_CLASS_DATETIME -> "datetime"
+            InputType.TYPE_NULL -> "none"
+            else -> "unknown"
         }
     }
 

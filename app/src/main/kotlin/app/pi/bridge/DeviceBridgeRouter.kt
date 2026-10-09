@@ -1157,7 +1157,10 @@ class DeviceBridgeRouter(
         // 要知道的细节，丢了它，用户只知道「没成功」而不知道该看哪个包。
         val failed = result.optJSONArray("failed")
         val detail = if (failed != null && failed.length() > 0) {
-            failed.joinToString("、") { it.toString() }
+            // JSONArray 不是 Iterable，直接 joinToString 是解析不到的 —— 按下标取成列表再拼。
+            (0 until failed.length())
+                .map { failed.opt(it)?.toString().orEmpty() }
+                .joinToString("、")
         } else {
             null
         }
