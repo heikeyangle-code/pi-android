@@ -2840,7 +2840,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 8. 点了一下但界面没反应，别急着换坐标重试：先用 **\`verify\`** 看那个坐标上到底是什么、它有没有可点击的祖先链 —— 有点不动的，也有点到了空处的。
 9. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
 10. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
-``,
+`,
 
 	"references/tools.md": `# 工具
 
