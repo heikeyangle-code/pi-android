@@ -132,6 +132,7 @@ export default function (pi: ExtensionAPI) {
 		if (toolName === "android_shell") {
 			const command = typeof input.command === "string" ? input.command : "";
 			approvalReason = needsApproval(command);
+		}
 
 		if (toolName === "android_shell") {
 			// A tool with its own rule: a call that matched none of them runs silently.

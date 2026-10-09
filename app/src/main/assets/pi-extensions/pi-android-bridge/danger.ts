@@ -285,6 +285,3 @@ export function needsApproval(command: string): ApprovalRule | null {
 	return null;
 }
 
-	return null;
-}
-
