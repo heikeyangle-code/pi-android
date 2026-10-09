@@ -94,6 +94,97 @@ class DeviceBridgeRouter(
                     )
                 }
 
+                // ---------------------------------------------- 可靠性（波1 的对接面）----
+                //
+                // 这一批是 DeviceUiAutomation 里写好、但此前**没有任何端点能到达**的函数：
+                // 结构化元素表、差分、自愈多策略选择器、空闲等待、UI 宏与 App 记忆、视觉交接。
+                // 没有这一段，那些代码就是死代码 —— 模型一个字都摸不到。
+
+                "/app/ui/elements" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.elements(
+                        service = service,
+                        maxNodes = params.int("maxNodes", DeviceUiAutomation.DEFAULT_MAX_NODES),
+                        maxDepth = params.int("maxDepth", 32),
+                    )
+                }
+
+                "/app/ui/diff" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.diffSinceLast(
+                        service = service,
+                        maxNodes = params.int("maxNodes", DeviceUiAutomation.DEFAULT_MAX_NODES),
+                        maxDepth = params.int("maxDepth", 32),
+                    )
+                }
+
+                "/app/ui/select" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.select(
+                        service = service,
+                        query = DeviceUiAutomation.Query(
+                            resourceId = params.strAny("resourceId", "id"),
+                            text = params.str("text"),
+                            description = params.strAny("description", "desc"),
+                            packageName = params.strAny("packageName", "package"),
+                            className = params.strAny("className", "class"),
+                            anchorText = params.strAny("anchorText", "anchor"),
+                            direction = params.str("direction"),
+                            occurrence = params.intOrNull("occurrence"),
+                            clickableOnly = params.bool("clickableOnly", false),
+                            x = params.intOrNull("x"),
+                            y = params.intOrNull("y"),
+                        ),
+                        timeoutMs = params.int("timeoutMs", 0),
+                    )
+                }
+
+                "/app/ui/idle" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.waitForIdle(
+                        service = service,
+                        timeoutMs = params.int("timeoutMs", 5000),
+                    )
+                }
+
+                "/app/ui/memory" -> withCapability(DeviceCapability.Accessibility) {
+                    DeviceUiAutomation.appMemory(params.str("package"))
+                }
+
+                "/app/ui/visual" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.visualFallback(
+                        service = service,
+                        target = params.str("target").orEmpty(),
+                        screenshotBase64 = params.str("screenshotBase64"),
+                        maxDimension = params.int("maxDimension", 1280),
+                    )
+                }
+
+                "/app/ui/macro/start" -> withCapability(DeviceCapability.Accessibility) {
+                    DeviceUiAutomation.startRecording(params.str("name") ?: "recipe")
+                }
+
+                "/app/ui/macro/step" -> withCapability(DeviceCapability.Accessibility) {
+                    DeviceUiAutomation.recordStep(params.body())
+                }
+
+                "/app/ui/macro/stop" -> withCapability(DeviceCapability.Accessibility) {
+                    DeviceUiAutomation.stopRecording()
+                }
+
+                "/app/ui/macro/play" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    val recipe = params.body().optJSONObject("recipe") ?: DeviceUiAutomation.recipe()
+                        ?: throw DeviceActionException(
+                            DeviceDenial(
+                                DeviceDenial.BAD_REQUEST,
+                                "没有可回放的 recipe：在 body 里给 recipe，或先录一段（macro/start → step → stop）。",
+                            ),
+                        )
+                    runBlocking { DeviceUiAutomation.play(recipe, service) }
+                }
+
                 "/app/ui/tap" -> withCapability(DeviceCapability.Accessibility) {
                     val service = requireAccessibilityService()
                     runBlocking {

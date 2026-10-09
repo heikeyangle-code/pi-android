@@ -413,14 +413,24 @@ const AppAction = Type.Union(
 const UiAction = Type.Union(
 	[
 		Type.Literal("dump"),
+		Type.Literal("elements"),
+		Type.Literal("diff"),
+		Type.Literal("select"),
+		Type.Literal("idle"),
 		Type.Literal("tap"),
 		Type.Literal("swipe"),
 		Type.Literal("input"),
 		Type.Literal("key"),
 		Type.Literal("keyevent"),
 		Type.Literal("screenshot"),
+		Type.Literal("memory"),
+		Type.Literal("visual"),
+		Type.Literal("macroStart"),
+		Type.Literal("macroStep"),
+		Type.Literal("macroStop"),
+		Type.Literal("macroPlay"),
 	],
-	{ description: "dump=read tree, tap, swipe/scroll, input=type, key=global action, keyevent=raw keys (Shizuku), screenshot." },
+	{ description: "dump=read tree, elements=structured table, diff=changes since last dump, select=self-healing multi-strategy lookup, idle=wait for the tree to settle, tap, swipe, input=type, key=global action, keyevent=raw keys (Shizuku), screenshot, memory=per-app element memory, visual=screenshot handoff, macroStart/Step/Stop/Play=record and replay a recipe." },
 );
 
 const IoAction = Type.Union(
@@ -594,6 +604,28 @@ const UI_ACTIONS: Record<string, string> = {
 	screenshot: "android_screenshot",
 };
 
+/**
+ * action → 端点：那些**没有细粒度工具**的动作直接打端点。
+ *
+ * 波1 给 [DeviceUiAutomation] 写了一整套可靠性函数（结构化元素表、差分、自愈选择器、
+ * 空闲等待、UI 宏、App 记忆、视觉交接），但没有一个只为了转发而存在的
+ * `DeviceToolSpec`。曾经它们因此完全够不到 —— 函数在、端点没挂、action 表里也没有。
+ * 这里把它们接到端点上，机制与 `UI_ACTIONS` 一致（同样走 `dispatch` 的校验），
+ * 区别只是不经过一个中间工具。
+ */
+const UI_DIRECT: Record<string, string> = {
+	elements: "/app/ui/elements",
+	diff: "/app/ui/diff",
+	select: "/app/ui/select",
+	idle: "/app/ui/idle",
+	memory: "/app/ui/memory",
+	visual: "/app/ui/visual",
+	macroStart: "/app/ui/macro/start",
+	macroStep: "/app/ui/macro/step",
+	macroStop: "/app/ui/macro/stop",
+	macroPlay: "/app/ui/macro/play",
+};
+
 const IO_ACTIONS: Record<string, string> = {
 	clipboard: "android_clipboard",
 	say: "android_say",
@@ -660,19 +692,30 @@ function requireText(tool: string, action: string, params: Record<string, unknow
 	}
 }
 
-/** 展开一个 action 表：非法 action 抛 `[BAD_PARAM]`，必填项缺失也抛。 */
+/** 展开一个 action 表：非法 action 抛 `[BAD_PARAM]`，必填项缺失也抛。
+ *
+ * `direct` 是「没有细粒度工具、直接打端点」的那一组（见 `UI_DIRECT`）。它和 `actions`
+ * 共用同一套 action 名校验与必填项校验，只是最后不经过 `deviceTool()`。
+ */
 async function dispatch(
 	tool: string,
 	actions: Record<string, string>,
 	required: Record<string, string[]>,
 	params: Record<string, unknown>,
 	ctx: ExtensionContext,
+	direct: Record<string, string> = {},
 ): Promise<ToolOutcome> {
 	const action = typeof params.action === "string" ? params.action : "";
-	const target = actions[action];
-	if (target === undefined) throw badParam(tool, "action", Object.keys(actions), params.action);
+	const endpoint = direct[action];
+	if (endpoint === undefined && actions[action] === undefined) {
+		throw badParam(tool, "action", [...Object.keys(actions), ...Object.keys(direct)], params.action);
+	}
 	requireText(tool, action, params, required[action] ?? []);
-	return deviceTool(target).run(withoutAction(params), ctx);
+	if (endpoint !== undefined) {
+		const data = await bridgePost<Record<string, unknown>>(endpoint, withoutAction(params));
+		return textResult(JSON.stringify(data, null, 2), data);
+	}
+	return deviceTool(actions[action]).run(withoutAction(params), ctx);
 }
 
 /** 一个状态字段的显示值：缺字段显示 `?`（而不是 `undefined`），对象按 JSON 摆出来。 */
@@ -905,10 +948,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_ui",
 		capability: "accessibility",
 		label: "屏幕操作",
-		description: "Screen: action=dump|tap|swipe|input|key|keyevent|screenshot. Dump first; its indices feed tap and input.",
+		description: "Screen: action=dump|elements|diff|select|idle|tap|swipe|input|key|keyevent|screenshot|memory|visual|macroStart|macroStep|macroStop|macroPlay. Dump first; its indices feed tap and input.",
 		promptSnippet: "Read screen / tap / type / swipe / screenshot",
 		promptGuidelines: [
 			"Dump before acting; on NOT_FOUND re-dump or pass text/desc/resourceId to action=tap.",
+			"action=select tries resourceId→text→desc→neighbour→relative position→coordinate and reports why each strategy failed; action=idle waits for the tree to settle; action=diff reports only added/removed/changed since the last dump.",
+			"macroStart → macroStep（每步一个动作）→ macroStop 录一段配方；macroPlay 回放，回放时按当前屏幕重新解析选择器。",
 			"Custom UI / games / video: action=screenshot (crop with region); raw keys need Shizuku.",
 		],
 		parameters: Type.Object({
@@ -958,7 +1003,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			),
 			marks: Type.Optional(Type.Boolean({ description: "screenshot: draw the last dump's clickable indices, default false." })),
 		}),
-		run: (params, ctx) => dispatch("android_ui", UI_ACTIONS, UI_REQUIRED, params, ctx),
+		run: (params, ctx) => dispatch("android_ui", UI_ACTIONS, UI_REQUIRED, params, ctx, UI_DIRECT),
 	},
 	{
 		name: "android_ui_dump",
@@ -2755,25 +2800,55 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 	"references/ui.md": `# 屏幕与输入（android_ui）
 
+## 看清屏幕
+
 | action | 做什么 | 关键参数 |
 |---|---|---|
-| \`dump\` | 读屏幕控件树（带编号） | filter、maxNodes、diff、waitForText/waitForId/waitMs |
+| \`dump\` | 读控件树（带编号） | filter、maxNodes、diff、waitForText/waitForId/waitMs |
+| \`elements\` | 结构化元素表（可操作元素 + 中心点），比 dump 更适合拿来判断 | maxNodes、maxDepth |
+| \`diff\` | 只报「相对上一次 dump 的新增 / 消失 / 变化」——屏幕只小改时省 token | maxNodes、maxDepth |
+| \`idle\` | 等界面稳定（控件树连续两次不变才算空闲），别用 sleep | timeoutMs |
+| \`select\` | **自愈查找**：resourceId→text→desc→邻居文本→相对位置→坐标，逐个试并回报每个策略为什么失败 | text/desc/resourceId/anchor/direction/occurrence/timeoutMs |
+| \`memory\` | 这个应用里见过哪些元素、各自能做什么 | package |
+
+## 动作
+
+| action | 做什么 | 关键参数 |
+|---|---|---|
 | \`tap\` | 点按 | index，或 x/y，或 text/desc/resourceId；longPress |
 | \`swipe\` | 坐标滑动，或滚动控件 | x1/y1/x2/y2/durationMs，或 direction+index/text/resourceId |
 | \`input\` | 向输入框写文本 | text，index/desc/resourceId，submit |
 | \`key\` | 全局动作 | key = back/home/recents/notifications/quicksettings/powermenu/lock/screenshot/split |
 | \`keyevent\` | 注入原始按键（要 ADB 身份） | keys、repeat |
-| \`screenshot\` | 截屏（Android 11+） | format、maxDimension、quality、region、marks |
 
-规则：
+## 录一段，以后一键回放
 
-1. 先 dump 再动作。编号只在最近一次 dump 里有效；能按 text/desc/resourceId 定位就别记编号。
-2. 每个动作的返回都带「前台 A → B」和「屏幕已变化 / 没有变化」。说没有变化就是真没生效，别当成功报。
-3. NOT_FOUND 是选择器没命中：换 text/desc/resourceId，或用 waitForText/waitForId 等它出现。
-4. 画布/游戏/视频这类读到不内容的界面用 screenshot；小字用 region 裁，看不清就调大 maxDimension 或改 png。
-5. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
-6. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
-`,
+| action | 做什么 |
+|---|---|
+| \`macroStart\` | 开始录制（name） |
+| \`macroStep\` | 记一步（body 就是那一步：action + 选择器） |
+| \`macroStop\` | 停止并返回配方 |
+| \`macroPlay\` | 回放；回放时按当前屏幕**重新解析选择器**（锚点自愈），单步失败有界重试 |
+
+## 其他
+
+| action | 做什么 |
+|---|---|
+| \`screenshot\` | 截屏（Android 11+）：format、maxDimension、quality、region、marks |
+| \`visual\` | 视觉兜底：把「截图 + 目标描述」打包交给上层判断（本组件不调模型） |
+
+## 规则
+
+1. 先 dump / elements 再动作。编号只在最近一次 dump 里有效；能按 text/desc/resourceId 定位就别记编号。
+2. 找不到元素时用 **\`select\`**：它按稳定性从高到低逐个策略试，并告诉你每个为什么失败 —— 比反复 dump 一次一次猜快。
+3. 界面在加载或动画时别急着点：用 **\`idle\`** 等它稳定，或用 dump 的 waitForText / waitForId。
+4. 屏幕只变了一点时用 **\`diff\`**（只报变化），别重新 dump 整棵树。
+5. 同一串操作要做很多遍 → **录成宏**（macroStart → macroStep → macroStop → macroPlay）。
+6. 每个动作的返回都带「前台 A → B」和「屏幕已变化 / 没有变化」。说没有变化就是真没生效，别当成功报。
+7. 画布 / 游戏 / 视频这类读不到内容的界面：用 \`screenshot\`（region 裁、调 maxDimension），或 **\`visual\`** 交上层。
+8. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
+9. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
+``,
 
 	"references/tools.md": `# 工具
 
