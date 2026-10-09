@@ -52,6 +52,21 @@ export type DangerLevel = "read" | "control" | "dangerous";
 export const DEVICE_TOOL_PREFIX = "android_";
 
 export const DANGER_LEVELS: Record<string, DangerLevel> = {
+	// --- direct：常驻，进提示词 ----------------------------------------------
+	//
+	// 合并后的工具若按「各分支里最高的那一级」记，`android_ui` / `android_io` /
+	// `android_fs` / `android_app` 都会变成 `dangerous` —— 而它们绝大多数调用是
+	// 读屏、点一下、存个文件。每次都弹窗等于把确认变成条件反射，真正的确认也
+	// 就不值钱了。所以只有 `android_shell` 留在 `dangerous`，其余四个是 `control`；
+	// 需要用户过目的不可逆命令由 `needsApproval` 在 shell 那一支单独收窄。
+	android_status: "read",
+	android_ui: "control",
+	android_app: "control",
+	android_io: "control",
+	android_fs: "control",
+	android_shell: "dangerous",
+
+	// --- deferred：注册着但不进提示词，`tool_search` 按需激活 -----------------
 	android_bridge_status: "read",
 	android_ui_dump: "read",
 	android_screenshot: "read",
@@ -64,17 +79,14 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	android_say: "control",
 	android_vibrate: "control",
 	android_clipboard: "control",
-	android_app: "control",
 	android_torch: "control",
-
-	android_input: "dangerous",
-	android_keyevent: "dangerous",
-	android_stop_app: "dangerous",
-	android_share: "dangerous",
-	android_open: "dangerous",
-	android_download: "dangerous",
-	android_files: "dangerous",
-	android_shell: "dangerous",
+	android_input: "control",
+	android_keyevent: "control",
+	android_stop_app: "control",
+	android_share: "control",
+	android_open: "control",
+	android_download: "control",
+	android_files: "control",
 };
 
 export const DANGEROUS_TOOLS: readonly string[] = Object.entries(DANGER_LEVELS)
@@ -120,7 +132,7 @@ function truncate(value: string, max: number): string {
 export function describeDangerousCall(toolName: string, input: Record<string, unknown>): string {
 	switch (toolName) {
 		case "android_shell":
-			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令受白名单、硬性禁用清单与「工作区写入边界」限制；以当前 Shell 后端身份运行（装了 Shizuku 就是 ADB 级 uid=2000，否则是应用自身身份）。`;
+			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令受命令白名单与「工作区写入边界」限制，放宽模式放宽的只是命令替换与嵌套执行的语法；以当前 Shell 后端身份运行（装了 Shizuku 就是 ADB 级 uid=2000，否则是应用自身身份）。`;
 		case "android_stop_app":
 			return `结束应用：\n\n  ${asString(input, "package")}\n\n后台进程会被结束，未保存的内容可能丢失。`;
 		case "android_share":
@@ -148,45 +160,24 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
  * The device shell's **hard blocklist**, mirrored from the Kotlin guard
  * (`DeviceShellGuard.hardBlocks`).
  *
- * The bridge enforces this too — that copy is the authoritative one, because the
- * app must not depend on an extension to stay safe. This one exists so an obviously
- * forbidden command is refused *without* bothering the user with a confirmation
- * dialog for something that can never be allowed. The two lists are deliberately
- * identical in *coverage* and deliberately short: each entry earns its place by
- * "needs privilege the app does not have, so it can only fail" or "irreversible
- * device damage if it ever ran". A path-based rule does **not** belong here — the
- * workspace is the write boundary, and it is enforced on the Kotlin side where it
- * cannot be bypassed.
+ * **It is empty, and deliberately so.** The device shell *asks* now instead of
+ * refusing: an irreversible command is put in front of the user through
+ * `needsApproval` below, and everything else is the whitelist's and the workspace
+ * write boundary's business — both enforced inside the app process, where the guest
+ * cannot bypass them. A pre-filter only earned its place by "this can never be
+ * allowed"; there is no such command left, so there is no rule left.
  *
- * **One honest difference from the Kotlin list:** eleven of the twelve patterns
- * here carry the `i` flag, and the Kotlin `Regex`es are case-sensitive. So this
- * pre-filter also refuses `MOUNT` / `DD`-style spellings that the authoritative
- * guard would let through (where they simply fail: `MOUNT` is not a binary). That
- * asymmetry is left alone rather than "aligned": tightening the Kotlin guard would
- * refuse prose that merely mentions a token, and loosening this one would gain
- * nothing the guard does not already cover.
- *
- * The two lists are compared mechanically by the `shell-policy-mirror` bare-JVM
- * harness (`app/src/test/kotlin/app/pi/bridge/ShellPolicyMirrorCheck.kt`, run by
+ * The Kotlin list is empty with it. The two are compared mechanically by the
+ * `shell-policy-mirror` bare-JVM harness
+ * (`app/src/test/kotlin/app/pi/bridge/ShellPolicyMirrorCheck.kt`, run by
  * `tools/run-app-pure-checks.sh`), which fails when either side gains, loses or
- * renames a rule. The `i` flags are deliberately not part of that comparison.
+ * renames a rule — so a rule added back on one side alone is caught.
+ *
+ * Two shapes that still do not belong here if the list is ever repopulated: a
+ * path-based rule (the workspace is the write boundary, enforced on the Kotlin side
+ * where it cannot be bypassed) and a rule for something that can only fail.
  */
-export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
-	{ pattern: /(^|[\s;&|()])mount(\s|$)/i, label: "挂载/卸载文件系统（需要 root，只会失败）" },
-	{ pattern: /(^|[\s;&|()])umount(\s|$)/i, label: "挂载/卸载文件系统（需要 root，只会失败）" },
-	{ pattern: /\bsetenforce\b/i, label: "修改 SELinux 状态（需要 root）" },
-	{ pattern: /\bsetprop\b/i, label: "修改系统属性，或改设备设置（硬性策略）" },
-	{ pattern: /\bsettings\s+(put|delete|reset)\b/i, label: "修改系统设置（硬性策略）" },
-	{ pattern: /\bmknod\b/i, label: "创建设备节点（需要 root）" },
-	{ pattern: /\bdd\b/i, label: "裸写入，可能覆盖分区或整盘数据" },
-	{ pattern: /\bmkfs(\.[a-z0-9]+)?(\s|$)/i, label: "格式化文件系统（不可逆）" },
-	{ pattern: /\bpm\s+(clear|uninstall)\b/i, label: "清除应用数据或卸载应用（不可逆）" },
-	{ pattern: /\bcmd\s+package\s+(clear|uninstall)\b/i, label: "清除应用数据或卸载应用（不可逆）" },
-	{ pattern: /(^|[\s;&|()])(su|sudo|magisk)(\s|$)/i, label: "提权（root）" },
-	// Note: no leading \b here — there is no word boundary between a space and a
-	// slash, so /\/dev\/block\b/ can never match. The harness caught that.
-	{ pattern: /\/dev\/block/, label: "访问块设备（写入等于改分区）" },
-];
+export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [];
 
 /**
  * The syntax the 放宽模式 switch (「设置 → 设备能力 → Shell」) turns on.
@@ -201,6 +192,43 @@ export const RELAXED_ONLY_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: stri
 	{ pattern: /`/, label: "命令替换（反引号）" },
 	{ pattern: /\$\(/, label: "命令替换 $(...)" },
 ];
+
+/**
+ * The shell commands the user is asked to approve: the **irreversible** ones, and
+ * only those.
+ *
+ * This is the whole of the device shell's danger list — `FORBIDDEN_SHELL_PATTERNS`
+ * above refuses nothing any more — so the judgement "should the user see this
+ * before it runs?" lives here. Each entry earns its place by "the damage cannot be
+ * undone":
+ *
+ *  - `dd` writes over whatever it is pointed at, up to a whole block device;
+ *  - `mkfs` formats a filesystem;
+ *  - a path under `/dev/block` reaches the partitions behind the filesystems;
+ *  - `pm clear` / `cmd package clear` delete an app's entire data directory.
+ *
+ * The `dd` pattern requires whitespace after the command word on purpose. `/\bdd\b/i`
+ * also matched `dd.txt` and `ls dd`, so the dialog asked about a file name; a
+ * confirmation that fires on the wrong thing is how a confirmation becomes a reflex.
+ */
+export const NEEDS_APPROVAL_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+	{ pattern: /(^|[\s;&|()])dd\s/, label: "裸写入：目标若指向分区或整盘会被直接覆盖，数据无法恢复" },
+	{ pattern: /\bmkfs(\.[a-z0-9]+)?(\s|$)/i, label: "格式化文件系统（不可逆，该分区上的数据全部丢失）" },
+	{ pattern: /\/dev\/block/, label: "访问块设备：写入等于改分区表，可能让设备无法启动" },
+	{ pattern: /\bpm\s+clear\b/i, label: "清除应用数据（不可逆：该应用的全部数据会被删光）" },
+	{ pattern: /\bcmd\s+package\s+clear\b/i, label: "清除应用数据（不可逆：该应用的全部数据会被删光）" },
+];
+
+/**
+ * @returns the label of the rule the command matched — the consequence to show the
+ *   user — or null when the command may run without a confirmation.
+ */
+export function needsApproval(command: string): string | null {
+	for (const { pattern, label } of NEEDS_APPROVAL_SHELL_PATTERNS) {
+		if (pattern.test(command)) return label;
+	}
+	return null;
+}
 
 /**
  * @param relaxed the 放宽模式 flag, read from `/app/health`. When the bridge cannot

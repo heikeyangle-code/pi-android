@@ -117,9 +117,13 @@ private fun tokens(pattern: String): List<String> {
 
 /** Kotlin: `HardBlock(Regex("<source>"), "what", "why")` inside `hardBlocks`. */
 private fun kotlinBlocks(text: String): List<Block> {
-    val listStart = text.indexOf("private val hardBlocks: List<HardBlock> = listOf(")
+    // Matched up to `= `, not to `listOf(`: after the user asked for every hard block
+    // to be dropped the declaration is `emptyList()`, and this must parse to zero
+    // blocks instead of tripping the `require` below. Both sides being empty is now
+    // the expected state, and the length check below still fails if only one is.
+    val listStart = text.indexOf("private val hardBlocks: List<HardBlock> = ")
     require(listStart >= 0) {
-        "DeviceShell.kt no longer declares `private val hardBlocks: List<HardBlock> = listOf(` — " +
+        "DeviceShell.kt no longer declares `private val hardBlocks: List<HardBlock> = …` — " +
             "this check reads that declaration by name; re-read bridge/DeviceShell.kt."
     }
     val body = text.substring(listStart)

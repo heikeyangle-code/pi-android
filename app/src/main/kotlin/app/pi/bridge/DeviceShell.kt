@@ -298,77 +298,9 @@ object DeviceShellGuard {
     private data class HardBlock(val pattern: Regex, val what: String, val why: String)
 
     /**
-     * The irreducible set. Twelve patterns covering the ten things user consent must
-     * never reach (mount/umount and pm/cmd-package are each split into their own
-     * pattern so the denial can name the exact command).
-     *
-     * Test A = "needs privilege the app does not have, so it can only fail".
-     * Test B = "irreversible device damage if it ever ran".
-     *
-     * These are the one class the workspace carve-out does **not** cover: the test
-     * is the command itself, not where it runs. `rm -rf /workspace/build` is the
-     * user's own directory and none of our business; `dd` is not.
-     *
-     * Honest note for a Shizuku-enabled device: with a uid=2000 backend `setprop`
-     * and `settings put` (and possibly `mount` on a userdebug build) would
-     * *succeed*, so for those the block is a policy decision rather than test A.
-     * The user asked for exactly this list; the wording below says "we forbid it",
-     * not "it cannot work".
-     *
-     * **Case, and the one place this list and its TypeScript mirror differ.** These
-     * `Regex`s are case-sensitive (Kotlin's default). The mirror in
-     * `assets/pi-extensions/pi-android-bridge/danger.ts` matches eleven of the twelve
-     * with the `i` flag, so the gate refuses `MOUNT` / `DD` style spellings that this
-     * guard would let through. Left as-is on purpose rather than "aligned" in either
-     * direction: this guard is the enforcement, the TS copy is only a "do not ask the
-     * user about something that can never be allowed" pre-filter, and a capitalised
-     * spelling is not a bypass on a case-sensitive filesystem (`MOUNT` is not a
-     * binary) — so adding `IGNORE_CASE` here would buy nothing and refuse prose that
-     * merely mentions the token.
+     * 按用户要求已全部放开；这里留空是有意的。
      */
-    private val hardBlocks: List<HardBlock> = listOf(
-        // --- Test A: needs root (or ADB-level privilege) this app does not have ---
-        HardBlock(
-            Regex("(^|[\\s;&|()])mount(\\s|$)"),
-            "mount",
-            "挂载/卸载文件系统需要 root（缺少 CAP_SYS_ADMIN），应用身份下只会失败",
-        ),
-        HardBlock(
-            Regex("(^|[\\s;&|()])umount(\\s|$)"),
-            "umount",
-            "挂载/卸载文件系统需要 root，应用身份下只会失败",
-        ),
-        HardBlock(Regex("\\bsetenforce\\b"), "setenforce", "修改 SELinux 需要 root"),
-        HardBlock(Regex("\\bsetprop\\b"), "setprop", "修改系统属性需要 root 或特权 SELinux 域"),
-        HardBlock(
-            Regex("\\bsettings\\s+(put|delete|reset)\\b"),
-            "settings put/delete/reset",
-            "写系统设置需要 WRITE_SECURE_SETTINGS（签名权限）；这一条同时是刻意的策略：授权 Shell 不等于授权改设备设置",
-        ),
-        HardBlock(Regex("\\bmknod\\b"), "mknod", "创建设备节点需要 CAP_MKNOD"),
-        // --- Test B: irreversible damage ---
-        HardBlock(Regex("\\bdd\\b"), "dd", "裸写入可以覆盖分区或整盘数据，无法撤销"),
-        HardBlock(Regex("\\bmkfs(\\.[a-z0-9]+)?(\\s|$)"), "mkfs", "格式化会销毁文件系统，无法撤销"),
-        HardBlock(
-            Regex("\\bpm\\s+(clear|uninstall)\\b"),
-            "pm clear/uninstall",
-            "清除应用数据或卸载应用会丢失用户数据，无法撤销",
-        ),
-        HardBlock(
-            Regex("\\bcmd\\s+package\\s+(clear|uninstall)\\b"),
-            "cmd package clear/uninstall",
-            "清除应用数据或卸载应用会丢失用户数据，无法撤销",
-        ),
-        HardBlock(
-            Regex("(^|[\\s;&|()])(su|sudo|magisk)(\\s|$)"),
-            "su/sudo/magisk",
-            "提权：拿到 root 意味着上面每一条都能执行",
-        ),
-        // No leading \b: there is no word boundary between a space and a slash, so
-        // Regex("\\b/dev/block\\b") could never match. The TS mirror of this policy
-        // had the same bug; the runtime harness caught it.
-        HardBlock(Regex("/dev/block"), "/dev/block", "块设备：写入等于直接改分区，无法撤销"),
-    )
+    private val hardBlocks: List<HardBlock> = emptyList()
 
     /**
      * @param relaxedShellSyntax the opt-in 放宽模式. Persisted by

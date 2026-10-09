@@ -16,12 +16,16 @@
  *  - errors are signalled by **throwing**, and the thrown message is already the
  *    Chinese explanation plus the user's next step, because a disabled capability
  *    must never be a silent failure;
+ *  - six tools are *declared* to the model — `android_status`, `android_ui`, `android_app`,
+ *    `android_io`, `android_fs`, `android_shell` — and every finer-grained tool they expand
+ *    into stays registered with `exposure: "deferred"`, so `tool_search` can still reach it
+ *    without its schema and description being paid for on every turn;
  *  - every tool truncates its own output with pi's own utilities (50KB / 2000
  *    lines) and says when it did;
  *  - string enums use `StringEnum` for Google API compatibility.
  */
 
-import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, ToolNamespace } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -159,7 +163,8 @@ function badParam(tool: string, param: string, allowed: string[], got: unknown):
 
 /**
  * 设备能力分组的 id，与 App 侧 `bridge/DeviceCapability.kt` 的 `id` 一一对应
- * （`basic` / `storage` / `accessibility` / `sensors` / `shell`，共 5 组）。
+ * （`basic` / `accessibility` / `shell`，共 3 组）。原来的 `storage` 与 `sensors`
+ * 两组已并入 `basic`，所以文件、位置、传感器、手电筒这些工具现在都挂在 `basic` 上。
  *
  * 这里是一份**抄写**，不是第二份真相：注册时拿它去 `/app/health` 的
  * `capabilities[].id` 里查状态，而那份 JSON 就是授权页和桥端点共用的
@@ -178,6 +183,12 @@ interface DeviceToolSpec {
 	 * `withCapability(...)` 包着，以及能力卡上 `DeviceCapability.kt` 的 `allows` 文案。
 	 */
 	capability: DeviceCapabilityId | null;
+	/**
+	 * 进不进提示词。`direct` = 常驻：每次请求都声明它的 schema 与 description；
+	 * `deferred` = 注册但不声明，`tool_search` 能找到并按需激活（pi 的 `ToolExposure`，
+	 * 见 `docs/extensions.md` 的 “Tool exposure”）。
+	 */
+	exposure: "direct" | "deferred";
 	label: string;
 	description: string;
 	promptSnippet: string;
@@ -383,11 +394,166 @@ const ScreenshotFormat = StringEnum(["jpeg", "png"] as const, {
 	description: "Image format: jpeg is smaller (default), png is lossless.",
 });
 
+/**
+ * 四个合并工具（`android_ui` / `android_app` / `android_io` / `android_fs`）的 action。
+ *
+ * 用 `Type.Union` + `Type.Literal` 而不是 `StringEnum`：action 是合并出来的分支选择器，
+ * 每个字面量都要在 schema 里单独摆出来，模型看到的才是闭集。`StringEnum`（`type:string` + `enum`）
+ * 留给其它单值枚举（`kind` / `op` / `what` / `direction` / `format`）。
+ */
+const AppAction = Type.Union(
+	[Type.Literal("list"), Type.Literal("launch"), Type.Literal("stop")],
+	{ description: "list = list apps, launch = start one, stop = kill a user app's background process." },
+);
+
+const UiAction = Type.Union(
+	[
+		Type.Literal("dump"),
+		Type.Literal("tap"),
+		Type.Literal("swipe"),
+		Type.Literal("input"),
+		Type.Literal("key"),
+		Type.Literal("keyevent"),
+		Type.Literal("screenshot"),
+	],
+	{ description: "dump=read tree, tap, swipe/scroll, input=type, key=global action, keyevent=raw keys (Shizuku), screenshot." },
+);
+
+const IoAction = Type.Union(
+	[
+		Type.Literal("clipboard"),
+		Type.Literal("say"),
+		Type.Literal("vibrate"),
+		Type.Literal("share"),
+		Type.Literal("open"),
+	],
+	{ description: "clipboard=read/write, say=notify/toast/speak, vibrate, share=system sheet, open=URL/deep link." },
+);
+
+const FsAction = Type.Union(
+	[
+		Type.Literal("list"),
+		Type.Literal("read"),
+		Type.Literal("write"),
+		Type.Literal("download"),
+	],
+	{ description: "list/read/write = authorized (SAF) dirs; download = public Download (needs op)." },
+);
+
+/** `android_ui` / `android_io` 的 action → 它展开成哪个细粒度工具。 */
+const UI_ACTIONS: Record<string, string> = {
+	dump: "android_ui_dump",
+	tap: "android_tap",
+	swipe: "android_swipe",
+	input: "android_input",
+	key: "android_key",
+	keyevent: "android_keyevent",
+	screenshot: "android_screenshot",
+};
+
+const IO_ACTIONS: Record<string, string> = {
+	clipboard: "android_clipboard",
+	say: "android_say",
+	vibrate: "android_vibrate",
+	share: "android_share",
+	open: "android_open",
+};
+
+/** 合并工具里本该由原 schema 的 `required` 把关的字段，按 action 列出来。 */
+const UI_REQUIRED: Record<string, string[]> = {
+	input: ["text"],
+	key: ["key"],
+	keyevent: ["keys"],
+};
+
+const IO_REQUIRED: Record<string, string[]> = {
+	say: ["kind", "text"],
+	open: ["url"],
+};
+
+/**
+ * pi 的工具分组名。声明与不声明的工具都归这一组，模型的工具列表与 tool_search 按它成组。
+ */
+const DEVICE_NAMESPACE: ToolNamespace = {
+	name: "pi-android",
+	description: "pi-android device bridge (android_*)",
+};
+
+/**
+ * 常驻工具把一次调用转交给它展开的细粒度工具。
+ *
+ * 六个常驻工具只多一个 `action`，其余参数原样传下去；被展开的工具仍然注册着
+ * （`exposure: "deferred"`），所以端点和结果文案只有一份。
+ */
+function deviceTool(name: string): DeviceToolSpec {
+	const tool = DEVICE_TOOLS.find((entry) => entry.name === name);
+	if (tool === undefined) throw new Error(`[BUG] 设备扩展里没有 ${name}，请用 /device-reload 重新加载扩展。`);
+	return tool;
+}
+
+/** 去掉合并工具的 `action`，其余参数原样交给被展开的工具。 */
+function withoutAction(params: Record<string, unknown>): Record<string, unknown> {
+	const rest: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(params)) {
+		if (key !== "action") rest[key] = value;
+	}
+	return rest;
+}
+
+/**
+ * 合并工具里本该由 schema 的 `required` 把关的字段。
+ *
+ * 合并之后每个参数都只能声明成可选（不同 action 的必填集不同），这条检查补回原工具
+ * schema 的精度：缺字段当场抛 `[BAD_PARAM]`，不让桥端点去猜。
+ */
+function requireText(tool: string, action: string, params: Record<string, unknown>, names: string[]): void {
+	for (const name of names) {
+		const value = params[name];
+		if (typeof value !== "string" || value.trim().length === 0) {
+			throw new Error(
+				`[BAD_PARAM] ${tool} 的 action="${action}" 需要 ${name}。\n提示：补上 ${name} 后重新调用 ${tool}。`,
+			);
+		}
+	}
+}
+
+/** 展开一个 action 表：非法 action 抛 `[BAD_PARAM]`，必填项缺失也抛。 */
+async function dispatch(
+	tool: string,
+	actions: Record<string, string>,
+	required: Record<string, string[]>,
+	params: Record<string, unknown>,
+	ctx: ExtensionContext,
+): Promise<ToolOutcome> {
+	const action = typeof params.action === "string" ? params.action : "";
+	const target = actions[action];
+	if (target === undefined) throw badParam(tool, "action", Object.keys(actions), params.action);
+	requireText(tool, action, params, required[action] ?? []);
+	return deviceTool(target).run(withoutAction(params), ctx);
+}
+
 const DEVICE_TOOLS: DeviceToolSpec[] = [
-	// ---------------------------------------------------------------- 诊断 ----
+	// ----------------------------------------------------------- 常驻工具 ----
+	//
+	// 这六个是声明给模型的全部（`exposure: "direct"`，默认值）。其余工具注册着但
+	// `exposure: "deferred"`：`tool_search` 能找到并按需激活，平时不占提示词。
+	{
+		name: "android_status",
+		capability: null,
+		exposure: "direct",
+		label: "设备桥状态",
+		description: "Bridge + capability groups, foreground app, accessibility, permissions, shell backend/uid, SAF dirs, workspace boundary.",
+		promptSnippet: "Bridge + capability status",
+		promptGuidelines: [
+			"On [DISABLED]/[NO_PERMISSION] read android_status; relay its reason, no retry.",
+		],
+		parameters: Type.Object({}),
+		run: (params, ctx) => deviceTool("android_bridge_status").run(params, ctx),
+	},
 	{
 		name: "android_bridge_status",
 		capability: null,
+		exposure: "deferred",
 		label: "设备桥状态",
 		description: "Bridge + capability state: groups on/usable, accessibility, missing permissions, screenshot support.",
 		promptSnippet: "Bridge + capability status",
@@ -505,8 +671,69 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 
 	// ------------------------------------------------------------ 屏幕 / UI ----
 	{
+		name: "android_ui",
+		capability: "accessibility",
+		exposure: "direct",
+		label: "屏幕操作",
+		description: "Screen: action=dump|tap|swipe|input|key|keyevent|screenshot. Dump first; its indices feed tap and input.",
+		promptSnippet: "Read screen / tap / type / swipe / screenshot",
+		promptGuidelines: [
+			"Dump before acting; on NOT_FOUND re-dump or pass text/desc/resourceId to action=tap.",
+			"Custom UI / games / video: action=screenshot (crop with region); raw keys need Shizuku.",
+		],
+		parameters: Type.Object({
+			action: UiAction,
+			filter: Type.Optional(
+				Type.String({ description: "dump: keep nodes whose text/description/id contains this, plus ancestors." }),
+			),
+			maxNodes: Type.Optional(Type.Number({ description: "dump: max nodes, default 400, cap 2000." })),
+			waitForText: Type.Optional(
+				Type.String({ description: "dump: wait until a node text contains this; NOT_FOUND on timeout." }),
+			),
+			waitForId: Type.Optional(
+				Type.String({ description: "dump: wait until a node resource id contains this." }),
+			),
+			waitMs: Type.Optional(Type.Number({ description: "dump: wait timeout ms, default 5000, cap 30000." })),
+			diff: Type.Optional(Type.Boolean({ description: "dump: only changes since the last dump, default false." })),
+			index: Type.Optional(Type.Number({ description: "tap/input: node index from the last dump." })),
+			x: Type.Optional(Type.Number({ description: "tap: X in display px; with y, index is ignored." })),
+			y: Type.Optional(Type.Number({ description: "tap: Y in display px." })),
+			text: Type.Optional(
+				Type.String({ description: "tap/swipe: match node text (substring, case-insensitive). input: the text to write." }),
+			),
+			desc: Type.Optional(Type.String({ description: "tap/input: match contentDescription substring." })),
+			resourceId: Type.Optional(Type.String({ description: "tap/input/swipe: match resource id substring, e.g. btn_send." })),
+			longPress: Type.Optional(Type.Boolean({ description: "tap: long-press, default false." })),
+			x1: Type.Optional(Type.Number({ description: "swipe: start x in display px." })),
+			y1: Type.Optional(Type.Number({ description: "swipe: start y." })),
+			x2: Type.Optional(Type.Number({ description: "swipe: end x." })),
+			y2: Type.Optional(Type.Number({ description: "swipe: end y." })),
+			durationMs: Type.Optional(Type.Number({ description: "swipe: gesture ms, default 300." })),
+			direction: Type.Optional(
+				StringEnum(["forward", "backward"] as const, {
+					description: "swipe: scroll the node at index/text/resourceId instead of dragging.",
+				}),
+			),
+			submit: Type.Optional(Type.Boolean({ description: "input: attempt enter after writing, default false." })),
+			key: Type.Optional(ScreenKey),
+			keys: Type.Optional(
+				Type.String({ description: "keyevent: space/comma-separated, e.g. \"ENTER\"; KEYCODE_ prefix optional." }),
+			),
+			repeat: Type.Optional(Type.Number({ description: "keyevent: 1-20, default 1." })),
+			format: Type.Optional(ScreenshotFormat),
+			maxDimension: Type.Optional(Type.Number({ description: "screenshot: longest side cap in px, default 1280 (240-4096)." })),
+			quality: Type.Optional(Type.Number({ description: "screenshot: JPEG quality 20-100, default 82." })),
+			region: Type.Optional(
+				Type.Array(Type.Number(), { description: "screenshot: crop [left,top,right,bottom] in display px." }),
+			),
+			marks: Type.Optional(Type.Boolean({ description: "screenshot: draw the last dump's clickable indices, default false." })),
+		}),
+		run: (params, ctx) => dispatch("android_ui", UI_ACTIONS, UI_REQUIRED, params, ctx),
+	},
+	{
 		name: "android_ui_dump",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "读取屏幕",
 		description: "Read the screen node tree (indexed); indices feed android_tap and android_input. Coordinates are display pixels.",
 		promptSnippet: "Read screen tree (indexed)",
@@ -572,6 +799,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_tap",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "点按",
 		description: "Tap by dump index (most reliable), x/y, or text/desc/resourceId resolved on-device. longPress for long press.",
 		promptSnippet: "Tap node or coordinate",
@@ -613,6 +841,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_input",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "输入文本",
 		description: "Type into the focused field or a dump index; falls back to clipboard paste (replaces the clipboard) when refused.",
 		promptSnippet: "Type into a field",
@@ -652,6 +881,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_key",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "系统按键",
 		description: "Run a system global action. For raw keys (enter/delete/arrows) use android_keyevent (needs Shizuku).",
 		promptSnippet: "Global action (back/home/lock)",
@@ -671,6 +901,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_keyevent",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "注入原始按键",
 		description: "Inject raw keys into the focused window via Shizuku (ADB uid=2000); refuses without it.",
 		promptSnippet: "Inject raw keys (Shizuku)",
@@ -694,6 +925,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_swipe",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "滑动 / 滚动",
 		description: "Swipe in display pixels, or scroll the node at index/selector with direction (accessibility scroll action).",
 		promptSnippet: "Swipe or scroll a node",
@@ -764,6 +996,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_screenshot",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "截屏",
 		description: "Capture the screen (Android 11+); region crops it, marks draws the last dump's indices. Secure windows fail.",
 		promptSnippet: "Capture the screen",
@@ -828,13 +1061,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_app",
 		capability: "basic",
-		label: "应用列表 / 启动",
-		description: "List installed apps, or launch one by exact package name (find it with action=\"list\" first).",
-		promptSnippet: "List or launch apps",
+		exposure: "direct",
+		label: "应用列表 / 启动 / 结束",
+		description: "List apps, launch one by exact package (find it with action=\"list\" first), or stop its background process.",
+		promptSnippet: "List / launch / stop apps",
 		parameters: Type.Object({
-			action: StringEnum(["list", "launch"] as const, {
-				description: "list = list apps, launch = start one.",
-			}),
+			action: AppAction,
 			q: Type.Optional(Type.String({ description: "Substring filter on name or package; list only." })),
 			includeSystem: Type.Optional(Type.Boolean({ description: "Include system apps, default false; list only." })),
 			limit: Type.Optional(Type.Number({ description: "Max rows, default 60, cap 500; list only." })),
@@ -889,12 +1121,29 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 						data as unknown as Record<string, unknown>,
 					);
 				}
-				throw badParam("android_app", "action", ["list", "launch"], p.action);
+				if (p.action === "stop") {
+					if (typeof p.package !== "string" || p.package.trim().length === 0) {
+						throw new Error(
+							"[BAD_PARAM] android_app 的 action=\"stop\" 需要 package（精确包名，先用 action=\"list\" 查）。" +
+								"\n提示：请传入 package 后重新调用 android_app。",
+						);
+					}
+					const data = await bridgePost<{ packageName: string; mode: string; note?: string }>("/app/apps/stop", {
+						package: p.package,
+					});
+					const note = data.note ? `\n${data.note}` : "";
+					return textResult(
+						`[action stop] 已请求结束后台进程：${data.packageName}（${data.mode}）${note}`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				throw badParam("android_app", "action", ["list", "launch", "stop"], p.action);
 			}),
 	},
 	{
 		name: "android_stop_app",
 		capability: "accessibility",
+		exposure: "deferred",
 		label: "结束应用",
 		description: "Kill a user app's background process; system apps, critical processes and pi-android are refused.",
 		promptSnippet: "Kill a background app",
@@ -914,8 +1163,41 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 
 	// ------------------------------------------------------------ 交互/输出 ----
 	{
+		name: "android_io",
+		capability: "basic",
+		exposure: "direct",
+		label: "对外输出",
+		description: "User-visible output: action=clipboard|say|vibrate|share|open. share opens the system sheet, open launches a URL.",
+		promptSnippet: "Clipboard / notify / vibrate / share / open",
+		parameters: Type.Object({
+			action: IoAction,
+			text: Type.Optional(
+				Type.String({ description: "clipboard: text to write (omit to read). say: text to send or read. share: body to share." }),
+			),
+			kind: Type.Optional(
+				StringEnum(["notification", "toast", "speak"] as const, {
+					description: "say: notification, toast, or speak.",
+				}),
+			),
+			title: Type.Optional(Type.String({ description: "say: notification title, default pi." })),
+			id: Type.Optional(Type.Number({ description: "say: notification id (overwrites the same one); default auto." })),
+			long: Type.Optional(Type.Boolean({ description: "say: toast long duration, default false." })),
+			language: Type.Optional(Type.String({ description: "say: BCP-47 tag, e.g. zh-CN; default system." })),
+			rate: Type.Optional(Type.Number({ description: "say: speech rate 0.1-3.0, default 1.0." })),
+			pitch: Type.Optional(Type.Number({ description: "say: pitch 0.1-3.0, default 1.0." })),
+			ms: Type.Optional(Type.Number({ description: "vibrate: length ms, default 200, cap 10000." })),
+			pattern: Type.Optional(
+				Type.Array(Type.Number(), { description: "vibrate: pattern ms, e.g. [0,120,80,120]; overrides ms." }),
+			),
+			url: Type.Optional(Type.String({ description: "share: link to attach. open: full URL, mailto:, or intent://…." })),
+			subject: Type.Optional(Type.String({ description: "share: title." })),
+		}),
+		run: (params, ctx) => dispatch("android_io", IO_ACTIONS, IO_REQUIRED, params, ctx),
+	},
+	{
 		name: "android_say",
 		capability: "basic",
+		exposure: "deferred",
 		label: "通知 / 短提示 / 朗读",
 		description: "Post a notification, show a short on-screen message, or read text with TTS.",
 		promptSnippet: "Notify / toast / speak",
@@ -972,6 +1254,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_vibrate",
 		capability: "basic",
+		exposure: "deferred",
 		label: "震动",
 		description: "Vibrate the phone.",
 		promptSnippet: "Vibrate the phone",
@@ -991,6 +1274,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_share",
 		capability: "basic",
+		exposure: "deferred",
 		label: "分享",
 		description: "Share text or a link via the system sheet; to open a URL use android_open.",
 		promptSnippet: "Share to another app",
@@ -1013,6 +1297,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_open",
 		capability: "basic",
+		exposure: "deferred",
 		label: "打开链接",
 		description: "Open a URL/deep link with the default app; intent: URLs fall back to browser_fallback_url.",
 		promptSnippet: "Open URL / deep link",
@@ -1034,6 +1319,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_clipboard",
 		capability: "basic",
+		exposure: "deferred",
 		label: "剪贴板",
 		description: "Pass text to write the clipboard, omit it to read; reads work only in the foreground (Android 10+).",
 		promptSnippet: "Read/write clipboard",
@@ -1061,8 +1347,47 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 
 	// -------------------------------------------------------------- 存储 ----
 	{
+		name: "android_fs",
+		capability: "basic",
+		exposure: "direct",
+		label: "文件",
+		description: "Files: action=list|read|write on user-authorized (SAF) dirs, or action=download for the public Download folder (needs op).",
+		promptSnippet: "Authorized-dir / Download files",
+		parameters: Type.Object({
+			action: FsAction,
+			path: Type.Optional(
+				Type.String({ description: "list: omit for root names, else \"root/relative\". read/write: \"root/relative\"." }),
+			),
+			op: Type.Optional(
+				StringEnum(["write", "read"] as const, { description: "download: write = export, read = import." }),
+			),
+			name: Type.Optional(Type.String({ description: "download: file name, no path; e.g. report.md." })),
+			content: Type.Optional(Type.String({ description: "write/download: text (not with base64)." })),
+			base64: Type.Optional(Type.String({ description: "write/download: binary as base64 (not with content)." })),
+			mimeType: Type.Optional(Type.String({ description: "write/download: MIME type, default text/plain." })),
+			maxBytes: Type.Optional(Type.Number({ description: "read/download: max bytes, default 1MB, cap 4MB." })),
+		}),
+		run: async (params, ctx) => {
+			const action = typeof params.action === "string" ? params.action : "";
+			const rest = withoutAction(params);
+			if (action === "list" || action === "download") {
+				if (action === "download") {
+					requireText("android_fs", action, params, ["op", "name"]);
+					return deviceTool("android_download").run(rest, ctx);
+				}
+				return deviceTool("android_files_list").run(rest, ctx);
+			}
+			if (action === "read" || action === "write") {
+				requireText("android_fs", action, params, ["path"]);
+				return deviceTool("android_files").run({ ...rest, op: action }, ctx);
+			}
+			throw badParam("android_fs", "action", ["list", "read", "write", "download"], params.action);
+		},
+	},
+	{
 		name: "android_download",
-		capability: "storage",
+		capability: "basic",
+		exposure: "deferred",
 		label: "公共 Download 读写",
 		description: "Read/write the public Download folder; user-authorized dirs use android_files. write: no permission on API 29+, storage permission on 8/9. read: own exports only on 33+, storage permission on 30-32.",
 		promptSnippet: "Public Download files",
@@ -1118,7 +1443,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_files_list",
-		capability: "storage",
+		capability: "basic",
+		exposure: "deferred",
 		label: "已授权目录",
 		description: "List user-authorized (SAF) dirs; omit path for root names. Read/write them with android_files.",
 		promptSnippet: "List authorized dirs",
@@ -1149,7 +1475,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_files",
-		capability: "storage",
+		capability: "basic",
+		exposure: "deferred",
 		label: "授权目录读写",
 		description: "Read/write files under a user-authorized (SAF) dir. write: creates parent dirs, overwrites. read: text direct, binary as base64. Public Download uses android_download.",
 		promptSnippet: "Authorized-dir files",
@@ -1207,7 +1534,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ------------------------------------------------- 位置 / 传感器 / 相机 ----
 	{
 		name: "android_device_state",
-		capability: "sensors",
+		capability: "basic",
+		exposure: "deferred",
 		label: "设备状态",
 		description: "Read battery, last known location, the sensor list, or one sensor sample.",
 		promptSnippet: "Battery / location / sensors",
@@ -1278,7 +1606,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_torch",
-		capability: "sensors",
+		capability: "basic",
+		exposure: "deferred",
 		label: "手电筒",
 		description: "Flashlight (camera LED) on/off; some ROMs need the camera permission.",
 		promptSnippet: "Flashlight on/off",
@@ -1297,8 +1626,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_shell",
 		capability: "shell",
+		exposure: "direct",
 		label: "设备 Shell",
-		description: "Whitelisted shell; unknown refused. Blocked: mount/umount, setenforce, setprop, settings put, mknod, dd, mkfs, pm clear|uninstall, su|sudo|magisk, /dev/block. Writes only in workspace; Shizuku = uid 2000, else app uid.",
+		description: "Whitelisted shell; unknown heads refused. Writes only inside the workspace; Shizuku = uid 2000, else the app uid. `$(...)`/backticks need relaxed mode.",
 		promptSnippet: "Guarded device shell",
 		promptGuidelines: [
 			"android_shell only for device identity; workspace git/npm/builds use bash.",
@@ -1355,59 +1685,165 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 // ---------------------------------------------------------------------------
 
 const SKILL_NAME = "pi-android-device";
-const SKILL_SENTINEL = `name: ${SKILL_NAME}`;
 
-function skillMarkdown(): string {
-	return `---
+/**
+ * 技能正文：`SKILL.md` 只是路标（frontmatter + 一张索引表），细节按主题拆在
+ * `references/*.md` 里；附件不进每轮提示词，进去的只有 frontmatter 的 name/description。
+ *
+ * 键是相对技能目录（`<agentDir>/skills/<SKILL_NAME>/`）的路径，因为文件由下面
+ * `resources_discover` 写到磁盘上。
+ */
+const SKILL_FILES: Record<string, string> = {
+	"SKILL.md": `---
 name: ${SKILL_NAME}
-description: "pi-android device tools: screen, apps, files, notifications, sensors."
+description: "pi-android device tools (android_*): screen, apps, files, clipboard/notify/share, device shell. Read before acting on this phone."
 ---
 
-# pi-android device environment
+# pi-android 设备环境
 
-pi runs in a proot Ubuntu; the app provides the android_* tools.
+pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工具。先读这张表，再按需打开附件。
 
-## Paths
+| 主题 | 什么时候读 | 附件 |
+|---|---|---|
+| 屏幕与输入 | 读屏、点按、输入、滑动、按键、截图 | \`references/ui.md\` |
+| 六个常驻工具 | 记不清 action 或参数 | \`references/tools.md\` |
+| 设备 Shell | 要在设备上跑命令、看 uid 与写入边界 | \`references/shell.md\` |
+| 路径 | /workspace、/sdcard、agentDir 各是什么 | \`references/paths.md\` |
+| 常见坑 | 报 [DISABLED] / NOT_FOUND / 截断时 | \`references/pitfalls.md\` |
+| ADB 身份 | 要 input/pm/am/settings，要 uid 2000 | \`references/elevate.md\` |
+`,
 
-| Path | Meaning |
+	"references/ui.md": `# 屏幕与输入（android_ui）
+
+| action | 做什么 | 关键参数 |
+|---|---|---|
+| \`dump\` | 读屏幕控件树（带编号） | filter、maxNodes、diff、waitForText/waitForId/waitMs |
+| \`tap\` | 点按 | index，或 x/y，或 text/desc/resourceId；longPress |
+| \`swipe\` | 坐标滑动，或滚动控件 | x1/y1/x2/y2/durationMs，或 direction+index/text/resourceId |
+| \`input\` | 向输入框写文本 | text，index/desc/resourceId，submit |
+| \`key\` | 全局动作 | key = back/home/recents/notifications/quicksettings/powermenu/lock/screenshot/split |
+| \`keyevent\` | 注入原始按键（要 ADB 身份） | keys、repeat |
+| \`screenshot\` | 截屏（Android 11+） | format、maxDimension、quality、region、marks |
+
+规则：
+
+1. 先 dump 再动作。编号只在最近一次 dump 里有效；能按 text/desc/resourceId 定位就别记编号。
+2. 每个动作的返回都带「前台 A → B」和「屏幕已变化 / 没有变化」。说没有变化就是真没生效，别当成功报。
+3. NOT_FOUND 是选择器没命中：换 text/desc/resourceId，或用 waitForText/waitForId 等它出现。
+4. 画布/游戏/视频这类读到不内容的界面用 screenshot；小字用 region 裁，看不清就调大 maxDimension 或改 png。
+5. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
+6. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
+`,
+
+	"references/tools.md": `# 六个常驻工具
+
+提示词里只有这六个。其余细粒度工具（\`android_tap\`、\`android_files\`、\`android_device_state\` 等）注册着但默认不声明，需要时用 \`tool_search\` 找到并激活。
+
+| 工具 | 覆盖 | action |
+|---|---|---|
+| \`android_status\` | 桥、能力组、前台、权限、Shell 后端与 uid、SAF 目录、工作区边界 | — |
+| \`android_ui\` | 屏幕 | dump / tap / swipe / input / key / keyevent / screenshot |
+| \`android_app\` | 应用 | list / launch / stop |
+| \`android_io\` | 用户可见的输出 | clipboard / say / vibrate / share / open |
+| \`android_fs\` | 文件 | list、read、write（授权目录 SAF）、download（公共 Download，要 op） |
+| \`android_shell\` | 设备命令 | — |
+
+- 能力组三组：basic（基础，默认开）/ accessibility（屏幕，默认关）/ shell（默认关）。关着的那组，它的工具既不注册也不进提示词。
+- [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
+- 危险动作会弹确认；用户拒绝就停。
+`,
+
+	"references/shell.md": `# 设备 Shell（android_shell）
+
+- 一条命令一次调用；\`$(...)\` 与反引号要用户开「放宽模式」。
+- 命令头是白名单：getprop、dumpsys、logcat、pm、am、cmd、settings、wm、screencap、input、getevent、ls、cat、find、sed、awk、tar、curl…，未列出的默认拦截。
+- 只能写工作区之内，工作区外会拒；回复里的 policy 行会复述这次实际生效的规则。
+- 后端与身份写在回复的 [后端 …，uid=N]：默认是应用自身 uid；拿到 ADB 身份后是 uid 2000，input、pm、am、settings get、dumpsys 这些才真正可用（见 references/elevate.md）。
+- 每条流 50 KB 上限；被截断时点名是 stdout 还是 stderr。
+- 超时 / 没有退出码 / 非零退出都算失败，正文保留 pi 的原句 Command exited with code N。
+`,
+
+	"references/paths.md": `# 路径
+
+| 路径 | 是什么 |
 |---|---|
-| \`/root/.pi/agent\` | pi agentDir: settings, extensions, skills, sessions, auth.json |
-| \`/workspace\` | workspace (app-private, fast, for build/npm) |
-| \`/sdcard\`, \`/storage/emulated/0\` | shared storage (FUSE, slow, visible) |
-| \`/tmp\` | writable temp |
+| \`/root/.pi/agent\` | pi agentDir：settings、extensions、skills、sessions、auth.json |
+| \`/workspace\` | 工作区（应用私有、快，编译 / npm 用） |
+| \`/sdcard\`、\`/storage/emulated/0\` | 共享存储（FUSE，慢，用户可见） |
+| \`/tmp\` | 可写临时目录 |
 
-## Tools
+- 设备策略只管 android_* 工具；工作区里的 bash/read/write 不受限。
+- android_shell 以工作区为写入边界；guest 里工作区的挂载点有两个拼写，看 android_status 的「Shell 写入边界」行。
+- 本技能的附件在 <agentDir>/skills/pi-android-device/ 下（上面表格里的路径都相对该目录）。
+`,
 
-- Screen: \`android_ui_dump\` → \`android_tap\` (index or text/desc/resourceId resolved on-device) → \`android_input\`;
-  wait with waitForText/waitForId. Custom-drawn UI: \`android_screenshot\` (region, marks).
-- Apps: \`android_app\`, \`android_stop_app\` (confirm). User: \`android_say\`, \`android_vibrate\`.
-- Data: \`android_clipboard\`, \`android_download\`, \`android_files_list\`/\`android_files\` (SAF dirs the user authorized).
-- State: \`android_device_state\`, \`android_torch\`.
+	"references/pitfalls.md": `# 常见坑
 
-## Rules
+1. [DISABLED] / [NO_PERMISSION]：那组能力关着或系统权限没给。原因在正文里，原样转述，别重试。
+2. NOT_FOUND：控件没命中 —— 重新 dump，或换 text/desc/resourceId，或 waitForText/waitForId。
+3. 编号失效：index 只属于最近一次 dump；跨步骤用选择器。
+4. 动作「成功」但界面没变：返回里的「屏幕没有变化」就是判据，别当成功报。
+5. 二进制读回：android_fs 以 base64 返回；要处理就在工作区里用 bash 解。
+6. 剪贴板读取：Android 10+ 只有前台应用读得到；为空就是看不到，别反复试。
+7. 截屏失败：密码框、银行类安全窗口系统禁止截屏。
+8. 输出被截断：缩小范围重跑（Shell 每流 50 KB；工具结果 50 KB / 2000 行）。
+9. 危险操作会确认：用户拒绝就停，别换条路再试。
+`,
 
-1. Capabilities are off by default; \`[DISABLED]\`/\`[NO_PERMISSION]\` carry a Chinese reason — relay it verbatim, say
-   where to enable it (Settings → Device capabilities), don't retry.
-2. Dangerous actions confirm ("allow and remember for this session" silences that class until the session ends);
-   refusal = stop.
-3. Indices are valid only within the latest \`android_ui_dump\`; prefer selectors. The reply's "foreground A → B" /
-   "screen did not change" is the self-check.
-4. Never pretend: report tool output as it is.
-5. Policy covers only \`android_*\`; workspace bash/read/write are unrestricted. \`android_shell\` has a whitelist, a
-   hard blocklist and writes only in the workspace.
+	"references/elevate.md": `# 拿到 ADB 身份（uid 2000）：本机无线调试自连
 
-## vs Termux
+设备能力里最强的一档不是某个开关，而是以「ADB 身份」（uid 2000）执行命令：input、pm install/uninstall、am、settings get、dumpsys、screencap 这些系统操作只有它放行。
 
-Use the \`android_*\` tools; upstream Termux commands don't apply.
+两条路：
 
-## Device shell
+- **Shizuku**（应用自己的通道）：用户在「设置 → 设备能力 → Shell」里打开 Shizuku，并在 Shizuku 里用系统「无线调试」启动它（Android 11+，全程在手机上，不需要电脑）。之后 android_status 会显示「Shizuku：已就绪（ADB 身份，uid=2000）」。
+- **本机无线调试自连**（下面这一步）：在 guest 里用 adb 客户端连 127.0.0.1 上的无线调试端口，直接得到一个 uid 2000 的 shell。
 
-- Default backend is the app uid; with **Shizuku** authorized it is ADB (uid=2000) and \`input\`, \`pm\`, \`am\`,
-  \`settings get\`, \`dumpsys\` work; read it from \`android_bridge_status\`.
-- Whitelist, blocklist and write boundary are echoed in the reply (\`policy\`).
-- \`$(...)\`/backticks need the user's relaxed mode.
-`;
-}
+## 前置：guest 里要有 adb 客户端
+
+android_shell 的白名单里没有 adb，所以配对与连接都在 guest 的 bash 里做，先装一次：
+
+\`\`\`bash
+apt-get install -y adb        # Ubuntu guest（Termux 里是 pkg install android-tools）
+adb version
+\`\`\`
+
+装不上就走 Shizuku 那条路。
+
+## 第一次：配对（只做一次）
+
+1. 用户打开「设置 → 开发者选项 → 无线调试」（先连一次 Wi-Fi，端口才会出现）。
+2. 点「使用配对码配对设备」：屏幕给出 6 位配对码，以及一个 IP:端口（配对端口）。先试页面上的地址；很多设备上 127.0.0.1:端口 也能自连。
+3. 在 guest 里配对：
+
+\`\`\`bash
+adb pair 127.0.0.1:<配对端口>     # 提示时输入那 6 位配对码
+\`\`\`
+
+4. 配对成功后，回到无线调试页看**连接端口**（与配对端口不同，每次重开无线调试都会变）。
+
+## 之后：重连（不用再配对）
+
+\`\`\`bash
+adb connect 127.0.0.1:<连接端口>
+adb devices                      # 列表里出现 127.0.0.1:<连接端口>  device
+adb shell id                     # uid=2000(shell) 就是 ADB 身份
+\`\`\`
+
+## 连上之后能跑什么
+
+- \`input keyevent …\`、\`input text …\`、\`input tap/swipe\`：坐标级与原始按键输入（无障碍通道只能做那几个全局动作）。
+- \`pm list packages / install / uninstall\`、\`am start / force-stop\`、\`settings get\`、\`dumpsys\`、\`screencap\`、\`logcat -d\`。
+- android_keyevent 走的就是这条身份；android_status 的「Shizuku：已就绪（ADB 身份，uid=2000）」是它在应用侧对应的读数。
+- 走 android_shell 时仍然过它的命令头白名单与工作区写入边界；adb 本身不在白名单里，所以自连从 guest 的 bash 发起。
+
+## 注意
+
+- 无线调试端口每次重开都会变；连不上先回设置页确认端口。
+- 断开 Wi-Fi 会关掉无线调试（本机自连也要 Wi-Fi 开着）。
+- 这是用户自己的设备、自己的身份，不需要 root；开不开无线调试由用户决定。
+`,
+};
 
 /** The system-prompt block appended for every turn. */
 function environmentGuidance(): string {
@@ -1417,6 +1853,8 @@ function environmentGuidance(): string {
 		"",
 		"pi runs in proot Ubuntu; tools are android_*.",
 		"- `/workspace` fast, `/sdcard` slow; device policy covers only android_* tools, workspace bash unrestricted.",
+		"- ADB identity (uid 2000, what input/pm/am/settings need) is reachable by a local wireless-debug self-connect; read references/elevate.md when needed.",
+		"- If only the six resident android_* tools show up, `tool_search` is off: add it (and optionally `codemode`) to `defaultTools` in `/root/.pi/agent/settings.json` and restart the engine — that list is a full whitelist, extend it, never overwrite it.",
 		"- Dangerous device actions confirm; on refusal, stop.",
 	].join("\n");
 }
@@ -1436,9 +1874,10 @@ function environmentGuidance(): string {
  * 那正是这次要消灭的“注册了却调不动”。
  *
  * 读不到（桥没起来、token 文件读不到、超时）就返回 `null`，调用方按“一组都不注册、
- * 只留 `android_bridge_status`”处理。桥不在时我们并不知道任何一组开着没有；这时注册全部
+ * 只留 `android_status`（和它展开的 `android_bridge_status`）”处理。桥不在时我们并不知道任何
+ * 一组开着没有；这时注册全部
  * 工具等于把“注册了但调用失败”重新变成默认，而这次改动的全部意义就是不让不可用的东西进请求。
- * 对用户也不是死路：`android_bridge_status` 永远注册，它会说出“未连接”和下一步。
+ * 对用户也不是死路：`android_status` 永远注册，它会说出“未连接”和下一步。
  */
 async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 	try {
@@ -1452,7 +1891,8 @@ async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 /**
  * 这个工具此刻该不该注册。
  *
- * `capability === null` 的是 `android_bridge_status`：它是“为什么不可用”的唯一解释通道
+ * `capability === null` 的是 `android_status` / `android_bridge_status`：它是“为什么不可用”的
+ * 唯一解释通道
  * （`health.capabilities[].reason` 只有它会读给模型听），成本约 100 字符，所以永远注册。
  * 其余工具只在它那一组 `usable` 时注册 —— 关掉的能力，它的 `description`、
  * `promptSnippet`、`promptGuidelines` 和参数 schema 一个字都不进请求。
@@ -1497,6 +1937,8 @@ export default async function (pi: ExtensionAPI) {
 			promptSnippet: tool.promptSnippet,
 			promptGuidelines: tool.promptGuidelines,
 			parameters: tool.parameters,
+			exposure: tool.exposure,
+			namespace: DEVICE_NAMESPACE,
 			async execute(
 				_toolCallId: string,
 				params: Static<TSchema>,
@@ -1674,20 +2116,28 @@ export default async function (pi: ExtensionAPI) {
 		return { systemPrompt: event.systemPrompt + environmentGuidance() };
 	});
 
-	// Contribute the environment skill. `resources_discover` can only hand back
-	// *paths*, so the file is written on the way in; a failure there is silent by
-	// design because the system-prompt block above already carries the essentials.
+	// Contribute the environment skill: SKILL.md plus its references/. `resources_discover`
+	// can only hand back *paths*, so every file is written on the way in. A group of
+	// capabilities that is not usable contributes nothing — with no group open the android_*
+	// tools are not registered either, and a skill describing tools the model does not have is
+	// worse than no skill. A write failure is still silent by design: the system-prompt block
+	// above carries the essentials.
 	pi.on("resources_discover", async () => {
 		try {
+			const usable = await usableCapabilities();
+			if (usable === null || usable.size === 0) return {};
 			const { mkdir, writeFile } = await import("node:fs/promises");
-			const { join } = await import("node:path");
+			const { dirname, join } = await import("node:path");
 			const home = process.env.HOME && process.env.HOME.trim().length > 0 ? process.env.HOME.trim() : "/root";
 			const agentDir = process.env.PI_CODING_AGENT_DIR && process.env.PI_CODING_AGENT_DIR.trim().length > 0
 				? process.env.PI_CODING_AGENT_DIR.trim()
 				: join(home, ".pi", "agent");
 			const skillDir = join(agentDir, "skills", SKILL_NAME);
-			await mkdir(skillDir, { recursive: true });
-			await writeFile(join(skillDir, "SKILL.md"), skillMarkdown(), "utf8");
+			for (const [relativePath, content] of Object.entries(SKILL_FILES)) {
+				const target = join(skillDir, relativePath);
+				await mkdir(dirname(target), { recursive: true });
+				await writeFile(target, content, "utf8");
+			}
 			return { skillPaths: [skillDir] };
 		} catch {
 			return {};

@@ -235,15 +235,15 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                "/app/location" -> withCapability(DeviceCapability.Sensors) {
+                "/app/location" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.location(context)
                 }
 
-                "/app/sensors" -> withCapability(DeviceCapability.Sensors) {
+                "/app/sensors" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.sensors(context)
                 }
 
-                "/app/sensor" -> withCapability(DeviceCapability.Sensors) {
+                "/app/sensor" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.sensorSample(
                         context = context,
                         typeName = params.str("typeName").orEmpty(),
@@ -252,15 +252,15 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                "/app/battery" -> withCapability(DeviceCapability.Sensors) {
+                "/app/battery" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.battery(context)
                 }
 
-                "/app/torch" -> withCapability(DeviceCapability.Sensors) {
+                "/app/torch" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.torch(context, params.boolRequired("on"))
                 }
 
-                "/app/export" -> withCapability(DeviceCapability.Storage) {
+                "/app/export" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.export(
                         context = context,
                         name = params.str("name") ?: "pi-export.txt",
@@ -270,7 +270,7 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                "/app/import" -> withCapability(DeviceCapability.Storage) {
+                "/app/import" -> withCapability(DeviceCapability.Basic) {
                     DeviceSystemActions.import(
                         context = context,
                         name = params.strRequired("name"),
@@ -305,22 +305,22 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                "/app/files" -> withCapability(DeviceCapability.Storage) {
+                "/app/files" -> withCapability(DeviceCapability.Basic) {
                     DeviceSafStore.get(context).describe()
                 }
 
-                "/app/files/list" -> withCapability(DeviceCapability.Storage) {
+                "/app/files/list" -> withCapability(DeviceCapability.Basic) {
                     DeviceSafStore.get(context).list(params.str("path"))
                 }
 
-                "/app/files/read" -> withCapability(DeviceCapability.Storage) {
+                "/app/files/read" -> withCapability(DeviceCapability.Basic) {
                     DeviceSafStore.get(context).read(
                         path = params.strRequired("path"),
                         maxBytes = params.int("maxBytes", 1024 * 1024),
                     )
                 }
 
-                "/app/files/write" -> withCapability(DeviceCapability.Storage) {
+                "/app/files/write" -> withCapability(DeviceCapability.Basic) {
                     DeviceSafStore.get(context).write(
                         path = params.strRequired("path"),
                         text = params.str("content"),

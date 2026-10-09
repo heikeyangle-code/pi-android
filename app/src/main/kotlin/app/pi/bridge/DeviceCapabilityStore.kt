@@ -224,23 +224,6 @@ class DeviceCapabilityStore private constructor(context: Context) {
             )
         }
 
-        DeviceCapability.Sensors -> sensorsPrecondition()
-
-        DeviceCapability.Storage ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // API 29+ has MediaStore, which needs no storage permission for the
-                // app's own exports; SAF grants cover everything else.
-                null
-            } else if (hasLegacyStoragePermission()) {
-                null
-            } else {
-                DeviceDenial(
-                    code = DeviceDenial.NO_PERMISSION,
-                    reason = "Android ${Build.VERSION.RELEASE} 导出需要存储权限。",
-                    hint = "让用户在「设置 → 设备能力 → 存储」点「授予存储权限」。",
-                )
-            }
-
         DeviceCapability.Shell ->
             if (DeviceShellGuard.backends().any { it.available }) {
                 null
@@ -252,15 +235,24 @@ class DeviceCapabilityStore private constructor(context: Context) {
                 )
             }
 
-        DeviceCapability.Basic -> null
+        // 原「位置 · 传感器 · 相机」组并入 基础：那一组本来就没有组级前置（位置与
+        // 手电筒都是端点级，见 [cameraPrecondition]），所以合并后唯一带过来的组级
+        // 检查是旧「存储」组的 pre-API-29 存储权限。
+        DeviceCapability.Basic ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // API 29+ has MediaStore, which needs no storage permission for the
+                // app's own exports; SAF grants cover everything else.
+                null
+            } else if (hasLegacyStoragePermission()) {
+                null
+            } else {
+                DeviceDenial(
+                    code = DeviceDenial.NO_PERMISSION,
+                    reason = "Android ${Build.VERSION.RELEASE} 导出需要存储权限。",
+                    hint = "让用户在「设置 → 设备能力 → 基础」点「授予存储权限」。",
+                )
+            }
     }
-
-    /**
-     * Location needs two things at once (the group switch and a runtime grant),
-     * but the group also carries sensors and the torch, which need neither. A
-     * missing grant must therefore degrade the *endpoint*, not the whole group.
-     */
-    private fun sensorsPrecondition(): DeviceDenial? = null
 
     /** True when the app already holds the location runtime permission. */
     fun hasLocationPermission(): Boolean {
@@ -316,11 +308,10 @@ class DeviceCapabilityStore private constructor(context: Context) {
     /**
      * The camera precondition, checked per *endpoint* rather than per group.
      *
-     * The 「位置 · 传感器 · 相机」 group also carries location, the sensor list and
-     * the battery reading, none of which need CAMERA. So a missing grant must not
-     * make the whole group unusable (the same reasoning as
-     * [sensorsPrecondition]) — but it must be reported as `NO_PERMISSION` with the
-     * camera permission named, and never as "this device has no flash". Before the
+     * The 基础 group also carries location, the sensor list, the battery reading and
+     * the clipboard, none of which need CAMERA. So a missing grant must not
+     * make the whole group unusable — but it must be reported as `NO_PERMISSION` with
+     * the camera permission named, and never as "this device has no flash". Before the
      * manifest declared CAMERA, that mis-reporting was guaranteed on every ROM that
      * enforces the permission.
      */
@@ -331,7 +322,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
             DeviceDenial(
                 code = DeviceDenial.NO_PERMISSION,
                 reason = "控制手电筒需要 CAMERA 权限（API 23+ 要求）。",
-                hint = "让用户在「设置 → 设备能力 → 位置·传感器·相机」点「授予相机权限」；部分设备需先用一次相机。",
+                hint = "让用户在「设置 → 设备能力 → 基础」点「授予相机权限」；部分设备需先用一次相机。",
             )
         }
 

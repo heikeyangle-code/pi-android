@@ -25,8 +25,8 @@
  *    ever passing through here, so this layer is a speed bump against a bad
  *    decision, not a security boundary;
  *  - the parts that cannot be bypassed from the guest are in the app's process:
- *    the capability opt-in, the shell whitelist / hard blocklist, and the workspace
- *    write boundary. Those are what the user's consent actually rests on.
+ *    the capability opt-in, the shell whitelist and its 放宽模式 syntax rule, and the
+ *    workspace write boundary. Those are what the user's consent actually rests on.
  *
  * ## The three properties that matter here
  *
@@ -38,11 +38,14 @@
  *     remembered set is cleared on every `session_start`. That kills confirmation
  *     fatigue (which turns real approvals into a reflex) without turning into a
  *     permanent grant; a new session asks again.
- *  3. **A second, independent pre-check for shell, sharing one switch with Kotlin.**
- *     A command that can never be allowed is refused outright instead of being
- *     offered to the user. The list is mirrored from `DeviceShellGuard.hardBlocks`,
- *     and the 放宽模式 flag is read from `/app/health` — the same boolean the Kotlin
- *     guard enforces — so the dialog and the guard cannot disagree about `$(...)`.
+ *  3. **Shell asks instead of refusing.** The hard blocklist is empty on both sides
+ *     (`danger.FORBIDDEN_SHELL_PATTERNS` mirrors `DeviceShellGuard.hardBlocks`), so
+ *     there is nothing left that can never be allowed: `needsApproval` names the
+ *     irreversible commands (a `dd` write, `mkfs`, `/dev/block`, `pm clear`) and the
+ *     user is asked, while every other command runs without a dialog. The whitelist,
+ *     the 放宽模式 syntax rule and the workspace write boundary are still enforced
+ *     inside the app process on every `/app/shell` call, so "not asked" is not "not
+ *     checked".
  */
 
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
@@ -51,7 +54,7 @@ import {
 	dangerLevelOf,
 	describeDangerousCall,
 	isDeviceTool,
-	shellPrecheck,
+	needsApproval,
 } from "./pi-android-bridge/danger";
 
 /** The three answers the confirmation dialog offers. */
@@ -94,9 +97,12 @@ const RELAXED_TTL_MS = 3000;
 /**
  * The 放宽模式 switch, read from the app rather than duplicated here.
  *
- * On any failure the answer is `false`: if the bridge is unreachable the shell tool
- * is going to fail anyway, and assuming "relaxed" would be the one mistake this
- * design cannot make — the two sides disagreeing about what is permitted.
+ * The gate decides nothing with it: the syntax rule it names is enforced by the
+ * app's guard on every `/app/shell` call. What remains is the ledger entry `publish`
+ * sends back to the 设备能力 page, so the switch is sampled when the report is
+ * composed.
+ * On any failure the answer is `false` — the only wrong answer is "relaxed" for a
+ * switch that is off.
  */
 async function currentRelaxed(): Promise<boolean> {
 	if (Date.now() - relaxedFetchedAt < RELAXED_TTL_MS) return relaxedShellSyntax;
@@ -117,6 +123,10 @@ async function currentRelaxed(): Promise<boolean> {
  */
 async function publish(note: string): Promise<void> {
 	try {
+		// The 放宽模式 flag is not policy input for the gate any more — the app's guard is
+		// what enforces it — but the ledger still reports it, so it is sampled here, at
+		// report time, instead of on a shell decision that no longer reads it.
+		relaxedShellSyntax = await currentRelaxed();
 		await reportGate({
 			sessionGrants: [...sessionGrants],
 			counts: Object.fromEntries(approvals),
@@ -140,22 +150,17 @@ export default function (pi: ExtensionAPI) {
 
 		const input = event.input as Record<string, unknown>;
 
-		// (3) Hard policy refusals, checked before anyone is asked to decide.
+		// (3) android_shell: the shell asks; it no longer refuses.
+		//
+		// The hard blocklist is empty on both sides (`danger.FORBIDDEN_SHELL_PATTERNS`),
+		// so there is no longer a command that can never be allowed. What is left is the
+		// irreversible short list: `needsApproval` names it and the user is asked, while
+		// every other command goes straight through without a dialog.
+		let approvalReason: string | null = null;
 		if (toolName === "android_shell") {
 			const command = typeof input.command === "string" ? input.command : "";
-			if (command.trim().length === 0) {
-				return { block: true, reason: "android_shell 需要一条命令，但它拿到的是空字符串。" };
-			}
-			const relaxed = await currentRelaxed();
-			const violation = shellPrecheck(command, relaxed);
-			if (violation !== null) {
-				return {
-					block: true,
-					reason:
-						`设备策略拒绝这条 Shell 命令（${violation}），它与用户授权无关，无法放行：\n\n  ${command}\n\n` +
-						"请改用别的命令或别的工具，或直接告诉用户这一步无法通过设备桥完成。",
-				};
-			}
+			approvalReason = needsApproval(command);
+			if (approvalReason === null) return undefined;
 		}
 
 		// (1) No UI → no consent → no action.
@@ -181,11 +186,14 @@ export default function (pi: ExtensionAPI) {
 		const history = previous > 0
 			? `\n\n（本会话你已经批准过 ${previous} 次「${toolName}」，但每次都问过你。）`
 			: "";
+		// Only `android_shell` has a rule list of its own; the label is the consequence
+		// that made the command worth asking about, so it belongs in the question.
+		const reason = approvalReason === null ? "" : `\n\n［${approvalReason}］`;
 
 		let choice: string | undefined;
 		try {
 			choice = await ctx.ui.select(
-				`⚠️ pi-android 请求执行危险设备操作：${toolName}`,
+				`⚠️ pi-android 请求执行危险设备操作：${toolName}${reason}\n\n${description}${history}`,
 				[CHOICE_ONCE, CHOICE_REMEMBER, CHOICE_DENY],
 				{ timeout: 120_000 },
 			);

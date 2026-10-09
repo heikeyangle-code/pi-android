@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
@@ -93,7 +92,7 @@ import org.json.JSONObject
  * The user's requirement is that nothing may be loosened without a trace. So this
  * screen is also the *policy* screen: the shell card shows the exact command
  * whitelist, the irreducible hard blocklist, the write boundary and the relaxed-mode
- * switch with its cost in one sentence; the storage card shows the granted SAF
+ * switch with its cost in one sentence; the 基础 card shows the granted SAF
  * directories; and the approvals card shows what the pi-side permission gate has
  * been told to stop asking about. None of that is inferred — it is read from the
  * same objects the enforcement reads ([DeviceShellGuard], [DeviceCapabilityStore],
@@ -707,37 +706,6 @@ private fun DeviceCapabilityCard(
                 }
             }
 
-            DeviceCapability.Storage -> {
-                Spacer(Modifier.height(PiSpacing.inline))
-                for (line in DeviceSafStore.get(androidx.compose.ui.platform.LocalContext.current).summaryLines()) {
-                    Text(
-                        line,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                for (grant in grants) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "· ${grant.name}",
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = { onRevokeDirectory(grant.uri) }) { Text("撤销") }
-                    }
-                }
-                TextButton(onClick = onGrantDirectory) { Text("授权目录") }
-                if (storagePermissionsNeeded) {
-                    Text(
-                        "这台设备的 Android 版本还需要「存储」权限才能写公共 Download。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = PiTheme.palette.warning,
-                    )
-                    TextButton(onClick = onRequestStoragePermission) { Text("授予存储权限") }
-                }
-            }
-
             DeviceCapability.Shell -> {
                 Spacer(Modifier.height(PiSpacing.inline))
                 // The backend that will run the *next* command, from the same live
@@ -812,17 +780,71 @@ private fun DeviceCapabilityCard(
                 }
             }
 
-            DeviceCapability.Sensors -> {
+            DeviceCapability.Basic -> {
                 Spacer(Modifier.height(PiSpacing.inline))
-                // Two endpoint-level grants, stated as they are
-                // (DeviceCapabilityStore.kt:207-211, 268-278). The camera one *must* be
-                // requestable here: `cameraPrecondition()`'s hint tells the user to
-                // press 「授予相机权限」 on this card (Store:275-276) and the model
-                // relays that verbatim. The location grant is requested here too,
-                // because until now nothing in the app ever asked for it
-                // (`grep -rn ACCESS_FINE_LOCATION` outside the store and
+                // 基础 is on by default, so its badge reads 「可用」 out of the box —
+                // and on API 33+ without POST_NOTIFICATIONS `android_say` is refused
+                // every time (DeviceSystemActions.kt:103-112). Silence here is the one
+                // thing the default-on group cannot afford.
+                if (notificationPermission) {
+                    Text(
+                        "系统通知权限：已授予。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "系统通知权限：未授予 —— 发送通知会被拒绝；剪贴板、打开链接、分享、震动不受影响。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                    TextButton(
+                        onClick = { onRequestPermission(listOf(Manifest.permission.POST_NOTIFICATIONS)) },
+                    ) { Text("授予通知权限") }
+                }
+
+                // 文件（原「存储」组并入 基础）。The SAF picker is the whole reason this
+                // group is no longer documented as "无": a picker needs an Activity, and
+                // this screen is one. Persisting the URI permission is what makes the
+                // grant survive a restart.
+                Spacer(Modifier.height(PiSpacing.inline))
+                for (line in DeviceSafStore.get(androidx.compose.ui.platform.LocalContext.current).summaryLines()) {
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                for (grant in grants) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "· ${grant.name}",
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { onRevokeDirectory(grant.uri) }) { Text("撤销") }
+                    }
+                }
+                TextButton(onClick = onGrantDirectory) { Text("授权目录") }
+                if (storagePermissionsNeeded) {
+                    Text(
+                        "这台设备的 Android 版本还需要「存储」权限才能写公共 Download。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                    TextButton(onClick = onRequestStoragePermission) { Text("授予存储权限") }
+                }
+
+                // 定位与相机（原「位置 · 传感器 · 相机」组并入 基础）：两者都是端点级授权，
+                // 缺了不影响整组 —— 传感器、电池、剪贴板照常。The camera one *must* be
+                // requestable here: `cameraPrecondition()`'s hint tells the user to press
+                // 「授予相机权限」 on this card and the model relays that verbatim. The
+                // location grant is requested here too, because nothing else in the app
+                // ever asks for it (`grep -rn ACCESS_FINE_LOCATION` outside the store and
                 // `DeviceSystemActions` → no request), so the endpoint could only ever
                 // answer NO_PERMISSION.
+                Spacer(Modifier.height(PiSpacing.inline))
                 if (locationPermission) {
                     Text(
                         "定位权限：已授予（还要系统定位开关打开、且有过一次定位结果）。",
@@ -861,30 +883,6 @@ private fun DeviceCapabilityCard(
                     TextButton(
                         onClick = { onRequestPermission(listOf(Manifest.permission.CAMERA)) },
                     ) { Text("授予相机权限") }
-                }
-            }
-
-            DeviceCapability.Basic -> {
-                Spacer(Modifier.height(PiSpacing.inline))
-                // 基础 is on by default, so its badge reads 「可用」 out of the box —
-                // and on API 33+ without POST_NOTIFICATIONS `android_say` is refused
-                // every time (DeviceSystemActions.kt:103-112). Silence here is the one
-                // thing the default-on group cannot afford.
-                if (notificationPermission) {
-                    Text(
-                        "系统通知权限：已授予。",
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    Text(
-                        "系统通知权限：未授予 —— 发送通知会被拒绝；剪贴板、打开链接、分享、震动不受影响。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = PiTheme.palette.warning,
-                    )
-                    TextButton(
-                        onClick = { onRequestPermission(listOf(Manifest.permission.POST_NOTIFICATIONS)) },
-                    ) { Text("授予通知权限") }
                 }
             }
         }
@@ -1109,9 +1107,7 @@ private fun permissionLabel(permission: String): String = when (permission) {
 
 private fun iconFor(capability: DeviceCapability): ImageVector = when (capability) {
     DeviceCapability.Basic -> Icons.Filled.PhoneAndroid
-    DeviceCapability.Storage -> Icons.Filled.Folder
     DeviceCapability.Accessibility -> Icons.Filled.TouchApp
-    DeviceCapability.Sensors -> Icons.Filled.Security
     DeviceCapability.Shell -> Icons.Filled.Terminal
 }
 

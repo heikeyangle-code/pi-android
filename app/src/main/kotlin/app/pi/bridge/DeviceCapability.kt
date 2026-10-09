@@ -1,7 +1,7 @@
 package app.pi.bridge
 
 /**
- * The five device-capability groups of the authorization page
+ * The three device-capability groups of the authorization page
  * (docs/pi-android-ui-spec.md §5.6, docs/pi-android-app-design.md §21.4).
  *
  * Every group is an explicit user opt-in. The bridge never infers consent from
@@ -10,10 +10,9 @@ package app.pi.bridge
  * decision here is about what the agent may do, not about what the app can.
  *
  * [defaultEnabled] exists because the spec draws one deliberate line — the
- * mundane, non-observable group (clipboard, notifications, opening links,
- * sharing) is on out of the box, and the four surveillance/control groups
- * (存储 / 无障碍 / 位置·传感器·相机 / Shell) are off until the user says
- * otherwise. Nothing dangerous is ever defaulted on.
+ * basic group (clipboard, notifications, links, sharing, plus the former 存储 /
+ * 位置·传感器·相机 endpoints) is on out of the box, and the two control groups
+ * (屏幕 / Shell) are off until the user says otherwise.
  */
 enum class DeviceCapability(
     val id: String,
@@ -31,7 +30,7 @@ enum class DeviceCapability(
     Basic(
         id = "basic",
         title = "基础",
-        summary = "剪贴板、通知、打开链接、分享、提示音与语音",
+        summary = "剪贴板、通知、打开链接、分享、提示音与语音，以及文件、定位、传感器、电量与手电筒",
         allows = listOf(
             "读取与写入系统剪贴板",
             "发送系统通知（可点击回到会话）",
@@ -40,45 +39,27 @@ enum class DeviceCapability(
             "把文本分享到其他 App",
             "朗读文本（TTS）",
             "列出已安装应用并启动其中一个",
+            "读写你在本页授权的目录（SAF，重启后仍然有效）",
+            "把 Agent 生成的文件写入 Download（用户可见、可撤销）",
+            "从 Download 读回文件交给 Agent（API 33+ 只能读本应用自己的文件）",
+            "读取当前定位（取决于系统是否已授予定位权限）",
+            "列出传感器并读取一次采样值",
+            "读取电池电量与充电状态",
+            "开关手电筒（相机闪光灯）",
         ),
         defaultEnabled = true,
     ),
 
-    Storage(
-        id = "storage",
-        title = "存储",
-        summary = "读写用户授权（SAF）的目录，并把文件导出到公共 Download",
-        allows = listOf(
-            "读写你在本页授权的目录（SAF，重启后仍然有效）",
-            "把 Agent 生成的文件写入 Download（用户可见、可撤销）",
-            "从 Download 读回文件交给 Agent（API 33+ 只能读本应用自己的文件）",
-        ),
-        defaultEnabled = false,
-    ),
-
     Accessibility(
         id = "accessibility",
-        title = "无障碍",
-        summary = "读取屏幕内容、点按、滑动、输入、截图，以及结束其他应用",
+        title = "屏幕",
+        summary = "读屏/点按/输入/滑动/按键/截图",
         allows = listOf(
             "读取当前屏幕的控件树（文本、按钮、输入框）",
             "点按控件、手势滑动、长按",
             "向输入框写入文本、执行返回/主页/最近任务",
             "截屏并把图片交给模型查看",
             "结束指定的用户应用（危险：可能丢失未保存内容）",
-        ),
-        defaultEnabled = false,
-    ),
-
-    Sensors(
-        id = "sensors",
-        title = "位置 · 传感器 · 相机",
-        summary = "读取位置、电池与传感器数据，控制手电筒",
-        allows = listOf(
-            "读取当前定位（取决于系统是否已授予定位权限）",
-            "列出传感器并读取一次采样值",
-            "读取电池电量与充电状态",
-            "开关手电筒（相机闪光灯）",
         ),
         defaultEnabled = false,
     ),
