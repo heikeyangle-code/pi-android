@@ -9,10 +9,9 @@ package app.pi.bridge
  * happens to hold is *necessary* but not *sufficient*, because the user's
  * decision here is about what the agent may do, not about what the app can.
  *
- * [defaultEnabled] exists because the spec draws one deliberate line — the
- * basic group (clipboard, notifications, links, sharing, plus the former 存储 /
- * 位置·传感器·相机 endpoints) is on out of the box, and the control groups
- * (屏幕 / Shell / 输入法 / 管理员) are off until the user says otherwise.
+ * [defaultEnabled] 现在五组全是 `false` —— 用户要求「默认全关」：装完之后一组都不开，
+ * 要用哪组由用户在「设置 → 设备能力」里自己说。字段保留而不是删掉，是因为它记录的是
+ * 「这个 App 有没有替用户做过默认决定」；将来若某一组该默认开，改一个布尔值即可。
  *
  * 通知监听、自动化、VPN 与投屏没有各自的分组：它们并入 基础（contract 里写死的那条）。
  * 把「通知监听」单开一个开关看起来更缜密，但它与 android_say（同一个通知权限/同一个
@@ -51,7 +50,7 @@ enum class DeviceCapability(
             "读取电池电量与充电状态",
             "开关手电筒（相机闪光灯）",
         ),
-        defaultEnabled = true,
+        defaultEnabled = false,
     ),
 
     Accessibility(

@@ -2788,7 +2788,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | \`android_fs\` | 文件 | list、read、write（授权目录 SAF）、download（公共 Download，要 op） |
 | \`android_shell\` | 设备命令 | — |
 
-- 能力组五组：basic（基础，默认开）/ accessibility（屏幕，默认关）/ ime（输入法，默认关）/ admin（设备管理员，默认关）/ shell（默认关）。关着的那组，它的工具既不注册也不进提示词。
+- 能力组五组：basic（基础）/ accessibility（屏幕）/ ime（输入法）/ admin（设备管理员）/ shell。**五组默认全关**：一组都不开时只有 android_status 会注册，其余工具既不注册也不进提示词；要用哪组在「设置 → 设备能力」里开。
 - [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
 - 危险动作会弹确认；用户拒绝就停。
 
