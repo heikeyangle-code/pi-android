@@ -146,6 +146,17 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
 	switch (toolName) {
 		case "android_shell":
 			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令本身不做任何过滤，成败取决于身份：装了 Shizuku 是 ADB 级 uid=2000，否则是应用自身身份（pm、input、dumpsys、screencap 会以 SecurityException 失败）。`;
+		case "android_admin": {
+			const action = asString(input, "action");
+			const target =
+				typeof input.package === "string" && input.package.length > 0 ? `  package=${input.package}` : "";
+			// 只有 wipe 会出现那句后果。它挂在弹窗正文里而不是给所有 admin 动作重复一遍，
+			// 否则 `grant` 的弹窗会写着「恢复出厂设置」—— 一句在错的地方出现的严重警告，
+			// 会教用户不再读弹窗。
+			const consequence =
+				action === "wipe" ? "\n\n恢复出厂设置：这台设备上的一切都会被抹掉（包括 pi 与它的工作区），无法恢复。" : "";
+			return `执行设备管理员操作：\n\n  action=${action}${target}\n\n这类操作需要 Device Owner / Profile Owner 身份，改的是设备级策略。${consequence}`;
+		}
 		case "android_stop_app":
 			return `结束应用：\n\n  ${asString(input, "package")}\n\n后台进程会被结束，未保存的内容可能丢失。`;
 		case "android_share":
@@ -209,7 +220,12 @@ export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: s
  *  - `dd` writes over whatever it is pointed at, up to a whole block device;
  *  - `mkfs` formats a filesystem;
  *  - a path under `/dev/block` reaches the partitions behind the filesystems;
- *  - `pm clear` / `cmd package clear` delete an app's entire data directory.
+ *  - `pm clear` / `cmd package clear` delete an app's entire data directory;
+ *  - `pm uninstall` / `cmd package uninstall` remove the app *and* that directory.
+ *
+ * `android_admin(action="wipe")` belongs to the same class and is asked about through
+ * `needsApprovalForAdmin` below — it is not a shell command, so it cannot live in this
+ * list.
  *
  * The `dd` pattern requires whitespace after the command word on purpose. `/\bdd\b/i`
  * also matched `dd.txt` and `ls dd`, so the dialog asked about a file name; a
@@ -221,7 +237,42 @@ export const NEEDS_APPROVAL_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; lab
 	{ pattern: /\/dev\/block/, label: "访问块设备：写入等于改分区表，可能让设备无法启动" },
 	{ pattern: /\bpm\s+clear\b/i, label: "清除应用数据（不可逆：该应用的全部数据会被删光）" },
 	{ pattern: /\bcmd\s+package\s+clear\b/i, label: "清除应用数据（不可逆：该应用的全部数据会被删光）" },
+	{ pattern: /\bpm\s+uninstall\b/i, label: "卸载应用（不可逆：应用与它的全部数据一起消失）" },
+	{ pattern: /\bcmd\s+package\s+uninstall\b/i, label: "卸载应用（不可逆：应用与它的全部数据一起消失）" },
 ];
+
+/**
+ * The `android_admin` actions the user is asked about. Only one, and that is the point.
+ *
+ * `wipe` is a factory reset: everything on the device goes, including this app and the
+ * workspace the agent has been working in. Nothing else the tool can do is in the same
+ * class — `reboot` looks like its sibling but the phone comes back, so it fails the
+ * "the damage cannot be undone" test every other entry here is built on; `grant`,
+ * `hidden`, `suspend` and the rest are reversible; `status` and `capabilities` are
+ * reads. Asking about those would be noise, and noise is what turns a confirmation into
+ * a reflex.
+ *
+ * This lives beside the shell list rather than inside it because the decision is not
+ * about a command string: it is a tool plus one of its `action` values.
+ */
+export const NEEDS_APPROVAL_ADMIN_ACTIONS: ReadonlyArray<{ action: string; label: string }> = [
+	{
+		action: "wipe",
+		label: "恢复出厂设置：手机上的一切都会被抹掉（包括 pi 与它的工作区），无法恢复",
+	},
+];
+
+/**
+ * @returns the label of the rule the admin action matched — the consequence to show the
+ *   user — or null when the call may run without a confirmation.
+ */
+export function needsApprovalForAdmin(input: Record<string, unknown>): string | null {
+	const action = typeof input.action === "string" ? input.action : "";
+	for (const entry of NEEDS_APPROVAL_ADMIN_ACTIONS) {
+		if (action === entry.action) return entry.label;
+	}
+	return null;
+}
 
 /**
  * @returns the label of the rule the command matched — the consequence to show the
