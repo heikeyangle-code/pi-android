@@ -406,8 +406,8 @@ const ScreenshotFormat = StringEnum(["jpeg", "png"] as const, {
  * 留给其它单值枚举（`kind` / `op` / `what` / `direction` / `format`）。
  */
 const AppAction = Type.Union(
-	[Type.Literal("list"), Type.Literal("launch"), Type.Literal("stop")],
-	{ description: "list = list apps, launch = start one, stop = kill a user app's background process." },
+	[Type.Literal("list"), Type.Literal("launch")],
+	{ description: "list = list apps, launch = start one. (Stopping an app is android_stop_app — it needs the accessibility capability, not basic.)" },
 );
 
 const UiAction = Type.Union(
@@ -417,6 +417,8 @@ const UiAction = Type.Union(
 		Type.Literal("diff"),
 		Type.Literal("select"),
 		Type.Literal("idle"),
+		Type.Literal("wait"),
+		Type.Literal("verify"),
 		Type.Literal("tap"),
 		Type.Literal("swipe"),
 		Type.Literal("input"),
@@ -430,7 +432,7 @@ const UiAction = Type.Union(
 		Type.Literal("macroStop"),
 		Type.Literal("macroPlay"),
 	],
-	{ description: "dump=read tree, elements=structured table, diff=changes since last dump, select=self-healing multi-strategy lookup, idle=wait for the tree to settle, tap, swipe, input=type, key=global action, keyevent=raw keys (Shizuku), screenshot, memory=per-app element memory, visual=screenshot handoff, macroStart/Step/Stop/Play=record and replay a recipe." },
+	{ description: "dump=read tree, elements=structured table, diff=changes since last dump, select=self-healing multi-strategy lookup, idle=wait for the tree to settle, wait=wait for a selector to appear (or pass gone=true to wait for it to disappear), verify=what sits at (x,y) and whether a tap there would land, tap, swipe, input=type, key=global action, keyevent=raw keys (Shizuku), screenshot, memory=per-app element memory, visual=screenshot handoff, macroStart/Step/Stop/Play=record and replay a recipe." },
 );
 
 const IoAction = Type.Union(
@@ -618,6 +620,8 @@ const UI_DIRECT: Record<string, string> = {
 	diff: "/app/ui/diff",
 	select: "/app/ui/select",
 	idle: "/app/ui/idle",
+	wait: "/app/ui/wait",
+	verify: "/app/ui/verify",
 	memory: "/app/ui/memory",
 	visual: "/app/ui/visual",
 	macroStart: "/app/ui/macro/start",
@@ -948,11 +952,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_ui",
 		capability: "accessibility",
 		label: "屏幕操作",
-		description: "Screen: action=dump|elements|diff|select|idle|tap|swipe|input|key|keyevent|screenshot|memory|visual|macroStart|macroStep|macroStop|macroPlay. Dump first; its indices feed tap and input.",
+		description: "Screen: action=dump|elements|diff|select|idle|wait|verify|tap|swipe|input|key|keyevent|screenshot|memory|visual|macroStart|macroStep|macroStop|macroPlay. Dump first; its indices feed tap and input.",
 		promptSnippet: "Read screen / tap / type / swipe / screenshot",
 		promptGuidelines: [
 			"Dump before acting; on NOT_FOUND re-dump or pass text/desc/resourceId to action=tap.",
-			"action=select tries resourceId→text→desc→neighbour→relative position→coordinate and reports why each strategy failed; action=idle waits for the tree to settle; action=diff reports only added/removed/changed since the last dump.",
+			"action=select tries resourceId→text→desc→neighbour→relative position→coordinate and reports why each strategy failed; action=idle waits for the tree to settle; action=wait blocks until a selector appears (or, with gone=true, disappears); action=diff reports only added/removed/changed since the last dump.",
+			"action=verify tells you what is at a coordinate and whether a tap there would land on something clickable — use it when a tap seemed to do nothing, before retrying with different coordinates.",
 			"macroStart → macroStep（每步一个动作）→ macroStop 录一段配方；macroPlay 回放，回放时按当前屏幕重新解析选择器。",
 			"Custom UI / games / video: action=screenshot (crop with region); raw keys need Shizuku.",
 		],
@@ -1337,8 +1342,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_app",
 		capability: "basic",
 		label: "应用列表 / 启动 / 结束",
-		description: "List apps, launch one by exact package (find it with action=\"list\" first), or stop its background process.",
-		promptSnippet: "List / launch / stop apps",
+		description: "List apps or launch one by exact package (find it with action=\"list\" first). To stop one use android_stop_app.",
+		promptSnippet: "List / launch apps",
 		parameters: Type.Object({
 			action: AppAction,
 			q: Type.Optional(Type.String({ description: "Substring filter on name or package; list only." })),
@@ -1395,23 +1400,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 						data as unknown as Record<string, unknown>,
 					);
 				}
-				if (p.action === "stop") {
-					if (typeof p.package !== "string" || p.package.trim().length === 0) {
-						throw new Error(
-							"[BAD_PARAM] android_app 的 action=\"stop\" 需要 package（精确包名，先用 action=\"list\" 查）。" +
-								"\n提示：请传入 package 后重新调用 android_app。",
-						);
-					}
-					const data = await bridgePost<{ packageName: string; mode: string; note?: string }>("/app/apps/stop", {
-						package: p.package,
-					});
-					const note = data.note ? `\n${data.note}` : "";
-					return textResult(
-						`[action stop] 已请求结束后台进程：${data.packageName}（${data.mode}）${note}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				throw badParam("android_app", "action", ["list", "launch", "stop"], p.action);
+				throw badParam("android_app", "action", ["list", "launch"], p.action);
 			}),
 	},
 	{
@@ -2808,6 +2797,8 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | \`elements\` | 结构化元素表（可操作元素 + 中心点），比 dump 更适合拿来判断 | maxNodes、maxDepth |
 | \`diff\` | 只报「相对上一次 dump 的新增 / 消失 / 变化」——屏幕只小改时省 token | maxNodes、maxDepth |
 | \`idle\` | 等界面稳定（控件树连续两次不变才算空闲），别用 sleep | timeoutMs |
+| \`wait\` | 等某个选择器**出现**（\`gone: true\` 则等它**消失**）——事件驱动，不是轮询 | text/desc/resourceId、gone、timeoutMs |
+| \`verify\` | 问「(x,y) 上到底是什么、点下去会不会生效」——返回命中的节点与可点击祖先链 | x、y |
 | \`select\` | **自愈查找**：resourceId→text→desc→邻居文本→相对位置→坐标，逐个试并回报每个策略为什么失败 | text/desc/resourceId/anchor/direction/occurrence/timeoutMs |
 | \`memory\` | 这个应用里见过哪些元素、各自能做什么 | package |
 
@@ -2841,13 +2832,14 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 1. 先 dump / elements 再动作。编号只在最近一次 dump 里有效；能按 text/desc/resourceId 定位就别记编号。
 2. 找不到元素时用 **\`select\`**：它按稳定性从高到低逐个策略试，并告诉你每个为什么失败 —— 比反复 dump 一次一次猜快。
-3. 界面在加载或动画时别急着点：用 **\`idle\`** 等它稳定，或用 dump 的 waitForText / waitForId。
+3. 界面在加载或动画时别急着点：用 **\`idle\`** 等它稳定，用 **\`wait\`** 等某个具体元素出现（或 pass gone=true 等它消失），或用 dump 的 waitForText / waitForId。
 4. 屏幕只变了一点时用 **\`diff\`**（只报变化），别重新 dump 整棵树。
 5. 同一串操作要做很多遍 → **录成宏**（macroStart → macroStep → macroStop → macroPlay）。
 6. 每个动作的返回都带「前台 A → B」和「屏幕已变化 / 没有变化」。说没有变化就是真没生效，别当成功报。
 7. 画布 / 游戏 / 视频这类读不到内容的界面：用 \`screenshot\`（region 裁、调 maxDimension），或 **\`visual\`** 交上层。
-8. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
-9. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
+8. 点了一下但界面没反应，别急着换坐标重试：先用 **\`verify\`** 看那个坐标上到底是什么、它有没有可点击的祖先链 —— 有点不动的，也有点到了空处的。
+9. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
+10. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
 ``,
 
 	"references/tools.md": `# 工具
@@ -2857,8 +2849,8 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | 工具 | 覆盖 | action |
 |---|---|---|
 | \`android_status\` | 桥、能力组、前台、权限、Shell 后端与 uid、SAF 目录、工作区边界 | — |
-| \`android_ui\` | 屏幕 | dump / tap / swipe / input / key / keyevent / screenshot |
-| \`android_app\` | 应用 | list / launch / stop |
+| \`android_ui\` | 屏幕 | dump / elements / diff / select / idle / wait / verify / tap / swipe / input / key / keyevent / screenshot / memory / visual / macroStart / macroStep / macroStop / macroPlay |
+| \`android_app\` | 应用 | list / launch（**结束应用不是它**，见下表的 \`android_stop_app\`：那一步要屏幕能力，basic 开不出来） |
 | \`android_io\` | 用户可见的输出 | clipboard / say / vibrate / share / open |
 | \`android_fs\` | 文件 | list、read、write（授权目录 SAF）、download（公共 Download，要 op） |
 | \`android_shell\` | 设备命令 | — |
