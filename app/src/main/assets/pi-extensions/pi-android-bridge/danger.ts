@@ -196,18 +196,6 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
  */
 export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [];
 
-/**
- * The syntax the 放宽模式 switch (「设置 → 设备能力 → Shell」) used to turn on.
- *
- * **No longer consulted by anything.** The Kotlin guard stopped checking command
- * substitution, so `shellPrecheck` below ignores this list, and the switch itself has
- * no effect (the UI no longer draws it). Kept only so the file still records what the
- * mode was — see the class comment on `DeviceShellGuard` for what replaced it.
- */
-export const RELAXED_ONLY_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
-	{ pattern: /`/, label: "命令替换（反引号）" },
-	{ pattern: /\$\(/, label: "命令替换 $(...)" },
-];
 
 /**
  * The shell commands the user is asked to approve: the **irreversible** ones, and
@@ -246,38 +234,3 @@ export function needsApproval(command: string): string | null {
 	return null;
 }
 
-/**
- * @param relaxed the 放宽模式 flag, read from `/app/health`. When the bridge cannot
- *   be reached the caller passes `false` — fail closed.
- * @returns the label of the violated rule, or null when the command may proceed to
- *   the confirmation step (or straight to execution, for a remembered approval).
- */
-/**
- * The device shell's "can never be allowed" pre-check.
- *
- * Both lists this used to consult are gone from the decision:
- *
- *  - `FORBIDDEN_SHELL_PATTERNS` is empty — clearing the blacklist was a deliberate
- *    user request, and it is mirrored by `DeviceShellGuard.hardBlocks`, also empty.
- *  - The 放宽模式 branch is gone with the substitution rule it guarded: the Kotlin
- *    guard stopped refusing `$(...)` and backticks too, along with the whitelist and
- *    the write boundary (see the class comment on `DeviceShellGuard`). Nothing on the
- *    app side refuses a shell command by its text any more, so a gate that did would
- *    be refusing something the bridge would have run.
- *
- * Kept as a function rather than deleted so the gate does not have to know which
- * side of that change it was built against. The only thing left in front of a shell
- * command is `needsApproval`'s irreversible short list.
- *
- * @param relaxed 放宽模式, read from `/app/health`. Ignored now.
- * @returns always `null` — nothing is refused before the confirmation step.
- */
-export function shellPrecheck(command: string, relaxed = false): string | null {
-	// `relaxed` 不再参与判定（替换检查在 App 侧也取消了）；`void` 一句是为了让
-	// "参数未使用"这件事在代码里显式，而不是靠一个下划线命名去暗示。
-	void relaxed;
-	for (const { pattern, label } of FORBIDDEN_SHELL_PATTERNS) {
-		if (pattern.test(command)) return label;
-	}
-	return null;
-}

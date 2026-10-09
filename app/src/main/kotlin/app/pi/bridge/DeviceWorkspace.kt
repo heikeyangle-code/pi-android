@@ -7,8 +7,13 @@ import app.pi.runtime.PtyLauncher
 import java.io.File
 
 /**
- * The workspace, as the device shell has to spell it — the concrete
- * [ShellWriteBoundary] the guard asks about.
+ * The workspace, as the device shell has to spell it.
+ *
+ * It used to *be* the guard's write boundary (`object DeviceWorkspace :
+ * ShellWriteBoundary`, answering `contains` / `isKnown` for every shell request).
+ * That rule was removed at the user's request along with the whitelist, so this
+ * object is now only a *locator*: it answers "where is the workspace" for
+ * `/app/health` and for the terminal, and nothing refuses a write because of it.
  *
  * ### Where the path comes from
  *
@@ -58,7 +63,7 @@ import java.io.File
  * its file access is exactly the app's — the platform's scoped-storage rules are
  * what bound it, not this class.
  */
-object DeviceWorkspace : ShellWriteBoundary {
+object DeviceWorkspace {
 
     /**
      * Only used if the runtime layer's accessor itself fails.
@@ -115,15 +120,14 @@ object DeviceWorkspace : ShellWriteBoundary {
         nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
     ).workspaceBase
 
-    override fun contains(path: String): Boolean {
-        val canonical = canonicalize(path)
-        if (canonical.isEmpty()) return false
-        return aliases.any { alias -> canonical == alias || canonical.startsWith("$alias/") }
-    }
+    fun shellPath(): String? = hostPath
 
-    override fun shellPath(): String? = hostPath
-
-    override fun isKnown(): Boolean = aliases.isNotEmpty()
+    /**
+     * `/app/health` 报的 `workspace.known`。它曾经是写入边界那个接口的 `isKnown()`
+     * ——「不确定工作区时跳过写入检查」那一支的前置；写入规则没了，这个字段就只说明
+     * 「我们确实知道工作区在哪」。读它的调用点（`DeviceBridgeRouter`）没动。
+     */
+    fun isKnown(): Boolean = aliases.isNotEmpty()
 
     /**
      * The workspace as the **engine** spells it, i.e. where the process that reads

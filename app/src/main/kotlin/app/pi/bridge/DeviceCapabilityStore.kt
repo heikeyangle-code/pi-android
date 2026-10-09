@@ -109,26 +109,6 @@ class DeviceCapabilityStore private constructor(context: Context) {
     fun isSessionDisabled(capability: DeviceCapability): Boolean =
         sessionDisabled.contains(capability.id)
 
-    /**
-     * 放宽模式: the opt-in that lets the shell guard accept command substitution
-     * (`$(...)`, backticks) and the nesting heads (`sh`, `eval`, `source`, …).
-     *
-     * One stored boolean, read by three consumers: the Kotlin guard
-     * ([DeviceShellGuard.inspect]), the authorization page, and the pi-side
-     * permission gate — the gate reads it from `/app/health`. That single source is
-     * the point: a mode only one side honoured would be worse than no mode, because
-     * the disagreement between "the dialog let it through" and "the guard refuses"
-     * is invisible.
-     *
-     * Default OFF, and it is not part of any capability group: turning 「Shell」 on
-     * must not silently widen what shell *syntax* is allowed.
-     */
-    fun isShellSyntaxRelaxed(): Boolean = prefs.getBoolean(KEY_RELAXED_SHELL, false)
-
-    fun setShellSyntaxRelaxed(relaxed: Boolean) {
-        prefs.edit().putBoolean(KEY_RELAXED_SHELL, relaxed).apply()
-    }
-
     /** Persisted decision **and** not cut for this session. */
     fun isEnabled(capability: DeviceCapability): Boolean =
         isPersistentlyEnabled(capability) && !isSessionDisabled(capability)
@@ -377,7 +357,6 @@ class DeviceCapabilityStore private constructor(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "pi-device-capabilities"
-        private const val KEY_RELAXED_SHELL = "shell.relaxed-syntax"
 
         @Volatile
         private var instance: DeviceCapabilityStore? = null

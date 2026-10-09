@@ -371,17 +371,13 @@ class DeviceBridgeRouter(
 
                 "/app/shell" -> withCapability(DeviceCapability.Shell) {
                     val command = params.strRequired("command")
-                    // One switch, two enforcers: the TS gate reads the same boolean
-                    // from /app/health, so the dialog and this guard cannot disagree.
-                    val relaxed = store.isShellSyntaxRelaxed()
+                    // 守卫不再拒绝任何命令（唯一策略点 hardBlocks 是空的）。这里保留调用，是为了
+                    // 让「要加规则就往 hardBlocks 里加」这条路径仍然接在一个真实端点上，而不是
+                    // 一段没人调的代码。
                     DeviceWorkspace.refresh(context)
-                    DeviceShellGuard.inspect(command, relaxed, DeviceWorkspace)?.let { throw DeviceActionException(it) }
+                    DeviceShellGuard.inspect(command)?.let { throw DeviceActionException(it) }
                     val backend = DeviceShellGuard.active()
-                    DeviceShellGuard.toJson(
-                        result = backend.run(command, params.int("timeoutMs", 15_000)),
-                        relaxedShellSyntax = relaxed,
-                        boundaryLabel = DeviceWorkspace.shellPath(),
-                    )
+                    DeviceShellGuard.toJson(result = backend.run(command, params.int("timeoutMs", 15_000)))
                 }
 
                 // Raw key injection. The accessibility channel can only do the five
@@ -1205,9 +1201,6 @@ class DeviceBridgeRouter(
         put("notificationPermissionGranted", store.hasNotificationPermission())
         put("vibratePermissionGranted", store.hasVibratePermission())
         put("legacyStoragePermissionGranted", store.hasLegacyStoragePermission())
-        // The relaxed-syntax switch is published so the pi-side gate can honour the
-        // exact same boolean the Kotlin guard enforces.
-        put("shellSyntaxRelaxed", store.isShellSyntaxRelaxed())
         DeviceWorkspace.refresh(context)
         put("workspace", JSONObject().apply {
             put("shellPath", DeviceWorkspace.shellPath() ?: JSONObject.NULL)
@@ -1222,24 +1215,13 @@ class DeviceBridgeRouter(
         })
         put("shizuku", DeviceShizuku.status(context))
         put("gate", DeviceApprovalLedger.toJson())
-        // The whole policy, so a model (and the diagnostics page) can see exactly
-        // what is permitted instead of inferring it from refusals.
-        //
-        // `enforced=false` is the headline now: the whitelist, the substitution rule
-        // and the write boundary were all removed from `DeviceShellGuard.inspect` at
-        // the user's request, leaving `hardBlocks` (empty) as the only policy point.
-        // `allowedCommands` stays as a catalog of what used to be allowed — the guard
-        // no longer reads it, and saying so is the difference between a model that
-        // knows it may run anything and one that keeps rephrasing to fit a list that
-        // is not being consulted.
+        // The whole policy, so a model (and the diagnostics page) can see exactly what
+        // is permitted instead of inferring it from refusals. It is short now on
+        // purpose: there is exactly one rule, and it is empty.
         put("shellPolicy", JSONObject().apply {
             put("enforced", false)
-            put("note", "白名单、命令替换检查、写入边界均已取消；唯一策略点 hardBlocks 当前为空，因此不再按命令拒绝任何东西。")
-            put("allowedCommands", JSONArray(DeviceShellGuard.allowedCommands))
+            put("note", "不按命令拒绝任何东西：命令名不检查、写入不限路径、替换不检查。唯一策略点 hardBlocks 为空。")
             put("blocked", JSONArray(DeviceShellGuard.blockedSummary()))
-            put("writeBoundary", JSONArray(DeviceShellGuard.writeBoundarySummary()))
-            put("syntax", JSONArray(DeviceShellGuard.syntaxSummary(store.isShellSyntaxRelaxed())))
-            put("relaxedCost", DeviceShellGuard.relaxedCost())
             put("elevatedBackend", DeviceShellGuard.hasElevatedBackend())
         })
         put("saf", JSONObject().apply {

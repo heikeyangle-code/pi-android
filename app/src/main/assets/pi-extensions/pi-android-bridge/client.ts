@@ -155,12 +155,9 @@ export interface HealthPayload {
 	 */
 	legacyStoragePermissionGranted?: boolean;
 	/**
-	 * The 放宽模式 switch, owned by the app. The permission gate reads it here so
-	 * both enforcers use one boolean (see `danger.shellPrecheck`).
-	 */
-	shellSyntaxRelaxed?: boolean;
-	/**
-	 * The shell write boundary: the user's workspace, as the device shell sees it.
+	 * The workspace, as the device shell sees it. It is **not** a write boundary any
+	 * more — the shell does not restrict where it writes — so this is positioning
+	 * information only.
 	 *
 	 * `guestPath` is the **engine's** spelling of that directory, i.e. where *this*
 	 * process sees it; `guestPathAliases` also carries the terminal tab's plain
@@ -189,18 +186,19 @@ export interface HealthPayload {
 		reported: boolean;
 		sessionGrants?: string[];
 		counts?: Record<string, number>;
-		relaxedShellSyntax?: boolean;
 		note?: string;
 	};
 	/** Granted SAF directories (the storage group). */
 	saf?: { count: number; roots: string[] };
-	/** The full shell policy, so a model can read what is allowed before trying. */
+	/**
+	 * The shell policy. It is short because there is one rule left and it is empty:
+	 * `enforced:false` says the guard refuses nothing by command text, and `blocked`
+	 * is the (empty) hard-block list.
+	 */
 	shellPolicy?: {
-		allowedCommands: string[];
+		enforced: boolean;
+		note: string;
 		blocked: string[];
-		writeBoundary: string[];
-		syntax: string[];
-		relaxedCost: string;
 		elevatedBackend: boolean;
 	};
 	shellBackends: Array<{ id: string; label: string; available: boolean }>;
@@ -401,7 +399,6 @@ export async function bridgeHealth(): Promise<HealthPayload> {
 export async function reportGate(payload: {
 	sessionGrants: string[];
 	counts: Record<string, number>;
-	relaxedShellSyntax: boolean;
 	note: string;
 }): Promise<void> {
 	await bridgePost<unknown>("/app/gate/report", payload, 3000);

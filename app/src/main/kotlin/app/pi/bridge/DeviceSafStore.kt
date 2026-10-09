@@ -24,7 +24,6 @@ object DeviceApprovalLedger {
     private data class Snapshot(
         val sessionGrants: List<String>,
         val counts: Map<String, Int>,
-        val relaxedShellSyntax: Boolean,
         val reportedAt: Long,
         val note: String,
     )
@@ -52,7 +51,6 @@ object DeviceApprovalLedger {
         snapshot = Snapshot(
             sessionGrants = grants,
             counts = counts,
-            relaxedShellSyntax = payload.optBoolean("relaxedShellSyntax", false),
             reportedAt = System.currentTimeMillis(),
             note = payload.optString("note").take(MAX_TEXT),
         )
@@ -75,7 +73,6 @@ object DeviceApprovalLedger {
             }
             put("sessionGrants", JSONArray(current.sessionGrants))
             put("counts", JSONObject(current.counts as Map<*, *>))
-            put("relaxedShellSyntax", current.relaxedShellSyntax)
             put("reportedAt", current.reportedAt)
             put("ageSeconds", (System.currentTimeMillis() - current.reportedAt) / 1000)
             put("note", current.note)

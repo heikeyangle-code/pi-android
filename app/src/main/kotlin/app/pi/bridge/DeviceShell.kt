@@ -168,42 +168,6 @@ object AppUidShellBackend : DeviceShellBackend {
     }
 }
 
-/**
- * The device shell's write boundary, expressed as one question: is this path part
- * of the directory the user handed to pi?
- *
- * ### Why "the workspace is the authorization boundary"
- *
- * The user's rule, made explicit: **whatever directory they picked as the
- * workspace is what they gave the agent.** That choice *is* the authorization, so
- * nothing inside the workspace is the gate's business — not `rm -rf`, not a
- * `chmod 777`, not overwriting a file. A hardcoded list of "sensitive" paths
- * (`DCIM`, `Pictures`, `Android/data`, …) is the wrong shape twice over: it blocks
- * things the user meant to hand over when the workspace happens to *be* that
- * directory, and it says nothing about everything else that happens to be outside
- * the workspace. So the rule is relative, not a list: **inside the workspace the
- * gate does not exist; outside it, the shell does not write.**
- *
- * This is only about *writes*: reading device state (`dumpsys`, `getprop`,
- * `ls /sdcard`) is what the 「Shell」 opt-in authorizes, and stays allowed wherever
- * it points. And it is only about the *shell*: `android_download` / `android_files`
- * are separate, explicitly-confirmed endpoints whose whole purpose is to touch
- * files the user picks elsewhere.
- *
- * The implementation is deliberately not a `File.canonicalPath` call: the command
- * is a string that has not run yet, so the boundary is decided by lexically
- * normalising the path tokens the command *names*.
- */
-interface ShellWriteBoundary {
-    /** True when [path] is the workspace or inside it. */
-    fun contains(path: String): Boolean
-
-    /** The workspace as the device shell has to spell it. */
-    fun shellPath(): String?
-
-    /** True when we actually know the workspace; otherwise the rule is skipped. */
-    fun isKnown(): Boolean
-}
 
 /**
  * The policy guard for the `android_shell` capability (design §23.3).
@@ -220,8 +184,8 @@ interface ShellWriteBoundary {
  *  2. **白名单**（约 95 个命令头，其余一律拒）。**已去掉**。它比黑名单更常是真正的
  *     边界：`mount`、`dd`、`setprop`、`su` 都在这里先被拒了，所以只清黑名单从来
  *     没真的让它们能跑。
- *  3. **工作区外写入**。**已去掉**。[ShellWriteBoundary] 与 `extractWriteTargets`
- *     还留在文件里，但不再被调用。
+ *  3. **工作区外写入**。**已去掉**，相关的类型与函数（ShellWriteBoundary、WriteTarget、
+ *     extractWriteTargets、targetAllowed、canonicalize…）跟它一起删干净了。
  *
  * 守卫去掉**不会**改变命令跑在什么身份上：有 Shizuku 才是 uid 2000，否则是应用自身。
  * 没有特权就是没有特权 —— `pm`、`dumpsys`、`input`、`screencap` 本来就在旧白名单里，
@@ -240,60 +204,6 @@ object DeviceShellGuard {
     /** True when commands run as uid 2000 (or 0) instead of the app's own uid. */
     fun hasElevatedBackend(): Boolean = ShizukuShellBackend.available
 
-    /**
-     * Heads a read **or write** command may start with, ordered by what it is for
-     * so the authorization page can show it as a readable list.
-     *
-     * What is deliberately *not* here: `sh`/`bash`/`eval`/`source` (they would make
-     * the whitelist meaningless — only relaxed mode admits them), `kill`/`killall`
-     * (ending device processes is what the separately-confirmed android_stop_app is
-     * for, and the app's own engine is one of its own processes), `chown` (needs
-     * root, so it could only ever fail), and interpreters a ROM might or might not
-     * ship (`python3`, `perl`, `node`).
-     */
-    val allowedCommands: List<String> = listOf(
-        // shell builtins that matter here
-        "cd",
-        // 设备与系统查询
-        "getprop", "dumpsys", "logcat", "pm", "am", "cmd", "settings", "wm",
-        "screencap", "input", "getevent",
-        // 文件与目录（读写）
-        "ls", "cat", "head", "tail", "wc", "stat", "file", "readlink", "realpath", "find",
-        "mkdir", "rmdir", "rm", "cp", "mv", "touch", "ln", "chmod", "install",
-        "mktemp", "tee", "truncate", "df", "du", "sync",
-        // 文本与二进制处理
-        "grep", "sort", "uniq", "cut", "tr", "sed", "awk", "xargs", "diff", "cmp", "patch",
-        "basename", "dirname", "seq", "expr", "strings", "base64", "xxd", "od", "hexdump",
-        "md5sum", "sha1sum", "sha256sum", "cksum",
-        // 归档
-        "tar", "gzip", "gunzip", "zip", "unzip",
-        // 进程与系统信息
-        "ps", "top", "free", "uptime", "date", "uname", "id", "whoami", "pwd",
-        "env", "printenv", "which", "type", "nproc", "getconf",
-        // `echo`/`printf` are how a shell writes a file at all; dropping them (as this
-        // list did after the first rewrite) makes `echo x > file` fail the whitelist.
-        "echo", "printf",
-        "sleep", "true", "false", "test", "[",
-        // 网络
-        "ip", "ifconfig", "netstat", "ping", "curl", "wget",
-        // 数据库文件
-        "sqlite3",
-    )
-
-    private val allowedHeads: Set<String> = allowedCommands.toSet()
-
-    /**
-     * Heads only 放宽模式 admits. They nest execution, so with them the whitelist
-     * constrains the *outer* command only — including, deliberately and visibly, the
-     * write boundary. That is the cost the UI states before the switch is flipped.
-     */
-    private val relaxedOnlyHeads: Set<String> =
-        setOf("sh", "bash", "dash", "ash", "busybox", "eval", "exec", "source", ".")
-
-    private const val RELAXED_COST =
-        "放宽模式允许 \$(…)、反引号与 sh/bash/eval/source 这类嵌套执行：命令白名单与写入边界从此只约束最外层命令，" +
-            "嵌套进去的命令不再逐条检查（包括它是否写在工作区内），等于把设备 Shell 的边界交给 Agent 自己把持。"
-
     /** One hard block: what it is, and which of the two tests earns it a place. */
     private data class HardBlock(val pattern: Regex, val what: String, val why: String)
 
@@ -303,19 +213,16 @@ object DeviceShellGuard {
     private val hardBlocks: List<HardBlock> = emptyList()
 
     /**
-     * @param relaxedShellSyntax 保留在签名里，是为了不动调用点与 `/app/health` 的形状。
-     *   它曾经决定要不要做替换检查；那条检查已经去掉，所以这个值现在**不参与判定**。
-     * @param boundary 工作区。同上：写入边界已去掉，这个值不再参与判定。
      * @return `null` 表示 [command] 可以跑；否则返回要递交的拒绝。
      *
      * 现在只剩一件事会拒绝：[hardBlocks] —— 它是空列表，所以这里实际上只拦形状不对的
      * 请求（空命令、超长）。类注释里写了去掉的那三道以及为什么。
+     *
+     * 签名里曾经还有 `relaxedShellSyntax` 与 `boundary` 两个参数（替换检查与写入边界的
+     * 输入）。两道检查都删了，参数也一起删了 —— 留着没人读的参数，只会让下一个读它的
+     * 人以为它们还有作用。
      */
-    fun inspect(
-        command: String,
-        relaxedShellSyntax: Boolean = false,
-        boundary: ShellWriteBoundary? = null,
-    ): DeviceDenial? {
+    fun inspect(command: String): DeviceDenial? {
         val trimmed = command.trim()
         if (trimmed.isEmpty()) {
             return DeviceDenial(DeviceDenial.BAD_REQUEST, "命令为空。")
@@ -339,236 +246,10 @@ object DeviceShellGuard {
         }
         return null
     }
-
-    private fun substitutionDenial(what: String): DeviceDenial = DeviceDenial(
-        code = DeviceDenial.BLOCKED_BY_POLICY,
-        reason = "命令包含$what 替换，已拦截。",
-        hint = "拆成独立命令；嵌套需让用户开「放宽模式」（设置 → 设备能力 → Shell）。",
-    )
-
-    // ------------------------------------------------------ write boundary ----
-
-    private data class WriteTarget(val raw: String, val cwd: String, val kind: String)
-
-    private val redirection = Regex("(?:^|[^0-9<>])>>?\\s*([^\\s;&|<>()]+)")
-
-    private fun writeBoundaryDenial(command: String, boundary: ShellWriteBoundary): DeviceDenial? {
-        for (target in extractWriteTargets(command)) {
-            if (targetAllowed(target, boundary)) continue
-            val where = boundary.shellPath() ?: "工作区"
-            val platform = if (isAndroidDataPath(target.raw)) {
-                "Android 11（API 30）起的分区存储在平台层面也禁止应用写别的应用的 Android/data、Android/obb，" +
-                    "写进去只会以 EACCES 失败。"
-            } else {
-                ""
-            }
-            return DeviceDenial(
-                code = DeviceDenial.BLOCKED_BY_POLICY,
-                reason = "要写工作区外：${target.raw}（${target.kind}）。工作区内可写。$platform",
-                hint = "在工作区内操作（$where）；或用 android_files（op=\"write\"）。",
-            )
-        }
-        return null
-    }
-
-    private fun isAndroidDataPath(raw: String): Boolean =
-        raw.contains("/Android/data") || raw.contains("/Android/obb")
-
-    /**
-     * Which argument of a write command is the destination. Relative names resolve
-     * against the tracked `cd`, so `cd $workspace && rm -rf build` is fine while
-     * `cd / && rm -rf sdcard` is not.
-     */
-    private fun extractWriteTargets(command: String): List<WriteTarget> {
-        val out = ArrayList<WriteTarget>()
-        var cwd = "/"
-        for (segment in splitSegments(command)) {
-            for (match in redirection.findAll(segment)) {
-                val raw = match.groupValues[1].trim()
-                if (raw.isNotEmpty() && raw != "-") out.add(WriteTarget(raw, cwd, "重定向"))
-            }
-            val tokens = segment.split(Regex("\\s+")).filter { it.isNotEmpty() }
-            if (tokens.isEmpty()) continue
-            val head = normalizeHead(tokens[0])
-            val args = tokens.drop(1)
-            if (head == "cd") {
-                cwd = args.firstOrNull()?.let { canonicalize(resolveAgainst(it, cwd)) } ?: "/"
-                continue
-            }
-            for (raw in destinationsFor(head, args)) out.add(WriteTarget(raw, cwd, head))
-        }
-        return out
-    }
-
-    private fun destinationsFor(head: String, args: List<String>): List<String> {
-        val values = { names: List<String> ->
-            args.filterIndexed { index, token -> index > 0 && args[index - 1] in names }
-        }
-        val nonFlags = args.filter { it.isNotEmpty() && !it.startsWith("-") }
-        return when (head) {
-            // Every file argument is written in place.
-            "rm", "rmdir", "mkdir", "truncate", "patch", "tee",
-            "mktemp", "gzip", "gunzip",
-            -> nonFlags
-
-            // `chmod -R 777 path`: the mode is not a path. It is octal (755) or
-            // symbolic (u+x, a=rwx); without dropping it the mode resolves to a path
-            // like `/777` and a legitimate chmod inside the workspace is refused.
-            // (The guard harness caught exactly that.)
-            "chmod" -> nonFlags.filterNot { isModeArgument(it) }
-
-            // `touch -t 202401011200 file`: the timestamp is an option *value*.
-            "touch" -> withoutOptionValues(args, setOf("-t", "-d", "-r"))
-
-            // Only the *destination* is written; the sources are reads, and blocking a
-            // read outside the workspace would be the gate reaching where it must not:
-            // `cp /etc/hosts <workspace>/h` is legitimate.
-            "cp", "mv", "install", "ln" -> nonFlags.takeLast(1)
-            "dd" -> args.filter { it.contains("of=") }.map { it.substringAfter("of=") }
-            // `sed -i s/a/b/ file` — the script is the first non-flag argument and
-            // is not a path; without -i, sed does not write at all.
-            "sed" -> if (args.any { it == "-i" || it.startsWith("-i") }) nonFlags.drop(1) else emptyList()
-            "curl" -> values(listOf("-o", "--output"))
-            "wget" -> values(listOf("-O", "--output-document"))
-            // `tar -xzf src.tgz -C dest`: the extraction directory is the write. When
-            // creating an archive (the `-c` bundle), the archive is one as well.
-            "tar" -> values(listOf("-C", "--directory")) +
-                (if (args.any { it.startsWith("-") && !it.startsWith("--") && it.contains('c') }) {
-                    values(listOf("-f", "--file"))
-                } else {
-                    emptyList()
-                })
-
-            "unzip" -> values(listOf("-d"))
-            "zip" -> nonFlags.take(1)
-            // find only writes when it is told to. Its *paths* are the leading
-            // arguments; from the first flag on it is an expression, and `-name 'x'`
-            // is a pattern, not a path (the harness caught that).
-            "find" -> if (args.any { it == "-delete" || it == "-exec" || it == "-execdir" }) {
-                args.takeWhile { !it.startsWith("-") }.filter { it.isNotEmpty() }
-            } else {
-                emptyList()
-            }
-
-            "sqlite3" -> nonFlags.take(1)
-            else -> emptyList()
-        }
-    }
-
-    private val octalMode = Regex("^[0-7]{3,4}$")
-    private val symbolicMode = Regex("^[ugoa]*[+-=][rwxXst]*$")
-
-    private fun isModeArgument(token: String): Boolean =
-        octalMode.matches(token) || symbolicMode.matches(token)
-
-    /** Non-flag arguments, skipping the value that follows any of [valueFlags]. */
-    private fun withoutOptionValues(args: List<String>, valueFlags: Set<String>): List<String> {
-        val out = ArrayList<String>()
-        var index = 0
-        while (index < args.size) {
-            val token = args[index]
-            if (token in valueFlags) {
-                index += 2
-                continue
-            }
-            if (token.isNotEmpty() && !token.startsWith("-")) out.add(token)
-            index += 1
-        }
-        return out
-    }
-
-    private fun targetAllowed(target: WriteTarget, boundary: ShellWriteBoundary): Boolean {
-        val raw = target.raw.trim().trim('"', '\'')
-        if (raw.isEmpty() || raw == "-" || raw.startsWith("&")) return true
-        // A URL is not a filesystem path (`curl -o` aside, which is handled above).
-        if (raw.contains("://")) return true
-        val combined = resolveAgainst(raw, target.cwd)
-        val pinned = staticPrefix(combined)
-        if (pinned.isEmpty() && (raw.contains('$') || raw.contains('`'))) {
-            // Unresolvable absolute-ish target: fail closed, the message says why.
-            return false
-        }
-        val canonical = canonicalize(if (pinned.isEmpty()) target.cwd else pinned)
-        if (canonical.isEmpty()) return true
-        return boundary.contains(canonical)
-    }
-
-    /** Relative tokens resolve against the shell's tracked `cd`. */
-    private fun resolveAgainst(raw: String, cwd: String): String =
-        if (raw.startsWith("/")) raw else "$cwd/$raw"
-
-    /**
-     * Everything before the first character that could expand to something else: a
-     * trailing glob or a variable does not change *where* the write lands, so the
-     * static prefix is what gets checked against the workspace. A glob inside the
-     * workspace is therefore allowed while a glob on a system directory is not.
-     *
-     * (The wording above avoids writing a slash-star pair inside this comment on
-     * purpose: Kotlin block comments nest, so one would swallow this KDoc's closing
-     * marker and report the error at the end of the file. It has bitten this repo
-     * more than once, including this very line.)
-     */
-    private fun staticPrefix(path: String): String {
-        val cut = path.indexOfFirst { it == '*' || it == '?' || it == '$' || it == '{' || it == '~' }
-        return if (cut >= 0) path.substring(0, cut) else path
-    }
-
-    /** Lexical normalisation: the command has not run, so nothing can be stat'd. */
-    private fun canonicalize(path: String): String {
-        val clean = path.trim().trim('"', '\'')
-        if (clean.isEmpty()) return ""
-        val parts = ArrayList<String>()
-        for (segment in clean.split('/')) {
-            when (segment) {
-                "", "." -> Unit
-                ".." -> if (parts.isNotEmpty()) parts.removeAt(parts.size - 1)
-                else -> parts.add(segment)
-            }
-        }
-        return "/" + parts.joinToString("/")
-    }
-
     // ------------------------------------------------------------- for the UI ----
 
     /** Human-readable hard blocklist, shown verbatim on the authorization page. */
     fun blockedSummary(): List<String> = hardBlocks.map { "${it.what} —— ${it.why}" }
-
-    /**
-     * 白名单已经不参与判定。[allowedCommands] 留着只作目录 —— 它记录了改之前那些
-     * 曾被放行的命令，方便对照，但 `inspect` 不再读它。
-     */
-    fun allowedSummary(): String =
-        "白名单已取消：任何命令头都放行（不再按命令名拒绝）。" +
-            "下面这 ${allowedCommands.size} 个只是改之前放行过的清单，现在不参与判定。"
-
-    /** What the write rule now is. */
-    fun writeBoundarySummary(): List<String> = listOf(
-        "写入边界已取消：不再限制只能写工作区。",
-        "ShellWriteBoundary 与 extractWriteTargets 仍在代码里，但 inspect 不再调用它们。",
-        "android_download 与 android_files（SAF）是独立端点，一直不受这条约束。",
-    )
-
-    /** Where the syntax policy stands right now. */
-    fun syntaxSummary(relaxedShellSyntax: Boolean): List<String> = listOf(
-        "命令替换检查已取消：\$(...) 与反引号一律放行，与放宽模式开关无关。",
-        "sh/bash/dash/ash/busybox/eval/exec/source 也不再需要单独开关。",
-    )
-
-    /** The sentence the UI shows next to the relaxed-mode switch. */
-    fun relaxedCost(): String =
-        "放宽模式已无作用：它控制的那两条（命令替换检查、白名单）都已取消。"
-
-    private fun splitSegments(command: String): List<String> = command
-        .replace("&&", ";")
-        .replace("||", ";")
-        .replace("|", ";")
-        .replace("\n", ";")
-        .split(';')
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-
-    private fun normalizeHead(head: String): String =
-        head.substringAfterLast('/').trim('"', '\'')
 
     // --------------------------------------------------------------- result ----
 
@@ -584,11 +265,7 @@ object DeviceShellGuard {
     }
 
     /** Renders a result for the model, keeping the backend's real privilege visible. */
-    fun toJson(
-        result: DeviceShellResult,
-        relaxedShellSyntax: Boolean = false,
-        boundaryLabel: String? = null,
-    ): JSONObject = JSONObject().apply {
+    fun toJson(result: DeviceShellResult): JSONObject = JSONObject().apply {
         put("stdout", result.stdout)
         put("stderr", result.stderr)
         put("exitCode", result.exitCode)
@@ -608,18 +285,17 @@ object DeviceShellGuard {
             if (result.backend == ShizukuShellBackend.id) {
                 "命令以 ${labelFor(result)} 执行（uid=${result.uid}），这是 Shizuku 提供的 ADB 级身份：" +
                     "可以跑 input / pm / am / settings get / dumpsys，也能读到 shell 能看到的系统状态。" +
-                    "读不到其他应用的私有数据（/data/user/0/<package>），那是 Linux uid 的边界。" +
-                    "命令白名单、硬性禁用清单与工作区写入边界仍然生效。"
+                    "读不到其他应用的私有数据（/data/user/0/<package>），那是 Linux uid 的边界。"
             } else {
                 "本机当前没有可用的 Shizuku（未安装、未启动或未授权），命令以应用自身身份（uid=${result.uid}）执行，" +
                     "因此读不到其他应用与系统私有状态，input/pm/am 这类需要特权权限的命令会失败。" +
-                    "需要 uid=2000 的能力时请告诉用户去「设置 → 设备能力 → Shell」按提示启用 Shizuku。"
+                    "需要 uid=2000 的能力时请告诉用户去「设置 → 设备能力 → Shell」按提示启用 Shizuku。" +
+                    "注意：这个工具不走 adb —— 即使 `adb shell id` 已经是 uid=2000，这里仍然是应用身份。"
             },
         )
         put(
             "policy",
-            "命令白名单与硬性禁用清单仍然生效；放宽模式" + (if (relaxedShellSyntax) "已开启" else "已关闭") +
-                (if (boundaryLabel != null) "；写入边界 = $boundaryLabel" else ""),
+            "没有策略拒绝：命令名不检查、写入不限路径、替换不检查。成败只取决于上面那个 uid。",
         )
     }
 }

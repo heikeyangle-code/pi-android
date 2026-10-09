@@ -100,9 +100,9 @@ import org.json.JSONObject
  * ### Why every relaxation is visible here
  *
  * The user's requirement is that nothing may be loosened without a trace. So this
- * screen is also the *policy* screen: the shell card shows the exact command
- * whitelist, the irreducible hard blocklist, the write boundary and the relaxed-mode
- * switch with its cost in one sentence; the 基础 card shows the granted SAF
+ * screen is also the *policy* screen: the shell card shows the hard blocklist (the one
+ * rule left, currently empty) and says plainly that the command filter is gone; the
+ * 基础 card shows the granted SAF
  * directories; and the approvals card shows what the pi-side permission gate has
  * been told to stop asking about. None of that is inferred — it is read from the
  * same objects the enforcement reads ([DeviceShellGuard], [DeviceCapabilityStore],
@@ -145,7 +145,6 @@ fun DeviceCapabilityScreen(
     var bridgeRunning by remember { mutableStateOf(DeviceBridgeController.isRunning()) }
     var revision by remember { mutableStateOf(0) }
     var grants by remember { mutableStateOf(safStore.grants()) }
-    var relaxed by remember { mutableStateOf(store.isShellSyntaxRelaxed()) }
     var shizuku by remember { mutableStateOf(DeviceShizuku.status(context)) }
     var workspace by remember { mutableStateOf(DeviceWorkspace.summary()) }
     var storagePermissionsNeeded by remember { mutableStateOf(!store.hasLegacyStoragePermission()) }
@@ -415,12 +414,6 @@ fun DeviceCapabilityScreen(
                                 "启用「PI 设备桥」。"
                         }
                     },
-                    relaxed = relaxed,
-                    onRelaxedChange = { enabled ->
-                        relaxed = enabled
-                        store.setShellSyntaxRelaxed(enabled)
-                        revision += 1
-                    },
                     imeEnabled = imeEnabled,
                     imeDefault = imeDefault,
                     imeRunning = imeRunning,
@@ -522,7 +515,7 @@ fun DeviceCapabilityScreen(
 
             item {
                 PiSettingsSectionHeader("Shell 策略")
-                ShellPolicyCard(relaxed = relaxed, workspace = workspace)
+                ShellPolicyCard(workspace = workspace)
             }
 
             item {
@@ -685,8 +678,6 @@ private fun DeviceCapabilityCard(
     onToggle: (Boolean) -> Unit,
     onSessionToggle: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
-    relaxed: Boolean,
-    onRelaxedChange: (Boolean) -> Unit,
     imeEnabled: Boolean,
     imeDefault: Boolean,
     imeRunning: Boolean,
@@ -1091,54 +1082,53 @@ private fun DeviceCapabilityCard(
  * The shell policy, in full.
  *
  * This card exists because the user asked for one thing above all: **a relaxation
- * the user cannot see is not allowed**. So it prints the whitelist, the hard
- * blocklist with a reason per entry, the write boundary, and where the syntax
- * policy stands — all read from [DeviceShellGuard], never retyped here.
+ * the user cannot see is not allowed**. It is short now because there is almost
+ * nothing left to show: one hard blocklist (empty) and the plain fact that the
+ * command filter is gone. Everything is read from [DeviceShellGuard], never
+ * retyped here.
  */
 @Composable
-private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
+private fun ShellPolicyCard(workspace: String) {
     Card {
         Text(
-            "写入边界",
+            "工作区",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
             workspace,
             // `DeviceWorkspace.summary()` is a machine line and nothing else:
-            // 「写入边界 = 工作区：/data/user/0/app.pi/files/workspace（guest 内：/root/pi；
+            // 「工作区：/data/user/0/app.pi/files/workspace（guest 内：/root/pi；
             // 终端标签页：/root）」. Three absolute paths in the UI face was the one place on
             // this screen where a path was not already mono — the audit log one card above
-            // (`审计日志：$logPath`) and `DeviceShellGuard.allowedSummary()` below both are
-            // (`monoSmall`), which is rule #7 applied to a path.
+            // (`审计日志：$logPath`) is `monoSmall` for the same reason, which is rule #7
+            // applied to a path.
             style = PiTheme.text.monoSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        for (line in DeviceShellGuard.writeBoundarySummary()) {
-            Text(
-                "· $line",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            "· 这不再是写入边界：Shell 不限制写哪里，工作区只是 agent 的默认落点。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Spacer(Modifier.height(PiSpacing.inline))
         Text(
-            "语法策略",
+            "Shell 命令过滤：已取消",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
-        for (line in DeviceShellGuard.syntaxSummary(relaxed)) {
-            Text(
-                "· $line",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (relaxed) PiTheme.palette.warning else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            "· 命令名不检查（su / mount / dd / 任意二进制都能发出去）、写入不限路径、\$() 与反引号不检查。\n" +
+                "· 成败只看身份：装了 Shizuku 是 ADB 级 uid 2000，否则是应用自身身份（pm、input、dumpsys 会失败）。\n" +
+                "· 要改回来：往 DeviceShellGuard.hardBlocks 里加规则，旧的白名单已删。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Spacer(Modifier.height(PiSpacing.inline))
         Text(
-            "无论谁授权，下面这些都不会执行：",
+            "无论谁授权都不会执行的命令（当前：无）：",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -1149,18 +1139,6 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-
-        Spacer(Modifier.height(PiSpacing.inline))
-        Text(
-            "命令白名单（未知命令一律拒绝）：",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            DeviceShellGuard.allowedSummary(),
-            style = PiTheme.text.monoSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         Spacer(Modifier.height(PiSpacing.gutter))
         Text(

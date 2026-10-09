@@ -144,10 +144,11 @@ private fun tsBlocks(text: String): List<Block> {
         "danger.ts no longer declares `FORBIDDEN_SHELL_PATTERNS` — this check reads that " +
             "declaration by name; re-read assets/pi-extensions/pi-android-bridge/danger.ts."
     }
-    // Stop at the next exported list: `RELAXED_ONLY_PATTERNS` has the same object shape
-    // and is a *different* rule (the 放宽模式 switch, single-sourced through /app/health),
-    // so counting its entries here would report a length mismatch that is not one.
-    val end = text.indexOf("export const RELAXED_ONLY_PATTERNS", listStart)
+    // Stop at the next exported list. `NEEDS_APPROVAL_SHELL_PATTERNS` has the same object
+    // shape and is a *different* rule (the shell's irreversible-command short list, which
+    // asks the user rather than refusing), so counting its entries here would report a
+    // length mismatch that is not one.
+    val end = text.indexOf("export const NEEDS_APPROVAL_SHELL_PATTERNS", listStart)
     val body = if (end < 0) text.substring(listStart) else text.substring(listStart, end)
     val pattern = Regex("""pattern:\s*/((?:[^/\\]|\\.)*)/([a-z]*)\s*,""")
     return pattern.findAll(body).map { match ->

@@ -49,7 +49,7 @@
  */
 
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { bridgeHealth, reportGate } from "./pi-android-bridge/client";
+import { reportGate } from "./pi-android-bridge/client";
 import {
 	dangerLevelOf,
 	describeDangerousCall,
@@ -89,33 +89,6 @@ function grantLabel(toolName: string, key: string): string {
 /** How many times each dangerous tool has been approved in this process. */
 const approvals = new Map<string, number>();
 
-/** Cached 放宽模式 flag, with the time it was read (loopback call, so cheap). */
-let relaxedShellSyntax = false;
-let relaxedFetchedAt = 0;
-const RELAXED_TTL_MS = 3000;
-
-/**
- * The 放宽模式 switch, read from the app rather than duplicated here.
- *
- * The gate decides nothing with it: the syntax rule it names is enforced by the
- * app's guard on every `/app/shell` call. What remains is the ledger entry `publish`
- * sends back to the 设备能力 page, so the switch is sampled when the report is
- * composed.
- * On any failure the answer is `false` — the only wrong answer is "relaxed" for a
- * switch that is off.
- */
-async function currentRelaxed(): Promise<boolean> {
-	if (Date.now() - relaxedFetchedAt < RELAXED_TTL_MS) return relaxedShellSyntax;
-	try {
-		const health = await bridgeHealth();
-		relaxedShellSyntax = health.shellSyntaxRelaxed === true;
-	} catch {
-		relaxedShellSyntax = false;
-	}
-	relaxedFetchedAt = Date.now();
-	return relaxedShellSyntax;
-}
-
 /**
  * Publish the session's approval state to the app so the user can *see* the
  * relaxation on the 设备能力 page. Display only — the app cannot verify it, and the
@@ -123,14 +96,9 @@ async function currentRelaxed(): Promise<boolean> {
  */
 async function publish(note: string): Promise<void> {
 	try {
-		// The 放宽模式 flag is not policy input for the gate any more — the app's guard is
-		// what enforces it — but the ledger still reports it, so it is sampled here, at
-		// report time, instead of on a shell decision that no longer reads it.
-		relaxedShellSyntax = await currentRelaxed();
 		await reportGate({
 			sessionGrants: [...sessionGrants],
 			counts: Object.fromEntries(approvals),
-			relaxedShellSyntax,
 			note,
 		});
 	} catch {
@@ -234,13 +202,12 @@ export default function (pi: ExtensionAPI) {
 		};
 	});
 
-	// The gate never speaks on the bottom of the screen. Both facts it used to
-	// announce there are *persistent* state, and each has a home where the user can
-	// read it whenever they want instead of having it pushed at every session start:
+	// The gate never speaks on the bottom of the screen. The fact it used to announce
+	// there is *persistent* state, and it has a home where the user can read it whenever
+	// they want instead of having it pushed at every session start:
 	//
 	//   - the remembered approvals and the approval count → 设置 → 设备能力 → 本会话的审批
-	//     (kept truthful by `publish` below, which is the only reporting channel);
-	//   - 放宽模式 → 设置 → 设备能力 → Shell.
+	//     (kept truthful by `publish` below, which is the only reporting channel).
 	//
 	// A per-session snackbar for an unchanged setting is confirmation fatigue with a
 	// zero information rate, and it also cost display-only latency in front of every
@@ -250,7 +217,6 @@ export default function (pi: ExtensionAPI) {
 		// by definition, and a stale set would be a permanent grant nobody agreed to.
 		sessionGrants.clear();
 		approvals.clear();
-		relaxedFetchedAt = 0;
 
 		// Fire-and-forget: `session_start` must return before pi attaches the JSONL
 		// stdin reader (`core/agent-session.ts:2468-2491` from `modes/rpc/rpc-mode.ts:316`),
