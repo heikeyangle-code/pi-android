@@ -800,7 +800,7 @@ object PiAutomation {
     /**
      * `ui` 动作交给 [DeviceUiAutomation]。
      *
-     * 手势（tap/swipe）是 suspend 的，这里用 [runBlocking] 同步等它完成——工作线程是
+     * 手势（tap / swipe / scroll）是 suspend 的，这里用 [runBlocking] 同步等它完成——工作线程是
      * 引擎自己的，阻塞它是刻意的串行化：UI 动作绝不并发。不带选择器的参数一律由
      * `selector*` 前缀区分（`text` 在 `input` 里是"要输入的文字"）。
      */
@@ -820,12 +820,14 @@ object PiAutomation {
                 selector,
             ).put("ok", true)
 
-            "scroll" -> DeviceUiAutomation.scroll(
-                service,
-                selector,
-                params["index"]?.toIntOrNull(),
-                params["direction"].orEmpty(),
-            ).put("ok", true)
+            "scroll" -> runBlocking {
+                DeviceUiAutomation.scroll(
+                    service,
+                    selector,
+                    params["index"]?.toIntOrNull(),
+                    params["direction"].orEmpty(),
+                )
+            }.put("ok", true)
 
             "dump" -> DeviceUiAutomation.dump(
                 service,

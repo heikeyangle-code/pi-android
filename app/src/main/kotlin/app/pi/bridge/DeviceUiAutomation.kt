@@ -775,7 +775,7 @@ object DeviceUiAutomation {
      * system gesture navigation the way an edge swipe can. The coordinate swipe
      * stays for the cases where there is no scrollable node (canvas surfaces).
      */
-    fun scroll(
+    suspend fun scroll(
         service: AccessibilityService,
         selector: Selector?,
         index: Int?,
@@ -791,10 +791,7 @@ object DeviceUiAutomation {
                 ),
             )
         }
-        val action = beginAction(service)
-        if (selector != null && !selector.isEmpty) action.markTarget(selector = selector)
         val indexed = if (index != null) lastSnapshot.firstOrNull { it.index == index } else null
-        if (indexed != null) action.markTarget(path = indexed.path)
         val start: AccessibilityNodeInfo? = when {
             selector != null && !selector.isEmpty -> bestMatch(service, selector)
             indexed != null -> resolve(service, indexed)
@@ -812,35 +809,57 @@ object DeviceUiAutomation {
                 }
                 current
             }
-        } ?: throw DeviceActionException(
-            DeviceDenial(
-                code = DeviceDenial.UNSUPPORTED,
-                reason = "没有找到可滚动的控件" +
-                    (if (selector != null && !selector.isEmpty) "：${selector.describe()}" else "") + "。",
-                hint = "改用 android_swipe 坐标滑动，或找带 scrollable 的控件。",
-            ),
-        )
-        val performed = target.performAction(
-            if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
-        )
-        if (!performed) {
-            throw DeviceActionException(
-                DeviceDenial(
-                    code = DeviceDenial.BUSY,
-                    reason = "控件拒绝滚动（可能已到尽头或正在动画）。",
-                    hint = "稍等重试；反复如此说明已到列表尽头。",
-                    retryable = true,
-                ),
-            )
         }
-        return action.finish(
-            JSONObject().apply {
-                put("mode", if (forward) "action_scroll_forward" else "action_scroll_backward")
-                put("direction", if (forward) "forward" else "backward")
-                put("target", nodeJson(target))
+
+        if (target != null) {
+            val action = beginAction(service)
+            if (selector != null && !selector.isEmpty) action.markTarget(selector = selector)
+            if (indexed != null) action.markTarget(path = indexed.path)
+            if (target.performAction(
+                    if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                    else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+                )
+            ) {
+                return action.finish(
+                    JSONObject().apply {
+                        put("mode", if (forward) "action_scroll_forward" else "action_scroll_backward")
+                        put("direction", if (forward) "forward" else "backward")
+                        put("target", nodeJson(target))
+                    },
+                )
+            }
+        }
+
+        // 降级：改用坐标滑动。
+        //
+        // 走到这里有两种情形，两种都不该报错：
+        //   1. 找不到 isScrollable 的节点。**这在 MIUI / HyperOS 上是常态，不是异常** ——
+        //      实测无障碍设置页 42 个节点、scrollable 为 0（列表是 RecyclerView，只是不上报
+        //      那个属性）。旧代码在这里直接抛 UNSUPPORTED，把调用方推到 android_swipe 上，
+        //      可「把这一屏滚一下」本来就是同一个意图，没有理由换一个工具。
+        //   2. 节点存在但拒绝滚动（到尽头，或正在动画）。
+        // 坐标滑动不依赖任何节点属性，是同一件事的另一条路。
+        val metrics = service.resources.displayMetrics
+        val centreX = metrics.widthPixels / 2
+        val near = (metrics.heightPixels * 0.62f).toInt()
+        val far = (metrics.heightPixels * 0.32f).toInt()
+        val (fromY, toY) = if (forward) near to far else far to near
+        val result = swipe(service, centreX, fromY, centreX, toY, SCROLL_GESTURE_MS)
+        result.put("mode", "gesture_swipe")
+        result.put("direction", if (forward) "forward" else "backward")
+        result.put(
+            "note",
+            if (target == null) {
+                "没有找到带 scrollable 的控件，已改用坐标滑动（部分 ROM 不上报该属性）。"
+            } else {
+                "控件拒绝滚动（可能已到尽头或正在动画），已改用坐标滑动。"
             },
         )
+        return result
     }
+
+    /** 降级坐标滑动的时长：够长不会被当成 fling，够短不像慢拖。 */
+    private const val SCROLL_GESTURE_MS = 360
 
     // ------------------------------------------------------------- swiping ----
 

@@ -66,9 +66,30 @@ object DeviceAppActions {
         installedCache?.let { cached ->
             if (now - cached.at <= INSTALLED_CACHE_TTL_MS) return cached.apps
         }
-        val fresh = runCatching {
+
+        val byUid = runCatching {
             manager.getInstalledApplications(PackageManager.GET_META_DATA)
-        }.getOrNull() ?: return emptyList()
+        }.getOrNull().orEmpty()
+
+        // `getInstalledApplications` 在某些 ROM / 构建上只返回调用者自己。实测这台 HyperOS +
+        // targetSdk 36：`pm list` 看得到 123 个第三方包，它只给 1 个（app.pi 自己），
+        // 而**同一时刻** `getLaunchIntentForPackage("com.android.settings")` 又能正常解析
+        // —— 也就是说包可见性没被限制（`QUERY_ALL_PACKAGES` 已 granted=true），是这个调用
+        // 本身被过滤了。原因未知，但结论够用：不能只依赖它。
+        //
+        // 可启动应用的枚举走的是另一条路径（`queryIntentActivities`），在同样条件下仍然完整，
+        // 所以两个取并集：前者提供全量（含没有启动图标的），后者在它失灵时提供可启动的那些。
+        // `list()` 本来就会给每条算 `launchable`，所以并集不会让结果变得不准。
+        val launchable = runCatching {
+            manager.queryIntentActivities(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+                0,
+            ).mapNotNull { it.activityInfo?.applicationInfo }
+        }.getOrNull().orEmpty()
+
+        val fresh = (byUid + launchable)
+            .distinctBy { it.packageName }
+            .sortedBy { it.packageName }
         installedCache = InstalledApps(now, fresh)
         return fresh
     }
@@ -112,8 +133,9 @@ object DeviceAppActions {
             put("apps", array)
             put(
                 "note",
-                "Android 11 起，未声明 QUERY_ALL_PACKAGES 的应用只能看到自己可见的包（通常是可启动的应用）。" +
-                    "如果列表明显不完整，请告诉用户这是系统可见性限制。",
+                "枚举取 getInstalledApplications 与 queryIntentActivities(LAUNCHER) 的并集：" +
+                    "部分 ROM（实测 HyperOS）上前者只返回调用者自己，只靠它会给出一个静默错误的短名单。" +
+                    "仍然不完整时，那是系统的包可见性限制（Android 11 起）。",
             )
         }
     }

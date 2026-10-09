@@ -201,12 +201,16 @@ class DeviceBridgeRouter(
 
                 "/app/ui/scroll" -> withCapability(DeviceCapability.Accessibility) {
                     val service = requireAccessibilityService()
-                    DeviceUiAutomation.scroll(
-                        service = service,
-                        selector = params.selector(),
-                        index = params.intOrNull("index"),
-                        direction = params.str("direction") ?: "forward",
-                    )
+                    // scroll 现在会降级成坐标滑动，而滑动是 suspend 的（它要等手势回调）——
+                    // 所以这里和 tap / swipe 一样包在 runBlocking 里。
+                    runBlocking {
+                        DeviceUiAutomation.scroll(
+                            service = service,
+                            selector = params.selector(),
+                            index = params.intOrNull("index"),
+                            direction = params.str("direction") ?: "forward",
+                        )
+                    }
                 }
 
                 "/app/ui/input" -> withCapability(DeviceCapability.Accessibility) {

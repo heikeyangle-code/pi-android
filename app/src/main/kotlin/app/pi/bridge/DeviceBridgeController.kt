@@ -1,6 +1,8 @@
 package app.pi.bridge
 
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.util.Base64
 import app.pi.runtime.PiPaths
 import org.json.JSONArray
@@ -43,6 +45,9 @@ object DeviceBridgeController {
 
     /** JSON published for the guest extension. */
     private const val TOKEN_FILE_NAME = "device-bridge.json"
+
+    /** 「无障碍被系统关掉了」那条提醒的通知 id；与引擎(1001)/投屏(1002) 错开。 */
+    private const val ACCESSIBILITY_LOST_NOTIFICATION_ID = 1003
 
     /** Guest-visible location inside the rootfs. */
     const val GUEST_TOKEN_FILE = "/root/.pi/device-bridge.json"
@@ -114,6 +119,33 @@ object DeviceBridgeController {
     /** Raw JSON lines, for `/app/audit` and the model. */
     fun auditTail(lines: Int): List<String> = auditLog?.tail(lines) ?: emptyList()
 
+    /**
+     * 无障碍服务被系统关掉时提醒用户。
+     *
+     * Android 会在**应用更新后作废无障碍授权** —— 所以每装一次新版本，那一组屏幕能力就
+     * 静默失效，而用户只会看到「点不动了」，看不到原因。这条通知把因果说出来，并给一个直达
+     * 设置页的按钮。
+     *
+     * 只在「这一组开着、但服务未启用」时提醒：那是授权丢了，不是用户本来就不要它。
+     * 通知本身可能发不出去（没给 POST_NOTIFICATIONS），这里静默 —— 它不是核心路径。
+     */
+    private fun remindIfAccessibilityWasRevoked(context: Context) {
+        val store = DeviceCapabilityStore.get(context)
+        if (!store.isPersistentlyEnabled(DeviceCapability.Accessibility)) return
+        if (DeviceAccessibilityService.isEnabledInSettings(context)) return
+        runCatching {
+            DeviceSystemActions.notifyIntent(
+                context = context,
+                title = "「屏幕」能力失效了",
+                text = "无障碍服务被系统关掉了（应用更新会作废这个授权）。" +
+                    "点这里重新打开，点按 / 输入 / 截图才能用。",
+                id = ACCESSIBILITY_LOST_NOTIFICATION_ID,
+                intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
     /** One-line-per-request rendering for the diagnostics card. */
     fun auditPrettyTail(lines: Int): List<String> = auditLog?.prettyTail(lines) ?: emptyList()
 
@@ -145,6 +177,10 @@ object DeviceBridgeController {
 
         val minted = mintToken()
         token = minted
+
+        // 无障碍授权会因为一次应用更新而静默失效（Android 的行为），而那一组是屏幕能力
+        // 的全部。在这里提醒，是因为桥启动 = 应用刚起来，正是发现这件事的时刻。
+        remindIfAccessibilityWasRevoked(appContext)
 
         val installed = installExtensionAssets(appContext)
         val published = publishTokenFile(appContext, paths, minted)
