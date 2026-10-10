@@ -250,11 +250,13 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  * @param palette pi's resolved token set.
  * @param profile the resolved 排版 preset: every size and leading here is the
  *   preset's, and the **body role is its [PiTypographyProfile.styles]`prose`**
- *   (14/23 in 经典, 16/28 in the default 舒适). The table's role is deliberately
- *   **not** the preset's: the user's ruling was that the table does not move, so
- *   it stays the 12.5/18 `mono` override it has always been — cell width,
- *   horizontal scroll, corner size and cell padding included (the preset carries
- *   no table field at all). The colour is still pi's: headings keep
+ *   (14/23 in 经典, 16/28 in the default 舒适). The table's **type** is the preset's
+ *   too — [PiTypographyProfile.tableSizeSp] / `tableLineHeightSp`, 12.5/18 in 经典
+ *   (which is exactly the pair this file used to hard-code) and 14/22 in 舒适 — but
+ *   the table's *geometry* is not: cell width (160 dp), horizontal scroll, corner
+ *   size (8 dp) and cell padding (8 dp) are all outside the preset and unchanged by
+ *   this feature (`PiMarkdownComponents.kt`'s `PiTable` only adds a header tint and
+ *   a right-edge fade). The colour is still pi's: headings keep
  *   `mdHeading`, links `mdLink`, inline code `mdCode`, fences `mdCodeBlock`,
  *   quotes `mdQuote` and bullets `mdListBullet`, drawn on top of the body colour
  *   exactly as they sit on top of pi's base (`markdown.ts:377-403`).
@@ -321,10 +323,17 @@ internal fun piMarkdownTypography(
         textLink = TextLinkStyles(
             style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
         ),
-        // The table's own role, deliberately outside the preset: it is today's
-        // `mono` at 12.5/18 at **every** preset, because the user's ruling was that
-        // the table does not move (cell width, scroll, radii and colours included).
-        table = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = body),
+        // The table's own role: `mono`'s family, the preset's size and leading, the
+        // body colour. The two numbers are taken from the profile **verbatim** — the
+        // 行距/字号 multipliers deliberately skip them (`PiTypographyProfile`), since a
+        // cell's leading only makes the cell taller while the column width it has to
+        // fit into is the renderer's fixed 160 dp. 经典 is 12.5/18, the exact pair this
+        // line used to carry as constants.
+        table = mono.copy(
+            fontSize = profile.tableSizeSp.sp,
+            lineHeight = profile.tableLineHeightSp.sp,
+            color = body,
+        ),
     )
 }
 

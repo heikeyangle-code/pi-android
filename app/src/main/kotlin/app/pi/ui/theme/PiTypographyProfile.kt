@@ -67,6 +67,7 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * | list indent        |   12    |   18    |     20      |  22   |
  * | inline code size/w | 12.5/400|  13/600 |    14/600   | 15/600|
  * | code size/leading  |  13/19  |  13/21  |    14/24    | 15/26 |
+ * | table size/leading | 12.5/18 |  13/20  |    14/22    | 15/23 |
  * | headings h1…h6     | 22/20/18/16/15/14 | 21/19/17/15/15/14 | 22/20/18/16/16/15 | 24/21/19/17/17/16 |
  * | transcript gap     |    8    |    4    |      8      |  12   |
  * | 换人：消息之前       |    8    |   16    |     24      |  32   |
@@ -102,10 +103,26 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  *   is `mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp)` — a half-step off the
  *   `code` role, and the sheet's 13 is that role's number. Classic keeps 12.5.
  *
- * **表格不随预设动.** The table's cell width (160 dp), its horizontal scroll,
- * its corner size (8 dp), its cell padding (8 dp) and its role (12.5/18) are all
- * today's at every preset — the user's own ruling, and the reason this profile
- * carries no table field at all.
+ * **A table follows the preset in its type size, and only there.** [tableSizeSp] and
+ * [tableLineHeightSp] are the two numbers this profile carries for a table
+ * (经典 12.5/18 — the `mono` override the renderer had hard-coded before this
+ * feature). Everything else about a table is today's at **every** preset: the cell
+ * width is 160 dp, the horizontal scroll is the library's
+ * (`render/PiMarkdownComponents.kt`'s `PiTable` only adds a header tint and a
+ * right-edge fade on top of it, and does not touch either), the corner size is
+ * 8 dp, the cell padding is 8 dp and the surface is `cardBg`. The preset carries
+ * no other table field for that reason. Size and leading are also the **only**
+ * table numbers the two multipliers below do not touch: they are taken verbatim,
+ * because a cell is already a small monospace box and stepping its leading would
+ * change how many lines a cell occupies without changing the column width it has
+ * to fit into.
+ *
+ * Why those four sizes: Tailwind Typography draws a `prose` table at `0.875em`,
+ * and on a phone whose body is at least 16 sp that is 14 sp — 舒适's number. The
+ * leading ratio stays at or above 1.53 for every new step (13/20 = 1.538,
+ * 14/22 = 1.571, 15/23 = 1.533), the documented floor for small CJK text being
+ * 1.5. 经典's 12.5/18 is 1.44 and deliberately below that floor: it is the value
+ * that was already on screen, not a number chosen now.
  *
  * ## The two multipliers
  *
@@ -155,6 +172,19 @@ data class PiTypographyProfile(
     val inlineCodeSizeSp: Float,
     val inlineCodeLineHeightSp: Float,
     val inlineCodeWeight: FontWeight,
+    /**
+     * 表格单元格的字号/行高，`sp`。`mono` 字族与 `body` 配色由
+     * `render/PiMarkdownTheme.kt` 给，这里只有两个数。
+     *
+     * 这两个数是这一档**直接给**的，`app.appearance.lineHeight` 与 `.fontSize` 两个乘子
+     * **不吃**它们 —— 只作用于 [styles] 五角色与六个标题槽。理由与四个数值的来历写在类注释
+     * 那句「A table follows the preset in its type size」里。
+     *
+     * 表格的其余一切（列宽 160 dp、横滑、圆角 8 dp、内边距 8 dp、`cardBg` 底色）不随预设动；
+     * 这一笔没有碰它们。
+     */
+    val tableSizeSp: Float,
+    val tableLineHeightSp: Float,
     /** Markdown paragraph spacing (`MarkdownPadding.block`). */
     val markdownBlock: Dp,
     val markdownListItemTop: Dp,
@@ -270,6 +300,7 @@ data class PiTypographyProfile(
                 blockSpacing = 8,
                 messageGap = 8,
                 inlineSize = 12.5f, inlineWeight = 400,
+                tableSize = 12.5f, tableLine = 18,
                 headings = intArrayOf(22, 20, 18, 16, 15, 14),
             ),
             COMPACT to Preset(
@@ -279,6 +310,7 @@ data class PiTypographyProfile(
                 blockSpacing = 4,
                 messageGap = 16,
                 inlineSize = 13f, inlineWeight = 600,
+                tableSize = 13f, tableLine = 20,
                 headings = intArrayOf(21, 19, 17, 15, 15, 14),
             ),
             COMFORTABLE to Preset(
@@ -288,6 +320,7 @@ data class PiTypographyProfile(
                 blockSpacing = 8,
                 messageGap = 24,
                 inlineSize = 14f, inlineWeight = 600,
+                tableSize = 14f, tableLine = 22,
                 headings = intArrayOf(22, 20, 18, 16, 16, 15),
             ),
             LOOSE to Preset(
@@ -297,6 +330,7 @@ data class PiTypographyProfile(
                 blockSpacing = 12,
                 messageGap = 32,
                 inlineSize = 15f, inlineWeight = 600,
+                tableSize = 15f, tableLine = 23,
                 headings = intArrayOf(24, 21, 19, 17, 17, 16),
             ),
         )
@@ -392,6 +426,12 @@ data class PiTypographyProfile(
                 // apart, which is the opposite of what an inline span should do.
                 inlineCodeLineHeightSp = if (numbers.inlineSize >= 14f) 19f else 18f,
                 inlineCodeWeight = if (numbers.inlineWeight >= 600) FontWeight.SemiBold else FontWeight.Normal,
+                // Verbatim, not through `leadingScaled`/`scaled`: the two multipliers
+                // belong to the body roles and the heading slots, and a table cell's
+                // leading only decides how tall the cell is — the column width it has
+                // to fit into is the renderer's 160 dp, not this number.
+                tableSizeSp = numbers.tableSize,
+                tableLineHeightSp = numbers.tableLine.toFloat(),
                 markdownBlock = numbers.block.dp,
                 markdownListItemTop = numbers.listItem.dp,
                 markdownListItemBottom = numbers.listItem.dp,
@@ -425,6 +465,9 @@ private class Preset(
     val messageGap: Int,
     val inlineSize: Float,
     val inlineWeight: Int,
+    /** 表格单元格的字号/行高；经典 12.5/18 是改前写死的那个 `mono.copy(…)`。 */
+    val tableSize: Float,
+    val tableLine: Int,
     /** h1…h6, in that order. */
     val headings: IntArray,
 )

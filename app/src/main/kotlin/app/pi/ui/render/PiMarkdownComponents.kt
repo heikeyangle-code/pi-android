@@ -2,14 +2,18 @@ package app.pi.ui.render
 
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +27,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.times
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
@@ -72,7 +79,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 
 /**
  * Which highlighter code blocks use. A composition local rather than a parameter
@@ -524,10 +534,16 @@ private fun PiImageFallback(
 }
 
 /**
- * GFM 表格：解析、列宽、横向滚动都留给库，我们只把库写死的「每格 1 行」换成
- * [TABLE_MAX_LINES]。
+ * GFM 表格：解析、列宽（160 dp，与今天逐字节相同）、横向滚动与语义都留给库；这个槽只做三件事
+ * —— 把库写死的「每格 1 行」换成 [TABLE_MAX_LINES]、给表头一层极淡底、在**真的要横滑**时
+ * 于右缘画一条渐隐。
  *
- * ## 为什么要覆盖这个槽
+ * 列宽不是这里决定的：库把表格宽度算成 `tableWidth = columnsCount * tableCellWidth`
+ * （`compose/elements/MarkdownTable.kt:88`），横滑判据是 `maxWidth <= tableWidth`（`:99`），
+ * 而 `tableCellWidth` 仍是 `piMarkdownDimens` 的 160 dp。右缘渐隐的触发条件就是库那条判据的
+ * 补集，所以「有没有渐隐」与「库会不会滚」不可能对不上。
+ *
+ * ## 理由一：每格只画一行（覆盖这个槽的起因）
  *
  * 库的 `MarkdownComponents.table` 默认是
  * `MarkdownTable(it.content, it.node, style = it.typography.table)`
@@ -543,6 +559,38 @@ private fun PiImageFallback(
  *
  * 用户看到的是「表格的确很多显示不全，只能显示前几行字，每一格里」：每格只画一行、
  * 其余用「…」截掉，而且没有任何交互能看到被截的部分（表头与数据行都是这样）。
+ *
+ * ## 理由二：表头一层极淡底
+ *
+ * `headerBlock` 里把 `MarkdownTableHeader` 包一层
+ * `Modifier.background(palette.mdHr.copy(alpha = 0.10f))`：库给表头与数据行的是同一个内边距与
+ * 同一个字号，差别只有一句 `style.copy(fontWeight = FontWeight.Bold)`（`:154`），一张四五
+ * 行以上的表里「哪一行是表头」就只能靠读文字。0.10 是「看得出有一条带、看不出颜色」的量级；
+ * 用的是 `mdHr` 令牌 —— 表头下面那条 1 dp 分隔线（库的 `MarkdownDivider`，
+ * `dividerColor = palette.mdHr`）也是这个令牌，两者同源，不新增色相。
+ *
+ * 外面那个 Box 只是一个包裹：`MarkdownTableHeader` 的 `Row` 自己带
+ * `Modifier.widthIn(tableWidth).height(IntrinsicSize.Max)`，Box 把约束原样传下去，
+ * 测量结果与不包时相同 —— 这一层只有底色。
+ *
+ * ## 理由三：右缘渐隐，且只在真的要滑时
+ *
+ * 360 dp 手机上正文列约 332 dp（左右各留 14 dp），3 列就是 480 dp —— 今天的表格 3 列起就会
+ * 横滑，而屏幕上没有任何提示说「右边还有」。触发条件取库自己那条判据的补集：
+ * `columns * tableCellWidth > 可用宽`（等号那一侧内容并没有超出，不画）。
+ *
+ * 画法：最外层 Box 里叠一个 `matchParentSize()` 的 Box（内层 `align(CenterEnd)` +
+ * `width(26.dp)` + `fillMaxHeight()`），底色
+ * `Brush.horizontalGradient(Color.Transparent → palette.cardBg)`。
+ *
+ * 为什么要两层 Box：表格在 `LazyColumn` 里拿到的**高度**约束是无界的，直接
+ * `fillMaxHeight()` 在无界约束下会退化成 0（Compose 的 `FillNode` 在 `!hasBoundedHeight`
+ * 时取 `constraints.minHeight`），叠加层会整条消失。`matchParentSize()` 拿到的才是 Box
+ * 测完之后的大小（`Box.kt:180-190`：匹配父尺寸的子节点在父尺寸定了之后按固定约束测一次），
+ * 高度才有得填。渐隐层用**表格自己的圆角**（`LocalMarkdownDimens.current.tableCornerSize`，
+ * 今天 8 dp）`clip` 一次，否则它会把右上/右下两个圆角用 `cardBg` 填成直角。
+ *
+ * 纯绘制：不新增文本测量、不改横滑状态、不改语义；可用宽只用来算这一个布尔值。
  *
  * ## 这个数字只有一处：[TABLE_MAX_LINES]
  *
@@ -587,11 +635,16 @@ private fun PiImageFallback(
  * `remember(text, …, containerSize.value, …)`（`:241-244`）的键，所以首帧每格还会多
  * 一次重组 + 一次文本重测（之后写等值不再失效，会收敛）；这部分由库决定，与本常量无关。
  *
+ * 这一笔**新增**的东西是：每张表多一层 `BoxWithConstraints`（库自己那层旁边）、表头多一个
+ * 只有底色的 `Box`、一次列数遍历（表头行的 CELL 个数）与一次乘法比较；真的要滑时才多画一个
+ * 渐隐 Box。一个文本都不多量，也没有新增缓存。
+ *
  * ## 不做什么，以及为什么
  *
  * **不动横向，也不动列宽。** `horizontalScroll(requiredWidth(tableWidth))` 就是库自己的
  * 实现（`:99-103`），与 `PiCodeSurface` 给代码块用的 `.horizontalScroll(rememberScrollState())`
  * 是同一个惯用法；`tableCellWidth = 160.dp` 是库默认值、不是用户报的症状，没有证据不改数字。
+ * 这次只是**在库的滚动之上**加了一条提示，滚动机制、判据与语义都留在原处。
  *
  * **不加上限高度、不加内部纵向滚动。** 单元格会折行，行数多表格就高，由外层列表滚动
  * 接管——和代码块一样（`PiCodeSurface` 对 200 行的围栏也没有高度上限）。加一个
@@ -606,9 +659,11 @@ private fun PiImageFallback(
  * 远超 32 MiB 位图缓存），占位框的高还取自"这一格自己的高度"（于是框与行高互相追）。
  * `PiTable` 因此在这里换一个**按单元格内容宽构造成**的 transformer 实例 —— 机制、算术与
  * 价钱在 `bridge/PiGuestImageTransformer.kt` 的类注释里，那条也是这次「滑动卡」的修复。
+ * 列宽没有变，所以这个内容宽仍是今天的 `tableCellWidth − 2 × tableCellPadding`。
  */
 @Composable
 private fun PiTable(model: MarkdownComponentModel) {
+    val palette = PiTheme.palette
     val dimens = LocalMarkdownDimens.current
     val density = LocalDensity.current
     // 单元格**内容**宽 = 列宽 − 两侧内边距。这个数与横向滚动状态无关：
@@ -621,32 +676,76 @@ private fun PiTable(model: MarkdownComponentModel) {
     val cellWidthPx = with(density) {
         (dimens.tableCellWidth - dimens.tableCellPadding * 2).roundToPx()
     }.coerceAtLeast(1)
+    // 列数只用于右缘渐隐那一个判断（列宽本身不是这里算的），算法与库 `MarkdownTable.kt:86`
+    // 一样：表头行里的 CELL 个数。
+    val columns = remember(model.node) { piTableColumnCount(model.node) }
+    // 表格宽 = 列数 × 列宽，与库 `MarkdownTable.kt:88` 同一个算式；它只作为下面那次 px 比较的
+    // 一个乘数，不进任何布局约束。
+    val tableWidthDp = columns * dimens.tableCellWidth
     // 表格里换一个**同一个类**的 transformer 实例：它把"画多宽"钉成上面这个数，
     // 于是 (a) 缩略图按单元格宽解码（不是窗口的 1080 px），(b) 占位框只由宽度决定
     // （不再是"容器高度 = 这一格自己"那个反馈环）。两个理由都在
     // `bridge/PiGuestImageTransformer.kt` 的类注释里，连同代价。
     val transformer = rememberPiGuestImageTransformer(cellWidthPx)
-    CompositionLocalProvider(
-        // 库的 `MarkdownTableBasicText` 直接读库自己的 `LocalImageTransformer`
-        // （`MarkdownTable.kt:232`），单元格里的 `![]()` 因此按上面那个框画；
-        // 我们自己的 `LocalPiImageTransformer` 也一起换，两个读它的槽
-        // （`PiImagePlaceholder` / `PiInlineImage`）才不会与库看到两份答案。
-        LocalImageTransformer provides transformer,
-        LocalPiImageTransformer provides transformer,
-    ) {
-        MarkdownTable(
-            content = model.content,
-            node = model.node,
-            style = model.typography.table,
-            headerBlock = { content, header, tableWidth, style ->
-                MarkdownTableHeader(content, header, tableWidth, style, maxLines = TABLE_MAX_LINES)
-            },
-            rowBlock = { content, row, tableWidth, style ->
-                MarkdownTableRow(content, row, tableWidth, style, maxLines = TABLE_MAX_LINES)
-            },
-        )
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // `constraints.maxWidth` 是整型 px，不用 `maxWidth` 那个已经按 density 取整过的 Dp。
+        val availablePx = constraints.maxWidth
+        // 库自己的判据是 `scrollable = maxWidth <= tableWidth`（`MarkdownTable.kt:99`），
+        // `tableWidth = columnsCount * tableCellWidth`。渐隐取它的**补集**，并且要求内容真的
+        // 超出：等号那一侧库会挂上滚动修饰符，但内容并没有超出，画渐隐只会凭空盖住内容一条。
+        val scrolls = columns > 0 && with(density) { tableWidthDp.toPx() } > availablePx
+
+        CompositionLocalProvider(
+            // 库的 `MarkdownTableBasicText` 直接读库自己的 `LocalImageTransformer`
+            // （`MarkdownTable.kt:232`），单元格里的 `![]()` 因此按上面那个框画；
+            // 我们自己的 `LocalPiImageTransformer` 也一起换，两个读它的槽
+            // （`PiImagePlaceholder` / `PiInlineImage`）才不会与库看到两份答案。
+            LocalImageTransformer provides transformer,
+            LocalPiImageTransformer provides transformer,
+        ) {
+            MarkdownTable(
+                content = model.content,
+                node = model.node,
+                style = model.typography.table,
+                headerBlock = { content, header, tableWidth, tableStyle ->
+                    Box(modifier = Modifier.background(palette.mdHr.copy(alpha = 0.10f))) {
+                        MarkdownTableHeader(
+                            content, header, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES,
+                        )
+                    }
+                },
+                rowBlock = { content, row, tableWidth, tableStyle ->
+                    MarkdownTableRow(content, row, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES)
+                },
+            )
+        }
+
+        if (scrolls) {
+            // 两层 Box：外层 `matchParentSize()` 才是"表格测完之后的大小"。表格在
+            // `LazyColumn` 里的高度约束是无界的，直接 `fillMaxHeight()` 会退化成 0。
+            Box(modifier = Modifier.matchParentSize()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(TABLE_FADE_WIDTH)
+                        .fillMaxHeight()
+                        // 与表格底同一个圆角（`tableCornerSize`，今天 8 dp），否则渐隐层会把
+                        // 右上/右下两个圆角填成直角。
+                        .clip(RoundedCornerShape(dimens.tableCornerSize))
+                        .background(
+                            Brush.horizontalGradient(listOf(Color.Transparent, palette.cardBg)),
+                        ),
+                )
+            }
+        }
     }
 }
+
+/** 表头行里的 CELL 个数；与库 `MarkdownTable.kt:86` 是同一个算法。 */
+private fun piTableColumnCount(node: ASTNode): Int =
+    node.findChildOfType(GFMElementTypes.HEADER)?.children?.count { it.type == GFMTokenTypes.CELL }
+        ?: 0
 
 /**
  * 一格最多画几行，表格路径上这个数的**唯一**来源。
@@ -657,6 +756,14 @@ private fun PiTable(model: MarkdownComponentModel) {
  * `MarkdownTableBasicText` 会一起变。
  */
 private const val TABLE_MAX_LINES = 50
+
+/**
+ * 右缘渐隐的宽度，26 dp —— 表格路径上这个数的**唯一**来源。
+ *
+ * 26 是「足够把一行字的结尾化开、又不吃掉内容」的量级（正文 14 sp 下约 3 个汉字宽），
+ * 而这一层只在真的要横滑时才存在，所以它盖住的本来就是需要滑动才能看到的内容。
+ */
+private val TABLE_FADE_WIDTH = 26.dp
 
 @Composable
 private fun PiCodeFence(model: MarkdownComponentModel) {
