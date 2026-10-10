@@ -148,7 +148,7 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
 
 /**
  * The renderer's component set: pi's code-block chrome, pi's math, the
- * image fallback, the one thing the library gets wrong about tables, and bare
+ * image fallback, the three table adjustments, and bare
  * block HTML.
  *
  * Everything except those five keeps the library default, because the default
@@ -177,10 +177,11 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
  * all there. See each component's comment for why the decision is made on
  * `transform`'s *result* rather than on the transformer's type.
  *
- * Tables are the fourth, and they claim the `table` slot for exactly one reason —
- * the library gives every cell one line ([PiTable]). Everything else about a
- * table (the parse, the fixed column width, the horizontal scroll) stays the
- * library's.
+ * Tables are the fourth, and they claim the `table` slot for three reasons, all of
+ * them listed on [PiTable]: the library gives every cell one line, the header has no
+ * identity of its own, and a table that scrolls sideways says nothing about it.
+ * Everything else about a table (the parse, the fixed 160 dp column width, the
+ * horizontal scroll, the corner, the cell padding) stays the library's.
  *
  * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
  * in the library (`.../compose/components/MarkdownComponents.kt`) whose
