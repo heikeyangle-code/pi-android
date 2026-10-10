@@ -50,7 +50,11 @@ internal fun EditBlock(
     // the footer's text; the count now goes to the header's reading instead, and the footer
     // has nothing left to print it into ([toolFooterText]).
     val lines = remember(item.output) { lineCount(item.output) }
-    val footer = remember(item.outputTruncated, state) {
+    // Keyed on `lines` rather than on the whole `item.output` (which the other blocks use):
+    // `lineCount` is exact about emptiness — 0 if and only if the result is empty — and that
+    // is the only thing [toolFooterText] reads out of the output, so an Int key gives the same
+    // value with fewer invalidations. `item.output` is still what feeds it, through `lines`.
+    val footer = remember(lines, item.outputTruncated, state) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, null) {
