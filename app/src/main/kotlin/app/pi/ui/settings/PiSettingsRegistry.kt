@@ -1146,13 +1146,14 @@ object PiSettingsCatalog {
         // `fontSize` 缺席而 `fontScaleDelta` 在 → −2/−1→small、0→normal、1→large、2→xlarge），
         // 迁移函数与理由在 `PiTypographyProfile.migratedTypography` / `migratedFontSize`。
         // 删行不等于删能力：旧的 ±2sp 偏移在新行里是四个具名档（小/标准/大/更大），
-        // 旧的块间距三档在预设的 `blockSpacing` 里（紧凑 6 / 舒适 8 / 宽松 12）。
+        // 旧的块间距三档在预设的 `blockSpacing` 里（紧凑 4 / 舒适 8 / 宽松 12）。
         PiSetting(
             key = "app.appearance.typography",
             title = "排版",
             description = "对话流的整体排版档位：正文大小与行高、段间距、列表缩进与间距、" +
-                "标题字号、代码块圆角一起动。**经典**逐像素等于旧版（正文 14/23、段间距 2）。" +
-                "默认舒适。",
+                "标题字号、代码块与表格的字号、块间距与换人间距一起动；圆角、表格列宽与底色不跟档。" +
+                "**经典**的数值等于旧版（正文 14/23、段间距 2）。表头那层极淡底与横滑时的右缘渐隐" +
+                "是**全档一样**的新外观，经典档也有。默认舒适。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",
