@@ -1,6 +1,7 @@
 package app.pi.ui.render
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -16,6 +17,7 @@ import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.Markdown
+import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAnimations
@@ -423,6 +425,35 @@ internal fun PiMarkdownText(
             //    caller decides which rows those are (`PiMarkdownImmediate.kt`, where the
             //    frame budget that thins a crowd of eager rows is also described).
             //    (Now an argument of `rememberMarkdownState` above, like `retainState`.)
+            //
+            // 4. `success`: 库的 `MarkdownSuccess` 在**每个块之前**插一段
+            //    `Spacer(Modifier.height(padding.block))` —— 连文档的**第一个块**也插
+            //    (`compose/MarkdownExtension.kt:70`)，而文档末尾没有任何补偿。
+            //
+            //    段落之间看不出来（那里本来就该有一段间距），但它同时给**整段文本**的上面加了
+            //    一段、下面一段都没有 —— 这就是「用户消息气泡里文字偏下」的全部来源：气泡的
+            //    内边距是 12/12 对称的，多出来的正是**排版档的 `block`**（紧凑 8 dp / 舒适 16 /
+            //    宽松 24）。用户截图按屏幕密度 3.0 折算：同一条气泡上 23.4 dp、下 14.3 dp，
+            //    差的 9.1 dp 里 8 dp 是它，剩下 1.1 dp 才是字体自身 ascent/descent 的差。
+            //
+            //    改成库自己的公开参数 `MarkdownElement(..., includeSpacer = index > 0)`：间距
+            //    只落在块**之间**。这也是 pi 的规矩 —— 空行在块与块之间，消息开头没有空行
+            //    (`pi-tui` 的 markdown 渲染逐块 push 行，块间才 push `''`)。块与块之间一个
+            //    像素都不变（第 2..n 块照旧带那段 spacer），少掉的只有文档开头那一段；顺带把
+            //    「以 markdown 开头的行」与「以工具卡开头的行」上方的间距拉齐 —— 在此之前，
+            //    前者比后者正好多出这一个 `block`。
+            success = { successState, successComponents, successModifier ->
+                Column(successModifier) {
+                    successState.node.children.forEachIndexed { index, node ->
+                        MarkdownElement(
+                            node = node,
+                            components = successComponents,
+                            content = successState.content,
+                            includeSpacer = index > 0,
+                        )
+                    }
+                }
+            },
             modifier = modifier,
         )
         if (immediate) {
