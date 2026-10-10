@@ -43,8 +43,8 @@ internal enum class TranscriptGap {
  *
  * 两路都成立的事实是**顺序**：pi 的一条助手回合就是紧跟一条用户消息之后的那一段行。
  * 所以判据是"这一行在列表里的前一行是不是用户消息"，而这不是猜——它就是
- * `LazyColumn` 渲染的那张表本身（`ChatScreen` 传的是 `visibleItems`，与
- * `firstOfRun` / `lastOfRun` 用的是同一份数据、同一个下标）。
+ * `LazyColumn` 渲染的那张表本身（`ChatScreen` 传的是 `visibleItems`，用的是
+ * 渲染那张表时的同一个下标）。
  *
  * 日期分隔行**自己**永远取 [TranscriptGap.SameMessage]：它是分隔符，不是任何一条消息的
  * 第一行。判据里说的"透明"是另一件事 —— 找"这一行之前的上一条消息"时**往回跳过**连续的

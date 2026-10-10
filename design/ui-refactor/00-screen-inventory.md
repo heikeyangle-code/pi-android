@@ -1,5 +1,7 @@
 # 00 · 屏幕与内容清点（UI 重设计的事实底稿）
 
+> ⚠️ **本文写于 2026-10-10，其中的行号与文案描述的是当时的代码。**此后工具卡有过几轮改动（执行轨道线与节点已删除、页脚条件化、读数并进头行、卡片圆角 8dp、缩进 11dp）并已推上 `main`；要今天的口径看代码与 `docs/pi-android-ui-spec.md`。
+
 > 事实来源：**仅当前源码**（`app/src/main/kotlin/app/pi/ui/**`、`app/src/main/kotlin/app/pi/MainActivity.kt`、`rpc/src/main/kotlin/app/pi/rpc/Transcript.kt`）。
 > 不引用 `docs/pi-android-ui-spec.md` 与 `docs/pi-android-app-design.md`（用户已声明过时）。代码注释里出现的 `docs/...` 只是注释文本，不作为色值/尺寸的事实来源。
 > 行号均指当前工作区文件的实际行号。不确定处标 **不确定**。
