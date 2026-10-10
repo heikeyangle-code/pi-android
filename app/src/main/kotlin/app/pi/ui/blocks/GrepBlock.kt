@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -45,6 +46,8 @@ internal fun GrepBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -70,20 +73,11 @@ internal fun GrepBlock(
     val shownMatches = remember(plan) { countMatches(plan) }
     val omitted = (body.matchCount - shownMatches).coerceAtLeast(0)
     val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state, body.matchCount) {
-        if (state == ToolState.Rejected) {
-            toolRejectedFooter()
-        } else {
-            val parts = mutableListOf(toolStateLabel(state))
-            if (body.matchCount > 0) parts += "${body.matchCount} 处"
-            // pi's own count of files, not the capped group list's size (which would undercount
-            // a 500-file search as "200 个文件").
-            if (body.fileCount > 1) parts += "${body.fileCount} 个文件"
-            item.exitCode?.let { parts += "退出码 $it" }
-            item.elapsedMs?.let { parts += formatDuration(it) }
-            if (item.outputTruncated) parts += "已截断"
-            parts.joinToString(" · ")
-        }
+    // One exit point for this row ([toolFooterText]): only `已截断` / `无输出` are left to it,
+    // because the state, the two counts, pi's exit code and the duration all live in the
+    // header's reading now.
+    val footer = remember(item.output, item.outputTruncated, state) {
+        toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
@@ -97,6 +91,16 @@ internal fun GrepBlock(
                     state = state,
                     title = "grep",
                     subject = subject,
+                    // The reading is this card's own two counts, from the parse above —
+                    // pi reports matches per file, and the file count is pi's own number
+                    // (`core/tools/renderers/grep.ts`), not the capped group list's size.
+                    right = toolHeaderReading(
+                        item,
+                        state,
+                        count = body.matchCount,
+                        unit = "处",
+                        extra = if (body.fileCount > 1) "${body.fileCount} 个文件" else null,
+                    ),
                     expanded = expanded,
                     expandable = hasBody,
                 )
@@ -142,11 +146,9 @@ internal fun GrepBlock(
                     body.notice?.let { ToolNotice(text = it, copyOnTap = null) }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolImages(item.images, onImageClick)
+
+                ToolFooter(text = footer)
             }
         }
     }

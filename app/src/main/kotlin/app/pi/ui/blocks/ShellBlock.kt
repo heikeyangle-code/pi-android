@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
 import app.pi.rpc.Ansi
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -37,9 +38,10 @@ import app.pi.ui.theme.PiTheme
  *    BASH_PREVIEW_LINES, width)`, `:56-70`) plus a `muted` 「… (N earlier lines, … to expand)」
  *    hint. That is five tail rows *and* a hint line on **every** collapsed shell call, and a
  *    run of shell calls is where a transcript spends most of its height — on a phone that is
- *    the difference between seeing four turns at once and seeing two. The header line already
- *    says what ran and the footer already says how it ended (state, exit code, line count,
- *    「已截断」), so a collapsed card is readable without the tail. Going back to pi's shape is
+ *    the difference between seeing four turns at once and seeing two. The header's own row
+ *    already says how it ended (state glyph and word, exit code, duration, line count) and the
+ *    conditional footer adds 「已截断」 when it applies, so a collapsed card is readable without
+ *    the tail. Going back to pi's shape is
  *    the single guard around the body below. Ledger: `07-construction-decisions.md` D45;
  *  - `[Full output: <path>. Truncated: …]` as a warning line (`:86-98`) — the same sentence in
  *    the same place, but **inside the expanded branch** here, for the same reason (D45): the
@@ -74,6 +76,8 @@ internal fun ShellBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
     /**
      * `UiState.nowMs`: the ViewModel's 1 Hz coarse clock, non-null exactly while a
      * tool card is pending. Null keeps the pre-clock behaviour (one read per
@@ -167,7 +171,11 @@ internal fun ShellBlock(
     } else {
         item.elapsedMs
     }
-    val footer = shellFooter(item, state, exitCode, lines, elapsedMs)
+    // The row's conditional footer — the same one every other tool card uses, so the
+    // 无输出 guard below lives in one place instead of in a private copy here.
+    val footer = remember(item.output, item.outputTruncated, state) {
+        toolFooterText(item, state)
+    }
     ToolActionMenu(command.ifEmpty { null }, item.output, fullOutputPath) {
         BlockColumn(modifier) {
             ToolCard(
@@ -180,6 +188,20 @@ internal fun ShellBlock(
                     state = state,
                     title = "$",
                     subject = subject,
+                    // The live clock, not `item.elapsedMs`: while a command runs the
+                    // ViewModel's 1 Hz tick is the only number that exists (`nowMs`), and
+                    // the same value goes to nothing else — the tick that used to repeat
+                    // it is gone with the footer row. `exitCode` is this block's parsed
+                    // one (`ToolOutputParse.shellExitCode`), not the raw field, and `lines`
+                    // is the line count taken from the stripped body above: all three are
+                    // values this block already produced.
+                    right = toolHeaderReading(
+                        item,
+                        state,
+                        elapsedMs = elapsedMs,
+                        exitCode = exitCode,
+                        count = lines,
+                    ),
                     expanded = expanded,
                     expandable = bodyText.isNotEmpty() || notice != null,
                 )
@@ -204,7 +226,7 @@ internal fun ShellBlock(
                         onExpandAll = { fullOutput = true },
                     )
                 }
-                // A settled command with no output says so in the footer ([shellFooter]),
+                // A settled command with no output says so in the footer ([toolFooterText]),
                 // which is where pi's own card reports the same thing; the body has nothing
                 // to print either way.
                 //
@@ -222,11 +244,9 @@ internal fun ShellBlock(
                 if (expanded && notice != null) {
                     ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolImages(item.images, onImageClick)
+
+                ToolFooter(text = footer)
             }
         }
     }
@@ -265,31 +285,6 @@ private fun shellSubject(command: String, timeout: Int?): List<ToolCallPart> = b
     val head = command.lineSequence().firstOrNull().orEmpty()
     add(ToolCallPart(head, ToolCallToken.ToolTitle, bold = true))
     if (timeout != null) add(ToolCallPart(" (timeout ${timeout}s)", ToolCallToken.Muted))
-}
-
-/**
- * The footer line: state, pi's exit code, pi's elapsed number, and the row's size.
- *
- * pi splits these across two lines (its card's title, and `Elapsed`/`Took` under the body);
- * the app's card has one footer row, so they are joined in pi's order. The elapsed part is
- * [ToolOutputParse.elapsedLabel], which is pi's `formatDuration` (`renderers/bash.ts:32-42`,
- * including 0.86.1's switch to minutes and hours past a minute).
- *
- * [elapsedMs] is handed in by the caller: while the command runs it is the ViewModel's
- * 1 Hz clock minus the row's timestamp (see [ShellBlock]), and the same value goes to the
- * tick. A blocked call has no such reading — nothing ran — so it takes the fourth state's
- * own footer instead.
- */
-private fun shellFooter(item: ToolCall, state: ToolState, exitCode: Int?, lines: Int, elapsedMs: Long?): String {
-    if (state == ToolState.Rejected) return toolRejectedFooter()
-    val pending = state == ToolState.Running
-    val parts = mutableListOf(toolStateLabel(state))
-    if (!pending) exitCode?.let { parts += "退出码 $it" }
-    if (elapsedMs != null) parts += ToolOutputParse.elapsedLabel(pending, elapsedMs)
-    if (lines > 0) parts += "$lines 行"
-    if (item.outputTruncated) parts += "已截断"
-    if (!pending && item.output.isEmpty()) parts += "无输出"
-    return parts.joinToString(" · ")
 }
 
 /**

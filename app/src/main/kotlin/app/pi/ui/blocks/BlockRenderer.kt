@@ -122,28 +122,36 @@ fun BlockRenderer(
         // P2-1 (`docs/capability-gap.md` §4.9): pi gives every built-in tool its own
         // renderer pair (`core/tools/renderers/index.ts:34-44` — read, bash, powershell,
         // edit, write, grep, find, ls), so each one gets its own block here rather than one
-        // generic card. A result that came back with images keeps the generic card, because
-        // that is where pi's `content[type=image]` blocks are painted (F16 in
-        // `docs/rendering-review.md`); so does every other tool, which is exactly the set pi
-        // itself has no built-in renderer for — its own fallback is
+        // generic card. Every other tool goes to the generic card, which is exactly the set
+        // pi itself has no built-in renderer for — its own fallback is
         // `withBuiltInRenderers` (`index.ts:51-63`).
-        is ToolCall -> if (item.images.isNotEmpty()) {
-            // The one branch whose card can carry images, so the one that needs the
-            // viewer: `onImageClick` reaches the grid from `ToolCallBlock`.
-            ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick)
-        } else {
-            when (item.toolName) {
-                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded)
-                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded)
-                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded)
-                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded)
-                "find" -> FindBlock(item, modifier, toolsDefaultExpanded)
-                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded)
-                // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
-                // is the only difference between them, so they share one block here too.
-                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded, nowMs)
-                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded)
-            }
+        //
+        // **A result that came back with images keeps the tool's own block.** This used to
+        // be the one exception: `item.images.isNotEmpty()` dropped the row to the generic
+        // card, on the grounds that the generic card was the only one painting images (F16
+        // in `docs/rendering-review.md`) — so a `read` of a screenshot lost read's layout.
+        // pi does not do that: it calls the tool's **own** result renderer
+        // (`components/tool-execution.js:234`) and paints the result's image blocks beside
+        // it (`:266-292`, appended at `:158`/`:166-173`), which is what every block now
+        // does through [ToolImages]. `onImageClick` therefore reaches all of them, exactly
+        // as it reached the generic card before.
+        is ToolCall -> when (item.toolName) {
+            "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            "find" -> FindBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
+            // is the only difference between them, so they share one block here too.
+            "bash", "powershell" -> ShellBlock(
+                item,
+                modifier,
+                toolsDefaultExpanded,
+                onImageClick = onImageClick,
+                nowMs = nowMs,
+            )
+            else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick)
         }
 
         is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)

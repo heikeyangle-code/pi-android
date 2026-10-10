@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -39,6 +40,8 @@ internal fun ReadBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -55,8 +58,8 @@ internal fun ReadBlock(
     val shown = if (fullOutput) body.lines else body.lines.take(READ_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val hasBody = body.lines.isNotEmpty() || body.footer != null || body.scanCapped || notice != null
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
-        toolFooterText(item, state, body.totalLines)
+    val footer = remember(item.output, item.outputTruncated, state) {
+        toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
@@ -79,6 +82,7 @@ internal fun ReadBlock(
                         add(toolPathPart(body.path, fallback = "文件"))
                         if (range.isNotEmpty()) add(ToolCallPart(range, ToolCallToken.Warning))
                     },
+                    right = toolHeaderReading(item, state, count = body.totalLines),
                     expanded = expanded,
                     expandable = hasBody,
                 )
@@ -126,11 +130,9 @@ internal fun ReadBlock(
                     }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolImages(item.images, onImageClick)
+
+                ToolFooter(text = footer)
             }
         }
     }

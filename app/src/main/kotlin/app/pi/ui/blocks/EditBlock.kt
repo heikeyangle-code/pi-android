@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiTheme
 
@@ -36,6 +37,8 @@ internal fun EditBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -43,8 +46,12 @@ internal fun EditBlock(
     val command = remember(item.args) { toolCommandText(item.args) }
     val path = remember(item.args) { argString(item.args, "file_path", "path").orEmpty() }
     val failed = state == ToolState.Failed
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
-        toolFooterText(item, state, lineCount(item.output))
+    // F31: the output's line count, scanned once per output. It used to be scanned here for
+    // the footer's text; the count now goes to the header's reading instead, and the footer
+    // has nothing left to print it into ([toolFooterText]).
+    val lines = remember(item.output) { lineCount(item.output) }
+    val footer = remember(item.outputTruncated, state) {
+        toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, null) {
         BlockColumn(modifier) {
@@ -62,6 +69,7 @@ internal fun EditBlock(
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`). `write` and `read` are the same shape.
                     subject = listOf(toolPathPart(path, fallback = "文件")),
+                    right = toolHeaderReading(item, state, count = lines),
                     expanded = expanded,
                     expandable = failed,
                 )
@@ -77,11 +85,9 @@ internal fun EditBlock(
                     // (`ProseText`), which stays as it is.
                     Text(text = item.output, style = PiTheme.text.monoSmall, color = palette.error)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolImages(item.images, onImageClick)
+
+                ToolFooter(text = footer)
             }
         }
     }

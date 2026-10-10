@@ -830,7 +830,7 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 | **user-message** | 容器 `userMessageBg`，圆角 16dp，内边距 14dp，字 15/23；支持 Markdown 与图片；右下角时间戳（每轮首次） |
 | **assistant-text** | **无容器**，直接落画布，内边距左右 0（靠页面边距 16dp）、上下 0；Markdown 全支持；流式末尾呼吸光标 |
 | **thinking-block** | 收起：一行 32dp，左侧 3dp 圆角色条（thinking 等级色）+ 「思考 12s」+ `muted`；展开：`thinkingText` 色 + **斜体** + 行高 22；`hideThinkingBlock` 时不渲染 |
-| **tool-execution** | 容器三态色（pending/success/error），圆角 16dp，内边距 12dp；标题行 = 等宽工具名（`dim` 11.5sp）+ 参数摘要（15sp 单行省略）+ 状态符号；输出区等宽 13/20；页脚 = 退出码 · 耗时 · 行数 + 「展开」；>5s 无输出显示运行计时 |
+| **tool-execution** | 容器三态色（pending/success/error），圆角 **8dp**，**无描边**，行内边距 横 10 / 纵 7dp；标题行 = 状态字形（12 等宽，状态色，`contentDescription` = 状态词）+ 等宽工具名（`toolTitle` 12 粗体）+ 参数摘要（12 等宽、单行省略、**按 pi 分段取色**）+ 状态词（**仅 `…`/`⊘`**）+ 右读数（`耗时 · N 行`，有退出码则并入）；输出区等宽 13/20，**正文之后画返回的图片网格（折叠/展开都画）**；页脚**只在 `已截断`/`无输出` 时出现**；左内边距 = 思考正文的 11dp；>5s 无输出显示运行计时 |
 | **tool-diff** | 顶部路径 + `+12 −5`；正文等宽 13/20，**符号列 16dp（`+`/`-`/空格）+ 极淡底纹（8% 透明）+ 文字色**；上下文行折叠「…N 行未变」；>200 行折叠为统计行；点击开全屏 diff（统一/并排可切） |
 | **compaction** | 通栏细线 + 中央 Chip（`customMessageLabel`）+ 文案「上下文已压缩 · 释放 42k tokens」；点击展开摘要（Markdown） |
 | **branch-summary** | 卡片 `customMessageBg`，头部一行标签「分支摘要」+ 分支 id；点击跳转 |

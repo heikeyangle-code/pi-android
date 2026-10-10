@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -34,6 +35,8 @@ internal fun FindBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) = PathListBlock(
     item = item,
     title = "find",
@@ -43,6 +46,7 @@ internal fun FindBlock(
     parse = { ToolOutputParse.findBody(it) },
     modifier = modifier,
     defaultExpanded = defaultExpanded,
+    onImageClick = onImageClick,
 )
 
 /**
@@ -64,6 +68,8 @@ internal fun LsBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) = PathListBlock(
     item = item,
     title = "ls",
@@ -73,6 +79,7 @@ internal fun LsBlock(
     parse = { ToolOutputParse.lsBody(it) },
     modifier = modifier,
     defaultExpanded = defaultExpanded,
+    onImageClick = onImageClick,
 )
 
 /**
@@ -103,6 +110,8 @@ private fun PathListBlock(
     parse: (String) -> PathBody?,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -127,17 +136,10 @@ private fun PathListBlock(
     val shown = remember(plan) { countEntries(plan) }
     val omitted = (body.entryCount - shown).coerceAtLeast(0)
     val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state, body.entryCount) {
-        if (state == ToolState.Rejected) {
-            toolRejectedFooter()
-        } else {
-            val parts = mutableListOf(toolStateLabel(state))
-            if (body.entryCount > 0) parts += "${body.entryCount} 项"
-            item.exitCode?.let { parts += "退出码 $it" }
-            item.elapsedMs?.let { parts += formatDuration(it) }
-            if (item.outputTruncated) parts += "已截断"
-            parts.joinToString(" · ")
-        }
+    // One exit point for this row ([toolFooterText]): the card's own count, pi's exit code
+    // and the duration are in the header's reading now, so only `已截断` / `无输出` are left.
+    val footer = remember(item.output, item.outputTruncated, state) {
+        toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
@@ -151,6 +153,11 @@ private fun PathListBlock(
                     state = state,
                     title = title,
                     subject = subject,
+                    // v2's `find` / `ls` cards read out as a *count* (`right="12 项"`) —
+                    // the tool's own `limit` answer is what those two cards say first — and
+                    // the reading puts the duration in front of it. `body.entryCount` is the
+                    // number the parse above already produced, handed on rather than re-read.
+                    right = toolHeaderReading(item, state, count = body.entryCount, unit = "项"),
                     expanded = expanded,
                     expandable = hasBody,
                 )
@@ -200,11 +207,9 @@ private fun PathListBlock(
                     body.notice?.let { ToolNotice(text = it, copyOnTap = null) }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolImages(item.images, onImageClick)
+
+                ToolFooter(text = footer)
             }
         }
     }

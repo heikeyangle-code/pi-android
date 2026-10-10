@@ -129,5 +129,12 @@ private val THINK_STRIPE_HEIGHT = 18.dp
 /** v2's `ThinkRow` `gap:8` — between the stripe, the headline and the level word. */
 private val THINK_ROW_GAP = 8.dp
 
-/** v2's expanded thinking body sits `paddingLeft:11` — just past the 3 dp stripe. */
-private val THINK_BODY_INDENT = 11.dp
+/**
+ * v2's expanded thinking body sits `paddingLeft:11` — just past the 3 dp stripe.
+ *
+ * `internal` rather than `private` because it is **also the tool card's own left edge**
+ * ([RAIL_INDENT] in `ToolRail.kt`): both are "where the content starts inside a row that
+ * carries a marker on its left", and this app used to have three different left edges for
+ * one column — prose 0, the thinking body 11, a tool card 26. One number, one place.
+ */
+internal val THINK_BODY_INDENT = 11.dp

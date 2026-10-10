@@ -297,6 +297,19 @@ internal fun BlockCard(
 internal val BlockCardRowPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
 
 /**
+ * The **tool** card's own row inset: `06 §2` 工具卡's `padding:7px 10px` verbatim — one
+ * vertical dp taller than [BlockCardRowPadding].
+ *
+ * It is a second constant rather than a change to [BlockCardRowPadding] because that one is
+ * shared with the diff card and the two extension sub-page cards
+ * (`ui/extension/ExtensionInfoCards.kt`, `ui/extension/ExtensionWidgetCard.kt`), and this
+ * decision is about the tool card's own geometry: v2 gives its rows `7px 10px` and the app
+ * had 6, which on a one-row card is 2 dp of the height this pass buys back. The horizontal
+ * number is v2's own and is the same in both constants.
+ */
+internal val ToolCardRowPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+
+/**
  * The 3dp state stripe. Height is explicit on purpose: filling a Row's height
  * would need intrinsic measurement, and a fixed bar is enough of an accent.
  *

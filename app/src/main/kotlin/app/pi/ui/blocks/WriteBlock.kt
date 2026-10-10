@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -35,6 +36,8 @@ internal fun WriteBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -47,8 +50,8 @@ internal fun WriteBlock(
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val failed = state == ToolState.Failed
     val hasBody = body.lines.isNotEmpty() || failed
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
-        toolFooterText(item, state, body.totalLines)
+    val footer = remember(item.output, item.outputTruncated, state) {
+        toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, null) {
         BlockColumn(modifier) {
@@ -66,6 +69,7 @@ internal fun WriteBlock(
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`).
                     subject = listOf(toolPathPart(body.path, fallback = "文件")),
+                    right = toolHeaderReading(item, state, count = body.totalLines),
                     expanded = expanded,
                     expandable = hasBody,
                 )
@@ -124,11 +128,9 @@ internal fun WriteBlock(
                         Text(text = TOOL_SCAN_CAPPED_HINT, style = PiTheme.text.meta, color = palette.muted)
                     }
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolImages(item.images, onImageClick)
+
+                ToolFooter(text = footer)
             }
         }
     }

@@ -91,9 +91,14 @@ data class ToolCall(
      * [output] carries (F16). The parser and both entry points keep them
      * (`Events.kt:454`, `Transcript.kt:1137` live, `:1547` replay) so the
      * transcript is not where the bytes are lost — pi draws every `image` block
-     * (`components/tool-execution.ts:379-388`). Painting them needs a consumer:
-     * as of the F16 review no file under `ui/` reads this list (`ToolCallBlock`
-     * never references `images`), so the row still shows `[image]` text.
+     * (`components/tool-execution.js:266-292`).
+     *
+     * The consumer is `ui/blocks`' `ToolImages` (`ToolBlockChrome.kt`), painted by
+     * every tool card — the generic one and each built-in tool's own block, so a
+     * `read` of a screenshot keeps read's layout and shows the picture beside it,
+     * as pi does (`tool-execution.js:234` calls the tool's own renderer and adds
+     * the images after it). The `[image]` text in [output] stays in the payload:
+     * the row no longer *shows* it, but [output] is what 「复制输出」 copies.
      */
     val images: List<PiImage> = emptyList(),
 ) : TranscriptItem {

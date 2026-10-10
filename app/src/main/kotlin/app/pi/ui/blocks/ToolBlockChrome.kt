@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,9 +30,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
-import app.pi.ui.theme.DurationMeter
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -242,6 +243,14 @@ internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
  * Nothing is lost to a screen reader: every state's glyph carries the word, so `✓` / `✗`
  * are still announced where they are no longer painted ([toolStateWord]).
  *
+ * **The reading keeps its place at the right end.** It is the block's own string
+ * (`@param right`), `maxLines = 1` and without a `weight`, so while a running call's
+ * number grows (`0.3s` → `1m 0s`) the **subject** gives way — it is the only cell that
+ * ellipsizes — rather than the number being clipped. That is the shape this row already
+ * had before the glyph moved in; the glyph asks for no width reservation of its own, so
+ * the one cost of the new cell is that the subject shortens by a glyph and a
+ * [TOOL_HEADER_GAP].
+ *
  * Nothing shifts under pi's own two themes: `toolTitle`, `text` and `accent` are the same
  * value there (`theme.ts`'s dark/light `toolTitle = text`, and both ship `accent` as the one
  * non-neutral hue), so this — like the name's `toolTitle` — only becomes visible under an
@@ -254,9 +263,10 @@ internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
  *   printed. Passed in rather than re-derived here: every block computes it once per
  *   composition with [toolStateOf], and one derivation is what keeps the glyph, the word
  *   and the card's own colours from disagreeing.
- * @param right the right-hand reading. Defaults to [toolHeaderReading] of [item];
- *   a block whose tool reads out as a *count* rather than a duration (`find`, `ls`)
- *   passes its own string.
+ * @param right the right-hand reading. The default is the duration alone; a block that
+ *   has a count to report passes its own [toolHeaderReading] (`耗时 · N 行`, plus pi's
+ *   exit code when the call has one), because only the block knows the number its own
+ *   parse produced.
  * @param expanded whether the card is open, which only turns the chevron.
  * @param expandable false for a card with no body: the chevron is then not drawn at
  *   all, because an indicator that never changes is a lie.
@@ -270,7 +280,7 @@ internal fun ToolHeader(
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
     expandable: Boolean = true,
-    right: String? = toolHeaderReading(item),
+    right: String? = toolHeaderReading(item, state),
 ) {
     val palette = PiTheme.palette
     // One `AnnotatedString` with one span per run. Built here rather than at the seven call
@@ -371,60 +381,90 @@ internal fun ToolHeader(
 private val TOOL_HEADER_GAP = 7.dp
 
 /**
- * The reading v2 prints at a tool card header's right end.
+ * The reading a tool card prints at its header's right end: **how long the call took and
+ * how much came back**, joined by ` · `.
  *
- * v2 hands each card that string by hand (`right="132ms"`, `"96ms"`, `"12.3s"`,
- * `"6.4s"`, `"0.4s"`, `"2.1s"`); the rule that produces all of them is the one the
- * app already uses in its footers — **milliseconds for the file tools, pi's own
- * duration spelling for the two shells** — because pi measures those two families
- * with two different formatters (`core/tools/renderers/read.ts:129` prints its own
- * line count; `renderers/bash.ts:32-42` formats `Elapsed`/`Took` and switches to
- * `1m 30s` / `1h 5m 30s` once the call passes a minute, which is 0.86.1's change).
+ * ```
+ *   598ms                       a file tool, no usable count
+ *   0.9s · 8 行                 a shell, with the output's line count
+ *   42.1s · 退出码 3            a failed shell
+ *   1.2s · 退出码 1 · 12 处 · 3 个文件
+ *   没有执行                     a 被拒 call: nothing ran, so nothing was measured
+ * ```
  *
- * Nothing here is a new number: [formatDuration] is the file-tool spelling and
- * `ToolOutputParse.formatDuration` is pi's shell formatter, verbatim — including the
- * unit switch, so an hour-long `bash` card reads `1h 5m 30s` and not `3930.0s`. A
- * call with no measured duration has no reading (v2 passes `right={null}` for
- * exactly that case), and a **被拒** call has none either — nothing ran, so there is
- * nothing to measure.
+ * **Every number here is one the block already computed.** [count] / [unit] / [extra] are
+ * passed in by the caller from the parse it already `remember`s (`read`/`write`'s
+ * `body.totalLines`, `grep`'s `body.matchCount` + `body.fileCount`, `find`/`ls`'s
+ * `body.entryCount`, `edit`'s `lineCount(output)`, a shell's own `lines`), and [elapsedMs]
+ * / [exitCode] come from the row's scalar fields — the shell passes its *parsed* exit code
+ * (`ToolOutputParse.shellExitCode`, which also reads pi's `Command exited with code N`
+ * sentence). Nothing in this function scans or parses a result: it formats numbers the
+ * caller had, which is what keeps the F31/F8 rule at the top of this file (and the reason
+ * the previous footer took `lines` as a parameter at all).
+ *
+ * The duration's **spelling belongs to the tool family**: pi measures the two shells with
+ * its own formatter (`core/tools/renderers/bash.ts:32-42` — `Elapsed`/`Took`, switching to
+ * `1m 30s` / `1h 5m 30s` past a minute, which is 0.86.1's change) and the file tools with
+ * the app's `598ms` / `1s` / `1m30s` ([formatDuration]). Both spellings are pi's, and
+ * `ToolOutputParse.formatDuration` is the shell one verbatim.
+ *
+ * **被拒 has no duration**: nothing ran (`06 §3` 构件 5), so the state's own sentence takes
+ * the slot. This is the one place the state changes the reading, and it is why `state` is a
+ * parameter rather than re-derived from [item] here.
+ *
+ * @param count how many things the tool returned, in [unit] (`16`, `12`); 0 prints nothing —
+ *   `0 行` on every empty result would be a row of noise, and pi prints no such line either.
+ * @param extra one further count the card reports beside the main one, already spelled
+ *   (`"3 个文件"`); null when there is none.
  */
-internal fun toolHeaderReading(item: ToolCall): String? {
-    if (toolStateOf(item) == ToolState.Rejected) return null
-    val ms = item.elapsedMs ?: return null
-    return if (item.toolName == "bash" || item.toolName == "powershell") {
-        ToolOutputParse.formatDuration(ms)
-    } else {
-        formatDuration(ms)
+internal fun toolHeaderReading(
+    item: ToolCall,
+    state: ToolState,
+    elapsedMs: Long? = item.elapsedMs,
+    exitCode: Int? = item.exitCode,
+    count: Int = 0,
+    unit: String = "行",
+    extra: String? = null,
+): String? {
+    if (state == ToolState.Rejected) return TOOL_REJECTED_READING
+    val parts = mutableListOf<String>()
+    elapsedMs?.let {
+        parts += if (item.toolName == "bash" || item.toolName == "powershell") {
+            ToolOutputParse.formatDuration(it)
+        } else {
+            formatDuration(it)
+        }
     }
+    exitCode?.let { parts += "退出码 $it" }
+    if (count > 0) parts += "$count $unit"
+    extra?.let { parts += it }
+    return if (parts.isEmpty()) null else parts.joinToString(" · ")
 }
 
+/** What a 被拒 call's reading says (`06 §3` 构件 5), in place of a duration it never had. */
+internal const val TOOL_REJECTED_READING = "没有执行"
+
 /**
- * The card's footer row: the state's **glyph and word**, then the duration tick.
+ * The card's conditional footer row: **only** what the header's reading cannot carry —
+ * `已截断` and `无输出` ([toolFooterText]).
  *
- * `06 §4`「页脚永远同时有符号与状态词」— `… 运行中`, `✓ 成功`, `✗ 失败`,
- * `⊘ 被拒` — and `06 §2` 工具卡's footer row is `padding:0 10px 8px`, `gap 6`:
- * `状态字形 + 状态词 + 右侧耗时刻度`. v2 draws it the same way
- * (`direction-b-v2.html:748-754`). The word arrives inside [text] (the callers build
- * it through [toolFooterText] / `shellFooter`), so the glyph is prepended here and
- * the pair is one glance apart.
+ * The row used to be unconditional and to repeat the state (`06 §4`'s 「页脚永远同时有符号
+ * 与状态词」: glyph + word + duration tick). All of that moved to the header — the glyph and
+ * the word as the row's first cells ([ToolHeader], with the word announced through the
+ * glyph's `contentDescription` for the two states that no longer print it), and the duration
+ * into the reading — so what is left is the one category of fact that has no home on a
+ * one-line header: a condition that is only sometimes true. A card with neither condition
+ * therefore draws **no footer row at all**, which is where this pass buys its height.
  *
- * The row is monospace (`mono t12`) and in the **normal** text colour, not `muted`:
- * v2's footer line is `color:'var(--text)'`, and it is a reading the user actually
- * reads, not a caption. The tick keeps the state colour, which is the one channel
- * the glyph's own colour also carries.
+ * That is also why [text] is nullable and why there is no meter here: the tick
+ * (`DurationMeter`) was the *ordinal* reading of the number the reading now prints as text
+ * (`04 §1.1`: 刻度是补充，不是替代 — the text is the reading, the tick merely repeated it),
+ * and a row that usually does not exist cannot be where the tick lives. The component
+ * itself stays (`theme/PiMeter.kt`): the workspaces screen's own progress bars still use it.
  *
- * [DurationMeter] sits at the end of the readings: the tick is the *ordinal* reading
- * of the same number the text just printed (`04 §1.1`: 刻度是补充，不是替代), so it
- * belongs beside it rather than beside the affordance. It draws nothing when
- * [elapsedMs] is null, which is what keeps a card with no measured duration — and
- * every diff card, which has no duration of its own (`06 §2`: diff 卡不显示) — free
- * of an empty tick.
- *
- * [elapsedMs] is passed in rather than read from [item] because one caller has a
- * *live* number: a running shell command's elapsed time is `UiState.nowMs - item.ts`,
- * measured by [ShellBlock] against the ViewModel's 1 Hz clock, not read from
- * `ToolCall.elapsedMs` (which only exists once the call has ended). Nothing here scans
- * a result — the F31/F8 rule at the top of this file.
+ * [text]'s two sentences are conditional by construction, so `null` means "say nothing" and
+ * the caller needs no second decision — which is what lets the four blocks that used to
+ * assemble their own footers share this one row.
  *
  * There is **no expand label** on this row: v2's disclosure is the header chevron
  * (`direction-b-v2.html:746`), and the card body is itself the hit target
@@ -433,34 +473,19 @@ internal fun toolHeaderReading(item: ToolCall): String? {
  */
 @Composable
 internal fun ToolFooter(
-    text: String,
-    state: ToolState,
-    elapsedMs: Long?,
+    text: String?,
     modifier: Modifier = Modifier,
 ) {
+    if (text == null) return
     val palette = PiTheme.palette
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = toolStateGlyph(state),
-            style = PiTheme.text.monoSmall,
-            color = toolAccentColor(state, palette),
-            maxLines = 1,
-        )
-        Spacer(Modifier.width(PiSpacing.gutter))
-        Text(
-            text = text,
-            modifier = Modifier.weight(1f),
-            style = PiTheme.text.monoSmall,
-            color = palette.text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        DurationMeter(
-            ms = elapsedMs,
-            color = toolAccentColor(state, palette),
-            modifier = Modifier.padding(start = PiSpacing.gutter),
-        )
-    }
+    Text(
+        text = text,
+        modifier = modifier.fillMaxWidth(),
+        style = PiTheme.text.monoSmall,
+        color = palette.text,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 /**
@@ -531,8 +556,9 @@ internal fun ToolNotice(
  * node in that margin any more: the state glyph is the header row's first cell
  * ([ToolHeader]), and the rail was removed with it (`ToolRail.kt`'s KDoc).
  *
- * The rows inset by [BlockCardRowPadding] (10 horizontally), which is v2's own
- * `padding:7px 10px` on this card's rows rather than the default card's 12.
+ * The rows inset by [ToolCardRowPadding] (10 horizontally, 7 vertically), which is v2's own
+ * `padding:7px 10px` on this card's rows rather than the default card's 12 / the shared
+ * [BlockCardRowPadding]'s 6.
  *
  * The container is **not bordered**: `06 §2` gives it a 1 px status-coloured outline at
  * 35 %, and the official renderer's card has no border at all — a `Box` with the status
@@ -562,7 +588,7 @@ internal fun ToolCard(
             // No border: `06 §2`'s 1 px status outline is gone (see this composable's KDoc
             // for the decision). The fill alone is the card's ground.
             borderColor = null,
-            padding = BlockCardRowPadding,
+            padding = ToolCardRowPadding,
             shape = TOOL_CARD_SHAPE,
             content = content,
         )
@@ -635,32 +661,81 @@ internal fun toolCommandText(args: JsonObject?): String? =
     }
 
 /**
- * The card's footer parts, in pi's order: state, pi's exit code, the duration pi measures,
- * the row's size, and whether the result was truncated or empty.
+ * The card's footer text — the **one** exit point for that row, shared by every tool card:
+ * `已截断` when our scan cut pi's result, `无输出` when a settled call returned nothing, and
+ * `null` when neither is true (the common case, and the one that draws no footer row at all).
  *
- * [lines] is passed in rather than recomputed (F31): the caller already holds a remembered
- * count for the same output, and this used to scan the whole (possibly megabyte) string on
- * every composition.
+ * Everything else the row used to carry is in the header now: the state's word and glyph
+ * ([ToolHeader]), the duration, the exit code and the row's own count ([toolHeaderReading]).
+ * This function therefore takes **no count**: the number would have nothing to print into,
+ * and the count that *is* printed comes from the same remembered parse the caller hands the
+ * reading (see that function's KDoc for the F31 rule this keeps).
  *
- * A blocked call short-circuits every part: pi measured nothing, returned no exit code and
- * produced no rows, so the settled parts below would report `0ms · 1 行` about a call that
- * never ran. `06 §3` 构件 5 states the fact instead (「被拒 · 这次写入没有执行 · 0 行」);
- * the wording here is tool-agnostic, because the blocked call can be any tool.
+ * A blocked call says nothing here: pi measured nothing and returned no rows, so the two
+ * conditions below could only describe a call that never ran. `06 §3` 构件 5 states that fact
+ * in the reading instead ([TOOL_REJECTED_READING]) — and it is stated once, in one place,
+ * rather than in a footer three blocks used to assemble for themselves.
+ *
+ * `无输出` waits for the call to settle (`state != ToolState.Running`): while a call is still
+ * pending it has produced nothing *yet*, and pi's own bash renderer only prints its no-output
+ * line for a finished result (`core/tools/renderers/bash.ts:100-118`). Before this was one
+ * function, that guard existed only in `ShellBlock`'s private copy, so a pending `read` said
+ * `无输出` about output it had not received.
  */
-internal fun toolFooterText(item: ToolCall, state: ToolState, lines: Int): String {
-    if (state == ToolState.Rejected) return toolRejectedFooter()
-    val parts = mutableListOf(toolStateLabel(state))
-    item.exitCode?.let { parts += "退出码 $it" }
-    item.elapsedMs?.let { parts += formatDuration(it) }
-    if (lines > 0) parts += "$lines 行"
+internal fun toolFooterText(item: ToolCall, state: ToolState): String? {
+    if (state == ToolState.Rejected) return null
+    val parts = mutableListOf<String>()
     if (item.outputTruncated) parts += "已截断"
-    if (item.output.isEmpty()) parts += "无输出"
-    return parts.joinToString(" · ")
+    if (state != ToolState.Running && item.output.isEmpty()) parts += "无输出"
+    return if (parts.isEmpty()) null else parts.joinToString(" · ")
 }
 
-/** The one footer a blocked call has (`06 §3` 构件 5), shared by every tool card. */
-internal fun toolRejectedFooter(): String = "${toolStateLabel(ToolState.Rejected)} · 没有执行"
-
+/**
+ * The images a tool returned, painted **after the card's body and before its footer**, and
+ * **independently of whether the card is expanded**.
+ *
+ * F16 (`docs/rendering-review.md`): the images a tool returned were parsed into
+ * `ToolCall.images` and then never painted, so the row showed only the `[image]` marker
+ * `rpc/Events.kt`'s `contentText` substitutes. pi paints them — `components/
+ * tool-execution.js:266-292` builds an image component for every `content[type=image]`
+ * block, appends it after the renderer's own output (`:158`, `:166-173`), and gates the
+ * whole thing on the terminal's image capability rather than on `expanded`; where the
+ * terminal cannot show graphics pi prints fallback text instead (`packages/tui/src/
+ * components/image.ts:97-104`: `[Image: <mime> <WxH>]`). A phone can always show them, so
+ * this is pi's graphics branch, and the grid's labelled placeholder is the decode-failure
+ * fallback that stands in for pi's text branch.
+ *
+ * **Every built-in tool block paints them**, not just the generic card: pi calls the tool's
+ * *own* result renderer and adds the images beside it (`tool-execution.js:234`), so a `read`
+ * of a screenshot keeps read's layout *and* shows the picture. This used to be the reason
+ * `BlockRenderer` dropped to the generic card whenever `item.images` was non-empty — which
+ * silently threw away the per-tool layout the app had just been given.
+ *
+ * pi wraps only the *text* of a result in the region that toggles the card
+ * (`tool-execution.ts:172-178`), so a tap on a screenshot must not collapse the card. This
+ * used to be a no-op tap detector that swallowed the gesture and did nothing else — the
+ * user's report was 「点一下它只会展开，图片没有反应」. The cell now owns the tap
+ * (`ImageGridBlock`'s own `clickable`, the deepest node, so it is dispatched before the
+ * card's `toggleContent`), and it opens the picture instead: image → viewer, every other
+ * part of the card → expand/collapse, exactly as before.
+ *
+ * Nothing is drawn for an empty list, so a call site does not need its own guard.
+ */
+@Composable
+internal fun ToolImages(
+    images: List<PiImage>,
+    onImageClick: ((PiImage) -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    if (images.isEmpty()) return
+    ImageGridBlock(
+        images = images,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = PiSpacing.tiny),
+        onImageClick = onImageClick,
+    )
+}
 
 /**
  * pi's `[invalid content arg - expected string]` case

@@ -65,9 +65,9 @@
 
 **状态行**：`padding:2px 14px 8px`，gap 5；上下文进度 = 8 段，每段 `3×8` 圆角 1、段间 1px，已填充 accent。
 
-**执行轨道**：左内边距 26；竖线 `left 9`、宽 1px、上下各缩进 16；节点 `17×17` 圆、`left 1 / top 8`，描边 1px 状态色 45%，字形 12 等宽居中。**（已删除：用户裁决后线、节点与 `firstOfRun`/`lastOfRun` 判定一并删掉，状态字形改到工具卡头行常显。）**
+**执行轨道（已删除）**：改造前是「左内边距 26；竖线 `left 9`、宽 1px、上下各缩进 16；节点 `17×17` 圆、`left 1 / top 8`，描边 1px 状态色 45%，字形 12 等宽居中」。用户裁决后**整条删除**：状态字形改到工具卡头行常显（见下），线、节点与「一个 run 的首/末行」判定（`firstOfRun`/`lastOfRun`）一并删掉。卡片左内边距随之改用思考正文的 **11**（`THINK_BODY_INDENT`），全屏三种左缘（正文 0 / 思考正文 11 / 工具卡 26）收敛成两种（**0 / 11**），每张工具卡因此宽 +15。
 
-**工具卡**：圆角 10，描边 1px 状态色 35%，底色 pending/success/error 三档；标题行 `padding:7px 10px` gap 7（工具名 12 `toolTitle`+粗体、主体 12 **按 pi 分段取色**、右读数 12 muted tab、chevron 14）；正文 13/19；页脚 `padding:0 10px 8px` gap 6（状态字形 + 状态词 + 右侧耗时刻度）。**块间距 8**。
+**工具卡**：圆角 **8**、**无描边**，底色 pending/success/error 三档；标题行 `padding:7px 10px` gap 7（**状态字形** 12 常显、色 = 状态色、挂 `contentDescription` = 状态词；工具名 12 `toolTitle`+粗体；主体 12 **按 pi 分段取色**；状态词 12 **仅 `…`/`⊘`**；右读数 12 muted tab = `耗时 · N 行`，有退出码则并入 `退出码 N`；chevron 14）；正文 13/19，正文之后是返回的图片网格（折叠/展开都画）；行内边距 横 10 / 纵 **7**；页脚**条件式**（只有 `已截断` / `无输出` 时才出现一行，不再有状态字形/状态词/耗时刻度）。**块间距 8**。
 > 标题行的两半都不是 v2 原型的取色，按用户裁决「全修的一致」以 pi 的语义为准：
 > **工具名**用 `toolTitle` + 粗体（每个内置渲染器都这么画它的名字，`core/tools/renderers/bash.js:31`、`read.js:27`、`write.js:90`、`edit.js:53`；卡壳的回退头在 `modes/interactive/components/tool-execution.js:91`、`:316`）；
 > **主体**按每个渲染器自己的 `theme.fg(...)` 分段——`read`/`write`/`edit`/`ls` 的路径 = `accent`（`core/tools/render-utils.js:57-63` 的 `renderToolPath`）、`read` 的 `:1-50` = `warning`（`read.js:19-23`）、`grep`/`find` 的 pattern = `accent` 而 ` in <path>` / `(glob)` / `(limit N)` = `toolOutput`（`grep.js:19-26`、`find.js:18-24`）、`bash`/`powershell` 的整行 `$ command` = `toolTitle`+粗体（`bash.js:26-32`）、通用回退卡 = 无 `fg`（`tool-execution.js:274-278`）。pi 自带两个主题里 `toolTitle = text`，所以只有导入别的主题时才看得出差别。见 `07` D40.1 / D40.12。
@@ -132,7 +132,7 @@
 
 | 场景 | 写法 |
 |---|---|
-| 工具卡 | pending `…`「运行中」warning；success `✓`「成功」success；error `✗`「失败」error；**被拒** `⊘`「被拒」`#9E9E9E`（被拒不是失败，不用 error 色）。页脚**永远同时有符号与状态词**。**头行另有**：状态字形常显（色 = 状态色），`…`/`⊘` 另配状态词、`✓`/`✗` 只有字形；字形挂 `contentDescription = 状态词`，所以视觉上没写词的状态读屏仍读得到；读数在主体右侧且不参与省略。 |
+| 工具卡 | pending `…`「运行中」warning；success `✓`「成功」success；error `✗`「失败」error；**被拒** `⊘`「被拒」`#9E9E9E`（被拒不是失败，不用 error 色）。三重编码**在头行**：状态字形常显（色 = 状态色，挂 `contentDescription` = 状态词，所以读屏四种状态都读得到词）；`…`/`⊘` 另写状态词、`✓`/`✗` 只有字形；右读数 = `耗时 · N 行`（有退出码则并入 `退出码 N`；被拒 = `没有执行`）。页脚**只在 `已截断` / `无输出` 时出现**（改造前那句「页脚永远同时有符号与状态词」已随耗时刻度一起删除）。 |
 | 引擎状态行 | `✓ 就绪` success｜`… 工作中` warning｜`◌ 启动中` warning｜`≡ 排队中` warning｜`✗ 引擎已退出` error｜`■ 引擎已停止` error；busy 动词（读取会话树等）用 `…` warning |
 | 队列 | `⇢` 穿插 N（符号 warning，字与数字正文色）；`⇣` 后续 N（符号 muted）；不可用时整条 dim |
 | 审批 | `!`「待决策」warning + 倒计时段 |

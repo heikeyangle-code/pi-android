@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 
 /**
  * The left edge a tool card and a diff card share (`06 §2` 执行轨道 左内边距).
@@ -34,14 +33,23 @@ import androidx.compose.ui.unit.dp
  */
 
 /**
- * `06 §2`「左内边距 26」: where a tool (or diff) card's container starts.
+ * Where a tool (or diff) card's container starts: **the same left edge the thinking
+ * body starts at** ([THINK_BODY_INDENT]).
  *
- * This is `06 §2`'s own rail inset, kept as the card's left edge after the rail itself
- * was removed. The cards were offset by it so the node (1 … 18) and the line (9 … 10)
- * could sit in their left margin; that margin is kept, so this removal decides nothing
- * about where the container begins.
+ * `06 §2` says `左内边距 26`, and 26 is what this was — the rail's inset, so the node
+ * (1 … 18) and the line (9 … 10) could sit in the card's left margin. With the rail and
+ * the node gone (see the file KDoc) that margin has nothing in it, and the app was left
+ * with three left edges in one column: prose at 0, the thinking body at 11, a tool card
+ * at 26. The tool card now takes the thinking body's 11, which is the design's own
+ * "content starts just past the marker" inset ([THINK_BODY_INDENT]) — so a tool card and
+ * a thinking block line up on one baseline instead of two, and each card gains the 15 dp
+ * that used to be its empty rail margin.
+ *
+ * Why `06 §2`'s 26 is not kept as a third edge: the number was derived from the rail's
+ * geometry (node left 1 + size 17 + the gap to the card), and that geometry no longer
+ * exists. Keeping it would preserve a margin measured for something that is not drawn.
  */
-internal val RAIL_INDENT: Dp = 26.dp
+internal val RAIL_INDENT: Dp = THINK_BODY_INDENT
 
 /**
  * The one place that says how far in a tool card and a diff card start: their content is

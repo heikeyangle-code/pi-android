@@ -1,6 +1,5 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -112,16 +111,9 @@ fun ToolCallBlock(
     // F31 (`docs/rendering-review.md`): the footer's parts list + `joinToString`
     // used to be rebuilt on every composition, and its `lineCount` scanned the
     // whole output each time. It depends only on the row's scalar fields, so it is
-    // built once per output change. `outputLineCount` is deliberately not a key —
-    // it is derived from `item.output`, which is.
-    val footer = remember(
-        item.output,
-        item.exitCode,
-        item.elapsedMs,
-        item.outputTruncated,
-        state,
-    ) {
-        toolFooterText(item, state, outputLineCount)
+    // built once per output change.
+    val footer = remember(item.output, item.outputTruncated, state) {
+        toolFooterText(item, state)
     }
     // §4.8: 工具卡长按 → 复制命令 / 复制输出. The command is the tool's own argument
     // (`command` for bash, `file_path`/`path` for the file tools); a tool whose
@@ -158,6 +150,10 @@ fun ToolCallBlock(
                     // arguments are the terminal's default foreground — `Uncoloured`, which the
                     // palette maps onto pi's `text` — not `accent` and not a segmented line.
                     subject = listOf(ToolCallPart(item.argsSummary, ToolCallToken.Uncoloured)),
+                    // The row's own count, from the `remember` above (F31): this card's
+                    // result is the one with no parse of its own, so the count it hands
+                    // the reading is the incremental one it already keeps.
+                    right = toolHeaderReading(item, state, count = outputLineCount),
                     expanded = expanded,
                     expandable = item.output.isNotEmpty(),
                 )
@@ -216,42 +212,12 @@ fun ToolCallBlock(
                     }
                 }
 
-                // F16 (`docs/rendering-review.md`): the images a tool returned were
-                // parsed into `ToolCall.images` and then never painted, so the row
-                // showed only the `[image]` marker `rpc/Events.kt`'s `contentText`
-                // substitutes. pi paints them — `components/tool-execution.ts:379-388`
-                // adds a real `Image` child for every `content[type=image]` block —
-                // and where the terminal cannot show graphics it prints fallback text
-                // instead (`packages/tui/src/components/image.ts:97-104`,
-                // `packages/tui/src/terminal-image.ts:683-696`: `[Image: <mime> <WxH>]`).
-                // A phone can always show them, so this is pi's graphics branch, and
-                // the grid's labelled placeholder is the decode-failure fallback that
-                // stands in for pi's text branch.
-                //
-                // pi wraps only the *text* of a result in the region that toggles the
-                // card (`tool-execution.ts:172-178`), so a tap on a screenshot must
-                // not collapse the card. This used to be a no-op tap detector that
-                // swallowed the gesture and did nothing else — the user's report was
-                // 「点一下它只会展开，图片没有反应」. The cell now owns the tap
-                // (`ImageGridBlock`'s own `clickable`, the deepest node, so it is
-                // dispatched here before the card's `toggleContent`), and it opens the
-                // picture instead: image → viewer, every other part of the card →
-                // expand/collapse, exactly as before.
-                if (item.images.isNotEmpty()) {
-                    ImageGridBlock(
-                        images = item.images,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = PiSpacing.tiny),
-                        onImageClick = onImageClick,
-                    )
-                }
+                // F16: the images a tool returned, after the body and before the footer —
+                // position, tap handling and the whole pi argument are [ToolImages]' own
+                // KDoc (one place, because every tool card paints them now).
+                ToolImages(item.images, onImageClick)
 
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
+                ToolFooter(text = footer)
             }
         }
     }
