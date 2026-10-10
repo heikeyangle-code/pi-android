@@ -70,17 +70,16 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  *   so they cannot be constructed from here. Their interfaces are public and
  *   carry no behaviour, so this file implements them ([PiMarkdownPadding],
  *   [PiMarkdownDimens]) with the same field values the builders were being
- *   called with. Those two used to be top-level `val`s — allocated once per
- *   process — because they depended on nothing in the composition. They now
- *   depend on one thing, the 排版 preset, so they became functions of it
- *   ([piMarkdownPadding], [piMarkdownDimens]) and `PiMarkdown.kt` caches each
- *   result with `remember(profile)`: one instance per preset, not one per frame.
- *   The library defaults the app does not override (`blockQuoteBar`, the
- *   alert paddings/dimens, `tableCellWidth`, `tableCellPadding`,
- *   `tableCornerSize`) are transcribed
- *   from the 0.45.0 sources named in each KDoc below — if that dependency is ever bumped, those numbers have to be
- *   re-checked against the new artifact: an interface change fails the build
- *   loudly, a changed default would not.
+ *   called with. [piMarkdownPadding] is a function of the 排版 preset and
+ *   `PiMarkdown.kt` caches its result with `remember(profile)`: one instance per
+ *   preset, not one per frame. [piMarkdownDimens] depends on nothing — the preset
+ *   does **not** move any radius — so it is still a top-level `val`, allocated
+ *   once per process. The library defaults the app does not override
+ *   (`blockQuoteBar`, the alert paddings/dimens, `tableCellWidth`,
+ *   `tableCellPadding`, `tableCornerSize`) are transcribed from the 0.45.0
+ *   sources named in each KDoc below — if that dependency is ever bumped, those
+ *   numbers have to be re-checked against the new artifact: an interface change
+ *   fails the build loudly, a changed default would not.
  *
  * The fifth object, `MarkdownComponents`, is not built here: its builder
  * `markdownComponents(...)` is **not** composable (see `PiMarkdownComponents.kt`),
@@ -391,21 +390,27 @@ internal fun piMarkdownPadding(profile: PiTypographyProfile): MarkdownPadding = 
 )
 
 /**
- * The code block's corner radius, from the preset: `06 §2` says 12 dp, which is
- * what 经典 keeps, and the approved direction sheet unifies the card/code-block
- * radius to 10 for the other three presets (the code block used to be the one
- * surface still drawing 12).
+ * 12 dp corners keep code blocks recognisably cards rather than slabs.
+ *
+ * **No preset moves this.** The 排版 draft proposed unifying the card/code-block
+ * radius to 10, and it was dropped: the cards (`BlockCardShape`) and the code
+ * block are *already* both 12, so there was no inconsistency to unify, and 10 is
+ * not a multiple of 8 while 12 is — it would leave the page's own grid for no
+ * gain. The table's 8 was never in question.
  *
  * Same construction as [piMarkdownPadding]: the interface is public, the
  * builder's implementation is private and the builder is composable
- * (`multiplatform-markdown-renderer/.../model/MarkdownDimens.kt`). Of the values
- * the app passes, only `codeBackgroundCornerSize` moves with the preset; the
- * table's four numbers are today's at **every** preset, per the user's ruling
- * that the table does not move — `tableCellWidth = 160.dp`,
- * `tableCornerSize = 8.dp` and `tableCellPadding = 8.dp` are the 0.45.0 defaults
- * (the padding being v2's own `6px 8px` cell inset), and `dividerThickness`,
- * `blockQuoteThickness`, `tableMaxWidth` and `alert = markdownAlertDimens()` are
- * also unchanged.
+ * (`multiplatform-markdown-renderer/.../model/MarkdownDimens.kt`). The values the
+ * app passes are kept; `tableCellWidth = 160.dp`,
+ * `tableCornerSize = 8.dp` and `alert = markdownAlertDimens()` are the 0.45.0
+ * defaults, transcribed.
+ *
+ * `tableCellPadding` is **not** the library default: v2 draws a markdown table
+ * `padding:6px 8px` per cell (`direction-b-v2.html:300-303`, `.b-tbl th,.b-tbl td`),
+ * where the library's default is a uniform 16. The interface carries one `Dp` for
+ * both axes, so the cell takes v2's horizontal 8 — the axis that decides how much
+ * room a column's text gets — and the vertical step is the same number rather than
+ * two values the interface cannot express.
  */
 @Immutable
 private data class PiMarkdownDimens(
@@ -419,10 +424,10 @@ private data class PiMarkdownDimens(
     override val alert: MarkdownAlertDimens,
 ) : MarkdownDimens
 
-/** The one [PiMarkdownDimens] per preset; only the code-block radius moves. */
-internal fun piMarkdownDimens(profile: PiTypographyProfile): MarkdownDimens = PiMarkdownDimens(
+/** The one [PiMarkdownDimens] instance; constant, like the app has always had. */
+internal val piMarkdownDimens: MarkdownDimens = PiMarkdownDimens(
     dividerThickness = 1.dp,
-    codeBackgroundCornerSize = profile.codeBlockRadius,
+    codeBackgroundCornerSize = 12.dp,
     blockQuoteThickness = 3.dp,
     tableMaxWidth = Dp.Unspecified,
     tableCellWidth = 160.dp,

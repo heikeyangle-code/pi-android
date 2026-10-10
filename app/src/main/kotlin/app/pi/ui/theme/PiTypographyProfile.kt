@@ -45,28 +45,30 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * aspiration: [styles] for `classic` is literally [PiTextStyles.Default], the
  * heading sizes are the ones `PiMarkdownTheme.kt` already hard-coded
  * (22/20/18/16/15/14), the paragraph gap is today's 2 dp, the indent is today's
- * 12 dp and the code-block radius is today's 12. A user who picks 经典 must see
- * the app they had before this feature existed.
+ * 12 dp. A user who picks 经典 must see the app they had before this feature
+ * existed.
  *
  * The other three come from the approved direction sheet
  * (`/root/design-preview/typography-preview.html`, screenshots `s1.png`–`s3.png`)
  * and its sources: Tailwind Typography for the prose scale, the CJK
  * typesetting convention of 1.75–1.8 leading for the comfortable step, and
  * Android M3's 16 sp body for the same step. **No colour moves with a preset** —
- * the sheet only re-uses `PiPalette` tokens, and everything here is a size, a
- * gap or a corner radius.
+ * the sheet only re-uses `PiPalette` tokens, and everything here is a size or a
+ * gap. (The draft's "unify the card/code-block radius to 10" was **dropped**: the
+ * cards and the code block are already 12 today, so there was no inconsistency to
+ * fix, and 10 is not a multiple of 8 while 12 is — see the file's git history and
+ * `PiMarkdownDimens`. The table's 8 was never in question.)
  *
  * |                    | classic | compact | comfortable | loose |
  * |--------------------|---------|---------|-------------|-------|
  * | prose size/leading |  14/23  |  15/24  |   16/28     | 17/31 |
  * | markdown `block`   |    2    |    8    |     16      |  24   |
- * | list item top/bot  |   2/2   |   4/4   |    6/6      | 10/10 |
+ * | list item top/bot  |   2/2   |   4/4   |     8/8     | 10/10 |
  * | list indent        |   12    |   18    |     20      |  22   |
- * | inline code size/w | 12.5/400|  13/600 |    14/600   | 14/600|
- * | code size/leading  |  13/19  |  13/21  |    14/24    | 14/26 |
- * | code-block radius  |   12    |   10    |     10      |  10   |
+ * | inline code size/w | 12.5/400|  13/600 |    14/600   | 15/600|
+ * | code size/leading  |  13/19  |  13/21  |    14/24    | 15/26 |
  * | headings h1…h6     | 22/20/18/16/15/14 | 21/19/17/15/15/14 | 22/20/18/16/16/15 | 24/21/19/17/17/16 |
- * | transcript gap     |    8    |    6    |      8      |  12   |
+ * | transcript gap     |    8    |    4    |      8      |  12   |
  * | 换人：消息之前       |    8    |   16    |     24      |  32   |
  *
  * The paragraph gap (markdown `block`) is 16 for 舒适 and 24 for 宽松 — larger than
@@ -82,7 +84,7 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * between "before a user message" and "before an assistant message" would be a
  * difference no user can see the reason for. It also keeps the three gaps ordered
  * for the three non-classic presets — 同一条消息内部 < 段间距 < 换人间距
- * (紧凑 6 < 8 < 16, 舒适 8 < 16 < 24, 宽松 12 < 24 < 32). 经典 sets all three to 8,
+ * (紧凑 4 < 8 < 16, 舒适 8 < 16 < 24, 宽松 12 < 24 < 32). 经典 sets all three to 8,
  * the single uniform gap the transcript had before this existed. pi's terminal has
  * no such notion, so the number is the app's own.
  *
@@ -108,9 +110,22 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * ## The two multipliers
  *
  * `app.appearance.lineHeight` multiplies every **leading** (never a size) by
- * 0.92 / 1.0 / 1.08. **Classic is exempt**: the multiplier is forced to 1.0
- * there, which is what makes "经典 = 今天" survive the row — otherwise the
- * default would itself be a multi-preset app rather than the previous one.
+ * 0.92 / 1.0 / 1.08, and the result must stay inside
+ * [MIN_LEADING_RATIO]…[MAX_LEADING_RATIO] (1.5–1.85): a step that would leave
+ * that band is **dropped entirely** and the base leading stands. 1.5 is the floor
+ * below which CJK text starts to collide; 1.85 is where a body column starts to
+ * come apart. This is why the step is a no-op at the two ends:
+ *
+ * * 紧凑 is 15/24 (1.60) — `tight` would be 1.47, so it stays 24; `loose` is
+ *   1.73 and does apply (26).
+ * * 宽松 is 17/31 (1.82) — `loose` would be 1.97, so it stays 31; `tight` is
+ *   1.68 and does apply (29).
+ * * 舒适 is 16/28 (1.75) — `tight` applies (26); `loose` would be 1.89, so it
+ *   stays 28. 经典 is 14/23 (1.64) and, as below, exempt altogether.
+ *
+ * **Classic is exempt**: the multiplier is forced to 1.0 there, which is what
+ * makes "经典 = 今天" survive the row — otherwise the default would itself be a
+ * multi-preset app rather than the previous one.
  *
  * `app.appearance.fontSize` adds −1 / 0 / +1 / +2 sp to **every role in
  * [PiTextStyles]**, exactly where `fontScaleDelta` used to add its ±2. It is
@@ -145,8 +160,6 @@ data class PiTypographyProfile(
     val markdownListItemTop: Dp,
     val markdownListItemBottom: Dp,
     val markdownListIndent: Dp,
-    /** The code block's corner radius (`MarkdownDimens.codeBackgroundCornerSize`). */
-    val codeBlockRadius: Dp,
     /**
      * The gap above the first row of a **new** message (换人间距) — user and
      * assistant alike, one number.
@@ -254,7 +267,7 @@ data class PiTypographyProfile(
                 proseSize = 14, proseLine = 23,
                 block = 2, listItem = 2, indent = 12,
                 codeSize = 13, codeLine = 19,
-                radius = 12, blockSpacing = 8,
+                blockSpacing = 8,
                 messageGap = 8,
                 inlineSize = 12.5f, inlineWeight = 400,
                 headings = intArrayOf(22, 20, 18, 16, 15, 14),
@@ -263,16 +276,16 @@ data class PiTypographyProfile(
                 proseSize = 15, proseLine = 24,
                 block = 8, listItem = 4, indent = 18,
                 codeSize = 13, codeLine = 21,
-                radius = 10, blockSpacing = 6,
+                blockSpacing = 4,
                 messageGap = 16,
                 inlineSize = 13f, inlineWeight = 600,
                 headings = intArrayOf(21, 19, 17, 15, 15, 14),
             ),
             COMFORTABLE to Preset(
                 proseSize = 16, proseLine = 28,
-                block = 16, listItem = 6, indent = 20,
+                block = 16, listItem = 8, indent = 20,
                 codeSize = 14, codeLine = 24,
-                radius = 10, blockSpacing = 8,
+                blockSpacing = 8,
                 messageGap = 24,
                 inlineSize = 14f, inlineWeight = 600,
                 headings = intArrayOf(22, 20, 18, 16, 16, 15),
@@ -280,10 +293,10 @@ data class PiTypographyProfile(
             LOOSE to Preset(
                 proseSize = 17, proseLine = 31,
                 block = 24, listItem = 10, indent = 22,
-                codeSize = 14, codeLine = 26,
-                radius = 10, blockSpacing = 12,
+                codeSize = 15, codeLine = 26,
+                blockSpacing = 12,
                 messageGap = 32,
-                inlineSize = 14f, inlineWeight = 600,
+                inlineSize = 15f, inlineWeight = 600,
                 headings = intArrayOf(24, 21, 19, 17, 17, 16),
             ),
         )
@@ -303,7 +316,14 @@ data class PiTypographyProfile(
 
         private fun heading(numbers: Preset, slot: Int, leading: Double): PiHeading {
             val size = numbers.headings[slot]
-            return PiHeading(size, (size * HEADING_LEADING_RATIO[slot] * leading).roundToInt())
+            val ratio = HEADING_LEADING_RATIO[slot]
+            val stepped = ratio * leading
+            // Same band as the body roles. A heading's own leading is tighter than
+            // 1.5 for most slots (h1 is 1.36), so in practice 行距 moves a heading
+            // only where the stepped ratio lands inside the band (h2's 1.4 × 1.08 =
+            // 1.51, say) — the rule is uniform rather than special-cased to the body.
+            val effective = if (stepped < MIN_LEADING_RATIO || stepped > MAX_LEADING_RATIO) ratio else stepped
+            return PiHeading(size, (size * effective).roundToInt())
         }
 
         /** The whole profile from the three stored strings. */
@@ -376,7 +396,6 @@ data class PiTypographyProfile(
                 markdownListItemTop = numbers.listItem.dp,
                 markdownListItemBottom = numbers.listItem.dp,
                 markdownListIndent = numbers.indent.dp,
-                codeBlockRadius = numbers.radius.dp,
                 messageSpacing = numbers.messageGap.dp,
                 blockSpacing = numbers.blockSpacing.dp,
                 fontSizeOffsetSp = offset,
@@ -401,7 +420,6 @@ private class Preset(
     val indent: Int,
     val codeSize: Int,
     val codeLine: Int,
-    val radius: Int,
     val blockSpacing: Int,
     /** 换人间距: above the first row of a new message (one number, either speaker). */
     val messageGap: Int,
@@ -412,14 +430,40 @@ private class Preset(
 )
 
 /**
- * Every role's leading multiplied by [factor], sizes untouched.
+ * The band a **leading ratio** (`lineHeight / fontSize`) may live in, applied to
+ * the 行距 step.
  *
- * `factor == 1.0` is identity — the common case (every `normal` profile, and
- * every classic one), so a normal preset allocates nothing here.
+ * 1.5 is the floor below which CJK text starts to collide (the reason the
+ * direction sheet asks for 1.75–1.8 leading in the first place); 1.85 is where a
+ * single body column starts to come apart. The step is therefore all-or-nothing:
+ * a 紧/松 that would leave the band is **dropped**, and the preset's own leading
+ * stands — see `PiTypographyProfile`'s KDoc for the four presets' answers.
+ */
+private const val MIN_LEADING_RATIO = 1.5
+private const val MAX_LEADING_RATIO = 1.85
+
+/**
+ * [lineHeightSp] in [fontSizeSp] stepped by [factor], or **unchanged** when the
+ * result would leave [MIN_LEADING_RATIO]…[MAX_LEADING_RATIO]; [factor] 1.0 is
+ * identity.
+ */
+private fun steppedLeading(lineHeightSp: Float, fontSizeSp: Float, factor: Double): Float {
+    if (factor == 1.0 || fontSizeSp <= 0f) return lineHeightSp
+    val ratio = lineHeightSp * factor / fontSizeSp
+    if (ratio < MIN_LEADING_RATIO || ratio > MAX_LEADING_RATIO) return lineHeightSp
+    return (lineHeightSp * factor).roundToInt().toFloat()
+}
+
+/**
+ * Every role's leading stepped by [factor], sizes untouched — the 行距 row.
+ *
+ * `factor == 1.0` is identity (every `normal` profile, and every classic one), so
+ * a normal preset allocates nothing here and classic is byte-for-byte its base.
  */
 private fun PiTextStyles.leadingScaled(factor: Double): PiTextStyles {
     if (factor == 1.0) return this
-    fun TextStyle.lead(): TextStyle = copy(lineHeight = (lineHeight.value * factor).roundToInt().sp)
+    fun TextStyle.lead(): TextStyle =
+        copy(lineHeight = steppedLeading(lineHeight.value, fontSize.value, factor).sp)
     return PiTextStyles(
         meta = meta.lead(),
         mono = mono.lead(),

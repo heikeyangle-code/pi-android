@@ -192,10 +192,10 @@ internal fun PiMarkdownText(
     val palette = PiTheme.palette
     val darkTheme = isSystemInDarkTheme()
     // 排版预设（`app.appearance.typography` / `.lineHeight` / `.fontSize`）解析后的那一个值：
-    // 正文/次要角色的字号与字重、标题字号、markdown 段间距/列表缩进、代码块圆角都在里面。
-    // 库的三个对象（typography/padding/dimens）全部由它派生，所以三个 `remember` 都键在它
-    // 上面 —— 一次组合只算一次；`PiMarkdownTheme.kt` 里那两个以前是顶层 `val`（每进程一个），
-    // 现在按预设缓存，仍然不是每帧新建。
+    // 正文/次要角色的字号与字重、标题字号、markdown 段间距与列表缩进都在里面。
+    // 库的 typography 与 padding 由它派生，所以两个 `remember` 都键在它上面 —— 一次组合只算
+    // 一次；`PiMarkdownTheme.kt` 里 padding 因此从顶层 `val` 变成了函数（仍按预设缓存，
+    // 不是每帧新建）。dimens 不随预设动（没有任何圆角变化），所以它还是那个顶层 `val`。
     val profile = PiTheme.typography
     val colors = remember(palette, darkTheme, textColor) {
         piMarkdownColors(palette, darkTheme, textColor)
@@ -218,7 +218,6 @@ internal fun PiMarkdownText(
         )
     }
     val padding = remember(profile) { piMarkdownPadding(profile) }
-    val dimens = remember(profile) { piMarkdownDimens(profile) }
     // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
     // is not composable — so it can be remembered directly. The lambdas it holds
     // are composable, but only *created* here; the library does the same thing in
@@ -340,7 +339,7 @@ internal fun PiMarkdownText(
             colors = colors,
             typography = typography,
             padding = padding,
-            dimens = dimens,
+            dimens = piMarkdownDimens,
             imageTransformer = imageTransformer,
             components = components,
             // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')
