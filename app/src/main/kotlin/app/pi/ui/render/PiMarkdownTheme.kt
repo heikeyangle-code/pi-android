@@ -76,7 +76,7 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  *   does **not** move any radius — so it is still a top-level `val`, allocated
  *   once per process. The library defaults the app does not override
  *   (`blockQuoteBar`, the alert paddings/dimens, `tableCellWidth`,
- *   `tableCellPadding`, `tableCornerSize`) are transcribed from the 0.45.0
+ *   `tableCornerSize`) are transcribed from the 0.45.0
  *   sources named in each KDoc below — if that dependency is ever bumped, those
  *   numbers have to be re-checked against the new artifact: an interface change
  *   fails the build loudly, a changed default would not.

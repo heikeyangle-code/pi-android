@@ -162,8 +162,9 @@ class PiEngineSession(
      * startup is over (that gap is the reason [probeServing] exists at all), and it
      * also stops draining while it is busy parsing a huge record. So a large command —
      * an attachment travels inline as base64, several megabytes of it — written from
-     * the frame thread is a main-thread block, and on a phone with pi's cold start
-     * (~20 s under proot, docs/startup-latency.md) that is long enough to be an ANR.
+     * the frame thread is a main-thread block, and a phone's pi cold start is long
+     * enough for that to be an ANR（那个长度与**入口**有关：App 现在跑的是官方 bundle
+     * 入口，数字见 `PiEngineHost.kt` 里 `NODE_COMPILE_CACHE` 那段对入口差异的说明）。
      *
      * One thread preserves the ordering pi's protocol depends on (commands carry ids
      * and pi answers in order), and it moves *both* halves out of the caller:
