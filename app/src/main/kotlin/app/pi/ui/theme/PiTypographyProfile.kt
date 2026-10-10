@@ -70,7 +70,7 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * | table size/leading | 12.5/18 |  13/20  |    14/22    | 15/23 |
  * | headings h1…h6     | 22/20/18/16/15/14 | 21/19/17/15/15/14 | 22/20/18/16/16/15 | 24/21/19/17/17/16 |
  * | transcript gap     |    8    |    4    |      8      |  12   |
- * | 换人：消息之前       |    8    |   16    |     24      |  32   |
+ * | 换人：消息之前       |    8    |   16    |     20      |  32   |
  *
  * The paragraph gap (markdown `block`) is 16 for 舒适 and 24 for 宽松 — larger than
  * the direction sheet's first draft (12/20), because the sheet was re-checked
@@ -85,9 +85,14 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * between "before a user message" and "before an assistant message" would be a
  * difference no user can see the reason for. It also keeps the three gaps ordered
  * for the three non-classic presets — 同一条消息内部 < 段间距 < 换人间距
- * (紧凑 4 < 8 < 16, 舒适 8 < 16 < 24, 宽松 12 < 24 < 32). 经典 sets all three to 8,
+ * (紧凑 4 < 8 < 16, 舒适 8 < 16 < 20, 宽松 12 < 24 < 32). 经典 sets all three to 8,
  * the single uniform gap the transcript had before this existed. pi's terminal has
- * no such notion, so the number is the app's own.
+ * no such notion, so the number is the app's own. 舒适's 20 — not 24 — is a
+ * deliberate down-adjustment: 20 is still on the 4 dp grid, is still strictly larger
+ * than 舒适's own 16 dp paragraph step (so a new message still reads as a new
+ * message), and no longer collides with 紧凑's 16. Dropping to 16 would make the gap
+ * equal to both the paragraph step and 紧凑, i.e. delete this layer; the cost of 20
+ * is that the visible difference between 舒适 and 紧凑 shrinks from 8 dp to 4 dp.
  *
  * Two of those rows deserve their reasoning written down, because both are
  * places where the task book and the code disagreed and the code won:
@@ -318,7 +323,7 @@ data class PiTypographyProfile(
                 block = 16, listItem = 8, indent = 20,
                 codeSize = 14, codeLine = 24,
                 blockSpacing = 8,
-                messageGap = 24,
+                messageGap = 20,
                 inlineSize = 14f, inlineWeight = 600,
                 tableSize = 14f, tableLine = 22,
                 headings = intArrayOf(22, 20, 18, 16, 16, 15),
