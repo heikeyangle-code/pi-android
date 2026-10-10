@@ -171,7 +171,9 @@ fun main() {
     )
     check(
         "未知键不是错误（pi 会原样保留它们）",
-        accepted("settings.json", """{"app.appearance.fontSize":1,"theme":"dark"}"""),
+        // 用一个真正的未知键：`app.appearance.fontSize` 是本 App 的注册行（值是字符串），
+        // 拿它举例会让这条断言读起来像在说一个 pi 的键，也像在说那个行存的是数字。
+        accepted("settings.json", """{"app.appearance.notARealKey":1,"theme":"dark"}"""),
     )
 
     // ---------------------------------------------------------------- models.json

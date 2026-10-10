@@ -89,7 +89,11 @@ class MainActivity : ComponentActivity() {
             PiTheme(
                 dark = theme.dark,
                 palette = theme.palette,
-                textScaleDelta = uiState.prefs.fontScaleDelta,
+                // `app.appearance.typography` / `.lineHeight` / `.fontSize`, resolved
+                // once in `readPrefs`. It replaced the bare `fontScaleDelta`: the same
+                // offset is inside the profile, together with the preset's sizes, gaps,
+                // headings and radii.
+                typographyProfile = uiState.prefs.typographyProfile,
             ) {
                 PiRoot()
             }

@@ -1138,34 +1138,65 @@ object PiSettingsCatalog {
         // `PiTheme.palette`, which *is* the resolved pi theme — so the switch
         // could never have been honoured without breaking the theme contract.
         // Colour always comes from the theme file (see `ui/theme/PiThemeFiles.kt`).
+        // `app.appearance.fontScaleDelta`（Number ±2）与 `app.appearance.messageDensity`
+        // （舒服/紧凑/宽松）原来各占一行，现在被下面这三行取代 —— **两行都从注册表删掉了**，
+        // 理由是一条决定不能有两个真相：三行都在说同一件事（对话流排多大、多松），留着旧行
+        // 就是两个控件互相盖。旧值不丢：`PiSessionViewModel.readPrefs` 做一次性读时迁移
+        // （`typography` 缺席而 `messageDensity` 在 → compact/comfortable/cozy→loose；
+        // `fontSize` 缺席而 `fontScaleDelta` 在 → −2/−1→small、0→normal、1→large、2→xlarge），
+        // 迁移函数与理由在 `PiTypographyProfile.migratedTypography` / `migratedFontSize`。
+        // 删行不等于删能力：旧的 ±2sp 偏移在新行里是四个具名档（小/标准/大/更大），
+        // 旧的块间距三档在预设的 `blockSpacing` 里（紧凑 6 / 舒适 8 / 宽松 12）。
         PiSetting(
-            key = "app.appearance.fontScaleDelta",
-            title = "字号微调",
-            description = "在系统字号基础上再加减 2sp。正文默认 15/23，元信息 12/18。",
-            kind = PiRowKind.Number,
-            group = G_APPEARANCE,
-            section = "外观",
-            defaultValue = num(0),
-            min = -2,
-            max = 2,
-            step = 1,
-            unit = "sp",
-            aliases = listOf("font", "size"),
-        ),
-        PiSetting(
-            key = "app.appearance.messageDensity",
-            title = "消息密度",
-            description = "对话流的块间距与内边距档位。舒适是默认值，紧凑更适合小屏一次看更多内容。",
+            key = "app.appearance.typography",
+            title = "排版",
+            description = "对话流的整体排版档位：正文大小与行高、段间距、列表缩进与间距、" +
+                "标题字号、代码块圆角一起动。**经典**逐像素等于旧版（正文 14/23、段间距 2）。" +
+                "默认舒适。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",
             defaultValue = str("comfortable"),
             options = choices(
-                "comfortable" to "舒适",
+                "classic" to "经典",
                 "compact" to "紧凑",
-                "cozy" to "宽松",
+                "comfortable" to "舒适",
+                "loose" to "宽松",
             ),
-            aliases = listOf("density", "spacing"),
+            aliases = listOf("typography", "排版", "density", "spacing"),
+        ),
+        PiSetting(
+            key = "app.appearance.lineHeight",
+            title = "行距",
+            description = "在排版档位的行高上再乘一档：紧 0.92、标准 1.0、松 1.08。" +
+                "只乘行高、不动字号。经典档不受它影响 —— 经典必须是旧版原样。",
+            kind = PiRowKind.Value,
+            group = G_APPEARANCE,
+            section = "外观",
+            defaultValue = str("normal"),
+            options = choices(
+                "tight" to "紧",
+                "normal" to "标准",
+                "loose" to "松",
+            ),
+            aliases = listOf("line height", "leading", "行距"),
+        ),
+        PiSetting(
+            key = "app.appearance.fontSize",
+            title = "字号",
+            description = "在排版档位的字号上再偏移：小 −1、标准 0、大 +1、更大 +2 sp。" +
+                "作用于全部文本角色（正文、次要、等宽、代码），不只是转录。",
+            kind = PiRowKind.Value,
+            group = G_APPEARANCE,
+            section = "外观",
+            defaultValue = str("normal"),
+            options = choices(
+                "small" to "小",
+                "normal" to "标准",
+                "large" to "大",
+                "xlarge" to "更大",
+            ),
+            aliases = listOf("font", "size", "字号"),
         ),
         PiSetting(
             key = "app.appearance.showTimestamps",

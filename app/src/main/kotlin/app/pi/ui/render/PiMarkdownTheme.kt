@@ -12,8 +12,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.ui.theme.PiHeading
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiTypographyProfile
 import com.mikepenz.markdown.model.DefaultMarkdownColors
 import com.mikepenz.markdown.model.DefaultMarkdownTypography
 import com.mikepenz.markdown.model.MarkdownAlertColors
@@ -68,12 +70,15 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  *   so they cannot be constructed from here. Their interfaces are public and
  *   carry no behaviour, so this file implements them ([PiMarkdownPadding],
  *   [PiMarkdownDimens]) with the same field values the builders were being
- *   called with. Those two objects depend on nothing in the composition at all,
- *   so they are top-level `val`s: allocated once per process, not once per
- *   frame. The library defaults the app does not override (`blockQuoteBar`, the
- *   alert paddings/dimens, `tableCellWidth`, `tableCornerSize`) are transcribed
- *   from the 0.45.0 sources named in each KDoc below; `tableCellPadding` is the
- *   one value of that group the app *does* override, with v2's own cell padding — if that dependency is ever bumped, those numbers have to be
+ *   called with. Those two used to be top-level `val`s — allocated once per
+ *   process — because they depended on nothing in the composition. They now
+ *   depend on one thing, the 排版 preset, so they became functions of it
+ *   ([piMarkdownPadding], [piMarkdownDimens]) and `PiMarkdown.kt` caches each
+ *   result with `remember(profile)`: one instance per preset, not one per frame.
+ *   The library defaults the app does not override (`blockQuoteBar`, the
+ *   alert paddings/dimens, `tableCellWidth`, `tableCellPadding`,
+ *   `tableCornerSize`) are transcribed
+ *   from the 0.45.0 sources named in each KDoc below — if that dependency is ever bumped, those numbers have to be
  *   re-checked against the new artifact: an interface change fails the build
  *   loudly, a changed default would not.
  *
@@ -244,10 +249,16 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  * two Material inputs lifted to parameters.
  *
  * @param palette pi's resolved token set.
- * @param base the body style this app's prose uses, read from
- *   `PiTheme.text.prose` (`06 §2`'s 14 sp chat-text step).
- * @param mono the mono role, read from `PiTheme.text.mono`.
- * @param code the fence body's role, read from `PiTheme.text.code` (13/19).
+ * @param profile the resolved 排版 preset: every size and leading here is the
+ *   preset's, and the **body role is its [PiTypographyProfile.styles]`prose`**
+ *   (14/23 in 经典, 16/28 in the default 舒适). The table's role is deliberately
+ *   **not** the preset's: the user's ruling was that the table does not move, so
+ *   it stays the 12.5/18 `mono` override it has always been — cell width,
+ *   horizontal scroll, corner size and cell padding included (the preset carries
+ *   no table field at all). The colour is still pi's: headings keep
+ *   `mdHeading`, links `mdLink`, inline code `mdCode`, fences `mdCodeBlock`,
+ *   quotes `mdQuote` and bullets `mdListBullet`, drawn on top of the body colour
+ *   exactly as they sit on top of pi's base (`markdown.ts:377-403`).
  * @param textColor the base foreground override described on [piMarkdownColors];
  *   it replaces `palette.text` in the body slots only (`text`, `paragraph`,
  *   `ordered`, `list`, `table`). Headings (`mdHeading`), links (`mdLink`), inline
@@ -257,13 +268,10 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  */
 internal fun piMarkdownTypography(
     palette: PiPalette,
-    base: TextStyle,
-    mono: TextStyle,
-    /** The fence body's own role — `06 §2`: 码块固定 13/19, not the 13/20 machine body. */
-    code: TextStyle,
+    profile: PiTypographyProfile,
     textColor: Color? = null,
     /**
-     * 段落用等宽（而不是 [base]）。
+     * 段落用等宽（而不是正文角色）。
      *
      * 只有**含显示式网格**的消息才为真：网格是靠空格对齐的，比例字体里空格与字形的宽度
      * 不同，整块会歪。做成参数而不是"造完之后 `copy`"——库的 `MarkdownTypography` 没有
@@ -272,26 +280,31 @@ internal fun piMarkdownTypography(
      */
     monoParagraph: Boolean = false,
 ): MarkdownTypography {
+    val base = profile.styles.prose
+    val mono = profile.styles.mono
+    val code = profile.styles.code
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
     val body = textColor ?: palette.text
 
     return DefaultMarkdownTypography(
-        h1 = heading.copy(
-            fontSize = 22.sp,
-            lineHeight = 30.sp,
-            textDecoration = TextDecoration.Underline,
-        ),
-        h2 = heading.copy(fontSize = 20.sp, lineHeight = 28.sp),
-        h3 = heading.copy(fontSize = 18.sp, lineHeight = 26.sp),
-        h4 = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
-        h5 = heading.copy(fontSize = 15.sp, lineHeight = 22.sp),
-        h6 = heading.copy(fontSize = 14.sp, lineHeight = 21.sp),
+        h1 = heading.headingSlot(profile.h1, underline = true),
+        h2 = heading.headingSlot(profile.h2),
+        h3 = heading.headingSlot(profile.h3),
+        h4 = heading.headingSlot(profile.h4),
+        h5 = heading.headingSlot(profile.h5),
+        h6 = heading.headingSlot(profile.h6),
         // GFM alert titles (`> [!NOTE]`) read as a small heading, not as body
-        // text — same size as h4, since the alert body is already inset.
-        alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
+        // text — same slot as h4, since the alert body is already inset. That is
+        // what this line has always been; the preset moves both together.
+        alertTitle = heading.headingSlot(profile.h4),
         text = base.copy(color = body),
         code = code.copy(color = palette.mdCodeBlock),
-        inlineCode = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.mdCode),
+        inlineCode = mono.copy(
+            fontSize = profile.inlineCodeSizeSp.sp,
+            lineHeight = profile.inlineCodeLineHeightSp.sp,
+            fontWeight = profile.inlineCodeWeight,
+            color = palette.mdCode,
+        ),
         // pi's markdown renderer puts **two** decorations on a blockquote, not one: the theme
         // supplies the colour (`quote: (text) => theme.fg("mdQuote", text)`,
         // `modes/interactive/theme/theme.js:936`) and the renderer's blockquote case wraps that
@@ -309,9 +322,20 @@ internal fun piMarkdownTypography(
         textLink = TextLinkStyles(
             style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
         ),
+        // The table's own role, deliberately outside the preset: it is today's
+        // `mono` at 12.5/18 at **every** preset, because the user's ruling was that
+        // the table does not move (cell width, scroll, radii and colours included).
         table = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = body),
     )
 }
+
+/** One heading slot at the profile's size and leading; [underline] only for h1. */
+private fun TextStyle.headingSlot(slot: PiHeading, underline: Boolean = false): TextStyle =
+    copy(
+        fontSize = slot.sizeSp.sp,
+        lineHeight = slot.lineHeightSp.sp,
+        textDecoration = if (underline) TextDecoration.Underline else null,
+    )
 
 /**
  * pi's rhythm, as far as the renderer exposes it: block spacing stays tight so a
@@ -320,12 +344,22 @@ internal fun piMarkdownTypography(
  *
  * Implements the library's public `MarkdownPadding` interface, because the
  * builder's own implementation is private and the builder itself is composable
- * (`multiplatform-markdown-renderer/.../model/MarkdownPadding.kt`). The values
- * are the ones the app already passed to `markdownPadding(...)`; the two slots
- * it did not pass — `blockQuoteBar` and `alert` — keep the 0.45.0 defaults,
- * `PaddingValues.Absolute(left = 4.dp, top = 2.dp, right = 4.dp, bottom = 2.dp)`
- * and `markdownAlertPadding()`, which is itself a plain function and is called
- * here with its own defaults.
+ * (`multiplatform-markdown-renderer/.../model/MarkdownPadding.kt`). The four
+ * values the 排版 preset decides — `block`, `listItemTop`, `listItemBottom` and
+ * `listIndent` — come from [profile]; everything else is what the app already
+ * passed to `markdownPadding(...)` at every preset:
+ *
+ * * `list` (the gap *between* items of one list) is not one of the preset's rows;
+ *   it keeps today's 4 dp.
+ * * `codeBlock` / `blockQuote` keep [PiSpacing.cardPadding] and the vertical 10/0/4.
+ * * `blockQuoteBar` and `alert` keep the 0.45.0 defaults,
+ *   `PaddingValues.Absolute(left = 4.dp, top = 2.dp, right = 4.dp, bottom = 2.dp)`
+ *   and `markdownAlertPadding()`, which is itself a plain function and is called
+ *   here with its own defaults.
+ *
+ * A function of [PiTypographyProfile] rather than a top-level `val` (which is what
+ * this was before the preset existed): the caller caches it with
+ * `remember(profile)` so it is still allocated once per preset, never per frame.
  */
 @Immutable
 private data class PiMarkdownPadding(
@@ -341,13 +375,14 @@ private data class PiMarkdownPadding(
     override val alert: MarkdownAlertPadding,
 ) : MarkdownPadding
 
-/** The one [PiMarkdownPadding] instance; it depends on nothing in the composition. */
-internal val piMarkdownPadding: MarkdownPadding = PiMarkdownPadding(
-    block = 2.dp,
+/** The one [PiMarkdownPadding] per preset; see its KDoc for which fields move. */
+internal fun piMarkdownPadding(profile: PiTypographyProfile): MarkdownPadding = PiMarkdownPadding(
+    block = profile.markdownBlock,
+    // Not one of the preset's rows; today's number, at every preset.
     list = 4.dp,
-    listItemTop = 2.dp,
-    listItemBottom = 2.dp,
-    listIndent = 12.dp,
+    listItemTop = profile.markdownListItemTop,
+    listItemBottom = profile.markdownListItemBottom,
+    listIndent = profile.markdownListIndent,
     codeBlock = PaddingValues(horizontal = PiSpacing.cardPadding, vertical = 10.dp),
     blockQuote = PaddingValues(horizontal = PiSpacing.cardPadding, vertical = 0.dp),
     blockQuoteText = PaddingValues(vertical = 4.dp),
@@ -356,21 +391,21 @@ internal val piMarkdownPadding: MarkdownPadding = PiMarkdownPadding(
 )
 
 /**
- * 12 dp corners keep code blocks recognisably cards rather than slabs.
+ * The code block's corner radius, from the preset: `06 §2` says 12 dp, which is
+ * what 经典 keeps, and the approved direction sheet unifies the card/code-block
+ * radius to 10 for the other three presets (the code block used to be the one
+ * surface still drawing 12).
  *
  * Same construction as [piMarkdownPadding]: the interface is public, the
  * builder's implementation is private and the builder is composable
- * (`multiplatform-markdown-renderer/.../model/MarkdownDimens.kt`). The four
- * values the app passed are kept; `tableCellWidth = 160.dp`,
- * `tableCornerSize = 8.dp` and `alert = markdownAlertDimens()` are the 0.45.0
- * defaults, transcribed.
- *
- * `tableCellPadding` is **not** the library default: v2 draws a markdown table
- * `padding:6px 8px` per cell (`direction-b-v2.html:300-303`, `.b-tbl th,.b-tbl td`),
- * where the library's default is a uniform 16. The interface carries one `Dp` for
- * both axes, so the cell takes v2's horizontal 8 — the axis that decides how much
- * room a column's text gets — and the vertical step is the same number rather than
- * two values the interface cannot express.
+ * (`multiplatform-markdown-renderer/.../model/MarkdownDimens.kt`). Of the values
+ * the app passes, only `codeBackgroundCornerSize` moves with the preset; the
+ * table's four numbers are today's at **every** preset, per the user's ruling
+ * that the table does not move — `tableCellWidth = 160.dp`,
+ * `tableCornerSize = 8.dp` and `tableCellPadding = 8.dp` are the 0.45.0 defaults
+ * (the padding being v2's own `6px 8px` cell inset), and `dividerThickness`,
+ * `blockQuoteThickness`, `tableMaxWidth` and `alert = markdownAlertDimens()` are
+ * also unchanged.
  */
 @Immutable
 private data class PiMarkdownDimens(
@@ -384,14 +419,14 @@ private data class PiMarkdownDimens(
     override val alert: MarkdownAlertDimens,
 ) : MarkdownDimens
 
-/** The one [PiMarkdownDimens] instance; constant, like its padding sibling. */
-internal val piMarkdownDimens: MarkdownDimens = PiMarkdownDimens(
+/** The one [PiMarkdownDimens] per preset; only the code-block radius moves. */
+internal fun piMarkdownDimens(profile: PiTypographyProfile): MarkdownDimens = PiMarkdownDimens(
     dividerThickness = 1.dp,
-    codeBackgroundCornerSize = 12.dp,
+    codeBackgroundCornerSize = profile.codeBlockRadius,
     blockQuoteThickness = 3.dp,
     tableMaxWidth = Dp.Unspecified,
     tableCellWidth = 160.dp,
-    // v2's `6px 8px`; see this file's KDoc on why one number and not two.
+    // v2's `6px 8px`; the same number the app has always passed.
     tableCellPadding = 8.dp,
     tableCornerSize = 8.dp,
     alert = markdownAlertDimens(),

@@ -2033,28 +2033,31 @@ private fun ChatBody(
         // `ChatScreen`'s boot branch).
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
         if (!emptyTranscript) {
-            // `app.appearance.messageDensity`: the transcript's block rhythm,
-            // scaled around v2's own gap. F11 (`docs/rendering-review.md`):
-            // blocks used to pad themselves as well, so the real gap was
-            // 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the prose column lost
-            // 16 dp on each side; the list is now the only place that margins.
+            // `app.appearance.typography`: the transcript's block rhythm, one of the
+            // preset's own rows (`PiTypographyProfile.blockSpacing`). F11
+            // (`docs/rendering-review.md`): blocks used to pad themselves as well, so
+            // the real gap was 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the
+            // prose column lost 16 dp on each side; the list is now the only place
+            // that margins.
             //
             // B7: the base gap is **8**, not 16. `06 §2`「块间距 8」 is v2's rhythm
-            // (every card in the frozen board carries `marginBottom:8`), and the
-            // three density steps hang off it — compact is half, cozy is double —
-            // so the pref still moves the stream and the default is the design's.
-            // `PiSpacing.blockGap` is the same constant `ToolRail` bridges with, so
-            // the rail's overdraw and the gap it spans cannot drift apart.
-            val blockSpacing = when (prefs.messageDensity) {
-                "compact" -> PiSpacing.blockGap / 2
-                "cozy" -> PiSpacing.blockGap * 2
-                else -> PiSpacing.blockGap
-            }
+            // (every card in the frozen board carries `marginBottom:8`), and the four
+            // presets hang off it — 经典 8 / 紧凑 6 / 舒适 8 / 宽松 12 — so the row
+            // still moves the stream and the default is the design's.
+            //
+            // The rail: `PiSpacing.blockGap` (8) is what `ToolRail` bridges with, and
+            // 舒适 — the default — is exactly that 8, so the rail's overdraw and the
+            // gap it spans do not drift apart there. 紧凑 and 宽松 do differ from it;
+            // that is not new (the old density row was 4 and 16 against the same 8)
+            // and it is not this row's to fix — a preset-aware `RAIL_BRIDGE` would be
+            // a layout change to the tool rail, which this pass does not own.
+            val blockSpacing = prefs.typographyProfile.blockSpacing
             // The page margin is **14 at every density** (`06 §2`「屏水平 14px」,
             // `direction-b-v2.html:1376`: `.b-scroll{padding:10px 14px 12px}`). The
             // compact step used to narrow it to 12 as well, which put the transcript's
             // left edge out of line with the AppBar's own 14 and with every other
             // screen; the density preference moves the *block rhythm*, not the page.
+            // 排版 follows the same rule: no preset moves this 14.
             //
             // ---------------------------------------------------------------- 加载更早
             //

@@ -726,7 +726,11 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
         val highlighted = rememberPiHighlightedCode(code, normalized)
         MarkdownCodeBackground(
             color = Color.Transparent,
-            shape = RoundedCornerShape(12.dp),
+            // 预设的代码块圆角：经典 12（`06 §2`，也是这个值一直以来的数），其余三档 10
+            // （定稿方向「圆角统一 10」；见 `PiTypographyProfile.codeBlockRadius`）。
+            // `MarkdownDimens.codeBackgroundCornerSize` 是同一个数的另一处读者，
+            // 两者都由预设决定，不会各写各的。
+            shape = RoundedCornerShape(PiTheme.typography.codeBlockRadius),
             border = BorderStroke(1.dp, palette.mdCodeBlockBorder),
             modifier = Modifier
                 .fillMaxWidth()

@@ -157,7 +157,11 @@ fun main() {
         val dir = tempDir("applocal")
         val global = File(dir, "settings.json")
         val sidecar = File(dir, "app-prefs.json")
-        val key = "app.appearance.messageDensity"
+        // A deliberately synthetic key: this section is about the store's `app.*`
+        // sidecar routing, not about any one setting, and naming a real
+        // `app.appearance.*` row here would make the harness look like a second
+        // reader of a key the registry no longer has.
+        val key = "app.appearance.storeProbe"
         val store = store(dir)
         store.write(key, JsonPrimitive("compact"))
         check(
@@ -175,7 +179,7 @@ fun main() {
         // The legacy copy an older build left in pi's document still answers, and the next
         // write of that key migrates it out. Written in the nested form, which is what this
         // store itself produced before the sidecar existed.
-        global.writeText("""{"app":{"appearance":{"messageDensity":"cozy"}}}""")
+        global.writeText("""{"app":{"appearance":{"storeProbe":"cozy"}}}""")
         sidecar.writeText("{}")
         store.invalidate()
         check(

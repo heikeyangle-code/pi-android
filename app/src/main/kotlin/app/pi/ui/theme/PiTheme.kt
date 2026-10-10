@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -245,10 +244,12 @@ data class PiTextStyles(
     /**
      * The same roles with every size shifted by [deltaSp].
      *
-     * This is what the `app.appearance.fontScaleDelta` setting drives: the base
-     * sizes above are v2's own five steps, and the setting only nudges them,
-     * exactly as its description promises. Line heights move with the size so the
-     * transcript's leading does not collapse.
+     * This is what the `app.appearance.fontSize` row drives: the base sizes above
+     * are v2's own five steps, and the row only nudges them, exactly as its
+     * description promises. Line heights move with the size so the transcript's
+     * leading does not collapse. (It replaced `app.appearance.fontScaleDelta`,
+     * whose ±2 offset this reproduces step for step; see
+     * [PiTypographyProfile.migratedFontSize].)
      */
     fun scaled(deltaSp: Int): PiTextStyles = if (deltaSp == 0) this else PiTextStyles(
         meta = meta.shifted(deltaSp),
@@ -305,7 +306,22 @@ private fun TextStyle.shifted(deltaSp: Int): TextStyle = copy(
 )
 
 val LocalPiPalette = staticCompositionLocalOf { PiPalette.Dark }
-val LocalPiTextStyles = staticCompositionLocalOf { PiTextStyles.Default }
+val LocalPiTextStyles = staticCompositionLocalOf { PiTypographyProfile.Default.styles }
+
+/**
+ * The resolved 排版 preset, for the parts of the render path that need more than
+ * [PiTextStyles]: the markdown rhythm and heading scale (`render/PiMarkdown.kt`,
+ * `render/PiMarkdownTheme.kt`), the code block's corner radius
+ * (`render/PiMarkdownComponents.kt`) and the transcript's block gap
+ * (`screens/ChatScreen.kt` reads it through `UiPrefs` instead).
+ *
+ * A composition local rather than another `PiTheme` parameter read at each call
+ * site, because those call sites are seven blocks deep in the transcript and are
+ * reached through the renderer's own dispatch — the same reason
+ * `LocalPiTextStyles` is a local. Its default is the unthemed one, matching
+ * [LocalPiTextStyles]'s.
+ */
+val LocalPiTypographyProfile = staticCompositionLocalOf { PiTypographyProfile.Default }
 
 /**
  * The colours Android paints a **text selection** with — the long-press highlight
@@ -354,6 +370,10 @@ object PiTheme {
 
     val text: PiTextStyles
         @Composable @ReadOnlyComposable get() = LocalPiTextStyles.current
+
+    /** The resolved 排版 preset behind [text]: gaps, headings and radii. */
+    val typography: PiTypographyProfile
+        @Composable @ReadOnlyComposable get() = LocalPiTypographyProfile.current
 }
 
 /** Blend helper for the surface ladder below. */
@@ -419,6 +439,14 @@ private fun Color.luminanceIsDark(): Boolean {
     return (0.2126f * r + 0.7152f * g + 0.0722f * b) < 0.5f
 }
 
+/**
+ * M3's slots, with the 字号 row's offset applied.
+ *
+ * `textScaleDelta` is `PiTypographyProfile.fontSizeOffsetSp` (−1/0/+1/+2). The
+ * markdown headings do **not** go through here — they are sized by
+ * `render/PiMarkdownTheme.kt` from the profile — and that split is today's:
+ * `app.appearance.fontScaleDelta` never moved a heading either.
+ */
 private fun piTypography(textScaleDelta: Int = 0): Typography {
     fun TextStyle.shift(): TextStyle = copy(
         fontSize = (fontSize.value + textScaleDelta).coerceAtLeast(1f).sp,
@@ -480,14 +508,24 @@ private fun piShapes(): Shapes = Shapes(
 fun PiTheme(
     dark: Boolean = true,
     palette: PiPalette = if (dark) PiPalette.Dark else PiPalette.Light,
-    /** `app.appearance.fontScaleDelta`: pi's sizes nudged by the user. */
-    textScaleDelta: Int = 0,
+    /**
+     * The resolved 排版 preset (`app.appearance.typography` / `.lineHeight` /
+     * `.fontSize`). It replaces the old bare `textScaleDelta`: the same offset now
+     * arrives inside the profile, together with the sizes, gaps, headings and radii
+     * the preset decides. `MainActivity` resolves it from `UiPrefs`.
+     */
+    typographyProfile: PiTypographyProfile = PiTypographyProfile.Default,
     content: @Composable () -> Unit,
 ) {
-    val styles = remember(textScaleDelta) { PiTextStyles.Default.scaled(textScaleDelta) }
+    // No `remember`: the profile is a value the caller already built and cached
+    // (`UiPrefs.typographyProfile`, built once in `readPrefs`), so its `styles` field
+    // costs a field read — the previous `remember(textScaleDelta)` was allocating a
+    // five-`TextStyle` `PiTextStyles` right here on every offset change.
+    val styles = typographyProfile.styles
     CompositionLocalProvider(
         LocalPiPalette provides palette,
         LocalPiTextStyles provides styles,
+        LocalPiTypographyProfile provides typographyProfile,
         // The long-press highlight, from pi's own selection token — see
         // [textSelectionColors]. Provided here rather than through the M3
         // `ColorScheme` because M3 has no slot for it: it is a Compose-foundation
@@ -497,7 +535,7 @@ fun PiTheme(
     ) {
         MaterialTheme(
             colorScheme = palette.colorScheme(),
-            typography = piTypography(textScaleDelta),
+            typography = piTypography(typographyProfile.fontSizeOffsetSp),
             shapes = piShapes(),
             content = content,
         )

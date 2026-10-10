@@ -124,8 +124,9 @@
 | `themes` | List(Array) | RestartEngine | `PiSessionViewModel.configuredThemePaths` → `PiThemeLoader.load/discover`（App 热读） | 1:1（有意偏离：App 热读、pi 要重启）+ **B8**（与 `theme` 同名） |
 | `enableSkillCommands` | Switch | Immediate | `refreshCommands` → `piCommandPalette` | AL |
 | `theme` | Value | Reload | `PiSessionViewModel.refreshTheme` → `PiThemeLoader.load`；`PiSettingEditorSheet` 走 `PiThemeEditorSheet`；`onSettingWritten("theme")` → `refreshTheme()` | AL + **B8** |
-| `app.appearance.fontScaleDelta` | Number | （Immediate） | `readPrefs` → `UiPrefs.fontScaleDelta` → `MainActivity`（`textScaleDelta`） | AL |
-| `app.appearance.messageDensity` | Value | （Immediate） | `readPrefs` → `ChatScreen` 块间距 | AL |
+| `app.appearance.typography` | Value | （Immediate） | `readPrefs` → `UiPrefs.typographyProfile`（`PiTypographyProfile.forPreset`）→ `MainActivity`（`PiTheme`）的 `styles`/标题/圆角 + `PiMarkdownText` 的 `padding`/`dimens` + `ChatScreen` 的 `blockSpacing` | AL |
+| `app.appearance.lineHeight` | Value | （Immediate） | 同上：`PiTypographyProfile` 的行高乘子（只乘行高；经典档不生效） | AL |
+| `app.appearance.fontSize` | Value | （Immediate） | 同上：`PiTypographyProfile` 的 ±1/±2 sp 偏移（`PiTextStyles.scaled` + `piTypography`）。取代 `app.appearance.fontScaleDelta`（已从注册表删除，只在 `readPrefs` 的迁移里读） | AL |
 | `app.appearance.showTimestamps` | Switch | （Immediate） | `readPrefs` → `ChatScreen` 日期分隔（`visibleItems`）+ `BlockRenderer(showTimestamps=…)` → `UserMessageBlock`/`NoticeBlock` 的时钟。**默认关**；此前默认开、气泡时钟又无条件画，所以开关看起来不管事 | AL |
 | `app.appearance.thinkingCollapsedByDefault` | Switch | （Immediate） | `readPrefs` → `ChatScreen` `thinkingDefaultExpanded` | AL |
 | `images.autoResize` | Switch | NewSession | 无 App 读者（pi `:1289`） | PW |

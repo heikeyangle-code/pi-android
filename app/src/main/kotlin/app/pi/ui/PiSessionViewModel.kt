@@ -91,6 +91,7 @@ import app.pi.ui.settings.boolIn
 import app.pi.ui.theme.PiResolvedTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
+import app.pi.ui.theme.PiTypographyProfile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -440,8 +441,24 @@ data class HistoryCursor(
 }
 
 data class UiPrefs(
-    val fontScaleDelta: Int = 0,
-    val messageDensity: String = "comfortable",
+    /**
+     * The whole 排版 preset, resolved once here from
+     * `app.appearance.typography` / `.lineHeight` / `.fontSize`.
+     *
+     * Built in [readPrefs] rather than exposed as three raw strings with a
+     * computed property, because the three consumers (`MainActivity`'s
+     * `PiTheme`, `PiMarkdownText`'s five library objects, `ChatScreen`'s
+     * `spacedBy`) each need a different part of it and a property would rebuild
+     * the five `TextStyle`s on every read. Being a data-class field also lets
+     * `remember` key on a value that compares structurally, so an equal preset
+     * does not invalidate anything.
+     *
+     * It replaces `fontScaleDelta: Int` and `messageDensity: String`. Those two
+     * keys are gone from the registry and are read only by the migration in
+     * `readPrefs`; see [PiTypographyProfile.migratedTypography] and
+     * [PiTypographyProfile.migratedFontSize].
+     */
+    val typographyProfile: PiTypographyProfile = PiTypographyProfile.Default,
     /**
      * `app.appearance.showTimestamps`, **default off**. It gates three things: the clock on
      * the user's own bubble, the clock at the end of a notice line, and the date separators
@@ -1283,13 +1300,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         fun bool(key: String, fallback: Boolean): Boolean =
             settingsStore.readBoolean(key) ?: fallback
 
-        fun int(key: String, fallback: Int, range: IntRange): Int =
-            ((settingsStore.read(key) as? JsonPrimitive)?.content?.toIntOrNull() ?: fallback)
-                .coerceIn(range)
+        /** The raw primitive's own text, or null: used by the two migrations below. */
+        fun raw(key: String): String? =
+            (settingsStore.read(key) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+
+        // 一次性读时迁移（**不是死代码**：这两个键已从注册表删除，这里是全仓唯一的读者，
+        // 删掉它就等于把用户已经设过的排版偏好悄悄清零）。新键在场时永远优先，所以迁移
+        // 不会覆盖之后的编辑；新键不在场时每次读都按旧值解析，两份文档因此不会各说各话。
+        // 两个映射表与理由在 `PiTypographyProfile.migratedTypography` / `migratedFontSize`。
+        val typography = raw("app.appearance.typography")
+            ?: PiTypographyProfile.migratedTypography(raw("app.appearance.messageDensity"))
+        val fontSize = raw("app.appearance.fontSize")
+            ?: PiTypographyProfile.migratedFontSize(raw("app.appearance.fontScaleDelta"))
 
         return UiPrefs(
-            fontScaleDelta = int("app.appearance.fontScaleDelta", 0, -2..2),
-            messageDensity = string("app.appearance.messageDensity", "comfortable"),
+            typographyProfile = PiTypographyProfile.forPreset(
+                preset = typography,
+                lineHeight = string("app.appearance.lineHeight", "normal"),
+                fontSize = fontSize,
+            ),
             showTimestamps = bool("app.appearance.showTimestamps", false),
             thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),
             expandToolsByDefault = bool("app.tools.expandByDefault", false),

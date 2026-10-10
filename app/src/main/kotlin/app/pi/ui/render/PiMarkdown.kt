@@ -187,19 +187,20 @@ internal fun PiMarkdownText(
     // functions in `PiMarkdownTheme.kt` — the library's own builders are
     // `@Composable` and therefore illegal inside `remember`'s calculation lambda
     // (see that file's header for the failed attempt this replaced). Streaming a
-    // long block recomposes this function per token; without these three
-    // `remember`s every token rebuilt all five objects and the component set.
+    // long block recomposes this function per token; without these `remember`s
+    // every token rebuilt all five objects and the component set.
     val palette = PiTheme.palette
     val darkTheme = isSystemInDarkTheme()
-    val baseText = PiTheme.text.prose
-    val monoText = PiTheme.text.mono
-    // `06 §2`: 码块与 diff 固定 13/19 — a fence's body is the one machine role v2 gives
-    // its own leading, so it does not borrow `monoText`'s 13/20.
-    val codeText = PiTheme.text.code
+    // 排版预设（`app.appearance.typography` / `.lineHeight` / `.fontSize`）解析后的那一个值：
+    // 正文/次要角色的字号与字重、标题字号、markdown 段间距/列表缩进、代码块圆角都在里面。
+    // 库的三个对象（typography/padding/dimens）全部由它派生，所以三个 `remember` 都键在它
+    // 上面 —— 一次组合只算一次；`PiMarkdownTheme.kt` 里那两个以前是顶层 `val`（每进程一个），
+    // 现在按预设缓存，仍然不是每帧新建。
+    val profile = PiTheme.typography
     val colors = remember(palette, darkTheme, textColor) {
         piMarkdownColors(palette, darkTheme, textColor)
     }
-    val typography = remember(palette, baseText, monoText, codeText, textColor, hasGrid) {
+    val typography = remember(palette, profile, textColor, hasGrid) {
         // 网格用**空格**对齐（`renderLayout` 逐行补齐），比例字体里空格与字形的宽度
         // 不同、整块会歪，所以含网格的这条消息把段落样式换成等宽。改写只作用于
         // `paragraph`：标题/列表/引用的角色保持原样，其它消息完全不受影响。
@@ -211,13 +212,13 @@ internal fun PiMarkdownText(
         // 所以这不是"整条消息换成代码字体"，是"段落这一档换成等宽"。
         piMarkdownTypography(
             palette = palette,
-            base = baseText,
-            mono = monoText,
-            code = codeText,
+            profile = profile,
             textColor = textColor,
             monoParagraph = hasGrid,
         )
     }
+    val padding = remember(profile) { piMarkdownPadding(profile) }
+    val dimens = remember(profile) { piMarkdownDimens(profile) }
     // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
     // is not composable — so it can be remembered directly. The lambdas it holds
     // are composable, but only *created* here; the library does the same thing in
@@ -338,8 +339,8 @@ internal fun PiMarkdownText(
             markdownState = markdownState,
             colors = colors,
             typography = typography,
-            padding = piMarkdownPadding,
-            dimens = piMarkdownDimens,
+            padding = padding,
+            dimens = dimens,
             imageTransformer = imageTransformer,
             components = components,
             // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')

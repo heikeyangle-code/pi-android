@@ -305,7 +305,7 @@ fun PiSettingsStack(
             scope.launch {
                 withContext(Dispatchers.IO) {
                     runCatching { activeStore.read("theme") }
-                    runCatching { activeStore.read("app.appearance.messageDensity") }
+                    runCatching { activeStore.read("app.appearance.typography") }
                 }
                 filesEpoch++
             }
