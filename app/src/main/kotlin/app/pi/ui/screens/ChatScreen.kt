@@ -160,8 +160,10 @@ import app.pi.ui.components.PiContextRing
 import app.pi.ui.render.LocalPiMarkdownImmediate
 import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
+import app.pi.ui.render.gapFor
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
+import app.pi.ui.render.transcriptGap
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
@@ -2144,7 +2146,25 @@ private fun ChatBody(
                     // cannot inherit the previous row's answer.
                     val markdownParsed = remember(item.key) { mutableStateOf(false) }
                     val onMarkdownParsed: () -> Unit = remember(markdownParsed) { { markdownParsed.value = true } }
-                    val rowModifier = when {
+                    // 消息级间距（换人时大、同一条消息内部小）：这一行属于哪一档由
+                    // `transcriptGap` 按**列表顺序**判定，理由在
+                    // `ui/render/TranscriptSpacing.kt`（实时那条路没有可剥的 key 前缀）。
+                    //
+                    // 只补**差值**：列表自己的 `spacedBy(blockSpacing)` 一格不动，换人那一行
+                    // 在自己头顶多留 `间距 − blockSpacing`。这样 a) 同一条消息内部逐像素不变；
+                    // b) 经典档三段都是 8 → 差值 0 → 连 padding 节点都不进链，等于今天。
+                    //
+                    // 加在**搜索高亮之外**（链的最外层），两个理由：高亮框不该把这段留白也
+                    // 涂上；而 `rememberedRowHeight` 的 `onSizeChanged` 在它里面，所以
+                    // `RowHeightCache` 记下的仍然是**内容**高度 —— 与今天同一个数。
+                    // 行的实际高度是「留白 + max(内容, 记忆高度)」，留白是这一行自己的确定
+                    // 值，所以不会出现"看着 8dp、测出来另一个数"。间距因此**在测量之内**
+                    // （`LazyColumn` 量的是带 padding 的节点），也**不在缓存之内**。
+                    val extraTop = (
+                        prefs.typographyProfile
+                            .gapFor(transcriptGap(visibleItems, hiddenCount + sliceIndex)) - blockSpacing
+                        ).coerceAtLeast(0.dp)
+                    val highlightModifier = when {
                         isCurrentMatch -> Modifier
                             .border(1.dp, PiTheme.palette.searchMatchText, PiShapes.cardInner)
                             .background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
@@ -2152,6 +2172,8 @@ private fun ChatBody(
                         isMatch -> Modifier.background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
                         else -> Modifier
                     }
+                    val rowModifier = (if (extraTop > 0.dp) Modifier.padding(top = extraTop) else Modifier)
+                        .then(highlightModifier)
                         // The height this row had before, for the frames of a *fresh*
                         // composition of it: markdown's parse state is built with a plain
                         // `remember`, so a row that leaves and comes back (a destination

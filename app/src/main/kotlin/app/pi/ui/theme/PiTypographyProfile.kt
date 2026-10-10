@@ -67,6 +67,7 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * | code-block radius  |   12    |   10    |     10      |  10   |
  * | headings h1…h6     | 22/20/18/16/15/14 | 21/19/17/15/15/14 | 22/20/18/16/16/15 | 24/21/19/17/17/16 |
  * | transcript gap     |    8    |    6    |      8      |  12   |
+ * | 换人：消息之前       |    8    |   16    |     24      |  32   |
  *
  * The paragraph gap (markdown `block`) is 16 for 舒适 and 24 for 宽松 — larger than
  * the direction sheet's first draft (12/20), because the sheet was re-checked
@@ -74,6 +75,16 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * requirement that a layout survive a `2em` user override: a body that grows to
  * 16 sp needs a paragraph step that scales with it rather than a fixed 12. 经典
  * keeps today's 2 dp, which is what makes it today.
+ *
+ * 换人那一行 takes the single number above, and 同一条消息内部 keeps the transcript
+ * gap. **One** 换人 number, not one per speaker: that is what every chat UI does
+ * (`chatview`'s `messageGroupSpacing` is a single parameter), and an asymmetry
+ * between "before a user message" and "before an assistant message" would be a
+ * difference no user can see the reason for. It also keeps the three gaps ordered
+ * for the three non-classic presets — 同一条消息内部 < 段间距 < 换人间距
+ * (紧凑 6 < 8 < 16, 舒适 8 < 16 < 24, 宽松 12 < 24 < 32). 经典 sets all three to 8,
+ * the single uniform gap the transcript had before this existed. pi's terminal has
+ * no such notion, so the number is the app's own.
  *
  * Two of those rows deserve their reasoning written down, because both are
  * places where the task book and the code disagreed and the code won:
@@ -136,7 +147,17 @@ data class PiTypographyProfile(
     val markdownListIndent: Dp,
     /** The code block's corner radius (`MarkdownDimens.codeBackgroundCornerSize`). */
     val codeBlockRadius: Dp,
-    /** The transcript `LazyColumn`'s `Arrangement.spacedBy`. */
+    /**
+     * The gap above the first row of a **new** message (换人间距) — user and
+     * assistant alike, one number.
+     *
+     * `render/TranscriptSpacing.kt` decides which row starts a message, and
+     * `screens/ChatScreen.kt` applies the difference against [blockSpacing] as that
+     * row's own top padding; the list's `spacedBy` stays [blockSpacing], so 同一条
+     * 消息内部 and 换人间距 cannot disagree about the baseline.
+     */
+    val messageSpacing: Dp,
+    /** The transcript `LazyColumn`'s `Arrangement.spacedBy`, i.e. 同一条消息内部. */
     val blockSpacing: Dp,
     /** The `sp` this profile's [fontSize] adds to every [styles] role. */
     val fontSizeOffsetSp: Int,
@@ -234,6 +255,7 @@ data class PiTypographyProfile(
                 block = 2, listItem = 2, indent = 12,
                 codeSize = 13, codeLine = 19,
                 radius = 12, blockSpacing = 8,
+                messageGap = 8,
                 inlineSize = 12.5f, inlineWeight = 400,
                 headings = intArrayOf(22, 20, 18, 16, 15, 14),
             ),
@@ -242,6 +264,7 @@ data class PiTypographyProfile(
                 block = 8, listItem = 4, indent = 18,
                 codeSize = 13, codeLine = 21,
                 radius = 10, blockSpacing = 6,
+                messageGap = 16,
                 inlineSize = 13f, inlineWeight = 600,
                 headings = intArrayOf(21, 19, 17, 15, 15, 14),
             ),
@@ -250,6 +273,7 @@ data class PiTypographyProfile(
                 block = 16, listItem = 6, indent = 20,
                 codeSize = 14, codeLine = 24,
                 radius = 10, blockSpacing = 8,
+                messageGap = 24,
                 inlineSize = 14f, inlineWeight = 600,
                 headings = intArrayOf(22, 20, 18, 16, 16, 15),
             ),
@@ -258,6 +282,7 @@ data class PiTypographyProfile(
                 block = 24, listItem = 10, indent = 22,
                 codeSize = 14, codeLine = 26,
                 radius = 10, blockSpacing = 12,
+                messageGap = 32,
                 inlineSize = 14f, inlineWeight = 600,
                 headings = intArrayOf(24, 21, 19, 17, 17, 16),
             ),
@@ -352,6 +377,7 @@ data class PiTypographyProfile(
                 markdownListItemBottom = numbers.listItem.dp,
                 markdownListIndent = numbers.indent.dp,
                 codeBlockRadius = numbers.radius.dp,
+                messageSpacing = numbers.messageGap.dp,
                 blockSpacing = numbers.blockSpacing.dp,
                 fontSizeOffsetSp = offset,
             )
@@ -377,6 +403,8 @@ private class Preset(
     val codeLine: Int,
     val radius: Int,
     val blockSpacing: Int,
+    /** 换人间距: above the first row of a new message (one number, either speaker). */
+    val messageGap: Int,
     val inlineSize: Float,
     val inlineWeight: Int,
     /** h1…h6, in that order. */
