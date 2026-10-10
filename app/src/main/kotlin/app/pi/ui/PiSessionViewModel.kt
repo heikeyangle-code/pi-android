@@ -662,10 +662,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * 没人重组它，读数就冻在那儿，直到点一下卡或切屏逼出一次新组合才跳一下。时钟得
          * **被推**，不能被读。
          *
-         * **为什么是 1 秒。** 这个读数本身的精度就是秒（`ToolOutputParse.elapsedLabel`
-         * 印的是 `12.3 秒` / `1 分 30 秒`），60 Hz 的心跳会为每一次看得见的变化多印 59 个
-         * 一模一样的数字——同一个读数配 60 倍的重组。一秒一跳是「不丢掉任何一个显示出来
-         * 的秒」的最粗节拍。
+         * **为什么是 1 秒。** 读数用的是 pi 自己的写法（`ToolOutputParse.formatDuration`：
+         * `0.9s` / `1m 30s`），而 pi 的 bash 渲染器就是**每秒刷一次**同一个读数
+         * （`renderers/bash.ts:122`）。跟它同拍最省：更密的心跳只会为同一个数字多重组几次。
          *
          * null 是**空闲**态，也是消费者的回退契约：为 null 时没有任何东西在滴答（见
          * ViewModel 里的发布者），消费者保持自己原来的行为，而不是编一个读数出来。
@@ -6122,10 +6121,10 @@ private const val NAVIGATE_COMMAND = "pi-android-navigate"
 private const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
 
 /**
- * [UiState.nowMs] 的节拍：一秒。它不是随手取的数——这个读数的显示精度就是秒
- * （`ToolOutputParse.elapsedLabel`），比 1 s 更密的心跳除了多重组几次什么都不改；而 1 s
- * 也正是 pi 给同一个读数用的周期（`ShellBlock` 的 KDoc：pi 的 bash 渲染器 `:122`
- * 每秒刷新一次 `Elapsed`）。只在有 pending 行时存在，见发布者那段 KDoc。
+ * [UiState.nowMs] 的节拍：一秒。它不是随手取的数——pi 给同一个读数用的就是这个周期
+ * （`ShellBlock` 的 KDoc：pi 的 bash 渲染器 `:122` 每秒刷新一次 `Elapsed`），而我们的读数
+ * 用的也是 pi 自己的写法（`ToolOutputParse.formatDuration`）。比 1 s 更密的心跳除了多重组
+ * 几次什么都不改。只在有 pending 行时存在，见发布者那段 KDoc。
  */
 private const val TOOL_CLOCK_TICK_MS = 1_000L
 

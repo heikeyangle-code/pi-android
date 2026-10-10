@@ -301,10 +301,6 @@ fun main() {
         null,
     )
 
-    check("shell: the running label is pi's Elapsed", ToolOutputParse.elapsedLabel(true, 12_345), "已运行 12.3 秒")
-    check("shell: the finished label is pi's Took", ToolOutputParse.elapsedLabel(false, 400), "耗时 0.4 秒")
-    check("shell: a negative clock reads as zero", ToolOutputParse.elapsedLabel(true, -5), "已运行 0.0 秒")
-    check("shell: one decimal, always", ToolOutputParse.formatSeconds(59_949), "59.9")
 
     // 0.86.1's `formatDuration` (`renderers/bash.ts:32-42`) stops being one-decimal-seconds
     // at a minute: whole minutes + seconds, then hours. Pinned here because 0.85.1 printed
@@ -314,8 +310,6 @@ fun main() {
     check("shell duration: exactly a minute keeps its zero seconds", ToolOutputParse.formatDuration(60_000), "1m 0s")
     check("shell duration: an hour adds hours", ToolOutputParse.formatDuration(3_930_000), "1h 5m 30s")
     check("shell duration: a negative clock reads as zero", ToolOutputParse.formatDuration(-5), "0.0s")
-    check("shell label: past a minute the units change too", ToolOutputParse.elapsedLabel(false, 90_000), "耗时 1 分 30 秒")
-    check("shell label: past an hour the units change too", ToolOutputParse.elapsedLabel(true, 3_930_000), "已运行 1 时 5 分 30 秒")
 
     // ------------------------------------------------- pi's call-line shapes
 
