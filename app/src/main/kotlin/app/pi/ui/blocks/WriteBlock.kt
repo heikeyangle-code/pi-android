@@ -35,8 +35,6 @@ internal fun WriteBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -58,11 +56,10 @@ internal fun WriteBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
-                firstOfRun = firstOfRun,
-                lastOfRun = lastOfRun,
             ) {
                 ToolHeader(
                     item = item,
+                    state = state,
                     title = "write",
                     // pi's `formatWriteCall` (`renderers/write.js:87-90`):
                     //   `${fg("toolTitle", bold("write"))} ${pathDisplay}`

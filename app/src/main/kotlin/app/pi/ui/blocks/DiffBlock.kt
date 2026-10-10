@@ -33,7 +33,6 @@ import app.pi.rpc.DiffLineKind
 import app.pi.rpc.ToolDiff
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
-import app.pi.ui.theme.StateTone
 
 /**
  * `tool-diff` (docs/pi-android-ui-spec.md §7.4): path plus `+N −N` up top, then
@@ -63,9 +62,6 @@ import app.pi.ui.theme.StateTone
  * v2 gives it to, and only those) stay byte for byte.
  */
 
-/** `06 §2` diff 卡's rail node: `±`, the one node that is not a state. */
-private const val DIFF_NODE_GLYPH = "±"
-
 /**
  * v2's line wash for the two changed kinds — `rgba(181,189,104,.08)` on an added
  * line, `rgba(204,102,102,.08)` on a removed one, which is each token's own colour
@@ -78,8 +74,6 @@ fun DiffBlock(
     item: ToolDiff,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
@@ -111,27 +105,14 @@ fun DiffBlock(
     val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
 
     BlockColumn(modifier) {
-        // The diff sits on the same rail as the calls beside it (`06 §3` 构件 1), with the
-        // one node that is not a state: `±`. It carries **no duration tick** (`06 §2`:
+        // The diff card used to sit on the execution rail beside the calls it belongs to,
+        // with the one node that is not a state — `±` (`06 §3` 构件 1). The rail and its
+        // nodes are gone (`ToolRail.kt`'s KDoc: the state glyph moved into a tool card's
+        // header row), so this card is now inset by the same shared left edge as a tool
+        // card and draws no node at all. It carries **no duration tick** either (`06 §2`:
         // diff 卡不显示 — nothing here was timed, and the row is already the densest in
         // the stream).
-        //
-        // `06 §2` gives this node the plain tokens rather than a state's: a solid
-        // `borderMuted` ring and a `bodyOnTool` glyph, which is exactly the pair v2 draws
-        // (`direction-b-v2.html:1516-1520`: `border:'1px solid var(--border-muted)'` and
-        // `color:'var(--body-on-tool)'`). `StateTone.Muted` alone cannot express it — it
-        // resolves one colour for *both* parts (ring at 45 %, glyph `muted`) — which is
-        // why `PiStateNode` takes the two overrides.
-        ToolRailFrame(
-            glyph = DIFF_NODE_GLYPH,
-            tone = StateTone.Muted,
-            label = "差异",
-            firstOfRun = firstOfRun,
-            lastOfRun = lastOfRun,
-            strokeAlpha = 1f,
-            ringColor = palette.borderMuted,
-            glyphColor = palette.bodyOnTool,
-        ) {
+        ToolRailFrame {
             BlockCard(
                 color = palette.toolPendingBg,
                 // F28: same content-region gesture as the tool card.

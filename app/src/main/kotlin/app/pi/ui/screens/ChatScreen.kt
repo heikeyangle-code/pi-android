@@ -2044,15 +2044,16 @@ private fun ChatBody(
             //
             // B7: the base gap is **8**, not 16. `06 §2`「块间距 8」 is v2's rhythm
             // (every card in the frozen board carries `marginBottom:8`), and the four
-            // presets hang off it — 经典 8 / 紧凑 6 / 舒适 8 / 宽松 12 — so the row
+            // presets hang off it — 经典 8 / 紧凑 4 / 舒适 8 / 宽松 12 — so the row
             // still moves the stream and the default is the design's.
             //
-            // The rail: `PiSpacing.blockGap` (8) is what `ToolRail` bridges with, and
-            // 舒适 — the default — is exactly that 8, so the rail's overdraw and the
-            // gap it spans do not drift apart there. 紧凑 and 宽松 do differ from it;
-            // that is not new (the old density row was 4 and 16 against the same 8)
-            // and it is not this row's to fix — a preset-aware `RAIL_BRIDGE` would be
-            // a layout change to the tool rail, which this pass does not own.
+            // The rail used to have a stake in this number: `ToolRail` bridged the list's
+            // own gap by drawing 8 dp *past* each card's bottom edge, so the line joined
+            // two cards while the gap happened to be 8 (舒适, the default) and left a hole
+            // at 宽松's 12. Neither the constant nor the line exists any more — a tool card
+            // draws no rail at all, its state glyph is a cell of its own header row
+            // (`ui/blocks/ToolRail.kt`) — so this value is now the list's rhythm and
+            // nothing else's, and no two places have to agree about it.
             val blockSpacing = prefs.typographyProfile.blockSpacing
             // The page margin is **14 at every density** (`06 §2`「屏水平 14px」,
             // `direction-b-v2.html:1376`: `.b-scroll{padding:10px 14px 12px}`). The
@@ -2182,25 +2183,12 @@ private fun ChatBody(
                         // A floor, not a size, released by the parse itself: see
                         // `ui/render/TranscriptRowHeight.kt` (and `RowHeightCache`'s bound).
                         .rememberedRowHeight(item.key, contentReady = markdownParsed.value)
-                    // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」).
-                    // A run is a property of *consecutive transcript rows*, so the one
-                    // place that can answer "is this the first/last tool card of a run"
-                    // is the list that holds the order — the blocks themselves only ever
-                    // see one item. `previous`/`next` therefore come from `visibleItems`,
-                    // the whole loaded list, and not from the rendered slice: inside the
-                    // window the two are the same row (`renderedItems[i] ==
-                    // visibleItems[hiddenCount + i]`), but at the window's two ends the
-                    // slice has no neighbour where the transcript has one. Reading the
-                    // slice made the boundary row's rail insets flip the moment a batch
-                    // was prepended *under* it — and that boundary row is exactly the one
-                    // the anchor above is holding still, so the flip was a few tens of dp
-                    // of movement on the reader's own row, once per load-earlier batch.
-                    // `ToolCall` and `ToolDiff` are the only two kinds that draw a rail
-                    // (`ui/blocks/ToolRail.kt`).
-                    val previous = visibleItems.getOrNull(hiddenCount + sliceIndex - 1)
-                    val next = visibleItems.getOrNull(hiddenCount + sliceIndex + 1)
-                    val firstOfRun = previous !is ToolCall && previous !is ToolDiff
-                    val lastOfRun = next !is ToolCall && next !is ToolDiff
+                    // The list no longer computes anything about a row's neighbours: the
+                    // execution rail's two ends were the only thing it read them for, and
+                    // the rail is gone (the state glyph moved into a tool card's own
+                    // header — `ui/blocks/ToolRail.kt`). A tool card is therefore the same
+                    // shape wherever it sits, which is also why no row's height depends on
+                    // what precedes or follows it.
                     // Whether this row's markdown must be parsed before its first layout:
                     // see `PiMarkdownImmediate.kt` for the defect, and the block above for
                     // the gate. `RowHeightCache` is the latch — a row that has already been
@@ -2227,8 +2215,6 @@ private fun ChatBody(
                         BlockRenderer(
                             item = item,
                             modifier = rowModifier,
-                            firstOfRun = firstOfRun,
-                            lastOfRun = lastOfRun,
                             // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
                             // the app's collapse-by-default preference both land here;
                             // the renderer already honours both.

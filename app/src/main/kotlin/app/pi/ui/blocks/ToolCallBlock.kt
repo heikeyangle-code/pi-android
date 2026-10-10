@@ -36,8 +36,6 @@ fun ToolCallBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
     /** A tap on a returned image opens it full screen ([PiImageViewer]). */
     onImageClick: ((PiImage) -> Unit)? = null,
 ) {
@@ -135,11 +133,10 @@ fun ToolCallBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
-                firstOfRun = firstOfRun,
-                lastOfRun = lastOfRun,
             ) {
                 ToolHeader(
                     item = item,
+                    state = state,
                     // **The title rule of this card, and why it is not a literal.**
                     //
                     // Every other tool block names itself with a hardcoded string, exactly as

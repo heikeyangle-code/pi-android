@@ -45,8 +45,6 @@ internal fun GrepBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -54,7 +52,6 @@ internal fun GrepBlock(
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { ToolOutputParse.grepBody(item.output) }
     if (body == null) {
-        ToolCallBlock(item, modifier, defaultExpanded, firstOfRun, lastOfRun)
         return
     }
     val subject = remember(item.args) { grepSubject(item.args) }
@@ -94,11 +91,10 @@ internal fun GrepBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
-                firstOfRun = firstOfRun,
-                lastOfRun = lastOfRun,
             ) {
                 ToolHeader(
                     item = item,
+                    state = state,
                     title = "grep",
                     subject = subject,
                     expanded = expanded,

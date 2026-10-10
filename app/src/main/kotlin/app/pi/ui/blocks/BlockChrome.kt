@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -152,7 +153,7 @@ internal data class BlockAction(val label: String, val onSelect: () -> Unit)
  *    per-item composition limit, and moving the scope would not fix it.
  *  - **A long press on selectable text does not open the block menu.** The two live on
  *    different targets and that is final: text keeps the platform's selection, and the
- *    card's own chrome (padding, rail, margins) keeps the block menu. There used to be a
+ *    card's own chrome (padding, margins) keeps the block menu. There used to be a
  *    ⋮ button beside every scoped block so the menu could not be missed; it is gone — see
  *    [BlockActionMenu] for the reason (it cost 32 dp of width on every row, which on a
  *    phone is width the transcript does not have).
@@ -256,6 +257,10 @@ internal val BlockCardShape = RoundedCornerShape(10.dp)
  * body below it. The card's own tap gesture (`Modifier.toggleContent`) is on the
  * `Surface` *outside* the scope and is unaffected — a tap is not consumed by a
  * selection, only a long press is.
+ *
+ * @param shape the container's corner radius. Defaults to [BlockCardShape] (`06 §2`'s
+ *   10 dp); the tool card passes its own 8 dp because v2 tightens *that* card and the
+ *   default is shared with the diff, error and custom cards (`ToolBlockChrome.ToolCard`).
  */
 @Composable
 internal fun BlockCard(
@@ -269,11 +274,12 @@ internal fun BlockCard(
      * horizontal inset, not the default card's 12.
      */
     padding: PaddingValues = PaddingValues(PiSpacing.cardPadding),
+    shape: Shape = BlockCardShape,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = BlockCardShape,
+        shape = shape,
         color = color,
         border = borderColor?.let { BorderStroke(PiSpacing.hairline, it) },
     ) {

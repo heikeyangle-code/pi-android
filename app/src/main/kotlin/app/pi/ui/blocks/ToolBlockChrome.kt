@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -19,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -78,12 +81,29 @@ internal fun toolStateLabel(state: ToolState): String = when (state) {
     ToolState.Rejected -> "被拒"
 }
 
-/** The glyph beside the status word, for the same reason (`06 §4`). */
+/** The glyph at the head of a tool card's header row (`06 §4`'s first channel). */
 internal fun toolStateGlyph(state: ToolState): String = when (state) {
     ToolState.Running -> "…"
     ToolState.Success -> "✓"
     ToolState.Failed -> "✗"
     ToolState.Rejected -> "⊘"
+}
+
+/**
+ * The **word** the header prints beside the glyph, or null when the glyph says it alone
+ * (decision D4).
+ *
+ * `06 §4` gives each state a word as well as a symbol, and the pair used to be printed
+ * unconditionally in the footer. Two of the four glyphs are ambiguous on their own — `…`
+ * is also an ordinary prose ellipsis, and `⊘` is a policy stop that is deliberately not
+ * the failure's `✗` — so those two keep their word beside the glyph. `✓` and `✗` are
+ * self-evident, and the word is **not lost** for them: the glyph announces
+ * [toolStateLabel] as its `contentDescription`, so a screen reader hears 「成功」 / 「失败」
+ * where the row no longer paints them.
+ */
+internal fun toolStateWord(state: ToolState): String? = when (state) {
+    ToolState.Running, ToolState.Rejected -> toolStateLabel(state)
+    ToolState.Success, ToolState.Failed -> null
 }
 
 /** The state's tone — the third channel, resolved in one table (`06 §4`). */
@@ -109,7 +129,7 @@ internal fun toolContainerColor(state: ToolState, palette: PiPalette): Color = w
     ToolState.Rejected -> palette.toolPendingBg
 }
 
-/** The border, stripe, node-ring and tick colour of a card: its state colour. */
+/** The glyph, stripe and tick colour of a card: its state colour. */
 internal fun toolAccentColor(state: ToolState, palette: PiPalette): Color =
     stateToneColor(toolStateTone(state), palette)
 
@@ -189,8 +209,10 @@ internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
  *
  * ```
  * padding:7px 10px, gap 7
+ *   字形      mono 12 状态色            <- `06 §4`'s glyph, always drawn
  *   工具名    mono 12 toolTitle + Bold  <- pi: fg("toolTitle", bold(toolName))
  *   主体      mono 12 分段取色          <- pi: the renderer's own fg(token, …) runs
+ *   状态词    mono 12 text              <- only `…` / `⊘`; see [toolStateWord]
  *   右读数    mono 12 muted tab         <- the call's own reading (a duration, or a count)
  *   chevron   14, bodyOnTool            <- right while collapsed, down while expanded
  * ```
@@ -209,12 +231,16 @@ internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
  * Text, order, spacing, size and the monospace face are unchanged: **colour is the only
  * channel this parameter carries**.
  *
- * **The state is not on this row.** `06 §4` puts the tool card's triple encoding in
- * the footer — 「页脚**永远同时有符号与状态词**」 — and v2's header carries a
- * *reading* instead (v2's `right="132ms"`, `right="12 项"`); [ToolHeaderReading]
- * derives it from the same fields the footer prints, so the two cannot disagree.
- * The word and the glyph stay one row below, in [ToolFooter], which is what keeps
- * the encoding intact without printing it twice.
+ * **The state is on this row now.** `06 §4`'s triple encoding used to live in
+ * [ToolFooter] — 「页脚永远同时有符号与状态词」 — which spent a whole extra row (plus the
+ * row gap above it) on every card saying what the header has room for. The glyph has
+ * therefore moved here: always drawn, in [toolAccentColor]'s state colour, with
+ * [toolStateLabel] as its `contentDescription`. The **word** follows it for the two
+ * states whose glyph does not say enough on its own — `…` is also a prose ellipsis, and
+ * `⊘` is a policy stop rather than a failure (decision D4) — while `✓` / `✗` print no
+ * word, because a second channel that always repeats the first is not a second channel.
+ * Nothing is lost to a screen reader: every state's glyph carries the word, so `✓` / `✗`
+ * are still announced where they are no longer painted ([toolStateWord]).
  *
  * Nothing shifts under pi's own two themes: `toolTitle`, `text` and `accent` are the same
  * value there (`theme.ts`'s dark/light `toolTitle = text`, and both ship `accent` as the one
@@ -224,7 +250,11 @@ internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
  *
  * @param subject the call line's runs, in pi's order. A block with no pi recipe for its
  *   arguments passes one [ToolCallToken.Uncoloured] run.
- * @param right the right-hand reading. Defaults to [ToolHeaderReading] of [item];
+ * @param state the call's state, which paints the glyph and decides whether the word is
+ *   printed. Passed in rather than re-derived here: every block computes it once per
+ *   composition with [toolStateOf], and one derivation is what keeps the glyph, the word
+ *   and the card's own colours from disagreeing.
+ * @param right the right-hand reading. Defaults to [toolHeaderReading] of [item];
  *   a block whose tool reads out as a *count* rather than a duration (`find`, `ls`)
  *   passes its own string.
  * @param expanded whether the card is open, which only turns the chevron.
@@ -236,6 +266,7 @@ internal fun ToolHeader(
     item: ToolCall,
     title: String,
     subject: List<ToolCallPart>,
+    state: ToolState,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
     expandable: Boolean = true,
@@ -257,7 +288,21 @@ internal fun ToolHeader(
             }
         }
     }
+    // The two states that spell themselves out (see the KDoc above): `…` and `⊘`.
+    val word = toolStateWord(state)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        // **Always drawn, in the state's own colour** (`06 §4`): the icon is the card's
+        // permanent state channel, and `clearAndSetSemantics` is what makes it a *word*
+        // for a screen reader instead of a bare symbol — the glyph character itself is
+        // dropped from the semantics, so TalkBack says 「运行中」 and not 「…」.
+        Text(
+            text = toolStateGlyph(state),
+            modifier = Modifier.clearAndSetSemantics { contentDescription = toolStateLabel(state) },
+            style = PiTheme.text.monoSmall,
+            color = toolAccentColor(state, palette),
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(TOOL_HEADER_GAP))
         Text(
             text = title,
             // **Bold, because pi bolds it**: `theme.fg("toolTitle", theme.bold(toolName))`
@@ -288,6 +333,19 @@ internal fun ToolHeader(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (word != null) {
+            Spacer(Modifier.width(TOOL_HEADER_GAP))
+            Text(
+                text = word,
+                style = PiTheme.text.monoSmall,
+                // The same colour the word carried in [ToolFooter] (`palette.text`, not
+                // `muted`): it is a fact the user reads, not a caption — and the glyph
+                // beside it already carries the state's colour, so painting the word too
+                // would be the same channel twice (`06 §4`: 颜色只是第三层).
+                color = palette.text,
+                maxLines = 1,
+            )
+        }
         if (right != null) {
             Spacer(Modifier.width(TOOL_HEADER_GAP))
             Text(
@@ -464,18 +522,28 @@ internal fun ToolNotice(
 }
 
 /**
- * The card itself: the rail frame, pi's status container, the one content-region gesture
- * (`Modifier.toggleContent`, F28), and the block's own column of rows.
+ * The card itself: the shared left inset, pi's status container, the one content-region
+ * gesture (`Modifier.toggleContent`, F28), and the block's own column of rows.
  *
- * The rail (`06 §3` 构件 1) wraps the card rather than the card wrapping the rail, because
- * the node and the line live in the card's left margin — outside the surface that carries
- * the tap gesture, exactly as v2 draws them (`marginLeft:-26; paddingLeft:26`).
+ * [ToolRailFrame] wraps the card rather than the card wrapping the frame, because the
+ * inset is the card's **outer** edge — outside the surface that carries the tap gesture,
+ * exactly as v2 draws it (`marginLeft:-26; paddingLeft:26`). There is no rail line and no
+ * node in that margin any more: the state glyph is the header row's first cell
+ * ([ToolHeader]), and the rail was removed with it (`ToolRail.kt`'s KDoc).
  *
  * The rows inset by [BlockCardRowPadding] (10 horizontally), which is v2's own
  * `padding:7px 10px` on this card's rows rather than the default card's 12.
  *
- * @param firstOfRun/lastOfRun whether this card is the first / last tool row of its
- *   consecutive run — see [ToolRailFrame]; the list computes both.
+ * The container is **not bordered**: `06 §2` gives it a 1 px status-coloured outline at
+ * 35 %, and the official renderer's card has no border at all — a `Box` with the status
+ * background and nothing else (`modes/interactive/components/tool-execution.ts:172-178`).
+ * The fill is the state's first channel and the header glyph is its second, so the third
+ * was a frame around an already-coloured card; on a phone that frame is the width of the
+ * whole row's silhouette, which is the one thing the card does not need to spend.
+ *
+ * The corner radius is v2's original tool-card radius of **8** (`TOOL_CARD_SHAPE` below),
+ * passed explicitly because [BlockCardShape] — the default the diff, error and custom cards
+ * share — is 10.
  */
 @Composable
 internal fun ToolCard(
@@ -483,34 +551,32 @@ internal fun ToolCard(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    ToolRailFrame(
-        glyph = toolStateGlyph(state),
-        tone = toolStateTone(state),
-        label = toolStateLabel(state),
-        modifier = modifier,
-        firstOfRun = firstOfRun,
-        lastOfRun = lastOfRun,
-    ) {
+    ToolRailFrame(modifier = modifier) {
         BlockCard(
             color = toolContainerColor(state, palette),
             modifier = Modifier.toggleContent(expanded, onToggle),
-            // `06 §2`「描边 1px 状态色 35%」, for all four states: the ring is what the
-            // card's state looks like at a glance, and the fill is only its ground.
-            borderColor = toolAccentColor(state, palette).copy(alpha = TOOL_CARD_BORDER_ALPHA),
+            // No border: `06 §2`'s 1 px status outline is gone (see this composable's KDoc
+            // for the decision). The fill alone is the card's ground.
+            borderColor = null,
             padding = BlockCardRowPadding,
+            shape = TOOL_CARD_SHAPE,
             content = content,
         )
     }
 }
 
-/** `06 §2` 工具卡: the status-coloured border's alpha, in all four states. */
-internal const val TOOL_CARD_BORDER_ALPHA: Float = 0.35f
+/**
+ * `06 §2` 工具卡's corner radius, decision D2: v2's board draws this card's shell square
+ * (a terminal has no rounds), and the app keeps **8 dp** because a transcript card is a
+ * phone container rather than a terminal cell. It is passed to [BlockCard] explicitly,
+ * since that card's own default ([BlockCardShape]) is 10 and is shared with the diff,
+ * error and custom cards.
+ */
+private val TOOL_CARD_SHAPE = RoundedCornerShape(8.dp)
 
 /**
  * The long-press actions of §4.8, shared by every tool card: the command, the output, and
@@ -528,9 +594,9 @@ internal const val TOOL_CARD_BORDER_ALPHA: Float = 0.35f
  *
  * The body is a selection scope (`BlockCard` → [SelectableContent]), so a long press on the
  * output selects it and the menu is reached by long-pressing the card's **chrome** — the
- * rail, the padding outside a text node. There is no ⋮ button: it would cost 32 dp of width
- * on every tool card, which on a phone is width the command line and the output do not have
- * (see [BlockActionMenu]).
+ * inset outside the container, the padding outside a text node. There is no ⋮ button: it
+ * would cost 32 dp of width on every tool card, which on a phone is width the command line
+ * and the output do not have (see [BlockActionMenu]).
  */
 @Composable
 internal fun ToolActionMenu(
@@ -594,6 +660,7 @@ internal fun toolFooterText(item: ToolCall, state: ToolState, lines: Int): Strin
 
 /** The one footer a blocked call has (`06 §3` 构件 5), shared by every tool card. */
 internal fun toolRejectedFooter(): String = "${toolStateLabel(ToolState.Rejected)} · 没有执行"
+
 
 /**
  * pi's `[invalid content arg - expected string]` case

@@ -39,8 +39,6 @@ internal fun ReadBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -66,11 +64,10 @@ internal fun ReadBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
-                firstOfRun = firstOfRun,
-                lastOfRun = lastOfRun,
             ) {
                 ToolHeader(
                     item = item,
+                    state = state,
                     title = "read",
                     // pi's `formatReadCall` (`renderers/read.js:24-28`):
                     //   `${fg("toolTitle", bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`

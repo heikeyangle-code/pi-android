@@ -36,8 +36,6 @@ internal fun EditBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -54,11 +52,10 @@ internal fun EditBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
-                firstOfRun = firstOfRun,
-                lastOfRun = lastOfRun,
             ) {
                 ToolHeader(
                     item = item,
+                    state = state,
                     title = "edit",
                     // pi's `formatEditCall` (`renderers/edit.js:51-54`):
                     //   `${fg("toolTitle", bold("edit"))} ${pathDisplay}`

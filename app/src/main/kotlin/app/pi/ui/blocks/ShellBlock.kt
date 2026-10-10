@@ -74,8 +74,6 @@ internal fun ShellBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    firstOfRun: Boolean = true,
-    lastOfRun: Boolean = true,
     /**
      * `UiState.nowMs`: the ViewModel's 1 Hz coarse clock, non-null exactly while a
      * tool card is pending. Null keeps the pre-clock behaviour (one read per
@@ -176,11 +174,10 @@ internal fun ShellBlock(
                 item,
                 expanded,
                 { expanded = !expanded },
-                firstOfRun = firstOfRun,
-                lastOfRun = lastOfRun,
             ) {
                 ToolHeader(
                     item = item,
+                    state = state,
                     title = "$",
                     subject = subject,
                     expanded = expanded,
@@ -228,7 +225,7 @@ internal fun ShellBlock(
                 ToolFooter(
                     text = footer,
                     state = state,
-                    elapsedMs = elapsedMs,
+                    elapsedMs = item.elapsedMs,
                 )
             }
         }
