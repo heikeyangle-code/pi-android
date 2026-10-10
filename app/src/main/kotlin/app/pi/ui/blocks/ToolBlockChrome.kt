@@ -346,6 +346,9 @@ internal fun ToolHeader(
         if (word != null) {
             Spacer(Modifier.width(TOOL_HEADER_GAP))
             Text(
+                // 字形那边已经挂了 `contentDescription = 状态词`，这里再让读屏念一遍就是
+                // 「运行中，运行中」。对读屏而言这个词是重复的（`✓`/`✗` 没有词，不受影响）。
+                modifier = Modifier.clearAndSetSemantics {},
                 text = word,
                 style = PiTheme.text.monoSmall,
                 // The same colour the word carried in [ToolFooter] (`palette.text`, not
@@ -435,7 +438,10 @@ internal fun toolHeaderReading(
             formatDuration(it)
         }
     }
-    exitCode?.let { parts += "退出码 $it" }
+    // 退出码只有**调用结束后**才存在；而 `shellExitCode` 是从当前输出尾巴里正则刮出来的，
+    // 所以还在跑的命令只要屏幕上恰好出现那句话（`cat old.log`、嵌套调用…）就会提前显示。
+    // HEAD 的 `shellFooter` 本来就有这道守卫。
+    if (state != ToolState.Running) exitCode?.let { parts += "退出码 $it" }
     if (count > 0) parts += "$count $unit"
     extra?.let { parts += it }
     return if (parts.isEmpty()) null else parts.joinToString(" · ")

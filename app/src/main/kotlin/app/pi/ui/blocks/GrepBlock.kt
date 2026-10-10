@@ -55,6 +55,11 @@ internal fun GrepBlock(
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { ToolOutputParse.grepBody(item.output) }
     if (body == null) {
+        // 解析不出结果就回退通用卡：这正是 pi 没有专属渲染器的那种形状（`06 §3`）。
+        // 这一行原先是 `ToolCallBlock(...)` —— 删 `firstOfRun`/`lastOfRun` 参数时被整行带走，
+        // 只剩裸 `return`，于是**被拒/失败**的 grep/find/ls（结果是拦截器那句话或错误文本，
+        // 解析为 null）会整张卡消失（连退回的图片也没了）。
+        ToolCallBlock(item, modifier, defaultExpanded, onImageClick)
         return
     }
     val subject = remember(item.args) { grepSubject(item.args) }
