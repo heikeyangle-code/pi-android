@@ -673,6 +673,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val nowMs: Long? = null,
         val queueSteering: Int = 0,
         val queueFollowUp: Int = 0,
+        /**
+         * The queued messages themselves, in pi's own order, as `queue_update`
+         * reported them.
+         *
+         * pi sends the text, not just a count — `queue_update` is
+         * `{type, steering: string[], followUp: string[]}`
+         * (`core/agent-session.js:655`, emitted at `:1767` on a steer enqueue, `:1783`
+         * on a follow-up, `:1920` on `clearQueue`) and RPC forwards the whole event
+         * verbatim (`modes/rpc/rpc-mode.js:265-270`; `modes/json-event.js:17-19` only
+         * rewrites `message_update`). The app used to keep `.size` alone, which made
+         * the two counts below the only trace of a queue whose *content* the user
+         * cannot otherwise see — a queued message is deliberately not in the
+         * transcript until pi delivers it (see `PiEngineSession.prompt`), and
+         * official pi prints the text (`interactive-mode.js:3879` `Steering: …`,
+         * `:3883` `Follow-up: …`).
+         *
+         * The counts are kept beside them because the engine line reads them on its
+         * own ([engineLabel]) and a count is the honest reading of "is anything
+         * waiting"; the lists are what the pending row draws.
+         */
+        val queueSteeringTexts: List<String> = emptyList(),
+        val queueFollowUpTexts: List<String> = emptyList(),
         val lastError: String? = null,
         /**
          * The blocking `extension_ui_request` on screen right now — the head of
@@ -2484,7 +2506,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(boot = Boot.Ready)
         // The queue counters describe **this engine process's** queues, and the engine in
         // hand is brand new, so its queues are empty. pi sends `queue_update` only when
-        // the queue changes (`agent-session.ts:592-597`, `:650-656`), so a fresh process
+        // the queue changes — `_emitQueueUpdate` (`core/agent-session.js:655`) is called
+        // on a steer enqueue (`:1767`), a follow-up enqueue (`:1783`), the removal of a
+        // message as it is delivered (`:740` / `:747`) and by `clearQueue` (`:1920`),
+        // which is the whole set — so a fresh process
         // never re-states the empty queue — and the counters would keep saying 「排队中 N」
         // about messages no pi process is holding. Reachable by: queue a message while a
         // turn runs, switch workspace (the switch kills that turn), land in the new one.
@@ -2501,7 +2526,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // this is an idempotent write of the same value. Dropping either one re-opens its own
         // leak; the session half's argument is on the [UiState.queueSteering] note there.
         if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
-            _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
+            // The texts go with the counts: both are written by the same
+            // `queue_update` arm ([onEvent]), so clearing one without the other
+            // would leave the pending row drawing a message pi no longer holds.
+            _state.value = _state.value.copy(
+                queueSteering = 0,
+                queueFollowUp = 0,
+                queueSteeringTexts = emptyList(),
+                queueFollowUpTexts = emptyList(),
+            )
         }
         // Anything typed before this engine attached is deliverable now: replay it in
         // order ([pendingPrompts]). The list is copied and cleared **before** the
@@ -2904,9 +2937,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             is PiEvent.QueueUpdate -> _state.value = _state.value.copy(
                 queueSteering = event.steering.size,
                 queueFollowUp = event.followUp.size,
+                queueSteeringTexts = event.steering,
+                queueFollowUpTexts = event.followUp,
             )
 
-            // The window in which pi refuses a plain `prompt` (`:1192-1196`). Kept
+            // The window in which pi refuses a plain `prompt`
+            // (`core/agent-session.js:1619`). Kept
             // here rather than read off the transcript reducer (which draws the
             // compaction card) because the *send* path is what needs it, and the
             // reconciliation in [refreshState] is what heals a dropped event.
@@ -4382,23 +4418,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         // **Compacting: the one window in which `prompt` is not an option.** pi
         // throws there — `Cannot submit a prompt while compaction is in progress.
-        // Wait for compaction to finish and retry.` (`core/agent-session.ts:1192-1196`,
-        // checked after the extension-command branch and before the streaming
-        // branch). The bare `steer`/`follow_up` commands have no such check: they go
-        // through `_queueUserInput` (`:1388-1413`), which runs the extension `input`
-        // handlers and the skill/template expansion and then pushes the text onto
-        // pi's own `_steeringMessages`/`_followUpMessages`. So during a compaction
-        // the message is **queued by pi** (visible in the queue row, which reads
-        // `queue_update`), the submission does not fail, and the app needs no local
-        // hold-and-flush of its own.
+        // Wait for compaction to finish and retry.` (`core/agent-session.js:1619`,
+        // checked after the extension-command branch at `:1611` and before the
+        // streaming branch). The bare `steer`/`follow_up` commands have no such
+        // check: they go through `_queueUserInput` (`:1722-1740`), which runs the
+        // extension `input` handlers and the skill/template expansion and then
+        // pushes the text onto pi's own `_steeringMessages`/`_followUpMessages`. So
+        // during a compaction the message is **queued by pi** (visible in the
+        // pending row, which reads `queue_update`), the submission does not fail,
+        // and the app needs no local hold-and-flush of its own.
         //
         // Worst case if this flag is ever stale-true: the text lands in pi's
         // steering queue and is delivered at the next agent step. Slower, not lost,
         // not an error — which is why the trade is worth taking. (The flag is
         // reconciled from `get_state` in [refreshState], so a dropped
         // `compaction_end` heals at the next attach or settle.)
+        //
+        // No echo here: this path *always* queues, so the row belongs to pi's
+        // delivery, not to this submission (see `PiEngineSession.prompt`). The
+        // pending row is what shows the message in the meantime.
         if (_state.value.meta.compacting) {
-            engine.echoUserPrompt(trimmed, images)
             engine.send(
                 PiCommands.steer(
                     id = "steer-${System.nanoTime()}",
@@ -4407,14 +4446,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             )
             syncTranscript(engine, engine.publication.value)
+            // pi answers this window with its own status line — `Queued message for
+            // after compaction` (`interactive-mode.js:3916`, in
+            // `queueCompactionMessage`). The pending row will show the text too once
+            // pi's `queue_update` lands (`core/agent-session.js:1767`); the notice is
+            // what says *why* it is waiting, which the row does not.
+            pushNotice("已排队，压缩结束后投递", Notice.Tone.Info)
             return
         }
         // Otherwise: one entry point, two delivery choices — pi's own shape. Its TUI
         // submits every non-built-in message through `session.prompt(text, {
         // streamingBehavior: "steer" })` while a turn is running
-        // (`interactive-mode.ts:3137-3143`) and through a plain `prompt` when the
-        // agent is idle, so the app does the same: `streamingBehavior` only while
-        // streaming, never on an idle engine.
+        // (`interactive-mode.js:2717-2723`, the call itself at `:2720`) and through
+        // an ordinary submit when the agent is idle (`:2726-2734`).
         //
         // What `prompt` adds over the bare `steer` command: pi's own pre-flight —
         // the compaction check above, the model/credential validation and the rest
@@ -4422,22 +4466,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // `docs/feature-gaps.md:96` recorded the old app as never sending
         // `streamingBehavior` on `prompt` ("used only through `follow_up`"). It is
         // **not** "the only path that runs the input handlers": `_queueUserInput`
-        // runs those (`:1388-1413`) for the bare commands too.
+        // runs those (`core/agent-session.js:1722-1740`) for the bare commands too.
         //
-        // The optimistic echo is `PiEngineSession.prompt`'s own (`:763`), and it is
-        // no longer done here: it publishes the row *and* registers it in the
-        // reducer's pending-echo queue, which is what makes pi's later
-        // `message_end(role="user")` a confirmation instead of a second bubble
-        // (`rpc/.../Transcript.kt:883-897` records the echo, `:919-1010` matches
-        // it). Echoing here as well would render the row twice and leave a stale
-        // pending echo behind, which would then swallow the next unrelated message.
+        // The echo is `PiEngineSession.prompt`'s own, and it is no longer done here:
+        // it publishes the row *and* registers it in the reducer's pending-echo
+        // queue, which is what makes pi's later `message_end(role="user")` a
+        // confirmation instead of a second bubble (`rpc/.../Transcript.kt:1036`
+        // records the echo, `:1065-1068` matches it by text). Echoing here as well
+        // would render the row twice and leave a stale pending echo behind — the same
+        // failure the queue fix removes for queued messages.
+        //
+        // `streamingBehavior` now goes out **always**. pi reads it only inside its
+        // `if (this.isStreaming)` branch (`core/agent-session.js:1635`) and ignores
+        // it otherwise, falling through to an ordinary turn at `:1663`, so no state
+        // makes sending it wrong. What the app's own flag still decides is only the
+        // echo: `queued` says whether this message will wait in pi's queue rather
+        // than be delivered now, which is precisely what official pi draws in its
+        // pending area instead of the chat (`interactive-mode.js:3873-3889`).
         engine.prompt(
             message = trimmed,
             images = images,
-            streamingBehavior = if (engine.transcript.streaming) StreamingBehavior.Steer else null,
+            streamingBehavior = StreamingBehavior.Steer,
+            queued = engine.transcript.streaming,
         )
-        // Already published by `prompt`; reading it here is what makes the echoed
-        // row visible without waiting for the collector's dispatch.
+        // Published by `prompt` only when it echoed; a queued message publishes when
+        // pi confirms it instead.
         syncTranscript(engine, engine.publication.value)
     }
 
@@ -4472,47 +4525,54 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             engine.send(PiCommands.prompt("cmd-${System.nanoTime()}", text))
         } else {
             // Templates and skills are expanded inside pi into a real user message
-            // (`agent-session.ts:1211-1216`), so the optimistic echo is confirmed by
-            // that event and replaced by pi's own projection of it.
+            // (`core/agent-session.js:1631-1632`), so the optimistic echo is confirmed
+            // by that event and replaced by pi's own projection of it.
             //
             // Mid-turn the submission needs pi's `streamingBehavior`, exactly as
-            // pi's own TUI sends it (`interactive-mode.ts:3137-3142`:
-            // `session.prompt(text, { streamingBehavior: "steer" })` for every
-            // non-built-in submit while streaming). Without it pi rejects the
+            // pi's own TUI sends it (`interactive-mode.js:2717-2723`, the call at
+            // `:2720`: `session.prompt(text, { streamingBehavior: "steer" })` for
+            // every non-built-in submit while streaming). Without it pi rejects the
             // `prompt` outright — "Agent is already processing. Specify
             // streamingBehavior ('steer' or 'followUp') to queue the message"
-            // (`agent-session.ts:1211-1217`) — so selecting a template or a skill
+            // (`core/agent-session.js:1637`) — so selecting a template or a skill
             // from the palette during a turn raised that error instead of queueing,
             // while the same selection works in pi's TUI. `steer` is pi's own choice
-            // for Enter; the follow-up chip is a separate gesture and still goes
-            // through [sendFollowUp].
+            // for Enter; the follow-up gesture is separate and still goes through
+            // [sendFollowUp].
+            //
+            // `queued` is this app's belief, and it gates the echo only: a palette
+            // skill or template picked mid-turn waits in pi's queue like any other
+            // mid-turn message, so it belongs in the pending row until pi delivers it.
             engine.prompt(
                 message = text,
-                streamingBehavior = if (engine.transcript.streaming) StreamingBehavior.Steer else null,
+                streamingBehavior = StreamingBehavior.Steer,
+                queued = engine.transcript.streaming,
             )
         }
         syncTranscript(engine, engine.publication.value)
     }
 
     /**
-     * `follow_up` — pi's `alt+enter` (`interactive-mode.ts:4126-4155`).
+     * `follow_up` — pi's `alt+enter` (`interactive-mode.js:3653-3682`).
      *
      * The delivery choice *is* the difference between the two queueing commands:
-     * `steer` lands after this turn's tool calls (`_queueSteer`), `follow_up`
-     * only once the agent would otherwise stop (`_queueFollowUp`,
-     * `agent-session.ts:1453-1468`), and `set_follow_up_mode` configures the
-     * second one. pi's TUI queues a follow-up only while the agent is streaming;
-     * when it is idle alt+enter is a normal submit, so the composer offers this
-     * only while streaming and [send] handles the idle case.
+     * `steer` lands after this turn's tool calls (`_queueSteer`,
+     * `core/agent-session.js:1765`), `follow_up` only once the agent would otherwise
+     * stop (`_queueFollowUp`, `:1781`), and `set_follow_up_mode` configures the
+     * second one. pi's TUI queues a follow-up only while the agent is streaming
+     * (`interactive-mode.js:3671-3677`); when it is idle alt+enter is an ordinary
+     * submit (`:3679-3682`), so the composer offers this only while streaming and
+     * [send] handles the idle case.
      *
      * [images] travels the whole way because pi's follow-up carries them: the
      * TUI hands its editor attachments to `session.prompt(text, {
-     * streamingBehavior: "followUp" })` (`interactive-mode.ts:4146`), which
-     * reaches `_queueFollowUp(expandedText, currentImages)` (`agent-session.ts:1225-1226`).
-     * F21's investigation in `docs/gap-disposition.md` §10 found that
-     * `PiCommands.followUp` already had the parameter and this signature did not,
-     * so the 后续 chip silently dropped an attachment the user had added — a
-     * visible action with no effect, the same class of bug F19 removed elsewhere.
+     * streamingBehavior: "followUp" })` (`interactive-mode.js:3674`), which
+     * reaches `_queueFollowUp(expandedText, currentImages)`
+     * (`core/agent-session.js:1639-1642`). F21's investigation in
+     * `docs/gap-disposition.md` §10 found that `PiCommands.followUp` already had the
+     * parameter and this signature did not, so the 后续 chip silently dropped an
+     * attachment the user had added — a visible action with no effect, the same
+     * class of bug F19 removed elsewhere.
      */
     fun sendFollowUp(text: String, images: List<PiImage> = emptyList()) {
         if (parkUntilAttached { sendFollowUp(text, images) }) return
@@ -4520,11 +4580,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         // Compacting: [send] documents the window — pi's `prompt` throws
-        // (`agent-session.ts:1192-1196`) and the bare `follow_up` command queues the
-        // text instead (`_queueUserInput`, `:1388-1413`, no compaction check). Same
-        // trade, same worst case.
+        // (`core/agent-session.js:1619`) and the bare `follow_up` command queues the
+        // text instead (`_queueUserInput`, `:1722-1740`, no compaction check). Same
+        // trade, same worst case. No echo, for the same reason as [send].
         if (_state.value.meta.compacting) {
-            engine.echoUserPrompt(trimmed, images)
             engine.send(
                 PiCommands.followUp(
                     id = "follow-${System.nanoTime()}",
@@ -4533,23 +4592,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             )
             syncTranscript(engine, engine.publication.value)
+            // Same status line as [send]'s compaction branch, and pi's own wording
+            // for it (`interactive-mode.js:3916`).
+            pushNotice("已排队，压缩结束后投递", Notice.Tone.Info)
             return
         }
         // pi's `alt+enter` is the *same* submit with the other delivery choice:
         // `session.prompt(text, { streamingBehavior: "followUp" })`
-        // (`interactive-mode.ts:4143-4150`), not the bare `follow_up` command — see
+        // (`interactive-mode.js:3671-3677`), not the bare `follow_up` command — see
         // [send] for what the command form gives up (pi's pre-flight checks). The
         // echo is `PiEngineSession.prompt`'s, for the same single-render reason.
         //
-        // `streamingBehavior` is only sent while a turn is running, because that is
-        // the only case pi's TUI queues a follow-up in: with the agent idle
-        // alt+enter is an ordinary submit (`interactive-mode.ts:4126-4155` is the
-        // streaming half; the idle half goes through the normal submit path), and
-        // this method's chip is only offered while streaming anyway.
+        // `streamingBehavior` goes out always: it is what pi consults *if* it is
+        // streaming (`core/agent-session.js:1635`), and it is ignored otherwise, so
+        // with the agent idle alt+enter still becomes an ordinary submit — pi's own
+        // `:3679-3682` behavior — without this app having to guess. `queued` carries
+        // this app's guess separately, because only the echo depends on it: a
+        // follow-up that pi queues must not be drawn in the transcript, since
+        // official draws it in the pending area (`interactive-mode.js:3873-3889`) and
+        // adds the chat row when it is delivered.
         engine.prompt(
             message = trimmed,
             images = images,
-            streamingBehavior = if (engine.transcript.streaming) StreamingBehavior.FollowUp else null,
+            streamingBehavior = StreamingBehavior.FollowUp,
+            queued = engine.transcript.streaming,
         )
         syncTranscript(engine, engine.publication.value)
     }
@@ -4569,18 +4635,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * pi's `app.message.dequeue` (`alt+up`): take the queued messages back out of
      * pi and hand them to the composer **without aborting the turn**
-     * (`interactive-mode.ts:4157-4164` → `restoreQueuedMessagesToEditor()` with no
-     * options, `:4387-4406`).
+     * (`interactive-mode.js:3684-3693` — `handleDequeue`, wired to the keybinding at
+     * `:2463` — → `restoreQueuedMessagesToEditor()` with no options,
+     * `:3891-3910`).
      *
      * The difference from [stop] is exactly the missing `abort`, and it is pi's
      * whole point of the action: the current turn keeps running, only the queue
      * moves back into the editor. `clear_queue` is all-or-nothing
-     * (`rpc-types.ts:26`), so "one message at a time" is not on offer here — nor in
+     * (`rpc-types.d.ts:35`), so "one message at a time" is not on offer here — nor in
      * pi, whose pending-messages list is read-only and whose hint restores them all.
      *
-     * An empty answer is reported rather than silently ignored: it is what pi's
-     * `handleDequeue` says too ("No queued messages to restore"), and it is the only
-     * signal that the dequeue raced the turn's own consumption of the queue.
+     * Both answers are reported, matching pi's own two status lines: an empty one is
+     * `No queued messages to restore` (`interactive-mode.js:3687`) and it is the only
+     * signal that the dequeue raced the turn's own consumption of the queue; a
+     * non-empty one is `Restored N queued messages to editor` (`:3690`), which this
+     * app was missing entirely — the text reappeared in the composer with nothing
+     * saying that it had come *back* rather than been typed.
      */
     fun restoreQueue(onRestored: (List<String>) -> Unit = {}) {
         val engine = session ?: return
@@ -4589,6 +4659,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             syncTranscript(engine, engine.publication.value)
             if (restored.isEmpty()) {
                 pushNotice("队列里没有待收回的消息", Notice.Tone.Warning)
+            } else {
+                pushNotice("已收回 ${restored.size} 条排队消息到输入框", Notice.Tone.Info)
             }
             onRestored(restored)
         }
@@ -5715,7 +5787,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // would let a later attach replay the file of a session pi is no longer on.
         SessionHints.file = null
         if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
-            _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
+            // The texts go with the counts: both are written by the same
+            // `queue_update` arm ([onEvent]), so clearing one without the other
+            // would leave the pending row drawing a message pi no longer holds.
+            _state.value = _state.value.copy(
+                queueSteering = 0,
+                queueFollowUp = 0,
+                queueSteeringTexts = emptyList(),
+                queueFollowUpTexts = emptyList(),
+            )
         }
         // A different session's export is no longer the thing on screen: the row
         // would offer to save a file that belongs to the conversation the user just

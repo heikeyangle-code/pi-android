@@ -346,15 +346,26 @@ fun SessionToolsSheet(
             // 插话 / 排队 are the composer's two delivery chips' words, used here for
             // the same two modes: one name per concept, or the sheet reads as if it
             // were describing something else. The English names in the parentheses
-            // are pi's own (`steer` / `follow_up`).
+            // are pi's own, in pi's own spelling: `steer` and the settings key
+            // `followUpMode` (`docs/settings.md:31-32`), not the `follow_up` command
+            // name and not `follow up`.
+            //
+            // Both supporting lines say *when*, because that is the whole difference
+            // between the two modes. 插话's first version said 「本回合进行中插入」
+            // ("inserted during this turn"), which is weaker than pi's own definition:
+            // a steering message is delivered after the turn's tool calls finish and
+            // before the next model call (`packages/agent/src/agent-loop.js:111`), not
+            // anywhere inside the turn. 排队's 「整个回合结束后才投递」 is already pi's
+            // `_queueFollowUp` rule (`core/agent-session.js:1781`, drained only once the
+            // agent would otherwise stop, `agent-loop.js:192-198`) and stays as it was.
             QueueModeRow(
                 title = "插话消息（steer）",
-                supporting = "本回合进行中插入，下一次回答之前生效",
+                supporting = "本回合的工具调用跑完后、下一次回答前投递",
                 current = state.meta.steeringMode,
                 onPick = onSteeringMode,
             )
             QueueModeRow(
-                title = "排队消息（follow up）",
+                title = "排队消息（followUp）",
                 supporting = "整个回合结束后才投递",
                 current = state.meta.followUpMode,
                 onPick = onFollowUpMode,

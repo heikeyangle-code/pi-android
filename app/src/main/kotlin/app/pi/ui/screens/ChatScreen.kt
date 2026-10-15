@@ -2352,9 +2352,14 @@ private fun ChatBody(
             QueueRow(
                 steering = state.queueSteering,
                 followUp = state.queueFollowUp,
+                // The texts come from the same `queue_update` that wrote the counts
+                // (`PiSessionViewModel`'s `is PiEvent.QueueUpdate` arm), so the chips
+                // and the lines can never disagree about how many are waiting.
+                steeringTexts = state.queueSteeringTexts,
+                followUpTexts = state.queueFollowUpTexts,
                 // pi's `app.message.dequeue` (`alt+up`): the queue comes back to the
-                // editor and **the turn keeps running** (`interactive-mode.ts:4157-4164`
-                // → `:4387-4406` with no `abort`). Stop is the other half — it drains
+                // editor and **the turn keeps running** (`interactive-mode.js:3684-3693`
+                // → `:3891-3910` with no `abort`). Stop is the other half — it drains
                 // and aborts — and stays on the send button.
                 onRestore = {
                     session.restoreQueue { restored -> draft = mergeRestoredQueue(restored, draft) }
@@ -2628,11 +2633,11 @@ private fun ChatBody(
                         ?: session.notifyUnknownCommand(route.name)
                 }
             },
-            // pi's Escape (`interactive-mode.ts:2855-2857`):
+            // pi's Escape (`interactive-mode.js:2416-2418`):
             // `restoreQueuedMessagesToEditor({ abort: true })` clears the queue,
             // puts the queued text **and** the current editor text back into the
-            // editor, then aborts. Dropping the queued text here is what made Stop
-            // silently destroy what the user had typed.
+            // editor (`:3891-3910`), then aborts. Dropping the queued text here is
+            // what made Stop silently destroy what the user had typed.
             // 清空 and 排队 are no longer Composer parameters: the designer's overflow
             // ladder moved both out of the key row and into this screen's ⋮ menu, so
             // the composer does not gate or run them any more.
@@ -2645,16 +2650,22 @@ private fun ChatBody(
             },
             onFollowUp = {
                 // pi's alt+enter: queue this message for after the current turn
-                // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
-                // { streamingBehavior: "followUp" })`, which is `follow_up` on the
-                // wire). Only offered while streaming, because that is the only time
-                // pi's own binding queues rather than submits.
+                // (`interactive-mode.js:3653-3682`; the call is at `:3674` —
+                // `session.prompt(text, { streamingBehavior: "followUp" })`). Only
+                // offered while streaming, because that is the only time pi's own
+                // binding queues rather than submits (`:3679-3682`).
                 //
                 // The attachments go with it: pi's own call hands the editor's images
-                // to `_queueFollowUp` (`agent-session.ts:1225-1226`), and F21's
+                // to `_queueFollowUp` (`core/agent-session.js:1639-1642`), and F21's
                 // finding in `docs/gap-disposition.md` §10 found this call dropping
                 // them — the chip looked like it queued the message and the picture
                 // was silently gone.
+                //
+                // Nothing is echoed into the transcript here — a queued message is
+                // drawn in the pending row above the composer until pi actually
+                // delivers it, which is what official pi does
+                // (`interactive-mode.js:3873-3889`). The row appears when pi confirms
+                // it. See `PiEngineSession.prompt`.
                 session.sendFollowUp(draft, attachments)
                 draft = ""
                 attachments = emptyList()
@@ -3405,49 +3416,124 @@ private fun ModelChip(label: String?, onClick: () -> Unit) {
 }
 
 /**
+ * How many queued-message lines [QueueRow] draws before it stops.
+ *
+ * pi prints every queued message (`updatePendingMessagesDisplay`,
+ * `interactive-mode.js:3873-3889`); the cap is this screen's, and it is what keeps a
+ * long queue from walking the composer up the screen. Nothing is hidden by it: the
+ * two count chips above the lines are the complete reading.
+ */
+private const val PENDING_MESSAGE_LINES = 2
+
+/**
  * What is waiting behind the running turn, plus the one action pi offers on it.
  *
  * pi draws the same thing above its editor (`updatePendingMessagesDisplay`,
- * `interactive-mode.ts:4368-4385`): one line per queued message and a single hint —
- * "↳ <key> to edit all queued messages" — because `app.message.dequeue` restores
- * **all** of them (`:4387-4406`) and `clear_queue` has no per-message form
- * (`rpc-types.ts:26`). This row keeps the app's existing count chips and adds that
- * one action; it deliberately does not pretend each message can be taken back
+ * `interactive-mode.js:3873-3889`): one `dim` line per queued message —
+ * `Steering: ${message}` (`:3879`) and `Follow-up: ${message}` (`:3883`) — plus one
+ * hint, `↳ <key> to edit all queued messages` (`:3887`), because
+ * `app.message.dequeue` restores **all** of them (`restoreQueuedMessagesToEditor`,
+ * `:3891-3910`) and `clear_queue` has no per-message form
+ * (`rpc-types.d.ts:34-36`). This row keeps the app's existing count chips and adds
+ * that one action; it deliberately does not pretend each message can be taken back
  * alone, because nothing on the wire can do that.
  *
- * v2's `QueueRow` (`direction-b-v2.html:1381-1390`, phone11/phone12) is the shape
- * here: a `⇢` chip for the steering count and a `⇣` chip for the follow-up count —
- * the symbol is the queue's own third channel, coloured by meaning (`⇢` warning,
- * `⇣` muted) while the words and the number stay in the normal text colour — and
- * 「收回并编辑」 in the accent at the far right. The app used to print the two counts
- * as bare words in surface-coloured pills, which left the queue the only state on
- * the screen without a symbol.
+ * ## The message lines
+ *
+ * The text is pi's own. `queue_update` carries `{steering: string[],
+ * followUp: string[]}` (`core/agent-session.js:655`; emitted on a steer enqueue at
+ * `:1767`, on a follow-up at `:1783`, and by `clearQueue` at `:1920`) and RPC
+ * forwards the whole event verbatim (`modes/rpc/rpc-mode.js:265-270`). The app used
+ * to keep only `.size`, which left the queue the one state whose *content* the user
+ * could not read — and since a queued message is deliberately not drawn in the
+ * transcript until pi delivers it (`PiEngineSession.prompt`), the count was all
+ * there was. The reading of each line is pi's too: steering first and then
+ * follow-ups (the two loops at `interactive-mode.js:3878-3885`), each truncated to a
+ * single visual line (`TruncatedText(text, 1, 0)` at `:3880`/`:3884`).
+ *
+ * `PiTheme.palette.dim` is the same token pi paints these lines with —
+ * `theme.fg("dim", …)` at `:3879`/`:3883`/`:3887` — and it is resolved from the
+ * user's own theme file (`PiThemeFiles.kt:1020`, the `dim` key), so a theme switch
+ * moves both together. There is no background: pi draws these lines on the canvas.
+ * At most [PENDING_MESSAGE_LINES] are drawn, unlike pi's uncapped list.
+ *
+ * v2's `QueueRow` (`direction-b-v2.html:1381-1390`, phone11/phone12) is the shape of
+ * the count row: a `⇢` chip for the steering count and a `⇣` chip for the follow-up
+ * count — the symbol is the queue's own third channel, coloured by meaning (`⇢`
+ * warning, `⇣` muted) while the words and the number stay in the normal text colour
+ * — and 「收回并编辑」 in the accent at the far right. The app used to print the two
+ * counts as bare words in surface-coloured pills, which left the queue the only state
+ * on the screen without a symbol. The v2 board also draws a per-message card carrying
+ * its own 「编辑」 (`direction-b-v2.html:2702-2718`); that half is **not** built,
+ * because a per-message dequeue does not exist on the wire. The ruling is
+ * `design/ui-refactor/14-illustration-and-queue-diff.md:230` option (a), and the
+ * message text itself was adjudicated in row 6 of that table (`:181`).
  */
 @Composable
-private fun QueueRow(steering: Int, followUp: Int, onRestore: () -> Unit) {
-    Row(
+private fun QueueRow(
+    steering: Int,
+    followUp: Int,
+    steeringTexts: List<String>,
+    followUpTexts: List<String>,
+    onRestore: () -> Unit,
+) {
+    // pi's order, capped by [PENDING_MESSAGE_LINES]. Built here rather than in the
+    // caller so the two lists cannot be paired with the wrong counts.
+    //
+    // A blank text is skipped rather than drawn as an empty line. An attachment-only
+    // mid-turn message queues with an empty string — `_queueSteer` pushes the *text*
+    // (`core/agent-session.js:1765-1766`) and this app offers 插话 for an attachment
+    // with no caption (the composer's `canSteer`), a state official pi cannot reach
+    // at all because its submit rejects empty text
+    // (`interactive-mode.js:2542-2544`). Skipping keeps such a queue showing exactly
+    // what it showed before these lines existed: the count chip. The gap behind it —
+    // a queued attachment cannot be taken back, because `clear_queue` returns
+    // `string[]` only (`rpc-types.d.ts:194-199`) — is already recorded and needs a
+    // product ruling: `design/ui-refactor/14-illustration-and-queue-diff.md:187` row 12.
+    val pendingLines = buildList {
+        steeringTexts.filter { it.isNotBlank() }.forEach { add("插话：$it") }
+        followUpTexts.filter { it.isNotBlank() }.forEach { add("排队：$it") }
+    }.take(PENDING_MESSAGE_LINES)
+    Column(
         Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny),
     ) {
-        // The two words are pi's two waiting modes and are **not** synonyms:
-        // 插话 is `steeringMode`/steer (this turn is steered by the message, applied
-        // between its tool calls), 排队 is `followUpMode`/followUp (processed once the
-        // whole turn is over). The glyphs and tones are the queue's own third channel
-        // (`06 §4`: `⇢` warning, `⇣` muted).
-        if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "插话 $steering")
-        if (steering > 0 && followUp > 0) Spacer(Modifier.width(PiSpacing.inline))
-        if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "排队 $followUp")
-        Spacer(Modifier.weight(1f))
-        // The consequence, not the mechanism: the text goes back into the input box
-        // and the turn that is running is not touched.
-        Text(
-            "收回并编辑",
-            modifier = Modifier
-                .clickable(onClickLabel = "收回并编辑", onClick = onRestore)
-                .padding(horizontal = 6.dp, vertical = 3.dp),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            // The two words are pi's two waiting modes and are **not** synonyms:
+            // 插话 is `steeringMode`/steer (this turn is steered by the message: pi
+            // delivers it after the turn's tool calls finish and before the next model
+            // call, `core/agent-session.js:1741-1742`), 排队 is `followUpMode`/followUp
+            // (processed once the agent would otherwise stop, `:1753-1754`). The glyphs
+            // and tones are the queue's own third channel (`06 §4`: `⇢` warning,
+            // `⇣` muted).
+            if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "插话 $steering")
+            if (steering > 0 && followUp > 0) Spacer(Modifier.width(PiSpacing.inline))
+            if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "排队 $followUp")
+            Spacer(Modifier.weight(1f))
+            // The consequence, not the mechanism: the text goes back into the input box
+            // and the turn that is running is not touched.
+            Text(
+                "收回并编辑",
+                modifier = Modifier
+                    .clickable(onClickLabel = "收回并编辑", onClick = onRestore)
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        // One read-only line per queued message, in pi's `dim` and on the canvas —
+        // the same shape as official, and the only place the user can read what is
+        // actually waiting (`PiThemeFiles.kt:1020` resolves `dim` from their theme).
+        pendingLines.forEach { line ->
+            Text(
+                text = line,
+                modifier = Modifier.fillMaxWidth(),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.dim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -3696,12 +3782,20 @@ private fun Composer(
                 // read as synonyms:
                 //
                 //   插话 = `steeringMode` / steer — this turn is steered by the
-                //          message, applied between its tool calls
-                //          (`interactive-mode.ts:3137-3142`, pi's own Enter while
-                //          streaming)
-                //   排队 = `followUpMode` / followUp — processed after the whole turn
-                //          is over (`app.message.followUp`, `keybindings.md:165`,
-                //          pi's `alt+enter`)
+                //          message: pi delivers it after the turn's tool calls finish
+                //          and before the next model call
+                //          (`core/agent-session.js:1741-1742`). This is pi's own Enter
+                //          while streaming (`interactive-mode.js:2717-2723`, the call
+                //          at `:2720`).
+                //   排队 = `followUpMode` / followUp — delivered only once the agent
+                //          would otherwise stop (`core/agent-session.js:1753-1754`).
+                //          This is `app.message.followUp`, i.e. `alt+enter`
+                //          (`keybindings.md:166`), whose call is at
+                //          `interactive-mode.js:3674`.
+                //
+                // Both only *queue* the message while a turn runs, so neither draws a
+                // chat row at submit time: the pending row shows it and the transcript
+                // row appears when pi delivers it (`PiEngineSession.prompt`).
                 //
                 // Before this they were one chip (「后续」) and the steer half was
                 // reachable only through the send button — which, now that the engine

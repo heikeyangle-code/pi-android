@@ -6,6 +6,7 @@ import app.pi.rpc.PiEvent
 import app.pi.rpc.PiEvents
 import app.pi.rpc.PiImage
 import app.pi.rpc.PiResponses
+import app.pi.rpc.StreamingBehavior
 import app.pi.rpc.TranscriptChange
 import app.pi.rpc.TranscriptItem
 import app.pi.rpc.TranscriptReducer
@@ -1008,23 +1009,64 @@ class PiEngineSession(
     // ------------------------------------------------------- typed operations
 
     /**
-     * Send a prompt and mirror it into the local transcript before the wire call.
+     * Send a prompt, and mirror it into the local transcript before the wire call
+     * **unless pi is going to queue it instead of delivering it**.
      *
      * The echo is local because pi's own TUI adds the user's row when
      * `message_start` arrives with `role === "user"`
-     * (`modes/interactive/interactive-mode.ts:3223-3227`), and the reducer here
+     * (`modes/interactive/interactive-mode.js:2829-2832`), and the reducer here
      * appends nothing for a `user` message: it only clears the content-block maps
      * for `assistant` (the `PiEvent.MessageStart` arm of `TranscriptReducer.onEvent`).
      * Without the echo the bubble the
      * user just sent would not exist until the session was reopened and replayed
      * (docs/rendering-review.md F1).
+     *
+     * ## Why [queued] suppresses the echo
+     *
+     * A message handed to pi mid-turn is not delivered when it is submitted:
+     * `_queueSteer` / `_queueFollowUp` push it onto pi's own two queues
+     * (`core/agent-session.js:1765-1790`) and it becomes a real user message only
+     * where the agent loop drains those queues — steering after the turn's tool
+     * calls (`packages/agent/src/agent-loop.js:111`, `:186`), a follow-up only once
+     * the agent would otherwise stop (`:192-198`).
+     *
+     * Official pi draws a queued message **only** in its pending-messages area above
+     * the editor (`modes/interactive/interactive-mode.js:3873-3889`, as `Steering:` /
+     * `Follow-up:` lines) and adds the chat row at delivery time. Echoing here put a
+     * queue entry into the transcript as a delivered bubble, and nothing ever took it
+     * back out — a `clear_queue` (the 收回并编辑 path) left it behind, so re-sending
+     * the same text drew it twice. Skipping the echo costs nothing: pi's own
+     * `message_end` draws the row through the reducer's un-matched path
+     * (`TranscriptReducer.onUserMessageEnd`), which is exactly the moment official
+     * draws it.
+     *
+     * ## Why [streamingBehavior] is no longer nullable
+     *
+     * It is sent unconditionally, and that is safe in every state: pi reads it only
+     * inside its `if (this.isStreaming)` branch (`core/agent-session.js:1635`) and
+     * ignores it entirely on an idle agent, which then starts an ordinary turn
+     * (`:1663`). Conditioning it on this app's own streaming flag is what made a send
+     * in the `agent_end` → `agent_settled` gap go out with no behavior at all — the
+     * app had already cleared its flag while pi had not started settling yet
+     * (`agent-session.js:1053-1055` reads `_isAgentRunActive`, which only
+     * `_emitAgentSettled` clears) — and pi answers a behavior-less mid-turn `prompt`
+     * with `Agent is already processing. Specify streamingBehavior …` (`:1637`).
      */
     fun prompt(
         message: String,
         images: List<PiImage> = emptyList(),
-        streamingBehavior: app.pi.rpc.StreamingBehavior? = null,
+        streamingBehavior: StreamingBehavior = StreamingBehavior.Steer,
+        /**
+         * The caller's belief that pi will queue this rather than start a turn.
+         *
+         * Only this app's own optimistic echo depends on it, so a stale value is
+         * cheap in both directions: a stale `true` skips an echo that would have been
+         * confirmed a moment later anyway, and a stale `false` leaves at worst a
+         * queued message drawing its row when pi confirms delivery.
+         */
+        queued: Boolean = false,
     ) {
-        echoUserPrompt(message, images)
+        if (!queued) echoUserPrompt(message, images)
         send(PiCommands.prompt(nextId(), message, images, streamingBehavior))
     }
 
@@ -1041,13 +1083,18 @@ class PiEngineSession(
      * hand.
      *
      * It stayed a separate function after every mid-turn queue path moved onto
-     * `prompt` + `streamingBehavior` (pi's own shape: `interactive-mode.ts:3137-3143`):
+     * `prompt` + `streamingBehavior` (pi's own shape: `interactive-mode.js:2720`):
      * `PiSessionViewModel.send` / `sendFollowUp` used to send the bare `steer` /
      * `follow_up` commands, which carry no echo, and called this by hand. They no
      * longer do — a second echo on top of [prompt]'s would render the row twice and
      * leave a stale entry in the reducer's pending-echo queue
-     * (`rpc/.../Transcript.kt:883-897`) — so this is now [prompt]'s publisher and
+     * (`rpc/.../Transcript.kt:845` declares it, `:1036` records one, `:1065-1068`
+     * consumes it by matching text) — so this is now [prompt]'s publisher and
      * nothing else's.
+     *
+     * [prompt] is the only caller, and since the queue fix it calls this only for a
+     * submission that pi is about to *deliver* (`queued = false`). A message pi
+     * queues gets no row until pi confirms it.
      */
     fun echoUserPrompt(text: String, images: List<PiImage> = emptyList()) {
         synchronized(transcriptLock) {
@@ -1132,27 +1179,29 @@ class PiEngineSession(
 
     /**
      * Take every queued message back out of pi **without** touching the turn in
-     * flight: pi's `app.message.dequeue` (`alt+up`), wired at
-     * `modes/interactive/interactive-mode.ts:2899` and implemented by
-     * `restoreQueuedMessagesToEditor()` (`:4387-4406`) — which is
+     * flight: pi's `app.message.dequeue` (`alt+up`), wired to that keybinding at
+     * `modes/interactive/interactive-mode.js:2463` and implemented by
+     * `restoreQueuedMessagesToEditor()` (`:3891-3910`) — which is
      * `clearAllQueues()` + put the text back in the editor, and only aborts when the
-     * caller passes `{ abort: true }`.
+     * caller passes `{ abort: true }` (`:3896-3898`, `:3906-3908`).
      *
      * Everything queued comes back at once, matching pi: `clear_queue` takes no
      * argument and its handler returns the whole `session.clearQueue()`
-     * (`rpc-types.ts:26`, `rpc-mode.ts:433-435`, `core/agent-session.ts:1608-1615`),
-     * and pi's pending-messages display is a read-only list under a single
-     * "edit all queued messages" hint — there is no per-message dequeue to
+     * (`rpc-types.d.ts:34-36`, `rpc-mode.js:331-333`,
+     * `core/agent-session.js:1915-1922`), and pi's pending-messages display is a
+     * read-only list under a single "edit all queued messages" hint
+     * (`interactive-mode.js:3873-3889`) — there is no per-message dequeue to
      * reproduce.
      *
      * The queue text is read from the **`clear_queue` response**, not from
      * `get_state`. `clear_queue` answers with the arrays it just removed
-     * (`rpc-mode.ts:433-435` returns `session.clearQueue()`, i.e.
-     * `{steering, followUp}` — `agent-session.ts:1608-1615`), while `get_state`
-     * carries no queue arrays at all (`RpcSessionState` has only
-     * `pendingMessageCount`). Reading them off `get_state` therefore always
-     * produced two empty lists: pi emptied its queue and the text was never handed
-     * back, so pressing Stop silently destroyed whatever the user had queued.
+     * (`rpc-mode.js:331-333` returns `session.clearQueue()`, i.e.
+     * `{steering, followUp}` — `core/agent-session.js:1915-1922`), while `get_state`
+     * carries no queue arrays at all (`RpcSessionState`, `rpc-types.d.ts:148-161`,
+     * has only `pendingMessageCount` at `:160`). Reading them off `get_state`
+     * therefore always produced two empty lists: pi emptied its queue and the text
+     * was never handed back, so pressing Stop silently destroyed whatever the user
+     * had queued.
      */
     suspend fun drainQueue(): List<String> {
         val cleared = request(PiCommands.clearQueue(nextId()))
@@ -1167,9 +1216,10 @@ class PiEngineSession(
      * (docs/pi-android-ui-spec.md §7.2).
      *
      * The abort is unconditional and comes **after** the drain, exactly as
-     * `restoreQueuedMessagesToEditor({ abort: true })` orders it
-     * (`interactive-mode.ts:4391` then `:4404-4406`): a `clear_queue` that failed
-     * must not leave a turn running that the user asked to stop.
+     * `restoreQueuedMessagesToEditor({ abort: true })` orders it — the queue is
+     * cleared at `interactive-mode.js:3892` and the abort follows at `:3906-3908`,
+     * with pi's Escape handler as the caller (`:2416-2418`): a `clear_queue` that
+     * failed must not leave a turn running that the user asked to stop.
      */
     suspend fun stopAndDrainQueue(): List<String> {
         val restored = drainQueue()
