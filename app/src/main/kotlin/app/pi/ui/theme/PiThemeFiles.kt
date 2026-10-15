@@ -451,6 +451,39 @@ object PiThemeLoader {
                 "已换算成最接近的真彩色。"
         }
 
+        // pi 1.2.0 起，用户主题在**所有模式**下都会被严格校验，包括 App 启动引擎用的
+        // `--mode rpc`：校验器从 `interactive-mode.ts` 搬进了 `main()`（在主题加载之前安装），
+        // 而且它在三处显式 `additionalProperties: false`——整份文档、`colors`、`export`
+        // （`theme-schema.js:61` / `:35` / `:56`，1.1.0 的 `theme-json.js` 没有这三处，
+        // 所以那时多余的键一律放行）。多一个顶层字段、多一个自定义颜色名、或者 `export` 里
+        // 多一个键，pi 就把**整份文件**判为无效并静默回落到内置主题——于是这个界面画出来的
+        // 主题不是 pi 那一侧真正在用的主题。
+        //
+        // 这里只记一条 note，不把文件判为无效：那会变成一套比 pi 更严的策略，而 1.1.0 的
+        // rpc 模式**什么都不校验**，用户手上已有的文件完全可能带着多余的键。
+        val allowedTopLevel = setOf("\$schema", "name", "appearance", "vars", "colors", "export")
+        val unknownTopLevel = json.keys.filterNot { it in allowedTopLevel }
+        if (unknownTopLevel.isNotEmpty()) {
+            notes += "pi 1.2.0 不认这些顶层字段：${unknownTopLevel.joinToString("、")}；" +
+                "它会把整份主题判为无效并改用内置主题，所以这里的颜色在 pi 那一侧不会生效。" +
+                "要保留可复用的颜色，请放进 vars。"
+        }
+        val knownColorTokens = REQUIRED_TOKENS.toSet() + OPTIONAL_FALLBACKS.keys
+        val unknownColorTokens = colors.keys.filterNot { it in knownColorTokens }
+        if (unknownColorTokens.isNotEmpty()) {
+            notes += "pi 1.2.0 不认 colors 里这些颜色名：${unknownColorTokens.joinToString("、")}；" +
+                "同样会让整份主题被判为无效，这些颜色在 pi 那一侧不会生效。" +
+                "要保留可复用的颜色，请放进 vars。"
+        }
+        // `export` 的三个键从 `deriveExportSurfaces` 取，不另抄一份名单——抄一份就是又一处会漂的拷贝。
+        val unknownExportKeys = export?.keys?.filterNot {
+            it in deriveExportSurfaces(resolved.getValue("userMessageBg")).keys
+        } ?: emptyList()
+        if (unknownExportKeys.isNotEmpty()) {
+            notes += "pi 1.2.0 不认 export 里这些字段：${unknownExportKeys.joinToString("、")}；" +
+                "同样会让整份主题被判为无效。HTML 导出只认 pageBg / cardBg / infoBg。"
+        }
+
         return ParsedTheme(palette = base.withTokens(resolved), dark = !isLight, notes = notes)
     }
 

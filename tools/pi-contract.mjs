@@ -263,7 +263,27 @@ function checkProjectConfigDir(piDir) {
 			"read `PiProjectConfig.DIRECTORY`. Re-read the pinned package.json's `piConfig` and " +
 			"`src/config.ts`'s CONFIG_DIR_NAME, then update `PiProjectConfig.DIRECTORY`.",
 	);
-	console.log(`   (project config dir pinned: ${kotlinDir})`);
+	// The same directory name is transcribed a **second** time in the UI layer, where it
+	// decides whether a workspace save goes through validation, the trust lock and an
+	// atomic replace (`WorkspacePiWrite.piRelative`/`piDirOf`/`relativeUnderPi`). Nothing
+	// pinned that copy, so a rename on either side would silently degrade a write to
+	// `<workspace>/.pi/settings.json` into an unlocked whole-file overwrite — the same
+	// §M12 shape as the check above, one layer further out.
+	const workspacePiDir = appLiterals(
+		"app/src/main/kotlin/app/pi/ui/screens/WorkspacePiWrite.kt",
+		/const\s+val\s+PI_DIR\s*(?::\s*String)?\s*=\s*"([^"]+)"/g,
+	)[0];
+	check(
+		"WorkspacePiWrite.PI_DIR is that same directory, not a second transcription of it",
+		workspacePiDir === engineDir,
+		"ui/screens/WorkspacePiWrite.kt decides from its own `PI_DIR` constant whether a write under " +
+			"the workspace's project directory gets validation, the trust lock and an atomic replace. " +
+			"If it disagrees with the pinned engine's piConfig.configDir (" + engineDir + "), that save " +
+			"silently degrades to an unlocked whole-file overwrite; if the constant cannot be read at " +
+			"all, the file was renamed or moved. Re-read the pinned package.json's `piConfig.configDir` " +
+			"and make `WorkspacePiWrite.PI_DIR` equal it.",
+	);
+	console.log(`   (project config dir pinned: ${kotlinDir}, workspace .pi writer: ${workspacePiDir})`);
 }
 
 /**
@@ -347,8 +367,9 @@ function checkMentionArgv(dist) {
 
 /**
  * pi's five optional colour tokens and the token each one falls back to
- * (`withThemeColorFallbacks`, `theme.ts:261-276`; the same five are re-applied in
- * `Theme`'s constructor at `:303-316`).
+ * (`withThemeTokenFallbacks`, whose five targets live in `theme-tokens.ts`'s `fallback`
+ * descriptors since 1.2.0 rewrote `withThemeColorFallbacks`/`theme.ts:261-276`; the same
+ * five are re-applied in `Theme`'s constructor).
  *
  * These are the **five fallback targets the built-in themes do not exercise**:
  * `dark.json` and `light.json` both declare all five tokens explicitly, so a bug in
@@ -866,7 +887,7 @@ function checkThemeValues(piDir) {
 				(missing.length > 0 ? `Missing from PiPalette.kt: ${missing.join(", ")}. ` : "") +
 				(extra.length > 0 ? `Not in pi's theme any more: ${extra.join(", ")}. ` : "") +
 				`Token names are the contract between a user's theme file and this app ` +
-				`(PiThemeFiles.kt maps them by name); re-read the pinned theme-schema.json and update ` +
+				`(PiThemeFiles.kt maps them by name); re-read the pinned schemas/theme.schema.json and update ` +
 				`PiPalette.kt, PiThemeFiles.kt's REQUIRED_TOKENS/OPTIONAL_FALLBACKS and ` +
 				`ChromeColor.kt's match list together.`,
 		);
@@ -1278,7 +1299,8 @@ async function checkStartupOnlyReload(piDir) {
  * result into a block by matching pi's own strings — the `read` footer, the `grep` and
  * `find` empty answers, the `limit reached` notice, the shell exit line — and
  * `ToolBlockChrome.kt`/`ShellBlock.kt` render pi's `Elapsed`/`Took` figure from a
- * duration ladder copied out of `core/tools/renderers/bash.ts`.
+ * duration ladder copied out of `core/tools/render-utils.ts`'s `formatToolDuration`
+ * (it lived in `core/tools/renderers/bash.ts` until 1.2.0 moved it).
  *
  * ## Why this needs its own group
  *
@@ -1396,23 +1418,28 @@ function checkToolText(piDir) {
 	// (`已运行`/`耗时`), so "Elapsed" exists only on pi's side — asserting the App spells
 	// "Elapsed" would fail on correct code. What the two sides share is the unit ladder:
 	// `%.1fs` under a minute, `m` + `s` under an hour, `h` + `m` + `s` above it.
-	const bashRenderer = join(piDir, "dist", "core/tools/renderers", "bash.js");
+	const bashRenderer = join(piDir, "dist", "core", "tools", "render-utils.js");
 	const renderer = existsSync(bashRenderer) ? readFileSync(bashRenderer, "utf8") : "";
 	check(
-		"renderers/bash.js still carries pi's Elapsed/Took label and a duration ladder",
-		renderer.includes("Elapsed") && renderer.includes("Took") && renderer.includes("m "),
+		"render-utils.js still carries pi's Elapsed/Took label and a duration ladder",
+		renderer.includes("formatToolDuration") &&
+			renderer.includes("Elapsed") &&
+			renderer.includes("Took") &&
+			renderer.includes("m "),
 		`app.pi reproduces pi's elapsed figure and its unit ladder ` +
 			`(ToolOutputParse.formatDuration + elapsedText, used by ShellBlock.kt and ` +
-			`ToolBlockChrome.kt) from renderers/bash.ts's formatDuration. If this file moved or the ` +
-			`ladder changed, re-read the pinned renderers/bash.ts and the App's copy together — the two ` +
-			`surfaces silently disagree otherwise.`,
+			`ToolBlockChrome.kt) from pi's own \`formatToolDuration\`. 1.2.0 moved that function out of ` +
+			`core/tools/renderers/bash.ts and into core/tools/render-utils.ts (\`formatToolDuration\`, with ` +
+			`the \`Elapsed\`/\`Took\` labels in \`toolTimerText\`), so bash.ts no longer contains either word; the ` +
+			`ladder's arithmetic is byte-identical. Re-read ${bashRenderer} and the App's copy together — the ` +
+			`two surfaces silently disagree otherwise.`,
 	);
 	const appFormat = readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt"), "utf8");
 	check(
 		"the App still carries that copied unit ladder (formatDuration)",
 		["fun formatDuration(", '"%.1fs"', "m ${"].every((needle) => appFormat.includes(needle)),
 		`ToolOutputParse.formatDuration is the App's copy of pi's duration ladder ` +
-			`(renderers/bash.ts:32-42) and ToolBlockChrome.toolHeaderReading prints it. If the App ` +
+			`(render-utils.ts's formatToolDuration, which was renderers/bash.ts:32-42 before 1.2.0) and ToolBlockChrome.toolHeaderReading prints it. If the App ` +
 			`dropped or reshaped it, this group no longer describes the same fact — either restore it ` +
 			`or delete this row together with the copy.`,
 	);
@@ -1547,7 +1574,9 @@ function checkSessionSurface(piDir) {
  *    presets) against pi's `ToolName` union: a chip naming a tool pi no longer has
  *    writes a whitelist that silently enables nothing.
  *  - **theme tokens** (`ui/theme/PiThemeFiles.kt`): the required set and the five
- *    optional fallbacks, against `theme-schema.json` and `theme.js`'s fallback map.
+ *    optional fallbacks, against `schemas/theme.schema.json` and `theme-tokens.js`'s
+ *    fallback descriptors (1.2.0 moved both: the schema out of `dist/`, the fallback
+ *    map out of `theme.js`'s `withThemeColorFallbacks`).
  *    The `theme` group asserts the *values* of the built-in themes; this asserts the
  *    app's own schema transcription, which is what decides whether a user's theme file
  *    is accepted at all.
@@ -1577,33 +1606,46 @@ function kotlinBlock(text, name) {
 	return match ? match[1] : null;
 }
 
-/** `export interface Name { … }` blocks of a `.d.ts`, name → body. */
-function tsInterfaces(text) {
-	const out = new Map();
-	for (const match of text.matchAll(/export interface (\w+)(?:\s+extends\s+[^{]+)?\s*\{([\s\S]*?)\n\}/g)) {
-		out.set(match[1], match[2]);
-	}
-	return out;
-}
-
 /**
- * Whether a dotted settings path resolves from `Settings` by walking the declared
- * interfaces. pi's schema is TypeBox-generated, so the `.d.ts` mirrors it one
- * interface per nested object; an inline object type is a leaf and resolves here.
+ * The **settings schema** as a set of dotted paths, read off the TypeBox declaration.
+ *
+ * 1.2.0 moved this shape twice over, and both moves broke the previous reader:
+ *
+ *  - `Settings` is no longer in `core/settings-manager.d.ts` — that file now only
+ *    re-exports. The declaration lives in `core/settings-schema.d.ts`;
+ *  - and it is no longer a hand-written `interface` whose nested objects are one named
+ *    interface each. It is `declare const SettingsSchema: Type.TObject<{ … }>` with every
+ *    nested object **inline**, so there is nothing left to walk by name. The previous
+ *    `tsInterfaces`/`settingsPathResolves` pair found no `Settings` at all and answered
+ *    `false` for every key — 41 failures, and then a `TypeError` in the caller, because
+ *    the "not exposed" summary reached for the missing interface body directly.
+ *
+ * What survives is the *indentation*: TypeBox emits four spaces per nesting level and
+ * writes every key as `<4·depth spaces><name>: <type>`, so a depth stack is the path.
+ * `$schema` is a JSON-Schema pointer rather than a setting, but it is a key in the
+ * schema and is returned like the others — the caller decides, in writing, what to do
+ * with a key it does not expose.
+ *
+ * Returns `{ topLevel, paths }`, both empty when the declaration moved again — the
+ * caller's floor turns that into a failure instead of 40 silent passes.
  */
-function settingsPathResolves(interfaces, path) {
-	let body = interfaces.get("Settings");
-	if (!body) return false;
-	const segments = path.split(".");
-	for (let index = 0; index < segments.length; index++) {
-		const match = new RegExp(`^\\s*${segments[index]}\\??\\s*:\\s*([^;]+);`, "m").exec(body);
-		if (!match) return false;
-		if (index === segments.length - 1) return true;
-		const named = /^(\w+)$/.exec(match[1].trim())?.[1];
-		if (!named || !interfaces.has(named)) return false;
-		body = interfaces.get(named);
+function settingsSchemaPaths(text) {
+	const body = /declare const SettingsSchema: Type\.TObject<\{([\s\S]*?)\n\}>;/.exec(text)?.[1];
+	if (body === undefined) return { topLevel: [], paths: new Set() };
+	const stack = [];
+	const topLevel = [];
+	const paths = new Set();
+	for (const line of body.split("\n")) {
+		const match = /^(\s+)(\$?\w+)\s*:/.exec(line);
+		if (!match) continue;
+		const depth = Math.floor(match[1].length / 4);
+		if (depth < 1) continue;
+		stack[depth - 1] = match[2];
+		stack.length = depth;
+		paths.add(stack.join("."));
+		if (depth === 1) topLevel.push(match[2]);
 	}
-	return true;
+	return { topLevel, paths };
 }
 
 function checkAppTables(piDir) {
@@ -1611,33 +1653,40 @@ function checkAppTables(piDir) {
 	const engine = (file) => readFileSync(join(piDir, "dist", file), "utf8");
 
 	// ---------------------------------------------------------------- settings keys
-	const settingsDeclared = engine("core/settings-manager.d.ts");
-	const interfaces = tsInterfaces(settingsDeclared);
+	// Read through `existsSync` rather than `engine()`: 1.2.0 is the release that put the
+	// declaration here, so a future move has to fail as "the file is not there, re-point
+	// this reader". The shape the *old* reader produced when the declaration moved out of
+	// `settings-manager.d.ts` was a `TypeError` from the summary below, which named nothing.
+	const settingsSchemaPath = join(piDir, "dist", "core", "settings-schema.d.ts");
+	const settingsDeclared = existsSync(settingsSchemaPath) ? readFileSync(settingsSchemaPath, "utf8") : "";
+	const schema = settingsSchemaPaths(settingsDeclared);
+	const schemaFound = schema.topLevel.length >= 50;
 	const registryText = read("app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt");
 	const appKeys = [...registryText.matchAll(/key = "([^"]+)"/g)]
 		.map((m) => m[1])
 		.filter((key) => !key.startsWith("app."));
 	check(
 		"the settings registry still exposes the keys this group reads (>= 35 pi-owned keys)",
-		appKeys.length >= 35 && interfaces.has("Settings"),
+		appKeys.length >= 35 && schemaFound,
 		`ui/settings/PiSettingsRegistry.kt declares its rows as \`key = "…"\` and this reader takes ` +
 			`every key that is not \`app.\`-prefixed. It found ${appKeys.length} and ` +
-			`${interfaces.has("Settings") ? "the" : "NO"} \`Settings\` interface in the pinned ` +
-			`settings-manager.d.ts. If a row was renamed or reformatted, re-point this reader (the floor ` +
-			`is what keeps a stopped reader from passing vacuously).`,
+			`${schemaFound ? "the" : "NO"} \`SettingsSchema\` declaration in ${settingsSchemaPath} ` +
+			`(${schema.topLevel.length} top-level keys${existsSync(settingsSchemaPath) ? "" : "; the FILE IS NOT THERE"}). ` +
+			`If a row was renamed or reformatted, re-point this reader (the floor is what keeps a stopped ` +
+			`reader from passing vacuously).`,
 	);
 	for (const key of appKeys) {
 		check(
 			`the pinned engine's Settings schema still has ${key}`,
-			settingsPathResolves(interfaces, key),
+			schema.paths.has(key),
 			`ui/settings/PiSettingsRegistry.kt writes ${key} into settings.json. If pi deleted or renamed ` +
 				`it, the row still renders and still saves and pi ignores it — the "switch with no effect" ` +
-				`shape of docs/settings-review.md. Re-read the pinned core/settings-manager.ts's Settings ` +
+				`shape of docs/settings-review.md. Re-read the pinned core/settings-schema.ts's settings ` +
 				`schema and either follow the rename or delete the row.`,
 		);
 	}
 	// Informational: the other direction is a decision (TUI-only keys), not a defect.
-	const piTopLevel = new Set([...interfaces.get("Settings").matchAll(/^ {4}(\w+)\??:/gm)].map((m) => m[1]));
+	const piTopLevel = new Set(schema.topLevel);
 	const appTopLevel = new Set(appKeys.map((key) => key.split(".")[0]));
 	const notExposed = [...piTopLevel].filter((key) => !appTopLevel.has(key)).sort();
 	console.log(
@@ -1680,6 +1729,20 @@ function checkAppTables(piDir) {
 		lastChangelogVersion: "pi 自己记录的已读 changelog 版本",
 		trackingId: "随 enableAnalytics 生成的匿名标识",
 		enableAnalytics: "匿名分析开关：本应用不发遥测，所以没有这个入口",
+		// 1.2.0 published generated JSON Schemas and put a `$schema` pointer in the
+		// settings schema so an editor can validate the file. It is not a value pi
+		// reads, and the app's writer preserves it by re-reading the whole document
+		// before changing one key, so there is nothing to expose or to preserve by hand.
+		$schema: "$schema 指针（1.2.0 新键）：编辑器用它对 settings.json 做校验/补全；pi 不读它本身，App 的写入路径锁内重读整份文档再改目标键，所以它既不用暴露也不会丢",
+		// 1.2.0's schema also accepts these two, but both are **legacy aliases**:
+		// `SettingsManager.migrateSettings` has turned them into `steeringMode` and
+		// `transport` since 1.1.0 (settings-manager.js:282-290, byte-identical in both
+		// versions) and deletes them on load. They are in the schema so an old
+		// settings.json still validates. A row for either would be a second control
+		// writing a second key for one behaviour — the app already has rows for
+		// `steeringMode` and `transport`.
+		queueMode: "遗留别名（1.2.0 进 schema）：pi 加载时迁移成 steeringMode 并删除；App 用 steeringMode 行",
+		websockets: "遗留别名（1.2.0 进 schema）：pi 加载时迁移成 transport（websocket/sse）并删除；App 用 transport 行",
 		// Resource lists: the app has a screen for each of them, and editing the raw
 		// arrays would fight those screens and `PiPackageFilters`' own `+`/`-`/`!` syntax.
 		extensions: "资源列表：由「资源包」屏与 PiPackageFilters 的过滤语法管理",
@@ -1797,15 +1860,23 @@ function checkAppTables(piDir) {
 	const themeFiles = read("app/src/main/kotlin/app/pi/ui/theme/PiThemeFiles.kt");
 	const required = kotlinListOf(themeFiles, "REQUIRED_TOKENS");
 	const fallbackKeys = kotlinMapOf(themeFiles, "OPTIONAL_FALLBACKS");
-	const piSchema = JSON.parse(engine("modes/interactive/theme/theme-schema.json"));
-	const piTokens = new Set(Object.keys(piSchema.properties.colors.properties));
+	// 1.2.0 generates and publishes the configuration schemas at the **package root**
+	// (`package.json`'s `files` gained `schemas/`) and deleted
+	// `dist/modes/interactive/theme/theme-schema.json`, which is where this used to look.
+	// The colour-token map keeps the same shape (`properties.colors.properties`), so only
+	// the location moved — but a missing file has to fail as "the location moved" rather
+	// than as zero tokens, which is what the floor below is for.
+	const piSchemaPath = join(piDir, "schemas", "theme.schema.json");
+	const piSchema = existsSync(piSchemaPath) ? JSON.parse(readFileSync(piSchemaPath, "utf8")) : null;
+	const piTokens = new Set(piSchema ? Object.keys(piSchema.properties.colors.properties) : []);
 	const appTokens = new Set([...(required ?? []), ...(fallbackKeys ?? [])]);
 	check(
 		"the theme token sets are still readable (51 required + 5 optional, 56 in the schema)",
 		required?.length === 51 && fallbackKeys?.length === 5 && piTokens.size === 56,
 		`ui/theme/PiThemeFiles.kt transcribes pi's theme schema: REQUIRED_TOKENS ` +
 			`(${required?.length ?? "unreadable"}), OPTIONAL_FALLBACKS (${fallbackKeys?.length ?? "unreadable"}), ` +
-			`against theme-schema.json's ${piTokens.size} colour tokens. This is the set that decides ` +
+			`against ${piSchemaPath}'s ${piTokens.size} colour tokens` +
+			`${piSchema === null ? " — the file is NOT THERE" : ""}. This is the set that decides ` +
 			`whether a user's own theme file is accepted with a warning or silently half-applied — ` +
 			`re-point this reader if either declaration moved.`,
 	);
@@ -1813,21 +1884,35 @@ function checkAppTables(piDir) {
 	const extraTokens = [...appTokens].filter((token) => !piTokens.has(token));
 	check(
 		"PiThemeFiles names exactly pi's theme tokens",
-		missingTokens.length === 0 && extraTokens.length === 0,
-		`theme-schema.json: ${piTokens.size} tokens; PiThemeFiles: ${appTokens.size}. ` +
+		missingTokens.length === 0 && extraTokens.length === 0 && piTokens.size > 0,
+		`${piSchemaPath}: ${piTokens.size} tokens; PiThemeFiles: ${appTokens.size}. ` +
 			(missingTokens.length ? `Not read by the app: ${missingTokens.join(", ")}. ` : "") +
 			(extraTokens.length ? `Not in pi any more: ${extraTokens.join(", ")}. ` : "") +
 			`A missing token means a user's theme file is reported as incomplete for a token pi accepts; ` +
-			`re-read the pinned theme-schema.json and update REQUIRED_TOKENS/OPTIONAL_FALLBACKS.`,
+			`re-read the pinned schemas/theme.schema.json and update REQUIRED_TOKENS/OPTIONAL_FALLBACKS.`,
 	);
 
-	// The five fallbacks: `theme.ts`'s `withThemeColorFallbacks` points at the sibling
-	// token a theme may omit. The app re-derives each colour from the same target, so a
-	// re-pointed fallback upstream silently changes what the app paints.
-	const fallbackBody = /function withThemeColorFallbacks\(colors\)\s*\{([\s\S]*?)\n\}/.exec(engine("modes/interactive/theme/theme.js"))?.[1] ?? "";
-	const piFallbacks = new Map(
-		[...fallbackBody.matchAll(/(\w+):\s*colors\.\w+\s*\?\?\s*colors\.(\w+)/g)].map((m) => [m[1], m[2]]),
-	);
+	// The five fallbacks: `theme.ts`'s `withThemeTokenFallbacks` fills the sibling token a
+	// theme may omit. The app re-derives each colour from the same target, so a re-pointed
+	// fallback upstream silently changes what the app paints.
+	//
+	// 1.2.0 renamed the function (`withThemeColorFallbacks(colors)` → `withThemeTokenFallbacks(values)`)
+	// and rewrote the hard-coded five `colors.x ?? colors.y` pairs into a loop over the
+	// `fallback` field of each descriptor in `theme-tokens.js`. The five targets did not
+	// move, so the fact is the same; the file that states it is now the descriptor table.
+	const tokensJsPath = join(piDir, "dist", "modes", "interactive", "theme", "theme-tokens.js");
+	const tokensJs = existsSync(tokensJsPath) ? readFileSync(tokensJsPath, "utf8") : "";
+	const piFallbacks = new Map();
+	let fallbackToken = null;
+	for (const line of tokensJs.split("\n")) {
+		const token = /^ {4}(\w+): \{$/.exec(line);
+		if (token) {
+			fallbackToken = token[1];
+			continue;
+		}
+		const fallback = /^ {8}fallback: "(\w+)",$/.exec(line);
+		if (fallback && fallbackToken !== null) piFallbacks.set(fallbackToken, fallback[1]);
+	}
 	const appFallbackMap = new Map(
 		[...(kotlinBlock(themeFiles, "OPTIONAL_FALLBACKS") ?? "").matchAll(/"(\w+)"\s+to\s+"(\w+)"/g)].map((m) => [m[1], m[2]]),
 	);
@@ -1836,11 +1921,11 @@ function checkAppTables(piDir) {
 		piFallbacks.size === 5 &&
 			appFallbackMap.size === 5 &&
 			[...piFallbacks].every(([token, target]) => appFallbackMap.get(token) === target),
-		`pi's withThemeColorFallbacks (pinned theme.ts) maps ` +
+		`pi's theme-tokens.js \`fallback\` descriptors (pinned ${tokensJsPath}) map ` +
 			`${JSON.stringify(Object.fromEntries(piFallbacks))}; the app maps ` +
 			`${JSON.stringify(Object.fromEntries(appFallbackMap))}. A theme that omits one of these five ` +
-			`tokens gets pi's fallback colour and the app's different one — re-read the pinned theme.ts ` +
-			`and update PiThemeFiles.OPTIONAL_FALLBACKS.`,
+			`tokens gets pi's fallback colour and the app's different one — re-read the pinned ` +
+			`theme-tokens.ts and update PiThemeFiles.OPTIONAL_FALLBACKS.`,
 	);
 }
 

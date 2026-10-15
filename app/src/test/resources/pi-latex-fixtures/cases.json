@@ -1,5 +1,5 @@
 {
-	"piTui": "1.1.0",
+	"piTui": "1.2.0",
 	"generatedBy": "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
 	"cases": [
 		{
@@ -3347,13 +3347,13 @@
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt\" \\",
-			"provenance": "docs/settings-audit-impl.md:605",
+			"provenance": "docs/settings-audit-impl.md:606",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt\"",
-			"provenance": "docs/settings-audit-impl.md:606",
+			"provenance": "docs/settings-audit-impl.md:607",
 			"piVisible": "  \"$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt\"",
 			"piRenders": false
 		},

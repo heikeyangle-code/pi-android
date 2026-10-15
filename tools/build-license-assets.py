@@ -293,17 +293,23 @@ PROROOT_FILES = [
 # (0.85.1 → 0.86.1) had moved those three `@aws-sdk/*` versions and swapped
 # `@nodable/entities` + `xml-naming` out for `proxy-agent-negotiate`.
 #
-# The seven `@earendil-works/*` versions come from `PI_VERSION`, not from this file:
+# The six `@earendil-works/*` versions come from `PI_VERSION`, not from this file:
 # they are the packages `tools/fetch-runtime.mjs` installs at that exact version, so
 # repeating the number here is what left this list describing 0.86.1 after the pin
 # had moved. Keeping them derived is only half the guard —
 # `verify_engine_payload_versions()` also reads the shipped payload, so a *stale
 # archive* cannot be described with a current label.
+#
+# 1.1.0 → 1.2.0: `@earendil-works/chord` left the list **and the payload**. Upstream
+# removed the dependency (`pi-coding-agent`'s `package.json`), and `chord` was its only
+# requirer in the 1.1.0 lock, so `chord` plus the whole `esbuild@0.28.2` fan-out it
+# carried (27 `@esbuild/*` platform packages + `esbuild`) left the closure with it:
+# 146 → 118 installed entries. The three hand-copied `@aws-sdk/*` versions moved with
+# the new lock (3.972.74/3.972.79/3.997.46 → 3.972.76/3.972.81/3.997.48).
 PI_ENGINE_NO_LICENCE_TEXT = [
     *((name, engine_version(), "MIT")
       for name in (
           "@earendil-works/pi-coding-agent",
-          "@earendil-works/chord",
           "@earendil-works/pi-agent-core",
           "@earendil-works/pi-ai",
           "@earendil-works/pi-codemode",
@@ -313,9 +319,9 @@ PI_ENGINE_NO_LICENCE_TEXT = [
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
-    ("@aws-sdk/credential-provider-http", "3.972.74", "Apache-2.0"),
-    ("@aws-sdk/credential-provider-login", "3.972.79", "Apache-2.0"),
-    ("@aws-sdk/nested-clients", "3.997.46", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-http", "3.972.76", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.81", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.997.48", "Apache-2.0"),
 ]
 
 # Where the notice for each of those packages can actually be found, and what was
@@ -328,10 +334,10 @@ PI_ENGINE_NO_LICENCE_TEXT = [
 # (package, version, licence, notice sentence, source url, sha256 or "" when none)
 PI_ENGINE_NOTICES = [
     (
-        "7 × @earendil-works/* 包",
+        "6 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3 八个标签的 LICENSE 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3 八个标签的 LICENSE 逐字节相同，sha256 未变）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),

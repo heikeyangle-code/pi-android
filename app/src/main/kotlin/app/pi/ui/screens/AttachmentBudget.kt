@@ -20,12 +20,13 @@ import app.pi.rpc.PiResponses
  *
  * pi normalizes every inline image through `resizeImage()`
  * (`packages/coding-agent/src/utils/image-resize.ts:84-109`)，`_normalizePromptImages` 在
- * `core/agent-session.ts:1937-1959` 每一轮 prompt 调它一次（档案取自 `:1947`）。`resizeImage()`
+ * `core/agent-session.ts:2022-2044` 每一轮 prompt 调它一次（档案取自 `:2032`）。`resizeImage()`
  * 把活交给 worker 线程里的 `resizeImageInProcess`，worker 加载不起来时**回落**到同进程
  * （`:104-108`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
- * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.1.0**
- * （`tools/pi-engine.lock.json`；1.0.3→1.1.0 该文件只多了 worker 回包的类型标签，行号整体 +10）里的位置，
- * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:156-160` 逐条对过 1.1.0 的源码：
+ * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.2.0**
+ * （`tools/pi-engine.lock.json`；1.1.0→1.2.0 这份 `image-resize-core.ts` 逐字节未变，所以下面这些
+ * 行号仍然成立；上面 `agent-session.ts` 的两个引用随该文件 +25 行整体位移 +85）里的位置，
+ * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:156-160` 逐条对过 1.2.0 的源码：
  *
  *  0. **EXIF 方向先摆正**（`:84-86` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
  *     取自摆正**之后**的图（`:88-89`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。
