@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalTextApi::class)
+
 package app.pi.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,10 +17,13 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.R
@@ -207,6 +212,64 @@ val PiMonoFamily: FontFamily = FontFamily(
 )
 
 /**
+ * The text metrics every role in this app is built on: **no font padding, leading
+ * centred in the line box, first-line-top / last-line-bottom trimmed**.
+ *
+ * ## Why this is not the default, and why it is written down here
+ *
+ * Compose's line box is not the glyph box. `PlatformTextStyle.includeFontPadding`
+ * (true by default on Android for a long time) adds the font's own ascent/descent
+ * padding *on top of* the line height, and `LineHeightStyle` decides how the
+ * leftover leading is distributed and whether the first/last line keeps it. Left
+ * at the platform default, three things happen to this app's text:
+ *
+ *  * **A single Chinese line sits low in its box.** The extra space is split by
+ *    the font's ascent:descent ratio, and a CJK face's ascent is much the larger
+ *    half, so most of the slack lands *above* the glyphs. In a message bubble with
+ *    symmetric 12 dp padding the text therefore reads as off-centre — the same
+ *    family of symptom this repo already paid for once (`d0c70df`, where the last
+ *    1.1 dp of the "bubble text sits low" report was exactly this ratio).
+ *  * **The gaps this app sets are not the gaps the user sees.** With untrimmed
+ *    first/last lines, a paragraph carries half its leading above and half below,
+ *    so a `block` of 12 dp paints 12 + slack, and two adjacent blocks look
+ *    further apart than the number says. `Trim.Both` makes the paragraph gap mean
+ *    what it says.
+ *  * **It can change under the app's feet.** `LineHeightStyle.Default`'s own value
+ *    has moved between Compose releases (androidx-main is
+ *    `Alignment.Proportional` + `Trim.Both`; the 1.11.x notes record the default
+ *    constructor being reworked), so "what the platform picks" is not a stable
+ *    contract for a layout that is tuned to the dp.
+ *
+ * `Center` (not `Proportional`) is right for CJK: a Chinese glyph fills ~0.87 em
+ * of its box with no ascender/descender variation, so the leading is meant to be
+ * split evenly above and below the glyph rather than by Latin font metrics.
+ * `Trim.Both` then removes the halves that hang outside the first and last line.
+ *
+ * `@file:OptIn(ExperimentalTextApi::class)` at the top of this file covers the
+ * API-level question: if a Compose bump makes one of these types experimental
+ * again, the annotation is already there (an unnecessary opt-in is a warning, not
+ * an error); if it renames one, the build fails loudly here rather than silently
+ * reverting the app to the platform default.
+ */
+internal val piLineHeightStyle: LineHeightStyle = LineHeightStyle(
+    alignment = LineHeightStyle.Alignment.Center,
+    trim = LineHeightStyle.Trim.Both,
+)
+
+/**
+ * [TextStyle] with [piLineHeightStyle] and `includeFontPadding = false` applied.
+ *
+ * Every role in this app goes through this: [PiTextStyles]'s five slots,
+ * `piTypography`'s M3 slots, and the markdown profile's own styles. `copy` (which
+ * `shifted` / `leadingScaled` / `PiMarkdownTheme`'s `base.copy(...)` all use)
+ * preserves both fields, so a scaled or recoloured role keeps them.
+ */
+internal fun TextStyle.piPrecise(): TextStyle = copy(
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+    lineHeightStyle = piLineHeightStyle,
+)
+
+/**
  * Text styles that Material 3's [Typography] has no slot for: the transcript's
  * prose role, pi's footer/meta line and the machine roles. Everything a *human*
  * wrote uses the system font; everything a *machine* emitted uses monospace —
@@ -260,34 +323,41 @@ data class PiTextStyles(
     )
 
     companion object {
+        /**
+         * 经典档的字面值，也是全 App 五个角色的基线。
+         *
+         * 每一行都以 [piPrecise] 收尾 —— 这是**唯一**一处把「没有字体自带内边距 + 行距居中
+         * + 首末行裁掉」写进角色定义的地方，别的角色（`PiTypographyProfile` 造的非经典档、
+         * 六个标题槽、表格与行内代码）都由这里的 `TextStyle` 派生（`copy` 会带上这两个字段）。
+         */
         val Default = PiTextStyles(
             meta = TextStyle(
                 fontFamily = FontFamily.Default,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.Normal,
-            ),
+            ).piPrecise(),
             mono = TextStyle(
                 fontFamily = PiMonoFamily,
                 fontSize = 13.sp,
                 lineHeight = 20.sp,
-            ),
+            ).piPrecise(),
             monoSmall = TextStyle(
                 fontFamily = PiMonoFamily,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
-            ),
+            ).piPrecise(),
             prose = TextStyle(
                 fontFamily = FontFamily.Default,
                 fontSize = 14.sp,
                 lineHeight = 23.sp,
                 fontWeight = FontWeight.Normal,
-            ),
+            ).piPrecise(),
             code = TextStyle(
                 fontFamily = PiMonoFamily,
                 fontSize = 13.sp,
                 lineHeight = 19.sp,
-            ),
+            ).piPrecise(),
         )
     }
 }
@@ -448,10 +518,13 @@ private fun Color.luminanceIsDark(): Boolean {
  * `app.appearance.fontScaleDelta` never moved a heading either.
  */
 private fun piTypography(textScaleDelta: Int = 0): Typography {
+    // `.piPrecise()`（无字体自带内边距、行距居中、首末行裁剪）也走 M3 槽：设置页的标题与
+    // 副行、对话框、空态标题都是这些槽画的，只给 [PiTextStyles] 加会让同一个屏幕上
+    // 两种文字度量并存 —— 那正是「精致」的反面。
     fun TextStyle.shift(): TextStyle = copy(
         fontSize = (fontSize.value + textScaleDelta).coerceAtLeast(1f).sp,
         lineHeight = (lineHeight.value + textScaleDelta).coerceAtLeast(1f).sp,
-    )
+    ).piPrecise()
     val base = Typography()
     return base.copy(
         displaySmall = base.displaySmall.copy(

@@ -250,7 +250,7 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  * @param palette pi's resolved token set.
  * @param profile the resolved 排版 preset: every size and leading here is the
  *   preset's, and the **body role is its [PiTypographyProfile.styles]`prose`**
- *   (14/23 in 经典, 16/28 in the default 舒适). The table's **type** is the preset's
+ *   (14/23 in 经典, 16/25 in the default 舒适). The table's **type** is the preset's
  *   too — [PiTypographyProfile.tableSizeSp] / `tableLineHeightSp`, 12.5/18 in 经典
  *   (which is exactly the pair this file used to hard-code) and 14/22 in 舒适 — but
  *   the table's *geometry* is not: cell width (160 dp), horizontal scroll, corner

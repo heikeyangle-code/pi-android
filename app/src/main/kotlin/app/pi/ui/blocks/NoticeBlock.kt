@@ -75,7 +75,10 @@ fun NoticeBlock(
             if (showTimestamps) {
                 Text(
                     text = formatClock(item.ts),
-                    style = PiTheme.text.meta,
+                    // 时钟是机器读数，按规则 #7 用等宽 —— 与用户气泡右下角那一次
+                    //（`UserMessageBlock` 的 `monoSmall`）同一个字面。此前这里是 `meta`
+                    //（系统字），于是**同一份 `formatClock` 输出在两个位置是两种字体**。
+                    style = PiTheme.text.monoSmall,
                     color = palette.metaOnCanvas,
                 )
             }
