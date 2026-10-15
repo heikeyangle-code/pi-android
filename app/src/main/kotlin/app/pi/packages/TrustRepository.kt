@@ -382,6 +382,28 @@ class TrustRepository(
                     runCatching { lockDir.delete() }
                 }
             }
+            // The bound is checked **before** the stale branch, and every path that
+            // neither returns nor throws reaches the single sleep at the bottom of the
+            // loop. Both halves are load-bearing: the stale branch used to `continue`
+            // without sleeping and *before* the bound test, so a stale lock whose
+            // `delete()` fails — a non-empty lock directory, or a parent the caller
+            // cannot write — looped mkdir → stat → delete → continue at 100% CPU and
+            // never reached `MAX_LOCK_ATTEMPTS` at all.
+            //
+            // Stating the timing consequence rather than hiding it: a stale lock is still
+            // removed first, but the retry now costs one extra `LOCK_RETRY_DELAY_MS`
+            // (20 ms). Staleness is `LOCK_STALE_MS` (10 s), far longer than the whole
+            // `MAX_LOCK_ATTEMPTS` window (10 × 20 ms), so a lock that is live on the first
+            // attempt cannot become stale inside this loop: the reordering cannot skip a
+            // recovery the old code would have performed.
+            //
+            // A *live* lock is never stolen. pi's own behaviour at maxAttempts is to
+            // throw (`trust-manager.ts:152-156`), and stealing here would be strictly
+            // worse than failing: the app would race pi's rewrite of the whole store
+            // and could lose a trust decision.
+            if (attempt >= MAX_LOCK_ATTEMPTS) {
+                throw IllegalStateException("无法获取 trust.json 的锁（${lockDir.absolutePath}）")
+            }
             // Stale: a process that died holding it. proper-lockfile checks the
             // lock directory's mtime against a 10 s default and removes it itself;
             // matching that is what keeps pi and the app from deadlocking on each
@@ -389,14 +411,6 @@ class TrustRepository(
             val age = System.currentTimeMillis() - lockDir.lastModified()
             if (lockDir.isDirectory && age > LOCK_STALE_MS) {
                 runCatching { lockDir.delete() }
-                continue
-            }
-            // A *live* lock is never stolen. pi's own behaviour at maxAttempts is to
-            // throw (`trust-manager.ts:152-156`), and stealing here would be strictly
-            // worse than failing: the app would race pi's rewrite of the whole store
-            // and could lose a trust decision.
-            if (attempt >= MAX_LOCK_ATTEMPTS) {
-                throw IllegalStateException("无法获取 trust.json 的锁（${lockDir.absolutePath}）")
             }
             Thread.sleep(LOCK_RETRY_DELAY_MS)
         }

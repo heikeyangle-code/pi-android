@@ -69,6 +69,9 @@ import app.pi.ui.theme.PiSpacing
  */
 private const val DIFF_LINE_WASH_ALPHA = 0.08f
 
+/** pi's tab expansion for diff content: `text.replace(/\t/g, "   ")` (`components/diff.ts:19-21`). */
+private const val TAB_EXPANSION = "   "
+
 @Composable
 fun DiffBlock(
     item: ToolDiff,
@@ -703,7 +706,37 @@ private object DiffPlanCache {
 
     /** [diffPlan] of `(key, diffText)`, from the memo when it has it. */
     fun plan(rowKey: String, diffText: String, hunks: List<DiffHunk>, maxRows: Int): List<DiffRow> =
-        lru.getOrCompute(PlanKey(rowKey, diffText, maxRows)) { diffPlan(hunks, maxRows) }
+        lru.getOrCompute(PlanKey(rowKey, diffText, maxRows)) { diffPlan(hunks.map { hunk -> expandTabs(hunk) }, maxRows) }
+
+    /**
+     * pi's `replaceTabs` (`components/diff.ts:19-21`) — **three** spaces, and it is applied
+     * before the intra-line diff rather than at draw time.
+     *
+     * Both halves matter. pi expands the tab on the *content* it hands `Diff.diffWords`
+     * (`:127-152` calls `replaceTabs(removed.content)`), so a left-tab against a right-spaces
+     * indentation is not reported as a change; expanding only in the renderer would leave the
+     * word diff looking at the raw pair. And pi expands only the lines it *parsed* — a
+     * `@@`-header, a `diff --git` line or any line `parseDiffLine` rejects is pushed through
+     * raw (`:98-103`) — so [DiffLineKind.Header] is deliberately left alone here, which is
+     * also why this is not done at the `diffBody` call site.
+     *
+     * Expansion happens on a **cache miss only** (inside `getOrCompute`), so a hit costs
+     * nothing; a diff with no tab returns the same instance, so its plan is byte-identical to
+     * the one built before this existed.
+     */
+    private fun expandTabs(line: DiffLine): DiffLine =
+        if (line.kind == DiffLineKind.Header || line.text.indexOf('\t') < 0) {
+            line
+        } else {
+            line.copy(text = line.text.replace("\t", TAB_EXPANSION))
+        }
+
+    private fun expandTabs(hunk: DiffHunk): DiffHunk =
+        if (hunk.lines.none { it.text.indexOf('\t') >= 0 && it.kind != DiffLineKind.Header }) {
+            hunk
+        } else {
+            hunk.copy(lines = hunk.lines.map { line -> expandTabs(line) })
+        }
 
     /**
      * What one plan costs, in bytes: every row's own text at two bytes a character, plus a

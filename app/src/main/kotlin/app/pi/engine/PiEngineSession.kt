@@ -667,7 +667,11 @@ class PiEngineSession(
             // `ProcessBuilder.start()` returned, and under proot on a phone it is tens
             // of seconds (docs/known-gaps.md §M1).
             if (_state.value == EngineState.Starting) _state.value = EngineState.Ready
-            pending.remove(event.id)?.complete(event)
+            // `id` is optional on pi's wire: the stdin parse-failure path emits
+            // `error(undefined, "parse", …)` (`modes/rpc/rpc-mode.ts:750-764`) and
+            // `JSON.stringify` drops the undefined key, so there is no request to
+            // complete — and `remove(null)` on a `ConcurrentHashMap` throws.
+            event.id?.let { id -> pending.remove(id)?.complete(event) }
         }
         when (event) {
             is PiEvent.AgentStart -> _state.value = EngineState.Busy

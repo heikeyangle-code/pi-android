@@ -167,8 +167,12 @@ enum class ProrootSeccomp(
  *
  * The order of the conditions is load-bearing and is not the order of the enum:
  * the switch is checked first (so a user who never opted in can never reach
- * proroot), then the two availability gates, then the failure budget. Every one of
- * them has to hold for proroot; any one of them puts the app back on proot.
+ * proroot), then the availability of the files, then the failure budget, and the
+ * gate's verdict **last** — the budget outranks the verdict because
+ * `RuntimeSelection.plan` does not even ask the gate once the streak is exhausted
+ * ([exhausted]), so "the probe has not passed" would be a statement about a
+ * question that was never put. Every one of the conditions has to hold for
+ * proroot; any one of them puts the app back on proot.
  *
  * ## Where the three-layer fallback comes from
  *
@@ -275,10 +279,12 @@ object RuntimeChoice {
     ): EngineDecision = when {
         !enabled -> EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff)
         !filesPresent -> EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing)
-        !probePassed -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotPassed)
+        // Before the verdict, because the caller does not consult the gate once the streak
+        // is exhausted: see the class KDoc's order paragraph, and `exhausted` below.
         consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ->
             EngineDecision(GuestEngine.Proot, EngineFallback.FailureStreak)
 
+        !probePassed -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotPassed)
         else -> EngineDecision(GuestEngine.Proroot, EngineFallback.None)
     }
 

@@ -438,6 +438,13 @@ internal object SessionFileReader {
         noinline onLine: ((String) -> Boolean)? = null,
     ): Range {
         val collected = ArrayList<String>(256)
+        // The **exact** byte offset (relative to `from`) of every collected line's first
+        // character, plus the offset just past the last one — both measured by the reader
+        // while it walked the chunk. Parallel to `collected`, so the trim below can name the
+        // byte the next backward window must end at instead of re-deriving it from the lines'
+        // text (see the comment on `keptOffset`).
+        val collectedOffsets = ArrayList<Long>(256)
+        var collectedEnd = from
         var firstOffset = from
         var seenChars = 0L
         var stopped = false
@@ -509,6 +516,11 @@ internal object SessionFileReader {
                     // backward window ends up 15 KB off and re-delivers entries the
                     // next window already had.
                     if (collected.isEmpty()) firstOffset = from + thisOffset
+                    collectedOffsets += thisOffset
+                    // `lineStartBytes` was just advanced past this line's terminator, so this
+                    // is the end of the line that is being collected — not of the last line
+                    // seen (one dropped for its length advances the same pointer).
+                    collectedEnd = from + lineStartBytes
                     seenChars += line.length
                     collected += line
                     if (onLine != null && !onLine(line)) {
@@ -546,11 +558,16 @@ internal object SessionFileReader {
         if (capped) keepFrom = collected.size - maxEntries
         // The reported offset has to follow whichever trim ran: it is the byte the next
         // backward window will end at, so an offset left on a dropped line would make that
-        // window re-deliver it. The dropped lines are re-measured in **bytes** rather than
-        // characters because their UTF-8 width is what the offset counts.
-        var keptOffset = firstOffset
-        for (i in 0 until keepFrom) {
-            keptOffset += collected[i].toByteArray(Charsets.UTF_8).size + 1L
+        // window re-deliver it. The offset is the one the reader **measured** while it scanned
+        // the line ([collectedOffsets]), not one re-derived from the line's text here: a `\r`
+        // the line lost, a blank line that was skipped and a line dropped for exceeding the
+        // cap are all bytes that "UTF-8 length + one newline" cannot count, and with any of
+        // them in the dropped prefix the offset used to land **before** the line it named —
+        // which is how the next backward window came to re-deliver what this one already had.
+        val keptOffset = when {
+            keepFrom <= 0 -> firstOffset
+            keepFrom < collectedOffsets.size -> from + collectedOffsets[keepFrom]
+            else -> collectedEnd
         }
         return Range(
             lines = if (keepFrom == 0) collected else collected.subList(keepFrom, collected.size).toList(),

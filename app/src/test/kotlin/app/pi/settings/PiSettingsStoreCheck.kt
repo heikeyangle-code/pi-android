@@ -298,19 +298,36 @@ fun main() {
         )
     }
 
-    // A corrupt document is moved aside, never overwritten in place (and the store must not
-    // then write into the file it just rescued without noticing).
+    // A corrupt document is **left where it is**, and a write into it is refused.
+    //
+    // It used to be renamed to `settings.json.corrupt-<millis>` from the **read** path, which
+    // runs per row per frame (`PiSettingsFileStore.Document.load`) — and nothing anywhere ever
+    // read the renamed file back, so the user's settings looked like they had vanished while the
+    // next write recreated the document with only the key that write carried. The three checks
+    // below are the two halves of that intent: the read touches nothing, and the write does not
+    // replace a document it could not parse.
     run {
         val dir = tempDir("corrupt")
         val global = File(dir, "settings.json")
-        global.writeText("{ this is not json")
+        val corrupt = "{ this is not json"
+        global.writeText(corrupt)
         val store = store(dir)
         check("a corrupt document reads as empty", store.read("theme") == null)
         check(
-            "a corrupt document is moved aside",
-            dir.listFiles().orEmpty().any { it.name.startsWith("settings.json.corrupt-") },
+            "a corrupt document is left where it is, and no copy is moved aside",
+            global.isFile && global.readText() == corrupt &&
+                dir.listFiles().orEmpty().none { it.name.startsWith("settings.json.corrupt-") },
             dir.listFiles().orEmpty().joinToString { it.name },
         )
+        // The base this write would be applied to is unknown, so writing would drop every key
+        // the file holds in exchange for one. Refuse: not one byte of the file changes.
+        store.write("theme", JsonPrimitive("dark"))
+        check(
+            "a write onto a corrupt document changes not one byte",
+            global.readText() == corrupt,
+            global.readTextOrEmpty().take(200),
+        )
+        check("and the key that write asked for is not in the document", store.read("theme") == null)
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

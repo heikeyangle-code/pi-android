@@ -29,6 +29,7 @@ import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.StreamingBehavior
 import app.pi.runtime.PiPaths
+import app.pi.rpc.TOOL_UPDATE_THROTTLE_MS
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
@@ -1673,7 +1674,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * hundreds of chunks: `output + delta` is quadratic in the output's length (measured:
      * ~2.4 s to accumulate 1 MiB from 200-char chunks on a desktop JVM), while an append
      * is amortised O(1). It is published as a `String` only when the throttle lets a
-     * publication through ([BASH_UPDATE_THROTTLE_MS]), and the `bash` response replaces
+     * publication through ([TOOL_UPDATE_THROTTLE_MS]), and the `bash` response replaces
      * the whole output at the end of the run, so the builder never has to be handed out
      * mid-stream.
      *
@@ -3004,7 +3005,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 val trimmed = appendTailBounded(bashStream, delta, BASH_OUTPUT_MAX_CHARS)
                 if (trimmed) bashStreamTrimmed = true
                 val now = SystemClock.elapsedRealtime()
-                if (lastBashPublishAt != 0L && now - lastBashPublishAt < BASH_UPDATE_THROTTLE_MS) {
+                if (lastBashPublishAt != 0L && now - lastBashPublishAt < TOOL_UPDATE_THROTTLE_MS) {
                     return
                 }
                 lastBashPublishAt = now
@@ -6002,19 +6003,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Notifications held for the snackbar before the oldest is dropped. */
         const val MAX_PENDING_NOTICES = 8
-
-        /**
-         * How often a running `bash` command's accumulated output is published.
-         *
-         * The same number and the same rule as the transcript's tool-output throttle
-         * (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`), because it answers the
-         * same problem for the same reason: pi emits a chunk per read and a chatty
-         * command emits hundreds a second, while a panel of that shape has nothing to
-         * say about the difference between two chunks 5 ms apart. It is a bound on the
-         * *repaint* only — every chunk is kept in `bashStream`, and the `bash` response
-         * replaces the output when the run ends, so the panel still shows everything.
-         */
-        const val BASH_UPDATE_THROTTLE_MS = 200L
 
         /**
          * How much of a session file one history window may read, in characters.

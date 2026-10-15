@@ -174,7 +174,8 @@ import app.pi.ui.extension.windowTitleOf
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.StateTone
+import app.pi.ui.theme.engineStateGlyph
+import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withPermit
@@ -388,32 +389,6 @@ private fun earlierRowHeight(text: String): Dp {
         earlierRowHeightPx(iconPx = iconPx, textHeightPx = linePx, verticalPaddingPx = paddingPx)
     }
     return with(density) { heightPx.toDp() }
-}
-
-/**
- * The engine state line's symbol — `06 §4`'s table, applied to pi's own wording.
- *
- * The words are `PiSessionViewModel.engineLabel`'s and are not translated here: the
- * six settled states are pi's (`就绪 / 工作中 / 启动中 / 排队中 / 引擎已退出 /
- * 引擎已停止`, `direction-b-v2.html:461-470`) and every other value the label can
- * carry is one of pi's own busy verbs (`正在加载会话` …), which the board draws with
- * `…` too. So the glyph is a reading of the label, not a second state machine.
- */
-private fun engineGlyphOf(label: String): String = when (label) {
-    "就绪" -> "✓"
-    "启动中" -> "◌"
-    "排队中" -> "≡"
-    "引擎已退出" -> "✗"
-    "引擎已停止" -> "■"
-    "工作中" -> "…"
-    else -> "…"
-}
-
-/** The engine state line's colour — the same table (`06 §4`), through [stateToneColor]. */
-private fun engineToneOf(label: String): StateTone = when (label) {
-    "就绪" -> StateTone.Success
-    "引擎已退出", "引擎已停止" -> StateTone.Error
-    else -> StateTone.Warning
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1726,9 +1701,9 @@ private fun ChatBody(
                     ) {
                         val label = session.engineLabel(state)
                         Text(
-                            text = engineGlyphOf(label),
+                            text = engineStateGlyph(label),
                             style = PiTheme.text.monoSmall,
-                            color = stateToneColor(engineToneOf(label), PiTheme.palette),
+                            color = stateToneColor(engineStateTone(label), PiTheme.palette),
                             maxLines = 1,
                         )
                         Text(
@@ -3840,13 +3815,20 @@ private const val MENTION_DEBOUNCE_MS: Long = 150L
 /**
  * How often the transcript's search may re-scan while a turn is streaming.
  *
- * The same number and the same argument as the transcript's tool-output throttle
- * (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`): pi publishes once per streamed
- * event, and a search over the whole session is expensive enough (110 ms for 800 rows
- * of realistic size, measured on a desktop JVM) that paying it per token is a frozen
- * screen. A search is a reading of the transcript, not a live feed — a match list that
- * is 200 ms behind the newest text is imperceptible, and the turn's last publication is
- * always scanned because the scan is repeated once the transcript stops streaming.
+ * The same number, and the same **shape** of argument, as the transcript's tool-output
+ * throttle (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`): a costly per-token
+ * operation is bound to a repaint-sized window instead of being paid per event. It is
+ * deliberately **not** that constant though — this number is sized by the scan below
+ * (110 ms for 800 rows), not by the tool cadence, so sharing the value must not make one
+ * move when the other is retuned. `PiSessionViewModel`'s bash panel is the one that had a
+ * second spelling of the tool throttle and now imports it; this is a separate knob.
+ *
+ * pi publishes once per streamed event, and a search over the whole session is expensive
+ * enough (110 ms for 800 rows of realistic size, measured on a desktop JVM) that paying it
+ * per token is a frozen screen. A search is a reading of the transcript, not a live feed —
+ * a match list that is 200 ms behind the newest text is imperceptible, and the turn's last
+ * publication is always scanned because the scan is repeated once the transcript stops
+ * streaming.
  *
  * The residual cost is bounded by what the scan has to read, which is the session's own
  * text: the follow-up (if this is ever still felt) is to cache each row's search text in

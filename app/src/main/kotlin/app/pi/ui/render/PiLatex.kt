@@ -713,14 +713,21 @@ internal object PiLatex {
      * `parseEnvironment`（`latex.ts:1183`），多行一定变成 layout node，而只要收过
      * layout node 就一定会跑 [renderLayout] —— 所以 pi 连行内的 `\begin{pmatrix}`
      * 也画网格，这里也一样。
+     *
+     * **这一层不许抛。** 它是公式解析的唯一入口，而 `parseSequence` 是按 `{` 直接递归的
+     * （`latex.ts` 同样如此），所以一条嵌套几千层的公式会走到 `StackOverflowError`。
+     * pi 那边抛的是可捕获的 `RangeError`，JVM 上却是 `Error`：不接住它，这个错误会从
+     * 组合里穿出去把整个应用带走，而正确的结果是 pi 的回退 —— 返回 `null`，调用方把原文
+     * 照排。`runCatching` 收 `Throwable`，因此这一层连栈溢出一起收；不抛的输入逐字节不变，
+     * 变的只有"本来会崩"的那条路。
      */
-    fun toUnicode(source: String, display: Boolean = false): String? {
+    fun toUnicode(source: String, display: Boolean = false): String? = runCatching {
         val nodes = ArrayList<LayoutNode>()
         val parser = LatexParser(source, nodes, display)
-        val rendered = parser.render() ?: return null
-        if (nodes.isEmpty()) return rendered.replace(PROTECTED_SPACE, " ")
-        return finishLayout(renderLayout(rendered, nodes))
-    }
+        val rendered = parser.render() ?: return@runCatching null
+        if (nodes.isEmpty()) return@runCatching rendered.replace(PROTECTED_SPACE, " ")
+        finishLayout(renderLayout(rendered, nodes))
+    }.getOrNull()
 
     /**
      * `latex.ts:1488-1506` `renderLatex` 的收尾：算出网格后剥掉**所有非空行的公共
@@ -958,8 +965,9 @@ internal object PiLatex {
     /**
      * 网格里一格文本占几列。pi 用的是 `visibleWidth`（`utils.ts:250` → 字形分段 +
      * `get-east-asian-width` + emoji 规则），这里只需要它在本场景下的行为：
-     * 汉字/全角算 2 列、组合记号算 0 列、其余（拉丁、希腊、`∑ ∫ √ ─ ⎛` 这些
-     * Ambiguous 数学符号）算 1 列 —— 实测 `get-east-asian-width` 对这些符号返回 1。
+     * 汉字/全角/东亚宽 emoji 算 2 列、组合记号与零宽格式字符算 0 列、其余（拉丁、
+     * 希腊、`∑ ∫ √ ─ ⎛` 这些 Ambiguous 数学符号）算 1 列 —— 实测
+     * `get-east-asian-width` 对这些符号返回 1。
      *
      * 网格里不会有 ANSI 转义序列（那是终端才有的东西），所以 pi 的剥 ANSI 一步不需要。
      */
@@ -970,7 +978,11 @@ internal object PiLatex {
             val codePoint = text.codePointAt(index)
             index += Character.charCount(codePoint)
             width += when {
+                // `200B`/`200C`/`200E`/`200F` 与 `200D` 同一类：Unicode 的 `Cf`（不可见
+                // 格式字符），wcwidth 记 0 列。少一个，一段含零宽连接符的网格就会多一格。
+                codePoint in 0x200B..0x200C -> 0
                 codePoint == 0x200D -> 0
+                codePoint in 0x200E..0x200F -> 0
                 codePoint in 0xFE00..0xFE0F -> 0
                 codePoint in 0x0300..0x036F -> 0
                 codePoint in 0x1AB0..0x1AFF -> 0
@@ -989,7 +1001,11 @@ internal object PiLatex {
                 codePoint in 0xFF00..0xFF60 -> 2
                 codePoint in 0xFFE0..0xFFE6 -> 2
                 codePoint in 0x1F300..0x1F64F -> 2
+                // `get-east-asian-width` 对这两个块同样返回 `W`，`1F300..1F64F` 那行漏了它们：
+                // 一张 🚀（`U+1F680`）按 1 列算，整块网格就歪一格。
+                codePoint in 0x1F680..0x1F6FF -> 2
                 codePoint in 0x1F900..0x1F9FF -> 2
+                codePoint in 0x1FA70..0x1FAFF -> 2
                 codePoint in 0x20000..0x3FFFD -> 2
                 else -> 1
             }
@@ -1193,13 +1209,18 @@ internal object PiLatex {
     private fun applyMath(text: String, start: Int, end: Int, grid: BooleanArray): String {
         val run = text.substring(start, end)
         if (!run.contains('$') && !run.contains('\\')) return run
-        // **两道 guard 都是精确的。** 上面的 `contains` 已经把"不可能匹配"的区间整个
+        // **三道 guard 都是精确的。** 上面的 `contains` 已经把"不可能匹配"的区间整个
         // 跳过了；下面这两道只跳过对应的那一趟，因为每个 pattern 都必须先看到它自己的
         // 字面量才能匹配（`$$` / `\[`）。少了它们，那一趟会走完整个区间才得出"这里
         // 没有显示式公式"的结论 —— 手机上 5.9 KB 的一趟量到 0.36–1.32 ms，而带 guard
         // 是 0.40 ms，代价出现在每个流式 token 更新时的重组里
         // （`docs/scroll-perf-items.md` §3）。`Regex.replace` 没有匹配时返回原串，
         // 所以跳过它唯一能改变的就是"哪个实例"流到下一趟。
+        //
+        // 第三道在 `INLINE_MATH` 之前（见下），它管的是同一件事的另一半：`INLINE_MATH`
+        // 的三条分支各以一个**字面量**开头（`\(`、`\[`、`$`），所以 `block` 里既没有 `$`
+        // 也没有反斜杠时一条都匹配不上，而 `BLOCK_MATH` 那一趟恰好能把 `$$…$$` 换成不含
+        // 任何 `$`/反斜杠的文本 —— 没有这道 guard，那种输入会在这里白扫一整趟。
         val block = if (run.contains(BLOCK_MATH_MARKER) || run.contains(BLOCK_BRACKET_MARKER)) {
             BLOCK_MATH.replace(run) { match ->
                 val dollar = match.groupValues[1]
@@ -1220,6 +1241,10 @@ internal object PiLatex {
         } else {
             run
         }
+        // 第三道 guard。`INLINE_MATH` 的每一条分支都以一个字面量开头（`\(`、`\[`、`$`），
+        // 所以这里既没有 `$` 也没有反斜杠时一条都不可能匹配，`replace` 会原样返回，而且
+        // **不会调用** lambda（也就不会置 `grid[0]`）。与不跳过逐字节相同。
+        if (!block.contains('$') && !block.contains('\\')) return block
         return INLINE_MATH.replace(block) { match ->
             val parenthesized = match.groupValues[1]
             val bracketed = match.groupValues[2]
@@ -1378,7 +1403,7 @@ internal object PiLatex {
             .replace(NAMED_OPERATOR_END, "")
         val lines = spaced.split('\n')
         val kept = lines.filterIndexed { index, line -> line.isNotEmpty() || (index > 0 && index < lines.size - 1) }
-        return kept.joinToString("\n") { it.replace(Regex("[ \t]+"), " ").trim() }.trim()
+        return kept.joinToString("\n") { it.replace(SPACE_RUN, " ").trim() }.trim()
     }
 
     /**
@@ -1399,7 +1424,7 @@ internal object PiLatex {
 
     /** `latex.ts:614` `normalizeScriptValue`：去掉 `= + -` 两侧的空白。 */
     private fun normalizeScriptValue(value: String): String =
-        value.trim().replace(Regex("\\s*([=+-])\\s*"), "$1")
+        value.trim().replace(SCRIPT_OPERATOR_SPACING, "$1")
 
     /** `latex.ts:618-620` `formatUnicodeScript`：整串都有对应上下标字符才算成功。 */
     private fun formatUnicodeScript(value: String, subscript: Boolean): String? =
@@ -1413,7 +1438,7 @@ internal object PiLatex {
         // pi 用 `Array.from(value).length`（**码点**数）判断"单个字符"，所以 emoji/
         // 补充平面字符算一个；Kotlin 的 `String.length` 是 UTF-16 长度，得显式数码点。
         val codePoints = trimmed.codePointCount(0, trimmed.length)
-        if (codePoints == 1 || (subscript && trimmed.matches(Regex("^[A-Za-z]+$")))) {
+        if (codePoints == 1 || (subscript && trimmed.matches(ASCII_LETTERS))) {
             return "$prefix$trimmed"
         }
         return "$prefix($trimmed)"
@@ -1422,14 +1447,14 @@ internal object PiLatex {
     private fun formatFraction(numerator: String, denominator: String): String {
         val n = numerator.trim()
         val d = denominator.trim()
-        val simpleNumerator = n.matches(Regex("^[\\p{L}\\p{N}.]+$"))
-        val simpleDenominator = d.matches(Regex("^[\\p{N}.]+$")) || d.length == 1
+        val simpleNumerator = n.matches(SIMPLE_SCRIPT_VALUE)
+        val simpleDenominator = d.matches(SIMPLE_NUMBER_VALUE) || d.length == 1
         return (if (simpleNumerator) n else "($n)") + "/" + (if (simpleDenominator) d else "($d)")
     }
 
     private fun formatRoot(value: String, symbol: String = "\u221a"): String {
         val v = value.trim()
-        return if (v.matches(Regex("^[\\p{L}\\p{N}.]+$"))) symbol + v else symbol + "(" + v + ")"
+        return if (v.matches(SIMPLE_SCRIPT_VALUE)) symbol + v else symbol + "(" + v + ")"
     }
 
     /**
@@ -2006,7 +2031,7 @@ internal object PiLatex {
                 // 丢掉；其余环境的 `&` 直接删掉（对齐信息对单列文本没意义），
                 // 每行单独渲染、空行丢掉、用 `\n` 拼起来。
                 val alignedAt = environment == "alignedat" || environment == "alignat" || environment == "alignat*"
-                val alignmentBody = if (alignedAt) body.replace(Regex("^\\s*\\{[^}]*}"), "") else body
+                val alignmentBody = if (alignedAt) body.replace(ENVIRONMENT_COLUMN_SPEC, "") else body
                 val rendered = ArrayList<String>()
                 for (row in splitEnvironmentRows(alignmentBody)) {
                     val cells = row.split('&')
@@ -2026,7 +2051,7 @@ internal object PiLatex {
                 return renderCases(body)
             }
             if (environment in GRID_ENVIRONMENTS) {
-                val matrixBody = if (environment == "array") body.replace(Regex("^\\s*\\{[^}]*}"), "") else body
+                val matrixBody = if (environment == "array") body.replace(ENVIRONMENT_COLUMN_SPEC, "") else body
                 return renderMatrix(environment, matrixBody)
             }
             return null
@@ -2051,15 +2076,15 @@ internal object PiLatex {
                 .filter { row -> row.any { it.isNotEmpty() } }
             val valueWidth = maxOf(
                 0,
-                rows.maxOfOrNull { row -> layoutWidth((row.getOrNull(0) ?: "").replace(Regex(",\\s*$"), "")) } ?: 0,
+                rows.maxOfOrNull { row -> layoutWidth((row.getOrNull(0) ?: "").replace(TRAILING_COMMA, "")) } ?: 0,
             )
             val contents = rows.map { row ->
-                val value = (row.getOrNull(0) ?: "").replace(Regex(",\\s*$"), "")
+                val value = (row.getOrNull(0) ?: "").replace(TRAILING_COMMA, "")
                 val condition = row.getOrNull(1) ?: ""
                 if (condition.isEmpty()) {
                     value
                 } else {
-                    val conditionPrefix = if (Regex("^(?:if|when|for|otherwise)\\b", RegexOption.IGNORE_CASE).containsMatchIn(condition)) " " else " if "
+                    val conditionPrefix = if (CASES_CONDITION_PREFIX.containsMatchIn(condition)) " " else " if "
                     value + PROTECTED_SPACE.repeat(valueWidth - layoutWidth(value)) + conditionPrefix + condition
                 }
             }
@@ -2185,3 +2210,33 @@ private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
 
 /** `latex.ts:970-982`: `\$`, `\%`, `\#`, `\_`, `\&` and the brace escapes. */
 private val CHAR_ESCAPES: Set<String> = setOf("{", "}", "$", "%", "#", "_", "&")
+
+/**
+ * 公式路径上的小正则，**每个一次**。
+ *
+ * 它们原先写在各自的函数体里（`normalizeOutput` 那一处还在 `joinToString` 的 lambda
+ * 里），于是每调用一次就 `Regex(...)` 编译一次：`renderCases`/`renderMatrix` 是按行调用
+ * 的，一块 20 行的 `cases` 就要编译 40 多个 `Pattern`。提到文件顶层只改代价，不改结果 ——
+ * 模式串与选项逐字未动，`Regex` 的 `matches`/`replace`/`containsMatchIn` 每次调用都新建
+ * `Matcher`，不持有跨调用的状态。
+ */
+private val SPACE_RUN = Regex("[ \t]+")
+
+/** `latex.ts:614` `normalizeScriptValue`. */
+private val SCRIPT_OPERATOR_SPACING = Regex("\\s*([=+-])\\s*")
+
+/** `latex.ts:620` `formatScript`: the one-character test's ASCII fast path. */
+private val ASCII_LETTERS = Regex("^[A-Za-z]+$")
+
+/** `latex.ts:636-647`: the "simple numerator/denominator/radicand" tests. */
+private val SIMPLE_SCRIPT_VALUE = Regex("^[\\p{L}\\p{N}.]+$")
+private val SIMPLE_NUMBER_VALUE = Regex("^[\\p{N}.]+$")
+
+/** `latex.ts:1371`: `\begin{alignedat}{2}`-style leading column count. */
+private val ENVIRONMENT_COLUMN_SPEC = Regex("^\\s*\\{[^}]*}")
+
+/** `latex.ts:1436`: a `cases` row's optional trailing comma. */
+private val TRAILING_COMMA = Regex(",\\s*$")
+
+/** `latex.ts:1443`: a `cases` condition that reads as a keyword needs no `if`. */
+private val CASES_CONDITION_PREFIX = Regex("^(?:if|when|for|otherwise)\\b", RegexOption.IGNORE_CASE)

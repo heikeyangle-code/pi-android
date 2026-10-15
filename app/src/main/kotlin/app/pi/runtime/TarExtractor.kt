@@ -283,6 +283,16 @@ class TarExtractor(
     }
 
     private fun readPayload(input: InputStream, size: Long): ByteArray {
+        // A metadata record is a long name or a pax attribute, so it is tens of bytes in every
+        // archive this app ships: measured, the largest of the ~2 400 such records in the six
+        // pinned payloads is **138 bytes**. The bound is what keeps a header a corrupt or
+        // hostile archive can carry from reaching `size.toInt()` — past 2 GiB that is negative
+        // and anything below it is allocated — so the failure is the named kind the rest of
+        // this class reports ([IOException], which `RuntimeProvisioner` wraps with the archive
+        // it came from) rather than an unrepresentable allocation.
+        if (size > MAX_METADATA_RECORD_BYTES) {
+            throw IOException("tar metadata record of $size bytes is out of range")
+        }
         val data = ByteArray(size.toInt())
         if (!readFully(input, data, data.size)) throw IllegalStateException("truncated tar metadata")
         skip(input, pad512(size))
@@ -441,5 +451,14 @@ class TarExtractor(
             value = value * 8 + (c - '0'.code)
         }
         return value
+    }
+
+    private companion object {
+        /**
+         * Ceiling on one metadata record (`L`/`K`/`x`/`X`/`g`), in bytes. See [readPayload]:
+         * the shipped payloads' largest is 138 bytes, so this only ever fires on an archive
+         * that is corrupt or not ours.
+         */
+        const val MAX_METADATA_RECORD_BYTES: Long = 1L shl 20
     }
 }

@@ -110,14 +110,29 @@ object PiConfigFiles {
                     runCatching { lockDir.delete() }
                 }
             }
+            // The bound is checked **before** the stale branch, and every path that
+            // neither returns nor throws falls through to the single sleep at the
+            // bottom of the loop. Both halves are load-bearing. The stale branch used
+            // to `continue` without sleeping *and* before the bound test, so a stale
+            // lock whose `delete()` fails — a non-empty lock directory, or a parent the
+            // caller cannot write — looped mkdir → stat → delete → continue at 100% CPU
+            // for the life of the process, which is the one path `MAX_ATTEMPTS` could
+            // never reach. A stale lock is still tried first: it is removed here and the
+            // lock is taken on the next turn.
+            //
+            // Stating the timing consequence rather than hiding it: the stale branch now
+            // sleeps once before retrying, so recovering a dead process's lock costs one
+            // extra `RETRY_DELAY_MS` (20 ms). Staleness itself is `STALE_MS` (10 s), far
+            // longer than the whole `MAX_ATTEMPTS` window (10 × 20 ms), so a lock that is
+            // live on the first attempt can never become stale inside this loop: the
+            // reordering cannot skip a recovery the old code would have performed.
+            if (attempt >= MAX_ATTEMPTS) {
+                throw IllegalStateException("无法获取 ${lockDir.name} 的锁（${lockDir.absolutePath}）")
+            }
             val age = System.currentTimeMillis() - lockDir.lastModified()
             if (lockDir.isDirectory && age > STALE_MS) {
                 // A process died holding it. proper-lockfile removes stale locks too.
                 runCatching { lockDir.delete() }
-                continue
-            }
-            if (attempt >= MAX_ATTEMPTS) {
-                throw IllegalStateException("无法获取 ${lockDir.name} 的锁（${lockDir.absolutePath}）")
             }
             Thread.sleep(RETRY_DELAY_MS)
         }

@@ -78,9 +78,42 @@ function wrapAsync(orig) {
   };
 }
 
+// The callback form `fs.readdir(path[, options], callback)` is a **different function object**
+// from `fsp.readdir`, so patching the promise API left it uncovered — while it reaches the
+// kernel through the same `scandir(3)` and therefore has the same defect. Its own wrapper,
+// because the optional middle argument has to be shifted and because the answer has to be
+// delivered the way Node delivers it: asynchronously, as `(err, entries)`.
+//
+// `recursive: true` is deliberately **not** taken over. `viaOpendir` lists one directory, so
+// answering a recursive request with a flat listing would replace a loud ENOENT with quietly
+// wrong data. Nothing in pi asks for it (checked in `pi-coding-agent/src`), and an extension
+// that does keeps the original error rather than a listing it will misread.
+function wrapCallback(orig) {
+  return function (path, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+    // Any other shape (no callback at all) is the original's to reject: it owns the
+    // `ERR_INVALID_CALLBACK`/`ERR_INVALID_ARG_TYPE` sentence the caller expects.
+    if (typeof callback !== "function") return orig.apply(this, arguments);
+    const recursive = !!(options && typeof options === "object" && options.recursive === true);
+    if (broken.has(path) && !recursive) {
+      viaOpendir(path, options).then((entries) => callback(null, entries), (err) => callback(err));
+      return;
+    }
+    return orig.call(this, path, options, (err, entries) => {
+      if (!err || recursive || !shouldFallback(err, path)) return callback(err, entries);
+      markBroken(path);
+      viaOpendir(path, options).then((e) => callback(null, e), (e2) => callback(e2));
+    });
+  };
+}
+
 if (!fs[MARK]) {
   fs[MARK] = true;
   fs.readdirSync = wrapSync(fs.readdirSync);
   fsp.readdir = wrapAsync(fsp.readdir);
   if (fs.promises && fs.promises !== fsp) fs.promises.readdir = fsp.readdir;
+  fs.readdir = wrapCallback(fs.readdir);
 }

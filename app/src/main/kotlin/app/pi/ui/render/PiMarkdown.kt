@@ -2,6 +2,7 @@ package app.pi.ui.render
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -170,7 +171,15 @@ internal fun PiMarkdownText(
     // 预处理还要报告"这次有没有写进一块多行网格"：网格靠换行与空格对齐，而库的
     // annotator 默认把段落内换行压成空格，所以含网格的这条消息要按下一段的两个
     // 开关渲染 —— 别的消息一个字节都不变（`PiLatex.prepare` 的注释）。
-    val prepared = remember(markdown) { PiLatex.prepare(markdown) }
+    // **不许抛。** `PiLatex.prepare` 本身只走字符串与正则，但它的数学替换会进
+    // `PiLatex.toUnicode`，而那个解析器是按 `{` 直接递归的（见那里的注释）：一条病态的
+    // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
+    // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
+    // 拿到的是同一个对象，逐字节相同。
+    val prepared = remember(markdown) {
+        runCatching { PiLatex.prepare(markdown) }
+            .getOrElse { PiLatex.PreparedMath(markdown, false) }
+    }
     // **裸 URL 不改写**（用户裁定，撤销，见 `docs/known-gaps.md` §A3 的 R2 末条）：
     // `![]()` 才是图，链接就是链接 —— 模型给的"八条直链，复制即可"必须还是可复制的一行
     // 链接文字。这里曾经挂过 `PiImageLinks.rewrite(prepared.text)`（把"整行只有一个图片
@@ -453,6 +462,20 @@ internal fun PiMarkdownText(
                         )
                     }
                 }
+            },
+            // 解析失败时必须给一个**不是空 Box** 的槽。库的默认 `error` 是
+            // `{ Box(modifier) }`（`multiplatform-markdown-renderer` 0.45.0 的
+            // `compose/Markdown.kt:210`），而库自己 `catch (Throwable)` 把解析异常转成
+            // `State.Error`（`model/MarkdownState.kt:220-234`）—— 两者相加就是"任何让
+            // GFM 解析器抛出的正文整条静默消失"，连一个字都不留下。这里画解析器拿到的
+            // 那份源文本。`State.Success` 永远到不了这个槽，所以正常路径一个字节不变。
+            error = { errorModifier ->
+                Text(
+                    text = content,
+                    style = typography.text,
+                    color = colors.text,
+                    modifier = errorModifier,
+                )
             },
             modifier = modifier,
         )

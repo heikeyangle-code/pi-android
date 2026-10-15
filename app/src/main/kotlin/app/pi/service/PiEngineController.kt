@@ -12,30 +12,24 @@ package app.pi.service
  * ([registerStopHandler]) and [stop] invokes it.
  *
  * That gap was user-visible before this: the notification's 停止 action called
- * [stop], which only set [state] — so tapping 「停止」 removed the notification,
- * released the wake lock and left pi running with nothing keeping its process alive.
- * Every reader of [state] was a search hit in this file, which is what made the
- * silence possible.
+ * [stop], which then did nothing but set a `state` field — so tapping 「停止」
+ * removed the notification, released the wake lock and left pi running with nothing
+ * keeping its process alive. Nothing read that field, which is what made the silence
+ * possible, and it was deleted rather than kept: a supervisor's handle has to be a
+ * state machine something actually drives, and nothing ever wrote its
+ * `Starting`/`Ready`/`Failed` values.
  *
  * ## What it is not
  *
- * [state] is **not** the authority on whether an engine is alive. The engine's own
+ * This object holds **no** copy of "is the engine alive". The engine's own
  * `PiEngineSession.state` (collected by the ViewModel and published as
- * `UiState.engine`) is, because the process can die without anyone asking this
- * object, and a second copy of "is it running" is exactly the shape
- * `docs/pi-sourced-lists.md` warns about. [state] records what has been *asked of*
- * the engine; it has no reader today and is kept as the handle a future
- * service-side supervisor would need.
+ * `UiState.engine`) is the authority, because the process can die without anyone
+ * asking this object, and a second copy is exactly the shape
+ * `docs/pi-sourced-lists.md` warns about.
  *
  * See docs/pi-android-app-design.md §7 for the supervisor design this belongs to.
  */
 object PiEngineController {
-
-    enum class State { NotProvisioned, Starting, Ready, Failed, Stopped }
-
-    @Volatile
-    var state: State = State.NotProvisioned
-        private set
 
     /**
      * The engine's own teardown, registered by whoever owns `PiEngineHost`.
@@ -69,7 +63,6 @@ object PiEngineController {
      * the ViewModel, because a caller here is a service callback on the main thread.
      */
     fun stop() {
-        state = State.Stopped
         stopHandler?.invoke()
     }
 }

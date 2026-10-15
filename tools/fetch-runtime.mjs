@@ -1052,9 +1052,17 @@ function download(url, dest) {
       index === 0 ? `  fetching ${name} … ` : `\n    pool has it; retrying there … `,
     );
     try {
-      execFileSync("curl", ["-sSL", "--fail", "--retry", "3", "-o", dest, source], {
-        stdio: "inherit",
-      });
+      // `--proto-redir =https` is a no-op for the pin set as it stands (probed one URL per
+      // host: nodejs.org, cdimage.ubuntu.com, ports.ubuntu.com, packages.termux.dev answer in
+      // place; github.com answers 302 to https://release-assets.githubusercontent.com, still
+      // https) and it removes the one hop the pinned digest cannot make harmless — a downgrade
+      // to plain http. A redirect to a *different host* is still possible; curl has no allowlist
+      // for that, and the lock's sha256 is the backstop.
+      execFileSync(
+        "curl",
+        ["-sSL", "--proto-redir", "=https", "--fail", "--retry", "3", "-o", dest, source],
+        { stdio: "inherit" },
+      );
       process.stdout.write("ok\n");
       return dest;
     } catch (error) {
@@ -1332,6 +1340,21 @@ function main() {
   // 1. Fetch and verify every artifact.
   for (const [name, spec] of Object.entries(ARTIFACTS)) {
     const file = join(CACHE, spec.url.split("/").pop());
+    // A file in the cache is only a cache entry if it **is** the artefact the pins describe.
+    // `download()` reuses anything that exists with a non-zero size, and `curl --fail` leaves a
+    // partial file behind when a transfer dies mid-body (curl only removes it with
+    // `--remove-on-error`, which is not passed) — so a half-downloaded `.tar.xz` would be reused
+    // on every later run and reported as `sha256 mismatch: Upstream moved`, which sends the
+    // reader after the wrong thing. Re-fetch it instead.
+    //
+    // `--resolve-only` is deliberately excluded: that mode exists to record the bytes *on disk*
+    // (`sha256: null` re-pins them), so deleting a file whose digest differs from the lock would
+    // change what it pins.
+    const expected = spec.sha256 ?? lock.artifacts[name]?.sha256 ?? null;
+    if (!resolveOnly && expected !== null && existsSync(file) && sha256(file) !== expected) {
+      console.log(`  ${name.padEnd(16)} cached bytes do not match the pin; re-fetching`);
+      rmSync(file, { force: true });
+    }
     download(spec.url, file);
     const digest = sha256(file);
     // Where upstream publishes a digest for the asset itself, the bytes must match

@@ -164,16 +164,21 @@ function badParam(tool: string, param: string, allowed: string[], got: unknown):
 
 /**
  * 设备能力分组的 id，与 App 侧 `bridge/DeviceCapability.kt` 的 `id` 一一对应
- * （`basic` / `accessibility` / `ime` / `admin` / `shell`，共 5 组）。原来的 `storage` 与
+ * （`basic` / `accessibility` / `shell` / `ime`，共 4 组）。原来的 `storage` 与
  * `sensors` 两组已并入 `basic`，所以文件、位置、传感器、手电筒这些工具现在都挂在 `basic` 上；
  * 通知监听、自动化、VPN、投屏四种能力也归 `basic`，不另开开关。
+ *
+ * 这个联合类型里**只放 App 侧真的有的组**。多写一个成员不会让任何工具成功注册
+ * （`shouldRegister` 拿它去 `usable.has` 里查，永远查不到），却会让「这组能力是存在的」
+ * 这句话变成假的 —— 曾经这里还写着 `storage` / `sensors` / `admin`，前两个是已并入 `basic`
+ * 的历史名字，`admin` 则在 App 侧从来没有过对应的组，也没有任何端点。
  *
  * 这里是一份**抄写**，不是第二份真相：注册时拿它去 `/app/health` 的
  * `capabilities[].id` 里查状态，而那份 JSON 就是授权页和桥端点共用的
  * `DeviceCapabilityState`（`DeviceBridgeRouter.kt` 的 `/app/health` 分支）。App 侧加一组
  * 能力时这里会查不到、对应工具不会注册（而不是猜着注册），所以错法是保守的。
  */
-type DeviceCapabilityId = "basic" | "storage" | "accessibility" | "sensors" | "ime" | "admin" | "shell";
+type DeviceCapabilityId = "basic" | "accessibility" | "shell" | "ime";
 
 interface DeviceToolSpec {
 	name: string;

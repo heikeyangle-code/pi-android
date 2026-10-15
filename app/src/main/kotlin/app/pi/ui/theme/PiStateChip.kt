@@ -123,6 +123,48 @@ fun stateToneColor(tone: StateTone, palette: PiPalette): Color = when (tone) {
 }
 
 /**
+ * The engine status line's symbol — `06 §4`'s table, applied to pi's own wording.
+ *
+ * **One table for every screen.** The words are `PiSessionViewModel.engineLabel`'s and are
+ * not translated here: the six settled states are pi's (`就绪 / 工作中 / 启动中 / 排队中 /
+ * 引擎已退出 / 引擎已停止`, `direction-b-v2.html:461-470`) and every other value the label can
+ * carry is one of pi's own busy verbs (`正在加载会话` …), which the board draws with `…` too.
+ * So the glyph is a reading of the label, not a second state machine.
+ *
+ * Why it lives here rather than beside either caller: the chat page's own top bar and
+ * [app.pi.ui.PiTopBarEngineMeta] (used by 工作区 / 会话列表) both draw it, and each used to spell
+ * its own table. They had **already drifted** — `启动中` was `◌` on one screen and `…` on the
+ * other, `排队中` `≡` vs `…`, `引擎已停止` `■` vs `✗` — so the engine read differently depending
+ * on which page the user was looking at. That is precisely what `PiTopBarEngineMeta`'s own KDoc
+ * forbids ("both must spell the six states the same way or the engine would read differently
+ * on two screens"), and this is the same six rows that KDoc lists.
+ */
+internal fun engineStateGlyph(label: String): String = when (label) {
+    "就绪" -> "✓"
+    "启动中" -> "◌"
+    "排队中" -> "≡"
+    "引擎已退出" -> "✗"
+    "引擎已停止" -> "■"
+    // Value-identical to `else` on purpose: `06 §4` gives 工作中 its own row (`…`) and
+    // `PiTopBarEngineMeta`'s KDoc spells that row out, so the arm stays as the statement of
+    // intent. A single `else` would hide the fact that two arms spell the same glyph — if
+    // either is ever given a different one, both have to change together.
+    "工作中" -> "…"
+    else -> "…"
+}
+
+/**
+ * The engine status line's colour, as the tone `06 §4` gives that state — resolve it with
+ * [stateToneColor]. `就绪` is success, the two stopped states are error, and every busy verb
+ * (including 启动中 / 排队中) is warning.
+ */
+internal fun engineStateTone(label: String): StateTone = when (label) {
+    "就绪" -> StateTone.Success
+    "引擎已退出", "引擎已停止" -> StateTone.Error
+    else -> StateTone.Warning
+}
+
+/**
  * The pill: `字 + 符号 + 颜色` in one component.
  *
  * Geometry is `06 §2`'s badge row verbatim — `border-radius:999`,

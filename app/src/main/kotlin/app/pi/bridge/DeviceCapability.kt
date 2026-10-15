@@ -73,7 +73,7 @@ enum class DeviceCapability(
         summary = "在设备上执行受策略守卫限制的命令（默认关闭；危险操作第一次确认后可选择本会话不再询问）",
         allows = listOf(
             "执行日常读命令（getprop、dumpsys、pm list、logcat、ls、cat、df、ps 等）",
-            "执行日常写命令（cp、mv、rm、mkdir、sed、tar、curl 等），但只能写工作区之内",
+            "执行日常写命令（cp、mv、rm、mkdir、sed、tar、curl 等）；命令名不检查，写入不限工作区",
             "在装有 Shizuku 的设备上以 ADB 身份（uid=2000）运行，从而使用 input、pm、am、settings get 等",
         ),
         defaultEnabled = false,

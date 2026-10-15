@@ -39,9 +39,15 @@ import java.util.concurrent.atomic.AtomicLong
  *     document goes to a temp file and is renamed into place, and the temp name is
  *     unique per call (a process-local counter), so two writers in one process can
  *     never share it.
- *  2. **A corrupt file is never clobbered.** If the existing document cannot be
- *     parsed, it is moved aside with a timestamped suffix instead of being
- *     overwritten with the new value, so a mangled file stays recoverable.
+ *  2. **A corrupt file is never clobbered, and never moved by a read.** If the
+ *     existing document cannot be parsed, a **read** answers an empty document and
+ *     touches nothing, and a **write** is refused rather than replacing every key
+ *     the file holds with the one key the call changes ([readDocumentOrNull]).
+ *     The file used to be renamed to `<name>.corrupt-<millis>` from
+ *     [readDocumentStatic] — a destructive move on the per-frame read path, with
+ *     nothing anywhere that ever read the renamed file back, so the user's settings
+ *     looked like they had vanished and the next write recreated `settings.json`
+ *     with only the key that write carried.
  *  3. **A write is a read-modify-write inside pi's lock.** [update] re-reads the
  *     document under `<file>.lock` before applying one key, which is what pi itself
  *     does; without it, a whole stale document was written back and a concurrent
@@ -168,7 +174,16 @@ class PiSettingsFileStore(
     private fun update(target: Document, transform: (JsonObject) -> JsonObject) {
         PiSettingsLock.withLock(target.file) {
             synchronized(target.lock) {
-                val current = if (target.file.isFile) readDocument(target.file) else JsonObject(emptyMap())
+                val exists = target.file.isFile
+                // The file exists but cannot be read or parsed — a half-written
+                // `settings.json` (pi rewrites it with a bare `writeFileSync`) or a
+                // hand-mangled one. The base this change would be applied to is unknown, so
+                // writing now would replace every key the file holds with the single key
+                // this call changes. Refuse and leave the bytes exactly as they are; the
+                // file is read again on the next write, so the change is not lost, it is
+                // deferred until the document is parseable again.
+                val current = if (exists) readDocumentOrNull(target.file) else JsonObject(emptyMap())
+                if (current == null) return@withLock
                 val next = transform(current)
                 if (writeDocument(target.file, next)) {
                     target.cached = next
@@ -204,8 +219,6 @@ class PiSettingsFileStore(
     }
 
     // ------------------------------------------------------------------ JSON I/O
-
-    private fun readDocument(file: File): JsonObject = readDocumentStatic(file)
 
     private fun writeDocument(file: File, document: JsonObject): Boolean = runCatching {
         file.parentFile?.mkdirs()
@@ -330,16 +343,33 @@ class PiSettingsFileStore(
         private fun stampOf(file: File): String? =
             if (!file.exists()) null else "${file.length()}:${file.lastModified()}"
 
-        private fun readDocumentStatic(file: File): JsonObject {
-            val text = runCatching { file.readText() }.getOrNull() ?: return JsonObject(emptyMap())
+        /**
+         * The parsed document, or null when the file exists but cannot be read or parsed.
+         *
+         * Null is the one answer a caller must not guess at: a half-written
+         * `settings.json` and a hand-mangled one look exactly like an empty document once
+         * they are folded into `{}`, and a write built on that empty base drops every key
+         * the file holds. [update] refuses in that case; [readDocumentStatic] folds it into
+         * `{}` for the callers that only read.
+         */
+        private fun readDocumentOrNull(file: File): JsonObject? {
+            val text = runCatching { file.readText() }.getOrNull() ?: return null
             if (text.isBlank()) return JsonObject(emptyMap())
-            return PiJson.parseObjectOrNull(text) ?: run {
-                // Unparsable. Keep it — a user's mangled file is still their file.
-                val aside = File(file.parentFile, "${file.name}.corrupt-${System.currentTimeMillis()}")
-                runCatching { Files.move(file.toPath(), aside.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-                JsonObject(emptyMap())
-            }
+            return PiJson.parseObjectOrNull(text)
         }
+
+        /**
+         * [readDocumentOrNull] with "unreadable" folded into an empty document, which is what
+         * a reader wants in both cases.
+         *
+         * **Nothing is moved.** An unparsable file is left exactly where it is — it used to be
+         * renamed here to `<name>.corrupt-<millis>`, on a path that runs per row per frame
+         * (`read(key)`), with nothing anywhere that read the renamed file back, so a user's
+         * mangled file disappeared from every surface and the next write recreated the
+         * document with only the key that write carried.
+         */
+        private fun readDocumentStatic(file: File): JsonObject =
+            readDocumentOrNull(file) ?: JsonObject(emptyMap())
 
         private fun canonical(file: File): String =
             runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)

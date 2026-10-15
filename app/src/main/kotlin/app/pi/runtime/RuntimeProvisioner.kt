@@ -788,7 +788,15 @@ class RuntimeProvisioner(
         // present. It deliberately includes **directories**: they are in the lists now, and
         // `it in present` is the step that would otherwise filter them all out and turn
         // "directory ownership" back into a comment (`PayloadPrune.victims`' KDoc).
-        val present = old.filterTo(HashSet()) { relative -> existsWithoutFollowing(File(paths.runtime, relative)) }
+        // `isSafePath` is asked **first**, before the filesystem is: an entry the list format
+        // forbids (`..`, an absolute path) is rejected by [PayloadPrune.victims] further down,
+        // so it can never be a victim — but this probe would still have joined it onto
+        // `paths.runtime` and `stat`ed outside the volatile tree (`File(runtime, "../../x")`
+        // really does resolve out of it). The victim set is unchanged, because the delete loop
+        // refuses exactly those entries anyway.
+        val present = old.asSequence()
+            .filter { PayloadPrune.isSafePath(it) }
+            .filterTo(HashSet()) { relative -> existsWithoutFollowing(File(paths.runtime, relative)) }
         val root = runCatching { paths.runtime.canonicalPath }.getOrNull() ?: return
         PayloadPrune.victims(old, new, present).forEach { relative ->
             val target = File(paths.runtime, relative)
@@ -906,9 +914,21 @@ class RuntimeProvisioner(
         try {
             stream.use { TarExtractor(into).extractGzip(it) }
         } catch (e: IOException) {
-            throw ProvisioningException("failed to unpack $assetName: ${e.message}${payloadReportBlock()}", e)
+            throw unpackFailure(assetName, e)
+        } catch (e: IllegalStateException) {
+            // [TarExtractor] reports the *entry* shapes it cannot finish as
+            // `IllegalStateException` — "truncated tar entry at …" and "truncated tar
+            // metadata" — which is the common half of the failures this method exists to
+            // explain (a half-written archive, a block-boundary cut). They used to bypass
+            // this wrap and reach the boot card as a bare `truncated tar entry at …`, with
+            // no asset name and none of the payload audit that is attached below.
+            throw unpackFailure(assetName, e)
         }
     }
+
+    /** One unpack failure's message, in the one spelling both catch clauses use. */
+    private fun unpackFailure(assetName: String, e: Exception): ProvisioningException =
+        ProvisioningException("failed to unpack $assetName: ${e.message}${payloadReportBlock()}", e)
 
     /**
      * Open a payload archive from the APK, and if that fails, say what the APK

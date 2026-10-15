@@ -765,8 +765,16 @@ private val TURN_FAILURE_REASONS = setOf("length", "aborted", "error")
  * it as of the last publication and the reducer's accumulator holds the rest
  * ([TranscriptReducer.pendingToolOutput]), which is what keeps the throttle from becoming
  * data loss.
+ *
+ * **Public rather than file-`private` on purpose.** The App's `bash` panel throttles the
+ * same way for the same reason, and it used to carry its own copy of this number —
+ * `PiSessionViewModel`'s `BASH_UPDATE_THROTTLE_MS`, documented there as "the same number
+ * and the same rule as the transcript's tool-output throttle". A copy cannot be kept in
+ * step by a comment, so that constant is gone and the panel imports **this** one
+ * (`PiSessionViewModel`'s `import app.pi.rpc.TOOL_UPDATE_THROTTLE_MS`). `:rpc` is a
+ * separate Gradle module, which is why this has to be public rather than `internal`.
  */
-private const val TOOL_UPDATE_THROTTLE_MS = 200L
+const val TOOL_UPDATE_THROTTLE_MS = 200L
 
 /**
  * How many characters of a tool call's accumulated output a chunk has to begin with to be
@@ -2046,10 +2054,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
             // F26: there is deliberately **no** `skill` / `skill_invocation` case
             // here. pi has neither an entry type nor an event with those names —
-            // the persisted union is exactly message, thinking_level_change,
-            // model_change, usage, compaction, branch_summary, custom,
-            // custom_message, label and session_info
-            // (`core/session-manager.ts:165-176`, 0.86.1) —
+            // the persisted union in the pinned engine is exactly message,
+            // thinking_level_change, model_change, usage, compaction,
+            // branch_summary, custom, custom_message, context_edit, label and
+            // session_info (`core/session-manager.ts:183-194`, 1.1.0) —
             // because `_expandSkillCommand` rewrites the user message itself
             // (`core/agent-session.ts`). The real projection is the `<skill …>`
             // split in [projectUser] from that user message, which is reachable
@@ -2086,8 +2094,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
             // pi has no `system_prompt` or `error` entry type — the persisted
             // union is exactly message, thinking_level_change, model_change,
-            // usage, compaction, branch_summary, custom, custom_message, label
-            // and session_info (`core/session-manager.ts:165-176`, 0.86.1). The
+            // usage, compaction, branch_summary, custom, custom_message,
+            // context_edit, label and session_info
+            // (`core/session-manager.ts:183-194`, 1.1.0). `context_edit` (new in
+            // 1.1.0) is not projected: it is a **model-context** edit — a
+            // `targetId` plus an optional `replacement` — that pi applies when it
+            // builds the LLM context (`projectContextEntry`, `core/session-manager.ts:519`),
+            // not a conversation row, and nothing here turns one into a row. The
             // system prompt
             // is only reachable through `getSystemPrompt()`, which no RPC command
             // exposes (`rpc-types.ts:20-71`), and a failure arrives as a
@@ -2620,9 +2633,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
          * Only **real** pi entry types belong here — this is the list's whole
          * point, because a name that pi cannot emit makes an unknown event look
          * projectable and lets a hand-fed record masquerade as wire data. The
-         * persisted union is `core/session-manager.ts:165-176` (0.86.1): message,
-         * thinking_level_change, model_change, usage, compaction, branch_summary,
-         * custom, custom_message, label, session_info. So `model_select`,
+         * persisted union in the pinned engine is `core/session-manager.ts:183-194`
+         * (1.1.0): message, thinking_level_change, model_change, usage, compaction,
+         * branch_summary, custom, custom_message, context_edit, label, session_info.
+         * `context_edit` is in that union and is not listed below: this reducer does
+         * not project it (it edits the model context, not the transcript), and pi
+         * does not push a bare entry type on stdout — listing it would only let a
+         * hand-fed record look projectable. So `model_select`,
          * `system_prompt` and `error` are absent (the first is extension-only,
          * the other two are not entry types), and F26 removed the former
          * `skill`/`skill_invocation` aliases for the same reason: pi has no such

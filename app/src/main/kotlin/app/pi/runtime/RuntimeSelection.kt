@@ -489,8 +489,11 @@ class RuntimeSelection(
                 add("nativeLibraryDir 缺少：${missing.joinToString("、")}")
 
             EngineFallback.ProbeNotPassed -> {
+                // The verdict's own lines, and nothing else. This branch is reached only
+                // when the gate was actually consulted — the failure budget is checked
+                // before it ([RuntimeChoice.decide]) — so there is never a verdict to
+                // invent here; a sentence claiming one would be a reading nobody took.
                 probe?.detail?.forEach { add(it) }
-                if (probe == null) add("探针的缓存结论是未通过")
             }
 
             EngineFallback.FailureStreak ->

@@ -15,9 +15,12 @@ import org.json.JSONObject
  * Android permission missing, gesture rejected — into one JSON envelope carrying a
  * code and a Chinese sentence the model can relay verbatim.
  *
- * `/app/health`, `/app/capabilities` and `/app/audit` are the only unGated routes,
- * because they are how a caller (and the app's own diagnostics) discovers *why*
- * something else is refused. They still require the bearer token.
+ * `/app/health`, `/app/capabilities` and `/app/audit` are the only unGated *read*
+ * routes, because they are how a caller (and the app's own diagnostics) discovers
+ * *why* something else is refused. `/app/gate/report` is unGated too, and it is a
+ * **write**: it is where the pi-side confirmation layer records what it just decided,
+ * display-only state that nothing in this router acts on (`DeviceApprovalLedger`).
+ * All four still require the bearer token — see `DeviceBridgeHttpServer.authorized`.
  */
 class DeviceBridgeRouter(
     private val context: Context,

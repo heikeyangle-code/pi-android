@@ -2,7 +2,10 @@ package app.pi.runtime
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
@@ -121,21 +124,35 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
                 // were wrong here before: reading stdout to EOF first, then stderr, then
                 // waiting means a guest that writes more than a pipe buffer to stderr
                 // (64 KiB) blocks in `write` with stdout never closing — the parent sits
-                // in the first `readText()` for ever and the 60 s budget below is never
-                // even reached. A guest that produces nothing at all hangs there too, and
+                // in the first `readText()` for ever and the wait below is never even
+                // reached. A guest that produces nothing at all hangs there too, and
                 // "proot 挂住" is one of the states this check exists to *report*
-                // (`Status.ProotFailed`) rather than to spin on. `GuestToolProbe` already
-                // had the right shape; this is that shape.
+                // (`Status.ProotFailed`) rather than to spin on. The two paths below are
+                // therefore **different on purpose**: the normal one reads to EOF, which
+                // is safe because the guest has exited, and the timeout one takes only
+                // what is already buffered, without ever waiting for a writer to close
+                // (`drainAvailable`).
                 .redirectErrorStream(true)
                 .also { it.environment().putAll(env) }
                 .start()
 
             val finished = process.waitFor(60, TimeUnit.SECONDS)
-            // Read whatever arrived, whether the process finished or not: after a
-            // `destroyForcibly()` this is the partial output the diagnostic needs.
-            val text = process.inputStream.bufferedReader().use { it.readText() }
             if (!finished) {
+                // **Drain before killing, and never wait for end-of-file.** `readText()`
+                // on a process pipe blocks until every writer is gone, so on this path —
+                // a proot that has already ignored the whole 60 s budget — it was the
+                // *read* that had no bound, not the wait above it, and the
+                // `destroyForcibly()` on the next line was never reached. Killing first is
+                // not enough either: it stops new writes without closing a pipe a
+                // surviving descendant still holds, and on this platform it closes the
+                // stream outright, which loses the diagnosis instead. [drainAvailable]
+                // asks only for bytes the kernel already has.
+                val text = drainAvailable(process.inputStream, MAX_TIMEOUT_DIAGNOSTIC_CHARS, TIMEOUT_DRAIN_MS)
                 process.destroyForcibly()
+                // Already closed by the kill on the platform measured here (reading it
+                // afterwards answers `Stream closed`); closing it again is what keeps a
+                // timeout from leaking a descriptor where the kill does not.
+                runCatching { process.inputStream.close() }
                 return@runCatching Outcome(
                     Status.ProotFailed,
                     "proot 启动后 60 秒没有返回——通常是 ptrace 被 SELinux 拦下，" +
@@ -143,6 +160,9 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
                     stderr = text.take(2000),
                 )
             }
+            // Finished, so every writer is gone and this read cannot block. Byte-for-byte
+            // the read this function has always done on its normal path.
+            val text = process.inputStream.bufferedReader().use { it.readText() }
 
             // One stream, so both fields carry the same text. That is the price of not
             // being able to deadlock, and it costs nothing here: this check only looks
@@ -200,6 +220,45 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         outcome
     }
 
+    /**
+     * Whatever [stream] has **already** buffered, without waiting for end-of-file.
+     *
+     * This is what bounds the timeout branch of [run]. `available()` never blocks, so
+     * every read below asks only for bytes the kernel says are there; the only waiting
+     * is [TIMEOUT_DRAIN_POLL_MS] between polls and the whole call stops at
+     * [TIMEOUT_DRAIN_MS] whether or not the writer ever closes. A closed stream ends the
+     * drain instead of throwing out of it.
+     *
+     * @param maxChars ceiling on the returned text, so a guest that streams megabytes
+     *        cannot grow the heap for a diagnostic that is then cut to 2000 characters.
+     */
+    private fun drainAvailable(stream: InputStream, maxChars: Int, waitMs: Long): String {
+        val bytes = ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        val deadline = System.nanoTime() + waitMs * 1_000_000L
+        while (bytes.size() < maxChars) {
+            val ready = try {
+                stream.available()
+            } catch (_: IOException) {
+                break
+            }
+            if (ready <= 0) {
+                if (System.nanoTime() >= deadline) break
+                runCatching { Thread.sleep(TIMEOUT_DRAIN_POLL_MS) }
+                continue
+            }
+            val want = minOf(ready, buffer.size, maxChars - bytes.size())
+            val read = try {
+                stream.read(buffer, 0, want)
+            } catch (_: IOException) {
+                break
+            }
+            if (read < 0) break
+            bytes.write(buffer, 0, read)
+        }
+        return String(bytes.toByteArray(), Charsets.UTF_8)
+    }
+
     /** Has a probe already passed at this unpacked revision? */
     private fun passedAtRevision(revision: String): Boolean = runCatching {
         val stamp = paths.selfCheckStamp()
@@ -242,5 +301,25 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
             append("\n\n")
             append(result.stderr.lineSequence().take(12).joinToString("\n"))
         }
+    }
+
+    private companion object {
+        /**
+         * How long the timeout branch keeps collecting what the guest already wrote.
+         *
+         * The guest has been silent for 60 s by then and its output, if any, is sitting in
+         * the pipe buffer; this bounds how much longer a boot failure takes to report.
+         */
+        const val TIMEOUT_DRAIN_MS: Long = 500L
+
+        /** Poll interval of [drainAvailable]; the drain is not on any successful path. */
+        const val TIMEOUT_DRAIN_POLL_MS: Long = 25L
+
+        /**
+         * Ceiling on the drained text. The value that reaches the screen and the report is
+         * cut to 2000 characters (and to 12 lines by [summarize]); this only stops a guest
+         * that streams megabytes from growing the heap on the way there.
+         */
+        const val MAX_TIMEOUT_DIAGNOSTIC_CHARS: Int = 64 * 1024
     }
 }

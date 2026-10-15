@@ -857,6 +857,148 @@ fun main() {
     }
     println()
 
+    // (b8) 被裁剪的前缀里有**尾随 CR**、**空行**或**整行作废的超长行**时，报出去的 `startOffset`
+    // 必须仍然是被留下来的第一行的**真实字节位置**。
+    //
+    // 这是这次改动针对的那一格：旧实现把偏移用「被丢掉的那些行的 UTF-8 字节数 + 1」重算，而
+    //   ① 行文本里的 `\r` 已经被去掉（`removeSuffix("\r")`），CRLF 行每行因此少算 1 字节；
+    //   ② 空行在收集处被 `continue` 跳过，一个字节都没算；
+    //   ③ 超过行上限的整行作废，也一个字节都没算。
+    // 于是 `keepFrom > 0` 时偏移**偏小**；而调用方（`PiSessionViewModel.backwardStep`）把它当成
+    // 下一次 `readBefore` 的 `until`，于是下一次窗口会把这一段重新交一遍（重复的 entry）。
+    //
+    // 期望值全部**手算**：账目只来自夹具自己的字节数（每行 = 文本字节 + 终止符；LF = 1，CRLF = 2），
+    // 与生产代码无关；下面还有一条独立累加（`startsOf`）与这些字面量互为见证。
+    //
+    //   β（CRLF + 空行，按**字符预算**裁剪；夹具 916 字节）
+    //     header  (LF)   = 124 + 1 = 125  → m1   行首 125
+    //     m1      (CRLF) = 290 + 2 = 292  → 空行 行首 417   （m1 的原始段是 290 + CR = 291 ≤ 上限 300，
+    //                                                        所以它被收集 —— 上限数的是**原始段**，
+    //                                                        `\r` 也算一个字符）
+    //     空行    (LF)   =   0 + 1 =   1  → m2   行首 **418**
+    //     m2      (LF)   = 164 + 1 = 165  → m3   行首 583
+    //     m3      (LF)   = 166 + 1 = 167  → m4   行首 750
+    //     m4      (LF)   = 165 + 1 = 166  → 文件 916 字节
+    //     readTail(maxChars = 700, maxEntries = MAX, maxLineChars = 300)：
+    //       from = snap(916 - 700 = 216) = 125（216 落在 m1 里，回退到 m1 行首），收集到
+    //       m1..m4 共 290+164+166+165 = 785 字符 > 700 → 丢掉 m1 → 保留的第一行是 m2，
+    //       startOffset = **418**；旧式重算给 125 + (290 + 1) = **416**（少的正是 m1 的 `\r` 与那条空行）。
+    //       这一格里被丢掉的**只有 m1 一条**，所以参照实现（它没有行上限这一层）也能算同一组行。
+    //
+    //   γ（CRLF + 空行 + 超长行，按**条目数**裁剪；夹具 1218 字节）
+    //     header  (LF)   = 124 + 1 = 125  → m1   行首 125
+    //     m1      (CRLF) = 290 + 2 = 292  → 空行 行首 417
+    //     空行    (LF)   =   0 + 1 =   1  → long 行首 418
+    //     long    (LF)   = 301 + 1 = 302  → m2   行首 720   （301 > 上限 300 → 整行作废）
+    //     m2      (LF)   = 164 + 1 = 165  → m3   行首 885
+    //     m3      (LF)   = 166 + 1 = 167  → m4   行首 **1052**
+    //     m4      (LF)   = 165 + 1 = 166  → 文件 1218 字节
+    //     readTail(maxChars = 1 MiB, maxEntries = 1, maxLineChars = 300)：
+    //       from = 0（1 MiB 覆盖整份），收集到 header/m1/m2/m3/m4（`long` 因 301 > 300 整行作废，
+    //       既不算字符也不算字节），maxEntries = 1 把前四条切掉 → 保留的第一行是 m4，
+    //       startOffset = **1052**；旧式重算给 (124+1)+(290+1)+(164+1)+(166+1) = **748**，
+    //       少的正是 m1 的 `\r`、空行那 1 字节和 `long` 整行的 302 字节。
+    //       `long` 作废同时让 `Window.complete = false`。参照实现没有行上限这一层，所以 γ 只对
+    //       字面量与独立累加断言，不与参照对照。
+    run {
+        val crlfRoot = File(root, "trimmed-prefix")
+        crlfRoot.mkdirs()
+        val cap = 300
+        fun padded(id: String, totalChars: Int): String {
+            val head = "{\"type\":\"message\",\"id\":\"$id\",\"pad\":\""
+            val tail = "\"}"
+            return head + "p".repeat(totalChars - head.length - tail.length) + tail
+        }
+        // 290 而不是 cap：上限数的是**原始段**（含 `\r`），所以「290 + CR」才刚好留在 300 以内。
+        val m1 = padded("m1", 290)
+        val over = padded("long", cap + 1)
+        val m2 = userEntry("m2", null, "two")
+        val m3 = userEntry("m3", null, "three")
+        val m4 = userEntry("m4", null, "four")
+        check(
+            "b8 夹具的文本长度：header/m1/long/m2/m3/m4",
+            listOf(header("b8").length, m1.length, over.length, m2.length, m3.length, m4.length),
+            listOf(124, 290, 301, 164, 166, 165),
+        )
+
+        // 独立累加：把每行的 (文本 + 终止符) 的 UTF-8 字节数自己加一遍。它与上面注释里的手算
+        // 字面量是两条互不相干的推导（一个在注释里、一个在代码里），都不读生产代码。
+        fun startsOf(lines: List<Pair<String, String>>): Pair<List<Long>, Long> {
+            val starts = ArrayList<Long>()
+            var cursor = 0L
+            for ((text, term) in lines) {
+                starts += cursor
+                cursor += (text + term).toByteArray(StandardCharsets.UTF_8).size.toLong()
+            }
+            return starts to cursor
+        }
+        fun write(lines: List<Pair<String, String>>, name: String): File {
+            val f = File(crlfRoot, name)
+            f.writeBytes(lines.joinToString("") { it.first + it.second }.toByteArray(StandardCharsets.UTF_8))
+            return f
+        }
+
+        // ---- β: CRLF + 空行，按字符预算裁剪 ----
+        val betaLines = listOf(
+            header("b8") to "\n",
+            m1 to "\r\n",
+            "" to "\n",
+            m2 to "\n",
+            m3 to "\n",
+            m4 to "\n",
+        )
+        val (betaStarts, betaTotal) = startsOf(betaLines)
+        check("b8β 各行行首（独立累加）", betaStarts, listOf(0L, 125L, 417L, 418L, 583L, 750L))
+        check("b8β 夹具总长（独立累加）", betaTotal, 916L)
+        val beta = write(betaLines, "beta.jsonl")
+        val betaWindow = SessionFileReader.readTail(beta, 700, Int.MAX_VALUE, maxLineChars = cap)!!
+        check("b8β 保留 m2..m4（header 没有 entry）", betaWindow.entries.map(::idOf), listOf("m2", "m3", "m4"))
+        check("b8β startOffset = m2 的行首（手算 418）", betaWindow.startOffset, 418L)
+        check(
+            "b8β 旧式重算会给出 416（少 m1 的 CR 与空行各 1 字节）——夹具能区分新旧",
+            125L + m1.length + 1L,
+            416L,
+        )
+        check("b8β 没有被整行作废的行", betaWindow.complete, true)
+        check("b8β 预算裁剪过，所以不是读到文件头", betaWindow.reachedStart, false)
+        // 与**独立参照**逐字段对照：参照从整份字节按 `'\n'` 切行，偏移只取 `ReferenceLine.offset`，
+        // 因此它不会跟着生产实现一起错（§4c 之前那版参照把旧算法抄了一遍，这一格就会与生产一起偏 2）。
+        val betaBytes = beta.readBytes()
+        check(
+            "b8β 与独立参照逐字段一致",
+            windowSignature(betaWindow),
+            windowSignature(
+                referenceWindow(referenceLines(betaBytes), 0L, betaBytes.size.toLong(), 700, Int.MAX_VALUE),
+            ),
+        )
+
+        // ---- γ: CRLF + 空行 + 超长行，按条目数裁剪 ----
+        val gammaLines = listOf(
+            header("b8") to "\n",
+            m1 to "\r\n",
+            "" to "\n",
+            over to "\n",
+            m2 to "\n",
+            m3 to "\n",
+            m4 to "\n",
+        )
+        val (gammaStarts, gammaTotal) = startsOf(gammaLines)
+        check("b8γ 各行行首（独立累加）", gammaStarts, listOf(0L, 125L, 417L, 418L, 720L, 885L, 1052L))
+        check("b8γ 夹具总长（独立累加）", gammaTotal, 1218L)
+        val gamma = write(gammaLines, "gamma.jsonl")
+        val gammaWindow = SessionFileReader.readTail(gamma, 1 shl 20, 1, maxLineChars = cap)!!
+        check("b8γ 只保留 m4", gammaWindow.entries.map(::idOf), listOf("m4"))
+        check("b8γ startOffset = m4 的行首（手算 1052）", gammaWindow.startOffset, 1052L)
+        check(
+            "b8γ 旧式重算会给出 748（少 m1 的 CR、空行 1 字节、long 整行 302 字节）",
+            (header("b8").length + 1L) + (m1.length + 1L) + (m2.length + 1L) + (m3.length + 1L),
+            748L,
+        )
+        check("b8γ 超长行整行作废被报出来", gammaWindow.complete, false)
+        check("b8γ 被条目数裁剪过，所以不是读到文件头", gammaWindow.reachedStart, false)
+    }
+    println()
+
     // (c) the framer's cap is what drops the big one: prove the same bytes are
     // unreadable at the cap and readable once it is raised, so the ceiling (not the
     // file) is the defect. The size is `cap + 1` read from the framer, never a literal:
@@ -1272,8 +1414,10 @@ private fun referenceSnap(bytes: ByteArray, target: Long): Long {
  *  - 落后于 `until` 的半行不是 entry（读者读不到它的终止换行）；但读者的下界裁剪会多要一个字节
  *    （`BoundedFileReader` 的 `+1`，为了跨块的字符），所以终止换行**正好落在 `until`** 的那一行
  *    仍然会被读出来 —— 这里按 `newlineAt <= until` 复现这条边界；
- *  - `firstOffset` 是范围里第一条非空行的偏移，再按被丢掉的那些行的 **UTF-8 字节数 + 1** 向前推进
- *    （偏移是字节，不是字符）；
+ *  - `startOffset` 是**被留下来的第一条**非空行的字节位置，直接取那一行在文件里的偏移
+ *    （`ReferenceLine.offset`），**不**从行文本重算 —— 「UTF-8 字节数 + 1」那种重算只要被丢掉的
+ *    前缀里出现一个尾随 `\r`、一条空行、或一条因超过行上限而整行作废的行，就会落在它**之前**
+ *    （§4c 的 β/γ 夹具正是为这三格写的：旧式重算在 β 少 2 字节、在 γ 少 304 字节）；
  *  - `reachedStart` 是 `from == 0 && 没被 maxEntries 切 && 没被预算丢过`。
  */
 private fun referenceWindow(
@@ -1294,22 +1438,22 @@ private fun referenceWindow(
     val budgetDropped = keepFrom > 0
     val capped = collected.size - keepFrom > maxEntries
     if (capped) keepFrom = collected.size - maxEntries
-    var firstOffset = from
-    for (line in inRange) {
-        if (line.text.isNotBlank()) {
-            firstOffset = line.offset
-            break
-        }
-    }
-    for (k in 0 until keepFrom) {
-        firstOffset += collected[k].text.toByteArray(StandardCharsets.UTF_8).size + 1L
+    // 偏移是**文件里的字节位置**（`ReferenceLine.offset`：整份字节按 `'\n'` 切出来的，见
+    // `referenceLines`），不是由行文本重算出来的启发式 —— 后者在「被丢掉的前缀里有尾随 `\r` /
+    // 空行 / 整行作废的超长行」时会偏小，而 `startOffset` 是下一次 `readBefore` 的 `until`。
+    val startOffset = when {
+        keepFrom <= 0 -> collected.firstOrNull()?.offset ?: from
+        keepFrom < collected.size -> collected[keepFrom].offset
+        // 一行都没留下（`maxEntries <= 0`）：生产实现报的是最后一条被收集行的**行尾**，即终止换行
+        // 之后的那个字节位置。
+        else -> collected.lastOrNull()?.let { it.newlineAt.toLong() + 1L } ?: from
     }
     val entries = collected.drop(keepFrom)
         .mapNotNull { PiJson.parseObjectOrNull(it.text) }
         .filterNot { (it["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "session" }
     return SessionFileReader.Window(
         entries = entries,
-        startOffset = firstOffset,
+        startOffset = startOffset,
         reachedStart = from == 0L && !capped && !budgetDropped,
         complete = true,
     )

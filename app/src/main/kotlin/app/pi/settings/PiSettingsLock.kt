@@ -60,8 +60,15 @@ object PiSettingsLock {
                 }
             }
             // A process died holding it: proper-lockfile removes stale locks too.
+            //
+            // The `attempt < MAX_ATTEMPTS` guard is what makes this branch bounded. It used to
+            // `continue` before the budget was consulted, so a stale lock directory that
+            // cannot be removed (`delete()` failing: a permission, a child entry) spun here
+            // **for ever**, without the sleep below, at 100% of one core — the one state this
+            // function cannot report through its `held` flag because it never returns. Within
+            // the budget this branch is unchanged, byte for byte.
             val age = System.currentTimeMillis() - lockDir.lastModified()
-            if (lockDir.isDirectory && age > STALE_MS) {
+            if (lockDir.isDirectory && age > STALE_MS && attempt < MAX_ATTEMPTS) {
                 runCatching { lockDir.delete() }
                 continue
             }

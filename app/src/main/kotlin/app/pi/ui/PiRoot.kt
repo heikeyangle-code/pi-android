@@ -60,6 +60,9 @@ import app.pi.ui.screens.SessionsView
 import app.pi.ui.screens.TerminalScreen
 import app.pi.ui.settings.PiSettingsStack
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.engineStateGlyph
+import app.pi.ui.theme.engineStateTone
+import app.pi.ui.theme.stateToneColor
 
 /**
  * The three top-level destinations, in bottom-bar order.
@@ -346,15 +349,16 @@ fun PiTopBarTextAction(label: String, onClick: () -> Unit) {
  *
  * It lives beside [PiTopBar] because the top bar is the only place that draws it: the
  * chat's app bar is the other caller, and both must spell the six states the same way
- * or the engine would read differently on two screens.
+ * or the engine would read differently on two screens. That rule is now enforced by
+ * **one** table rather than by this KDoc plus two hand-kept copies: the glyph is
+ * `engineStateGlyph` and the tone is `engineStateTone`, both in `ui/theme/PiStateChip.kt`
+ * (the columns above are that table's rows). Before the merge the two copies had already
+ * drifted — 启动中, 排队中 and 引擎已停止 read differently here than on the chat page.
  */
 @Composable
 fun PiTopBarEngineMeta(word: String) {
-    val (glyph, tone) = when (word) {
-        "就绪" -> "✓" to PiTheme.palette.success
-        "引擎已退出", "引擎已停止" -> "✗" to PiTheme.palette.error
-        else -> "…" to PiTheme.palette.warning
-    }
+    val glyph = engineStateGlyph(word)
+    val tone = stateToneColor(engineStateTone(word), PiTheme.palette)
     Row(
         modifier = Modifier.padding(top = 1.dp),
         verticalAlignment = Alignment.CenterVertically,

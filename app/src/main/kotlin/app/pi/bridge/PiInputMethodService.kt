@@ -1,5 +1,6 @@
 package app.pi.bridge
 
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
@@ -671,9 +672,24 @@ class PiInputMethodService : InputMethodService() {
 
     private fun captureClip() {
         val manager = clipboardManager ?: return
-        val text = runCatching {
-            manager.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
-        }.getOrNull()
+        val clip = runCatching { manager.primaryClip }.getOrNull() ?: return
+        // A source application can mark a clip as sensitive: a password or a card
+        // number it copied *for the user*, not for a history log this IME keeps and
+        // `/app/ime/status` hands to the model. Android 13 added
+        // `ClipDescription.EXTRA_IS_SENSITIVE` for exactly that, and its documented
+        // purpose is "a rendering hint from the source application, asking that the
+        // data within be obfuscated or redacted" — so honouring it here is the
+        // difference between the user's password sitting in the clipboard buffer and
+        // never being read at all.
+        //
+        // Guarded by `SDK_INT` because the constant is API 33 (`TIRAMISU`): below it
+        // the extra does not exist, so those devices behave exactly as before.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val sensitive = clip.description?.extras
+                ?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
+            if (sensitive) return
+        }
+        val text = runCatching { clip.getItemAt(0)?.coerceToText(this)?.toString() }.getOrNull()
         if (text.isNullOrEmpty()) return
         val entry = ClipEntry(System.currentTimeMillis(), clip(text, 200))
         synchronized(lock) {
