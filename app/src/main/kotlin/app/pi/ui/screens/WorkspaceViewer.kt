@@ -180,8 +180,33 @@ internal fun WorkspaceViewer(
     var openedStamp by remember(target.relativePath) { mutableStateOf<String?>(null) }
     var askUnsaved by remember(target.relativePath) { mutableStateOf(false) }
     var htmlReload by remember(target.relativePath) { mutableIntStateOf(0) }
+    // 一次导出还没落地时不再接第二次点按：`DeviceSystemActions.export` 的 `sanitizeName`
+    // 不带序号，连点两下会写出两份同名文件（第二份是覆盖还是"（1）"由系统说了算）—— 与图片
+    // 查看器那一颗 ⤓ 的判据是同一条（`PiImageViewer` 的 `saving`）。
+    var exporting by remember(target.relativePath) { mutableStateOf(false) }
 
     val isHtml = target.kind == WorkspaceEntryKind.Html
+
+    /**
+     * 把这一屏正在看的文件导出到公共 Download，并把**落点**说给用户听。
+     *
+     * 这一屏只有二进制那一支还从正文里调它（其余形态的两条路在行菜单里，见
+     * `WorkspaceMenuSheet`）。走 App 唯一那条写公共目录的路（`DeviceSystemActions.export`），
+     * 而且在 IO 线程上 —— 这里以前是在主线程上直接调的，点一下「导出到 Download」就阻塞住；
+     * 而 `export` 自己那时又整份 `readBytes()`，一个几百 MB 的文件是「卡住」和「OOM」一起发生。
+     *
+     * 提示复用全应用那一条通知队列（`onMessage` → 宿主画 snackbar），这一屏不自己画提示 —— 与
+     * 图片查看器「保存到下载目录」的结果走同一条通道。
+     */
+    fun exportToDownload() {
+        if (exporting) return
+        exporting = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { exportWorkspaceFile(context, target.file) }
+            exporting = false
+            onMessage(result.sentence)
+        }
+    }
 
     // 文件内容的解码同样在 IO 线程：一份 5 MB 的文本在 composition 里 `readLines()` 就是
     // 一次掉帧。
@@ -321,14 +346,19 @@ internal fun WorkspaceViewer(
                             path = target.relativePath,
                             onRetry = { reloadTick++ },
                             onRetrySave = { save() },
-                            onExport = {
-                                onMessage(exportBinary(context, target.file))
-                            },
+                            // 二进制那一支是唯一还从正文里拿这三个回调的一支（它自己就在
+                            // 正文里摆着三颗按钮）；其余形态的两条路在行菜单里
+                            // （`WorkspaceMenuSheet` 的「用其他应用打开」/「导出到 Download」）。
+                            // 两条都离开主线程：导出要写盘，「用其他应用打开」要先在 IO 上
+                            // 定 MIME（名字答不出来时要闻文件头）。
+                            onExport = { exportToDownload() },
                             onShare = {
                                 onMessage(sharePath(context, target))
                             },
                             onOpenWithApp = {
-                                onMessage(openWithOtherApp(context, target.file))
+                                scope.launch {
+                                    onMessage(openWithOtherApp(context, target.file).sentence)
+                                }
                             },
                             onCopyError = {
                                 copyToClipboard(context, saveError?.detail.orEmpty())
@@ -989,29 +1019,69 @@ private fun HtmlPreview(
 // ------------------------------------------------------------------ 设备动作 ----
 
 /**
- * 把二进制文件导出到公共 Download。
+ * 一次文件动作（导出 / 用其他应用打开）的结果。
  *
- * 走 App 既有的那条导出通道（`DeviceSystemActions.export`，设置里「导出诊断报告」用的是
- * 同一支），而不是在这里另写一个 `MediaStore` 写入器：那会变成第二条写公共目录的路径，
- * 两条路径迟早会在分区存储的某个分支上不一致。
+ * 做成一个值而不是一句话，是因为调用方要用比句子更多的东西：提示有**语气**（`ProjectScreen`
+ * 的 `say(what, tone)`，「已复制」与「剪贴板不可用」就是两个色），靠猜句子头几个字来选色
+ * 是让两个文件互相依赖对方的措辞；而「外部工作区」那一条还要拿到刚导出那一份的 URI。
  *
- * 字节给的是**文件本身**（`sourceFile`）：这条路以前自己 `readBytes()` 再 base64 一遍，
- * 而 `export` 拿到 base64 又要解回来 —— 一个 20 MB 的文件，峰值内存里躺着三份同样的字节。
+ * @param sentence 给用户看的那句话：成功时说清**落点**或结果，失败时说清原因（与
+ *   `DeviceSystemActions` 的 deny 文案同一套）。
+ * @param ok 成功与否 —— 调用方据此选提示语气。
+ * @param handoffUri 可以直接交给别的应用的那一份的 URI（`content://`）。只有「导出到 Download」
+ *   成功时可能有值；API<29 时 `export` 回的是 `file://`，而那个**不能**交出去（`targetSdk` 24
+ *   起会 `FileUriExposedException`），所以那时是 null，调用方据此把话改成两步。
  */
-private fun exportBinary(context: Context, file: File): String = try {
-    DeviceSystemActions.export(
+internal data class FileActionResult(
+    val sentence: String,
+    val ok: Boolean,
+    val handoffUri: String? = null,
+)
+
+/**
+ * 把一个工作区文件导出到公共 Download —— **任何**文件，不再只是二进制。
+ *
+ * 走 App 既有的那条导出通道（`DeviceSystemActions.export`，设置里「导出诊断报告」与对话里的
+ * 「保存到 Download」用的是同一支），而不是在这里另写一个 `MediaStore` 写入器：那会变成
+ * 第二条写公共目录的路径，两条路径迟早会在分区存储的某个分支上不一致。
+ *
+ * **调用方负责在 IO 线程上调它**（查看器的 `exportToDownload` 与行菜单的 `onExport` 都是这么
+ * 做的），而且 `export` 自己现在是流式的：磁盘那一支不再把整份文件读进堆里，峰值与文件大小无关。
+ *
+ * MIME 用 `DeviceSystemActions.mimeTypeForFile`（名字，答不出来再闻一下文件头）而不是只看名字：
+ * 无后缀的 `Makefile`、`LICENSE` 只有闻过才知道是文本，而 `text/plain` 才会让文本编辑器出现在
+ * 文件管理器的"打开方式"里。
+ *
+ * 文件名取 `export` 回的 `displayName` 而不是 `file.name`：`sanitizeName` 会改名（前导点、`..`、
+ * 超长），照原名说会与磁盘上那个不一致。
+ */
+internal fun exportWorkspaceFile(context: Context, file: File): FileActionResult = try {
+    val result = DeviceSystemActions.export(
         context = context,
         name = file.name,
         text = null,
         base64 = null,
-        mimeType = DeviceSystemActions.mimeTypeForFileName(file.name),
+        mimeType = DeviceSystemActions.mimeTypeForFile(file),
         sourceFile = file,
     )
-    "已保存到 Download/${file.name}"
+    val directory = result.optString("location").ifEmpty { "Download" }
+    val stored = result.optString("displayName").ifEmpty { file.name }
+    FileActionResult(
+        sentence = "已导出到 $directory/$stored",
+        ok = true,
+        handoffUri = result.optString("uri").takeIf { it.startsWith("content://") },
+    )
 } catch (error: DeviceActionException) {
-    "导出失败：" + error.denial.reason + (error.denial.hint?.let { " $it" } ?: "")
+    FileActionResult(
+        sentence = "导出失败：" + error.denial.reason +
+            (error.denial.hint?.let { " $it" } ?: ""),
+        ok = false,
+    )
 } catch (error: Exception) {
-    "导出失败：${error::class.java.simpleName}: ${error.message}"
+    FileActionResult(
+        sentence = "导出失败：${error::class.java.simpleName}: ${error.message}",
+        ok = false,
+    )
 }
 
 /**
@@ -1024,7 +1094,7 @@ private fun exportBinary(context: Context, file: File): String = try {
  *    `FileUriExposedException`。这个 App 的私有目录别人也读不到，只有 URI 授权能给出去。
  *  - **`FLAG_GRANT_READ_URI_PERMISSION`**：URI 授权是要显式带上的，否则对面拿到一个
  *    读不了的 URI，报的是它自己的"文件不存在"。
- *  - **`FLAG_ACTIVITY_NEW_TASK`**：这里拿到的 `Context` 是查看器那个 `Dialog` 的 context
+ *  - **`FLAG_ACTIVITY_NEW_TASK`**：这里拿到的 `Context` 可能是查看器那个 `Dialog` 的 context
  *    （不是 Activity），从非 Activity 的 context 起界面必须带这个 flag，否则
  *    `AndroidRuntimeException`。
  *
@@ -1033,32 +1103,107 @@ private fun exportBinary(context: Context, file: File): String = try {
  * 应用可能在这里答 null —— 那会让我们把"其实打得开"说成"没有应用能打开"。异常是平台自己
  * 的答案，不经过可见性过滤。
  *
- * 返回一句给用户看的话：成功、没人能接（保留导出/分享两条路）、或 FileProvider 覆盖不到
- * 这个路径。**不静默降级**：任何一种失败都带一句人话，而不是"什么都没发生"。
+ * ## 外部工作区：那一份交不出去，就先导出再打开（用户点一下）
+ *
+ * FileProvider 的路径清单只覆盖 `<files>/pi/`（`res/xml/file_paths.xml`），所以「从设备目录
+ * 选择」登记进来的设备真目录给不出授权 URI。这一支**自动**走两步：先把这份导出一份到 Download
+ * （[exportWorkspaceFile]），再打开刚导出的那一份（MediaStore 那一行是本次插入的，我们能把它
+ * 的读权限转授给对面）。不为了这一步把 `<external-path>` 或 `<root-path>` 写进
+ * `file_paths.xml` —— 那是把整块共享存储交给任何一个被我们启动的应用。
+ *
+ * API<29 上这一步只能走一半：`export` 回的 URI 是 `file://`，转授出去就会
+ * `FileUriExposedException`，所以那时说的是"已经导出到 Download，请从文件管理器打开它"。
+ * 这是**运行时 API 级别**的分叉，与 `targetSdk`（28 或 36）无关 —— 两个 targetSdk 在同一个
+ * API 级别上行为一致。
+ *
+ * ## 为什么是 `suspend`
+ *
+ * MIME 不再只看名字：`DeviceSystemActions.mimeTypeForFile` 在名字答不出来时会闻一下文件头
+ * （前 512 字节），所以取 MIME 要读盘、要放 IO 线程。写成 `suspend` 让"哪一段在 IO 上"留在
+ * 实现里，而不是让每个调用点自己记着 —— 取完 MIME 回到调用方的线程（主线程）再 `startActivity`：
+ * 起界面仍在主线程，这是这一支唯一必须成立的事。
+ *
+ * 返回一句给用户看的话：成功、没人能接、或外部工作区那条两步的结果。**不静默降级**：任何一种
+ * 失败都带一句人话，而不是"什么都没发生"；「先导出到 Download」这句话现在**真的可执行** ——
+ * 同一张行菜单里就有「导出到 Download」，不再是空头支票。
  */
-private fun openWithOtherApp(context: Context, file: File): String {
+internal suspend fun openWithOtherApp(context: Context, file: File): FileActionResult {
+    // 读盘那一步先做完：`mimeTypeForFile` 在名字答不出来时要闻文件头。
+    val mime = withContext(Dispatchers.IO) { DeviceSystemActions.mimeTypeForFile(file) }
     val uri = try {
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            .toString()
     } catch (_: IllegalArgumentException) {
-        // FileProvider 的路径清单只覆盖 `<files>/pi/`（`res/xml/file_paths.xml`）：工作区
-        // 可以是一个设备上的真目录（「从设备目录选择」），那里不在授权范围内。不为了这一步
-        // 把根目录也交出去 —— 那是把 shared_prefs/databases 一起放进可授权的范围。
-        return "这个文件不在应用的私有目录里，没法直接交给其他应用打开。" +
-            "可以先「导出到 Download」，再从那里打开或分享。"
+        return openExportedCopy(context, file, mime)
     }
-    val mime = DeviceSystemActions.mimeTypeForFileName(file.name)
+    return startViewIntent(context, uri, mime, file.name, alreadyExported = false)
+}
+
+/**
+ * 外部工作区那一条的"自动第二步"：导出一份到 Download，再把那一份交给别的应用。
+ *
+ * 三种结局，各说各的话：
+ *
+ *  - **导出就失败了**：原样回导出的那句话（原因与 hint 都在里面），**不加后缀** —— 那时
+ *    Download 里什么都没有，不能再叫人"从文件管理器打开刚刚那一份"。
+ *  - **导出成功但拿不到可转授的 URI**（API<29，`export` 回的是 `file://`）：这一趟没能替用户
+ *    把文件交出去，所以说清"已经导出到 Download，请从文件管理器打开它"，并且 `ok = false`
+ *    —— 用户要的那件事（用别的应用打开）没发生，不该报成成功。
+ *  - **导出成功且拿到了 URI**：把"已导出到 …"和打开的结果拼起来。
+ */
+private suspend fun openExportedCopy(context: Context, file: File, mime: String): FileActionResult {
+    val exported = withContext(Dispatchers.IO) { exportWorkspaceFile(context, file) }
+    if (!exported.ok) return exported
+    val handoff = exported.handoffUri
+        ?: return FileActionResult(
+            sentence = exported.sentence +
+                "；这个文件不在应用的私有目录里，本应用给不出它的读权限，" +
+                "请从文件管理器打开刚刚导出的那一份。",
+            ok = false,
+        )
+    val opened = startViewIntent(context, handoff, mime, file.name, alreadyExported = true)
+    return FileActionResult(
+        sentence = exported.sentence + "；" + opened.sentence,
+        ok = opened.ok,
+    )
+}
+
+/**
+ * `ACTION_VIEW` + 读授权那一段本身。URI 用字符串传：FileProvider 与 MediaStore 两条来源都
+ * 能拼出来，而 [Intent.setDataAndType] 要的 `Uri` 在这里解析一次就够。
+ *
+ * @param alreadyExported 这一次打开的那个 URI 是不是"刚导出到 Download 的那一份"。是的话，
+ *   "没有应用能接"时该说的是"文件已经在 Download 里，从文件管理器打开它"，而不是再让人去导出
+ *   一次（那时文件已经导出过了）。
+ */
+private fun startViewIntent(
+    context: Context,
+    uri: String,
+    mime: String,
+    name: String,
+    alreadyExported: Boolean,
+): FileActionResult {
     val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, mime)
+        setDataAndType(android.net.Uri.parse(uri), mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     return try {
         context.startActivity(intent)
-        "已交给其他应用打开 · ${file.name}"
+        FileActionResult("已交给其他应用打开 · $name", ok = true)
     } catch (error: ActivityNotFoundException) {
-        "这台设备上没有能打开这种文件的应用（$mime）。可以导出到 Download，或分享它的路径。"
+        FileActionResult(
+            sentence = if (alreadyExported) {
+                "这台设备上没有能打开这种文件的应用（$mime）。" +
+                    "文件已经在 Download 里，可以从文件管理器打开它。"
+            } else {
+                "这台设备上没有能打开这种文件的应用（$mime）。" +
+                    "可以先「导出到 Download」，再从那里打开或分享。"
+            },
+            ok = false,
+        )
     } catch (error: Exception) {
-        "打开失败：${error::class.java.simpleName}: ${error.message}"
+        FileActionResult("打开失败：${error::class.java.simpleName}: ${error.message}", ok = false)
     }
 }
 

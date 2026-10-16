@@ -1294,6 +1294,33 @@ fun ProjectScreen(
                 menuFor = null
                 openRelative(target.path, target.file, startInEdit = true)
             },
+            // 两件事都不能占主线程，但要占的段不一样：
+            //
+            //  - **导出**是阻塞的（读文件 + 写 Download），所以整个调用放到 IO 上；
+            //  - **用其他应用打开**自己就是 `suspend` 的，它内部把"读盘定 MIME"放在 IO 上、
+            //    回来**在主线程**上 `startActivity`（起界面必须在主线程那一侧）。所以这里
+            //    **不要**再套一层 `withContext(IO)` —— 套上就把 startActivity 一起推到后台了。
+            //
+            // 结果统一走这一屏的提示通道（`say`），语气按结果的 `ok` 选 —— 不去猜句子的头几个字。
+            //
+            // 文件先落成一个局部量：`menuFor = null` 之后 `target` 仍然可用，但这个 lambda
+            // 可能在协程里晚一步跑，钉住它比让读者去推"这时 target 还在不在"好。
+            onOpenWithApp = {
+                menuFor = null
+                val file = target.file
+                scope.launch {
+                    val result = openWithOtherApp(context, file)
+                    say(result.sentence, if (result.ok) StateTone.Muted else StateTone.Warning)
+                }
+            },
+            onExport = {
+                menuFor = null
+                val file = target.file
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { exportWorkspaceFile(context, file) }
+                    say(result.sentence, if (result.ok) StateTone.Muted else StateTone.Warning)
+                }
+            },
             onEnter = {
                 menuFor = null
                 crumbs = crumbs + target.file.name
@@ -2582,6 +2609,18 @@ private fun menuTargetFor(path: String, file: File, fromSession: Boolean): Works
  * 「打开 / 编辑 / 重命名 / 删除 / 复制路径」，④ 的目录是「进入 / 重命名 / 删除 / 复制路径」。
  * 删除用错误色（它是唯一不可逆的那一个）。
  *
+ * ## 「用其他应用打开」与「导出到 Download」是这张菜单加的两条（稿子的动作表里没有）
+ *
+ * 放在这里而不是查看器的正文里，正因为这张 sheet 是**两个入口共用**的：文件列表行的 ⋮，
+ * 以及查看器的 ⋮（查看器的 `onMore` 落回这一屏的 `menuFor`）。加一次，文本、代码、markdown、
+ * HTML、空文件、超大、图片、二进制 —— **每一种**都拿得到这两条路；各支正文再各画一遍就会有
+ * 七八个说法，第一个改的人只会改自己看见的那一个。
+ *
+ * 两条都只对**文件**存在（目录没有"用别的应用打开"这回事）。这两个 lambda 的实现都在
+ * `WorkspaceViewer.kt` 里（`openWithOtherApp` / `exportWorkspaceFile`）—— 查看器二进制那一支
+ * 用的是同一对函数，所以两条入口的行为不可能漂移。「导出到 Download」也是真的一条路：
+ * 「用其他应用打开」在没人能接时说的那句「先导出到 Download」，指的就是同一张菜单里的这一条。
+ *
  * 壳是 [WsSheet]：标题是 `mid(文件名, 22)`（稿子 `:1613`），副标题是**等宽**的完整路径
  * （稿子那儿是一个 `span.mono`），动作行自己带 `12px 14px` 的内边距，所以头下面不再垫
  * 一个空档 —— 头的 8 加上行的 12 就是稿子的那道缝。
@@ -2592,6 +2631,8 @@ private fun WorkspaceMenuSheet(
     onClose: () -> Unit,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
+    onOpenWithApp: () -> Unit,
+    onExport: () -> Unit,
     onEnter: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -2616,6 +2657,8 @@ private fun WorkspaceMenuSheet(
             if (WorkspaceFiles.editableAsText(target.kind)) {
                 MenuAction("编辑", onEdit)
             }
+            MenuAction("用其他应用打开", onOpenWithApp)
+            MenuAction("导出到 Download", onExport)
             MenuAction("重命名", onRename)
             MenuAction("删除", onDelete, tone = PiTheme.palette.error)
             if (target.fromSession) {

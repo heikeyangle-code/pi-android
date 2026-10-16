@@ -734,30 +734,119 @@ object DeviceSystemActions {
     /**
      * 一个文件名该用哪个 MIME —— 整个 App 只有这一份。
      *
-     * 两个读者，而且两边必须答同一个值：工作区的文件查看器把文件交给系统里的应用打开
-     * （`ACTION_VIEW`），以及图片/二进制写进 Download（[export] 要 MIME）。
+     * 三个读者，而且必须答同一个值：工作区的文件查看器把文件交给系统里的应用打开
+     * （`ACTION_VIEW`，用 [mimeTypeForFile]）、图片查看器按后缀问它（`PiImageViewerSource`
+     * 的 `HostFile.mimeType`），以及导出写进 Download（[export] 要 MIME）。
      *
-     * 用平台自己的表（`MimeTypeMap`）而不是手写一张后缀表：手写的那张永远漏，而漏掉的后缀
-     * 在被交出去时会被报成 `application/octet-stream` —— 一句对图片也照说的谎。
-     * 拿不到时给通配 MIME —— 就是下面那两行返回的、三个字符构成的「星号、斜杠、星号」。**这三个
-     * 字符在这段块注释里不能连写**：星号紧跟斜杠会在这一行当场把注释关掉，而下面那些 `*` 开头的行
-     * 会变成代码（这个文件真的因此编译失败过一次，报的是「Expecting member declaration」）。它
-     * 是系统里"我不知道"的写法，让系统自己去挑，比编一个具体的错类型好。
+     * 两层，按这个顺序：
+     *
+     *  1. **平台自己的表**（`MimeTypeMap`）。它是权威，绝大多数后缀都在里面。
+     *  2. **[TEXT_SUFFIXES]** —— 一些平台那张表答不出来、而工作区里确实会出现的**文本**后缀
+     *     （`.kt`、`.jsonl`、`.toml`…）。这一档正是用户报的「没有应用能打开」：平台答不出来
+     *     就只剩通配 MIME，而文本编辑器声明的是文本那一族，对不上。
+     *
+     *     这张表**只回答一个问题**——"这个后缀是文本吗"，答案一律 `text/plain`。**故意不给**
+     *     `.kt` 编一个 `text/x-kotlin` 之类的子类型：intent 匹配是"过滤器的类型要包含 intent
+     *     的类型"，一个没人认得的子类型会让只声明 `text/plain` 的编辑器**接不到**，本该能打开
+     *     的文件反而消失。`text/plain` 是实话（这些文件就是文本），也是能被接到的那个。
+     *
+     * 两层都答不出来时给通配 MIME —— 就是下面那几行返回的、三个字符构成的「星号、斜杠、星号」。
+     * **这三个字符在这段块注释里不能连写**：星号紧跟斜杠会在这一行当场把注释关掉，而下面那些 `*`
+     * 开头的行会变成代码（这个文件真的因此编译失败过一次，报的是「Expecting member declaration」）。
+     * 它是系统里"我不知道"的写法，让系统自己去挑，比编一个具体的错类型好。
+     *
+     * 只拿得到名字、读不了盘的地方用这一支；能读盘的地方用 [mimeTypeForFile]，它在这一支之后
+     * 还会补一次内容嗅探（无后缀的 `Makefile`、`LICENSE` 靠那一步回到 `text/plain`）。
      */
     fun mimeTypeForFileName(name: String): String {
         val suffix = name.substringAfterLast('.', "").lowercase(Locale.US)
         if (suffix.isEmpty()) return "*/*"
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(suffix) ?: "*/*"
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(suffix)
+            ?: if (suffix in TEXT_SUFFIXES) "text/plain" else "*/*"
+    }
+
+    /**
+     * "这个后缀是文本"的名单，在平台那张表答不出来时用（见 [mimeTypeForFileName]）。
+     *
+     * 「封闭」是这张表的纪律：它不是要把平台表重写一遍，只收 pi 与用户在手机工作区里真的
+     * 会碰到的文本格式。**漏掉一个后缀不会致命** —— [mimeTypeForFile] 的内容嗅探会把它救回
+     * `text/plain`；这一档的价值是**不用读盘**就答对（`export` 与图片查看器那一支拿到的就是它）。
+     *
+     * 判据是"这种文件是文本"，不是"我认得这门语言"，所以判错也只是多一次嗅探：平台答得出来时
+     * 这一支根本不会被问到。**故意不收** `.lock`（可能是二进制、也可能是结构化数据，交给平台与
+     * 嗅探去判）与 `.so`、`.class` 这类平台已经答得出来的二进制。
+     */
+    private val TEXT_SUFFIXES: Set<String> = setOf(
+        // 源码与脚本：pi 会读会写的就是这些，平台那张表基本都不认。
+        "kt", "kts", "java", "scala", "groovy", "gradle", "ts", "tsx", "jsx", "mjs", "cjs", "js",
+        "py", "pyi", "rb", "go", "rs", "cc", "cxx", "hpp", "hxx", "cs", "php", "swift",
+        "lua", "pl", "pm", "r", "jl", "dart", "sh", "bash", "zsh", "fish", "ps1", "bat",
+        "vue", "svelte", "astro",
+        // 结构化文本与配置。
+        "jsonl", "ndjson", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg", "conf",
+        "properties", "env", "editorconfig", "gitignore", "gitattributes", "dockerignore",
+        "npmrc", "csv", "tsv", "sql", "proto", "graphql", "gql", "hcl", "tf", "tfvars",
+        "nix", "mk", "cmake", "patch", "diff",
+        // 文档与其它。
+        "md", "markdown", "mdx", "rst", "adoc", "tex", "bib", "log", "srt", "vtt", "mmd",
+    )
+
+    /**
+     * 内容嗅探时最多读多少字节。
+     *
+     * 512 是"够看出这是不是文本"的量级。`WorkspaceFiles.kindOf` 的 NUL 判据读 8 KiB，那是为了
+     * 判二进制；这里只需要给出一个比通配更具体的类型，读越少越好 —— 调用方在 IO 线程上，但每次
+     * 点「用其他应用打开」都为一个几百 MB 的文件多读 8 KiB 也没有意义。
+     */
+    private const val MIME_SNIFF_BYTES = 512
+
+    /**
+     * 文件该用哪个 MIME：先按名字（[mimeTypeForFileName]），**名字答不出来才闻一下内容**。
+     *
+     * 为什么值得多读一次：没有后缀的文本文件（`Makefile`、`LICENSE`、`README`、
+     * `requirements`）按名字只能拿到通配 MIME，按内容能拿到 `text/plain` —— 后者才会让文本
+     * 编辑器出现在"打开方式"里。
+     *
+     * 判据只有一条：**头 512 字节里有没有 NUL 字节**。这与 `WorkspaceFiles.kindOf` 判
+     * "文本还是二进制"用的是同一条（`file(1)` 的经典做法）—— 两处同一条判据，为的是不出现
+     * "查看器说它是二进制、打开方式说它是文本"这种自相矛盾。代价是一段没有 NUL 的二进制会被
+     * 说成 `text/plain`：它照样打不开，而那不是这一步能断的案，`ACTION_VIEW` 那一侧会如实报出来。
+     *
+     * **要读盘，调它就得在 IO 线程上。** 读不出来（文件没了、没权限）时回到通配 MIME：
+     * 猜 MIME 不该是失败的理由，真打不开的时候由 `startActivity` 那一侧给出人话。
+     */
+    fun mimeTypeForFile(file: File): String {
+        val byName = mimeTypeForFileName(file.name)
+        if (byName != "*/*") return byName
+        val head = runCatching {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(MIME_SNIFF_BYTES)
+                val read = input.read(buffer)
+                if (read <= 0) ByteArray(0) else buffer.copyOf(read)
+            }
+        }.getOrNull() ?: return "*/*"
+        return if (head.any { it == 0.toByte() }) "application/octet-stream" else "text/plain"
     }
 
     /**
      * Public Download, sanitised name, MediaStore on API 29+, legacy path below.
      *
-     * The bytes come from exactly one of three sources, in this order: [sourceFile] — a file
-     * already on disk, which is **read here** rather than handed over as base64 (a photograph
-     * is megabytes; encoding it to base64 so this function can decode it again is a second
-     * full copy of the same bytes for nothing) — then [base64], then [text]. Every caller
-     * still ends up in the one writer to a user-visible location.
+     * The payload comes from exactly one of three sources, in this order: [sourceFile] — a file
+     * already on disk, which is **streamed** rather than handed over as base64 (a photograph is
+     * megabytes; encoding it to base64 so this function can decode it again is a second full copy
+     * of the same bytes for nothing) — then [base64], then [text]. Every caller still ends up in
+     * the one writer to a user-visible location.
+     *
+     * ## 磁盘那一支为什么不再 `readBytes()`
+     *
+     * 它以前把整份读进堆里再写出去。工作区里一个几百 MB 的导出因此要在内存里躺一整份 ——
+     * 峰值就是文件大小，而 OOM 会被那个 `runCatching` 兜成一句「读不到要导出的文件」。
+     * 现在磁盘那一支只留下一个 [File] 句柄，字节由 `writePayload` 一次一块地搬
+     * （`copyTo` 的默认缓冲区），峰值与文件大小无关。
+     *
+     * 代价说清：**文件在 `length()` 之后、拷贝之前被改小或删掉时**，「bytes」这个读数记的是
+     * 那一刻的 stat，而不是真正写出去的数量（内存那两支仍是实测的数组长度）。这个字段只有
+     * 诊断与桥的回执在读，没有任何界面按它做事。
      */
     fun export(
         context: Context,
@@ -768,17 +857,10 @@ object DeviceSystemActions {
         sourceFile: File? = null,
     ): JSONObject {
         val safeName = sanitizeName(name)
-        val bytes: ByteArray = when {
-            sourceFile != null -> runCatching { sourceFile.readBytes() }
-                .getOrElse {
-                    throw DeviceActionException(
-                        DeviceDenial(
-                            code = DeviceDenial.ERROR,
-                            reason = "读不到要导出的文件：${it.message}",
-                            hint = "文件可能已经被删掉或改名，重新打开一次再导出。",
-                        ),
-                    )
-                }
+        // 磁盘那一支**一个字节都不读**，所以这里是 null；另外两支本来就是内存里的字符串，
+        // 编不成流。两者互斥：有 sourceFile 就没有内存载荷。
+        val memoryBytes: ByteArray? = when {
+            sourceFile != null -> null
             base64 != null -> runCatching { android.util.Base64.decode(base64, android.util.Base64.DEFAULT) }
                 .getOrElse {
                     throw DeviceActionException(
@@ -790,8 +872,38 @@ object DeviceSystemActions {
                 DeviceDenial(DeviceDenial.BAD_REQUEST, "导出需要 content、base64 或文件路径之一。"),
             )
         }
-        if (bytes.isEmpty()) {
+        val fileBytes: File? = sourceFile
+        if (fileBytes != null) {
+            val source: File = fileBytes
+            // 先摸一下能不能打开：读不出来的原因要在**建 MediaStore 那一行之前**说清楚，
+            // 否则它会落到下面那个「写入 Download 失败」上（那时输出行已经建出来又删掉）。
+            // 这一下 open/close 是这次改动的代价：一次 open(2)，换来的是与 streaming 之前
+            // **一模一样**的失败文案与 deny code（不存在、没权限、是个目录各有各的原文）。
+            runCatching { source.inputStream().close() }.onFailure { error ->
+                throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.ERROR,
+                        reason = "读不到要导出的文件：${error.message}",
+                        hint = "文件可能已经被删掉或改名，重新打开一次再导出。",
+                    ),
+                )
+            }
+        }
+        // 两处都为空的唯一可能是上面那条 `when` 已经抛过异常了；0 在这里与"没有内容"同义，
+        // 落到下面那一句人话上，不编一个数字。
+        val byteCount: Long = fileBytes?.length() ?: memoryBytes?.size?.toLong() ?: 0L
+        if (byteCount == 0L) {
             throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "导出内容为空。"))
+        }
+        // 唯一那个"把载荷写进某个流"的动作。文件那一支是 `copyTo`，所以**同一个实现**同时
+        // 服务 MediaStore 与 API<29 那条真路径，两条路不必各写一遍读盘逻辑。
+        val writePayload: (java.io.OutputStream) -> Unit = { stream ->
+            val from = fileBytes
+            if (from != null) {
+                from.inputStream().use { input -> input.copyTo(stream) }
+            } else {
+                stream.write(memoryBytes.orEmpty())
+            }
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -813,7 +925,7 @@ object DeviceSystemActions {
                 )
             }
             try {
-                resolver.openOutputStream(uri)?.use { stream -> stream.write(bytes) }
+                resolver.openOutputStream(uri)?.use { stream -> writePayload(stream) }
                     ?: throw DeviceActionException(DeviceDenial(DeviceDenial.ERROR, "无法打开输出流。"))
                 values.clear()
                 values.put(MediaStore.Downloads.IS_PENDING, 0)
@@ -832,7 +944,7 @@ object DeviceSystemActions {
                 put("uri", uri.toString())
                 put("displayName", safeName)
                 put("location", "Download")
-                put("bytes", bytes.size)
+                put("bytes", byteCount)
                 put("mimeType", mimeType)
             }
         }
@@ -845,12 +957,12 @@ object DeviceSystemActions {
         val target = File(directory, safeName)
         return try {
             directory.mkdirs()
-            target.writeBytes(bytes)
+            target.outputStream().use { stream -> writePayload(stream) }
             JSONObject().apply {
                 put("uri", Uri.fromFile(target).toString())
                 put("displayName", safeName)
                 put("location", "Download")
-                put("bytes", bytes.size)
+                put("bytes", byteCount)
                 put("mimeType", mimeType)
                 put("legacyPath", true)
             }
