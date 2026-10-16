@@ -50,8 +50,15 @@ private fun roundTrip(options: PiLaunchOptions): List<ExtensionFlagArg> {
     return fromSuffix
 }
 
-/** The app's own pre-spawn spellings, which the round trip must ignore. */
-private val APP_FLAG_NAMES = setOf("system-prompt", "append-system-prompt", "no-context-files")
+/**
+ * The app's own pre-spawn spellings, which the round trip must ignore.
+ *
+ * `system-prompt` / `append-system-prompt` were in this set while the app emitted them for
+ * the two prompt rows. Those rows are pi's own files now (`app.pi.ui.PromptFileSettingsStore`)
+ * and the flags are gone, so the names are gone with them — a name left here would hide a
+ * flag that should never appear again from the "no prompt flag is emitted" check below.
+ */
+private val APP_FLAG_NAMES = setOf("no-context-files")
 
 fun main() {
     val root = System.getProperty("pi.repo.root")?.let(::File)
@@ -169,8 +176,8 @@ fun main() {
     )
 
     // ----------------------------------------------- the two spellings agree
-    val spaceForm = PiLaunchOptions.fromSettingValues(null, null, null, null, null, "--ssh user@host:/p")
-    val equalsForm = PiLaunchOptions.fromSettingValues(null, null, null, null, null, "--ssh=user@host:/p")
+    val spaceForm = PiLaunchOptions.fromSettingValues(null, null, null, "--ssh user@host:/p")
+    val equalsForm = PiLaunchOptions.fromSettingValues(null, null, null, "--ssh=user@host:/p")
     check(
         "`--x v` and `--x=v` build the same command line",
         spaceForm.commandLineSuffix() == equalsForm.commandLineSuffix(),
@@ -185,18 +192,24 @@ fun main() {
     val everything = PiLaunchOptions.fromSettingValues(
         offline = true,
         cacheRetention = "long",
-        systemPrompt = "base",
-        appendSystemPrompt = "extra",
         noContextFiles = true,
         extensionArgs = "--plan --ssh user@host:/path",
     )
     val suffix = everything.commandLineSuffix()
     check(
         "the app's own flags come first, the extension flags last",
-        suffix.indexOf("--system-prompt") < suffix.indexOf("--append-system-prompt") &&
-            suffix.indexOf("--append-system-prompt") < suffix.indexOf("--no-context-files") &&
+        suffix.indexOf("--no-context-files") >= 0 &&
             suffix.indexOf("--no-context-files") < suffix.indexOf("--plan") &&
             suffix.indexOf("--plan") < suffix.indexOf("--ssh"),
+        "got $suffix",
+    )
+    // The two prompt flags used to be the head of this suffix. They are not emitted any more
+    // — the prompt rows are pi's files, and a flag here would short-circuit the file
+    // discovery (`core/resource-loader.js:475`). Asserted as an absence rather than dropped:
+    // `indexOf(...) <` would pass trivially for a missing flag, so the check is on `contains`.
+    check(
+        "no prompt flag is ever emitted",
+        !suffix.contains("--system-prompt") && !suffix.contains("--append-system-prompt"),
         "got $suffix",
     )
     check(
@@ -206,12 +219,12 @@ fun main() {
     )
     check(
         "a value the shell would act on is quoted",
-        PiLaunchOptions.fromSettingValues(null, null, null, null, null, "--msg 'a b'")
+        PiLaunchOptions.fromSettingValues(null, null, null, "--msg 'a b'")
             .commandLineSuffix().contains("'a b'"),
     )
     check(
         "a value with a quote in it is quoted safely",
-        PiLaunchOptions.fromSettingValues(null, null, null, null, null, "--msg \"it's\"")
+        PiLaunchOptions.fromSettingValues(null, null, null, "--msg \"it's\"")
             .commandLineSuffix().contains("'it'\\''s'"),
     )
 
@@ -228,7 +241,7 @@ fun main() {
         "--plan",
     )
     for (text in tricky) {
-        val options = PiLaunchOptions.fromSettingValues(null, null, null, null, null, text)
+        val options = PiLaunchOptions.fromSettingValues(null, null, null, text)
         check(
             "round trip through bash-quoting: $text",
             roundTrip(options) == ExtensionFlagArgs.parse(text).flags,

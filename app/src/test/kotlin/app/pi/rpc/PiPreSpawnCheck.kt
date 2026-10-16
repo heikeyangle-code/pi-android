@@ -20,10 +20,19 @@ package app.pi.rpc
 //     extensions are ordinary discovered extensions that the switch is meant to
 //     turn off too (`docs/pre-spawn-config.md` §2.2).
 //   * a pre-spawn row that left the two groups which document the pre-spawn
-//     contract (`运行时与诊断 → 进程` for the engine knobs, `提示词` for the two
-//     prompt flags — see the `preSpawnGroups` comment below). The second group is
-//     new: the prompt rows moved there because that is where a user looks for
-//     them, and this check is what keeps that move deliberate rather than drift.
+//     contract (`运行时与诊断 → 进程` for the engine knobs, `扩展与资源` for the
+//     extension pass-through — see the `preSpawnGroups` comment below).
+//
+// **What this file used to check that it now checks the opposite of.** The two prompt
+// rows (`app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`) were pre-spawn
+// knobs emitting `--system-prompt` / `--append-system-prompt`, and this harness pinned
+// that emission. Those rows are pi's own **files** now
+// (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`, `app.pi.ui.PromptFileSettingsStore`), and
+// a flag on the command line would short-circuit that file discovery
+// (`core/resource-loader.js:475`) — so the two keys left [APP_EXPOSED_PRE_SPAWN], the two
+// flags are recorded in [NOT_EXPOSED_PRE_SPAWN] with the reason, and what is asserted
+// below is that **neither flag can come back** and that the two rows have a real reader
+// (the file store) instead of a dead key.
 //
 // `PiPreSpawnConfig.kt` and `PiLaunchOptions.kt` are pure Kotlin, so they are
 // compiled here directly. `PiSettingsRegistry.kt` imports Compose and
@@ -102,8 +111,6 @@ fun main() {
     val allNull = PiLaunchOptions.fromSettingValues(
         offline = null,
         cacheRetention = null,
-        systemPrompt = null,
-        appendSystemPrompt = null,
         noContextFiles = null,
     )
     check("absent settings collapse to the defaults", allNull == defaults)
@@ -111,29 +118,48 @@ fun main() {
     val blank = PiLaunchOptions.fromSettingValues(
         offline = false,
         cacheRetention = "short",
-        systemPrompt = "   ",
-        appendSystemPrompt = "",
         noContextFiles = false,
     )
     check(
-        "blank prompts and non-long cache retention emit nothing",
+        "an unset/off value emits nothing at all",
         blank.commandLineSuffix() == "" && blank.environment().isEmpty(),
         "got suffix=${blank.commandLineSuffix()} env=${blank.environment()}",
     )
 
+    // The two prompt keys are **not** knobs any more. Asserted by name, because the check
+    // above ("every exposed knob emits") only speaks about rows still in the table — a
+    // re-added `systemPrompt` field would otherwise be invisible here.
+    check(
+        "the two prompt rows left the pre-spawn table",
+        piPreSpawnKnob("app.runtime.systemPrompt") == null &&
+            piPreSpawnKnob("app.runtime.appendSystemPrompt") == null,
+        "the rows are pi's files now (app.pi.ui.PromptFileSettingsStore); a pre-spawn knob would " +
+            "re-emit --system-prompt/--append-system-prompt and kill the file discovery again " +
+            "(core/resource-loader.js:475).",
+    )
+    val promptFlagsSkipped = NOT_EXPOSED_PRE_SPAWN
+        .flatMap { spellings(it.flag) }
+        .toSet()
+    check(
+        "both prompt flags are recorded as deliberately not exposed",
+        "--system-prompt" in promptFlagsSkipped && "--append-system-prompt" in promptFlagsSkipped,
+        "record them in NOT_EXPOSED_PRE_SPAWN (rpc/PiPreSpawnConfig.kt) with the file reason: " +
+            "found $promptFlagsSkipped",
+    )
+
     // `PI_OFFLINE` is tested for *presence* by core/model-runtime.ts:196, so a
     // false-y string is worse than omitting the key.
-    val offlineOff = PiLaunchOptions.fromSettingValues(true, null, null, null, null)
+    val offlineOff = PiLaunchOptions.fromSettingValues(offline = true, cacheRetention = null, noContextFiles = null)
     check("offline=true sets PI_OFFLINE=1", offlineOff.environment()["PI_OFFLINE"] == "1")
-    val offlineUnset = PiLaunchOptions.fromSettingValues(false, null, null, null, null)
+    val offlineUnset = PiLaunchOptions.fromSettingValues(offline = false, cacheRetention = null, noContextFiles = null)
     check(
         "offline=false omits PI_OFFLINE rather than writing a false-y value",
         !offlineUnset.environment().containsKey("PI_OFFLINE"),
         "core/model-runtime.ts:196 treats any present PI_OFFLINE as 'model network off'.",
     )
-    val cacheLong = PiLaunchOptions.fromSettingValues(null, "long", null, null, null)
+    val cacheLong = PiLaunchOptions.fromSettingValues(offline = null, cacheRetention = "long", noContextFiles = null)
     check("cacheRetention=long sets PI_CACHE_RETENTION=long", cacheLong.environment()["PI_CACHE_RETENTION"] == "long")
-    val cacheShort = PiLaunchOptions.fromSettingValues(null, "short", null, null, null)
+    val cacheShort = PiLaunchOptions.fromSettingValues(offline = null, cacheRetention = "short", noContextFiles = null)
     check("cacheRetention=short omits PI_CACHE_RETENTION", !cacheShort.environment().containsKey("PI_CACHE_RETENTION"))
 
     // ------------------------------------------------- every exposed knob emits
@@ -143,8 +169,6 @@ fun main() {
     val everything = PiLaunchOptions.fromSettingValues(
         offline = true,
         cacheRetention = "long",
-        systemPrompt = "base prompt",
-        appendSystemPrompt = "extra preference",
         noContextFiles = true,
         noExtensions = true,
         noSkills = true,
@@ -217,28 +241,29 @@ fun main() {
         )
     }
 
-    // Appending is not replacing: both land on the same command line and pi
-    // applies them in different places (core/system-prompt.ts:34-41).
+    // **Neither prompt flag may be emitted.** This check is the inverted form of the one
+    // that used to assert replace-and-append were two distinct flags in the right order:
+    // the app no longer passes either, because the two rows are pi's files and a flag here
+    // suppresses the file discovery (`core/resource-loader.js:475`) — the exact defect that
+    // made a user's `SYSTEM.md` dead. Asserted on the *full* fixture, so any future code
+    // path that re-adds a flag fails here.
     check(
-        "replace and append are two distinct flags on one command line",
-        containsFlag(suffix, "--system-prompt") &&
-            containsFlag(suffix, "--append-system-prompt") &&
-            suffix.indexOf("--system-prompt") < suffix.indexOf("--append-system-prompt"),
-        "the append row must not shadow the replace row; see docs/pre-spawn-config.md.",
+        "no prompt flag is emitted — replace and append are files now",
+        !containsFlag(suffix, "--system-prompt") && !containsFlag(suffix, "--append-system-prompt"),
+        "got '$suffix'. The rows write <agentDir>/SYSTEM.md and <agentDir>/APPEND_SYSTEM.md " +
+            "(app.pi.ui.PromptFileSettingsStore); passing the flag would shadow them.",
     )
     check(
         "noContextFiles is a flag, not an environment variable",
         containsFlag(suffix, "--no-context-files") && !environment.containsKey("--no-context-files"),
     )
-    val noContextOff = PiLaunchOptions.fromSettingValues(null, null, null, null, false)
+    val noContextOff = PiLaunchOptions.fromSettingValues(null, null, false)
     check("noContextFiles=false emits nothing", noContextOff.commandLineSuffix() == "")
 
     // ------------------------------------------------- the four discovery suppressions
     val suppressionSuffix = PiLaunchOptions.fromSettingValues(
         offline = null,
         cacheRetention = null,
-        systemPrompt = null,
-        appendSystemPrompt = null,
         noContextFiles = null,
         noExtensions = true,
         noSkills = true,
@@ -276,14 +301,21 @@ fun main() {
         suppressionFlags.none { containsFlag(defaults.commandLineSuffix(), it) },
     )
 
-    // Quoting: the suffix is handed to `bash -lc`, so spaces and metacharacters
-    // must stay inside one argument.
-    val quoted = PiLaunchOptions.fromSettingValues(null, null, "it's here; rm -rf /", "a b", null)
+    // Quoting: the suffix is handed to `bash -lc`, so spaces and metacharacters must stay
+    // inside one argument. The subject moved with the flags: the prompt values are gone, and
+    // the two remaining caller-supplied strings are the session **path** (two tokens, so its
+    // value is the next word bash would split) and the extension pass-through.
+    val quoted = PiLaunchOptions.fromSettingValues(null, null, null, "--msg 'a b'")
     check(
-        "prompt values are shell-quoted",
-        quoted.commandLineSuffix().contains("'it'\\''s here; rm -rf /'") &&
-            quoted.commandLineSuffix().contains("'a b'"),
+        "a value the shell would act on is shell-quoted",
+        quoted.commandLineSuffix().contains("'a b'"),
         "got ${quoted.commandLineSuffix()}",
+    )
+    check(
+        "a session path with a space goes out as one quoted argument",
+        PiLaunchOptions(resumeSessionPath = "/tmp/a b/s.jsonl").commandLineSuffix()
+            .contains("--session '/tmp/a b/s.jsonl'"),
+        "got '${PiLaunchOptions(resumeSessionPath = "/tmp/a b/s.jsonl").commandLineSuffix()}'",
     )
 
     // ------------------------- the conversation this *new process* starts on
@@ -486,23 +518,17 @@ fun main() {
     // pre-spawn contract, and nowhere else:
     //
     //  * 运行时与诊断 → 进程 — the engine knobs (offline / cache retention /
-    //    context files). This was the only home until the two prompt flags moved.
-    //  * 提示词 — `app.runtime.systemPrompt` and `app.runtime.appendSystemPrompt`
-    //    (`--system-prompt` / `--append-system-prompt`, `cli/args.ts:110` / `:112`).
-    //    They are the same kind of value — written into pi's argv once, at spawn —
-    //    but a user looks for them next to the model, not under 运行时: pi's own CLI
-    //    keeps `--model` and `--system-prompt` adjacent (`cli/args.ts:108-112`), and
-    //    the settings home orders the groups the same way.
+    //    context files / the four suppressions).
+    //  * 扩展与资源 — `app.extensions.args`, the pass-through row: it is a pre-spawn
+    //    value, and that is the group a user looks in for anything about extensions.
     //
     // The predicate stays discriminating on purpose: a row moved anywhere else
     // fails, which is what this check is for. It is not `true`.
     //
-    // `G_RESOURCES` was added for `app.extensions.args`: the row is a pre-spawn value
-    // (it becomes argv at spawn, hence `RestartEngine`), and 扩展与资源 is the group a
-    // user looks in for anything about extensions — the same "the row lives where the
-    // user looks for it, and that choice is asserted rather than assumed" reasoning
-    // that moved the two prompt flags into 提示词.
-    val preSpawnGroups = listOf("group = G_RUNTIME", "group = G_PROMPTS", "group = G_RESOURCES")
+    // `G_PROMPTS` was in this list while the two prompt rows emitted their flags; they left
+    // both the table and this list (see the file header). Re-adding it would let a future
+    // pre-spawn row hide in a group that no longer documents the contract.
+    val preSpawnGroups = listOf("group = G_RUNTIME", "group = G_RESOURCES")
     for (knob in APP_EXPOSED_PRE_SPAWN) {
         val block = blockFor(registry, knob.appKey)
         check(
@@ -521,10 +547,9 @@ fun main() {
         check(
             "the pre-spawn row lives in a pre-spawn group: ${knob.appKey}",
             preSpawnGroups.any { block.contains(it) },
-            "pre-spawn rows live in 运行时与诊断 → 进程 (the engine knobs) or in 提示词 (the two prompt " +
-                "flags, moved there because a user looks for them next to the model). A row anywhere else " +
-                "hides that contract; put it back, or register the new group here and in " +
-                "PiSettingsRegistry.kt. See docs/pre-spawn-config.md.",
+            "pre-spawn rows live in 运行时与诊断 → 进程 (the engine knobs) or in 扩展与资源 (the " +
+                "extension pass-through). A row anywhere else hides that contract; put it back, or " +
+                "register the new group here and in PiSettingsRegistry.kt. See docs/pre-spawn-config.md.",
         )
         check(
             "the pre-spawn row is read by the launch mapping: ${knob.appKey}",
@@ -547,6 +572,52 @@ fun main() {
         viewModel.contains("PiLaunchOptions.fromSettingValues"),
         "the settings→process normalisation must stay in PiLaunchOptions.fromSettingValues so this harness " +
             "can execute it; re-read app/.../PiSessionViewModel.kt's launchOptions().",
+    )
+
+    // ------------------------------------------- the two prompt rows' new contract
+    //
+    // They left the table above, so nothing else in this harness would notice if the rows went
+    // dead or if pi were asked to restart for them. The facts asserted here are the
+    // replacement: the value lives in pi's file, the row says "new session" (pi re-reads the
+    // file when a session's resource loader is rebuilt — `core/agent-session-services.js:63-69`
+    // + `core/agent-session-runtime.js:116`), and the settings stack reaches that file through
+    // the decorator instead of pi's document.
+    val promptFileStoreFile = File(root, "app/src/main/kotlin/app/pi/ui/PromptFileSettingsStore.kt")
+    val promptFileStore = promptFileStoreFile.takeIf { it.isFile }?.readText().orEmpty()
+    check(
+        "the prompt file store exists and names both files",
+        promptFileStore.contains("\"SYSTEM.md\"") && promptFileStore.contains("\"APPEND_SYSTEM.md\""),
+        "expected $promptFileStoreFile to hold pi's two prompt file names.",
+    )
+    for (key in listOf("app.runtime.systemPrompt", "app.runtime.appendSystemPrompt")) {
+        val block = blockFor(registry, key)
+        check("the prompt row is registered: $key", block != null)
+        if (block == null) continue
+        check(
+            "the prompt row is a file write, so its effective badge is NewSession: $key",
+            block.contains("effective = EffectiveKind.NewSession"),
+            "pi reads these files when a session's resource loader is rebuilt, not at process start " +
+                "and not only at boot; `RestartEngine` would demand a restart the row does not need.",
+        )
+        check(
+            "the prompt row is served by the file store, and the key is spelled there: $key",
+            promptFileStore.contains("\"$key\""),
+            "$key is not named in app/pi/ui/PromptFileSettingsStore.kt, so the decorator does not " +
+                "intercept it and the row would keep reading the stale stored value the file must win over.",
+        )
+    }
+    check(
+        "the prompt decorator is in the settings store chain",
+        viewModel.contains("PromptFileSettingsStoreDecorator("),
+        "PiSessionViewModel.settingsStoreForSettingsUi must hand the settings screen a store whose two " +
+            "prompt keys are the files; without it the screen would read and write the old stored value.",
+    )
+    check(
+        "the launch mapping no longer reads the two prompt keys",
+        !viewModel.contains("readString(\"app.runtime.systemPrompt\")") &&
+            !viewModel.contains("readString(\"app.runtime.appendSystemPrompt\")"),
+        "PiSessionViewModel.launchOptions must not turn these rows into `--system-prompt` / " +
+            "`--append-system-prompt`: a flag suppresses pi's file discovery.",
     )
 
     if (failures > 0) {

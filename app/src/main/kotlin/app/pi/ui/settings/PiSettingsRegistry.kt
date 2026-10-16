@@ -170,10 +170,10 @@ data class PiSearchHit(
  */
 internal const val G_MODEL = "model"
 /**
- * 本应用自己的分组（spec §6.4 的 12 组里没有它）。pi 的 settings 里没有系统提示词那两行
- * （它们是 `--system-prompt` / `--append-system-prompt` 启动参数），所以 spec 没有它们的
- * 落点 —— 这是它们原来挂在「运行时与诊断 → 进程」下的原因。组名就叫「系统提示词」，与它
- * 唯一的那个 section 同名：这一组只有这一类东西。
+ * 本应用自己的分组（spec §6.4 的 12 组里没有它）。pi 的 settings 里没有系统提示词那两行：
+ * pi 只把这两个值做成**文件**（`<agentDir>/SYSTEM.md`、`<agentDir>/APPEND_SYSTEM.md`），
+ * 所以 spec 没有它们的落点 —— 这是它们原来挂在「运行时与诊断 → 进程」下的原因。组名就叫
+ * 「系统提示词」，组里两行可编辑（各写一个文件）加一行只读读数（现在生效的是哪一份）。
  *
  * 这个 id 与 registry 里那个 `prompts` **键**无关：那条是「提示模板」的路径数组。
  */
@@ -501,27 +501,29 @@ object PiSettingsCatalog {
         // ------------------------------------------------------------------
 
         //
-        // 这两行是 pi 的**进程启动参数**，不是 pi 的 settings 键：pi 的 `Settings`
-        // 接口（`core/settings-manager.ts:106-158`）里没有 systemPrompt，值由 App 组
-        // 进 `PiLaunchOptions`（`rpc/PiLaunchOptions.kt`）在启动 `pi --mode rpc` 时
-        // 传下去，也就是 `--system-prompt` / `--append-system-prompt`
-        // （`cli/args.ts:110` / `:112`，后者可重复）。它们原来挂在「运行时与诊断 →
-        // 进程」下面，和离线模式、缓存保留并列 —— 那是「引擎怎么跑」的位置，而这两
-        // 行是「模型被交代了什么」。用户报的就是找不到/以为没存进去，所以独立成组，
-        // 并且在设置首页排在「模型与推理」之后（pi 自己的 CLI 里 `--model` 与
-        // `--system-prompt` 也是挨着的，`cli/args.ts:108-112`）。
+        // 这两行是 pi 的**文件**，不是 pi 的 settings 键，也不再是启动参数：pi 的
+        // `Settings` 接口（`core/settings-manager.ts:106-158`）里没有 systemPrompt，
+        // 它的两种官方形态是命令行参数与文件，而 App 现在用文件 —— 值由
+        // `PromptFileSettingsStoreDecorator`（`ui/PromptFileSettingsStore.kt`）直接读写
+        // `<agentDir>/SYSTEM.md` 与 `<agentDir>/APPEND_SYSTEM.md`。以前这两行拼成
+        // `--system-prompt` / `--append-system-prompt` 发给引擎，那会让 pi 的
+        // `resourceLoader` 跳过文件发现（`core/resource-loader.js:475`），于是用户自己写的
+        // `SYSTEM.md` 在设置页非空时永远是死的，而且和「Pi 文件」屏里能改的同一份文件打架
+        // （`settings/PiFiles.kt:114-115`）。文件形态只有一个真相来源，也照着 pi 自己的
+        // 优先级链走：工作区 `.pi/SYSTEM.md`（项目受信任时）> 全局 `SYSTEM.md` > pi 自带。
         //
-        // 只搬显示位置：**键一个字没改**（`app.runtime.*`，与 pi 的
-        // `--system-prompt` / `--append-system-prompt` 一一对应），所以已经写在
-        // settings.json 里的老值照旧读得出来。
+        // 它们原来挂在「运行时与诊断 → 进程」下面，和离线模式、缓存保留并列 —— 那是
+        // 「引擎怎么跑」的位置，而这两行是「模型被交代了什么」。用户报的就是找不到/以为没
+        // 存进去，所以独立成组，并且在设置首页排在「模型与推理」之后。
         //
-        // 两行的 `effective` 都保持 `RestartEngine`：值在进程启动时写进 argv/env，
-        // 进程内没有写回通道（`rpc-types.ts:20-74` 没有改系统提示词的命令），界面
-        // 标签仍是「需重启引擎」，改动说明照旧。
+        // 生效时机**不是重启引擎**：文件是每次会话重建资源加载器时读的
+        // （`core/agent-session-services.js:63-69` 新建 loader + `reload()`，
+        // `core/agent-session-runtime.js:116` 换会话时重建），所以两行的 `effective` 是
+        // `NewSession`，行上也没有任何「需重启引擎」的字样。
         PiSetting(
             key = "app.runtime.systemPrompt",
             title = "自定义系统提示",
-            description = "整份替换 pi 自带的系统提示词；留空用 pi 自己的。",
+            description = "整份替换 pi 自带的系统提示词。内容写进全局 ~/.pi/agent/SYSTEM.md；留空就删掉这个文件。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
@@ -530,21 +532,39 @@ object PiSettingsCatalog {
             // （`PiTextEditorSheet` 的 `multiline` 分支）。这一行**曾经**漏掉这个
             // 标记，于是落进单行框，粘进去只剩第一行可见。
             multiline = true,
-            effective = EffectiveKind.RestartEngine,
+            effective = EffectiveKind.NewSession,
             aliases = listOf("system", "prompt"),
         ),
         PiSetting(
             key = "app.runtime.appendSystemPrompt",
             title = "追加系统提示",
-            description = "在 pi 自己拼好的系统提示词末尾追加一段文字，不替换它。",
+            description = "在 pi 自己的系统提示词之后追加一段文字，不替换它。内容写进全局 " +
+                "~/.pi/agent/APPEND_SYSTEM.md；留空就删掉这个文件。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
             defaultValue = str(""),
             // 同上一行：追加的通常是几段文字，不是一条命令。
             multiline = true,
-            effective = EffectiveKind.RestartEngine,
+            effective = EffectiveKind.NewSession,
             aliases = listOf("system", "prompt", "append"),
+        ),
+        // 只读读数：现在生效的是哪一份 `SYSTEM.md`。值由 `PiSettingsStack` 在 IO 上算好、
+        // 经 `valueOverrides` 传下来（与「已发现的主题」那四条同一个形状），因为它读的是
+        // **文件**而不是 store。三态里只能诚实地说两态：App 侧拿不到「这个项目受信任」的
+        // 确定答案（`PromptFileFacts` 的 KDoc 写了为什么），所以行上给的是两个文件各自
+        // 存在与否 + 字数，加上 pi 的规则（工作区那份受信任时优先），而不是猜一个裁决。
+        PiSetting(
+            key = "app.prompts.effectiveSource",
+            title = "系统提示词来源",
+            description = "pi 读系统提示词的顺序：工作区 .pi/SYSTEM.md（仅在项目受信任时）→ " +
+                "全局 ~/.pi/agent/SYSTEM.md → pi 自带。这里读出前两份是否存在、各多少字。",
+            kind = PiRowKind.Text,
+            group = G_PROMPTS,
+            section = "当前生效",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("system", "prompt", "source", "来源"),
         ),
         // ------------------------------------------------------------------
         // 3 消息与网络
@@ -1364,7 +1384,12 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.rootfsUsage",
             title = "运行时占用",
-            description = "Linux 运行时与包缓存的磁盘占用。运行时尚未解包或读不到时会写明原因。",
+            // 口径必须与实现一致（`RuntimeFacts.runtimeUsage`）：它量的是 <files>/pi/runtime
+            // **整棵目录** —— 解包出来的 Linux 系统树（里面包含 agent 目录：npm 包、会话文件）、
+            // proot 的临时目录、载荷记账文件；不跟随符号链接，按已分配块数计（不是表观大小）。
+            // 原来的文案写「与包缓存的磁盘占用」，既没说清是整棵树，也没说会话也在里面。
+            description = "内置运行时目录占用的实际磁盘空间（解包出的系统树、proot 临时目录与载荷记录" +
+                "都在内），不跟随符号链接。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时状态",
@@ -1456,8 +1481,8 @@ object PiSettingsCatalog {
         //
         // 这里的每一行都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
         // （`core/settings-manager.ts:110-163` 的 `Settings` 里没有 offline /
-        // systemPrompt / appendSystemPrompt / cacheRetention / noContextFiles /
-        // noExtensions / noSkills / noPromptTemplates / noThemes），
+        // cacheRetention / noContextFiles / noExtensions / noSkills /
+        // noPromptTemplates / noThemes），
         // 所以键是我们自己的（`app.` 前缀），值由 App 组进 `PiLaunchOptions`
         // （`rpc/PiLaunchOptions.kt`）在启动 `pi --mode rpc` 时传下去 —— 这与 pi
         // 的 CLI 参数一一对应，表的权威副本是 `rpc/PiPreSpawnConfig.kt`：
@@ -1475,10 +1500,9 @@ object PiSettingsCatalog {
         // 新会话不会重读 argv），`effective` 必须是 `RestartEngine`（界面标签
         // 「需重启引擎」），每一行的说明里写明需要重启引擎。
         //
-        // 同一张 `PiLaunchOptions` 表里的另外两个键（`--system-prompt` /
-        // `--append-system-prompt`，`:110` / `:112`）**不在这里**：它们是「模型被
-        // 交代了什么」，用户不会到「运行时」下面找，所以显示位置搬到了 2 提示词组
-        // （键没变）。搬走两行不影响本节的性质，本节仍是「引擎怎么跑」。
+        // 系统提示词那两行**不在这里**（它们在 2 提示词组）：它们既不是 pi 的 settings
+        // 键，也不再是启动参数 —— 它们是 pi 自己的两个文件，改完新会话就生效
+        // （`ui/PromptFileSettingsStore.kt`）。本节仍然是「引擎怎么跑」。
         // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.offline",
@@ -1741,10 +1765,10 @@ object PiSettingsCatalog {
 
     /**
      * The app's 13 groups, in order, each with a live summary: spec §6.4's 12, plus
-     * 提示词 — a group this app needs because the two system-prompt rows correspond
-     * to pi's `--system-prompt` / `--append-system-prompt` CLI flags and have no
-     * `settings.json` key to belong to, so the spec has no slot for them. It sits
-     * second because that is where a user looks for "what the model is told".
+     * 提示词 — a group this app needs because the two system-prompt rows are pi's own
+     * files (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`) and have no `settings.json`
+     * key to belong to, so the spec has no slot for them. It sits second because that
+     * is where a user looks for "what the model is told".
      */
     val groups: List<PiSettingsGroup> = listOf(
         PiSettingsGroup(G_MODEL, "模型与推理", Icons.Filled.Psychology) { store ->
@@ -1760,8 +1784,8 @@ object PiSettingsCatalog {
             // 字」）。长度是这里唯一说得清、也不会被误读的读数。
             val replaced = byKey["app.runtime.systemPrompt"]?.textIn(store).orEmpty()
             val appended = byKey["app.runtime.appendSystemPrompt"]?.textIn(store).orEmpty()
-            // 空白值等于没设：pi 那边也是这么判断的
-            // （`PiLaunchOptions.commandLineSuffix` 的 `takeIf { it.isNotBlank() }`）。
+            // 空白等于没设，而这里读到的本来就是**文件**（`PromptFileStore`）：留空会删掉
+            // 文件，文件不存在读回 null，于是一个空白值一个字符都不剩。
             val parts = buildList {
                 if (replaced.isNotBlank()) add("整份替换 ${replaced.length} 字")
                 if (appended.isNotBlank()) add("追加 ${appended.length} 字")

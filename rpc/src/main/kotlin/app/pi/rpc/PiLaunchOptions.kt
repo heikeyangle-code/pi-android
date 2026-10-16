@@ -21,9 +21,15 @@ package app.pi.rpc
  *    network access. [environment] omits it.
  *  - [longCacheRetention] → `PI_CACHE_RETENTION=long`, "extended provider
  *    prompt caching where supported".
- *  - [systemPrompt] / [appendSystemPrompt] → `--system-prompt <text>` and
- *    `--append-system-prompt <text>` (`src/cli/args.ts`). pi allows the append
- *    flag to repeat; one value is what an app-level setting can carry.
+ *  - **`systemPrompt` / `appendSystemPrompt` are no longer here.** They were
+ *    `--system-prompt` / `--append-system-prompt` once; pi reads the same two
+ *    things from `<agentDir>/SYSTEM.md` and `<agentDir>/APPEND_SYSTEM.md`, and
+ *    passing the flags **short-circuits** the file discovery
+ *    (`dist/core/resource-loader.js:475`: `this.systemPromptSource ??
+ *    this.discoverSystemPromptFile()`), which made a `SYSTEM.md` the user wrote
+ *    dead while a settings row was non-empty. The settings rows now edit those
+ *    files directly (`app.pi.ui.PromptFileSettingsStore`), so this process
+ *    configuration has nothing to say about prompts and does not emit either flag.
  *  - [noContextFiles] → `--no-context-files` (`src/cli/args.ts:194`), which turns
  *    off pi's discovery of `AGENTS.md` / `CLAUDE.md`. pi has no `settings.json`
  *    key for it, so it is one of the few pre-spawn switches with no duplicate
@@ -99,10 +105,6 @@ package app.pi.rpc
 data class PiLaunchOptions(
     val offline: Boolean = false,
     val longCacheRetention: Boolean = false,
-    /** Replaces pi's assembled system prompt (`--system-prompt`). */
-    val systemPrompt: String? = null,
-    /** Appended to pi's assembled system prompt (`--append-system-prompt`). */
-    val appendSystemPrompt: String? = null,
     /** Disables pi's `AGENTS.md` / `CLAUDE.md` discovery (`--no-context-files`). */
     val noContextFiles: Boolean = false,
     /**
@@ -225,8 +227,8 @@ data class PiLaunchOptions(
      *
      * The guest command is executed by `bash -lc` inside the rootfs
      * (`ProotCommand.build` appends it as the `-c` argument), so a value with a
-     * space — a system prompt certainly has those — must be quoted or bash would
-     * split it into separate arguments. Single-quote quoting is used because it
+     * space — an extension flag's certainly can have those — must be quoted or bash
+     * would split it into separate arguments. Single-quote quoting is used because it
      * is the one POSIX form with no escape processing inside it.
      *
      * ## Order (asserted by the `extension-flags` and `pre-spawn` harnesses)
@@ -248,10 +250,6 @@ data class PiLaunchOptions(
      * the argv readable in the diagnostic report.
      */
     fun commandLineSuffix(): String = buildString {
-        systemPrompt?.takeIf { it.isNotBlank() }?.let { append(renderPromptFlag("--system-prompt", it)) }
-        appendSystemPrompt?.takeIf { it.isNotBlank() }?.let {
-            append(renderPromptFlag("--append-system-prompt", it))
-        }
         if (noContextFiles) append(" --no-context-files")
         // The four discovery suppressions, each emitted exactly as pi defines it and
         // nothing else — no `-e` companion (see [noExtensions]).
@@ -289,11 +287,16 @@ data class PiLaunchOptions(
          * `PiSessionViewModel.launchOptions()` reads the raw values out of the
          * settings document — nine pi keys plus the app's own sidecar text for
          * [extensionArgs] — and this function turns them into the process inputs, so
-         * the normalisation rules — a blank prompt is "unset", not an empty flag;
-         * only the exact value `long` enables long cache retention; a missing
-         * boolean is false, never a truth-y string — live where the bare-JVM
-         * harness can execute them (`tools/run-app-pure-checks.sh`, harnesses
-         * `pre-spawn` and `extension-flags`). The caller keeps only the file IO.
+         * the normalisation rules — only the exact value `long` enables long cache
+         * retention; a missing boolean is false, never a truth-y string — live where
+         * the bare-JVM harness can execute them (`tools/run-app-pure-checks.sh`,
+         * harnesses `pre-spawn` and `extension-flags`). The caller keeps only the file
+         * IO.
+         *
+         * The two prompt rows are **not** here: they are files pi reads
+         * (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`), owned by
+         * `app.pi.ui.PromptFileSettingsStore`, and this function emits neither
+         * `--system-prompt` nor `--append-system-prompt` — see the class KDoc.
          *
          * Each parameter is `null` when the key is absent from the document,
          * which is how pi's sparse settings work (`settings-manager.ts`).
@@ -306,8 +309,6 @@ data class PiLaunchOptions(
         fun fromSettingValues(
             offline: Boolean?,
             cacheRetention: String?,
-            systemPrompt: String?,
-            appendSystemPrompt: String?,
             noContextFiles: Boolean?,
             extensionArgs: String? = null,
             noExtensions: Boolean? = null,
@@ -332,8 +333,6 @@ data class PiLaunchOptions(
             return PiLaunchOptions(
                 offline = offline ?: false,
                 longCacheRetention = cacheRetention == "long",
-                systemPrompt = systemPrompt?.takeIf { it.isNotBlank() },
-                appendSystemPrompt = appendSystemPrompt?.takeIf { it.isNotBlank() },
                 noContextFiles = noContextFiles ?: false,
                 noExtensions = noExtensions ?: false,
                 noSkills = noSkills ?: false,
@@ -380,22 +379,6 @@ data class PiLaunchOptions(
             val head = quoteIfNeeded("--$name")
             return if (value == null) head else "$head=${quoteIfNeeded(value)}"
         }
-
-        /**
-         * The two prompt flags, in whichever form round-trips.
-         *
-         * Normally the space form (`--system-prompt 'text'`), which is what this file
-         * has always emitted and what the `pre-spawn` harness asserts. But a prompt
-         * that *starts* with `-` or `@` hits the same pi guard as an extension value,
-         * so for exactly those it switches to the `=` form — otherwise pi would see
-         * the flag as `true` and treat the prompt as an option or a file argument.
-         */
-        internal fun renderPromptFlag(flag: String, value: String): String =
-            if (value.startsWith("-") || value.startsWith("@")) {
-                " $flag=${quoteIfNeeded(value)}"
-            } else {
-                " $flag ${quote(value)}"
-            }
 
         /** POSIX single-quoting: an embedded `'` is closed, escaped, reopened. */
         internal fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"

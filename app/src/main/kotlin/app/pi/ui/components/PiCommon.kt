@@ -937,10 +937,15 @@ fun PiValueRow(
  *    applied by this app the moment they are written, and pi re-reads a theme
  *    selection when its own UI asks for it.
  *  - [RestartEngine] — the value is read **only when `pi --mode rpc` starts**:
- *    pi's process configuration (`--offline`, `--system-prompt`,
- *    `PI_CACHE_RETENTION`) and the resources its loader caches at startup.
+ *    pi's process configuration (`--offline`, `PI_CACHE_RETENTION`, the four
+ *    `--no-*` suppressions) and the resources its loader caches at startup.
  *    Nothing short of a new process applies it, so the badge must not say
  *    "重载" — a word that promises the change is one tap away.
+ *  - [NewSession] — the value is read when a session's resource loader is rebuilt
+ *    (`core/agent-session-services.js` builds one per session and `reload()`s it,
+ *    `core/agent-session-runtime.js` rebuilds the services on a session switch), so
+ *    the running turn keeps what it has and the next session is different. The two
+ *    prompt rows are this case: they are pi's files, not process arguments.
  *  - [AutoRestartEngine] — the same timing as [RestartEngine] (a new process is
  *    still what makes the value true) **but the app performs it itself** as part
  *    of the write: the row is `app.runtime.proroot`, whose toggle runs the probe

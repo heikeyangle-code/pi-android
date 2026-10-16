@@ -24,6 +24,7 @@ import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
+import app.pi.ui.PromptFileFacts
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.screens.PiFilesScreen
 import app.pi.ui.screens.WorkspaceResource
@@ -398,6 +399,28 @@ fun PiSettingsStack(
     }
     // 扫描落地前显示「未读取」；落地后按三种读数之一显示，绝不显示一个假的 0。
     val resourceOverrides = resourceScan?.let { resourceFactOverrides(it) } ?: resourceFactPlaceholders()
+
+    // 「系统提示词」那一组里那一条**只读读数**：现在生效的是哪一份 `SYSTEM.md`。
+    //
+    // 与上面那四条「实际发现」同一个形状（值不是设置，宿主在 IO 上算好、经
+    // `valueOverrides` 传下去，落地前显示「未读取」）。它读的是**文件**，所以不能放进
+    // store 的 `read(key)`（那是每帧每行都要走的路径），只能在这里读一次。
+    //
+    // 键是 `PROMPT_SOURCE_KEY`。值是 `PromptFileFacts` 的三态读数，而它只能诚实地说两态：
+    // App 侧拿不到「这个项目受信任」的确定答案（`PromptFileFacts` 的 KDoc 写了为什么），
+    // 所以行上给的是两个文件的存在与字数 + pi 的规则，而不是猜一个裁决。
+    //
+    // epoch 用 `rowsEpoch`（外部改动 + 本进程写入）而不是只 `filesEpoch`：在设置页里
+    // 编辑提示词走的正是本进程写入那一半，`writeEpoch` 必须能把这行重读一次。
+    // `SETTINGS_WATCHED` 里的两个文件名管的是另一半（在「Pi 文件」或终端里改）。
+    var promptSource by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(workspacePath, rowsEpoch, paths) {
+        promptSource = withContext(Dispatchers.IO) {
+            runCatching { PromptFileFacts.describeSystemPrompt(paths.agentDir, workspace) }.getOrNull()
+        }
+    }
+    val promptOverrides = promptSource?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()
+
     val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
         AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
     }
@@ -595,7 +618,7 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
                 onBack = { searching = false },
                 onOpenSetting = openSetting,
-                valueOverrides = runtimeOverrides(facts) + resourceOverrides,
+                valueOverrides = runtimeOverrides(facts) + resourceOverrides + promptOverrides,
             )
 
             currentGroup != null -> SettingsGroupScreen(
@@ -619,7 +642,7 @@ fun PiSettingsStack(
                 onSettingWritten = handleSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
-                valueOverrides = runtimeOverrides(facts) + resourceOverrides,
+                valueOverrides = runtimeOverrides(facts) + resourceOverrides + promptOverrides,
                 // The raw per-phase evidence under 运行时（实际生效）: read once with the
                 // sentence above, rendered as a bounded string. See the state's comment.
                 //
@@ -727,6 +750,11 @@ fun PiSettingsStack(
  *
  * 只列 pi 读的文件与目录，不列 `sessions/`：会话目录在一个回合里会被反复写，把它算进来等于
  * 让设置页跟着对话的节奏重组，而设置页里没有任何一行显示会话。
+ *
+ * `SYSTEM.md` / `APPEND_SYSTEM.md` 是本轮加进来的：设置页有两条读它们的行（可编辑的两个
+ * 提示词行）和一条显示它们的行（`PROMPT_SOURCE_KEY`），在「Pi 文件」或终端里改完必须让
+ * 这几行重读。它们不是 `settings.json`，所以只能靠名字进这张表 —— 不加的话外部改动会一直
+ * 停在旧值上，直到别的原因触发一次重组。
  */
 private val SETTINGS_WATCHED = listOf(
     "settings.json",
@@ -734,8 +762,19 @@ private val SETTINGS_WATCHED = listOf(
     "auth.json",
     "models-store.json",
     "trust.json",
+    "SYSTEM.md",
+    "APPEND_SYSTEM.md",
     "extensions",
     "skills",
     "prompts",
     "themes",
 )
+
+/**
+ * 「系统提示词来源」那一行只读读数的键（注册表里的 `app.prompts.effectiveSource`）。
+ *
+ * 值不在 store 里：它由 `PiSettingsStack` 在 IO 上从两个 `SYSTEM.md` 算出来，作为
+ * `valueOverrides` 的一项交给行渲染 —— 与「已发现的主题」那四条同一个分工。常量放在这里
+ * 而不是注册表里，是因为它是**宿主**这一侧的键：注册表只声明行。
+ */
+private const val PROMPT_SOURCE_KEY = "app.prompts.effectiveSource"

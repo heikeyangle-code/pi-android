@@ -1,9 +1,12 @@
 package app.pi.ui.settings
 
+import android.system.Os
+import android.system.OsConstants
 import app.pi.engine.PiEngineSession
 import app.pi.runtime.PiPaths
 import app.pi.runtime.ProrootProbeNarrative
 import app.pi.runtime.RuntimeSelection
+import app.pi.runtime.RuntimeUsage
 import app.pi.service.PiEngineService
 import org.json.JSONObject
 import java.io.File
@@ -32,9 +35,13 @@ import java.io.File
  *    without touching its contents (`tools/fetch-runtime.mjs`), and
  *    `include/node/node_version.h` is what `node -v` is built from. Reading the
  *    header avoids starting a guest process just to print a version.
- *  - **runtime usage** — the real byte count of `<files>/pi/runtime`, walked on
- *    the IO dispatcher by the caller. The volatile tree is the one that grows
- *    (rootfs, package caches), so that is what the row is about.
+ *  - **runtime usage** — the **allocated** size of `<files>/pi/runtime` (`RuntimeUsage`:
+ *    `lstat` per entry, `st_blocks * 512`, symlinks never followed), read on the IO
+ *    dispatcher by the caller. The volatile tree is the one that grows, so that is what the
+ *    row is about; it contains the unpacked rootfs (which in turn contains the agent dir
+ *    with `npm` packages and sessions), `tmp/` and the payload bookkeeping. The row's
+ *    description names that scope, and the number is meant to be checked against `du` on
+ *    that one directory.
  *  - **wake lock** — `PiEngineService.isWakeLockHeld()`, i.e. the lock's own
  *    `isHeld`, published by the service that owns it. Not an inference from the
  *    service being alive, which matters more now than it used to: the lock is held
@@ -52,7 +59,9 @@ class RuntimeFacts(
         /** `v<major>.<minor>.<patch>` from the shipped node payload, or null. */
         val nodeVersion: String?,
         /**
-         * Preformatted size of the volatile runtime tree, or null.
+         * Preformatted **allocated** size of the volatile runtime tree (`<files>/pi/runtime`,
+         * symlinks not followed), or null. When a part of the tree could not be measured the
+         * sentence carries that caveat — the total is never presented as complete.
          */
         val runtimeUsage: String?,
         /**
@@ -112,9 +121,31 @@ class RuntimeFacts(
     private fun runtimeUsage(): String? = runCatching {
         val root = paths.runtime
         if (!root.isDirectory) return null
-        var bytes = 0L
-        root.walkTopDown().forEach { file -> if (file.isFile) bytes += file.length() }
-        formatBytes(bytes)
+        val usage = RuntimeUsage.measure(root, ::allocatedStat)
+        val caveats = buildList {
+            if (usage.unmeasured > 0) add("${usage.unmeasured} 项取不到分配块，未计入")
+            if (usage.unreadableDirectories > 0) add("${usage.unreadableDirectories} 个目录读不出")
+        }
+        val suffix = if (caveats.isEmpty()) "" else "（${caveats.joinToString("；")}）"
+        formatBytes(usage.bytes) + suffix
+    }.getOrNull()
+
+    /**
+     * `lstat` (the link itself) plus `st_blocks * 512` — the disk usage of the entry, not its
+     * apparent size. `java.nio.file`'s `PosixFileAttributes` carries no block count on
+     * Android, which is why this goes through [android.system.Os].
+     *
+     * Null when the entry cannot be measured. [RuntimeUsage] then counts it as unmeasured and
+     * the row says so rather than presenting an incomplete total as the whole number.
+     */
+    private fun allocatedStat(path: String): RuntimeUsage.Stat? = runCatching {
+        val stat = Os.lstat(path)
+        RuntimeUsage.Stat(
+            allocatedBytes = stat.st_blocks * BYTES_PER_BLOCK,
+            isDirectory = OsConstants.S_ISDIR(stat.st_mode),
+            isRegularFile = OsConstants.S_ISREG(stat.st_mode),
+            isSymlink = OsConstants.S_ISLNK(stat.st_mode),
+        )
     }.getOrNull()
 
     private fun formatBytes(bytes: Long): String = when {
@@ -135,6 +166,9 @@ class RuntimeFacts(
 
         /** `RuntimeProvisioner.extractNode` renames the archive's top dir to this. */
         const val NODE_DIR = "opt/node"
+
+        /** `st_blocks` is in 512-byte units (POSIX `DEV_BSIZE`), not in the filesystem's block size. */
+        const val BYTES_PER_BLOCK = 512L
 
         val NODE_MAJOR = Regex("""#define\s+NODE_MAJOR_VERSION\s+(\d+)""")
         val NODE_MINOR = Regex("""#define\s+NODE_MINOR_VERSION\s+(\d+)""")

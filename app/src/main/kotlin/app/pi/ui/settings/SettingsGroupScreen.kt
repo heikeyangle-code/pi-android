@@ -127,9 +127,8 @@ fun SettingsGroupScreen(
     var explaining by remember { mutableStateOf<PiSetting?>(null) }
     var confirming by remember { mutableStateOf<PiSetting?>(null) }
 
-    // 行上的三个动作。抽成 lambda 是因为页面底部还有一处「危险操作」要画同一个
-    // `app.security.emergencyStop` 行（v2 的 `SettingsGroup` 把它固定在页尾），
-    // 两处必须走同一条路径，否则同一个动作会有两种行为。
+    // 行上的三个动作。危险行（「紧急停止」）就在「运行时与诊断」组自己的
+    // `section = "动作"` 里，走的就是下面这一套，页面上没有第二处画它。
     val openRow: (PiSetting) -> Unit = { setting ->
         val hostAction = hostActions[setting.key]
         if (hostAction != null) {
@@ -210,35 +209,6 @@ fun SettingsGroupScreen(
                             valueOverrides = valueOverrides,
                             detailOverrides = detailOverrides,
                             highlighted = setting.key == highlightKey,
-                            onToggle = toggleRow,
-                            onOpen = openRow,
-                            onExplain = { explaining = it },
-                        )
-                    }
-                }
-            }
-            // 危险行固定在分组页末尾（v2 `SettingsGroup` 的结构提案，`phone34`–`phone38`
-            // 五台都画了它，标题落款「本版固定在页尾」）。它画的是同一个
-            // `app.security.emergencyStop` 行 —— 不新写一行、不新写文案；已经在某一组
-            // 里的那一页（安全与信任）不再重复画一遍。
-            val danger = PiSettingsCatalog.byKey[DANGER_ROW_KEY]
-            val alreadyShown = sections.any { section ->
-                section.settings.any { it.key == DANGER_ROW_KEY }
-            }
-            if (danger != null && !alreadyShown) {
-                item {
-                    PiSettingsSectionHeader(
-                        label = "危险操作",
-                        count = "1 项",
-                        aside = "本版固定在页尾",
-                    )
-                    PiSettingsCard {
-                        SettingSlot(
-                            setting = danger,
-                            store = store,
-                            valueOverrides = valueOverrides,
-                            detailOverrides = detailOverrides,
-                            highlighted = danger.key == highlightKey,
                             onToggle = toggleRow,
                             onOpen = openRow,
                             onExplain = { explaining = it },
@@ -328,8 +298,8 @@ fun SettingsGroupScreen(
 /**
  * 一行行槽：把 [PiSettingRow] 需要的五个值从 store 与宿主参数里取齐。
  *
- * 存在的理由是分组页有两处画行（分区里的卡片、页尾固定的危险行），两处必须用同一套
- * 取值 —— 尤其是「当前生效值」的 2px accent 条判定，抄一遍就会分叉。
+ * 分组页的每个分区都用它 —— 取值的口径只有这一份（尤其是「当前生效值」的 2px accent
+ * 条判定，抄一遍就会分叉）。
  *
  * 只读行可以再带一块**证据**（[detailOverrides]）：proroot 探针逐阶段的原始判读。
  * 它写在行下面而不是行里 —— 行的值只有一行（`PiSettingRow` 用 `maxLines = 1` 画），
@@ -377,9 +347,6 @@ private fun SettingSlot(
         }
     }
 }
-
-/** v2 固定在分组页页尾的那一行（`phone34`–`phone38`）。 */
-private const val DANGER_ROW_KEY = "app.security.emergencyStop"
 
 /** 一个分区（v2 的 `Section`）：分区头 + 一组行，是 LazyColumn 的一个 item。 */
 private class GroupSection(val label: String, val settings: List<PiSetting>)

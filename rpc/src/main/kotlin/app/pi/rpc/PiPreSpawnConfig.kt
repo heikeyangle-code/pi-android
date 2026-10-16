@@ -107,23 +107,6 @@ val APP_EXPOSED_PRE_SPAWN: List<PiPreSpawnKnob> = listOf(
             "core/package-manager.ts:54; core/model-runtime.ts:197; docs/environment-variables.md:84",
     ),
     PiPreSpawnKnob(
-        appKey = "app.runtime.systemPrompt",
-        flag = "--system-prompt",
-        envVar = null,
-        channel = PiPreSpawnChannel.CliFlag,
-        piReader = "cli/args.ts:110 (parse); main.ts:776 (into the resource loader); " +
-            "core/resource-loader.ts:526 (used only when set — otherwise SYSTEM.md is discovered)",
-    ),
-    PiPreSpawnKnob(
-        appKey = "app.runtime.appendSystemPrompt",
-        flag = "--append-system-prompt",
-        envVar = null,
-        channel = PiPreSpawnChannel.CliFlag,
-        piReader = "cli/args.ts:112-114 (parse, repeatable); main.ts:777; " +
-            "core/resource-loader.ts:533-534 (used only when set — otherwise APPEND_SYSTEM.md is discovered); " +
-            "core/agent-session.ts:1122-1123 (joined with a blank line); core/system-prompt.ts:64",
-    ),
-    PiPreSpawnKnob(
         appKey = "app.runtime.cacheRetention",
         flag = null,
         envVar = "PI_CACHE_RETENTION",
@@ -314,6 +297,28 @@ val COVERED_BY_PI_SETTING: List<PiCliKnobWithSetting> = listOf(
  * [COVERED_BY_PI_SETTING] / this list instead of the settings screen.
  */
 val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
+    // The two prompt flags this app used to emit. They are **not** skipped for being
+    // useless on a phone — they are the wrong channel for the row: pi reads the same two
+    // values from files, and a flag present on the command line short-circuits the file
+    // discovery (`core/resource-loader.ts:475`), which is how a `SYSTEM.md` the user wrote
+    // went dead. The rows edit those files now (`app.pi.ui.PromptFileSettingsStore`), so
+    // neither flag may come back: re-adding one would silently re-shadow the file.
+    PiPreSpawnSkipped(
+        flag = "--system-prompt",
+        envVar = null,
+        piReader = "cli/args.ts:110 (parse); main.ts:776; core/resource-loader.ts:475/:526 " +
+            "(a value here means discoverSystemPromptFile() is never reached)",
+        reason = "the row is pi's own file, not a process argument: `<agentDir>/SYSTEM.md` " +
+            "(`core/resource-loader.ts:1029`). Emitting the flag is what used to make that file dead — " +
+            "see `app.pi.ui.PromptFileSettingsStore`.",
+    ),
+    PiPreSpawnSkipped(
+        flag = "--append-system-prompt",
+        envVar = null,
+        piReader = "cli/args.ts:112-114 (parse, repeatable); main.ts:777; core/resource-loader.ts:475/:533-534",
+        reason = "same as `--system-prompt`: the row is `<agentDir>/APPEND_SYSTEM.md` " +
+            "(`core/resource-loader.ts:1037`), and the flag suppresses its discovery.",
+    ),
     PiPreSpawnSkipped(
         flag = "--exclude-tools",
         envVar = null,
@@ -435,12 +440,15 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
 /**
  * The settings keys the app's pre-spawn surface is built from, in table order.
  *
- * Two groups show them, not one: `运行时与诊断 → 进程` carries the engine knobs
- * (offline / cache retention / context files) and `提示词` carries the two prompt
- * flags (`app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`), which
- * moved there because a user looks for them next to the model — pi's CLI keeps
- * `--model` and `--system-prompt` adjacent (`cli/args.ts:108-112`). The
- * `pre-spawn` harness asserts every key here lives in one of those two groups.
+ * One group shows them: `运行时与诊断 → 进程` carries every engine knob (offline /
+ * cache retention / context files / the four discovery suppressions). `app.extensions.args`
+ * lives in `扩展与资源`, where a user looks for anything about extensions. The
+ * `pre-spawn` harness asserts every key here lives in one of those groups.
+ *
+ * The two prompt keys (`app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`) were
+ * in this table and are **not** any more: they are pi's own files, read per session
+ * rebuild, not process arguments (`app.pi.ui.PromptFileSettingsStore`). Both flags they
+ * used to produce are recorded in [NOT_EXPOSED_PRE_SPAWN] with the reason.
  */
 fun appExposedPreSpawnKeys(): Set<String> = APP_EXPOSED_PRE_SPAWN.map { it.appKey }.toSet()
 

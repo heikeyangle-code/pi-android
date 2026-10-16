@@ -401,8 +401,12 @@ class PiEngineHost(private val appContext: Context) {
      * [restart].
      *
      * pi's process configuration (`PI_OFFLINE`, `PI_CACHE_RETENTION`,
-     * `--system-prompt`, …) is only readable when the process starts, so a
-     * restart that dropped these would silently change the user's engine.
+     * `--no-context-files`, the four `--no-*` suppressions, the extension
+     * pass-through) is only readable when the process starts, so a
+     * restart that dropped these would silently change the user's engine. The two
+     * prompt values are deliberately not part of it any more: they are files pi
+     * re-reads per session (`app.pi.ui.PromptFileSettingsStore`), not process
+     * arguments.
      */
     private var launchOptions: PiLaunchOptions = PiLaunchOptions()
 

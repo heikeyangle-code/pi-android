@@ -214,16 +214,19 @@ internal val PiSettingsSheetShape = RoundedCornerShape(
 
 /**
  * `06 §2`「分组头 `padding:0 14px; margin-bottom:7px`」，标签 12/500 正文色，
- * 右侧可选计数与说明（v2 的 `Section` 组件）。
+ * 右侧可选计数（v2 的 `Section` 组件）。
  *
  * 不复用 `ui/components/PiCommon.kt` 的 `PiSectionHeader`：那个还服务对话页的
  * sheet 与会话列表，改它会牵动本批范围外的屏，而 v2 对设置页给的是另一套取值。
+ *
+ * 曾经还有一个 `aside`（右侧那句说明），唯一的调用方是分组页页尾固定的危险行 ——
+ * 那段逻辑已删（「紧急停止」只在它自己那一组里出现一次），于是这个参数也删掉了，
+ * 不留一个没有任何调用方的形参。
  */
 @Composable
 internal fun PiSettingsSectionHeader(
     label: String,
     count: String? = null,
-    aside: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -250,13 +253,6 @@ internal fun PiSettingsSectionHeader(
             )
         }
         Spacer(Modifier.weight(1f))
-        if (aside != null) {
-            Text(
-                aside,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
 

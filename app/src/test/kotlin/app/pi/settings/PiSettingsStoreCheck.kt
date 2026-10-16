@@ -24,11 +24,18 @@ package app.pi.settings
 //
 // Android-free on purpose: it compiles `app/pi/settings/PiSettingsStore.kt` (the interface,
 // which lives in the Compose-free file), `PiSettingsFileStore.kt`, `PiSettingsLock.kt`,
-// `app/pi/runtime/PiProjectConfig.kt` and `:rpc`'s `SettingsDocument.kt` + `PiJson.kt` +
-// `internal/Json.kt`. No Android, no Compose, no Gradle.
+// `app/pi/runtime/PiProjectConfig.kt`, `app/pi/ui/PromptFileSettingsStore.kt` (the two
+// prompt rows' file store, which is `java.io`/`java.nio` only) and `:rpc`'s
+// `SettingsDocument.kt` + `PiJson.kt` + `internal/Json.kt`. No Android, no Compose, no Gradle.
 //
 //   settings-store   app.pi.settings.PiSettingsStoreCheckKt
 
+import app.pi.runtime.PiProjectConfig
+import app.pi.ui.PromptFileFacts
+import app.pi.ui.PromptFileSettingsStoreDecorator
+import app.pi.ui.PromptFileSlot
+import app.pi.ui.PromptFileStore
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
@@ -328,6 +335,172 @@ fun main() {
             global.readTextOrEmpty().take(200),
         )
         check("and the key that write asked for is not in the document", store.read("theme") == null)
+    }
+
+    // ------------------------------------------ the two prompt rows are pi's files
+    //
+    // `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt` are
+    // `<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md` (`ui/PromptFileSettingsStore.kt`). What the
+    // row, pi and the 「Pi 文件」 screen have to agree on:
+    //
+    //   * an absent file is "never set" (`null`), so the row shows pi's default;
+    //   * a **blank** value deletes the file, because a file that exists with an empty body
+    //     is an empty system prompt to pi — not a fallback to pi's own;
+    //   * the read strips the BOM, the way pi's `stripBom` does
+    //     (`core/resource-loader.js:100-114`), or the editor would carry an invisible
+    //     character and write it back;
+    //   * a value an older build left in the store is **ignored** (no migration): the
+    //     decorator answers these keys itself, so the file is the only source.
+    //
+    // **Two APIs, and this section drives both on purpose.** The settings stack only ever
+    // holds a `PiSettingsStore`, so the decorator's writer is the interface's
+    // `write(key: String, value: JsonElement)` — that is the type every row and editor goes
+    // through, and the four `JsonPrimitive(...)` calls below are what pin it. The *file-level*
+    // text API is `PromptFileStore.write(key: String, text: String)` — the same object the
+    // decorator delegates to, with no JSON in sight. Asserting only the String form would leave
+    // the interface's contract unpinned (and a decorator that changed the parameter type would
+    // stop being a `PiSettingsStore` at all, which is exactly what the compiler caught here).
+    run {
+        val dir = tempDir("prompt-files")
+        val agentDir = File(dir, "agent").also { it.mkdirs() }
+        val workspace = File(dir, "workspace").also { it.mkdirs() }
+        val sidecar = PromptFileStore(agentDir)
+        val decorator = PromptFileSettingsStoreDecorator(store(dir), sidecar)
+        val systemFile = File(agentDir, "SYSTEM.md")
+        val appendFile = File(agentDir, "APPEND_SYSTEM.md")
+        val systemKey = "app.runtime.systemPrompt"
+        val appendKey = "app.runtime.appendSystemPrompt"
+
+        check(
+            "the two keys map onto pi's two file names",
+            PromptFileSlot.forKey(systemKey)?.fileName == "SYSTEM.md" &&
+                PromptFileSlot.forKey(appendKey)?.fileName == "APPEND_SYSTEM.md",
+        )
+        check("an absent prompt file reads as unset", decorator.read(systemKey) == null)
+        decorator.write("theme", JsonPrimitive("dark"))
+        check(
+            "every other key still goes to the base store",
+            (decorator.read("theme") as? JsonPrimitive)?.content == "dark",
+        )
+
+        // Through the interface: a string primitive, which is what `PiTextEditorSheet` hands
+        // over (`JsonPrimitive(value)`).
+        decorator.write(systemKey, JsonPrimitive("You are pi."))
+        check("the write lands in pi's file", systemFile.readText() == "You are pi.")
+        check(
+            "and reads back through the decorator",
+            (decorator.read(systemKey) as? JsonPrimitive)?.content == "You are pi.",
+        )
+        check("the other row keeps its own file", !appendFile.isFile)
+        check(
+            "a fresh store over the same directory reads the same file",
+            PromptFileStore(agentDir).read(systemKey) == "You are pi.",
+        )
+        // And the file-level text API, which is the one that has no JSON in its signature.
+        sidecar.write(systemKey, "written as text")
+        check("PromptFileStore.write takes the text directly", systemFile.readText() == "written as text")
+        decorator.write(systemKey, JsonPrimitive("You are pi."))
+
+        // What pi would see if someone else wrote the file: one leading BOM is dropped, the
+        // rest of the document is untouched.
+        systemFile.writeText("\uFEFF# edited by the file screen")
+        sidecar.invalidate()
+        check(
+            "the read strips one leading BOM",
+            sidecar.read(systemKey) == "# edited by the file screen",
+            "read: ${sidecar.read(systemKey)}",
+        )
+
+        // Blank == delete. The editor's "clear" gesture routes to `remove`, and a typed
+        // whitespace-only body routes here — both must end at "no file", never at an empty one.
+        decorator.write(systemKey, JsonPrimitive("   \n "))
+        check("a blank write deletes the file instead of leaving an empty one", !systemFile.isFile)
+        check("and the row reads as unset again", decorator.read(systemKey) == null)
+        // A value that is not a string at all (a `JsonNull`, a number) is an editor bug, not
+        // input; the documented answer is "clear", never a stringified `null` in the prompt.
+        decorator.write(systemKey, JsonPrimitive("# not a string"))
+        check("the file is there before the non-string write", systemFile.isFile)
+        decorator.write(systemKey, JsonNull)
+        check("a non-string value clears the file instead of being stringified", !systemFile.isFile)
+
+        decorator.write(appendKey, JsonPrimitive("Answer briefly."))
+        check("the append row writes its own file", appendFile.readText() == "Answer briefly.")
+        decorator.remove(appendKey)
+        check("remove deletes the file", !appendFile.isFile)
+
+        // The legacy value an older build stored for these `app.*` keys goes to the app-local
+        // sidecar (`PiSettingsFileStore`); a copy in pi's document is read by the old build's
+        // path only. Neither may show through the decorator — not even after the file is
+        // deleted, which is the "no fallback to the old key" rule.
+        val base = store(dir)
+        base.write(systemKey, JsonPrimitive("legacy stored value"))
+        decorator.write(systemKey, JsonPrimitive("from the file"))
+        check(
+            "the file wins over a stored value",
+            (decorator.read(systemKey) as? JsonPrimitive)?.content == "from the file",
+            "read: ${decorator.read(systemKey)}",
+        )
+        check(
+            "the stored value is still on disk (nothing migrated or deleted it)",
+            (base.read(systemKey) as? JsonPrimitive)?.content == "legacy stored value",
+        )
+        systemFile.delete()
+        sidecar.invalidate()
+        check(
+            "a deleted file does not fall back to the stored value",
+            decorator.read(systemKey) == null,
+            "read: ${decorator.read(systemKey)}",
+        )
+
+        // Atomic replace, and a temp name no other writer can be using (the 「Pi 文件」 screen
+        // writes this same file with its own `<name>.tmp-<pid>` spelling).
+        PromptFileStore(agentDir).write(systemKey, "again")
+        check("a prompt write leaves no temp file behind", systemFile.parentFile.listFiles()
+            .orEmpty().none { it.name.contains(".tmp-") })
+
+        // `PromptFileFacts` — the read-only 「系统提示词来源」 row. It reports files, and it
+        // must not invent the trust verdict it cannot know.
+        //
+        // "Neither file" has to be *made* true first: the fixture above left a global
+        // `SYSTEM.md` holding "again".
+        systemFile.delete()
+        val project = File(PiProjectConfig.root(workspace), "SYSTEM.md")
+        check(
+            "with neither file the row says pi's own prompt",
+            PromptFileFacts.describeSystemPrompt(agentDir, workspace) == "pi 自带",
+            "got: ${PromptFileFacts.describeSystemPrompt(agentDir, workspace)}",
+        )
+        project.parentFile.mkdirs()
+        project.writeText("# project")
+        val projectOnly = PromptFileFacts.describeSystemPrompt(agentDir, workspace)
+        check(
+            "the workspace file is named with the trust caveat, not as the verdict",
+            projectOnly.startsWith("工作区 .pi/SYSTEM.md") && projectOnly.contains("受信任时优先"),
+            "got: $projectOnly",
+        )
+        // The global file, 5 characters ("again"): the workspace one is named first because it
+        // is the one that wins when the project is trusted.
+        systemFile.writeText("again")
+        check(
+            "the global file is named with its length",
+            PromptFileFacts.describeSystemPrompt(agentDir, workspace).contains("全局 SYSTEM.md 5 字"),
+            "got: ${PromptFileFacts.describeSystemPrompt(agentDir, workspace)}",
+        )
+        check(
+            "the workspace file is ordered first (it wins when trusted)",
+            PromptFileFacts.describeSystemPrompt(agentDir, workspace)
+                .indexOf("工作区") < PromptFileFacts.describeSystemPrompt(agentDir, workspace).indexOf("全局"),
+        )
+        systemFile.delete()
+        check(
+            "a `SYSTEM.md` that is not a regular file is reported as such, not as absent",
+            run {
+                val directory = File(agentDir, "SYSTEM.md").also { it.mkdirs() }
+                val text = PromptFileFacts.describeSystemPrompt(agentDir, workspace)
+                directory.delete()
+                text.contains("不是普通文件")
+            },
+        )
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

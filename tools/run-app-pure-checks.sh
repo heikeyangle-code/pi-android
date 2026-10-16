@@ -1104,16 +1104,36 @@ run_harness settings-resources \
 # temp-file discipline around a write. Every property here answers a defect that shipped:
 # a "restore default" that bricked startup, a second store instance that erased the first
 # one's key, and a temp name two writers could collide on.
+#
+# `app/pi/ui/PromptFileSettingsStore.kt` is in this closure because it is the same kind of
+# thing one layer up: the two prompt rows write pi's `SYSTEM.md` / `APPEND_SYSTEM.md` instead
+# of a settings key, so "blank means delete the file" (pi tests `existsSync`, so an empty file
+# is an empty prompt, not a fallback to pi's own) and the BOM-stripping read are pinned here.
+# It imports only `java.io`/`java.nio`, kotlinx.serialization and the pure `PiProjectConfig`.
 run_harness settings-store \
   app.pi.settings.PiSettingsStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/settings/PiSettingsStoreCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiSettingsStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsLock.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/PromptFileSettingsStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SettingsDocument.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
+# app.pi.runtime: the 「运行时占用」 row's measurement. It used to be `walkTopDown()` +
+# `File.length()`, which follows symlinks (Kotlin's `FileTreeWalk` decides whether to descend
+# with `File.isDirectory()` — see the class KDoc) and measures apparent size, so the row
+# reported a number several times the real one. This pins the replacement's arithmetic:
+# symlinks are neither counted nor descended into, directories are counted once each (the root
+# as an operand), other file types contribute nothing, and an entry whose allocated size
+# cannot be read is *counted as a gap* rather than filled in with the apparent size.
+# Android-free (`java.io` + stdlib) with `lstat` injected.
+run_harness runtime-usage \
+  app.pi.runtime.RuntimeUsageCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimeUsageCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeUsage.kt"
 
 # app.pi.settings: the 「Pi 文件」screen's pure logic — the two roots, the writable
 # whitelist (default deny), the document classes, and the write-time JSON checks that keep

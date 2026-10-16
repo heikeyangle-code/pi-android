@@ -1026,17 +1026,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         ).also { settingsStoreCache = it }
 
     /**
-     * The store the **settings screen** must be handed: [settingsStore] with
-     * `app.extensions.args` served from the app-only sidecar
-     * ([ExtensionArgsStoreDecorator]).
+     * The store the **settings screen** must be handed: [settingsStore] with the app's
+     * non-`settings.json` rows served from their own homes —
+     * `app.extensions.args` from the app-only sidecar ([ExtensionArgsStoreDecorator]) and
+     * the two prompt rows from pi's own files ([PromptFileSettingsStoreDecorator]).
      *
      * A separate accessor rather than decorating [settingsStore] itself, because the
      * launch mapping and the credential screens read pi's document directly and have
-     * no business with a row that is not pi's (`settingsStoreForSettingsUi` is the
-     * one caller that renders and writes it).
+     * no business with rows that are not pi's (`settingsStoreForSettingsUi` is the
+     * one caller that renders and writes them).
+     *
+     * **Order: the prompt decorator is outermost.** The two decorators intercept disjoint
+     * key sets and both delegate every other key unconditionally, so no read or write
+     * changes meaning with the order — but these two rows are also the ones whose value an
+     * older build left in a *store* (`app-prefs.json`, plus a legacy copy in
+     * `settings.json`), so putting the file decorator outermost makes "the file answers,
+     * never a stored value" a fact about the chain's position rather than a conclusion
+     * about the inner layer's key routing.
      */
     fun settingsStoreForSettingsUi(): PiSettingsStore =
-        ExtensionArgsStoreDecorator(settingsStore, extensionArgsStore)
+        PromptFileSettingsStoreDecorator(
+            ExtensionArgsStoreDecorator(settingsStore, extensionArgsStore),
+            promptFileStore,
+        )
 
     /**
      * The app-only sidecar behind `app.extensions.args`.
@@ -1047,6 +1059,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * value in `settings.json` would be a key pi never reads (see [ExtensionArgsStore]).
      */
     private val extensionArgsStore: ExtensionArgsStore by lazy { ExtensionArgsStore(getApplication()) }
+
+    /**
+     * The two prompt files behind `app.runtime.systemPrompt` /
+     * `app.runtime.appendSystemPrompt` (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`).
+     *
+     * One instance for the whole ViewModel, not one per decorator construction: the store
+     * caches each file's text against its `(size, mtime)`, and a fresh instance per
+     * `settingsStoreForSettingsUi()` call would re-read a multi-kilobyte document on every
+     * row, every frame. Built lazily from the host's own path layout, like [settingsStore]
+     * — the agent dir is a fixed path inside the rootfs, so it does not move with the
+     * workspace, and a runtime re-extract writes the same path.
+     */
+    private val promptFileStore: PromptFileStore by lazy { PromptFileStore(host.paths().agentDir) }
 
     /**
      * pi's session index, read straight off disk.
@@ -1640,6 +1665,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun invalidateSettingsCache() {
         (settingsStore as? PiSettingsFileStore)?.invalidate()
+        // The two prompt files are read by a store of their own (`PromptFileStore`), which
+        // caches their text the same way. This function is the one hook every external
+        // writer already reaches — the settings page's file watcher and `attach()` — so the
+        // prompt cache is dropped here too; without it a `SYSTEM.md` edited in 「Pi 文件」
+        // or by the terminal would keep showing its old text until the 250 ms stamp check.
+        promptFileStore.invalidate()
     }
 
     // ----------------------------------------------------- extension UI state
@@ -2121,11 +2152,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * pi has no settings keys for these — its `Settings` interface
      * (`core/settings-manager.ts:110-163` in 0.86.1) carries none of `offline`,
-     * `systemPrompt`, `systemPrompt` append, `cacheRetention`, `noContextFiles`,
-     * `noExtensions`, `noSkills`, `noPromptTemplates` or `noThemes`; they exist only
-     * as CLI flags and environment variables (`--offline` / `PI_OFFLINE=1`,
-     * `src/cli/args.ts:223`, `:433`; `--system-prompt` / `--append-system-prompt`,
-     * `:110`, `:112`; `--no-context-files`, `:194`; `--no-extensions` / `--no-skills` /
+     * `cacheRetention`, `noContextFiles`, `noExtensions`, `noSkills`,
+     * `noPromptTemplates` or `noThemes`; they exist only as CLI flags and environment
+     * variables (`--offline` / `PI_OFFLINE=1`, `src/cli/args.ts:223`, `:433`;
+     * `--no-context-files`, `:194`; `--no-extensions` / `--no-skills` /
      * `--no-prompt-templates` / `--no-themes`, `:169`, `:188`, `:190`, `:192`;
      * `PI_CACHE_RETENTION=long`, `packages/ai/src/api/anthropic-messages.ts:64`). So
      * the *keys* are ours and the *values* are pi's, handed over in [PiLaunchOptions]
@@ -2133,6 +2163,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * including which CLI knobs pi already covers with a settings key, and which are
      * meaningless on a phone — is `rpc/PiPreSpawnConfig.kt`
      * (`docs/pre-spawn-config.md`).
+     *
+     * **The two prompt rows are not here.** They were `--system-prompt` /
+     * `--append-system-prompt` once; pi reads the same two values from
+     * `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`, and a flag on the command
+     * line suppresses that discovery (`dist/core/resource-loader.js:475`). The rows edit
+     * those files through [PromptFileSettingsStoreDecorator], which is also why changing
+     * one does not need this process restarted: pi re-reads them when a session's
+     * resource loader is rebuilt (`dist/core/agent-session-services.js:63-69`,
+     * `dist/core/agent-session-runtime.js:116`).
      *
      * The four `--no-*` are passed 1:1 with pi and nothing else: opening
      * 「停用扩展发现」 also turns off the app's own shipped extensions, because pi's
@@ -2142,8 +2181,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * `tool-search`, `llama.cpp`), which used to sit outside that gate — see
      * [PiLaunchOptions.noExtensions] for the two measured releases.
      *
-     * Only the file IO is here; the normalisation (blank means unset, only `long`
-     * means long retention) lives in [PiLaunchOptions.fromSettingValues], where
+     * Only the file IO is here; the normalisation (`long` means long retention, a
+     * missing boolean is false) lives in [PiLaunchOptions.fromSettingValues], where
      * the bare-JVM harness can execute it.
      *
      * Read fresh on every boot and every restart: a restart that replayed the
@@ -2169,10 +2208,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     ): PiLaunchOptions = PiLaunchOptions.fromSettingValues(
         offline = settingsStore.readBoolean("app.runtime.offline"),
         cacheRetention = settingsStore.readString("app.runtime.cacheRetention"),
-        // Blank means "use pi's own prompt", not "pass an empty prompt": pi only
-        // takes `--system-prompt` when there is text to pass.
-        systemPrompt = settingsStore.readString("app.runtime.systemPrompt"),
-        appendSystemPrompt = settingsStore.readString("app.runtime.appendSystemPrompt"),
         noContextFiles = settingsStore.readBoolean("app.runtime.noContextFiles"),
         noExtensions = settingsStore.readBoolean("app.runtime.noExtensions"),
         noSkills = settingsStore.readBoolean("app.runtime.noSkills"),
@@ -2666,7 +2701,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                             // asks the user to send exactly this text on. `null` when
                             // there is nothing attributable, in which case the generic
                             // sentence above is the honest answer.
-                            EngineExitCause.detail(engine.lastExitCode, engine.stderr.toString()),
+                            //
+                            // The third argument is `app.extensions.args`: the one
+                            // launch input the user types freely, and the most common
+                            // source of the `Unknown option` exit since the app started
+                            // forwarding it. Read through the same sidecar the launch
+                            // itself uses (`ExtensionArgsStore`, line 2219), because
+                            // only this layer owns storage — `EngineExitCause` is
+                            // Android-free by design.
+                            EngineExitCause.detail(
+                                engine.lastExitCode,
+                                engine.stderr.toString(),
+                                extensionArgsStore.read(),
+                            ),
                         ),
                     )
                     if (!engineTransition) {
@@ -4721,7 +4768,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * this app just sent, and the next `get_state` corrects it if pi disagreed.
      */
     fun setSteeringMode(mode: QueueMode) {
-        call("设置穿插模式") { api ->
+        call("设置引导模式") { api ->
             api.setSteeringMode(mode)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(steeringMode = mode))
         }
