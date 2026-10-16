@@ -87,8 +87,9 @@ class AgentLayout(
 
     /**
      * Create the agent dir if it is missing. A package command can run before any engine
-     * boot has created it (`PiEngineHost.migrateGuestAgentDir` normally does, `:449-460`),
-     * and the rootfs copy of a fresh install does not contain it.
+     * boot has created it — provisioning normally does (`PiRuntime.guestConfigTargets()`
+     * lists it with `directory = true`, and `RuntimeProvisioner.configureGuestFiles()`
+     * writes those), and the rootfs copy of a fresh install does not contain it.
      */
     fun ensureAgentMirrorDir(): Boolean = agentMirrorDir.isDirectory || agentMirrorDir.mkdirs()
 

@@ -172,7 +172,13 @@ fun main() {
         "no registration check: an unknown flag name is accepted",
         ExtensionFlagArgs.parse("--no-extension-registers-this 7").ok,
         "whether an extension registered it is knowable only inside pi " +
-            "(core/agent-session-services.ts:13-19); a whitelist here would be a guess",
+            "(core/agent-session-services.ts:13-19); a whitelist here would be a guess. " +
+            "**And accepting it here is not free**: pi does not shrug at an unknown name — it " +
+            "writes `Unknown option: --x` and exits 1 (agent-session-services.ts:36-41 → " +
+            "main.ts:744-755; measured on 1.1.0/1.2.0/1.3.0), *before* any RPC reply is written. " +
+            "So this assertion says \"the parser passes it\", not \"the engine tolerates it\" — " +
+            "which is why `EngineExitCause` has to name the 扩展启动参数 row when it sees that " +
+            "line. See `ExtensionFlagArgs`' KDoc.",
     )
 
     // ----------------------------------------------- the two spellings agree

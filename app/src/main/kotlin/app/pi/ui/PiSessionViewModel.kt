@@ -3246,13 +3246,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * parser turns both into null, and an empty string renders as nothing at all,
      * so both clear here too.
      *
-     * **Nothing renders this today.** The user's adjudication deleted the status
-     * row (`design/ui-refactor/11-designer-adjudication.md` D-3 — v2's dialogue
-     * shell draws no extension status line), so the `ExtensionStatus` list has no
-     * composable any more. The data is kept deliberately rather than left behind:
-     * it is the only copy of what an extension asked to show, and the adjudication
-     * names the 「会话与队列」 sheet as where it could reappear — which is a call
-     * site, not a re-plumb.
+     * **These do get drawn** — in the 「会话与队列」 sheet's 「扩展状态（N）」 section
+     * (`ChatSheets.kt`: `PiSectionHeader` + `ExtensionStatusLine`), which is exactly the
+     * landing the adjudication named when D-3 deleted the standalone status row
+     * (`design/ui-refactor/11-designer-adjudication.md`: "a call site, not a re-plumb").
+     * Earlier revisions of this comment claimed nothing rendered the list; that stopped
+     * being true when the sheet section came back.
      *
      * [text] keeps its escapes instead of being stripped here: whoever draws it
      * next has to be able to paint the colour (`chromeSpans` +
