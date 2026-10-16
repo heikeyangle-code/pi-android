@@ -402,24 +402,28 @@ fun PiSettingsStack(
 
     // 「系统提示词」那一组里那一条**只读读数**：pi 会读的那几份提示词文件（两份名字 × 两个层级）。
     //
-    // 与上面那四条「实际发现」同一个形状（值不是设置，宿主在 IO 上算好、经
-    // `valueOverrides` 传下去，落地前显示「未读取」）。它读的是**文件**，所以不能放进
-    // store 的 `read(key)`（那是每帧每行都要走的路径），只能在这里读一次。
+    // **一次 stat、两处用**：值给行（`valueOverrides`），存在的文件按 pi 的顺序逐行给行下面的
+    // 证据块（`detailOverrides` —— 见 `SettingsGroupScreen`：只读行的值只有一行，多行的东西写在
+    // 行下面）。两者必须出自**同一次**读数，否则行与它自己的证据会各说一套。
     //
-    // 键是 `PROMPT_SOURCE_KEY`。值只报能证明的事实 —— 哪几份文件存在、在哪一级；那条
+    // 它读的是**文件**，所以不能放进 store 的 `read(key)`（那是每帧每行都要走的路径），只能在这
+    // 里读一次。键是 `PROMPT_SOURCE_KEY`；值只报能证明的事实 —— 哪几份文件存在、在哪一级；那条
     // 「工作区那份受信任时优先」的规则写在行的描述里，不在这里猜一个裁决
     // （`PromptFileFacts` 的 KDoc 写了为什么）。
     //
     // epoch 用 `rowsEpoch`（外部改动 + 本进程写入）而不是只 `filesEpoch`：在设置页里
     // 编辑提示词走的正是本进程写入那一半，`writeEpoch` 必须能把这行重读一次。
     // `SETTINGS_WATCHED` 里的两个文件名管的是另一半（在「Pi 文件」或终端里改）。
-    var promptSource by remember { mutableStateOf<String?>(null) }
+    var promptReading by remember { mutableStateOf<PromptFileFacts.Reading?>(null) }
     LaunchedEffect(workspacePath, rowsEpoch, paths) {
-        promptSource = withContext(Dispatchers.IO) {
-            runCatching { PromptFileFacts.describePromptFiles(paths.agentDir, workspace) }.getOrNull()
+        promptReading = withContext(Dispatchers.IO) {
+            runCatching { PromptFileFacts.read(paths.agentDir, workspace) }.getOrNull()
         }
     }
-    val promptOverrides = promptSource?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()
+    val promptOverrides =
+        promptReading?.let { mapOf(PROMPT_SOURCE_KEY to PromptFileFacts.value(it)) } ?: emptyMap()
+    val promptDetailOverrides = promptReading?.let { PromptFileFacts.detail(it) }
+        ?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()
 
     val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
         AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
@@ -651,11 +655,11 @@ fun PiSettingsStack(
                 // says 「正在测 proroot 探针」. Two sentences contradicting each other is worse
                 // than the block arriving one step later — it does, at `Idle`, with the verdict
                 // the probe just recorded.
-                detailOverrides = if (runtimeSwitch.inFlight) {
+                detailOverrides = (if (runtimeSwitch.inFlight) {
                     emptyMap()
                 } else {
                     runtimeDetailOverrides(runtimeStatus)
-                },
+                }) + promptDetailOverrides,
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },

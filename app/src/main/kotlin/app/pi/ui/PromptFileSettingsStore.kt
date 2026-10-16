@@ -319,32 +319,69 @@ object PromptFileFacts {
     private val PROMPT_FILES = listOf("SYSTEM.md", "APPEND_SYSTEM.md")
 
     /**
-     * One line for the row. Never a verdict: it does not claim to know whether a workspace copy
-     * is in effect (see the object KDoc).
+     * One candidate file. [display] is the spelling the rest of this screen already uses
+     * (`~/.pi/agent/<name>` in the rows' descriptions), so the evidence block and the prose
+     * name the same file the same way. [source] decides both the order and the word.
      */
-    fun describePromptFiles(agentDir: File, workspace: File): String {
+    data class Candidate(val display: String, val source: DiscoverySource)
+
+    /**
+     * What a single pass over the four candidates found.
+     *
+     * Split out from the two formatters so the caller stats each file **once** and both strings
+     * come from the same reading: the row's value and the evidence under it must never describe
+     * different states.
+     */
+    data class Reading(val present: List<Candidate>, val notRegular: Int)
+
+    /**
+     * Stat the four candidates — **contents are never read** (nothing here reports a size, and
+     * pi's own list does not either).
+     */
+    fun read(agentDir: File, workspace: File): Reading {
         val projectRoot = PiProjectConfig.root(workspace)
         // Workspace before agent dir, per name: that is pi's precedence within one name
-        // (`docs/configuration.md:39`), and the count line must not read as if the global copy
-        // came first. The order also matches `resourceFactOverrides` (ProjectPi.rank < Global).
+        // (`docs/configuration.md:39`), and neither the count nor the list may read as if the
+        // global copy came first. The order also matches `resourceFactOverrides`
+        // (`ProjectPi.rank` < `Global.rank`).
         val candidates = buildList {
             for (name in PROMPT_FILES) {
-                add(File(projectRoot, name) to DiscoverySource.ProjectPi)
-                add(File(agentDir, name) to DiscoverySource.Global)
+                add(File(projectRoot, name) to Candidate("<工作区>/.pi/$name", DiscoverySource.ProjectPi))
+                add(File(agentDir, name) to Candidate("~/.pi/agent/$name", DiscoverySource.Global))
             }
         }
-        val present = candidates.filter { (file, _) -> file.isFile }
+        val present = candidates.filter { (file, _) -> file.isFile }.map { (_, candidate) -> candidate }
         // `existsSync` is true for these and pi's read then fails — the one state that must not
         // be folded into "absent". That is why this row stats the filesystem rather than
         // trusting the store.
         val notRegular = candidates.count { (file, _) -> file.exists() && !file.isFile }
-        val oddity = if (notRegular == 0) "" else "（另有 $notRegular 项不是普通文件）"
-        if (present.isEmpty()) {
-            return if (notRegular == 0) "还没有任何提示词文件" else "还没有提示词文件$oddity"
-        }
-        val bySource = present.groupingBy { (_, source) -> source }.eachCount().entries
+        return Reading(present = present, notRegular = notRegular)
+    }
+
+    /** The row's value. Never a verdict: it does not claim to know whether a workspace copy is in effect. */
+    fun value(reading: Reading): String {
+        val oddity = if (reading.notRegular == 0) "" else "（${reading.notRegular} 项不是普通文件）"
+        if (reading.present.isEmpty()) return "还没有任何提示词文件$oddity"
+        val bySource = reading.present.groupingBy { it.source }.eachCount().entries
             .sortedBy { it.key.rank }
             .joinToString(" · ") { (source, count) -> "${source.label} $count" }
-        return "${present.size} 份 · $bySource$oddity"
+        return "${reading.present.size} 份 · $bySource$oddity"
+    }
+
+    /**
+     * The evidence under the row: the files that exist, **one per line, in pi's reading order**
+     * — the shape pi itself prints (`interactive-mode.js:1382-1392`). `null` when there is
+     * nothing to list, which is also when the block is not drawn at all
+     * (`SettingsGroupScreen` skips a blank detail): pi omits its section in that case, and this
+     * is the closest this screen can get without a conditional-row mechanism.
+     */
+    fun detail(reading: Reading): String? {
+        val lines = buildList {
+            addAll(reading.present.map { it.display })
+            if (reading.notRegular > 0) {
+                add("（${reading.notRegular} 项不是普通文件，pi 会读失败）")
+            }
+        }
+        return lines.takeIf { it.isNotEmpty() }?.joinToString("\n")
     }
 }

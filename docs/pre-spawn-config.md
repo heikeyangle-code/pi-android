@@ -191,12 +191,24 @@
 13. **`PiPreSpawnConfig`**：两个旋钮从 `APP_EXPOSED_PRE_SPAWN` 移进 `NOT_EXPOSED_PRE_SPAWN`，理由写在行内（"给了参数就不再去发现文件，那正是用户写的 `SYSTEM.md` 变死的原因"），并写明"不许再加回来"。
 14. **新 `app/pi/ui/PromptFileSettingsStore.kt`**：一个 `PiSettingsStore` 装饰器，把 `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt` 两个键转发到 `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`。**空白 = 删文件**（pi 只看 `existsSync`；而"只有空白"的文件会让 `customPrompt` 为真、把 pi 自带的 preamble 替换成那点空白）；写是同目录临时文件 + `Files.move`（与「Pi 文件」屏同写一个文件时不撕裂）；读给编辑器的文本剥 BOM；缓存与 `PiSettingsFileStore.Document` 同一套 `(size,mtime)` 节流。套在 `PiSessionViewModel` 装饰器链的最外层。
 15. **`EffectiveKind`：`RestartEngine` → `NewSession`**（文件按会话重建资源加载器时读）；两行描述按官方语义写短（**替换** / **追加**）。
-16. **新增一行只读读数**（`app.prompts.effectiveSource`）。同一轮里它迭代过一次，落点是：
-    - **标题「提示词文件」**，值覆盖**四份**文件（`SYSTEM.md` / `APPEND_SYSTEM.md` × 工作区 / 全局），
-    - 形状与用词**沿用那四条「已发现的 …」资源读数**（`PiResourceFacts`）：`2 份 · 项目（<工作区>/.pi） 1 · 全局（~/.pi/agent） 1`，零状态是 `还没有任何提示词文件`；来源词取自 `DiscoverySource`（**构造级**保证同一个词，不是靠肉眼对），为此 `PiResourceFacts.kt` 进了 `settings-store` harness 的编译闭包，
+16. **新增一行只读读数**（`app.prompts.effectiveSource`）。同一轮里它迭代过两次，落点是：
+    - **标题「提示词文件」**，覆盖**四份**文件（`SYSTEM.md` / `APPEND_SYSTEM.md` × 工作区 / 全局）。
+    - **值**沿用那四条「已发现的 …」资源读数的形状与用词（`PiResourceFacts`）：
+      `2 份 · 项目（<工作区>/.pi） 1 · 全局（~/.pi/agent） 1`，零状态 `还没有任何提示词文件`；
+      来源词取自 `DiscoverySource`（**构造级**保证同一个词，不是靠肉眼对），为此
+      `PiResourceFacts.kt` 进了 `settings-store` harness 的编译闭包。
+    - **行下面还有一块证据**（`detailOverrides`，那个通道本来只给 proroot 探针用）：
+      存在的文件**按 pi 的读取顺序逐行列出**（`<工作区>/.pi/SYSTEM.md`、`~/.pi/agent/SYSTEM.md`、
+      `…/APPEND_SYSTEM.md`…）—— 这就是 pi 在它 TUI 的 `Context` 小节里印的东西
+      （`modes/interactive/interactive-mode.js:1382-1392`）。只读行的**值**是 `maxLines = 1`，
+      pi 那种多行列表只能走这块证据；两者出自**同一次**读数（`PromptFileFacts.read`），
+      行与它的证据不会各说一套。
     - **不报字数**（pi 自己的读数也不报），因此这一行只 stat 文件、**不读文件内容**。
-    - ~~早一版只覆盖 `SYSTEM.md`、并且报每份文件多少字~~ —— 已改掉；那个"范围限制"不存在了。
-    - **与 pi 的两处有意差距**（UI 地板，不是偷懒）：pi 把这几份文件的**路径逐行**列在它 TUI 的 `Context` 小节里（`modes/interactive/interactive-mode.js:1382-1392`），列表为空时**整节不出现**；这里的只读行值 `maxLines = 1`、注册表也没有条件隐藏机制，所以路径写进行描述、零状态借用 App 自己的词。
+    - ~~早一版只覆盖 `SYSTEM.md`、且报每份文件多少字、把路径塞进行描述~~ —— 都改掉了。
+    - **与 pi 还剩一处有意差距**：列表为空时 pi **整节不出现**，这里只是**证据块不画**
+      （`detail()` 返回 null），行本身还在并说 `还没有任何提示词文件` —— 注册表没有条件隐藏机制，
+      硬做就是新造机制。另外 pi 列的是**胜出**的那一份（它知道项目信任与否），这里列的是
+      **两个候选都列** —— 因为这一行存在的理由正是 App 不知道那个裁决。
 17. **harness 的断言方向反过来**：`PiLaunchOptionsTest` 改成"反射断言没有那两个字段 + 全开时一个 flag 都不发"；`PiPreSpawnCheck` / `ExtensionFlagArgsCheck` 跟着改（后者新增"两个 prompt flag 一个都不发"，因为把它们留在"忽略名单"里会藏住"不该再出现"的 flag）；`PiSettingsStoreCheck` 新增一整节钉新语义（缺文件 = null、写入真的落到 `<agentDir>/SYSTEM.md`、**空白 = 删文件**、非字符串 = 清空、BOM 剥离、无临时文件残留、**不回退也不迁移旧值**；以及读数行的四份计数与顺序）。
 
 ## 4. 不确定项与设备判据
