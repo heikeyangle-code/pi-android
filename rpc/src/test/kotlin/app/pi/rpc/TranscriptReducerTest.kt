@@ -144,6 +144,78 @@ class TranscriptReducerTest {
     }
 
     @Test
+    fun `a codemode update with no text still lands its call snapshot`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"codemode","args":{"code":"1"}}"""))
+        // pi 的 codemode **一个字的正文都不送**：每个嵌套调用的进度都走
+        // `{content: [], details: {calls: […]}}`（`dist/extensions/codemode/execute.js:395`），
+        // 而 `contentText` 对空数组答 `null`（`Events.kt:767-785`）。所以"没有文本就丢掉这次
+        // 更新"会让运行中的 codemode 卡永远看不到调用清单 —— 这条钉的就是那一句。
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[],"details":{"calls":[{"name":"read","args":"{}","status":"running"}]}}}""",
+            ),
+        )
+        val card = r.transcript.single() as ToolCall
+        assertTrue(card.liveDetails != null)
+        assertTrue(card.liveDetails.toString().contains("read"))
+        assertTrue(card.liveDetails.toString().contains("running"))
+        // 这次更新没带文本，所以 `output` 保持原样（这里本来就是空）。
+        assertEquals("", card.output)
+    }
+
+    @Test
+    fun `the settled result releases the live snapshot`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"codemode","args":{"code":"1"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[],"details":{"calls":[{"name":"read","status":"running"}]}}}""",
+            ),
+        )
+        assertTrue((r.transcript.single() as ToolCall).liveDetails != null)
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"tool_execution_end","toolCallId":"tc1","toolName":"codemode","isError":false,"result":{"content":[{"type":"text","text":"done"}],"details":{"calls":[{"name":"read","status":"ok"}]}}}""",
+            ),
+        )
+        val done = r.transcript.single() as ToolCall
+        // 结果自己的 `details` 一到，快照立刻放掉：卡片从此读 `details`，再留着就是纯占内存。
+        assertNull(done.liveDetails)
+        assertTrue(done.details != null)
+    }
+
+    @Test
+    fun `an update carrying neither text nor details is dropped`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"bash","args":{"command":"x"}}"""))
+        // bash 的第一次空更新就是这个形状（`core/tools/bash.js:216`）：既没有正文也没有
+        // details，不该被当成一次发布。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[],"details":null}}"""))
+        val card = r.transcript.single() as ToolCall
+        assertNull(card.liveDetails)
+        assertEquals("", card.output)
+    }
+
+    @Test
+    fun `a details-only update leaves the streamed output alone`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"bash","args":{"command":"x"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[{"type":"text","text":"half"}],"details":{"truncation":{"truncated":true}}}}""",
+            ),
+        )
+        assertEquals("half", (r.transcript.single() as ToolCall).output)
+        clock += 1_000
+        // 一次只带 details 的更新：不能把已经流出来的正文清掉（累加器只为带文本的更新建）。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[],"details":{"fullOutputPath":"/tmp/x"}}}"""))
+        val card = r.transcript.single() as ToolCall
+        assertEquals("half", card.output)
+        assertTrue(card.liveDetails.toString().contains("/tmp/x"))
+    }
+
+    @Test
     fun `a nested tool end cannot append a card on its own`() {
         val r = reducer()
         r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"codemode","args":{}}"""))

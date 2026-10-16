@@ -1627,6 +1627,21 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     toolName = event.toolName.ifEmpty { current.toolName },
                     args = event.args ?: current.args,
                     status = ToolStatus.Pending,
+                    // **A call started again under an id this transcript already used**: the
+                    // live snapshot belongs to the *previous* run, so it goes with the restart
+                    // rather than being shown against the new one until its first update lands.
+                    //
+                    // Only reachable if the engine reuses a `toolCallId` (or emits a second
+                    // `tool_execution_start` for one) — its ids are unique per call, and
+                    // `AssistantDelta.ToolCallStart` guards on `toolIndexByCallId`, so this is
+                    // defence in depth rather than a path seen in practice.
+                    //
+                    // The *other* settled fields on this branch — `output`, `details`, the
+                    // recorded duration, the exit code — keep the same behaviour they already
+                    // had (they are not reset here), so a reused id shows the previous run's
+                    // result until the new one overwrites it. That is pre-existing and is left
+                    // alone: changing it is a restart-semantics decision, not this field's.
+                    liveDetails = null,
                 )
                 return TranscriptChange.Updated(existing)
             }
@@ -1650,7 +1665,20 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         if (isNestedToolCall(event.toolCallId, event.parentToolCallId)) return TranscriptChange.None
         val index = toolIndexByCallId[event.toolCallId] ?: return TranscriptChange.None
         val current = items.getOrNull(index) as? ToolCall ?: return TranscriptChange.None
-        val chunk = event.partialText ?: return TranscriptChange.None
+        // **An update with no text is still an update.**
+        //
+        // pi's `codemode` publishes its progress as `{ content: [], details: { calls: […] } }`
+        // — **no text at all** (`dist/extensions/codemode/execute.js:395`) — and `contentText`
+        // answers `null` for an empty block list (`Events.kt:767-785`). The old `partialText ?:
+        // return` therefore threw away every codemode progress event before the snapshot could
+        // be recorded, which is exactly the payload [ToolCall.liveDetails] exists for: the
+        // nested-call rows would only ever appear once the script had finished.
+        //
+        // An update that carries *neither* text nor details is still dropped (bash's first,
+        // empty update, `core/tools/bash.js:216`).
+        val chunk = event.partialText
+        val partialDetails = event.partialDetails
+        if (chunk == null && partialDetails == null) return TranscriptChange.None
         // Engine updates are cumulative snapshots for some tools and deltas for
         // others; take the longer of "append" and "replace" so neither regresses.
         //
@@ -1659,16 +1687,26 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // compared against a stale row would be appended to it instead of replacing it.
         // The two agree whenever the row is current, so the decision is the same one the
         // code always meant to make.
-        val acc = pendingToolOutput.getOrPut(event.toolCallId) { StringBuilder(current.output) }
-        when {
-            chunk.isEmpty() -> Unit
-            acc.isEmpty() -> acc.append(chunk)
-            chunk.length >= acc.length &&
-                chunk.startsWith(acc.substring(0, minOf(PREFIX_COMPARE_CHARS, acc.length))) -> {
-                acc.setLength(0)
-                acc.append(chunk)
+        //
+        // The accumulator is created **only** for an update that carried text: a details-only
+        // publication must leave `output` exactly as it was, and a fresh accumulator would
+        // otherwise materialise as an empty string over the output already on screen.
+        val acc = if (chunk != null) {
+            pendingToolOutput.getOrPut(event.toolCallId) { StringBuilder(current.output) }
+        } else {
+            null
+        }
+        if (acc != null && chunk != null) {
+            when {
+                chunk.isEmpty() -> Unit
+                acc.isEmpty() -> acc.append(chunk)
+                chunk.length >= acc.length &&
+                    chunk.startsWith(acc.substring(0, minOf(PREFIX_COMPARE_CHARS, acc.length))) -> {
+                    acc.setLength(0)
+                    acc.append(chunk)
+                }
+                else -> acc.append(chunk)
             }
-            else -> acc.append(chunk)
         }
         // F8: the row above is the truth; only the repaint is coalesced. Before
         // this, every chunk published a whole transcript, so a `bash`/`grep`
@@ -1690,10 +1728,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         //
         // `liveDetails` rides along so a tool whose progress lives in `details` (codemode's
         // nested calls) can be drawn while it runs. It never touches `details`, which stays
-        // "what the settled result carried" — see [ToolCall.liveDetails].
+        // "what the settled result carried" — see [ToolCall.liveDetails]. And a details-only
+        // publication writes **no** output: `output` keeps whatever the row already had.
         items[index] = current.copy(
-            output = acc.toString(),
-            liveDetails = event.partialDetails ?: current.liveDetails,
+            output = acc?.toString() ?: current.output,
+            liveDetails = partialDetails ?: current.liveDetails,
         )
         pendingToolOutput.remove(event.toolCallId)
         return TranscriptChange.Updated(index)
