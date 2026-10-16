@@ -897,12 +897,18 @@ object DeviceSystemActions {
         }
         // 唯一那个"把载荷写进某个流"的动作。文件那一支是 `copyTo`，所以**同一个实现**同时
         // 服务 MediaStore 与 API<29 那条真路径，两条路不必各写一遍读盘逻辑。
+        //
+        // 内存那一支用 `requireNotNull` 而不是 `orEmpty()`：`ByteArray` **没有** `orEmpty()`
+        // —— 标准库只给 `Array<T>`、`String`、集合那几类，`ByteArray` 是原始类型数组，拿不到
+        // 那个扩展（这一行曾经就是这么写上去的，CI 报的是 `Unresolved reference 'orEmpty'`）。
+        // 而且这里**不可能**为空：上面那条 `when` 在三种载荷都缺席时已经抛过异常。把不可能写成
+        // `requireNotNull`，真出现时是一句能定位的异常，而不是静默写出去一个空文件。
         val writePayload: (java.io.OutputStream) -> Unit = { stream ->
             val from = fileBytes
             if (from != null) {
                 from.inputStream().use { input -> input.copyTo(stream) }
             } else {
-                stream.write(memoryBytes.orEmpty())
+                stream.write(requireNotNull(memoryBytes))
             }
         }
 
