@@ -230,7 +230,7 @@
 | 压缩卡的 chip + hairline 形态 | `CompactionBlock.kt:73/81/93` | `customMessageBg` / `borderMuted@50%` | v2 形态；见 D1（这一条同时是差异） |
 | 会话列表「当前」徽标 | `SessionsScreen.kt:832-870` | `primary`（=`accent`） | `11` 已裁决「外观以 v2 为准」；见 D2 |
 | 会话树「当前」标记 / 2dp 活动路径线 | `SessionTreeScreen.kt:770-779`、`:817-825` | `primary` / `outlineVariant` | `12 §6.4` 已裁决保留 |
-| 「插话 / 排队」QueueChip | `ChatScreen.kt:2539/2541` | `warning` / `muted` | pi 的 `Steering:`/`Follow-up:` 是 `dim` 单行（`interactive-mode.js:3603/3607`），我们的是 chip |
+| 「引导 / 后续」QueueChip | `ChatScreen.kt:2539/2541` | `warning` / `muted` | pi 的 `Steering:`/`Follow-up:` 是 `dim` 单行（`interactive-mode.js:3603/3607`），我们的是 chip（两名见 D60） |
 | 上下文环 PiMeter（弧填充） | `PiCommon.kt:311-335`、`:358-361` | `muted` 轨 / `accent`·`warning`·`error` 填充 | pi 无环；三档阈值与 pi 一致 |
 | 思考块的等级标签 + 色条 | `ThinkingBlockBlock.kt:41/58/80-81` | 思考色阶 | 见 D7（pi 的色阶只喂编辑器边框） |
 | 通知条 / Boot 卡 / 工作区各类卡 | `NoticeBlock.kt`、`BootScreen.kt`、`ProjectScreen.kt`、`WorkspaceChrome.kt`、`WorkspaceViewer.kt`、`DeviceCapabilityScreen.kt` | `pageBg`/`cardBg`/`infoBg`/`errorContainer`(= `toolErrorBg`)/`surfaceContainer*`（派生） | pi 无这些屏；`infoBg`/`cardBg`/`pageBg` 是 export token（`12 §2.2` 已裁定用法正当） |

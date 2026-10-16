@@ -471,7 +471,7 @@ export would have to be written app-side from `get_entries`; that is a feature, 
 "循环切换模型" item, around line 295):
 
 ```kotlin
-                    OverflowItem("排队追问（本轮结束后发送）") {
+                    OverflowItem("后续追问（本轮结束后发送）") {
                         if (draft.isNotBlank()) {
                             session.sendFollowUp(draft.trim())
                             draft = ""

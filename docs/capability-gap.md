@@ -166,7 +166,7 @@ pi 没有 cron、没有调度器、没有后台任务、bash 工具也没有后�
 | `set_thinking_level` | `:38` | 能：思考等级选择器 | `ChatScreen.kt:1226-1230` | `pi 有且 App 有` |
 | `cycle_thinking_level` | `:39` | 能：点思考 chip | `ChatScreen.kt:782,1130` | `pi 有且 App 有` |
 | `get_available_thinking_levels` | `:40` | 能（选择器数据源） | `PiSessionViewModel.kt:1895-1899` | `pi 有且 App 有` |
-| `set_steering_mode` | `:43` | 能：「会话与队列」里的「穿插」分段 | `ChatSheets.kt:308-322,433-460`；`ChatScreen.kt:1235` | `pi 有且 App 有` |
+| `set_steering_mode` | `:43` | 能：「会话与队列」里的「引导」分段 | `ChatSheets.kt:308-322,433-460`；`ChatScreen.kt:1235` | `pi 有且 App 有` |
 | `set_follow_up_mode` | `:44` | 能：同上「后续」分段 | 同上 `:1236` | `pi 有且 App 有` |
 | `compact` | `:47` | 能：面板 `/compact`（可带指令）+ 设置行 + 溢出菜单 | `ChatScreen.kt:646,1241`；`PiSessionViewModel.kt:2251-2259` | `pi 有且 App 有` |
 | `set_auto_compaction` | `:48` | 能：开关 | `ChatScreen.kt:1237` | `pi 有且 App 有` |
@@ -358,7 +358,7 @@ pi 的**内置**命令表：`core/slash-commands.ts:19-43`，**23** 条。App �
 | bash 的 `run_in_background` 之类参数 | **没有**：pi 的 bash 工具入参只有 `command` 与 `timeout` | `core/tools/bash.ts:35-38`（schema）；`:127`（`await waitForChildProcess(child)`，**等子进程退出才返回**） | App 侧 `bash` 命令也只有这两个概念（命令 + 排除出上下文） | `pi 无对应物` |
 | `detached` | **有，但不是后台执行**：`spawn(..., detached: process.platform !== "win32")` 是**进程组**，目的是 `killProcessTree` 能整棵杀掉 | `core/tools/bash.ts:96`、`:103`、`:107`、`:113`；`utils/shell.ts:198-211` | App 的 `abort_bash` 走同一个 `abortBash` | `pi 有且 App 有`（用户感觉不到差别） |
 | 命令自己用 `&` 放后台 | **能，且 pi 会失去跟踪**：shell 立刻退出 → 工具返回 → 那个进程留在 `trackedDetachedChildPids` 里，只在 pi 退出时被 `killTrackedDetachedChildren` 收掉 | `core/tools/bash.ts:107`（登记 pid）、`:129`（注释：不等被 detached 后代持有的 stdio）；`utils/shell.ts:206-211`（退出时清理） | App 的 BashPanel 只显示这一条命令的结果，之后那个后台进程**在界面上完全不可见、也没法停**（`abort_bash` 只管 pi 记着的那条） | **`pi 有（shell 层面）但两边都没有界面`** → App 侧 `pi 无对应物（App 的决定）`：没有可显示的对象，也就没有「任务列表」 |
-| 会话级穿插队列 `steering` | **有** | `core/agent-session.ts:150-154`（事件形状）、`:593-596`（`_emitQueueUpdate`）、`:1608-1616`（`clearQueue` 返回两串文本） | **有**：`queue_update` → 条数 chip | `pi 有且 App 有` |
+| 会话级引导队列 `steering` | **有** | `core/agent-session.ts:150-154`（事件形状）、`:593-596`（`_emitQueueUpdate`）、`:1608-1616`（`clearQueue` 返回两串文本） | **有**：`queue_update` → 条数 chip | `pi 有且 App 有` |
 | 会话级后续队列 `followUp` | **有** | 同上 | **有**：「后续 N」chip + 逐条本地回显（消息本体可见） | `pi 有且 App 有` |
 | 队列的**整批**操作（pi 没有逐条） | **有**：`app.message.dequeue` 把队列收回输入框而不打断 | `modes/interactive/interactive-mode.ts:2899`（绑定）、`:4157-4164`（`handleDequeue`）、`:4387-4406`（实现） | **有**（本轮已做）：队列行「收回并编辑」→ 不 abort | **`pi 有且 App 现在有`**（P0-2） |
 | `get_state.pendingMessageCount` | **有** | `core/agent-session.ts:1618-1621` | 解析了但没人读；等价信息来自 `queue_update` | `pi 有且 App 有（等价信息）`（P3-2） |

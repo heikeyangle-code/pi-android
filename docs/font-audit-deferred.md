@@ -144,7 +144,7 @@
 | `ChatScreen.kt` 对话内查找框 placeholder「在对话里查找」 | `PiTheme.text.mono` | `02-real-content.md:145` 明写「搜索框是等宽字体」；两个兄弟搜索框在稿子里也是 mono（`direction-b-v2.html:1868` 会话列表、`:1912` 会话树） |
 | `ChatScreen.kt` 模型 chip（含空态「选择模型」） | `monoSmall` | v2 的 chip 是 `mono t12`（`direction-b-v2.html:1345`），内容就是机器值 |
 | `ChatScreen.kt` 键位 chip（`/ ! !! @ 图片 编辑器`） | `monoSmall` | v2 `mono t12`（`:1428`）——**含中文的 chip 也画 mono**，是稿子明确的中文分类词 |
-| `ChatScreen.kt` 队列 chip（`⇢ 穿插 N` / `⇣ 后续 N`） | `monoSmall` | v2 `<Chip … mono>`（`:1384-1385`） |
+| `ChatScreen.kt` 队列 chip（`⇢ 引导 N` / `⇣ 后续 N`） | `monoSmall` | v2 `<Chip … mono>`（`:1384-1385`）；v2 板子上写的是旧措辞，现状用词是 `引导` / `后续`（见 D60） |
 | `ChatScreen.kt`「收回并编辑」「加载更早的 N 条」「关闭查找」、查找计数 | `meta` / `monoSmall` | v2 `t12` / `mono t12`（`:1387`、`:1622`、`:1559`、`:1557`） |
 | `ChatScreen.kt` 引擎状态符号/词 | `monoSmall` / `meta` | v2 `Engine`：符号 `mono t12`、词 `t12 c-text`（`:465-468`） |
 | `ChatSheets.kt` `status.key` | `monoSmall` | `07-construction-decisions.md:188`「键名等宽灰」 |

@@ -986,7 +986,7 @@ pi 在 `TERMUX_VERSION` 存在时走 `termux-clipboard-get/set`；官方 `termux
 - `/` → 命令补全（`get_commands`：扩展命令 / `/skill:name` / 模板）
 - `@` → 文件引用
 - 附件：相册 / 拍照 / 文件 / 粘贴图片 → base64 → `images`
-- 流式中发送：三选「排队(steer) / 追加(followUp) / 打断重说」
+- 流式中发送：三选「引导(steer) / 后续(followUp) / 打断重说」
 - 停止 = `clear_queue` + `abort`，并把被清空的排队文本还回输入框
 - 模型 / 思考等级快捷切换
 

@@ -125,8 +125,8 @@
 **为什么不能送字节**：pi 的对话内容类型只有 `TextContent | ImageContent`（`packages/ai/src/types.ts:351-372`、`:456`），`@file` 只是 CLI 参数（`cli/file-processor.ts:24`），RPC 明确不支持任意文件字节（`main.ts:641`）。所以「发任何东西」在 pi 协议下的正确形态就是：图片给字节、其它给路径。
 **影响**：`ui/screens/ChatScreen.kt`（选择器 mime、URI→真实路径解析、插入形态）。插入用**绝对路径**（与 pi 终端里 `drop files to attach` 插入绝对路径一致），**不要**混用 `@` mention 的相对路径风格。
 
-## D21 · 插话与排队改走 `prompt` + `streamingBehavior`（不再发裸命令）
-**现象**：用户问「没有给我做插话功能吗？官方是有插话的吗？」——插话**有**（流式中直接发送），但他这一问让我把链路核了一遍，发现 app 与 pi 的实现不同。
+## D21 · 引导与后续改走 `prompt` + `streamingBehavior`（不再发裸命令）
+**现象**：用户问「没有给我做插话功能吗？官方是有插话的吗？」（**用户原话**，用的是他当时的叫法；D60 已把全仓用词统一为「引导 / 后续」）——引导**有**（流式中直接发送），但他这一问让我把链路核了一遍，发现 app 与 pi 的实现不同。
 **裁决**：流式中的普通发送与「后续」排队都改成 pi 的形式：`session.prompt(text, { streamingBehavior: "steer" | "followUp" })`。
 **理由**：pi 的 TUI 两条路都走这个入口（`interactive-mode.ts:3137-3143` 的注释写明「This handles extension commands (execute immediately), prompt template expansion, and queueing」；followUp 在 `:4143-4150`），RPC 的 `prompt` **接受** `streamingBehavior` 并原样转发（`rpc-mode.ts:395-408`）；而裸 `steer` / `follow_up` 命令直连内部方法（`:418-426`），**绕过 `_processInput`** ⇒ 扩展 `emitInput`、模板/技能展开、压缩期排队都不会发生。pi 在**压缩期间**另有一条岔路（`:3125-3131` steer / `:4130-4136` followUp）会先排队而不是直接发。
 **影响**：`ui/PiSessionViewModel.kt`（流式发送分支、follow-up 分支、以及那条手工 `echoUserPrompt`——改成 `prompt` 后用户行由 `prompt` 自己发布，必须确认只渲染一次）、`engine/PiEngineSession.kt`、`rpc/.../Commands.kt`（`prompt` 可能需要补 `streamingBehavior` 字段）。
@@ -140,7 +140,7 @@
 **为什么这轮不做**（三件必须一起做，其中两件的前置不在本轮范围）：
 - RPC **既不能写也观察不到**压缩队列：命令全集里没有 `queue_compaction_message`，`queue_update` 只带 `{steering, followUp}`（`Events.kt:508-509`）；所以只能 app 本地暂存 + 压缩结束后自己 flush。
 - flush 只能挂在 `compaction_end` 上，而事件通道有**已记录的丢事件缺陷**（`hang-and-crash-review.md` B6：`PiEngineSession.kt:178` 容量 256、`:507` `tryEmit` 丢弃）。漏一个 `compaction_end` = 用户那条消息**永远发不出去**，而气泡早已 echo 在屏幕上——比现状更糟。
-- 「排队显示在哪」那一半在 `ChatScreen.kt` 的队列行（`⇢ 穿插 N` / `⇣ 排队 N`）；本地暂存若折进这两个计数，等于让芯片对「pi 收到了几条」说假话。
+- 「排队显示在哪」那一半在 `ChatScreen.kt` 的队列行（`⇢ 引导 N` / `⇣ 后续 N`）；本地暂存若折进这两个计数，等于让芯片对「pi 收到了几条」说假话。
 **最小安全路径（留给以后）**：① `UiState.compacting`（两个事件臂，事件其实已经送到 VM，只是没人接）；② 给 `compaction_start/end` 做不丢的通道；③ `send`/`sendFollowUp` 在压缩期本地暂存 + `compaction_end` 后按原 delivery choice flush + 折进队列 chip。
 
 **已核实的 pi 侧事实（父代理在 `/root/pi-src` 读到，补上原文「无法核实」那条）**：`session.prompt()` 在压缩进行中**直接抛错**——`if (this._compactionAbortController !== undefined) throw new Error("Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.")`（`core/agent-session.ts:1192-1196`，位于扩展命令之后、流式判断之前）。而裸命令那条路**没有这个检查**：`session.steer()`/`followUp()` → `_queueUserInput`（`:1388-1413`，只做扩展命令拦截 + `_runInputHandlers` + 技能/模板展开）→ 压进队列，**不抛错**。pi 的 TUI 在压缩期是**本地暂存**：`queueCompactionMessage`（`interactive-mode.ts:4408-4414`）+ `flushCompactionQueue`（`:4426+`）。
@@ -164,7 +164,7 @@
 **根因**：`finishStreaming()` 在 `message_end`（每条助手消息）就清 `streaming`，而一轮里带工具调用时 `message_end` 与下一条 `message_start` 交替 ⇒ 标志一轮内翻好几次。
 **裁决**：只有**轮次级**事件清标志——`agent_end` / `agent_settled` / 引擎退出；`message_end` 继续走收尾刷新但用 `finishStreaming(endsTurn = false)`。行级「此刻正在吐字」由 `item.streaming` 独立承担（它仍由 `message_end` 清），两类消费者各拿各的信号。
 **连带修好的三处（施工代理逐条复核）**：① `interrupted` 判定（旧语义下工具运行中会被误判成「回合已结束、工具未回」并闪烁）；② CPU 唤醒锁（`turnRunning` 里 `streaming` 为假时可能在命令跑到一半放锁）；③ 顶栏引擎标签（工具一跑就掉回「就绪」）。
-**同时**：流式发送键恒为「停止」，投递方式交给两个只在干活时出现的芯片——`插话`（steer，现在插进本轮）与`排队`（followUp，本轮结束后），两者都走 `prompt` + `streamingBehavior`。
+**同时**：流式发送键恒为「停止」，投递方式交给两个只在干活时出现的芯片——`引导`（steer，现在插进本轮）与`后续`（followUp，本轮结束后），两者都走 `prompt` + `streamingBehavior`。
 
 ## D26 · 不让界面说谎（本轮从审计里收口的三处）
 1. **`call()` 在引擎未附着时不再静默返回**：新增 `NoEngine { Notify, Quiet }`；动作类与「用户刚打开的读」（`/session`、`/fork`、`/tree` 那些会永久停在「正在读取…」或显示「没有可分叉的消息」的地方）走 `Notify`（`fail("引擎未就绪…")`，并对同一句话去重，避免引擎死时同帧叠四条）；只有 `refreshState` 这种内部重读是 `Quiet`。
@@ -176,7 +176,7 @@
 **裁决**：顶栏**读数行整条删除**（`PiStatusLine` 的调用撤掉）；键位行末尾加一枚 **24dp 细弧环**（环宽依设计稿；不放数字；触控 32dp；占位 30dp），弧长 = `contextUsage.percent`；颜色沿用 pi 的阈值（≤70 `accent`、>70 `warning`、>90 `error`，`footer.ts:154-156`）；`percent` 为 null（压缩后到下次回复前，`agent-session.ts:3443`）画**空轨道 + 中央 `?`**（`?` 是 pi 自己的拼法，`footer.ts:110`）。点击打开**新的**详情 sheet（见 D29）。
 **理由**：读数行是**常驻横带**，手机顶部最贵；而它的九个数字都是「点开才需要看」的。环本身承担「还能不能继续聊」这一个常驻问题。
 **设计来源**：`design-demos/context-gauge-options.html`（变体 A 定稿；B/C 仅作对照）。**可用宽是 310dp 不是 332dp**——它在输入框容器里（360 − 2×14 − 2×10 − 2×1）。
-**连带修掉的既有 bug**：那一行在流式态（`插话`/`排队` 出现时）**本来就会溢出 37/81dp**（360dp 屏），最坏把发送键挤出可见区。退让阶梯定为**三步**（R1 尾距 6→4 → `清空` 进菜单 → `排队` 进菜单），走完最坏态 293dp ✓ 余 17dp，**保留 `◐ 中`**。
+**连带修掉的既有 bug**：那一行在流式态（`引导`/`后续` 出现时）**本来就会溢出 37/81dp**（360dp 屏），最坏把发送键挤出可见区。退让阶梯定为**三步**（R1 尾距 6→4 → `清空` 进菜单 → `后续` 进菜单），走完最坏态 293dp ✓ 余 17dp，**保留 `◐ 中`**。（板子 `design-demos/context-gauge-options.html` 的 R4 画的仍是旧措辞「排队」，那是冻结的历史产物；现状用词是 `引导` / `后续`，见 D60。）
 
 ## D28 · 附件芯片改纯图标（无汉字）
 **用户原话**：「附件本身图标就行，不要有汉字。」
@@ -1270,3 +1270,36 @@ proroot；③ guest 内 `id` 是 fake root、`pwd` 是 `-w` 的 guest 路径、�
 - **什么都没删错**：删的是「渲染」，不是「数据」——`custom` 条目仍被解析、仍在会话文件里、`get_entries` 仍返回、会话树屏仍显示；`custom_message`（**进上下文**的那条路）与 `HookMessageBlock` 完全没动；「会话与队列」sheet 里 D29 那节扩展状态（`setStatus`）也没动。
 - pi 侧的判据：没有为 `customType` 注册渲染器时 **pi 自己也是静默的**（`interactive-mode.ts:3558-3561`），所以"不画"比"兜底画"更贴 pi。
 - 同类渲染审计项（`docs/extension-compatibility.md` 的 `registerEntryRenderer` 行、`docs/rpc-coverage.md`、`docs/capability-gap.md`、`docs/pi-surface-audit-tools.md`、`docs/remaining-work.md`、F6 的 disposition 行）同批改成"不画"。
+
+## D60 · 两个投递模式的中文统一为「引导（steer）」与「后续（followUp）」
+
+**现象**：同一对概念在仓库里先后出现过三套中文——对话页芯片一套、设置页与动态摘要一套、规范与 v2 板子一套（其中只指 `steer` 的那一侧，还额外出现过第三个叫法，且**只**用于 steer）。`14-illustration-and-queue-diff.md` §4-② 当时把它记成「命名三套并存，需裁决」，并在同一份文档里推荐 **(a) 统一到「插话 / 排队」**（理由：用户原话就是"插话"，D21/D25 已按它落地）。施工完成后代码已经自行收敛到**最终的一套**——**引导 / 后续**（`app/src/main/kotlin` 里的 `.kt` 是唯一事实来源，本轮文档全部向它对齐）。
+
+**裁决**：这两个投递模式的中文**一律**用
+- `引导` —— pi 的 `steer` / `steeringMode`（消息插进**正在跑的这一轮**：本轮工具调用跑完后、下一次模型调用前投递）；
+- `后续` —— pi 的 `followUp` / `followUpMode`（**整个回合结束**、agent 本要停下时才投递）。
+
+三个理由，按分量排序：
+1. **pi 官方用户可见的拼写就是这两个词。** TUI 在编辑器上方**逐行打印**待发消息，原文是 `Steering: ${message}` / `Follow-up: ${message}`（`dist/modes/interactive/interactive-mode.js:3881`、`:3885`；同一块见 `PiEngineSession.kt:1034` 的 `:3873-3889` 引用）。用户看到的 pi 原版字面就是 `Steering:` / `Follow-up:`，中文只能是它们的中文。
+2. **设置页那两行直接绑官方键，中文必须与键同源。** `PiSettingsRegistry.kt:575` 的标题 `引导模式`（`key = "steeringMode"`，`:582` 的 `aliases` 里带 `steer`）与 `:586` 的 `后续模式`（`key = "followUpMode"`），值直接读写 pi 的 `settings.json`；`:1791` 的分组摘要 `引导：… · 后续：…` 也是同一对键。行标题如果换成用户俗语，设置页当场出现"中文一套、键一套"，而且这两个词要能被用户拿去搜 pi 的文档。
+3. **规范本来就这么要求。** `docs/pi-android-ui-spec.md:56` 的设计原则 2「**pi 的词汇，App 的语法**」把 `steering / follow-up` 明确列进"术语沿用 pi"那一串。
+
+**被取代的旧建议（标注，不删）**：`14-illustration-and-queue-diff.md` §4-② 那一行推荐的 **(a) 统一到「插话 / 排队」** **已被 D60 取代**——当时的判据是"用户自己的词"，而按 D60 的判据（理由 1/2/3）应当对齐 **pi 官方术语**；用户俗语降为历史记录，不再用于界面文案。该行已在原地标注，本文档 D21/D22/D25/D27 等处沿用的旧措辞也已同批改成现状用词（D21 里那句**用户原话**保留原样，那是引用，不是文案）。
+
+**代码落点（现状，本轮零改动）**：
+- 对话页两颗芯片：`ChatScreen.kt:3808` `KeyChip(label = "引导" …)` / `:3809` `KeyChip(label = "后续" …)`（只在 `streaming` 时出现）；
+- 队列计数芯片：`ChatScreen.kt:3511` `QueueChip(… text = "引导 $steering")` / `:3513` `text = "后续 $followUp"`；
+- 队列逐条明细行：`ChatScreen.kt:3494` `add("引导：$it")` / `:3495` `add("后续：$it")`；
+- 会话队列 sheet 两行标题：`ChatSheets.kt:369` `引导消息（Steering）` / `:375` `后续消息（Follow-up）`；
+- 设置页两行与摘要：`PiSettingsRegistry.kt:575` `引导模式` / `:586` `后续模式` / `:1791` `引导：… · 后续：…`；
+- 动作提示词：`PiSessionViewModel.kt:4759` `call("设置引导模式")` / `:4766` `call("设置后续模式")`。
+
+> **行号口径**：以上是**本次改名当时逐行核对**出来的现状行号，本节列出的这四个 `.kt` 文件以此为准。本仓其它 md 里的 `file:line` 引用**普遍有历史漂移**（那是改名前就存在的，不是这次改名造成的），读那些引用时按各自的写作时间折算，不要拿它们去判断"现在代码是什么样"。
+
+**范围（硬边界）：仅改名。** 不改任何**交互**（发送键仍是停止、两颗芯片仍只在流式时出现、`收回并编辑` 行为不变）、不改**布局**（芯片位置、尺寸、颜色 `warning`/`muted`、`⇢`/`⇣` 符号全部不动）、不改**协议**（wire 仍是 `streamingBehavior: "steer" | "followUp"`、命令仍是 `set_steering_mode`/`set_follow_up_mode`）、不改**存储**（`settings.json` 的 `steeringMode`/`followUpMode` 键名一字不动）。
+
+**板子（HTML）与本次改名的关系**：`design/ui-refactor/design-demos/*.html`（含 `direction-b-v2.html`、`direction-a.html`、`context-gauge-options.html` 等）是**冻结的历史产物**，图上的字**照旧不改**；凡是**引用了板子上那对芯片措辞**的 md（`00-screen-inventory.md`、`04-direction-b-graft.md`、`06-v2-construction-reference.md`、`14-illustration-and-queue-diff.md` §4-②、`docs/font-audit-deferred.md`）已就地注明「现状用词是 `引导` / `后续`，见 D60」。
+
+**已有「排队」字样的处置判据（防止误伤另一个词）**：pi 的 `Queued` / 队列本身仍写「排队」——凡指"消息/请求/任务在队列里等着"的一律**保留**（例：`已排队，压缩结束后投递`、`已收回 N 条排队消息到输入框`、会话状态 `排队中`、`还有 N 个扩展对话框在排队`、图片预算注释里的"排队不占网络预算"、新建会话排队、导航请求排队）。只有**作 followUp 模式名**的「排队」才改成「后续」。
+
+**验证（本轮的验收就是三条 grep）**：① 旧的第三套词（那一套里**只指 steer**、曾经与「后续」成对出现的那个词）在 `*.md` 与 `*.kt` 里 **0 命中**——它 100% 只指 steer，已全部改成 `引导`（本文档按验收要求也不再写出它本身，避免自己成为命中）；② `git grep -n "插话"` 只剩**明确标注为过去**的上下文（D21 的用户原话、`14 §4-②` 被取代的旧建议）；③ `git grep -n "排队"` 逐条都是队列语义。

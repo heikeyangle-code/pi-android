@@ -4,6 +4,8 @@
 > 参照图：`design-demos/shots-v2/phone01.png … phone61.png`（每台一张）+ `board.png`（全貌）。
 > 本文件是 v2 设计师交出的施工参照清单，**实现方照这个 + `05-compose-migration-plan.md` 的对应章节干活**。
 > 设计师自检：Babel 8 块转译 0 语法错误、每块 IIFE 完整；SSR 渲染 62 个单元 0 异常 0 `console.error`；无外部图片、无令牌外色相、设备内字号仅 12/13/14/15/17。
+>
+> **用词注记（板子不改，文字对齐现状）**：`direction-b-v2.html` 与 `shots-v2/*.png` 是**冻结的历史产物**，图上那对队列芯片写的仍是旧措辞，**不回头改 HTML**。但**现状用词是 `引导`（`steer`）/ `后续`（`followUp`）**——由 `07-construction-decisions.md` 的 **D60** 裁决（理由：pi 官方用户可见拼写 `Steering:` / `Follow-up:`，设置页两行直接绑 `steeringMode` / `followUpMode`，规范 §1 原则 2 要求沿用 pi 术语）。本文档下文凡指同一对芯片，一律写现状用词。
 
 ## 0. 怎么用这份文档
 
@@ -33,7 +35,7 @@
 | phone9 | 块类型 D：压缩 / 分支摘要 / 模型切换 / 技能 / 扩展条目 / 提示条 / 图片网格 / 时间分隔 |
 | phone10 | 块类型 E：bash 三态 + 错误块 |
 | phone11 | 流式文本 + 「回到最新 · 8」 |
-| phone12 | 队列（穿插 2 / 后续 1 / 收回并编辑） |
+| phone12 | 队列（`引导 2` / `后续 1` / `收回并编辑`；板子上是旧措辞，见文首用词注记） |
 | phone13 | 审批弹层（允许 · 拒绝 + 倒计时 + 排队） |
 | phone14 | 对话内搜索（当前命中 vs 其它命中） |
 | phone15 | 耗时刻度对照台（40ms/96ms/132ms/214ms/6.4s/12.3s 六张卡并排） |
@@ -122,7 +124,7 @@
 11. **提示条 Notice**：前缀 `·` + 文本 + 时间，三档 tone（Info muted / Warning warning / Error error）。
 12. **图片网格 ImageGrid**：占位格，格内「第 N 张图片 / image/png」，溢出格给「+1」。
 13. **参数化 markdown 构件**：MdTable（1px 边、12px、单元格 padding 6×8）、Quote（3px 左边 + `mdQuote` 色）、CodeBlock（card 底 + 1px `mdCodeBlockBorder` + 圆角 12 + 语法令牌着色）。
-14. **队列行**：`⇢ 穿插 2` / `⇣ 后续 1` chips + 右侧 accent 的「收回并编辑」；队列明细行 = 符号 + 模式词 + 消息 + 编辑。
+14. **队列行**：`⇢ 引导 2` / `⇣ 后续 1` chips + 右侧 accent 的「收回并编辑」；队列明细行 = 符号 + 模式词 + 消息 + 编辑（板子上是旧措辞，现状用词见 D60）。
 15. **审批卡 ApprovalCard**：`! 待决策` + 标题（扩展给的字符串 + `(5s)`）+ 10 段倒计时 + 允许(accent)/拒绝 + 「还有 N 个扩展对话框在排队」+ 页脚超时说明。
 16. **错误块 ErrorCard**：左 3px error 条 + `✗ 出错了` + 消息 + 「详情」展开等宽 detail。
 17. **Snack 三档**、18. **ExtDialog 四型**（select/confirm/input/editor）+ 倒计时段 + 排队/超时页脚、19. **Boot 三态**、20. **空态 EmptyState**（π 字形标识 + 标题 + 两行正文）。
@@ -134,7 +136,7 @@
 |---|---|
 | 工具卡 | pending `…`「运行中」warning；success `✓`「成功」success；error `✗`「失败」error；**被拒** `⊘`「被拒」`#9E9E9E`（被拒不是失败，不用 error 色）。三重编码**在头行**：状态字形常显（色 = 状态色，挂 `contentDescription` = 状态词，所以读屏四种状态都读得到词）；`…`/`⊘` 另写状态词、`✓`/`✗` 只有字形；右读数 = `耗时 · N 行`（有退出码则并入 `退出码 N`；被拒 = `没有执行`）。页脚**只在 `已截断` / `无输出` 时出现**（改造前那句「页脚永远同时有符号与状态词」已随耗时刻度一起删除）。 |
 | 引擎状态行 | `✓ 就绪` success｜`… 工作中` warning｜`◌ 启动中` warning｜`≡ 排队中` warning｜`✗ 引擎已退出` error｜`■ 引擎已停止` error；busy 动词（读取会话树等）用 `…` warning |
-| 队列 | `⇢` 穿插 N（符号 warning，字与数字正文色）；`⇣` 后续 N（符号 muted）；不可用时整条 dim |
+| 队列 | `⇢` 引导 N（符号 warning，字与数字正文色）；`⇣` 后续 N（符号 muted）；不可用时整条 dim |
 | 审批 | `!`「待决策」warning + 倒计时段 |
 | 错误块 | `✗` +「出错了」error + 展开「详情」 |
 | 开关行 | 控件 + `✓ 开`（success）/`○ 关`（muted）+ 文字；颜色只是第三层 |

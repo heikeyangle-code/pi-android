@@ -319,7 +319,7 @@ v1 说"无阴影"，这是错的。现代 App 需要层级线索。改为 **M3 t
 │  改好了。要我跑一下测试吗？                  ⟋   │  流式光标
 │                                                  │
 ├──────────────────────────────────────────────────┤
-│  ⤷ 穿插 "顺便更新测试"                       ✕  │  队列 chip
+│  ⤷ 引导 "顺便更新测试"                       ✕  │  队列 chip
 ├──────────────────────────────────────────────────┤
 │ ╭────────────────────────────────────────────╮   │
 │ │ 输入消息…                              📎 │   │  输入区（边框 = thinking 等级）
@@ -430,7 +430,7 @@ data class DateSeparator(key, ts, label)
 | 场景 | 行为 |
 |---|---|
 | IDLE 点发送 | `prompt` |
-| STREAMING 点发送 | 弹三选 Sheet：**排队穿插**（`steer`）/ **等它做完**（`followUp`）/ **打断，重说**（`clear_queue`+`abort`+重发） |
+| STREAMING 点发送 | 弹三选 Sheet：**引导**（`steer`）/ **等它做完**（`followUp`）/ **打断，重说**（`clear_queue`+`abort`+重发） |
 | 长按发送 | 直接选送达方式，不弹层 |
 | 回车 | **默认换行**（手机惯例）；可在设置改为"回车发送" |
 | 发送后 | 清空输入、保留草稿快照（撤销用）、插入用户消息、滚动到底、轻震 |
@@ -654,7 +654,7 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 │ claude-sonnet-4.5 · ◐ medium               │
 ├────────────────────────────────────────────┤
 │ 🧠 模型与推理            默认 sonnet-4.5  ⟩ │
-│ 💬 消息与队列            穿插：逐条        ⟩ │
+│ 💬 消息与队列            引导：逐条        ⟩ │
 │ 📦 上下文与压缩           自动 · 16k/20k   ⟩ │
 │ 🔁 重试与网络             开 · 3 次        ⟩ │
 │ 🔧 工具                   6 个已启用       ⟩ │
@@ -707,7 +707,7 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 - 只搬显示位置：键仍是 `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`（`app.` 前缀，App 自己组进启动参数），已经写在 `settings.json` 里的值照旧读得出来。
 
 **L0-2 消息与队列**
-- 穿插模式（ValueRow：逐条/全部）· 后续模式（ValueRow）· HTTP 空闲超时（Number，0=禁用）· WebSocket 连接超时（Number）· HTTP 代理（Text，全局）
+- 引导模式（ValueRow：逐条/全部）· 后续模式（ValueRow）· HTTP 空闲超时（Number，0=禁用）· WebSocket 连接超时（Number）· HTTP 代理（Text，全局）
 
 **L0-3 上下文与压缩**
 - 自动压缩（Switch）· 保留 token（Number，默认 16384）· 保留最近 token（Number，默认 20000）· 逐模型覆盖（ListRow → L3）· 分支摘要保留 token（Number）· 跳过"要摘要吗"询问（Switch）
@@ -948,7 +948,7 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 | pi 能力 | App 入口 | 备注 |
 |---|---|---|
 | 发消息 / 流式回复 | 对话页输入区 | |
-| `steer` 穿插消息 | 流式中发送 → 三选「排队穿插」 | |
+| `steer` 引导消息 | 流式中发送 → 三选「引导」 | |
 | `followUp` 后续消息 | 流式中发送 → 三选「等它做完」 | |
 | `abort` 中止 | 停止按钮 / 返回键 | |
 | `clear_queue` | 停止按钮（含还原到输入框） | pi 的 Esc 语义 |
@@ -975,7 +975,7 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 | 工具开关（active tools） | 快捷面板 → 工具 | `getActiveTools`/`setActiveTools` |
 | 自动重试开关 | 快捷面板 / 设置·重试 | `set_auto_retry` |
 | 中止重试 | 状态行「中止」 | `abort_retry` |
-| 穿插/后续模式 | 快捷面板 / 设置·消息与队列 | `set_steering_mode`/`set_follow_up_mode` |
+| 引导/后续模式 | 快捷面板 / 设置·消息与队列 | `set_steering_mode`/`set_follow_up_mode` |
 | 直接执行 bash | 工作区·终端 | `bash` / `abort_bash` |
 | `!command` Shell 模式 | 输入区 `!` 前缀（边框变色） | |
 | `!!command` 静默 Shell | 输入区 `!!` 前缀 | |

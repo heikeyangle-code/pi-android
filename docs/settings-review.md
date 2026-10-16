@@ -332,7 +332,7 @@ run_harness settings-audit app.pi.ui.settings.PiSettingsAuditCheckKt \
 ## 7. 不确定性（写明判据，需要设备/真机才能定）
 
 ### 7.1 四个实时推送在真机上的表现
-判据：改"穿插模式"为"全部" → 不新建会话 → 发一条流式消息看它是否一次收两条。
+判据：改"引导模式"为"全部" → 不新建会话 → 发一条流式消息看它是否一次收两条。
 静态依据是 `rpc-mode.ts:521-540` 与 `agent-session.ts:1902-1917`，但没有真机跑过。
 失败形态会是 `busy` 标签一闪而过而模式没变——那就是 `PiEngineApi.setSteeringMode` 的线格式与该版 pi 不一致。
 

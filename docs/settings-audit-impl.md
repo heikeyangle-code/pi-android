@@ -432,7 +432,7 @@
 |---|---|---|
 | **1. 模型与推理**（12 行）| **本机模型**（2）<br>已导入的模型（动作）, 本地模型（llama.cpp）（动作）<br><sub>搬动：app.localModels.manage: 节 凭证→本机模型</sub><br>**凭证**（2）<br>API Key（动作）, 订阅登录（本应用暂无入口）（动作）<br>**默认模型**（4）<br>默认厂商, 默认模型, 默认思考等级, 循环模型<br><sub>搬动：enabledModels: 节 循环模型→默认模型</sub><br>**逐模型与预算**（2）<br>逐模型思考等级, 思考预算<br><sub>搬动：modelThinkingLevels: 节 默认模型→逐模型与预算；thinkingBudgets: 节 默认模型→逐模型与预算</sub><br>**行为**（2）<br>隐藏思考块, 缓存未命中提示 | |
 | **2. 系统提示词**（2 行）| **系统提示词**（2）<br>自定义系统提示, 追加系统提示 | |
-| **3. 消息与网络**（6 行）| **送达**（2）<br>穿插模式, 后续模式<br>**网络**（4）<br>传输方式, HTTP 空闲超时, WebSocket 连接超时, HTTP 代理<br><sub>搬动：transport: 节 传输→网络</sub> | |
+| **3. 消息与网络**（6 行）| **送达**（2）<br>引导模式, 后续模式<br>**网络**（4）<br>传输方式, HTTP 空闲超时, WebSocket 连接超时, HTTP 代理<br><sub>搬动：transport: 节 传输→网络</sub> | |
 | **4. 上下文与压缩**（6 行）| **压缩**（5）<br>自动压缩, 保留 token, 保留最近 token, 逐模型覆盖, 分支摘要保留 token<br><sub>搬动：branchSummary.reserveTokens: 节 分支摘要→压缩</sub><br>**动作**（1）<br>立即压缩（动作） | |
 | **5. 重试**（7 行）| **重试**（4）<br>自动重试, 最大重试次数, 基础延迟, 最大重试延迟<br>**Provider 重试（高级）**（3）<br>Provider 超时, Provider 重试次数, Provider 最大延迟 | |
 | **6. 工具**（2 行）| **工具**（2）<br>内建工具, 工具输出默认展开<br><sub>搬动：defaultTools: 节 内建工具→工具；app.tools.expandByDefault: 节 展示→工具</sub> | |

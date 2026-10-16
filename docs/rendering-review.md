@@ -86,7 +86,7 @@ state, not a verdict on a diff.
 * pi: `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3224-3226`
   — `} else if (event.message.role === "user") { this.addMessageToChat(event.message); … }`.
 * Consequence: type while the agent is working (the normal case for steering);
-  the composer clears, a transient "穿插 N" chip appears, and the message itself
+  the composer clears, a transient "引导 N" chip appears, and the message itself
   is **invisible** — the user cannot see what they queued or what was delivered.
   It reappears only after reopening the session, when `get_entries` replay
   projects it.
@@ -496,7 +496,7 @@ none of the five optional callbacks declared at `BlockRenderer.kt:42-46`.
 * App: `PiSessionViewModel.kt:1245-1262` — `if (engine.transcript.streaming) { engine.send(steer(...)) } else { engine.prompt(...) }`;
   the UI shows no choice. The chip only reports counts
   (`ChatScreen.kt:666-679`).
-* Spec: §4.4 发送行为 table — “STREAMING 点发送 | 弹三选 Sheet：**排队穿插**（`steer`）/
+* Spec: §4.4 发送行为 table — “STREAMING 点发送 | 弹三选 Sheet：**引导**（`steer`）/
   **等它做完**（`followUp`）/ **打断，重说**（`clear_queue`+`abort`+重发）”; also
   “长按发送 → 直接选送达方式”.
 * Consequence: a tap on Send during a turn makes an irreversible queueing decision

@@ -36,7 +36,7 @@ node tools/pi-contract.mjs --pi <1.1.0 包目录> --only=<组>  # surface|theme|
 | `core/tools/renderers/edit.ts` | 多了 `outputPad` 内边距 | 不要 | — |
 | `core/extensions/types.ts` | 新增 `durationMs`（工具执行耗时）、`outputPad`、`ToolLoadout.getPromptGuidelines()`、`agent_settled.aborted` | 只有 `durationMs` 要跟（见第五节①）；`aborted` **不做**，理由见第五节② | — |
 | `core/agent-session.ts` | 把 `durationMs` 透给扩展事件；`agent_settled` 多 `aborted`；其余是内部整理 | 不要 | — |
-| `cli/args.ts` | `--tools`/`--exclude-tools` 支持 `*` 通配与 `+name`/`-name`（并校验不能混用），新增 `--no-mcp` | **不要**：App 不传这两个开关，工具选择走设置键 `defaultTools`（那个的语义没变） | — |
+| `cli/args.ts` | `--tools`/`--exclude-tools` 支持 `*` 通配与 `+name`/`-name`（并校验不能混用），新增 `--no-mcp` | **不要**：App 不传这两个开关，工具选择走设置键 `defaultTools`（那个的语义没变）<br>⚠️ **2026-10 复核**（`docs/pi-surface-audit-cli.md` §16 的 F9）：**这一格的"不要"理由不对题** —— 它讲的是 `--tools`/`--exclude-tools`，而这一行真正新增的是 `--no-mcp`。1.3.0 实测：`--no-mcp` 是**关掉内置 `mcp` 扩展的唯一通道**（`dist/main.js:637` 是 `disabledBuiltinExtensions` 的唯一来源，`dist/core/resource-loader.js:410` 是唯一消费者），pi **没有**对应的 settings 键，所以"走设置键"这条理由对它不成立。**该条已在 `docs/pi-surface-audit-cli.md` 的 §10.7 重新裁定为"做"**（一行开关 + 一个 flag）；`--tools`/`--exclude-tools` 那半的"不要"判定仍然成立。 | — |
 | `utils/syntax-highlight.ts` | formatter 改成按行调用（修「多行字符串/注释只有第一行有颜色」） | 不要（那是 pi 自己的 TUI 高亮器；App 的高亮走 `pi-highlight` 扩展 + 自己的作用域映射） | — |
 | `utils/ansi.ts` | 新增 `splitIncompleteAnsiSuffix`，修「分片流把转义序列切断」 | 不要（App 的 `rpc/…/Ansi.kt` 作用在完整结果/整行上） | — |
 | `utils/image-resize{,-core,-worker}.ts` | worker 回包打类型标签（`node --watch` 下 Node 会往同一通道发自己的消息） | 不要（App 不跑 `--watch`；2000×2000 / 4.5 MiB / q80 的口径由 behaviour 组复验过） | `ui/screens/AttachmentBudget.kt` 的**行号**要跟着走（+10，见第三节） |

@@ -20,7 +20,7 @@
 1. **能写进 `settings.json` 并由 pi 读取的，就不是「启动期独占」。** 这种配置在设置里以 pi 的键出现（值来自 pi 的文件），不需要、也不应该在「进程」里再开一个开关。反例是 `--tools`：它在 `core/sdk.ts:258-264` 里**压过** `defaultTools`，所以一个进程开关会让设置行静默失效——这正是 §M12 的「两份真相」形状。
 2. **只有 CLI / 环境变量独占的（pi 的 `Settings` 接口没有对应键），才可能需要 App 暴露**；再叠加「手机上有明确意义」这一条。够不着或没意义的，写在下面并给理由，不硬做。
 
-「运行时能不能改」的公共依据：RPC 命令全集在 `modes/rpc/rpc-types.ts:20-74`（33 个 `RpcCommand`），里面**没有任何**改系统提示词、改工具集、改资源发现、重读设置的命令。`--mode rpc` 的进程只从 stdin 收这些命令，所以凡是 CLI/env 传进去的值，进程内都没有写回通道。能运行时改的只有：模型（`set_model`，`rpc-mode.ts:472`）、思考等级（`set_thinking_level`，`:499`）、穿插/后续模式（`:521`/`:526`）、自动压缩（`:540`）、自动重试（`:549`）、会话名（`set_session_name`，`:661`）、会话切换/派生（`:605`/`:613`/`:621`）。
+「运行时能不能改」的公共依据：RPC 命令全集在 `modes/rpc/rpc-types.ts:20-74`（33 个 `RpcCommand`），里面**没有任何**改系统提示词、改工具集、改资源发现、重读设置的命令。`--mode rpc` 的进程只从 stdin 收这些命令，所以凡是 CLI/env 传进去的值，进程内都没有写回通道。能运行时改的只有：模型（`set_model`，`rpc-mode.ts:472`）、思考等级（`set_thinking_level`，`:499`）、引导/后续模式（`:521`/`:526`）、自动压缩（`:540`）、自动重试（`:549`）、会话名（`set_session_name`，`:661`）、会话切换/派生（`:605`/`:613`/`:621`）。
 
 **一个容易搞错的前提**：RPC 的 `new_session`（`rpc-mode.ts:437`）会重建 runtime（`core/agent-session-runtime.ts:226-252` → `createRuntime`），因此 **pi 会重读 `settings.json`**、重扫资源目录。但 App 的这些进程键不是从设置文件直接读给 pi 的：`PiSessionViewModel.launchOptions()` 把值读出来写进**进程的 argv/env**，`parsed` 在整个进程里不变（`main.ts:776-777`、`:775`、`:764-778`）。所以新会话也不会让这些键生效——`RestartEngine` 是唯一正确的标签。
 

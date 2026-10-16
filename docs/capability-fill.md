@@ -99,7 +99,7 @@
 
 ### 现状（改之前）
 
-只有 Stop（`clear_queue` + `abort`）；队列 chip（`穿插 N` / `后续 N`）不可点。
+只有 Stop（`clear_queue` + `abort`）；队列 chip（`引导 N` / `后续 N`）不可点。
 
 ### pi 的语义（`file:line`）
 
