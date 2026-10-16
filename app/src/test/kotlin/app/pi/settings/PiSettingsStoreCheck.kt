@@ -35,6 +35,7 @@ import app.pi.ui.PromptFileFacts
 import app.pi.ui.PromptFileSettingsStoreDecorator
 import app.pi.ui.PromptFileSlot
 import app.pi.ui.PromptFileStore
+import app.pi.ui.settings.DiscoverySource
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -458,45 +459,58 @@ fun main() {
         check("a prompt write leaves no temp file behind", systemFile.parentFile.listFiles()
             .orEmpty().none { it.name.contains(".tmp-") })
 
-        // `PromptFileFacts` — the read-only 「系统提示词来源」 row. It reports files, and it
-        // must not invent the trust verdict it cannot know.
+        // `PromptFileFacts` — the read-only 「提示词文件」 row. It reports files, and it must not
+        // invent the trust verdict it cannot know, nor a count it did not measure.
         //
-        // "Neither file" has to be *made* true first: the fixture above left a global
+        // "None of the four" has to be *made* true first: the fixture above left a global
         // `SYSTEM.md` holding "again".
         systemFile.delete()
         val project = File(PiProjectConfig.root(workspace), "SYSTEM.md")
         check(
-            "with neither file the row says pi's own prompt",
-            PromptFileFacts.describeSystemPrompt(agentDir, workspace) == "pi 自带",
-            "got: ${PromptFileFacts.describeSystemPrompt(agentDir, workspace)}",
+            "with no prompt file at all the row says so in the app's own word, never `0 份`",
+            PromptFileFacts.describePromptFiles(agentDir, workspace) == "还没有任何提示词文件",
+            "got: ${PromptFileFacts.describePromptFiles(agentDir, workspace)}",
         )
         project.parentFile.mkdirs()
         project.writeText("# project")
-        val projectOnly = PromptFileFacts.describeSystemPrompt(agentDir, workspace)
         check(
-            "the workspace file is named with the trust caveat, not as the verdict",
-            projectOnly.startsWith("工作区 .pi/SYSTEM.md") && projectOnly.contains("受信任时优先"),
-            "got: $projectOnly",
+            "one workspace file counts as one, named by its scope with the shared label",
+            PromptFileFacts.describePromptFiles(agentDir, workspace) ==
+                "1 份 · ${DiscoverySource.ProjectPi.label} 1",
+            "got: ${PromptFileFacts.describePromptFiles(agentDir, workspace)}",
         )
-        // The global file, 5 characters ("again"): the workspace one is named first because it
-        // is the one that wins when the project is trusted.
         systemFile.writeText("again")
         check(
-            "the global file is named with its length",
-            PromptFileFacts.describeSystemPrompt(agentDir, workspace).contains("全局 SYSTEM.md 5 字"),
-            "got: ${PromptFileFacts.describeSystemPrompt(agentDir, workspace)}",
+            "the same name in both scopes is two copies, not one replacement",
+            PromptFileFacts.describePromptFiles(agentDir, workspace) ==
+                "2 份 · ${DiscoverySource.ProjectPi.label} 1 · ${DiscoverySource.Global.label} 1",
+            "got: ${PromptFileFacts.describePromptFiles(agentDir, workspace)}",
         )
         check(
-            "the workspace file is ordered first (it wins when trusted)",
-            PromptFileFacts.describeSystemPrompt(agentDir, workspace)
-                .indexOf("工作区") < PromptFileFacts.describeSystemPrompt(agentDir, workspace).indexOf("全局"),
+            "the workspace copy is listed before the global one (it wins when trusted)",
+            PromptFileFacts.describePromptFiles(agentDir, workspace)
+                .indexOf(DiscoverySource.ProjectPi.label) <
+                PromptFileFacts.describePromptFiles(agentDir, workspace)
+                    .indexOf(DiscoverySource.Global.label),
         )
+        // `APPEND_SYSTEM.md` is part of the same reading — that is what "this row no longer
+        // covers only `SYSTEM.md`" means. A row that kept reporting one of the two names would
+        // be the half-truth this change exists to remove.
+        val projectAppend = File(PiProjectConfig.root(workspace), "APPEND_SYSTEM.md")
+        projectAppend.writeText("extra")
+        check(
+            "an `APPEND_SYSTEM.md` is counted too, in the same reading",
+            PromptFileFacts.describePromptFiles(agentDir, workspace) ==
+                "3 份 · ${DiscoverySource.ProjectPi.label} 2 · ${DiscoverySource.Global.label} 1",
+            "got: ${PromptFileFacts.describePromptFiles(agentDir, workspace)}",
+        )
+        projectAppend.delete()
         systemFile.delete()
         check(
             "a `SYSTEM.md` that is not a regular file is reported as such, not as absent",
             run {
                 val directory = File(agentDir, "SYSTEM.md").also { it.mkdirs() }
-                val text = PromptFileFacts.describeSystemPrompt(agentDir, workspace)
+                val text = PromptFileFacts.describePromptFiles(agentDir, workspace)
                 directory.delete()
                 text.contains("不是普通文件")
             },

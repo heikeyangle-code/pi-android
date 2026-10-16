@@ -400,15 +400,15 @@ fun PiSettingsStack(
     // 扫描落地前显示「未读取」；落地后按三种读数之一显示，绝不显示一个假的 0。
     val resourceOverrides = resourceScan?.let { resourceFactOverrides(it) } ?: resourceFactPlaceholders()
 
-    // 「系统提示词」那一组里那一条**只读读数**：现在生效的是哪一份 `SYSTEM.md`。
+    // 「系统提示词」那一组里那一条**只读读数**：pi 会读的那几份提示词文件（两份名字 × 两个层级）。
     //
     // 与上面那四条「实际发现」同一个形状（值不是设置，宿主在 IO 上算好、经
     // `valueOverrides` 传下去，落地前显示「未读取」）。它读的是**文件**，所以不能放进
     // store 的 `read(key)`（那是每帧每行都要走的路径），只能在这里读一次。
     //
-    // 键是 `PROMPT_SOURCE_KEY`。值是 `PromptFileFacts` 的三态读数，而它只能诚实地说两态：
-    // App 侧拿不到「这个项目受信任」的确定答案（`PromptFileFacts` 的 KDoc 写了为什么），
-    // 所以行上给的是两个文件的存在与字数 + pi 的规则，而不是猜一个裁决。
+    // 键是 `PROMPT_SOURCE_KEY`。值只报能证明的事实 —— 哪几份文件存在、在哪一级；那条
+    // 「工作区那份受信任时优先」的规则写在行的描述里，不在这里猜一个裁决
+    // （`PromptFileFacts` 的 KDoc 写了为什么）。
     //
     // epoch 用 `rowsEpoch`（外部改动 + 本进程写入）而不是只 `filesEpoch`：在设置页里
     // 编辑提示词走的正是本进程写入那一半，`writeEpoch` 必须能把这行重读一次。
@@ -416,7 +416,7 @@ fun PiSettingsStack(
     var promptSource by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(workspacePath, rowsEpoch, paths) {
         promptSource = withContext(Dispatchers.IO) {
-            runCatching { PromptFileFacts.describeSystemPrompt(paths.agentDir, workspace) }.getOrNull()
+            runCatching { PromptFileFacts.describePromptFiles(paths.agentDir, workspace) }.getOrNull()
         }
     }
     val promptOverrides = promptSource?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()

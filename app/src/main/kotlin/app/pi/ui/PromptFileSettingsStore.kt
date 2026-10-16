@@ -1,6 +1,7 @@
 package app.pi.ui
 
 import app.pi.runtime.PiProjectConfig
+import app.pi.ui.settings.DiscoverySource
 import app.pi.ui.settings.PiSettingsStore
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -268,14 +269,14 @@ class PromptFileSettingsStoreDecorator(
 }
 
 /**
- * The read-only 「系统提示词来源」 row's value: which `SYSTEM.md` pi will read, as far as the
- * app can honestly say.
+ * The read-only 「提示词文件」 row's value: how many of pi's **four** prompt files exist, and at
+ * which scope — as far as the app can honestly say.
  *
  * ## What it can and cannot answer
  *
- * pi's chain is *workspace `.pi/SYSTEM.md` (when the project is trusted) > global
- * `SYSTEM.md` > built-in*, and the app **cannot** determine the middle condition from here.
- * `settingsManager.isProjectTrusted()` is not on pi's RPC surface (`get_state` carries no
+ * pi's chain is *workspace `.pi/<name>` (when the project is trusted) > global
+ * `<agentDir>/<name>` > built-in*, and the app **cannot** determine the middle condition from
+ * here. `settingsManager.isProjectTrusted()` is not on pi's RPC surface (`get_state` carries no
  * trust field), and the app's own reproduction of pi's decision (`ProjectTrust.resolve` +
  * `TrustRepository`) is reached only from the packages screen, needs a guest `readlink -f` to
  * canonicalise the cwd the way pi hashes it, and answers a different question even then: it
@@ -283,44 +284,67 @@ class PromptFileSettingsStoreDecorator(
  * pi process recorded (`docs/extension-compatibility.md:303` records this as DEGRADED).
  * Printing a trust verdict here would therefore be a guess about a security decision.
  *
- * So this reports the facts it can prove — which files exist, and how much text each holds —
- * and names the rule instead of a verdict. A row that says 「工作区 .pi/SYSTEM.md（受信任时优先）」
- * is true whichever way the trust question goes.
+ * So this reports the facts it can prove — **which files exist, and at which scope** — and the
+ * row's description names the rule instead of a verdict.
+ *
+ * ## The shape is [app.pi.ui.settings.resourceFactOverrides]', and it reuses its words
+ *
+ * `<N> 份 · 项目（<工作区>/.pi） 1 · 全局（~/.pi/agent） 1` / `还没有任何提示词文件`, with the
+ * source labels taken from [app.pi.ui.settings.DiscoverySource] rather than spelled again — the
+ * four 「已发现的 …」 rows in this same screen answer the same question ("what does pi actually
+ * load, and from where"), so they must read the same way. The classifier is 份 rather than 个
+ * because these are **copies of the same name** in two scopes: which copy wins is the whole
+ * question this row exists for.
+ *
+ * **Not** reported, deliberately: the size of each file. pi's own readout does not report it
+ * either, and counting files needs no read at all — so this row no longer touches file
+ * contents, only `isFile`/`exists`.
+ *
+ * ## Where this diverges from pi, and why that is the floor rather than laziness
+ *
+ * pi prints these as a list of paths in a multi-line `Context` section
+ * (`modes/interactive/interactive-mode.js:1382-1392`) and omits the section when the list is
+ * empty. Neither is reachable here: a settings row draws its value with `maxLines = 1`
+ * (`PiSettingsRows.kt:158`), and the registry has no conditional-row mechanism, so
+ * "list empty ⇒ no row" would mean inventing one. The zero state therefore borrows the app's
+ * own word for it (`还没有…`, as in `还没有发现任何资源`) and the paths live in the row's
+ * description.
  */
 object PromptFileFacts {
 
-    /** The system-prompt file name in both scopes (the row is about `SYSTEM.md`, not `APPEND_SYSTEM.md`). */
-    private const val SYSTEM_PROMPT_FILE = "SYSTEM.md"
+    /**
+     * pi's two file names, in the order it consumes them: it builds the system prompt and then
+     * appends (`core/system-prompt.js:78-98`).
+     */
+    private val PROMPT_FILES = listOf("SYSTEM.md", "APPEND_SYSTEM.md")
 
     /**
-     * One line for the row. Never a verdict: [describeSystemPrompt] does not claim to know
-     * whether the workspace file is in effect.
+     * One line for the row. Never a verdict: it does not claim to know whether a workspace copy
+     * is in effect (see the object KDoc).
      */
-    fun describeSystemPrompt(agentDir: File, workspace: File): String {
-        val global = File(agentDir, SYSTEM_PROMPT_FILE)
-        val project = File(PiProjectConfig.root(workspace), SYSTEM_PROMPT_FILE)
-        val projectState = state(project, "工作区 .pi/$SYSTEM_PROMPT_FILE")
-        val globalState = state(global, "全局 $SYSTEM_PROMPT_FILE")
-        val parts = listOfNotNull(
-            // The caveat belongs on a file that exists and is readable: it is the rule that
-            // decides *whether* the file is used, and the row must not be read as a verdict.
-            // A `SYSTEM.md` that is not a regular file has no such rule to state.
-            projectState?.let { if (project.isFile) "$it（受信任时优先）" else it },
-            globalState,
-        )
-        return if (parts.isEmpty()) "pi 自带" else parts.joinToString(" · ")
-    }
-
-    /** `null` when the file is absent; a sentence about the file otherwise — never a guess. */
-    private fun state(file: File, label: String): String? = when {
-        !file.exists() -> null
-        // Not a regular file: pi's `existsSync` is true and its read fails. Saying so is the
-        // whole reason this row reads the filesystem rather than the store.
-        !file.isFile -> "$label 不是普通文件"
-        else -> runCatching { file.readText().removePrefix("\uFEFF").length }
-            .fold(
-                onSuccess = { "$label $it 字" },
-                onFailure = { "$label 读不到" },
-            )
+    fun describePromptFiles(agentDir: File, workspace: File): String {
+        val projectRoot = PiProjectConfig.root(workspace)
+        // Workspace before agent dir, per name: that is pi's precedence within one name
+        // (`docs/configuration.md:39`), and the count line must not read as if the global copy
+        // came first. The order also matches `resourceFactOverrides` (ProjectPi.rank < Global).
+        val candidates = buildList {
+            for (name in PROMPT_FILES) {
+                add(File(projectRoot, name) to DiscoverySource.ProjectPi)
+                add(File(agentDir, name) to DiscoverySource.Global)
+            }
+        }
+        val present = candidates.filter { (file, _) -> file.isFile }
+        // `existsSync` is true for these and pi's read then fails — the one state that must not
+        // be folded into "absent". That is why this row stats the filesystem rather than
+        // trusting the store.
+        val notRegular = candidates.count { (file, _) -> file.exists() && !file.isFile }
+        val oddity = if (notRegular == 0) "" else "（另有 $notRegular 项不是普通文件）"
+        if (present.isEmpty()) {
+            return if (notRegular == 0) "还没有任何提示词文件" else "还没有提示词文件$oddity"
+        }
+        val bySource = present.groupingBy { (_, source) -> source }.eachCount().entries
+            .sortedBy { it.key.rank }
+            .joinToString(" · ") { (source, count) -> "${source.label} $count" }
+        return "${present.size} 份 · $bySource$oddity"
     }
 }

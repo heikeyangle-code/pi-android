@@ -1107,9 +1107,16 @@ run_harness settings-resources \
 #
 # `app/pi/ui/PromptFileSettingsStore.kt` is in this closure because it is the same kind of
 # thing one layer up: the two prompt rows write pi's `SYSTEM.md` / `APPEND_SYSTEM.md` instead
-# of a settings key, so "blank means delete the file" (pi tests `existsSync`, so an empty file
-# is an empty prompt, not a fallback to pi's own) and the BOM-stripping read are pinned here.
-# It imports only `java.io`/`java.nio`, kotlinx.serialization and the pure `PiProjectConfig`.
+# of a settings key, so "blank means delete the file" is pinned here. **Not** because an empty
+# file would break anything: pi's `if (customPrompt)` treats `""` as falsy and falls back to its
+# own preamble (`core/system-prompt.js:78-83`). What the delete buys is (a) `existsSync` is pi's
+# only signal, so "no file" is the one way to say "not set", and (b) a file holding **only
+# whitespace** is *not* falsy — it really does replace the preamble with that whitespace, which
+# is exactly the state a user reaches by typing a space and saving.
+# `PiResourceFacts.kt` rides along because `PromptFileFacts` now reports all four prompt files in
+# that file's shape and **reuses its `DiscoverySource` labels** — pulling the enum in is how "the
+# same words as the four 「已发现的 …」 rows" becomes a construction guarantee instead of a
+# by-inspection one. It has no imports of its own, so the closure does not grow otherwise.
 run_harness settings-store \
   app.pi.settings.PiSettingsStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/settings/PiSettingsStoreCheck.kt" \
@@ -1117,6 +1124,7 @@ run_harness settings-store \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsLock.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/PromptFileSettingsStore.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SettingsDocument.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \

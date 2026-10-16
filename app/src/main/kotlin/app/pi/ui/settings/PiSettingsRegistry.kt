@@ -559,22 +559,35 @@ object PiSettingsCatalog {
             effective = EffectiveKind.NewSession,
             aliases = listOf("system", "prompt", "append"),
         ),
-        // 只读读数：现在生效的是哪一份 `SYSTEM.md`。值由 `PiSettingsStack` 在 IO 上算好、
-        // 经 `valueOverrides` 传下来（与「已发现的主题」那四条同一个形状），因为它读的是
-        // **文件**而不是 store。三态里只能诚实地说两态：App 侧拿不到「这个项目受信任」的
-        // 确定答案（`PromptFileFacts` 的 KDoc 写了为什么），所以行上给的是两个文件各自
-        // 存在与否 + 字数，加上 pi 的规则（工作区那份受信任时优先），而不是猜一个裁决。
+        // 只读读数：pi 会读的那几份提示词文件（**两份名字 × 两个层级**，不是只有 `SYSTEM.md`）。
+        // 值由 `PiSettingsStack` 在 IO 上算好、经 `valueOverrides` 传下来（与「已发现的主题」
+        // 那四条同一个形状），因为它读的是**文件**而不是 store。
+        //
+        // 形状与用词都沿用那四条资源读数（`PiResourceFacts`）：`N 份 · 项目（<工作区>/.pi） 1 ·
+        // 全局（~/.pi/agent） 1` / `还没有任何提示词文件`，来源词取自 `DiscoverySource`，不另写
+        // 一套 —— 它们回答的是同一个问题（"pi 实际会加载什么、从哪来"），读起来必须一致。
+        //
+        // **这里只报能证明的事实**：哪几份文件存在、在哪一级。App 侧拿不到「这个项目受信任」的
+        // 确定答案（`PromptFileFacts` 的 KDoc 写了为什么），所以那条规则写在描述里一次，而不是
+        // 猜一个裁决。
+        //
+        // 与 pi 的两处**有意的差距**（不是偷懒，是 UI 的地板）：pi 把这几份文件的**路径逐行**
+        // 列在它 TUI 的 `Context` 小节里（`modes/interactive/interactive-mode.js:1382-1392`），
+        // 而且列表为空时**整个小节不出现**。在这里：只读行的值 `maxLines = 1`
+        // （`PiSettingsRows.kt:158`），路径写进描述；注册表没有条件隐藏机制，"没有 ⇒ 不显示"
+        // 要新造机制。所以零状态借用 App 自己的词（`还没有…`）。
         PiSetting(
             key = "app.prompts.effectiveSource",
-            title = "系统提示词来源",
-            description = "pi 读系统提示词的顺序：工作区 .pi/SYSTEM.md（仅在项目受信任时）→ " +
-                "全局 ~/.pi/agent/SYSTEM.md → pi 自带。这里读出前两份是否存在、各多少字。",
+            title = "提示词文件",
+            description = "pi 会读的四份文件，按它自己的顺序：工作区 .pi/SYSTEM.md、工作区 " +
+                ".pi/APPEND_SYSTEM.md、全局 ~/.pi/agent/SYSTEM.md、全局 ~/.pi/agent/APPEND_SYSTEM.md。" +
+                "同名不合并；工作区那份仅在该项目受信任时才被读，且此时它优先于全局那份。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "当前生效",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("system", "prompt", "source", "来源"),
+            aliases = listOf("system", "prompt", "source", "来源", "文件", "SYSTEM.md"),
         ),
         // ------------------------------------------------------------------
         // 3 消息与网络
