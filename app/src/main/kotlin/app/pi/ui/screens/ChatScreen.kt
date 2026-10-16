@@ -2638,7 +2638,7 @@ private fun ChatBody(
             // puts the queued text **and** the current editor text back into the
             // editor (`:3891-3910`), then aborts. Dropping the queued text here is
             // what made Stop silently destroy what the user had typed.
-            // 清空 and 排队 are no longer Composer parameters: the designer's overflow
+            // 清空 and 后续 are no longer Composer parameters: the designer's overflow
             // ladder moved both out of the key row and into this screen's ⋮ menu, so
             // the composer does not gate or run them any more.
             // 清空 is the composer's own ⋮ entry (`ComposerMenu`); the editor it
@@ -3482,7 +3482,7 @@ private fun QueueRow(
     //
     // A blank text is skipped rather than drawn as an empty line. An attachment-only
     // mid-turn message queues with an empty string — `_queueSteer` pushes the *text*
-    // (`core/agent-session.js:1765-1766`) and this app offers 插话 for an attachment
+    // (`core/agent-session.js:1765-1766`) and this app offers 引导 for an attachment
     // with no caption (the composer's `canSteer`), a state official pi cannot reach
     // at all because its submit rejects empty text
     // (`interactive-mode.js:2542-2544`). Skipping keeps such a queue showing exactly
@@ -3491,8 +3491,8 @@ private fun QueueRow(
     // `string[]` only (`rpc-types.d.ts:194-199`) — is already recorded and needs a
     // product ruling: `design/ui-refactor/14-illustration-and-queue-diff.md:187` row 12.
     val pendingLines = buildList {
-        steeringTexts.filter { it.isNotBlank() }.forEach { add("插话：$it") }
-        followUpTexts.filter { it.isNotBlank() }.forEach { add("排队：$it") }
+        steeringTexts.filter { it.isNotBlank() }.forEach { add("引导：$it") }
+        followUpTexts.filter { it.isNotBlank() }.forEach { add("后续：$it") }
     }.take(PENDING_MESSAGE_LINES)
     Column(
         Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
@@ -3500,15 +3500,17 @@ private fun QueueRow(
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             // The two words are pi's two waiting modes and are **not** synonyms:
-            // 插话 is `steeringMode`/steer (this turn is steered by the message: pi
+            // 引导 is `steeringMode`/steer (this turn is steered by the message: pi
             // delivers it after the turn's tool calls finish and before the next model
-            // call, `core/agent-session.js:1741-1742`), 排队 is `followUpMode`/followUp
+            // call, `core/agent-session.js:1741-1742`), 后续 is `followUpMode`/followUp
             // (processed once the agent would otherwise stop, `:1753-1754`). The glyphs
             // and tones are the queue's own third channel (`06 §4`: `⇢` warning,
-            // `⇣` muted).
-            if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "插话 $steering")
+            // `⇣` muted). The words are the same two the composer chips and the settings
+            // page use, and the same two pi prints above its editor
+            // (`interactive-mode.js:3881`/`:3885`).
+            if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "引导 $steering")
             if (steering > 0 && followUp > 0) Spacer(Modifier.width(PiSpacing.inline))
-            if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "排队 $followUp")
+            if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "后续 $followUp")
             Spacer(Modifier.weight(1f))
             // The consequence, not the mechanism: the text goes back into the input box
             // and the turn that is running is not touched.
@@ -3653,9 +3655,9 @@ private fun Composer(
     /** pi's `app.clear`: empty editor. True while there is something to clear. */
     canClear: Boolean,
     onClear: () -> Unit,
-    /** 插话: pi's steer — the message joins the running turn. */
+    /** 引导: pi's steer — the message joins the running turn. */
     onSteer: () -> Unit,
-    /** 排队: pi's followUp — the message waits for the turn to finish. */
+    /** 后续: pi's followUp — the message waits for the turn to finish. */
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -3781,13 +3783,13 @@ private fun Composer(
                 // `streamingBehavior`, and the names are picked so the pair cannot be
                 // read as synonyms:
                 //
-                //   插话 = `steeringMode` / steer — this turn is steered by the
+                //   引导 = `steeringMode` / steer — this turn is steered by the
                 //          message: pi delivers it after the turn's tool calls finish
                 //          and before the next model call
                 //          (`core/agent-session.js:1741-1742`). This is pi's own Enter
                 //          while streaming (`interactive-mode.js:2717-2723`, the call
                 //          at `:2720`).
-                //   排队 = `followUpMode` / followUp — delivered only once the agent
+                //   后续 = `followUpMode` / followUp — delivered only once the agent
                 //          would otherwise stop (`core/agent-session.js:1753-1754`).
                 //          This is `app.message.followUp`, i.e. `alt+enter`
                 //          (`keybindings.md:166`), whose call is at
@@ -3803,8 +3805,8 @@ private fun Composer(
                 // is a stop button for the whole turn. Both are drawn as key chips:
                 // that is the family they belong to.
                 if (streaming) {
-                    KeyChip(label = "插话", enabled = canSteer, onClick = onSteer)
-                    KeyChip(label = "排队", enabled = canFollowUp, onClick = onFollowUp)
+                    KeyChip(label = "引导", enabled = canSteer, onClick = onSteer)
+                    KeyChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
                 }
                 // The transcript's status row used to print this reading in its own
                 // 32 dp band above the stream; it is a ring in the key row now
@@ -4220,7 +4222,7 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
  * that the answer is not a priority ladder but a **shorter row**: `@`, `!` and `!!`
  * move into the ⋮ chip beside them ([ComposerMenu]), where they do exactly what the
  * chips did. What is left is what a person reaches for while typing (`/`, the
- * paperclip), the two delivery choices that exist only mid-turn (插话 / 排队), the
+ * paperclip), the two delivery choices that exist only mid-turn (引导 / 后续), the
  * thinking level and the context ring.
  *
  * No width arithmetic, no fallback order, no budget constants — the row is short
@@ -4237,7 +4239,7 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
  * all, so it read as stray characters rather than as keys.
  *
  * [enabled] is false for the conditional members whose action needs something to
- * deliver: pi's `alt+enter` 排队 and the 插话 chip both have nothing to hand over
+ * deliver: pi's `alt+enter` 后续 and the 引导 chip both have nothing to hand over
  * while the composer is empty, and a disabled chip is drawn in the muted tokens and
  * takes no tap.
  *
