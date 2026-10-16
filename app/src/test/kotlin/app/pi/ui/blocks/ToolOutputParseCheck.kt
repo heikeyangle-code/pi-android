@@ -598,6 +598,50 @@ fun main() {
     check("codemode: two priced calls are summed", codemodeModelCallsTotal(listOf(calls[0], calls[0])), "Model calls: $0.0024")
     check("codemode: the script is read from the arguments", codemodeCode(args("code" to "const a = 1;\n")), "const a = 1;")
     check("codemode: no script argument is null", codemodeCode(args("other" to "x")), null)
+    // pi normalises a script before displaying it — `\r` dropped, trimmed, tabs expanded to
+    // three spaces (`replaceTabs`, `codemode/renderer.js:63`). A script written with tabs used
+    // to reach the card with the tab characters still in it.
+    check(
+        "codemode: tabs in a script expand to three spaces, like pi's renderer",
+        codemodeCode(args("code" to "if (x) {\n\ty()\n}")),
+        "if (x) {\n   y()\n}",
+    )
+
+    // pi's per-token colours for a nested call (`codemode/renderer.js:41-56`): the name in
+    // `toolTitle`, the arguments / duration / cost in `dim` — **`muted` here**, the app's
+    // contrast-corrected stand-in for a tool card — and a failure's text in `error`.
+    check(
+        "codemode runs: pi's tokens, in pi's order",
+        codemodeCallRuns(calls[0], expanded = false).map { it.token },
+        listOf(ToolCallToken.ToolTitle, ToolCallToken.Muted, ToolCallToken.Muted, ToolCallToken.Muted),
+    )
+    check(
+        "codemode runs: the plain text is the same construction, so the two cannot disagree",
+        codemodeCallRuns(calls[0], expanded = false).joinToString("") { it.text },
+        codemodeCallText(calls[0], expanded = false),
+    )
+    check(
+        "codemode runs: a failure's text is the error token, and only when expanded",
+        codemodeCallRuns(calls[1], expanded = true).last().token,
+        ToolCallToken.Error,
+    )
+    check("codemode runs: a collapsed call carries no error run", codemodeCallRuns(calls[1], expanded = false).size, 3)
+    // The engine's own header, dropped the way pi's renderer drops it (`:114-121`).
+    check(
+        "codemode output: the Script completed header goes",
+        codemodeOutput("Script completed\nWall time 1.2 seconds\nOutput:\nhello\nworld"),
+        "hello\nworld",
+    )
+    check(
+        "codemode output: a failed script's header goes too",
+        codemodeOutput("Script failed\nWall time 0.3 seconds\nOutput:\nboom"),
+        "boom",
+    )
+    check(
+        "codemode output: text that is not that header is left alone",
+        codemodeOutput("just text\nsecond line"),
+        "just text\nsecond line",
+    )
 
     if (failures > 0) {
         println("tool-output-parse: $failures check(s) failed")

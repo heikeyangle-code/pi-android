@@ -206,7 +206,32 @@ private fun ToolCallToken.color(palette: PiPalette): Color = when (this) {
     ToolCallToken.Warning -> palette.warning
     ToolCallToken.Muted -> palette.muted
     ToolCallToken.Uncoloured -> palette.text
+    ToolCallToken.Error -> palette.error
 }
+
+/**
+ * A list of runs as one `AnnotatedString`: one span per run, in pi's own order.
+ *
+ * Split out of [ToolHeader] so a body row can carry pi's per-token colours too — the nested
+ * `codemode` call rows are the case: pi paints a call's name `toolTitle`, its arguments
+ * `muted`, its duration and cost `dim` and a failure's text `error`
+ * (`dist/extensions/codemode/renderer.js:41-56`), and this app's header row had the only
+ * implementation of "runs -> spans". [ToolHeader] now calls it with exactly the body it used
+ * to build inline, so its output is unchanged.
+ *
+ * `Unspecified` when [runs] is empty, which leaves the caller's own colour in place.
+ */
+internal fun List<ToolCallPart>.toAnnotatedString(palette: PiPalette): AnnotatedString =
+    buildAnnotatedString {
+        forEach { part ->
+            withStyle(
+                SpanStyle(
+                    color = part.token.color(palette),
+                    fontWeight = if (part.bold) FontWeight.Bold else null,
+                ),
+            ) { append(part.text) }
+        }
+    }
 
 /**
  * pi's `renderToolPath` (`core/tools/render-utils.js:57-63`), as one run: the path in
@@ -306,19 +331,9 @@ internal fun ToolHeader(
     val palette = PiTheme.palette
     // One `AnnotatedString` with one span per run. Built here rather than at the seven call
     // sites: the row's style (`monoSmall`, single line, ellipsis) stays in one place, so no
-    // block can accidentally change anything but a colour.
-    val subjectText = remember(subject, palette) {
-        buildAnnotatedString {
-            subject.forEach { part ->
-                withStyle(
-                    SpanStyle(
-                        color = part.token.color(palette),
-                        fontWeight = if (part.bold) FontWeight.Bold else null,
-                    ),
-                ) { append(part.text) }
-            }
-        }
-    }
+    // block can accidentally change anything but a colour. The run-to-span rule itself lives
+    // in [toAnnotatedString], shared with the body rows that carry pi's tokens.
+    val subjectText = remember(subject, palette) { subject.toAnnotatedString(palette) }
     // The two states that spell themselves out (see the KDoc above): `…` and `⊘`.
     val word = toolStateWord(state)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {

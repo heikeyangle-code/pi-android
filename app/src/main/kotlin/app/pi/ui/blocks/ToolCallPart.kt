@@ -46,9 +46,19 @@ internal enum class ToolCallToken {
      *
      * The one user is the generic fallback card, whose call line pi builds as
      * `theme.fg("toolTitle", bold(toolName))` + the raw JSON arguments with no colour
-     * (`components/tool-execution.js:274-278` → `:315-322`).
+     * (`components/tool-execution.js:312` and `:311-322`).
      */
     Uncoloured,
+
+    /**
+     * `error` — pi's token for a **failure's own text**, and the last one this file needed.
+     *
+     * Its user is a nested `codemode` call that failed: pi prints the failure under the call's
+     * line in the error colour (`dist/extensions/codemode/renderer.js:53-54`). The glyph beside
+     * the call already says `✗` (colour is the third channel, never the only one), but the
+     * sentence itself was sharing the body's colour, which is not what pi shows.
+     */
+    Error,
 }
 
 /**

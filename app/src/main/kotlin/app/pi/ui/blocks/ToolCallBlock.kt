@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
+import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -98,13 +99,22 @@ fun ToolCallBlock(
     // sentence the notice below repeats. The strip is pi's rule verbatim and refuses
     // far more often than it cuts (see `stripFullOutputFooter`), so a body that does
     // not end in that bracket block is left byte-for-byte alone.
-    val bodyText = remember(item.output, fullOutputPath, truncation, item.status) {
+    // `codemode` has its own rendering inside this generic card (script, nested calls, model
+    // cost — see the body below), so the name is read once, here, and used by both the body's
+    // text and the blocks that the engine's `details` feeds.
+    val isCodemode = item.toolName == "codemode"
+    val bodyText = remember(item.output, fullOutputPath, truncation, item.status, isCodemode) {
         // pi's `!options.isPartial`: a still-streaming row keeps its text untouched.
-        if (state != ToolState.Running && truncation != null) {
+        val text = if (state != ToolState.Running && truncation != null) {
             stripFullOutputFooter(item.output, fullOutputPath)
         } else {
             item.output
         }
+        // A `codemode` result's own `Script completed / Wall time N seconds / Output:` header is
+        // dropped, exactly as pi's renderer drops it (`codemode/renderer.js:114-121`) — the wall
+        // time is on this row's reading already. Only the *displayed* text: `复制输出` still
+        // copies `item.output`, pi's own bytes.
+        if (isCodemode) codemodeOutput(text) else text
     }
     val previewText = remember(bodyText, expanded, fullOutput, outputOversize) {
         when {
@@ -137,7 +147,6 @@ fun ToolCallBlock(
     // model cost were invisible. The script itself (`args.code`) comes with them: pi shows it
     // as the call's body, and this card's one-line summary can only ever carry its first
     // characters.
-    val isCodemode = item.toolName == "codemode"
     val script = remember(isCodemode, item.args) { if (isCodemode) codemodeCode(item.args) else null }
     // **The settled result wins over the live snapshot.** After `tool_execution_end` the
     // result's `details` is complete and authoritative — every call has a final status — while
@@ -227,9 +236,20 @@ fun ToolCallBlock(
                     // `lineCount` walks it, on a row that republishes every 200 ms while the
                     // script runs. Keyed on the script, so a publication costs nothing.
                     val shownScript = remember(script) { headLines(script, TOOL_BODY_MAX_LINES) }
-                    MonoText(
-                        text = shownScript,
-                        color = palette.bodyOnTool,
+                    // **pi's own highlighting, through the app's existing channel.** pi's codemode
+                    // renderer calls `highlightCode(replaceTabs(code), "javascript")`
+                    // (`codemode/renderer.js:70-71`) — a hard-coded language, because a script has
+                    // no file path to derive one from. That is the only reason this block used to
+                    // be plain: every other code body here (`read`/`write`, ``` fences) already
+                    // goes through `rememberPiHighlightedCode`, the guest's highlight.js with pi's
+                    // theme mapping. The colour branch is `SourceLines`' rule verbatim — a known
+                    // language leaves the untokenised characters at pi's default foreground
+                    // (`palette.text`), an unknown one takes the body colour.
+                    val highlighted = rememberPiHighlightedCode(shownScript, CODEMODE_SCRIPT_LANGUAGE)
+                    Text(
+                        text = highlighted.text,
+                        style = PiTheme.text.mono,
+                        color = if (highlighted.languageKnown) palette.text else palette.bodyOnTool,
                         modifier = Modifier.padding(top = PiSpacing.tiny),
                     )
                     val hiddenScript = remember(script, shownScript) {
@@ -293,6 +313,13 @@ fun ToolCallBlock(
                             )
                         }
                         shownCalls.forEach { call ->
+                            // One span per run: the name in `toolTitle`, the arguments, duration
+                            // and cost in `muted`, a failure in `error` — pi's own per-token
+                            // colours (`codemode/renderer.js:41-56`), resolved through the same
+                            // table the header row uses.
+                            val runs = remember(call, fullOutput) {
+                                codemodeCallRuns(call, expanded = fullOutput)
+                            }
                             Row(verticalAlignment = Alignment.Top) {
                                 Text(
                                     text = codemodeCallIcon(call.status),
@@ -301,9 +328,9 @@ fun ToolCallBlock(
                                     maxLines = 1,
                                 )
                                 Spacer(Modifier.width(PiSpacing.inline))
-                                MonoText(
-                                    text = codemodeCallText(call, expanded = fullOutput),
-                                    color = palette.bodyOnTool,
+                                Text(
+                                    text = remember(runs, palette) { runs.toAnnotatedString(palette) },
+                                    style = PiTheme.text.mono,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -407,3 +434,14 @@ private const val MAX_OUTPUT_BYTES = 200 * 1024
  * reason its shell rows keep the tail: a script's outcome is at the end.
  */
 private const val CODEMODE_CALL_PREVIEW = 8
+
+/**
+ * The language pi highlights a `codemode` script with — **pi's own literal**
+ * (`dist/extensions/codemode/renderer.js:71`: `highlightCode(…, "javascript")`).
+ *
+ * It is a literal and not `PiCodeLanguage.forPath(…)` on purpose: a script is not a file and has
+ * no path to derive a language from, which is exactly why pi hard-codes this one. The value is
+ * the same string `PiCodeLanguage`'s table maps `.js`/`.mjs`/`.cjs` onto, so the `read`/`write`
+ * bodies and this block ask the guest highlighter for the same grammar.
+ */
+private const val CODEMODE_SCRIPT_LANGUAGE = "javascript"

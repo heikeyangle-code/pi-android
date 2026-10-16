@@ -1166,28 +1166,47 @@ internal fun codemodeCallIcon(status: CodemodeCallStatus): String = when (status
 }
 
 /**
- * One nested call's line as pi's `formatCall` builds it (`codemode/renderer.js:41-56`), minus
- * the status glyph — that is [codemodeCallIcon]'s, because pi colours it by status and the
+ * One nested call's line as pi's `formatCall` builds it (`codemode/renderer.js:41-56`), as
+ * **runs** — the status glyph is [codemodeCallIcon]'s, because pi colours it by status and the
  * card paints it in the app's own state colour.
  *
- * Collapsed, the arguments are cut to pi's 80 characters (`:16`, `:42-44`); expanded, they
- * are whole and the failure's text follows on its own line indented by four spaces (`:53-54`).
+ * pi's four tokens, in pi's order (`:41-56`):
+ *
+ *  - the call's name in `toolTitle` (`theme.fg("toolTitle", call.name)`);
+ *  - its arguments in `muted`;
+ *  - its duration and its cost in `dim` — **`muted` here**, because this app keeps `dim`
+ *    (2.5:1 on a tool card) out of tool cards for the §9 contrast floor: `GrepBlock`'s KDoc
+ *    documents the same substitution for the same reason. Token, not text: nothing about the
+ *    line changes but which palette entry paints it;
+ *  - a failure's own text in `error`, on its own line indented by four spaces, and only when
+ *    the row is expanded (`:53-54`).
+ *
+ * Collapsed, the arguments are cut to pi's 80 characters (`:16`, `:42-44`).
  */
-internal fun codemodeCallText(call: CodemodeCall, expanded: Boolean): String {
+internal fun codemodeCallRuns(call: CodemodeCall, expanded: Boolean): List<ToolCallPart> = buildList {
     val args = if (!expanded && call.args.length > CODEMODE_COLLAPSED_ARGS_CHARS) {
         call.args.take(CODEMODE_COLLAPSED_ARGS_CHARS - 3) + "..."
     } else {
         call.args
     }
-    val line = StringBuilder(call.name)
-    if (args.isNotEmpty()) line.append(' ').append(args)
-    call.durationMs?.let { line.append(' ').append(codemodeDuration(it)) }
-    call.cost?.takeIf { it > 0.0 }?.let { line.append(' ').append(codemodeCost(it)) }
+    add(ToolCallPart(call.name, ToolCallToken.ToolTitle))
+    if (args.isNotEmpty()) add(ToolCallPart(" $args", ToolCallToken.Muted))
+    call.durationMs?.let { add(ToolCallPart(" ${codemodeDuration(it)}", ToolCallToken.Muted)) }
+    call.cost?.takeIf { it > 0.0 }?.let { add(ToolCallPart(" ${codemodeCost(it)}", ToolCallToken.Muted)) }
     if (expanded && !call.error.isNullOrEmpty()) {
-        line.append('\n').append("    ").append(call.error.replace("\n", "\n    "))
+        add(ToolCallPart("\n    ${call.error.replace("\n", "\n    ")}", ToolCallToken.Error))
     }
-    return line.toString()
 }
+
+/**
+ * [codemodeCallRuns] as one plain string — the row's text with its colours dropped.
+ *
+ * Derived from the runs rather than built a second time, so the two can never disagree: a
+ * caller that only needs the text (or a test that pins it) reads the same construction the
+ * card paints.
+ */
+internal fun codemodeCallText(call: CodemodeCall, expanded: Boolean): String =
+    codemodeCallRuns(call, expanded).joinToString("") { it.text }
 
 /**
  * pi's `formatDuration` for a nested call (`codemode/renderer.js:20-24`): whole milliseconds
@@ -1224,11 +1243,37 @@ internal fun codemodeModelCallsTotal(calls: List<CodemodeCall>): String? {
 }
 
 /**
- * The script a `codemode` call was given (`codemode/renderer.js:62`), or null when the
- * argument is absent or not a string — pi's `[invalid arg]` branch (`:66-69`).
+ * The script a `codemode` call was given, as **pi displays it** (`codemode/renderer.js:62-64`),
+ * or null when the argument is absent or not a string — pi's `[invalid arg]` branch (`:66-69`).
+ *
+ * pi's own normalisation, all three steps from its renderer: `\r` dropped, the text trimmed at
+ * the end, and **tabs expanded to three spaces** (`replaceTabs`, the same rule its `read`,
+ * `write` and diff renderers apply). pi does the tab expansion at render time; doing it here
+ * means the body and the collapsed summary can never disagree about the script's shape.
  */
 internal fun codemodeCode(args: JsonObject?): String? =
-    (args?.get("code") as? JsonPrimitive)?.takeIf { it.isString }?.content?.replace("\r", "")?.trimEnd()
+    (args?.get("code") as? JsonPrimitive)
+        ?.takeIf { it.isString }
+        ?.content
+        ?.let { replaceTabs(it.replace("\r", "")).trimEnd() }
+
+/**
+ * A `codemode` result's text without the engine's own header.
+ *
+ * The engine prefixes every script result with `Script completed\nWall time N seconds\nOutput:\n`
+ * (or `Script failed`), and pi's renderer drops exactly that block before painting the output
+ * (`codemode/renderer.js:114-121`, its `SCRIPT_HEADER`, verbatim below). The wall time it
+ * carried is already on the row as its own reading.
+ *
+ * Text that does not start with that header is returned untouched, so a result from a newer
+ * engine that changed the wording renders as it always did rather than losing its first lines.
+ */
+internal fun codemodeOutput(output: String): String =
+    CODEMODE_SCRIPT_HEADER.find(output)?.let { output.substring(it.range.last + 1) }?.trim() ?: output.trim()
+
+/** pi's `SCRIPT_HEADER` (`codemode/renderer.js:19`) — matched at the start, not anchored at the end. */
+private val CODEMODE_SCRIPT_HEADER =
+    Regex("""^Script (?:completed|failed)\nWall time [\d.]+ seconds\nOutput:\n""")
 
 /** `codemode/renderer.js:16`: the argument cut applied to a collapsed call. */
 private const val CODEMODE_COLLAPSED_ARGS_CHARS = 80
