@@ -10,6 +10,15 @@
 // 为什么跨度必须由**这个**解析器产生：`PiHtml.blockTextAt(content, start, end)` 拿到的
 // start/end 就是这里量出来的那两个数。手写跨度等于凭空假设解析器的行为，而这个假设错了
 // 只会表现为"手机上少画一段 HTML"，不会报错。
+//
+// `piTui` 字段**不在这里写死**。它曾经是常量 `"1.1.0"`，1.1.0→1.2.0 那次没人再改它，
+// 于是整跑一次就会把夹具的标签写回上一个版本 —— 而那个标签是 `PiHtmlCheck` 拿来与
+// `tools/pi-engine.lock.json` 里 pi-tui 的版本对账的，写错 = 让一条 harness 静默断言一个
+// 不是本仓库 pin 的引擎（比"夹具过期"更糟，因为它会通过）。所以：
+//   * 来源是第一步输出里的 `piTui`（`tools/collect-pi-html-pitext.mjs` 从 PI_TUI 真正
+//     指向的那个 pi-tui 包目录现读的版本）—— 那是产出这些期望值的 renderer 本身；
+//   * 这里再做一次与锁的交叉核对：两者不等就退出 2。缺字段、空串、锁里查不到也一样
+//     退出 2，**不兜底、不用默认值** —— 静默兜底正是这个 bug 的形态。
 import org.intellij.markdown.IElementType;
 import org.intellij.markdown.ast.ASTNode;
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor;
@@ -37,7 +46,8 @@ import java.util.stream.Collectors;
 public class HtmlFixtureSpans {
 
     static final String PARSER = "org.jetbrains:markdown-jvm:0.7.9 + GFMFlavourDescriptor";
-    static final String PI_TUI = "1.1.0";
+    /** `tools/pi-engine.lock.json` 里 pi-tui 的条目名：夹具的 `piTui` 必须等于它的 `version`。 */
+    static final String PI_TUI_LOCK_KEY = "node_modules/@earendil-works/pi-tui";
 
     public static void main(String[] args) throws Exception {
         Path piJson = Path.of(args[0]);
@@ -46,6 +56,8 @@ public class HtmlFixtureSpans {
 
         List<Map<String, Object>> cases = new ArrayList<>();
         Map<String, Object> root = (Map<String, Object>) new MiniJson(piRaw).parse();
+        String piTui = piTuiVersion(root, repo);
+
         for (Object o : (List<?>) root.get("cases")) {
             Map<String, Object> c = (Map<String, Object>) o;
             String name = (String) c.get("name");
@@ -63,11 +75,11 @@ public class HtmlFixtureSpans {
 
         StringBuilder sb = new StringBuilder();
         sb.append("{\n");
-        sb.append("\t\"piTui\": ").append(json(PI_TUI)).append(",\n");
+        sb.append("\t\"piTui\": ").append(json(piTui)).append(",\n");
         sb.append("\t\"parser\": ").append(json(PARSER)).append(",\n");
         sb.append("\t\"generatedBy\": ").append(json(
-                "app/src/test/resources/pi-html-fixtures/collect-pi-html-pitext.mjs（期望值是 pi 自己的 Markdown.render 输出，不是手抄）"
-                + " + app/src/test/resources/pi-html-fixtures/HtmlFixtureSpans.java（跨度与类型全集由 pin 住的解析器量出）")).append(",\n");
+                "tools/collect-pi-html-pitext.mjs（期望值是 pi 自己的 Markdown.render 输出，不是手抄）"
+                + " + tools/HtmlFixtureSpans.java（跨度与类型全集由 pin 住的解析器量出）")).append(",\n");
         sb.append("\t\"cases\": ").append(jsonArray(cases)).append(",\n");
         // 归一样本与 trim 样本由第一步原样带过来（它们是 pi 的 JS 行为，解析器不参与）。
         sb.append("\t\"normalizeCases\": ").append(jsonArray((List<?>) root.get("normalizeCases"))).append(",\n");
@@ -243,6 +255,47 @@ public class HtmlFixtureSpans {
     // ---- 极简 JSON（夹具的字段全是字符串/数组/对象，不引第三方）----
     static Map<String, Object> parse(String json) throws Exception {
         return (Map<String, Object>) new MiniJson(json).parse();
+    }
+
+    /**
+     * 夹具该记的 pi-tui 版本。两个来源都必须给出同一个答案，否则退出 2：
+     *
+     * 1. 第一步输出的 `piTui` —— `tools/collect-pi-html-pitext.mjs` 从 `PI_TUI` 真正指向的
+     *    那个包目录现读的版本，也就是产出 `piText` 期望值的 renderer 的版本。这才是"这份
+     *    夹具描述的是哪一份 pi-tui"的直接证据；这里写常量只会在下一次升级时腐烂（1.1.0
+     *    就是这么留到 1.2.0 的）。
+     * 2. `tools/pi-engine.lock.json` 里 pi-tui 的 `version` —— 仓库 pin 住的那一份。两者的
+     *    关系由 `app/src/test/kotlin/app/pi/ui/render/PiHtmlCheck.kt` 在跑 harness 时断言
+     *    （夹具的 `piTui` 必须等于锁里的版本），所以生成期就核对一次，把"夹具描述了另一个
+     *    引擎"挡在写盘之前，而不是等 CI 里那条断言（它只会说"夹具过期"）。
+     *
+     * 缺字段、空串、锁里没有这个条目一律是错误：静默兜底正是这个 bug 的形态。
+     */
+    static String piTuiVersion(Map<String, Object> step1, Path repo) throws Exception {
+        Object raw = step1.get("piTui");
+        require(
+                raw instanceof String && !((String) raw).isBlank(),
+                "第一步输出里没有 piTui（缺字段/非字符串/空串）。用改过的 "
+                        + "tools/collect-pi-html-pitext.mjs 重新生成 --pi-tui JSON：那个字段是"
+                        + "从 PI_TUI 指向的包目录现读的 pi-tui 版本，本工具不再自带常量、也没有默认值。");
+        String version = ((String) raw).trim();
+
+        Path lockFile = repo.resolve("tools/pi-engine.lock.json");
+        require(Files.isRegularFile(lockFile), "找不到引擎锁 " + lockFile + "，无法核对 piTui。");
+        Map<String, Object> lock = parse(Files.readString(lockFile, StandardCharsets.UTF_8));
+        Object packagesRaw = lock.get("packages");
+        require(packagesRaw instanceof Map, "引擎锁里没有 packages 对象，无法核对 piTui。");
+        Object entryRaw = ((Map<?, ?>) packagesRaw).get(PI_TUI_LOCK_KEY);
+        require(entryRaw instanceof Map, "引擎锁里没有 " + PI_TUI_LOCK_KEY + " 条目，无法核对 piTui。");
+        Object lockedRaw = ((Map<?, ?>) entryRaw).get("version");
+        require(lockedRaw instanceof String, PI_TUI_LOCK_KEY + " 的 version 不是字符串，无法核对 piTui。");
+        require(
+                version.equals(lockedRaw),
+                "第一步的 pi-tui 是 " + version + "，而 " + lockFile
+                        + " 里是 " + lockedRaw + "：夹具的 piTui 必须描述本仓库 pin 的那一份引擎。"
+                        + "如果引擎确实升了，先把 PI_TUI 指到新 payload 里解出的 pi-tui 重新生成第一步；"
+                        + "不要改这里的任何常量（本工具没有可改的常量）。");
+        return version;
     }
 
     static void require(boolean ok, String message) {

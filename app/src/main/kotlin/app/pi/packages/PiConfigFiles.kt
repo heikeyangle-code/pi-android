@@ -424,12 +424,22 @@ class PiModelsFile(
         }
     }
 
-    /** A provider block, with the fields from `ProviderConfigSchema`. */
+    /**
+     * A provider block, with the fields from `ProviderConfigSchema`.
+     *
+     * `name`, `baseUrl` and `api` are nullable on purpose: **`null` means "the app has no
+     * opinion, do not write this key"**, which is how a field pi already defines for this
+     * provider stays un-copied ([PiModelsMerge.declaredConnection]). `name` has been that
+     * shape since the app stopped re-labelling pi's own providers; `baseUrl`/`api` joined it
+     * when a copy of an official definition turned out to be the thing that goes stale —
+     * pi 1.3.0 changed both for `kimi-coding`, and the stored copy then won over pi's new
+     * definition.
+     */
     data class Provider(
         val id: String,
         val name: String?,
-        val baseUrl: String,
-        val api: String,
+        val baseUrl: String?,
+        val api: String?,
         /**
          * pi's `authHeader`: "if true, adds `Authorization: Bearer` with the
          * resolved API key" (`docs/custom-provider.md:681-682`,
@@ -442,18 +452,14 @@ class PiModelsFile(
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             name?.let { put("name", JsonPrimitive(it)) }
-            put("baseUrl", JsonPrimitive(baseUrl))
-            put("api", JsonPrimitive(api))
+            baseUrl?.let { put("baseUrl", JsonPrimitive(it)) }
+            api?.let { put("api", JsonPrimitive(it)) }
             authHeader?.let { put("authHeader", JsonPrimitive(it)) }
             // Omitted when empty, which is pi's own shape rather than a shortcut:
             // `models` is `Type.Optional(Type.Array(ModelDefinitionSchema))`
-            // (`model-config.ts:208`), and `applyModelsJson` only demands that a
-            // provider block carry *one* of baseUrl/headers/compat/modelOverrides/
-            // models/apiKey/oauth/authHeader (`provider-composer.ts:181-200`) — the
-            // baseUrl above satisfies that. An empty array would say "this provider
-            // has no models", which is a different and false claim: it means "pi's
-            // catalog is the only declaration for this provider", which is exactly
-            // what leaving the key out says (docs/known-gaps.md §M11).
+            // (`model-config.ts:208`) — and an empty array would say "this provider has no
+            // models", a different and false claim. Leaving the key out says "pi's catalog is
+            // the only declaration for this provider" (docs/known-gaps.md §M11).
             if (models.isNotEmpty()) put("models", JsonArray(models.map { it.toJson() }))
         }
     }
@@ -517,16 +523,21 @@ class PiModelsFile(
      */
     fun upsert(provider: Provider): String? {
         if (provider.id.isBlank()) return "厂商 id 不能为空"
-        if (provider.baseUrl.isBlank()) return "Base URL 不能为空"
-        if (provider.api.isBlank()) return "api 类型不能为空"
+        // `null` = "pi's own definition stands, do not write this key" and is legal; a blank
+        // *string* is still refused, because a written `""` is never a real endpoint and fails
+        // pi's `minLength: 1` (`schemas/models.schema.json`).
+        if (provider.baseUrl?.isBlank() == true) return "Base URL 不能为空"
+        if (provider.api?.isBlank() == true) return "api 类型不能为空"
         // No "at least one model" rule: pi does not have one. `models` is optional
-        // (`model-config.ts:208`) and `applyModelsJson` asks only that the block
-        // carry one of baseUrl/headers/compat/modelOverrides/models/apiKey/oauth/
-        // authHeader (`provider-composer.ts:181-200`), which the baseUrl checked just
-        // above already does. An empty list is a real state — "this provider's models
-        // come from pi's catalog and the app is not re-declaring them", which is what
-        // `PiCredentialService.save` writes for a provider pi ships
-        // (docs/known-gaps.md §M11).
+        // (`model-config.ts:208`) and `applyModelsJson` asks only that the block carry one of
+        // baseUrl/headers/compat/modelOverrides/models/apiKey/oauth/authHeader
+        // (`provider-composer.js:157-165` — and note `api`/`name` do **not** count).
+        // `PiCredentialService.save` always writes `authHeader`, so a block it produces
+        // satisfies that even when it omits `baseUrl`/`api`; a caller that omits all three must
+        // write no block at all, or pi records a composition error and
+        // `synchronizeCredentialState` fails right after the save (`model-runtime.js:404-410`).
+        // An empty list is a real state — "this provider's models come from pi's catalog and
+        // the app is not re-declaring them" (docs/known-gaps.md §M11).
         if (provider.models.any { it.id.isBlank() }) return "模型 id 不能为空"
 
         val snapshot = read()

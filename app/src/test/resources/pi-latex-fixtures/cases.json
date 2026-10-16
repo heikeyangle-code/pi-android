@@ -1,5 +1,5 @@
 {
-	"piTui": "1.2.0",
+	"piTui": "1.3.0",
 	"generatedBy": "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
 	"cases": [
 		{

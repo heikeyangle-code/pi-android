@@ -585,7 +585,7 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *  8. **许可证资产**：`v1.0.4` / `v1.1.0` 标签的根 `LICENSE` 与之前八个标签逐字节相同
  *     （sha256 `0457f5bc…`），所以只改标签清单、不加正文；三个手写的 `@aws-sdk/*` 版本按新锁复核。
  */
-const PI_VERSION = "1.2.0";
+const PI_VERSION = "1.3.0";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

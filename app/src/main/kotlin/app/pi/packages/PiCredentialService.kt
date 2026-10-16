@@ -372,6 +372,13 @@ class PiCredentialService(
         //
         // `models.json` declares **only what pi cannot know**.
         //
+        // It is one rule with three fields, not just `models[]`: `name`, `baseUrl` and `api`
+        // for a provider pi ships are also pi's own facts, and a copy of one goes stale the day
+        // upstream changes it — pi 1.3.0 changed `kimi-coding`'s `baseUrl` *and* `api`, and a
+        // stored 1.2.0 copy then overrode the new definition (the app's form also kept
+        // *showing* the stale value, so nothing looked wrong). `PiModelsMerge.declaredConnection`
+        // holds that half of the rule; see the comment at the construction site below.
+        //
         // pi ships a catalog for the providers [PiProviderPresets] marks
         // `builtInPi` (its own `providers/*.ts`, e.g. `providers/deepseek.ts:8-13`).
         // For those, a `models[]` entry is not an addition but a **replacement**:
@@ -407,6 +414,18 @@ class PiCredentialService(
             else -> choices
         }
 
+        // 连接字段走与 `name` 同一条规矩：pi 自己有这个厂商时，只声明与它不同的值。
+        // 抄一份的代价就在这里 —— pi 1.3.0 把 `kimi-coding` 的 `baseUrl`/`api` 都换了，
+        // 一份 1.2.0 抄下来的副本会压着新定义不放，而用户看不出来。
+        val connection = PiModelsMerge.declaredConnection(
+            baseUrl = baseUrl,
+            api = api,
+            official = if (preset.builtInPi) {
+                PiModelsMerge.OfficialConnection(baseUrl = preset.baseUrl, api = preset.api)
+            } else {
+                null
+            },
+        )
         val provider = PiModelsFile.Provider(
             id = preset.id,
             // pi's own providers already have a name, and this app's label for one
@@ -414,8 +433,12 @@ class PiCredentialService(
             // fact about the provider. Writing it would put the app's wording into
             // `models.json` and rename the provider inside pi.
             name = if (preset.builtInPi) null else preset.displayName,
-            baseUrl = baseUrl.trim().trimEnd('/'),
-            api = api,
+            baseUrl = connection.baseUrl,
+            api = connection.api,
+            // 故意不跟 `baseUrl`/`api` 走同一条规矩：表单没有这个字段，它的值永远是预设推出来的
+            // 那个；而 pi 的 composer 要求厂商块至少带一个 baseUrl/headers/compat/
+            // modelOverrides/models/apiKey/oauth/authHeader（`provider-composer.js:157-165`，
+            // `api` 不在其中），`authHeader` 是 App 手上唯一能一直满足它的键。
             authHeader = preset.authHeader,
             models = declared.map { choice ->
                 PiModelsFile.Model(

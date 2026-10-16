@@ -143,8 +143,11 @@ data class PiSlashCommand(
  * `quit` (`:42`) were rows whose tap could only produce a warning — there was no
  * landing and no RPC path. Each named an ability this platform has no path to:
  *
- *  - `share` is a secret GitHub gist written through the `gh` CLI
- *    (`interactive-mode.ts:3002`); there is no RPC command for it and no `gh` on
+ *  - `share` uploads the session to a **Radius artifact**, falling back to a secret
+ *    GitHub gist written through the `gh` CLI (`interactive-mode.ts:6629` →
+ *    `session-share.ts:38` `shareSession`: Radius at `:88`, gist at `:141`). pi's own
+ *    description in 1.3.0 says both (`slash-commands.ts:27` — "Share session via a
+ *    Radius artifact or a GitHub gist"); there is no RPC command for it and no `gh` on
  *    Android. What the user actually wants — getting the session out of the app —
  *    is `export` plus the app's own share sheet (`ui/chat/SessionExportDelivery.kt`).
  *  - `changelog` (`:3022`) and `hotkeys` (`:3027`) render a TUI text panel:

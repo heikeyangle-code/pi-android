@@ -461,17 +461,22 @@ object PiThemeLoader {
         //
         // 这里只记一条 note，不把文件判为无效：那会变成一套比 pi 更严的策略，而 1.1.0 的
         // rpc 模式**什么都不校验**，用户手上已有的文件完全可能带着多余的键。
+        //
+        // 1.3.0 的判据**逐字节未变**（整个 `dist/modes/interactive/theme/` 目录与 1.2.0 相同，
+        // `theme-schema.js` 的三处 `additionalProperties: false` 一字未改），所以下面三条 note
+        // 刻意不写引擎版本号：它们说的是「pin 住的这个引擎怎么判」，不是「哪个版本引入的」；
+        // 写死 `pi 1.3.0` 只会让下一次升级再多一处要改的文字，而改漏了就是给用户看一个假版本。
         val allowedTopLevel = setOf("\$schema", "name", "appearance", "vars", "colors", "export")
         val unknownTopLevel = json.keys.filterNot { it in allowedTopLevel }
         if (unknownTopLevel.isNotEmpty()) {
-            notes += "pi 1.2.0 不认这些顶层字段：${unknownTopLevel.joinToString("、")}；" +
+            notes += "pi 不认这些顶层字段：${unknownTopLevel.joinToString("、")}；" +
                 "它会把整份主题判为无效并改用内置主题，所以这里的颜色在 pi 那一侧不会生效。" +
                 "要保留可复用的颜色，请放进 vars。"
         }
         val knownColorTokens = REQUIRED_TOKENS.toSet() + OPTIONAL_FALLBACKS.keys
         val unknownColorTokens = colors.keys.filterNot { it in knownColorTokens }
         if (unknownColorTokens.isNotEmpty()) {
-            notes += "pi 1.2.0 不认 colors 里这些颜色名：${unknownColorTokens.joinToString("、")}；" +
+            notes += "pi 不认 colors 里这些颜色名：${unknownColorTokens.joinToString("、")}；" +
                 "同样会让整份主题被判为无效，这些颜色在 pi 那一侧不会生效。" +
                 "要保留可复用的颜色，请放进 vars。"
         }
@@ -480,7 +485,7 @@ object PiThemeLoader {
             it in deriveExportSurfaces(resolved.getValue("userMessageBg")).keys
         } ?: emptyList()
         if (unknownExportKeys.isNotEmpty()) {
-            notes += "pi 1.2.0 不认 export 里这些字段：${unknownExportKeys.joinToString("、")}；" +
+            notes += "pi 不认 export 里这些字段：${unknownExportKeys.joinToString("、")}；" +
                 "同样会让整份主题被判为无效。HTML 导出只认 pageBg / cardBg / infoBg。"
         }
 

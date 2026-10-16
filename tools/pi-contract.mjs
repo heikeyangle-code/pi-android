@@ -1753,6 +1753,16 @@ function checkAppTables(piDir) {
 		warnings: "pi 的警告开关（anthropicExtraUsage）",
 		sessionDir: "会话目录：App 在命令行上固定它（--session-dir），见 G_SESSIONS 的分组摘要",
 		treeFilterMode: "/tree 的默认过滤器：App 的会话树有自己的筛选",
+		// 1.3.0's one new top-level key. Its only runtime reader is the TUI's `/share`
+		// (modes/interactive/session-share.js): `auto` picks between a Radius artifact
+		// and a secret gist. This app has no `/share` entry point at all — its slash
+		// table answers with a note (`ui/chat/PiSlashCommands.kt`, the `share` row) —
+		// so a row here would be a control that writes a value nothing on the phone
+		// reads. Leaving the key unexposed has no side effect either: pi does not
+		// schema-validate settings.json on load (settings-manager.js grew only the two
+		// accessors), so an absent key simply takes the `"auto"` default.
+		sessionShareDestination:
+			"/share 的上传目的地（1.3.0 新键）：只被 TUI 的 /share 读（auto 在 Radius 与 gist 之间选），App 没有 /share 入口；pi 加载时不校验 schema，不写这个键没有副作用",
 	};
 	const undecided = notExposed.filter((key) => !(key in UNEXPOSED_SETTINGS_DECISIONS));
 	check(

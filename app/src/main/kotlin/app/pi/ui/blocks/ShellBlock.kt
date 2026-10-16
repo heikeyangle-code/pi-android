@@ -49,19 +49,23 @@ import app.pi.ui.theme.PiTheme
  *    to copy from. The sentence the tool already appended to its own text is stripped first
  *    (`:47-53`), which is what [stripFullOutputFooter] does, so the fact is printed once;
  *  - `Elapsed 12.3s` while the command runs and `Took 12.3s` afterwards (`:100-105`), pi
- *    refreshing it once a second (`dist/core/tools/render-utils.js:107`).
+ *    refreshing it once a second (`dist/core/tools/render-utils.js:129`).
  *
- * > **Re-verified against the pinned engine (1.2.0), 2026-02.** The bare `:NN` numbers below
- * > are the shipped `dist/core/tools/renderers/bash.js` of **1.2.0**, not of the 0.86.1 this
+ * > **Re-verified against the pinned engine (1.3.0), 2026-10.** The bare `:NN` numbers below
+ * > are the shipped `dist/core/tools/renderers/bash.js` of **1.3.0**, not of the 0.86.1 this
  * > file was originally written against: `formatShellCall` is `:16-22`, the collapsed
  * > `VisualLinePreview` window `:44-50`, the warning line `:53-67`, the timer line `:68-69`,
  * > `createShellRenderers` `:72-88`, and `BASH_PREVIEW_LINES = 5` `:14`. The `Elapsed`/`Took`
- * > text and the 1 Hz repaint live in `render-utils.js` (`:105-124`, `:107`) — `bash.js` has no
- * > formatter of its own. Any remaining `.ts` path is the upstream file the statement also
- * > holds for; the numbers that mattered were the ones that had drifted.
+ * > text and the 1 Hz repaint live in `render-utils.js` (`:126-146`, `:129`) — `bash.js` has no
+ * > formatter of its own, and `render-utils.js` itself moved **+21** because 1.3.0 added
+ * > `formatReadLineRange` above those functions, which is why the two numbers here are not the
+ * > 1.2.0 ones. Any `:NN` that names its own file (`render-utils.js` above, `core/tools/bash.ts`
+ * > below) is a line in that file, not in `bash.js`; the numbers that mattered were the ones
+ * > that had drifted.
  *
  * **The running clock is pushed, not read here.** pi starts an interval for it
- * (`:122`); this app has one clock for the whole transcript, owned by the ViewModel
+ * (`dist/core/tools/render-utils.js:129`); this app has one clock for the whole transcript,
+ * owned by the ViewModel
  * (`UiState.nowMs`, ticking once a second while some tool card is pending) and handed
  * to this card as [nowMs]. The version of this that read `System.currentTimeMillis()`
  * during composition was a real bug, not just a shortcut: a row only recomposes when
@@ -72,9 +76,9 @@ import app.pi.ui.theme.PiTheme
  * Nothing here starts or cancels a timer.
  *
  * Two of pi's numbers are not available from the protocol and are read from pi's own text:
- * the exit code, because `BashToolDetails` does not carry one (`core/tools/bash.ts:49-52`) —
+ * the exit code, because `BashToolDetails` does not carry one (`core/tools/bash.ts:66-69`) —
  * a non-zero exit throws and the number survives only in `Command exited with code N`
- * (`:363-364`) — and the truncation/complete-output report, as in the generic card.
+ * (`:402`) — and the truncation/complete-output report, as in the generic card.
  */
 @Composable
 internal fun ShellBlock(

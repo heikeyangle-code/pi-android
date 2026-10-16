@@ -17,22 +17,64 @@
 //  2. 任何 case 只要在 width 下发生了折行，也报错退出 —— 折行会把一"行"变成两行，
 //     期望值就不再是 pi 对这个形状的输出了。
 //
-// 第二步在 `HtmlFixtureSpans.java`：把 pin 住的解析器（org.jetbrains:markdown 0.7.9 +
+// 第二步在 `tools/HtmlFixtureSpans.java`：把 pin 住的解析器（org.jetbrains:markdown 0.7.9 +
 // GFMFlavourDescriptor）的节点跨度与类型全集补上去，合成最终夹具。
 // 用法（在仓库根目录跑）：
 //   PI_TUI=/path/to/node_modules/@earendil-works/pi-tui/dist/components/markdown.js \
-//     node app/src/test/resources/pi-html-fixtures/collect-pi-html-pitext.mjs > /tmp/pi-html-pitext.json
+//     node tools/collect-pi-html-pitext.mjs > /tmp/pi-html-pitext.json
 //   java -cp <markdown-jvm-0.7.9.jar>:<kotlin-stdlib.jar> \
-//     app/src/test/resources/pi-html-fixtures/HtmlFixtureSpans.java \
+//     tools/HtmlFixtureSpans.java \
 //     /tmp/pi-html-pitext.json "$PWD" > app/src/test/resources/pi-html-fixtures/cases.json
 //
 // pi 的安装位置没有默认值是对的：默认值会让"夹具是从哪一份 pi 生成的"变成一个猜出来的
 // 事实，而这份夹具的全部价值就在"期望值来自 pi 自己"。
+//
+// 输出里多一个 `piTui`：**这份期望值所属的 pi-tui 版本，从真正提供 renderer 的那个包目录
+// 现读**（PI_TUI 往上最近的 package.json 的 name/version）。它不在这里写死，也没有默认值，
+// 理由是夹具里那个 `piTui` 是给 `PiHtmlCheck` 与 `tools/pi-engine.lock.json` 对账用的：
+// 第二步的 Java 里曾经写死 `"1.1.0"`，1.2.0 那次就没人再改它 —— 整跑一次会把夹具的标签
+// 写回上一个版本，让那条 harness 静默断言一个不是本仓库 pin 的引擎。版本读不出来就退出 2，
+// 不兜底。
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+const PI_TUI_PACKAGE = "@earendil-works/pi-tui";
 const PI_TUI = process.env.PI_TUI;
 if (!PI_TUI) {
   console.error("PI_TUI 未设置（指向 @earendil-works/pi-tui/dist/components/markdown.js）");
   process.exit(2);
 }
+
+/** `PI_TUI` 指向的那个 pi-tui 的版本：往上找最近的 package.json，并核对其 name。 */
+function piTuiVersion(markdownPath) {
+  let dir = dirname(resolve(markdownPath));
+  for (;;) {
+    const manifest = join(dir, "package.json");
+    if (existsSync(manifest)) {
+      const meta = JSON.parse(readFileSync(manifest, "utf8"));
+      if (meta.name !== PI_TUI_PACKAGE) {
+        console.error(
+          `PI_TUI 指向 ${markdownPath}，但往上最近的 package.json 是 ` +
+            `${meta.name ?? "(没有 name)"}，不是 ${PI_TUI_PACKAGE} —— 夹具的 piTui 只能记这个版本。`,
+        );
+        process.exit(2);
+      }
+      if (typeof meta.version !== "string" || meta.version === "") {
+        console.error(`${manifest} 里没有 version，读不出夹具该记的 pi-tui 版本。`);
+        process.exit(2);
+      }
+      return meta.version;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      console.error(`从 ${markdownPath} 往上找不到任何 package.json，读不出 pi-tui 版本。`);
+      process.exit(2);
+    }
+    dir = parent;
+  }
+}
+
+const PI_TUI_VERSION = piTuiVersion(PI_TUI);
 const { Markdown } = await import(PI_TUI);
 
 const RENDER_WIDTH = 4096;
@@ -223,7 +265,7 @@ for (const c of jsTrimCodes) {
 
 process.stdout.write(
   JSON.stringify(
-    { renderWidth: RENDER_WIDTH, cases: out, normalizeCases, trimCases, jsTrimRanges },
+    { renderWidth: RENDER_WIDTH, piTui: PI_TUI_VERSION, cases: out, normalizeCases, trimCases, jsTrimRanges },
     null,
     "\t",
   ) + "\n",

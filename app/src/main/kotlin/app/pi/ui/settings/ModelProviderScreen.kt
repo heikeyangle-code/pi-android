@@ -514,8 +514,6 @@ private fun ImportSheet(
             var pickerQuery by remember { mutableStateOf("") }
             val sheetScope = rememberCoroutineScope()
 
-            val preset = PiProviderPresets.byId(presetId) ?: PiProviderPresets.all.first()
-
             // **官方目录一次读完**（41 份 `<provider>.json` + SHA-256 校验）：提供商列表、
             // 每个厂商的模型、以及它们的 baseUrl/api/上下文/价格/图片能力都来自这份文件。
             // 用户裁定：不自己维护表；升级 `PI_VERSION` 换载荷，列表自动跟着变。
@@ -533,6 +531,15 @@ private fun ImportSheet(
                 officialProviders.map { provider ->
                     PiProviderPresets.byId(provider.id) ?: presetFromOfficial(provider)
                 } + PiProviderPresets.all.filterNot { it.builtInPi }
+            }
+            // **选中的那一档必须从同一张表里取。** 这里曾经是 `byId(presetId) ?: all.first()`：
+            // 手写表只有 13 个 id，官方目录有 42 个，于是选中 `kimi-coding` 这类官方独有的厂商时
+            // 它会**静默退化成 openai** —— 标题写着 OpenAI、Base URL 填的是 api.openai.com、
+            // 保存时 `save(preset = preset)` 把厂商块与凭证写到 `openai` 名下（覆盖用户真正的
+            // openai 配置）。选择器列出 41 个、解析只认 13 个，是同一条数据的两套解析。
+            // 现在两边是同一个 `providerChoices`，不可能再各说各话。
+            val preset = remember(providerChoices, presetId) {
+                providerChoices.firstOrNull { it.id == presetId } ?: PiProviderPresets.all.first()
             }
             val officialForPreset = remember(officialProviders, presetId) {
                 officialProviders.firstOrNull { it.id == presetId }?.models.orEmpty()
