@@ -6,12 +6,13 @@ package app.pi.engine
 //
 // Why a harness: this object is the *only* thing that turns the captured stderr into
 // something a person can act on, and every rule in it is a claim about what pi
-// prints. The stderr strings below are copied verbatim from runs against the pinned
-// engine (pi 0.85.1, node 24.19.0; the 0.86.1 bump re-checked them against that
-// engine's source, where they are unchanged — `core/extensions/loader.ts:578`,
-// `cli/args.ts:242`, `main.ts:645`, `modes/rpc/rpc-mode.ts:476`); the runs and their
-// exit codes are recorded in
-// `docs/engine-exit-review.md` §2. If pi's wording ever changes, the rule silently
+// prints. The stderr strings below are copied verbatim from runs (pi 0.85.1, node
+// 24.19.0, recorded in `docs/engine-exit-review.md` §2); the pinned baseline
+// re-measured them, and **1.1.0, 1.2.0 and 1.3.0 behave identically** (an
+// unregistered flag: exit 1, stdout empty, `Error: Unknown option: --bogus-flag`).
+// The strings are unchanged in the pinned engine's source too —
+// `core/extensions/loader.ts:578`, `cli/args.ts:242`, `main.ts:645`,
+// `modes/rpc/rpc-mode.ts:476`. If pi's wording ever changes, the rule silently
 // stops matching and the failure screen quietly falls back to "引擎异常退出" — which
 // is precisely the state this object was written to end. Pinning the strings here
 // makes that change show up as a failure in CI instead.
@@ -57,10 +58,67 @@ fun main() {
     checkTrue("A4 a missing module is attributed too", EngineExitCause.summary(1, missingModule) != null)
 
     // -------------------------------------------------------------- unknown flag
-    // What a payload/launch mismatch looks like. Verbatim from the run.
+    // What an unregistered flag does — measured on the pinned engine: exit 1, stdout
+    // empty, this line on stderr. Since the app forwards `app.extensions.args`, the
+    // row is the source the user can actually check, so the sentence has two branches
+    // and both are pinned here.
     val unknownOption = "Error: Unknown option: --bogus-flag"
     checkTrue("B1 an unknown option is attributed", EngineExitCause.summary(1, unknownOption) != null)
-    checkFalse("B2 and does not pretend it is an extension", EngineExitCause.summary(1, unknownOption)?.contains("扩展") == true)
+    // Not the load-failure sentence ("有一个扩展没能加载"). The row's *name* may appear —
+    // it is the fix — so the assertion is about the claim, not about the word 扩展.
+    checkFalse(
+        "B2 and does not blame a failed extension load",
+        EngineExitCause.summary(1, unknownOption)?.contains("没能加载") == true,
+    )
+    // No row content (or unreadable): the common source is still named, the
+    // payload-mismatch answer and its fix stay.
+    val unknownOptionRowEmpty = EngineExitCause.summary(1, unknownOption)
+    checkTrue(
+        "B3 an empty row still names the row as the common source",
+        unknownOptionRowEmpty?.contains("扩展启动参数") == true,
+    )
+    checkTrue(
+        "B4 and keeps the payload-mismatch answer",
+        unknownOptionRowEmpty?.contains("运行时载荷") == true,
+    )
+    checkTrue("B5 and its reinstall advice", unknownOptionRowEmpty?.contains("重装 App") == true)
+    // A blank string is "no content", exactly as `ExtensionArgsStore.read()` treats it.
+    check(
+        "B6 a blank row is the empty-row branch",
+        EngineExitCause.summary(1, unknownOption, "   "),
+        unknownOptionRowEmpty,
+    )
+    // The row holds text: the sentence points at it, drops the payload claim, and says
+    // the value is not a reinstall away.
+    val unknownOptionRowFilled = EngineExitCause.summary(1, unknownOption, "--plan")
+    checkTrue(
+        "B7 a filled row is named as the likely source",
+        unknownOptionRowFilled?.contains("扩展启动参数") == true,
+    )
+    checkFalse(
+        "B8 and is not blamed on the payload",
+        unknownOptionRowFilled?.contains("运行时载荷") == true,
+    )
+    checkTrue(
+        "B9 and says a reinstall does not clear the row",
+        unknownOptionRowFilled?.contains("重装 App") == true &&
+            unknownOptionRowFilled?.contains("不会") == true,
+    )
+    checkTrue(
+        "B10 and the fix is editing or clearing that row",
+        unknownOptionRowFilled?.contains("清空") == true,
+    )
+    checkFalse(
+        "B11 the row's own text is never quoted back",
+        unknownOptionRowFilled?.contains("--plan") == true,
+    )
+    // It is an input to one rule only: an extension load failure stays the same
+    // sentence whatever the row says.
+    check(
+        "B12 the row does not change another rule",
+        EngineExitCause.summary(1, extensionStderr, "--plan"),
+        extensionSummary,
+    )
 
     // ------------------------------------------------------- argument-shape bugs
     // Not reachable today (the app passes neither), which is exactly why a match has
@@ -123,6 +181,12 @@ fun main() {
     checkTrue("G1 the detail carries the sentence", detail?.startsWith(extensionSummary.orEmpty()) == true)
     checkTrue("G2 the detail carries the engine's line", detail?.contains("Failed to load extension") == true)
     check("G3 nothing to say means no detail", EngineExitCause.detail(null, ""), null)
+    // `detail` is the one the production call site uses, so the row has to survive the
+    // forwarding to `summary`.
+    checkTrue(
+        "G4 the detail forwards the row",
+        EngineExitCause.detail(1, unknownOption, "--plan")?.contains("扩展启动参数") == true,
+    )
 
     // The caller has to be able to call this with the raw capture the engine keeps,
     // including its trailing newline and blank lines.

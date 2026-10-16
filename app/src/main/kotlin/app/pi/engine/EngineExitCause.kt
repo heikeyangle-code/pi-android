@@ -16,9 +16,10 @@ package app.pi.engine
  * ## Why matching stderr is legitimate here
  *
  * Every rule below is pi's own output, copied from a **run** - not guessed from
- * reading pi's source. The runs were against pi 0.85.1 (node 24.19.0); the
- * experiments and their raw stderr are in `docs/engine-exit-review.md` §2. The
- * 0.86.1 bump re-checked each string against the pinned engine's source, where they
+ * reading pi's source. The first experiments were against pi 0.85.1 (node 24.19.0)
+ * and their raw stderr is in `docs/engine-exit-review.md` §2; the strings and exit
+ * codes were then re-measured on the pinned baseline, where **1.1.0, 1.2.0 and 1.3.0
+ * behave identically**, and re-checked against the pinned engine's source, where they
  * are unchanged: `Failed to load extension` (`core/extensions/loader.ts:578`,
  * turned into an exit 1 at `main.ts:899-909`), `Unknown option` (`cli/args.ts:242`),
  * `@file arguments are not supported` (`main.ts:645`) and `Model not found`
@@ -30,9 +31,18 @@ package app.pi.engine
  *    permission gate and highlight extensions live in `<agentDir>/extensions`, and
  *    a partially written tree or a user-installed extension with a missing module
  *    both land here.
- *  - `Unknown option` - a long option pi does not know. On this device that means
- *    the packaged engine and the App's launch flags disagree, i.e. a payload
- *    change nobody reconciled (`docs/pi-contract.md`).
+ *  - `Unknown option` - a long option pi does not know, and pi **exits before it
+ *    answers anything** (measured: exit 1, stdout empty). There are two sources, and
+ *    the caller now hands this object the first one so it can be named:
+ *    1. the text the user typed into 设置 → 扩展与资源 → 扩展启动参数 (`app.extensions.args`,
+ *       [`summary`]'s `extensionArgs` argument). A name no loaded extension
+ *       registered lands here, and since the app started forwarding that row it is
+ *       the common source. The value lives in an app-only `SharedPreferences`
+ *       sidecar, so **a reinstall does not clear it** (only uninstalling the app, or
+ *       clearing/editing the row, does) - which is why "reinstall the app" is the
+ *       wrong answer for this branch;
+ *    2. a packaged engine whose extension set no longer matches the App's launch
+ *       flags, i.e. a payload change nobody reconciled (`docs/pi-contract.md`).
  *  - `not found` / `@file arguments are not supported` - the launch arguments
  *    themselves are wrong. Not reachable today (the App passes neither `--model`
  *    nor positional files), which is exactly why it is worth naming if it ever
@@ -59,9 +69,21 @@ object EngineExitCause {
     /** How much stderr is quoted back; the full text lives in the diagnostic report. */
     const val EVIDENCE_MAX_CHARS: Int = 400
 
-    /** One sentence for the failure screen, or null when nothing is attributable. */
-    fun summary(exitCode: Int?, stderr: String?): String? {
-        classify(stderr)?.let { return it }
+    /**
+     * One sentence for the failure screen, or null when nothing is attributable.
+     *
+     * [extensionArgs] is the text of `app.extensions.args` for **this launch** — the
+     * one launch input the user types freely, read by the caller through the same
+     * app-only sidecar the launch itself uses (`ExtensionArgsStore`); `null` when the
+     * row is empty or unreadable. It exists because the `Unknown option` rule has two
+     * sources with two different ways out, and only this one is something the user can
+     * check: a flag no loaded extension registered is almost always the text in that
+     * row, and the row survives a reinstall. Passing the **string** (rather than a
+     * boolean, and rather than reading storage here) is what keeps this object
+     * Android-free — see the class KDoc.
+     */
+    fun summary(exitCode: Int?, stderr: String?, extensionArgs: String? = null): String? {
+        classify(stderr, extensionArgs)?.let { return it }
         if (exitCode == null) return null
         return when {
             exitCode == 0 -> null
@@ -100,7 +122,7 @@ object EngineExitCause {
         val line = stderr.orEmpty()
             .lineSequence()
             .map { it.trim() }
-            .firstOrNull { it.isNotEmpty() && classify(it) != null }
+            .firstOrNull { it.isNotEmpty() && classify(it, null) != null }
             ?: return null
         return if (line.length <= EVIDENCE_MAX_CHARS) line else line.take(EVIDENCE_MAX_CHARS) + "…"
     }
@@ -109,9 +131,12 @@ object EngineExitCause {
      * What the failure screen renders as the detail: the App's sentence, then the
      * engine's own words when there are any. `null` when there is nothing to say
      * beyond the caller's generic message.
+     *
+     * [extensionArgs] is forwarded to [summary]; see there for what it is and why it
+     * is a parameter.
      */
-    fun detail(exitCode: Int?, stderr: String?): String? {
-        val sentence = summary(exitCode, stderr) ?: return null
+    fun detail(exitCode: Int?, stderr: String?, extensionArgs: String? = null): String? {
+        val sentence = summary(exitCode, stderr, extensionArgs) ?: return null
         val evidence = evidence(stderr) ?: return sentence
         return sentence + "\n引擎写到 stderr 的那一行：" + evidence
     }
@@ -119,8 +144,11 @@ object EngineExitCause {
     /**
      * The rule table, in order. `contains` rather than regex: the strings are
      * literal pi output and a regex would only add ways to be wrong.
+     *
+     * [extensionArgs] is only consulted by the `Unknown option` rule; every other
+     * rule is a fact about the text pi printed and must not change with it.
      */
-    private fun classify(text: String?): String? {
+    private fun classify(text: String?, extensionArgs: String?): String? {
         val t = text.orEmpty()
         if (t.isBlank()) return null
         return when {
@@ -132,8 +160,24 @@ object EngineExitCause {
                 "有一个扩展没能加载，引擎因此在启动时直接退出。" +
                     "把最近安装或最近改动过的那个扩展移走后重试；随包自带的扩展会在下次启动时自动重新安装。"
             t.contains("Unknown option") ->
-                "引擎不认识的启动选项（通常是运行时载荷与 App 版本不一致）。重装 App 一般能恢复；" +
-                    "请把下面这一行原文一起发回。"
+                // Two sources, two sentences, and the row is the one the user can act
+                // on. Measured: an unregistered flag exits 1 with stdout empty, so this
+                // stderr line is the *only* thing that says why — and the earlier text
+                // ("通常是运行时载荷与 App 版本不一致。重装 App 一般能恢复") sent the user to
+                // a reinstall for the one cause a reinstall cannot fix: the value lives
+                // in `ExtensionArgsStore`'s SharedPreferences file.
+                if (!extensionArgs.isNullOrBlank()) {
+                    "引擎因为不认识的启动选项退出了。「设置 → 扩展与资源 → 扩展启动参数」那一行里写的参数，" +
+                        "引擎没有对应的扩展去声明它 —— 这一行正是最可能的来源。" +
+                        "改正那一行（或者把它清空）后重试即可。" +
+                        "注意这一行的值保存在应用自己的存储里，重装 App **不会**清掉它；" +
+                        "请把下面这一行原文一起发回。"
+                } else {
+                    "引擎不认识的启动选项。最常见的原因是「设置 → 扩展与资源 → 扩展启动参数」那一行里" +
+                        "写进了引擎没有的扩展参数；这次那一行是空的（或读不到），" +
+                        "所以更可能是运行时载荷与 App 版本不一致。重装 App 一般能恢复；" +
+                        "请把下面这一行原文一起发回。"
+                }
             t.contains("@file arguments are not supported") ->
                 "启动参数里带了引擎不接受的输入。请把下面这一行原文发回。"
             t.contains("not found") && t.contains("Model") ->

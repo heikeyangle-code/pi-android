@@ -47,9 +47,29 @@ package app.pi.rpc
  *   extensions). A whitelist here would be an invention: it would have to guess, and
  *   a wrong guess would either block a valid flag or imply a guarantee the app cannot
  *   keep. pi itself only *reads* a value for a flag an extension registered
- *   (`core/extensions/loader.ts:288-292`), and reports the others as an
- *   `Unknown option` diagnostic on stderr (`agent-session-services.ts:37-42`) without
- *   exiting — so the app passes them and stays quiet.
+ *   (`core/extensions/loader.ts:288-292`). **For any other name pi does not stay
+ *   quiet — it exits 1.** The registered set is resolved during startup, an
+ *   unregistered `--name` becomes a diagnostic at `type: "error"`
+ *   (`core/agent-session-services.ts:36-41`, the wording is
+ *   `Unknown option: --bogus-flag`), and `main.ts`'s `hasRuntimeErrors` turns an error
+ *   diagnostic into `process.exit(1)` (`dist/main.js:744-755`) — **before any RPC
+ *   reply is written**. Measured on the pinned engine by piping one `get_state`
+ *   request in at `node dist/bundle/rpc-entry.js --session-dir <dir> --bogus-flag`:
+ *   exit code 1, stderr `Error: Unknown option: --bogus-flag`, stdout **empty**
+ *   (identical on 1.1.0, 1.2.0 and 1.3.0). The control run without the unknown flag
+ *   exits 0 and answers `{"type":"response",…}` on stdout.
+ *
+ *   So this row is **input that can keep the engine from starting**, and the parser
+ *   above draws its line exactly where it can: it decides only whether the text can
+ *   be spliced into argv at all (`--`, a single dash, `@file` and a stray word are
+ *   refused *with* a sentence — see [Refusal]). Whether a name is one pi knows is not
+ *   decidable here, because the answer only exists after pi has loaded the
+ *   extensions. That puts a duty on the other side of the launch: the failure this
+ *   produces has to be diagnosed with the way out that actually exists, and it must
+ *   name the row rather than telling the user to reinstall — the value lives in an
+ *   app-only `SharedPreferences` sidecar (`app/.../ui/ExtensionArgsSettingsStore.kt`,
+ *   `PREFS_NAME = "pi-extension-args"`), so a reinstall keeps it.
+ *   `app/.../engine/EngineExitCause.kt` is that layer.
  * - **No default filling.** A flag an extension declared a `default` for gets that
  *   default from pi's registration path, and only when the user did not supply a
  *   value (`core/extensions/loader.ts:264-271`); a user value is applied afterwards
