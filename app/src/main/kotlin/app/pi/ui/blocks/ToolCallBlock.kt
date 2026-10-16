@@ -1,12 +1,17 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
@@ -16,7 +21,7 @@ import app.pi.ui.theme.PiTheme
 /**
  * `tool-execution` (docs/pi-android-ui-spec.md §7.4): the **generic** tool card, used for
  * every tool pi itself has no renderer for — the extensions' tools, and anything a newer pi
- * adds (`packages/coding-agent/src/core/tools/renderers/index.ts:51-63` is pi's own fallback
+ * adds (`dist/core/tools/renderers/index.js:35-46` is pi's own fallback
  * of the same shape). The eight built-ins each have their own block; see `BlockRenderer`'s
  * `ToolCall` branch and `docs/capability-gap.md` §4.9.
  *
@@ -70,8 +75,8 @@ fun ToolCallBlock(
     val outputOversize = remember(item.output) { utf8ByteSizeExceeds(item.output, MAX_OUTPUT_BYTES) }
     // pi makes two separate decisions about a truncated result, and this mirrors
     // both. It *prints* a warning line whenever the result was truncated or names a
-    // full-output path (`core/tools/renderers/bash.ts:100`), and it *strips* that
-    // same sentence out of the body only when it is about to print it (`:59-64`) —
+    // full-output path (`dist/core/tools/renderers/bash.js:53`), and it *strips* that
+    // same sentence out of the body only when it is about to print it (`:28-33`) —
     // never unconditionally. Without the strip the sentence would appear twice: once
     // in the body the tool wrote and once in the warning.
     val truncation = remember(item.details) { truncationOf(item.details) }
@@ -119,6 +124,40 @@ fun ToolCallBlock(
     // (`command` for bash, `file_path`/`path` for the file tools); a tool whose
     // arguments are neither gets no command entry rather than a wrong one.
     val commandText = remember(item.args) { toolCommandText(item.args) }
+    // **pi's codemode content, and pi's expanded argument lines — both expanded-state only.**
+    //
+    // The collapsed half of this card is frozen: shape, size, rows, tokens. Everything below
+    // is painted inside `if (expanded)`, so none of it can move the collapsed card by a pixel.
+    //
+    // `codemode`: the engine records every nested tool call a script made on the **parent's**
+    // result as `details.calls` (`dist/extensions/codemode/execute.js:394`) and draws one line
+    // per call (`extensions/codemode/renderer.js:41-56`). The App's reducer drops a nested
+    // `tool_execution_*` lifecycle on purpose, so `details.calls` is the only place those calls
+    // survive — and nothing read it, which is why a script's calls, their failures and their
+    // model cost were invisible. The script itself (`args.code`) comes with them: pi shows it
+    // as the call's body, and this card's one-line summary can only ever carry its first
+    // characters.
+    val isCodemode = item.toolName == "codemode"
+    val script = remember(isCodemode, item.args) { if (isCodemode) codemodeCode(item.args) else null }
+    // **The settled result wins over the live snapshot.** After `tool_execution_end` the
+    // result's `details` is complete and authoritative — every call has a final status — while
+    // `liveDetails` is only the newest of the throttled partial snapshots. Before the tool ends
+    // `details` is null and the snapshot is the only view there is, which is what makes a
+    // script's calls appear **one by one while it runs** (the engine publishes each call's
+    // `running` status as `details.calls`, `dist/extensions/codemode/execute.js:394-397`).
+    val callsSource = item.details ?: item.liveDetails
+    val nestedCalls = remember(isCodemode, callsSource) { if (isCodemode) codemodeCallsOf(callsSource) else emptyList() }
+    val modelCalls = remember(nestedCalls) { codemodeModelCallsTotal(nestedCalls) }
+    // The title and the argument summary are inputs of `ToolHeader`, not Compose state, so
+    // without this they would be rebuilt on **every** recomposition — and the summary walks
+    // **every** argument (`toolParamSummary`), which is exactly the kind of O(call) work the
+    // F31/F8 rule at the top of this file keeps off the 200 ms publication path. Keyed on the
+    // value each one reads, so a tool row that republishes while streaming pays nothing.
+    val title = remember(item.toolName) { mcpLabel(item.toolName) ?: item.toolName.ifEmpty { "工具" } }
+    val paramSummary = remember(item.args) { toolParamSummary(item.args) }
+    // The other half of pi's generic call line: `formatToolCallWithArgs(..., expanded = true)`
+    // puts one `key: value` per argument, which the one-line title cell cannot (`render-utils.js:60-79`).
+    val paramText = remember(item.args) { toolParamLines(item.args).joinToString("\n") }
     ToolActionMenu(command = commandText, output = item.output, fullOutputPath = fullOutputPath) {
         BlockColumn(modifier) {
             ToolCard(
@@ -137,19 +176,37 @@ fun ToolCallBlock(
                     // tools the app has no block for, so it has no name of its own to write
                     // down — and pi's fallback renderer is in the same position: it draws
                     // `theme.fg("toolTitle", theme.bold(this.toolName))`
-                    // (`components/tool-execution.js:274-278`), i.e. the wire name verbatim.
+                    // (`components/tool-execution.js:312`), i.e. the wire name verbatim.
                     // Deriving the title from `item.toolName` is therefore the faithful
                     // reading for the general case, and the `ifEmpty` is pi's own empty case.
-                    title = item.toolName.ifEmpty { "工具" },
-                    // **The one card pi leaves uncoloured.** This block is the fallback for a tool
-                    // pi gives no renderer at all, and pi's own fallback path builds the whole
-                    // body with no `fg` call: `contentText.setText(this.formatToolExecution())`,
-                    // which is `theme.fg("toolTitle", theme.bold(this.toolName))` followed by the
-                    // raw JSON arguments (`components/tool-execution.js:274-278` → `:315-322`).
-                    // So the name is `toolTitle` (the header's title cell, one line up) and the
-                    // arguments are the terminal's default foreground — `Uncoloured`, which the
-                    // palette maps onto pi's `text` — not `accent` and not a segmented line.
-                    subject = listOf(ToolCallPart(item.argsSummary, ToolCallToken.Uncoloured)),
+                    //
+                    // **Except for an MCP tool, whose wire name pi never shows.** MCP registers
+                    // its tools as `mcp__<server>__<tool>` (`dist/extensions/mcp/index.js:9`)
+                    // and labels their row `<server>/<tool>` (`:244`), so a card titled
+                    // `mcp__docs__search` was showing the one name of the two that pi keeps to
+                    // itself. [mcpLabel] is that mapping and answers null for every other tool.
+                    // The title cell is unchanged — same row, one line, same tokens.
+                    title = title,
+                    // **The one card pi leaves uncoloured, and the one that shows every
+                    // argument.** pi's fallback path builds the whole body with no `fg` call:
+                    // `contentText.setText(this.formatToolExecution())`, which is
+                    // `theme.fg("toolTitle", theme.bold(this.toolName))` followed by the raw
+                    // JSON arguments (`components/tool-execution.js:311-322`). So the name is
+                    // `toolTitle` (the header's title cell, one line up) and the arguments are
+                    // the terminal's default foreground — `Uncoloured`, which the palette maps
+                    // onto pi's `text` — not `accent` and not a segmented line.
+                    //
+                    // The text is [toolParamSummary], pi's `key=value` list cut to pi's 100
+                    // characters (`render-utils.js:60-79`). This cell used to take
+                    // `item.argsSummary`, which is **one** value with no key: an MCP call's real
+                    // subject (its named parameters) and every argument but the first were
+                    // invisible. `argsSummary` stays where it belongs — the transcript search
+                    // (`screens/ChatScreen.kt`) and the two non-card fallbacks that already use
+                    // it — and the row's shape does not move: one cell, `maxLines = 1`, built
+                    // from arguments whose newlines are JSON-escaped, never a second line.
+                    subject = paramSummary
+                        ?.let { listOf(ToolCallPart(it, ToolCallToken.Uncoloured)) }
+                        .orEmpty(),
                     // The row's own count, from the `remember` above (F31): this card's
                     // result is the one with no parse of its own, so the count it hands
                     // the reading is the incremental one it already keeps.
@@ -158,12 +215,117 @@ fun ToolCallBlock(
                     expandable = item.output.isNotEmpty(),
                 )
 
+                // ---- pi's codemode content: the script, then its nested calls. ----
+                //
+                // All three blocks live inside `expanded`, so the collapsed card is untouched
+                // (see the `isCodemode` note above the menu). Order is pi's: its codemode
+                // renderer puts the script in the call half (`renderer.js:58-78`) and the call
+                // rows plus `Model calls` in the result half (`:79-101`), which is where the
+                // result text follows.
+                if (expanded && !script.isNullOrEmpty()) {
+                    // Remembered, not computed inline: `headLines` splits the whole script and
+                    // `lineCount` walks it, on a row that republishes every 200 ms while the
+                    // script runs. Keyed on the script, so a publication costs nothing.
+                    val shownScript = remember(script) { headLines(script, TOOL_BODY_MAX_LINES) }
+                    MonoText(
+                        text = shownScript,
+                        color = palette.bodyOnTool,
+                        modifier = Modifier.padding(top = PiSpacing.tiny),
+                    )
+                    val hiddenScript = remember(script, shownScript) {
+                        (lineCount(script) - lineCount(shownScript)).coerceAtLeast(0)
+                    }
+                    if (hiddenScript > 0) {
+                        // The app's own second level (see `ToolCallBlock`'s budget note): a
+                        // script longer than the body budget says what it left out rather than
+                        // growing without a ceiling. pi's row has no such cap.
+                        Text(
+                            text = "还有 $hiddenScript 行未显示",
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                            modifier = Modifier.padding(top = PiSpacing.tiny),
+                        )
+                    }
+                }
+                // **pi's expanded call line, for every tool that is not codemode.** Its
+                // `formatToolCallWithArgs(…, expanded = true)` puts one `key: value` per
+                // argument under the title (`render-utils.js:60-79`); the collapsed title cell
+                // can only carry one ellipsized line, so an MCP or extension tool's parameters
+                // were unreadable there. Same body budget and the same admission as the script.
+                if (expanded && script.isNullOrEmpty() && paramText.isNotEmpty()) {
+                    // Same reason as the script above: both calls scan the whole parameter text.
+                    val shownParams = remember(paramText) { headLines(paramText, TOOL_BODY_MAX_LINES) }
+                    MonoText(
+                        text = shownParams,
+                        color = palette.bodyOnTool,
+                        modifier = Modifier.padding(top = PiSpacing.tiny),
+                    )
+                    val hiddenParams = remember(paramText, shownParams) {
+                        (lineCount(paramText) - lineCount(shownParams)).coerceAtLeast(0)
+                    }
+                    if (hiddenParams > 0) {
+                        Text(
+                            text = "还有 $hiddenParams 行未显示",
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                            modifier = Modifier.padding(top = PiSpacing.tiny),
+                        )
+                    }
+                }
+                // **The nested calls, one line each, exactly as pi rows them** — status glyph,
+                // name, arguments, the call's own duration, and a model call's cost
+                // (`codemode/renderer.js:41-56`). The glyph takes the card's own four state
+                // colours (pi colours it by status too, `:26-40`), so no new colour enters the
+                // palette. Folded, pi keeps the last eight calls and says how many it hid
+                // (`:16`, `:50-52`); the card's existing 「展开全部」 is the second level.
+                if (expanded && nestedCalls.isNotEmpty()) {
+                    // `takeLast` allocates; the row republishes every 200 ms while the script
+                    // runs, so the fold is decided once per (list, level) rather than per frame.
+                    val shownCalls = remember(nestedCalls, fullOutput) {
+                        if (fullOutput) nestedCalls else nestedCalls.takeLast(CODEMODE_CALL_PREVIEW)
+                    }
+                    Column(modifier = Modifier.padding(top = PiSpacing.tiny)) {
+                        if (shownCalls.size < nestedCalls.size) {
+                            Text(
+                                text = "还有 ${nestedCalls.size - shownCalls.size} 条更早的调用未显示",
+                                style = PiTheme.text.meta,
+                                color = palette.muted,
+                            )
+                        }
+                        shownCalls.forEach { call ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Text(
+                                    text = codemodeCallIcon(call.status),
+                                    style = PiTheme.text.monoSmall,
+                                    color = toolAccentColor(codemodeCallState(call.status), palette),
+                                    maxLines = 1,
+                                )
+                                Spacer(Modifier.width(PiSpacing.inline))
+                                MonoText(
+                                    text = codemodeCallText(call, expanded = fullOutput),
+                                    color = palette.bodyOnTool,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                        // pi's `Model calls: $X` total, on its own condition: more than one
+                        // priced call (`codemode/renderer.js:53-59`).
+                        modelCalls?.let {
+                            MonoText(
+                                text = it,
+                                color = palette.muted,
+                                modifier = Modifier.padding(top = PiSpacing.tiny),
+                            )
+                        }
+                    }
+                }
+
                 if (expanded && item.output.isNotEmpty()) {
                     if (outputOversize) {
                         // The 200 KB ceiling is *ours* — a rendering budget, not a pi
                         // rule — and pi has usually already truncated this result at
                         // its own limit (50 KB / 2000 lines for bash,
-                        // `core/tools/truncate.ts:11-12`) and named the file holding
+                        // `dist/core/tools/truncate.js:10-11`) and named the file holding
                         // the rest. The wording this replaced
                         // (「输出超过 200 KB，请前往工作区查看完整日志」) did two wrong
                         // things: it hid the path pi had just printed, and it named an
@@ -196,7 +358,7 @@ fun ToolCallBlock(
                     }
                     if (notice != null) {
                         // pi's warning line, printed on pi's condition and in pi's
-                        // colour (`renderers/bash.ts:100-118`: `theme.fg("warning", …)`),
+                        // colour (`dist/core/tools/renderers/bash.js:53-67`: `theme.fg("warning", …)`),
                         // placed where pi places it — after the output, before the
                         // elapsed footer. The body above already had this sentence
                         // stripped out when it was the same one, so it is not repeated.
@@ -232,9 +394,16 @@ fun ToolCallBlock(
  * own record of where the complete output is (see `fullOutputPathOf`).
  *
  * [MAX_OUTPUT_BYTES] is this app's rendering budget, **not** a pi rule: pi's own
- * ceiling is 2000 lines / 50 KB (`core/tools/truncate.ts:11-12`), which is what
+ * ceiling is 2000 lines / 50 KB (`dist/core/tools/truncate.js:10-11`), which is what
  * the notice's numbers report. Nothing about the 200 KB limit is presented as pi's
  * information.
  */
 private const val COLLAPSED_OUTPUT_LINES = 200
 private const val MAX_OUTPUT_BYTES = 200 * 1024
+
+/**
+ * How many nested `codemode` calls the folded list keeps — pi's `CALL_PREVIEW_COUNT`
+ * (`dist/extensions/codemode/renderer.js:15`), and pi keeps the **last** ones for the same
+ * reason its shell rows keep the tail: a script's outcome is at the end.
+ */
+private const val CODEMODE_CALL_PREVIEW = 8

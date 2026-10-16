@@ -116,10 +116,16 @@ internal fun ReadBlock(
                         }
                     }
                     // pi's own continuation sentence: the tool's text, so it is not coloured
-                    // as a warning (pi prints it as body).
-                    body.footer?.let {
+                    // as a warning (pi prints it as body). **Translated**, because it is a
+                    // sentence addressed to the reader and the app's own lines beside it are
+                    // Chinese — see [readFooterText], which leaves pi's numbers and the
+                    // `offset=` spelling alone and hands back anything it does not recognise.
+                    // Remembered because the translation runs three regexes, and this row
+                    // republishes every 200 ms while anything streams (F31/F8).
+                    body.footer?.let { footer ->
+                        val sentence = remember(footer) { readFooterText(footer) }
                         Text(
-                            text = it,
+                            text = sentence,
                             style = PiTheme.text.meta,
                             color = palette.muted,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -138,5 +144,5 @@ internal fun ReadBlock(
     }
 }
 
-/** How long a `read` body may be when the card is merely expanded (pi's ten, `read.ts:129`). */
+/** How long a `read` body may be when the card is merely expanded (pi's ten, `dist/core/tools/renderers/read.js:95`). */
 private const val READ_PREVIEW_LINES = 10

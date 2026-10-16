@@ -306,7 +306,7 @@ pi 的工具全集是 `ToolName = "read" | "bash" | "powershell" | "edit" | "wri
 
 | 候选 | grep 结果（`packages/*/src/**/*.ts`） | 判定 |
 |---|---|---|
-| **MCP** | **无命中**（只有 `utils/tool-result-images.ts:15` 的一句注释提到"MCP bridges"作为例子） | pi 没有 MCP。**不做** |
+| **MCP** | **这份审计当时的 grep 口径是错的。** 它在 `packages/*/src/**/*.ts` 里只中了 `utils/tool-result-images.ts:15` 的一句注释，于是判定"pi 没有 MCP"，**对 1.2.0 不成立**：`dist/extensions/mcp/` 是 pi 的四个内置扩展之一（`dist/extensions/index.js:5-11`），有完整的工具注册（`mcp__<server>__<tool>`）、专属渲染器（`dist/extensions/mcp/tools.js:267-307`，标题画成 `<server>/<tool>`）和 `registerToolRenderer`（`dist/extensions/mcp/index.js:279-282`）。原因是 MCP 的实现来自依赖 `@earendil-works/pi-mcp`，不在 `packages/*/src` 下 | pi **有** MCP（内置扩展）。App 侧已对齐标签与参数呈现，见 `ToolOutputParse.mcpLabel` |
 | **subagent** | **`subagent` 0 命中、`sub-agent` 0 命中**；只有 `examples/extensions/subagent/`（示例）与 `examples/extensions/handoff.ts` | 核心没有。**不做**（除非把示例扩展当"pi 有"，见 §8.1） |
 | **memory** | 107 处命中，**全部是"内存/in-memory"**（`in-memory-storage-state.ts`、`MemorySessionRepo`、`export-html/index.ts:245`…），**没有一处是"记忆功能"** | pi 没有 memory 功能。**不做** |
 | **browser** | `packages/coding-agent/src` 内只有 `utils/open-browser.ts` 的 `openBrowser`（给 `/login` 打开 URL 用，`login-dialog.ts:111`、`tui-renderer.ts:34`） | 没有浏览器工具。**不做** |
@@ -442,7 +442,7 @@ run_harness tree-navigation \
 
 | 项 | 证据 | 结论 |
 |---|---|---|
-| MCP | `grep -rniE "\bmcp\b" --include=*.ts packages/*/src` → **恰好 1 命中**：`packages/coding-agent/src/utils/tool-result-images.ts:15` 的注释（"extensions, MCP bridges, screenshot tools"） | 无 |
+| MCP | `grep -rniE "\bmcp\b" --include=*.ts packages/*/src` → **恰好 1 命中**：`packages/coding-agent/src/utils/tool-result-images.ts:15` 的注释（"extensions, MCP bridges, screenshot tools"） | **这条 grep 的结论是错的**（命中的是 `packages/*/src`，而 MCP 来自依赖 `@earendil-works/pi-mcp`，源码不在那棵树里）。对 pin 的 1.2.0：`dist/extensions/mcp/` 存在且是内置扩展（`dist/extensions/index.js:5-11`）。上表已更正 |
 | subagent / 子代理 | `grep -rni "subagent\|sub-agent" packages/*/src` → **0** | 无（仅 `examples/extensions/subagent/`） |
 | memory 功能 | `grep -rni "\bmemory\b" packages/coding-agent/src/core packages/agent/src` → 107 命中，逐条看均为 in-memory 存储 | 无 |
 | browser 工具 | `grep -rni "browser" packages/coding-agent/src/core packages/agent/src` → `utils/open-browser.ts`（登录开链接） | 无 |

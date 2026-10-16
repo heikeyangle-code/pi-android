@@ -2,6 +2,7 @@ package app.pi.rpc
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -237,6 +238,25 @@ sealed interface PiEvent {
         val toolCallId: String,
         val toolName: String?,
         val partialText: String?,
+        /**
+         * The partial result's `details`, whole (`partialResult.details`), or null when this
+         * update carried none.
+         *
+         * Carried because **a tool can report its progress only through `details`**: pi has no
+         * other channel for it, and `codemode` is the case that matters — the engine publishes a
+         * snapshot of every nested tool call it has made so far, each with its status, duration
+         * and cost, and sends it as `details.calls`
+         * (`dist/extensions/codemode/execute.js:394-397`). Without this field the app could only
+         * see those calls once the script had already finished.
+         *
+         * It is deliberately **separate from the settled `details`** on the tool-result message
+         * ([ToolExecutionEnd.details]): every tool's partial `details` is a different shape, and
+         * `bash` sends truncation bookkeeping in each of its updates
+         * (`core/tools/bash.js:186-191`) and an MCP tool sends `{server, tool}`
+         * (`extensions/mcp/tools.js:261`). Merging them into one field would make a running
+         * `bash` row show a truncation notice mid-command, which nothing asked for.
+         */
+        val partialDetails: JsonElement? = null,
         /** See [ToolExecutionStart.parentToolCallId]. */
         val parentToolCallId: String? = null,
     ) : PiEvent {
@@ -521,6 +541,10 @@ object PiEvents {
             toolCallId = o.str("toolCallId").orEmpty(),
             toolName = o.str("toolName"),
             partialText = o.obj("partialResult")?.let { contentText(it["content"]) },
+            // `details: undefined` (what bash sends on its first, empty update,
+            // `core/tools/bash.js:216`) arrives as a JSON `null` or is absent; both mean
+            // "no details in this update", not "the details are null".
+            partialDetails = o.obj("partialResult")?.get("details")?.takeIf { it !is JsonNull },
             parentToolCallId = o.str("parentToolCallId"),
         )
 

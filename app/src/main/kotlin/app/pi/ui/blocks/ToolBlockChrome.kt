@@ -44,11 +44,11 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * The chrome the per-tool blocks share with the generic tool card.
  *
- * `packages/coding-agent/src/core/tools/renderers/index.ts:34-44` gives every built-in tool
+ * `dist/core/tools/renderers/index.js:17-28` gives every built-in tool
  * its own renderer, but all eight share pi's *card*: one container whose colour is the
- * status (`toolPendingBg`/`toolSuccessBg`/`toolErrorBg`, `modes/interactive/components/
- * tool-execution.ts:172-178`), a title row, and a footer that says how long the call took
- * (`core/tools/renderers/bash.ts:117-121`). Only the title and the body differ per tool, so
+ * status (`toolPendingBg`/`toolSuccessBg`/`toolErrorBg`, `dist/modes/interactive/components/
+ * tool-execution.js:200-204`), a title row, and a footer that says how long the call took
+ * (`dist/core/tools/renderers/bash.js:68-69`). Only the title and the body differ per tool, so
  * only those live in the eight block files; everything below is the shared half, and
  * [ToolCallBlock] — the fallback card for a tool pi gives no renderer — is built from it too.
  *
@@ -116,6 +116,27 @@ internal fun toolStateTone(state: ToolState): StateTone = when (state) {
     // neutral token rather than `error`. `StateTone.Rejected` resolves to
     // `bodyOnTool` (`theme/PiStateChip.kt`), the app's derived tool-body grey.
     ToolState.Rejected -> StateTone.Rejected
+}
+
+/**
+ * A nested `codemode` call's status, in the card's own four states.
+ *
+ * pi's codemode renderer colours each call's status glyph by status
+ * (`dist/extensions/codemode/renderer.js:26-40`: warning for `running`, success for `ok`,
+ * error for `error`, muted for `cancelled`). This maps onto the four states the tool cards
+ * already have, so the nested rows take the **same** tokens as every other state glyph in the
+ * app and no colour is invented for them — a cancelled call takes the neutral 被拒 tone for
+ * the same reason a blocked call does (nothing ran to completion).
+ */
+internal fun codemodeCallState(status: CodemodeCallStatus): ToolState = when (status) {
+    CodemodeCallStatus.Running -> ToolState.Running
+    CodemodeCallStatus.Ok -> ToolState.Success
+    CodemodeCallStatus.Error -> ToolState.Failed
+    CodemodeCallStatus.Cancelled -> ToolState.Rejected
+    // A status a newer engine introduced: reported, not guessed at, and not painted as a
+    // success. pi's own TUI prints `undefined` in this case; the neutral tone plus the
+    // `?` glyph [codemodeCallIcon] answers says "unknown" without claiming either.
+    CodemodeCallStatus.Unknown -> ToolState.Rejected
 }
 
 /**
@@ -316,14 +337,15 @@ internal fun ToolHeader(
         Text(
             text = title,
             // **Bold, because pi bolds it**: `theme.fg("toolTitle", theme.bold(toolName))`
-            // (`components/tool-execution.js:91`, and `:316` for the same header rebuilt on
+            // (`components/tool-execution.js:312`, and `:96` for the same header rebuilt on
             // update). The bundled family carries Regular + Bold and nothing between
             // (`PiMonoFamily`), so `Bold` is the face pi's bold actually maps onto here —
             // asking for SemiBold would make Android synthesise a weight the font does not have.
             style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
             // **`toolTitle` — the token pi paints a tool's *name* with.** Every built-in
-            // renderer passes it (`core/tools/renderers/bash.ts:40` and the same line in
-            // `read`/`write`/`edit`/`grep`/`find`/`ls`), and this cell is exactly that name.
+            // renderer passes it (`dist/core/tools/renderers/bash.js:21` — the `toolTitle` run
+            // `formatShellCall` builds, and the same token in read/write/edit/grep/find/ls),
+            // and this cell is exactly that name.
             // It used to be `muted` because v2's prototype draws it `c-muted`; the user's
             // ruling is that pi's own semantics win (「全修的一致」), so that board line was
             // superseded and `06 §2` + `docs/pi-android-ui-spec.md` §2.5 were updated with it —
@@ -406,7 +428,7 @@ private val TOOL_HEADER_GAP = 7.dp
  * the previous footer took `lines` as a parameter at all).
  *
  * The duration's **spelling belongs to the tool family**: pi measures the two shells with
- * its own formatter (`core/tools/renderers/bash.ts:32-42` — `Elapsed`/`Took`, switching to
+ * its own formatter (`dist/core/tools/render-utils.js:81-91` — `Elapsed`/`Took`, switching to
  * `1m 30s` / `1h 5m 30s` past a minute, which is 0.86.1's change) and the file tools with
  * the app's `598ms` / `1s` / `1m30s` ([formatDuration]). Both spellings are pi's, and
  * `ToolOutputParse.formatDuration` is the shell one verbatim.
@@ -524,7 +546,7 @@ internal fun ExpandAllLabel(
  * pi's warning line under a result, in this app's language.
  *
  * pi prints `[Full output: <path>. Truncated: …]` in the warning colour
- * (`core/tools/renderers/bash.ts:100-118`, `renderers/grep.ts:61-66`), after the body and
+ * (`dist/core/tools/renderers/bash.js:53-67`, `dist/core/tools/renderers/grep.js:197-206`), after the body and
  * before the elapsed line. The path is the one part of a truncation report a user needs
  * elsewhere, so the line copies it on tap.
  */
@@ -568,7 +590,7 @@ internal fun ToolNotice(
  *
  * The container is **not bordered**: `06 §2` gives it a 1 px status-coloured outline at
  * 35 %, and the official renderer's card has no border at all — a `Box` with the status
- * background and nothing else (`modes/interactive/components/tool-execution.ts:172-178`).
+ * background and nothing else (`modes/interactive/components/dist/modes/interactive/components/tool-execution.js:200-204`).
  * The fill is the state's first channel and the header glyph is its second, so the third
  * was a frame around an already-coloured card; on a phone that frame is the width of the
  * whole row's silhouette, which is the one thing the card does not need to spend.
@@ -684,7 +706,7 @@ internal fun toolCommandText(args: JsonObject?): String? =
  *
  * `无输出` waits for the call to settle (`state != ToolState.Running`): while a call is still
  * pending it has produced nothing *yet*, and pi's own bash renderer only prints its no-output
- * line for a finished result (`core/tools/renderers/bash.ts:100-118`). Before this was one
+ * line for a finished result (`dist/core/tools/renderers/bash.js:53-67`). Before this was one
  * function, that guard existed only in `ShellBlock`'s private copy, so a pending `read` said
  * `无输出` about output it had not received.
  */
@@ -718,7 +740,7 @@ internal fun toolFooterText(item: ToolCall, state: ToolState): String? {
  * silently threw away the per-tool layout the app had just been given.
  *
  * pi wraps only the *text* of a result in the region that toggles the card
- * (`tool-execution.ts:172-178`), so a tap on a screenshot must not collapse the card. This
+ * (`dist/modes/interactive/components/tool-execution.js:200-204`), so a tap on a screenshot must not collapse the card. This
  * used to be a no-op tap detector that swallowed the gesture and did nothing else — the
  * user's report was 「点一下它只会展开，图片没有反应」. The cell now owns the tap
  * (`ImageGridBlock`'s own `clickable`, the deepest node, so it is dispatched before the

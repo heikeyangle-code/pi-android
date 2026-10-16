@@ -70,6 +70,33 @@ data class ToolCall(
     val output: String = "",
     val isError: Boolean = false,
     val details: JsonElement? = null,
+    /**
+     * The **latest in-flight** `details` a running tool reported, or null.
+     *
+     * `tool_execution_update` carries `partialResult.details`, and a tool with progress to
+     * report has no other channel: `codemode` publishes a snapshot of every nested tool call it
+     * has made so far — name, arguments, status, duration, cost — as `details.calls`
+     * (`dist/extensions/codemode/execute.js:394-397`). Reading it is what lets a codemode card
+     * show its calls *while the script runs* instead of only after it ends
+     * (`ui/blocks/ToolCallBlock.kt`).
+     *
+     * **Separate from [details] on purpose**, and not merged into it:
+     *
+     *  - [details] means "what the settled result carried" — it is what `truncationOf` and
+     *    `fullOutputPathOf` read, and every tool sends a *different* shape in its partials
+     *    (`bash` sends truncation bookkeeping on every update, `core/tools/bash.js:186-191`;
+     *    an MCP tool sends `{server, tool}`, `extensions/mcp/tools.js:261`). Writing partials
+     *    into [details] would make a **running** `bash` row show a truncation notice and the
+     *    app's "已截断" footer mid-command.
+     *  - The 200 ms publication throttle ([TOOL_UPDATE_THROTTLE_MS]) drops whole updates, so a
+     *    stale value here is expected. That is safe because the payload is a **snapshot**, not
+     *    a delta: the next publication carries the whole current state, and
+     *    `tool_execution_end` always carries the final [details].
+     *
+     * Readers should prefer [details] whenever it is set — the settled result is authoritative
+     * and complete; this field is only the live view.
+     */
+    val liveDetails: JsonElement? = null,
     val endedAt: Long? = null,
     /**
      * pi 1.1.0 记录下来的**这次工具执行的真实耗时**（毫秒），没有就是 null。
@@ -1660,7 +1687,14 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // This publication materialises the row — the only point at which the accumulated
         // text becomes a `String` — and the accumulator is dropped with it, so the next
         // chunk starts from what was just published.
-        items[index] = current.copy(output = acc.toString())
+        //
+        // `liveDetails` rides along so a tool whose progress lives in `details` (codemode's
+        // nested calls) can be drawn while it runs. It never touches `details`, which stays
+        // "what the settled result carried" — see [ToolCall.liveDetails].
+        items[index] = current.copy(
+            output = acc.toString(),
+            liveDetails = event.partialDetails ?: current.liveDetails,
+        )
         pendingToolOutput.remove(event.toolCallId)
         return TranscriptChange.Updated(index)
     }
@@ -1724,6 +1758,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 // UI's "已截断" label was unreachable.
                 outputTruncated = current.outputTruncated || detailsTruncated(details),
                 images = images.ifEmpty { current.images },
+                // **The live snapshot is released the moment the settled result has its own
+                // `details`.** From here on the card reads `details` (it prefers it), so keeping
+                // the snapshot would hold the last in-flight payload — for codemode, the whole
+                // nested-call list the engine sent — resident for the life of the transcript
+                // for nothing. A result that carries **no** details keeps it: then it is still
+                // the only view of the tool's calls there is.
+                liveDetails = if (details != null) null else current.liveDetails,
             )
             change = TranscriptChange.Updated(index)
         } else {

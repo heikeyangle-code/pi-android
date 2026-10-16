@@ -128,8 +128,13 @@ private fun PathListBlock(
     }
     val command = remember(item.args) { toolCommandText(item.args) }
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
-    val notice = remember(item.details, fullOutputPath) {
-        truncationNotice(fullOutputPath, truncationOf(item.details))
+    // Expanded-state only (drawn inside the `if (expanded)` body below), so the collapsed
+    // card's shape is untouched. `find` and `ls` each have a limit count of their own beside
+    // the shared truncation report — `details.resultLimitReached` (`core/tools/find.js:103`)
+    // and `details.entryLimitReached` (`core/tools/ls.js:69`) — and neither had a reader here,
+    // so a listing pi had cut looked complete.
+    val notice = remember(item.details, fullOutputPath, body.kind) {
+        pathListNotice(fullOutputPath, item.details, entries = body.kind == PathBodyKind.Ls)
     }
     val plan = remember(body, expanded, fullOutput) {
         if (!expanded) {
@@ -172,14 +177,24 @@ private fun PathListBlock(
                         plan.isEmpty() -> Unit
                         else -> Column(modifier = Modifier.padding(top = PiSpacing.tiny)) {
                             plan.forEach { group ->
-                                PathGroupHeading(group)
+                                // **`find`'s row is pi's whole relative path**, so the group's
+                                // heading would only repeat the prefix every row already
+                                // carries; pi's own renderer prints one path per line and no
+                                // heading at all (`core/tools/find.js:268-273`). `ls` keeps its
+                                // heading, because there the row *is* pi's entry name and the
+                                // heading is pi's own entry kind (the `"/"` suffix).
+                                if (body.kind != PathBodyKind.Find) PathGroupHeading(group)
                                 group.entries.forEach { entry ->
-                                    // pi marks a directory by suffixing it with "/"
-                                    // (`core/tools/ls.ts:124`); the heading already says
-                                    // "目录", and the row keeps pi's own marker because that
-                                    // is the character a user copies out of the list.
                                     MonoText(
-                                        text = if (entry.kind == PathKind.Directory) entry.name + "/" else entry.name,
+                                        text = when {
+                                            body.kind == PathBodyKind.Find -> findRowPath(group.label, entry.name)
+                                            // pi marks a directory by suffixing it with "/"
+                                            // (`core/tools/ls.ts:124`), and the row keeps pi's
+                                            // own marker because that is the character a user
+                                            // copies out of the list.
+                                            entry.kind == PathKind.Directory -> entry.name + "/"
+                                            else -> entry.name
+                                        },
                                         color = palette.bodyOnTool,
                                     )
                                 }
@@ -246,8 +261,23 @@ private fun PathGroupHeading(group: PathGroup) {
     }
 }
 
-/** Entries the `find` card paints before 「展开全部」 (pi's twenty, `renderers/find.ts:46`). */
+/** Entries the `find` card paints before 「展开全部」 (pi's twenty, `dist/core/tools/renderers/find.js:32`). */
 private const val FIND_PREVIEW_ENTRIES = 20
 
-/** Entries the `ls` card paints before 「展开全部」 (pi's twenty, `renderers/ls.ts:39`). */
+/**
+ * One `find` row: pi's relative path, put back together from the parser's grouping.
+ *
+ * The parser groups `find`'s paths by directory because that is what the old card's heading
+ * needed (`ToolOutputParse.parsePaths`), and it keeps only the file name in each entry. pi
+ * prints the **whole relative path** on every row (`core/tools/find.js:268-273`) and has no
+ * grouping, so the row rebuilds it: the directory heading is dropped for `find` and the row
+ * carries the string pi wrote — which is also the string a reader selects out of the card.
+ *
+ * `fd` may report a path with no directory at all; the parser's label is `""` for those and
+ * the row is the bare name, exactly as pi printed it.
+ */
+private fun findRowPath(directory: String?, name: String): String =
+    if (directory.isNullOrEmpty()) name else "$directory/$name"
+
+/** Entries the `ls` card paints before 「展开全部」 (pi's twenty, `dist/core/tools/renderers/ls.js:89`). */
 private const val LS_PREVIEW_ENTRIES = 20

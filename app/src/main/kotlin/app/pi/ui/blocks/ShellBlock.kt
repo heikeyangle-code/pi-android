@@ -24,7 +24,7 @@ import app.pi.ui.theme.PiTheme
  * `bash` and `powershell` — pi's shell renderers (`core/tools/renderers/bash.ts`).
  *
  * pi builds both from one factory: `bash` gets the `$` prompt and `powershell` the `PS>`
- * prompt (`core/tools/renderers/index.ts:35-36` → `createShellRenderers`), which is the only
+ * prompt (`dist/core/tools/renderers/index.js:20-21` → `createShellRenderers`), which is the only
  * difference between the two definitions. The card is:
  *
  *  - the command as the title (`formatShellCall`, `:26-32`: `${prompt} ${command}`, with
@@ -49,11 +49,16 @@ import app.pi.ui.theme.PiTheme
  *    to copy from. The sentence the tool already appended to its own text is stripped first
  *    (`:47-53`), which is what [stripFullOutputFooter] does, so the fact is printed once;
  *  - `Elapsed 12.3s` while the command runs and `Took 12.3s` afterwards (`:100-105`), pi
- *    refreshing it once a second (`:122`).
+ *    refreshing it once a second (`dist/core/tools/render-utils.js:107`).
  *
- * > Line numbers are the shipped build's (`dist/core/tools/renderers/bash.js`, v0.86.1), which
- * > is the copy this was verified against; the older `.ts` numbers elsewhere in this file are
- * > the upstream TypeScript source and point at the same statements.
+ * > **Re-verified against the pinned engine (1.2.0), 2026-02.** The bare `:NN` numbers below
+ * > are the shipped `dist/core/tools/renderers/bash.js` of **1.2.0**, not of the 0.86.1 this
+ * > file was originally written against: `formatShellCall` is `:16-22`, the collapsed
+ * > `VisualLinePreview` window `:44-50`, the warning line `:53-67`, the timer line `:68-69`,
+ * > `createShellRenderers` `:72-88`, and `BASH_PREVIEW_LINES = 5` `:14`. The `Elapsed`/`Took`
+ * > text and the 1 Hz repaint live in `render-utils.js` (`:105-124`, `:107`) — `bash.js` has no
+ * > formatter of its own. Any remaining `.ts` path is the upstream file the statement also
+ * > holds for; the numbers that mattered were the ones that had drifted.
  *
  * **The running clock is pushed, not read here.** pi starts an interval for it
  * (`:122`); this app has one clock for the whole transcript, owned by the ViewModel
@@ -186,7 +191,15 @@ internal fun ShellBlock(
                 ToolHeader(
                     item = item,
                     state = state,
-                    title = "$",
+                    // **pi's prompt, which is not always `$`.** pi builds both shells from one
+                    // factory and the prompt is the *only* thing their definitions differ by:
+                    // `createAllToolRenderers()` maps `bash → createShellRenderers("$")` and
+                    // `powershell → createShellRenderers("PS>")`
+                    // (`dist/core/tools/renderers/index.js:20-21`), and the prompt is the first
+                    // thing `formatShellCall` prints (`:16-22`). This cell **is** that prompt,
+                    // so a `powershell` row that said `$` was labelling the one tool whose whole
+                    // difference from `bash` is the label.
+                    title = if (item.toolName == "powershell") "PS>" else "$",
                     subject = subject,
                     // The live clock, not `item.elapsedMs`: while a command runs the
                     // ViewModel's 1 Hz tick is the only number that exists (`nowMs`), and

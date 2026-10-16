@@ -65,8 +65,13 @@ internal fun GrepBlock(
     val subject = remember(item.args) { grepSubject(item.args) }
     val command = remember(item.args) { toolCommandText(item.args) }
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
+    // Expanded-state only (this row is drawn inside the `if (expanded)` body below), so it
+    // adds nothing to the collapsed card's shape. It is [grepNotice] rather than
+    // [truncationNotice] because pi's grep warning line carries **three** counts
+    // (`renderers/grep.js:194-206`) and this app read only one of them: a search cut at pi's
+    // 100-match limit, or one whose long lines were dropped, used to report nothing at all.
     val notice = remember(item.details, fullOutputPath) {
-        truncationNotice(fullOutputPath, truncationOf(item.details))
+        grepNotice(fullOutputPath, item.details)
     }
     val plan = remember(body, expanded, fullOutput) {
         if (!expanded) {
@@ -223,5 +228,5 @@ private fun GrepRow(match: GrepMatch) {
     }
 }
 
-/** How many matches the card paints before 「展开全部」 (pi's fifteen, `renderers/grep.ts:49`). */
+/** How many matches the card paints before 「展开全部」 (pi's fifteen, `dist/core/tools/renderers/grep.js:186`). */
 private const val GREP_PREVIEW_MATCHES = 15

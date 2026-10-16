@@ -1,6 +1,7 @@
 package app.pi.ui.blocks
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.system.exitProcess
@@ -430,6 +431,173 @@ fun main() {
     // card, and read/write answer an empty body instead.
     check("degrade: an unrecognised grep is null", ToolOutputParse.grepBody("nope") == null, true)
     check("degrade: a null argument set is safe", ToolOutputParse.readBody(null, "").lines.size, 0)
+
+    // --------------------------------------- the call line, both of pi's halves
+
+    // pi's generic call line, collapsed: `key=value` for **every** argument, cut to pi's 100
+    // characters (`core/tools/render-utils.js:60-79`). This is what the generic card's title
+    // cell takes, and the whole reason it changed: `summarizeToolArgs` returned one *value*,
+    // so `limit` and every second parameter were invisible.
+    check("params: a single string value keeps its key", toolParamSummary(args("query" to "x")), "query=\"x\"")
+    check(
+        "params: every argument, in wire order, JSON-quoted",
+        toolParamSummary(args("query" to "mcp docs", "limit" to 8)),
+        "query=\"mcp docs\" limit=8",
+    )
+    check("params: no arguments means no text", toolParamSummary(null), null)
+    check("params: an empty argument set means no text", toolParamSummary(args()), null)
+    val longParams = toolParamSummary(JsonObject(mapOf("command" to JsonPrimitive("x".repeat(200)))))
+    check("params: pi's 100-character cut keeps its ellipsis", longParams?.length, 100)
+    check("params: the cut ends in pi's three dots", longParams?.endsWith("..."), true)
+
+    // The expanded half: one `key: value` per line, a **string printed raw** (not quoted)
+    // and a non-string pretty-printed with two spaces, continuation lines indented by four.
+    check("params expanded: a string is raw, with pi's two-space lead", toolParamLines(args("path" to "a.kt")), listOf("  path: a.kt"))
+    check(
+        "params expanded: a number is bare",
+        toolParamLines(args("limit" to "8")),
+        listOf("  limit: 8"),
+    )
+    check(
+        "params expanded: a nested object is JSON.stringify(value, null, 2), indented by four",
+        toolParamLines(JsonObject(mapOf("opts" to JsonObject(mapOf("deep" to JsonPrimitive(true)))))),
+        listOf("  opts: {\n      \"deep\": true\n    }"),
+    )
+    check("params expanded: an array keeps its own line", toolParamLines(JsonObject(mapOf("xs" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive(1), JsonPrimitive(2)))))), listOf("  xs: [\n      1,\n      2\n    ]"))
+    check("params expanded: no arguments means no lines", toolParamLines(null), emptyList<String>())
+    // One 100 KB single-line value must not become a thousand rows on the phone: every line
+    // is capped at pi's own per-line limit (its `GREP_MAX_LINE_LENGTH`).
+    check(
+        "params expanded: a huge single value is capped per line",
+        toolParamLines(JsonObject(mapOf("blob" to JsonPrimitive("y".repeat(100_000))))).first().length,
+        TOOL_LINE_MAX_CHARS + 1,
+    )
+
+    // pi labels an MCP tool's row `<server>/<tool>` (`extensions/mcp/tools.js:244`) although
+    // the wire name is `mcp__<server>__<tool>`; its renderer matches that shape with this
+    // regex even for a tool that is not registered (`extensions/mcp/index.js:280`).
+    check("mcp: the wire name becomes pi's label", mcpLabel("mcp__docs__search"), "docs/search")
+    check("mcp: dashes and underscores survive in the server part", mcpLabel("mcp__dev-radius__get_issue"), "dev-radius/get_issue")
+    check("mcp: a plain tool name is not an MCP label", mcpLabel("read"), null)
+    check("mcp: an incomplete prefix is not an MCP label", mcpLabel("mcp__docs__"), null)
+    check("mcp: no name is not an MCP label", mcpLabel(null), null)
+
+    // ------------------------------------------------ read's own continuation sentence
+
+    // pi's four shapes (`core/tools/read.js:139`, `:148`, `:151`, `:159`), translated with
+    // pi's numbers and its `offset=` spelling kept. Anything unrecognised stays pi's text.
+    check(
+        "read footer: the line-range sentence",
+        readFooterText("Showing lines 1-2000 of 3001. Use offset=2001 to continue."),
+        "显示第 1–2000 行，共 3001 行；用 offset=2001 继续。",
+    )
+    check(
+        "read footer: the line-range sentence with the byte limit in it",
+        readFooterText("Showing lines 1-2000 of 3001 (50 KB limit). Use offset=2001 to continue."),
+        "显示第 1–2000 行，共 3001 行（上限 50 KB）；用 offset=2001 继续。",
+    )
+    check(
+        "read footer: the user-limit sentence",
+        readFooterText("1 more lines in file. Use offset=4 to continue."),
+        "文件里还有 1 行；用 offset=4 继续。",
+    )
+    check(
+        "read footer: the first-line sentence keeps pi's bash remedy",
+        readFooterText("Line 1 is 60 KB, exceeds 50 KB limit. Use bash: sed -n '1p' big.txt | head -c 51200"),
+        "第 1 行本身就有 60 KB，超过 50 KB 上限。可用 bash：sed -n '1p' big.txt | head -c 51200",
+    )
+    check("read footer: an unknown sentence is left alone", readFooterText("Bracketed but not pi's"), "Bracketed but not pi's")
+
+    // ------------------------------- the two counts pi's list tools report and this app dropped
+
+    // pi's grep warning line carries three `details` fields (`renderers/grep.js:194-206`):
+    // the match limit, the truncation report and the long-line flag. Only the middle one had
+    // a reader, so a search cut at pi's 100-match limit said nothing at all.
+    val grepLimited = args("matchLimitReached" to "100")
+    check("grep notice: the match limit alone", grepNoticeText(grepLimited), "已截断：100 处上限")
+    check("grep notice: nothing to report", grepNoticeText(null), null)
+    check(
+        "grep notice: pi's own order, match limit first",
+        grepNoticeText(
+            JsonObject(
+                mapOf(
+                    "matchLimitReached" to JsonPrimitive(100),
+                    "linesTruncated" to JsonPrimitive(true),
+                    "truncation" to JsonObject(
+                        mapOf("truncated" to JsonPrimitive(true), "truncatedBy" to JsonPrimitive("lines"), "outputLines" to JsonPrimitive(20)),
+                    ),
+                ),
+            ),
+        ),
+        "已截断：100 处上限、显示 20 行、部分行被截断",
+    )
+    check("grep notice: the full-output path leads, as the other cards' notice does", grepNotice("/tmp/x", grepLimited), "完整输出：/tmp/x；已截断：100 处上限")
+
+    check("find notice: the result limit", pathListNoticeText(args("resultLimitReached" to "1000"), entries = false), "已截断：1000 条上限")
+    check("ls notice: the entry limit", pathListNoticeText(args("entryLimitReached" to "500"), entries = true), "已截断：500 项上限")
+    check("find notice: the other tool's key is not read", pathListNoticeText(args("entryLimitReached" to "500"), entries = false), null)
+
+    // ---------------------------------------------------------- codemode's nested calls
+
+    // `details.calls` is the only place a script's nested calls survive (`execute.js:394`).
+    val callsJson = JsonObject(
+        mapOf(
+            "calls" to kotlinx.serialization.json.JsonArray(
+                listOf(
+                    JsonObject(
+                        mapOf(
+                            "name" to JsonPrimitive("read"),
+                            "args" to JsonPrimitive("{\"path\":\"a\"}"),
+                            "status" to JsonPrimitive("ok"),
+                            "durationMs" to JsonPrimitive(120),
+                            "cost" to JsonPrimitive(0.0012),
+                        ),
+                    ),
+                    JsonObject(
+                        mapOf(
+                            "name" to JsonPrimitive("bash"),
+                            "args" to JsonPrimitive("ls"),
+                            "status" to JsonPrimitive("error"),
+                            "durationMs" to JsonPrimitive(3400),
+                            "error" to JsonPrimitive("boom"),
+                        ),
+                    ),
+                    JsonObject(mapOf("name" to JsonPrimitive("grep"), "args" to JsonPrimitive("{}"), "status" to JsonPrimitive("running"))),
+                    JsonObject(mapOf("name" to JsonPrimitive("ls"), "args" to JsonPrimitive("{}"), "status" to JsonPrimitive("cancelled"))),
+                ),
+            ),
+        ),
+    )
+    val calls = codemodeCallsOf(callsJson)
+    check("codemode: every nested call is read, in order", calls.map { it.name }, listOf("read", "bash", "grep", "ls"))
+    check("codemode: the four statuses map", calls.map { it.status }, listOf(CodemodeCallStatus.Ok, CodemodeCallStatus.Error, CodemodeCallStatus.Running, CodemodeCallStatus.Cancelled))
+    check("codemode: a status a newer engine adds is unknown, not a success", codemodeCallsOf(JsonObject(mapOf("calls" to kotlinx.serialization.json.JsonArray(listOf(JsonObject(mapOf("name" to JsonPrimitive("x"), "status" to JsonPrimitive("what")))))))).single().status, CodemodeCallStatus.Unknown)
+    check("codemode: no calls is an empty list", codemodeCallsOf(null), emptyList<CodemodeCall>())
+    check("codemode: a call with no name is dropped", codemodeCallsOf(JsonObject(mapOf("calls" to kotlinx.serialization.json.JsonArray(listOf(JsonObject(mapOf("status" to JsonPrimitive("ok")))))))), emptyList<CodemodeCall>())
+    // pi's `statusIcon` (`renderer.js:26-40`), and the `?` its HTML exporter paints instead of
+    // the TUI's `undefined` for a status it does not know.
+    check("codemode: pi's four glyphs", calls.map { codemodeCallIcon(it.status) }, listOf("✓", "✗", "…", "⊘"))
+    check("codemode: an unknown status still gets a glyph", codemodeCallIcon(CodemodeCallStatus.Unknown), "?")
+    // pi's `formatCall` (`:41-56`): name, arguments, duration, cost — and, expanded, the
+    // failure's own text on the next line indented by four.
+    check("codemode: a call line is name + args + duration + cost", codemodeCallText(calls[0], expanded = false), "read {\"path\":\"a\"} 120ms $0.0012")
+    check("codemode: 3.4s is pi's seconds spelling", codemodeCallText(calls[1], expanded = false), "bash ls 3.4s")
+    check("codemode: no duration and no cost prints neither", codemodeCallText(calls[2], expanded = false), "grep {}")
+    check("codemode: expanded adds the failure indented by four", codemodeCallText(calls[1], expanded = true), "bash ls 3.4s\n    boom")
+    val longArgs = CodemodeCall("read", "x".repeat(200), CodemodeCallStatus.Ok, null, null, null)
+    check("codemode: collapsed arguments are cut to pi's 80", codemodeCallText(longArgs, expanded = false).length, "read ".length + 80)
+    check("codemode: expanded arguments are whole", codemodeCallText(longArgs, expanded = true).length, "read ".length + 200)
+    // pi's `formatCost`: cents when it has them, two significant digits below (`:45-47`).
+    check("codemode: a cent-scale cost is two decimals", codemodeCost(0.06), "$0.06")
+    check("codemode: a fraction of a cent keeps two significant digits", codemodeCost(0.0012), "$0.0012")
+    check("codemode: a slow call is seconds with one decimal", codemodeDuration(3400.0), "3.4s")
+    check("codemode: a fast call is whole milliseconds", codemodeDuration(120.4), "120ms")
+    // The total is printed only when **more than one** call was priced (`:53-59`).
+    check("codemode: one priced call prints no total", codemodeModelCallsTotal(listOf(calls[0])), null)
+    check("codemode: no priced call prints no total", codemodeModelCallsTotal(listOf(calls[2])), null)
+    check("codemode: two priced calls are summed", codemodeModelCallsTotal(listOf(calls[0], calls[0])), "Model calls: $0.0024")
+    check("codemode: the script is read from the arguments", codemodeCode(args("code" to "const a = 1;\n")), "const a = 1;")
+    check("codemode: no script argument is null", codemodeCode(args("other" to "x")), null)
 
     if (failures > 0) {
         println("tool-output-parse: $failures check(s) failed")

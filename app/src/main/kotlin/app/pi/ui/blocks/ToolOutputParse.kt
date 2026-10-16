@@ -1,5 +1,6 @@
 package app.pi.ui.blocks
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -9,7 +10,7 @@ import java.util.Locale
  * What each built-in tool's result *is*, reduced from the protocol alone.
  *
  * This file is the App's half of pi's renderers (`packages/coding-agent/src/core/tools/
- * renderers/index.ts:34-44` — the dispatch table this mirrors one for one): pi turns a
+ * dist/core/tools/renderers/index.js:17-28` — the dispatch table this mirrors one for one): pi turns a
  * tool call's `args` and its result's `content`/`details` into a rendered component, and so
  * does [ToolOutputParse]. Everything here is a pure function over
  * `toolName`/`args`/`details`/result text — the three fields `tool_execution_start` and
@@ -618,7 +619,7 @@ internal fun stripFullOutputFooter(text: String, path: String?): String {
 }
 
 /**
- * pi's warning line (`core/tools/renderers/bash.ts:100-118`), in this app's language.
+ * pi's warning line (`dist/core/tools/renderers/bash.js:53-67`), in this app's language.
  *
  * pi joins the parts with `". "` inside one `[ … ]` and colours the whole line warning; the
  * parts, in pi's order, are `Full output: <path>` when a path exists, then the truncation
@@ -628,24 +629,108 @@ internal fun stripFullOutputFooter(text: String, path: String?): String {
  * estimated. Null when pi would print nothing — its condition is
  * `truncation?.truncated || fullOutputPath`.
  */
-internal fun truncationNotice(path: String?, truncation: ToolTruncation?): String? {
+internal fun truncationNotice(path: String?, truncation: ToolTruncation?): String? =
+    joinNotice(path, truncationText(truncation))
+
+/**
+ * The truncation half of a warning line, on its own so the list-shaped tools can put their
+ * own counts in front of it (see [grepNoticeText] / [pathListNoticeText]).
+ */
+internal fun truncationText(truncation: ToolTruncation?): String? {
+    if (truncation == null) return null
+    val detail = truncationDetail(truncation)
+    return if (detail == null) "已截断" else "已截断：$detail"
+}
+
+/**
+ * What pi's truncation report says, without this app's `已截断：` prefix.
+ *
+ * pi's branches, in its own order (`core/tools/renderers/bash.js:58-65`): the line limit
+ * names `outputLines` and `totalLines`, the byte limit names `outputLines` and the size, and
+ * a report that carried neither number says only `Truncated`. A field pi did not send stays
+ * absent rather than being estimated.
+ */
+private fun truncationDetail(truncation: ToolTruncation): String? {
+    val shown = truncation.outputLines
+    val total = truncation.totalLines
+    return when {
+        truncation.truncatedBy == "lines" && shown != null && total != null -> "显示 $shown / $total 行"
+        truncation.truncatedBy == "lines" && shown != null -> "显示 $shown 行"
+        shown != null && truncation.maxBytes != null -> "显示 $shown 行（上限 ${formatBytes(truncation.maxBytes)}）"
+        shown != null -> "显示 $shown 行"
+        else -> null
+    }
+}
+
+/**
+ * `完整输出：<path>` in front of the detail, joined the way the app already joins its parts:
+ * pi puts both inside one `[…]` separated by `. `; this line keeps `；`.
+ */
+private fun joinNotice(path: String?, detail: String?): String? {
     val parts = mutableListOf<String>()
     if (path != null) parts += "完整输出：$path"
-    if (truncation != null) {
-        val shown = truncation.outputLines
-        val total = truncation.totalLines
-        parts += when {
-            truncation.truncatedBy == "lines" && shown != null && total != null ->
-                "已截断：显示 $shown / $total 行"
-            truncation.truncatedBy == "lines" && shown != null -> "已截断：显示 $shown 行"
-            shown != null && truncation.maxBytes != null ->
-                "已截断：显示 $shown 行（上限 ${formatBytes(truncation.maxBytes)}）"
-            shown != null -> "已截断：显示 $shown 行"
-            else -> "已截断"
-        }
-    }
+    detail?.let { parts += it }
     return parts.takeIf { it.isNotEmpty() }?.joinToString("；")
 }
+
+/**
+ * `grep`'s warning line — **including the two counts the app used to drop**.
+ *
+ * pi's `formatGrepResult` builds one `[Truncated: …]` line from **three** `details` fields
+ * (`dist/core/tools/renderers/grep.js:194-206`): `matchLimitReached` → `${n} matches limit`,
+ * `truncation` → the byte/line report, `linesTruncated` → `some lines truncated`. The tool
+ * sets them itself (`dist/core/tools/grep.js:222`, `:143`, `:205`). This app read only
+ * `truncation`, so a search that hit pi's own match limit, or one whose long lines were cut,
+ * said nothing at all and the list looked complete. That is information pi sends and the card
+ * was not showing.
+ *
+ * pi prints one line, so this is one line; the parts are pi's and in pi's order, and only the
+ * wording and the separator (`, ` → `、`) are this app's.
+ */
+internal fun grepNoticeText(details: JsonElement?): String? {
+    val obj = details as? JsonObject
+    val parts = mutableListOf<String>()
+    obj?.let { jsonInt(it, "matchLimitReached") }?.let { parts += "$it 处上限" }
+    val truncation = truncationOf(details)
+    if (truncation != null) parts += (truncationDetail(truncation) ?: "输出被截断")
+    if (obj != null && jsonBool(obj, "linesTruncated")) parts += "部分行被截断"
+    return noticeLine(parts)
+}
+
+/** `grep`'s whole warning line: the `完整输出` path in front of [grepNoticeText]. */
+internal fun grepNotice(path: String?, details: JsonElement?): String? =
+    joinNotice(path, grepNoticeText(details))
+
+/**
+ * `find` / `ls`'s warning line, the same shape as grep's.
+ *
+ * pi reads `details.resultLimitReached` for `find` (`core/tools/renderers/find.js:40-49`) and
+ * `details.entryLimitReached` for `ls` (`:97-106`) beside the shared `truncation`, printing
+ * `${n} results limit` / `${n} entries limit`. Neither field had a reader here either, so a
+ * listing cut at pi's own limit also looked complete.
+ */
+internal fun pathListNoticeText(details: JsonElement?, entries: Boolean): String? {
+    val obj = details as? JsonObject
+    val parts = mutableListOf<String>()
+    val limit = obj?.let { if (entries) jsonInt(it, "entryLimitReached") else jsonInt(it, "resultLimitReached") }
+    limit?.let { parts += if (entries) "$it 项上限" else "$it 条上限" }
+    val truncation = truncationOf(details)
+    if (truncation != null) parts += (truncationDetail(truncation) ?: "输出被截断")
+    return noticeLine(parts)
+}
+
+/** [pathListNoticeText] with the `完整输出` path in front, as [grepNotice] does. */
+internal fun pathListNotice(path: String?, details: JsonElement?, entries: Boolean): String? =
+    joinNotice(path, pathListNoticeText(details, entries))
+
+private fun noticeLine(parts: List<String>): String? =
+    if (parts.isEmpty()) null else "已截断：${parts.joinToString("、")}"
+
+private fun jsonInt(obj: JsonObject, key: String): Int? =
+    (obj[key] as? JsonPrimitive)?.content?.toIntOrNull()
+
+private fun jsonBool(obj: JsonObject, key: String): Boolean =
+    (obj[key] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() == true
 
 /** pi's `formatSize` for the byte limit: whole KB when it divides evenly. */
 internal fun formatBytes(bytes: Int): String =
@@ -795,4 +880,357 @@ internal fun lsSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     add(ToolCallPart(path, ToolCallToken.Accent))
     argInt(args, "limit")?.let { add(ToolCallPart(" (limit $it)", ToolCallToken.ToolOutput)) }
 }
+
+// ------------------------------------------------------- official call-line summaries
+
+/**
+ * pi's generic call line, collapsed: **every argument**, as `key=value` pairs
+ * (`core/tools/renderers/../render-utils.js:60-79`).
+ *
+ * ```js
+ * const pairs = entries.map(([key, value]) => `${key}=${JSON.stringify(value) ?? String(value)}`).join(" ");
+ * const preview = pairs.length > COLLAPSED_ARGS_CHARS ? `${pairs.slice(0, COLLAPSED_ARGS_CHARS - 3)}...` : pairs;
+ * ```
+ *
+ * This is the shape a tool with **no** renderer of its own gets — `tool_search`, an MCP tool
+ * before its extension's renderer is consulted, any extension tool that did not register
+ * one — and it is what `ToolCallBlock` used to approximate with a single value
+ * ([app.pi.rpc.summarizeToolArgs]). That approximation silently dropped every other
+ * argument: `tool_search query="x" limit=8` arrived as `x`, and an MCP call's real subject
+ * (its own named parameters) was invisible. The text here is pi's, built by pi's rule.
+ *
+ * [ToolCallToken.Uncoloured] is pi's own colour decision for this line: its fallback builds
+ * the call text with no `fg` call at all (`components/tool-execution.js:311-322`).
+ *
+ * Each value goes through `JsonElement.toString()`, which **is** kotlinx.serialization's JSON
+ * encoder: a string is quoted and escaped, a number/boolean/null is bare, an object or array
+ * is compact JSON — i.e. pi's `JSON.stringify(value)`, not a re-implementation of it.
+ *
+ * @return null when the call carried no arguments — pi's `entries.length === 0` branch,
+ *   where the header is the whole line.
+ */
+internal fun toolParamSummary(args: JsonObject?): String? {
+    if (args == null || args.isEmpty()) return null
+    val pairs = args.entries.joinToString(" ") { (key, value) -> "$key=${value}" }
+    return if (pairs.length > COLLAPSED_ARG_CHARS) {
+        pairs.take(COLLAPSED_ARG_CHARS - 3) + "..."
+    } else {
+        pairs
+    }
+}
+
+/**
+ * pi's `COLLAPSED_ARGS_CHARS` (`core/tools/renderutils` → `render-utils.js:54`): the width
+ * its generic call line is cut to, because a terminal is about that wide. A phone line is
+ * shorter still, and the row ellipsizes what fits, so pi's number is kept rather than
+ * invented — the cut only bounds the string that reaches the header.
+ */
+private const val COLLAPSED_ARG_CHARS = 100
+
+/**
+ * The label pi paints an MCP tool's call line with: `<server>/<tool>`.
+ *
+ * MCP registers its tools as `mcp__<server>__<tool>` (`extensions/mcp/index.js:9`) but labels
+ * their rows with the two parts joined by `/` (`extensions/mcp/tools.js:244`), and its
+ * renderer is even reachable for a name that is not registered yet
+ * (`extensions/mcp/index.js:279-282`, the regex below verbatim). A row titled
+ * `mcp__docs__search` is the wire name, which pi never shows.
+ *
+ * @return null for every name that is not an MCP one, so a caller can fall back to the wire
+ *   name (which is what pi's own generic fallback prints).
+ */
+internal fun mcpLabel(toolName: String?): String? {
+    val match = MCP_TOOL_NAME.matchEntire(toolName ?: "") ?: return null
+    return "${match.groupValues[1]}/${match.groupValues[2]}"
+}
+
+/** `dist/extensions/mcp/index.js:280`: `/^mcp__(.+?)__(.+)$/`. */
+private val MCP_TOOL_NAME = Regex("""^mcp__(.+?)__(.+)$""")
+
+// ------------------------------------------------------------------- read footer
+
+/**
+ * pi's own continuation sentence from a `read` result, in this app's language.
+ *
+ * pi's `read` tool appends one of four bracket sentences to its own text, all verified in the
+ * shipped engine (`dist/core/tools/read.js`):
+ *
+ *  - `[Showing lines X-Y of N. Use offset=Z to continue.]` — `:148`;
+ *  - `[Showing lines X-Y of N (<size> limit). Use offset=Z to continue.]` — `:151`;
+ *  - `[N more lines in file. Use offset=Z to continue.]` — `:159`;
+ *  - `[Line N is <size>, exceeds <size> limit. Use bash: <command>]` — `:139`, the case where
+ *    one line alone is over the byte limit and pi answers with a `bash` fallback instead of
+ *    file text.
+ *
+ * Its renderer prints them as body text (`dist/core/tools/renderers/read.js:91-114`), so pi
+ * shows them **verbatim, in English**.
+ *
+ * The App pulls the sentence out of the body ([splitReadFooter]) so it is not numbered as
+ * file text, and then printed it verbatim too — which is why a `read` card mixed English
+ * (pi's sentence) with Chinese (the app's own truncation line) on the same screen. The
+ * numbers, the `offset=` spelling and the `bash` remedy stay pi's: only the words around them
+ * are translated, exactly like [truncationNotice] already does for pi's warning line.
+ *
+ * The result text is **not** touched: `复制输出` still copies pi's bytes.
+ *
+ * @return the sentence in this app's words, or the raw string when it is not one of pi's
+ *   four shapes — an unrecognised footer is pi's text and stays as it is.
+ */
+internal fun readFooterText(raw: String): String {
+    // `MatchResult.destructured` is **1-based on the capture groups**: component1 is group 1,
+    // and a component past the group count throws. Each regex below is destructured into
+    // exactly its own group count — no leading component for the whole match.
+    READ_FOOTER_RANGE.matchEntire(raw)?.let { match ->
+        val (start, end, total, offset) = match.destructured
+        return "显示第 $start–$end 行，共 $total 行；用 offset=$offset 继续。"
+    }
+    READ_FOOTER_RANGE_LIMIT.matchEntire(raw)?.let { match ->
+        val (start, end, total, size, offset) = match.destructured
+        return "显示第 $start–$end 行，共 $total 行（上限 $size）；用 offset=$offset 继续。"
+    }
+    READ_FOOTER_MORE.matchEntire(raw)?.let { match ->
+        val (count, offset) = match.destructured
+        return "文件里还有 $count 行；用 offset=$offset 继续。"
+    }
+    READ_FOOTER_FIRST_LINE.matchEntire(raw)?.let { match ->
+        val (line, size, limit, remedy) = match.destructured
+        return "第 $line 行本身就有 $size，超过 $limit 上限。可用 bash：$remedy"
+    }
+    return raw
+}
+
+private val READ_FOOTER_RANGE =
+    Regex("""^Showing lines (\d+)-(\d+) of (\d+)\. Use offset=(\d+) to continue\.$""")
+private val READ_FOOTER_RANGE_LIMIT =
+    Regex("""^Showing lines (\d+)-(\d+) of (\d+) \((.+)\slimit\)\. Use offset=(\d+) to continue\.$""")
+private val READ_FOOTER_MORE = Regex("""^(\d+) more lines in file\. Use offset=(\d+) to continue\.$""")
+private val READ_FOOTER_FIRST_LINE =
+    Regex("""^Line (\d+) is (.+), exceeds (.+) limit\. Use bash: (.+)$""")
+
+// ------------------------------------------------- official expanded call lines
+
+/**
+ * pi's generic call line, **expanded**: one line per argument, `key: value`
+ * (`core/tools/render-utils.js:60-79`).
+ *
+ * ```js
+ * const lines = entries.map(([key, value]) => {
+ *     const text = typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
+ *     return `  ${key}: ${replaceTabs(text).replace(/\r/g, "").split("\n").join("\n    ")}`;
+ * });
+ * return `${header}\n${theme.fg("muted", lines.join("\n"))}`;
+ * ```
+ *
+ * Two things are pi's and easy to get wrong: a **string** value is printed raw (not
+ * JSON-quoted), while a non-string is pretty-printed with two spaces and each continuation
+ * line is indented by four; and the whole line keeps pi's two leading spaces.
+ *
+ * This is the expanded half of the same pair [toolParamSummary] is the collapsed half of.
+ * It exists because the collapsed cell is one ellipsized line: on a phone `key=value key=value…`
+ * is cut after a parameter or two, so the arguments of an MCP or extension tool were
+ * effectively unreadable. Being in the expanded body, it adds nothing to the collapsed card.
+ *
+ * Each line is capped at pi's own per-line limit ([TOOL_LINE_MAX_CHARS], pi's
+ * `GREP_MAX_LINE_LENGTH`) so one 100 KB single-line value cannot turn into a thousand rows.
+ */
+internal fun toolParamLines(args: JsonObject?): List<String> {
+    if (args == null || args.isEmpty()) return emptyList()
+    return args.entries.map { (key, value) ->
+        val text = if (value is JsonPrimitive && value.isString) {
+            value.content
+        } else {
+            prettyJson(value)
+        }
+        val body = replaceTabs(text).replace("\r", "").split("\n").joinToString("\n    ")
+        capLine("  $key: $body")
+    }
+}
+
+/**
+ * `JSON.stringify(value, null, 2)`, written out rather than borrowed.
+ *
+ * kotlinx.serialization's pretty printer indents by **four** spaces unless
+ * `prettyPrintIndent` is set, and that property is `@ExperimentalSerializationApi` — this way
+ * the indent is pi's (`render-utils.js:63`, `JSON.stringify(value, null, 2)`) with no opt-in
+ * and no encoder configuration to keep in step. Primitives go through
+ * `JsonElement.toString()`, which is the same JSON encoder: strings quoted and escaped (and
+ * not ASCII-escaped, exactly as `JSON.stringify` leaves them), numbers and literals bare.
+ */
+private fun prettyJson(element: JsonElement): String = StringBuilder().also { writeJson(it, element, 0) }.toString()
+
+private fun writeJson(out: StringBuilder, element: JsonElement, depth: Int) {
+    when (element) {
+        is JsonObject -> {
+            if (element.isEmpty()) {
+                out.append("{}")
+                return
+            }
+            out.append("{\n")
+            element.entries.forEachIndexed { index, (key, value) ->
+                out.append("  ".repeat(depth + 1)).append(JsonPrimitive(key).toString()).append(": ")
+                writeJson(out, value, depth + 1)
+                if (index < element.size - 1) out.append(',')
+                out.append('\n')
+            }
+            out.append("  ".repeat(depth)).append('}')
+        }
+
+        is JsonArray -> {
+            if (element.isEmpty()) {
+                out.append("[]")
+                return
+            }
+            out.append("[\n")
+            element.forEachIndexed { index, value ->
+                out.append("  ".repeat(depth + 1))
+                writeJson(out, value, depth + 1)
+                if (index < element.size - 1) out.append(',')
+                out.append('\n')
+            }
+            out.append("  ".repeat(depth)).append(']')
+        }
+
+        else -> out.append(element.toString())
+    }
+}
+
+/** pi's tab expansion for a displayed value: `text.replace(/\t/g, "   ")` (`render-utils.js:27-29`). */
+private fun replaceTabs(text: String): String = text.replace("\t", "   ")
+
+// --------------------------------------------------------------------- codemode
+
+/**
+ * One nested tool call a `codemode` script made.
+ *
+ * The engine records them on the **parent's** result as `details.calls`
+ * (`dist/extensions/codemode/execute.js:394`, `:406-425`), and pi's codemode renderer draws
+ * one line per call (`dist/extensions/codemode/renderer.js:26-56`). The App's reducer drops a
+ * nested `tool_execution_*` lifecycle on purpose — its own row would be a phantom
+ * (`rpc/.../Transcript.kt:1575-1589`) — so `details.calls` is the **only** place these calls
+ * survive. Until now nothing read it, which is why a codemode script's tool calls, their
+ * failures and their cost were invisible.
+ */
+internal data class CodemodeCall(
+    val name: String,
+    /** `JSON.stringify(args)`, already cut by the engine (`execute.js:26-35`). */
+    val args: String,
+    val status: CodemodeCallStatus,
+    /** `performance.now()` around the nested call; absent while it is still running. */
+    val durationMs: Double?,
+    /** Only a `models.*` call has one (`execute.js:617`). */
+    val cost: Double?,
+    /** The failure's own text, cut by the engine to `ERROR_PREVIEW_CHARS` (`execute.js:13`). */
+    val error: String?,
+)
+
+/** pi's four statuses (`codemode/renderer.js:26-40`) plus its unknown case. */
+internal enum class CodemodeCallStatus { Running, Ok, Error, Cancelled, Unknown }
+
+/** `details.calls` in the engine's order; a row with no name is dropped, one bad field is not. */
+internal fun codemodeCallsOf(details: JsonElement?): List<CodemodeCall> {
+    val array = (details as? JsonObject)?.get("calls") as? JsonArray ?: return emptyList()
+    return array.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val name = (obj["name"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+        if (name.isEmpty()) return@mapNotNull null
+        CodemodeCall(
+            name = name,
+            args = when (val args = obj["args"]) {
+                null -> ""
+                is JsonPrimitive -> if (args.isString) args.content else args.toString()
+                else -> args.toString()
+            },
+            status = when ((obj["status"] as? JsonPrimitive)?.takeIf { it.isString }?.content) {
+                "running" -> CodemodeCallStatus.Running
+                "ok" -> CodemodeCallStatus.Ok
+                "error" -> CodemodeCallStatus.Error
+                "cancelled" -> CodemodeCallStatus.Cancelled
+                else -> CodemodeCallStatus.Unknown
+            },
+            durationMs = (obj["durationMs"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+            cost = (obj["cost"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+            error = (obj["error"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
+        )
+    }
+}
+
+/** pi's `statusIcon` (`codemode/renderer.js:26-40`), glyph for glyph. */
+internal fun codemodeCallIcon(status: CodemodeCallStatus): String = when (status) {
+    CodemodeCallStatus.Running -> "…"
+    CodemodeCallStatus.Ok -> "✓"
+    CodemodeCallStatus.Error -> "✗"
+    CodemodeCallStatus.Cancelled -> "⊘"
+    // pi's TUI `switch` has no default and prints `undefined`; its HTML exporter paints `?`
+    // (`core/export-html/template.js:940`). A glyph is the honest choice of the two.
+    CodemodeCallStatus.Unknown -> "?"
+}
+
+/**
+ * One nested call's line as pi's `formatCall` builds it (`codemode/renderer.js:41-56`), minus
+ * the status glyph — that is [codemodeCallIcon]'s, because pi colours it by status and the
+ * card paints it in the app's own state colour.
+ *
+ * Collapsed, the arguments are cut to pi's 80 characters (`:16`, `:42-44`); expanded, they
+ * are whole and the failure's text follows on its own line indented by four spaces (`:53-54`).
+ */
+internal fun codemodeCallText(call: CodemodeCall, expanded: Boolean): String {
+    val args = if (!expanded && call.args.length > CODEMODE_COLLAPSED_ARGS_CHARS) {
+        call.args.take(CODEMODE_COLLAPSED_ARGS_CHARS - 3) + "..."
+    } else {
+        call.args
+    }
+    val line = StringBuilder(call.name)
+    if (args.isNotEmpty()) line.append(' ').append(args)
+    call.durationMs?.let { line.append(' ').append(codemodeDuration(it)) }
+    call.cost?.takeIf { it > 0.0 }?.let { line.append(' ').append(codemodeCost(it)) }
+    if (expanded && !call.error.isNullOrEmpty()) {
+        line.append('\n').append("    ").append(call.error.replace("\n", "\n    "))
+    }
+    return line.toString()
+}
+
+/**
+ * pi's `formatDuration` for a nested call (`codemode/renderer.js:20-24`): whole milliseconds
+ * under a second, then one decimal in seconds. This is **not**
+ * [ToolOutputParse.formatDuration], which is the shell row's formatter with its own `m`/`h`
+ * branches; codemode's stops at seconds, as pi's does.
+ */
+internal fun codemodeDuration(ms: Double): String =
+    if (ms < 1000) "${Math.round(ms)}ms" else String.format(Locale.US, "%.1fs", ms / 1000)
+
+/**
+ * pi's `formatCost` (`codemode/renderer.js:45-47`): cents for an amount that has them, two
+ * significant digits for the fractions of a cent a classifier call costs.
+ */
+internal fun codemodeCost(cost: Double): String = when {
+    cost >= 0.01 -> String.format(Locale.US, "$%.2f", cost)
+    cost <= 0.0 -> "$0"
+    else -> {
+        // `toPrecision(2)`: two significant digits, keeping JS's trailing zeros.
+        val decimals = (1 - Math.floor(Math.log10(cost)).toInt()).coerceAtLeast(0)
+        String.format(Locale.US, "$%.${decimals}f", cost)
+    }
+}
+
+/**
+ * pi's `Model calls: $X` total (`codemode/renderer.js:53-59`): the sum of the priced calls,
+ * printed only when **more than one** of them was priced — a single priced call already shows
+ * its own figure on its own line.
+ */
+internal fun codemodeModelCallsTotal(calls: List<CodemodeCall>): String? {
+    val priced = calls.filter { (it.cost ?: 0.0) > 0.0 }
+    if (priced.size <= 1) return null
+    return "Model calls: ${codemodeCost(priced.sumOf { it.cost ?: 0.0 })}"
+}
+
+/**
+ * The script a `codemode` call was given (`codemode/renderer.js:62`), or null when the
+ * argument is absent or not a string — pi's `[invalid arg]` branch (`:66-69`).
+ */
+internal fun codemodeCode(args: JsonObject?): String? =
+    (args?.get("code") as? JsonPrimitive)?.takeIf { it.isString }?.content?.replace("\r", "")?.trimEnd()
+
+/** `codemode/renderer.js:16`: the argument cut applied to a collapsed call. */
+private const val CODEMODE_COLLAPSED_ARGS_CHARS = 80
+
 
