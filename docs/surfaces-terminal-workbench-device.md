@@ -1,5 +1,10 @@
 # 面账补审：终端与 Shell · 工作区与 @ 提及 · 设备能力
 
+> **📌 2026-10-16 更正**：本文第 `38` 行的括注把 `--system-prompt` 归为"命令行参数，导出不了"。
+> 作为对 **pi** 的描述它成立，但**本应用已经不用它了** —— 设置里那两行改成读写
+> `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`，也就是**文件**，而文件是能导出/能编辑的。
+> 见 `docs/pre-spawn-config.md` 文首。
+
 这份文件补上 `docs/surface-inventory.md` 末尾「本轮**没有**重新审的三块」。它不是待办清单，而是**覆盖账**：
 每一面填出真相来源（`docs/pi-sourced-lists.md` 的规则）、判定、验收方式、未验证项。
 

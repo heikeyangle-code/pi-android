@@ -1,5 +1,11 @@
 # Row-by-row disposition of every non-`IMPLEMENTED` capability in `docs/feature-gaps.md`
 
+> **📌 2026-10-16 更正：提示词那两行换了通道。** 它们**不再发射 `--system-prompt` /
+> `--append-system-prompt`**，改成直接读写 `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`
+> （`app/pi/ui/PromptFileSettingsStore.kt`；空白 = 删文件），`EffectiveKind` = `NewSession`。
+> 所以第 `120` 行（#12 的"implemented：`PiLaunchOptions.kt:61` builds both flags"）与 `744` 行
+> 描述的是**当时**的状态。见 `docs/pre-spawn-config.md` 文首。
+
 This document exists because `docs/feature-gaps.md` graded 148 capability rows and only 12 of
 the ~55 actionable ones were ever recorded into `docs/known-gaps.md`. A list that is read
 selectively is how "is anything still missing?" keeps finding real items. So this is the

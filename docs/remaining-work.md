@@ -1,5 +1,11 @@
 # 剩余工作清单（核实版）
 
+> **📌 2026-10-16 更正**：本文第 `64` 行（§I11 环境类能力）把"三件都接上了"记成
+> `app.runtime.systemPrompt` → `--system-prompt`、`--append-system-prompt`。其中**提示词那两件换通道了**：
+> 现在直接读写 `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`
+> （`app/pi/ui/PromptFileSettingsStore.kt`），`EffectiveKind` = `NewSession`（不再需要重启引擎）；
+> 离线与缓存保留那两件仍是环境变量、仍要重启，描述不变。见 `docs/pre-spawn-config.md` 文首。
+
 > 生成：本轮核实（工作树 HEAD 见 `git log -1`；`docs/**` 有并发写者，本文件的结论都在生成时的工作树上读过一遍）。
 > 规格来源：**`/root/pi-src`，`0.85.1`，commit `bbb61e34`** —— 与 App 运行时里打的是同一个版本。
 > **源码与 `docs/**` 冲突时以源码为准。**

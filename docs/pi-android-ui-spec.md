@@ -1,5 +1,11 @@
 # pi Agent 安卓 App —— UI/UX 设计规范 v2
 
+> **📌 2026-10-16 更正**：§6 里那段解释「提示词」这一组为什么存在的文字（第 `706` 行）说这两行"对应 pi 的
+> `--system-prompt` / `--append-system-prompt` 启动参数"。**现在对应的是 pi 的两个文件**
+> （`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`，`app/pi/ui/PromptFileSettingsStore.kt`），两个 flag 不再发；
+> **分组位置与那条理由（用户不会去「运行时」下面找"模型被交代了什么"）不受影响**，
+> 单行/多行编辑器的要求也不变。
+
 > 配套文档：`pi-android-app-design.md`（架构与源码分析）
 > **v2 变更**：修正视觉方向；补齐组件库、设置分层模型、聊天界面实现机制、视觉特效体系、以及「pi 能力 → App 入口」覆盖矩阵。
 > 一句话定调：**它是一款现代原生 Android App；pi 的色彩语义与术语是它的灵魂，终端只是它里面的一个工作区。**

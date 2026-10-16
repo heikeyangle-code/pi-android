@@ -1,5 +1,11 @@
 # pi 能力面 × App 实现对照审查：工具 / 扩展钩子 / 技能 / 上下文压缩 / 附件 / agent 内核
 
+> **📌 2026-10-16 更正**：本文第 `195-196` 行把 `customPrompt` / `appendSystemPrompt` 的来源写成
+> "`--system-prompt` **或** `<agentDir>/SYSTEM.md` 或 `<cwd>/.pi/SYSTEM.md`"（对 **pi** 而言仍然正确），
+> 但第 `207-208` 行的 App 侧对照已经过期：那两行**不再发 flag**，改成直接读写
+> `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`，
+> 空白 = 删文件）。见 `docs/pre-spawn-config.md` 文首。
+
 - **被审 pi**：`/root/pi-src`，HEAD `bbb61e3`，`packages/coding-agent` 版本 **0.85.1**（`packages/coding-agent/package.json:3`）。
 - **被审 App**：`/root/pi-android` 的 `app/src/main/kotlin/app/pi/**`、`rpc/src/main/kotlin/app/pi/rpc/**`、`app/src/main/assets/pi-extensions/**`。
 - **方法**：pi 侧每条结论都带 `file:line`；App 侧只给**符号名**（少数给行号，因为要证明"这一支存在/不存在"）。未编译、未运行 Gradle、未改动任何既有文件；本文件是本次唯一新增文件。

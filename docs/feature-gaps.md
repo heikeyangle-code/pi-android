@@ -1,5 +1,12 @@
 # Feature-level gap review: the Android app against `pi` 0.85.1
 
+> **📌 2026-10-16 更正：提示词那两行换了通道。** 设置 →「自定义系统提示」/「追加系统提示」**不再发射
+> `--system-prompt` / `--append-system-prompt`**，改成直接读写 pi 自己的 `<agentDir>/SYSTEM.md` /
+> `<agentDir>/APPEND_SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`；空白 = **删文件**），
+> `EffectiveKind` 由 `RestartEngine` 改为 `NewSession`。所以本文里凡是说这两行"reproduced / 引擎已接 /
+> 通过 `PiLaunchOptions.systemPrompt` 拼 flag"的地方**只描述当时**：第 `149`、`308`、`584`、`588`、
+> `596`、`750`、`849` 行。新的权威表述见 `docs/pre-spawn-config.md` 文首的状态更新。
+
 > ⚠️ **The grades in §1 are as-of `a7b7738`, and the tree moved past most of them.** A reconciliation
 > pass at `182823e` sampled **30 of the 148 rows**, preferring everything marked `PARTIAL`/`MISSING`,
 > and re-read each against the working tree: **most were already implemented.** §7 carries the sample

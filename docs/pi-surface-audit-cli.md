@@ -139,8 +139,8 @@ pi 的 `parseArgs` 一共认 **44 项**（含 `--`、`@file`、位置消息、un
 | `--provider <name>` `:104` | 指定厂商（`main.ts:477-512`） | `defaultProvider` 行 | 已接 | 同一语义；`set_model` 可运行时改 |
 | `--model <pattern>` `:106` | 模型 pattern / `provider/id` / `id:thinking`（`resolveCliModel`，`main.ts:464-486`） | `defaultModel` 行 + `set_model` | 已接 | `:thinking` 简写由 App 的两行分别承担 |
 | `--api-key <key>` `:108` | 一次性明文覆盖（`setRuntimeApiKey`，`main.ts:806-815`） | 凭证页写 `auth.json`（`PiCredentialService`） | 有意钉死 | 避免密钥进 argv；持久形式更对 |
-| `--system-prompt <text>` `:110` | 替换系统提示（`resource-loader.ts:526`） | `app.runtime.systemPrompt` → `PiLaunchOptions.systemPrompt` | 已接 | 收录在 `APP_EXPOSED_PRE_SPAWN` |
-| `--append-system-prompt` `:112` | 追加（可重复，`resource-loader.ts:532-534`） | `app.runtime.appendSystemPrompt` | 已接 | 同上 |
+| `--system-prompt <text>` `:110` | 替换系统提示（`resource-loader.js:475`：**给了参数就不再去发现文件**，这就是换通道的原因） | ~~`app.runtime.systemPrompt` → `PiLaunchOptions.systemPrompt`~~ → **2026-10-16 起不再发射**：设置行直接读写 `<agentDir>/SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`） | 已接（换了通道） | **已从 `APP_EXPOSED_PRE_SPAWN` 移入 `NOT_EXPOSED_PRE_SPAWN`**：参数会把用户自己写的 `SYSTEM.md` 弄成死的 |
+| `--append-system-prompt` `:112` | 追加（可重复，`resource-loader.js:482-491`） | 同上：直接读写 `<agentDir>/APPEND_SYSTEM.md` | 已接（换了通道） | 同为 `NOT_EXPOSED_PRE_SPAWN`，理由同上 |
 | `--name` / `-n` `:115` | 会话显示名（`normalizeSessionName`，`main.ts:690-697`） | `set_session_name` → `PiSessionViewModel.setSessionName` | 已接 | RPC 有等价命令，启动参数是重复入口 |
 | `--no-session` `:121` | 临时会话（`SessionManager.inMemory`，`main.ts:359-361`） | 无 | 有意钉死 | 会话列表 / 续接 / 导出全建立在会话文件上 |
 | `--session <path\|id>` `:123` | 指定会话文件或 ID 前缀（`resolveSessionPath`，`main.ts:252-278`） | 运行时：`switch_session` + `SessionsScreen`；**启动时**：进程内重启在 pi 的 id 查找不唯一命中（同 id 多份、`findById` 取 `readdirSync` 顺序第一个）或 header 的 cwd 对不上引擎 cwd 时，发 `--session <path>`（`PiSessionViewModel.resumeTarget` → `PiLaunchOptions.resumeSessionPath`；它没有 cwd 过滤，起出来的 runtime cwd 取会话自己的 cwd，与 `switch_session` 同一个状态） | 已接 | 运行时可做，不必启动参数 —— 但**重启**那一条必须走 argv：起来之后再补 `switch_session` 会与新引擎的首帧抢会话 |
@@ -439,7 +439,7 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 >
 > **我们侧（读到的）**：引擎 argv 是拼死的字符串 —— `PiEngineHost` 的 `guestCommand`（`:390-397`）只有 `node <cli>`、`--session-dir`、以及 `launch.commandLineSuffix()`；`PiLaunchOptions`（`rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt`）的字段只有 `offline`/`longCacheRetention`/`systemPrompt`/`appendSystemPrompt`/`noContextFiles`；设置注册表 70 键里没有任何一行是"额外进程参数"；`PiPreSpawnConfig.kt` 的三张表（`APP_EXPOSED_PRE_SPAWN` `:87-129`、`COVERED_BY_PI_SETTING` `:137-238`、`NOT_EXPOSED_PRE_SPAWN` `:247-391`）**都没有收 unknown flags 这一项**。
 >
-> **为什么算欠账而不是"pi 没有"**：值必须在 spawn 那一刻决定，而 spawn 是**我们**做的；pi 对此的设计就是"嵌入方把 argv 传进来"。这跟已经接了的 `--system-prompt` / `--offline` 是同一类（同一张表、同一条通道），只是这一项漏了。
+> **为什么算欠账而不是"pi 没有"**：值必须在 spawn 那一刻决定，而 spawn 是**我们**做的；pi 对此的设计就是"嵌入方把 argv 传进来"。这跟已经接了的 `--system-prompt` / `--offline` 是同一类（同一张表、同一条通道），只是这一项漏了。**（§16 附注：`--system-prompt` 此后换了通道、已移到 `NOT_EXPOSED_PRE_SPAWN`，"同一张表"对它的那半不再成立；`--offline` 不变。）**
 >
 > **后果**：装了 `plan-mode` 的用户的 `--plan` 永远是未设值 → 扩展走 `getFlag("plan") === undefined` 的分支，功能静默失效（不会报错）。装了 sandbox 的用户同理。逃生口只有终端页（自己敲 `pi --plan`）。
 

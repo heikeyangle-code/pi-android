@@ -1,5 +1,10 @@
 # pi Agent 安卓独立 App —— 完整设计与分析文档
 
+> **📌 2026-10-16 更正**：本文第 `455` 行把 `SYSTEM.md` / `--system-prompt` / `--append-system-prompt`
+> 并列为"系统提示词的通道"。**今天只走文件**：那两行设置直接读写 `<agentDir>/SYSTEM.md` /
+> `<agentDir>/APPEND_SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`），两个 flag 已经不发 ——
+> 它们会把 pi 的文件发现整段短路（`core/resource-loader.js:475`）。见 `docs/pre-spawn-config.md` 文首。
+
 > **分析对象**：`earendil-works/pi` v0.85.1（clone 于 `/root/pi-src`，17.5 万行 TS，11 个包，250+ 源文件）
 > **实测机型**：Xiaomi M2011K2C / Android 14 (SDK 34) / aarch64 / 7 核 / 7.1 GB RAM / 224 GB 存储（约 14 GB 可用）
 > **文档范围**：pi 源码全量分析 + Android 平台约束调研 + 完整架构/UI/渲染设计 + 竞品调研 + 实施路线

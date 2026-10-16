@@ -1,5 +1,12 @@
 # 设置面 · 实现侧 bug 审查（对照 pi 0.85.1 / HEAD bbb61e3）
 
+> **📌 2026-10-16 更正**：本文第 `57`、`96`、`97` 行说 `app.runtime.systemPrompt` / `appendSystemPrompt`
+> 由 `PiLaunchOptions` 发出 `--system-prompt` / `--append-system-prompt`。**那两个 flag 已经不发了** ——
+> 两行改成直接读写 `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`
+> （`app/pi/ui/PromptFileSettingsStore.kt`），`EffectiveKind` 由 `RestartEngine` 改为 `NewSession`。
+> 同一行里 `PI_OFFLINE` / `PI_CACHE_RETENTION` / `--no-context-files` 那三段的描述仍然成立。
+> 见 `docs/pre-spawn-config.md` 文首。
+
 **范围**：`app/src/main/kotlin/app/pi/ui/settings/**`、`app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt`，
 以及接线处 `ui/PiRoot.kt`、`ui/PiSessionViewModel.kt`、`MainActivity.kt`。pi 源侧（缺失/无用/信息架构）不在本文。
 

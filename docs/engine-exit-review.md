@@ -1,5 +1,13 @@
 # 引擎以 code 1 退出：成因、App 的断裂点、加固
 
+> **📌 2026-10-16 更正：本文第 `124` 行举的成因少了一个 flag。** 它写"App 仍按 `PiLaunchOptions` 拼
+> `--system-prompt` / `--append-system-prompt` / `--no-context-files`" —— 那两个提示词 flag **已经不发了**
+> （改成读写 `<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`，`app/pi/ui/PromptFileSettingsStore.kt`），
+> 所以今天 App 固定的启动参数只剩 `--no-context-files` 与四个 `--no-*` 抑制。另外第 `45` 行那条
+> "`--system-prompt` 写在最后一个参数（没有值）"的实测仍然成立，但它测的是 pi 自己 CLI 的行为，
+> 不再是 App 会走到的路径。**同一类退出的第一嫌疑人现在是设置里的「扩展启动参数」那一行** —— 见
+> `app/pi/engine/EngineExitCause.kt` 的分支与 `docs/pi-surface-audit-cli.md` §16.2。
+
 来源：用户一手现象（"一聊天就卡死；退出重进点之前的对话也卡死；有时候提示软件停止运行；**有时候直接提示 `rpc: engine exited with code 1`**"），设备 Xiaomi M2011K2C / Android 14 / memory_free ≈ 1.21 GB / storage_free ≈ 2.75 GB / battery 26%。
 
 本文把两件事分开写，因为它们的证据强度完全不同：

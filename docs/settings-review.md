@@ -1,5 +1,11 @@
 # 设置面审查与重构（对照 pi 源码）
 
+> **📌 2026-10-16 更正**：本文第 `191` 行说 `app.runtime.systemPrompt` 经
+> `PiSessionViewModel.kt:702` 发出 `--system-prompt`（`RestartEngine`）。**那已经不对了** ——
+> 那一行现在直接读写 `<agentDir>/SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`），
+> `EffectiveKind` = `NewSession`；`--append-system-prompt` 同理。本文其余关于
+> `EffectiveKind` 的判据与 §7.2/§7.5 不受影响。见 `docs/pre-spawn-config.md` 文首。
+
 **审查对象**：`app/src/main/kotlin/app/pi/ui/settings/**`（重构前 5578 行、注册表 107 键；本轮删到 66 键，随后另一位代理在同一文件补入 1 行，现 67 键——见 §0.4）。
 **权威来源**：pi 的 `Settings` 接口、`docs/settings.md`、pi 自己的 `/settings` 选择器、以及 `cli/args.ts` 的同名参数。
 每个结论都带 `file:line`——**行号是本次审查时的快照**：同一轮还有别的改动在动这些文件，

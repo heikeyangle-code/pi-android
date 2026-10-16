@@ -1,5 +1,12 @@
 # 已登记的缺口与延期项
 
+> **📌 2026-10-16 更正：提示词那两行换了通道。** 它们**不再发射 `--system-prompt` /
+> `--append-system-prompt`**，改成直接读写 `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`
+> （`app/pi/ui/PromptFileSettingsStore.kt`；空白 = 删文件），`EffectiveKind` 由 `RestartEngine` 改为
+> `NewSession`。所以本文第 `445`、`856`、`859`、`897` 行（§I11 那条"引擎侧已接 / `PiLaunchOptions`
+> 映射出两个 flag"）与第 `863` 行未验证项 ③（"`--system-prompt` 的引号处理"）描述的是**当时**的状态 ——
+> 引号那一整类风险随参数一起消失了。见 `docs/pre-spawn-config.md` 文首。
+
 这份文档存在的理由：**延期项不能只活在对话里。**在此之前，"以后再做"的判断散落在聊天记录和编码会话的任务列表里，一旦会话结束就丢了。凡是有明确原因被推迟、或者已知但尚未实现的，全部记在这里，并写清楚：为什么延期、卡在哪、怎么收尾。
 
 格式约定：每条都有 **原因**（为什么不现在做）和 **收尾条件**（什么情况下可以做）。

@@ -1,5 +1,12 @@
 # 设置面 · pi 源侧盘点（缺口 / 无用 / 不一致 / 信息架构 / 文件面）
 
+> **📌 2026-10-16 更正：本文 C15 那条已经被处置了，但用的不是它建议的做法。** C15（第 `470` 行）
+> 指出"两行描述完全没提文件、`--system-prompt` 会静默盖掉用户写的 `SYSTEM.md`"，建议"在描述里加一句
+> 并提供查看/编辑入口"。**实际做法更彻底**：那两行**不再发 flag**，而是直接读写
+> `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`），
+> 同时新增一行只读的「系统提示词来源」；"文件被静默盖掉"这个状态**从根上不存在了**。
+> 见 `docs/pre-spawn-config.md` 文首。
+
 **本文是只读诊断。没有修改任何已有文件，只新建本文。**（同一轮另一个代理在改
 `ui/settings/**`、`settings/PiSettingsFileStore.kt` 等未提交工作；实现侧 bug 由
 `docs/settings-audit-impl.md` 负责，本文**不重复**它的结论。）

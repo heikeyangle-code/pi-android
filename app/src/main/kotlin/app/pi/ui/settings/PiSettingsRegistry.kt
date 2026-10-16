@@ -520,10 +520,20 @@ object PiSettingsCatalog {
         // （`core/agent-session-services.js:63-69` 新建 loader + `reload()`，
         // `core/agent-session-runtime.js:116` 换会话时重建），所以两行的 `effective` 是
         // `NewSession`，行上也没有任何「需重启引擎」的字样。
+        //
+        // **「替换」比名字听起来大得多，两行的文案必须说出这件事。** `core/system-prompt.js`
+        // 的 `buildSystemPromptSections` 是 `if (customPrompt) { preamble = 你的 }
+        // else { preamble = 自带; tools = …; rules = …; docs = … }` —— 也就是说
+        // **填了 `SYSTEM.md` 会让 pi 不再生成 `tools` / `tools 的使用规则` / `pi 文档指引`
+        // 这三个 section**（`core/system-prompt.js:78-96`）。「整份替换」四个字看不出这个分量，
+        // 所以那一行点明了它，并把「只是想补几条规矩」指到下面那行（追加不分叉、不影响任何
+        // section，`if (appendSystemPrompt) addendum = 你的` 在分支之外）。
         PiSetting(
             key = "app.runtime.systemPrompt",
             title = "自定义系统提示",
-            description = "整份替换 pi 自带的系统提示词。内容写进全局 ~/.pi/agent/SYSTEM.md；留空就删掉这个文件。",
+            description = "整份替换 pi 自带的系统提示词 —— 连它附带的工具清单、工具使用规则、" +
+                "pi 文档指引也一起换掉。写进全局 ~/.pi/agent/SYSTEM.md；留空就删掉这个文件。" +
+                "只想补几条自己的规矩，用下面那行。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
@@ -538,8 +548,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.appendSystemPrompt",
             title = "追加系统提示",
-            description = "在 pi 自己的系统提示词之后追加一段文字，不替换它。内容写进全局 " +
-                "~/.pi/agent/APPEND_SYSTEM.md；留空就删掉这个文件。",
+            description = "在 pi 组装好的提示词后面追加一段，不替换任何东西，也不影响工具清单与规则。" +
+                "写进全局 ~/.pi/agent/APPEND_SYSTEM.md；留空就删掉这个文件。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",

@@ -1,5 +1,11 @@
 # 07 · 施工期裁决记录
 
+> **📌 2026-10-16 一条后来者注**：本文第 `338` 行（把两行搬进「提示词」组）与第 `1169` 行（`--system-prompt` /
+> `--append-system-prompt` 计入"1:1 已达成"）记的是**用命令行参数**实现的那一版。那两行现在**不发射参数**，
+> 改成直接读写 `<agentDir>/SYSTEM.md` / `<agentDir>/APPEND_SYSTEM.md`（`app/pi/ui/PromptFileSettingsStore.kt`），
+> `EffectiveKind` = `NewSession`；搬进「提示词」组这个**裁决本身仍然有效**（`--model` 与 `--system-prompt` 在 pi
+> 的 CLI 里相邻这条理由也确实来自 pi 的代码）。见 `docs/pre-spawn-config.md` 文首。
+
 > 施工过程中父代理做的裁决，按时间顺序。作用：多个代理并行时，谁都不用猜「这个冲突当时怎么定的」；
 > 后来的人也能看到为什么某个数字是这样。每次都写「裁决 + 理由 + 影响谁」。
 
