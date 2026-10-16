@@ -304,11 +304,11 @@ class PromptFileSettingsStoreDecorator(
  *
  * pi prints these as a list of paths in a multi-line `Context` section
  * (`modes/interactive/interactive-mode.js:1382-1392`) and omits the section when the list is
- * empty. Neither is reachable here: a settings row draws its value with `maxLines = 1`
- * (`PiSettingsRows.kt:158`), and the registry has no conditional-row mechanism, so
- * "list empty ⇒ no row" would mean inventing one. The zero state therefore borrows the app's
- * own word for it (`还没有…`, as in `还没有发现任何资源`) and the paths live in the row's
- * description.
+ * empty. The **list** is reachable here — as the row's evidence block ([detail]), which is the
+ * multi-line channel this screen already has for read-only facts. What is *not* reachable is
+ * "list empty ⇒ no row": the registry has no conditional-row mechanism, so the zero state
+ * borrows the app's own word for it (`还没有…`, as in `还没有发现任何资源`) and the row stays
+ * while only its evidence block disappears.
  */
 object PromptFileFacts {
 
@@ -322,8 +322,15 @@ object PromptFileFacts {
      * One candidate file. [display] is the spelling the rest of this screen already uses
      * (`~/.pi/agent/<name>` in the rows' descriptions), so the evidence block and the prose
      * name the same file the same way. [source] decides both the order and the word.
+     *
+     * `internal` — and so is everything below it — because [DiscoverySource] is `internal`
+     * (it belongs to `PiResourceFacts`) and a **public** declaration may not expose an internal
+     * type. The module compile rejects that outright (`'public' function exposes its 'internal'
+     * parameter type 'DiscoverySource'`), and the bare-JVM harness closures do **not** reproduce
+     * the check — they compile the files as one module, so this class of error only shows up in
+     * CI's APK jobs. That is what this annotation is defending against, not style.
      */
-    data class Candidate(val display: String, val source: DiscoverySource)
+    internal data class Candidate(val display: String, val source: DiscoverySource)
 
     /**
      * What a single pass over the four candidates found.
@@ -332,13 +339,13 @@ object PromptFileFacts {
      * come from the same reading: the row's value and the evidence under it must never describe
      * different states.
      */
-    data class Reading(val present: List<Candidate>, val notRegular: Int)
+    internal data class Reading(val present: List<Candidate>, val notRegular: Int)
 
     /**
      * Stat the four candidates — **contents are never read** (nothing here reports a size, and
      * pi's own list does not either).
      */
-    fun read(agentDir: File, workspace: File): Reading {
+    internal fun read(agentDir: File, workspace: File): Reading {
         val projectRoot = PiProjectConfig.root(workspace)
         // Workspace before agent dir, per name: that is pi's precedence within one name
         // (`docs/configuration.md:39`), and neither the count nor the list may read as if the
@@ -359,7 +366,7 @@ object PromptFileFacts {
     }
 
     /** The row's value. Never a verdict: it does not claim to know whether a workspace copy is in effect. */
-    fun value(reading: Reading): String {
+    internal fun value(reading: Reading): String {
         val oddity = if (reading.notRegular == 0) "" else "（${reading.notRegular} 项不是普通文件）"
         if (reading.present.isEmpty()) return "还没有任何提示词文件$oddity"
         val bySource = reading.present.groupingBy { it.source }.eachCount().entries
@@ -375,7 +382,7 @@ object PromptFileFacts {
      * (`SettingsGroupScreen` skips a blank detail): pi omits its section in that case, and this
      * is the closest this screen can get without a conditional-row mechanism.
      */
-    fun detail(reading: Reading): String? {
+    internal fun detail(reading: Reading): String? {
         val lines = buildList {
             addAll(reading.present.map { it.display })
             if (reading.notRegular > 0) {

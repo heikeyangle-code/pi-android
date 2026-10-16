@@ -528,6 +528,10 @@ fun main() {
         )
         projectAppend.delete()
         systemFile.delete()
+        // A directory where pi looks for `SYSTEM.md`: `existsSync` is true and pi's read fails, so
+        // this is neither "present" nor "absent". `project` goes too, so this case is the odd
+        // candidate **alone** — the mixed case is the check right after it.
+        project.delete()
 
         check(
             "a `SYSTEM.md` that is not a regular file is reported, not folded into absent",
@@ -539,6 +543,22 @@ fun main() {
                 directory.delete()
                 value == "还没有任何提示词文件（1 项不是普通文件）" &&
                     detail == "（1 项不是普通文件，pi 会读失败）"
+            },
+        )
+        // One countable file **and** one odd candidate: both have to be said. Counting only the
+        // regular ones would hide a name pi will try to read and fail on.
+        check(
+            "a countable file and an odd candidate are reported together",
+            run {
+                project.writeText("# project")
+                val directory = File(agentDir, "SYSTEM.md").also { it.mkdirs() }
+                val reading = read()
+                val value = PromptFileFacts.value(reading)
+                val detail = PromptFileFacts.detail(reading)
+                directory.delete()
+                project.delete()
+                value == "1 份 · ${DiscoverySource.ProjectPi.label} 1（1 项不是普通文件）" &&
+                    detail == "<工作区>/.pi/SYSTEM.md\n（1 项不是普通文件，pi 会读失败）"
             },
         )
     }
