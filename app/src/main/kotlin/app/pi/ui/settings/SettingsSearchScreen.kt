@@ -306,7 +306,7 @@ private fun SearchResultRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                PiKeyLabel(hit.setting.key)
+                PiKeyLabel(hit.setting.keyLabel ?: hit.setting.key)
             }
             Text(
                 "${hit.breadcrumb} · ${hit.setting.description}",

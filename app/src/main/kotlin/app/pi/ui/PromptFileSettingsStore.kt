@@ -11,7 +11,7 @@ import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt` — the **two prompt files**
+ * `app.prompts.system` / `app.prompts.append` — the **two prompt files**
  * pi reads, edited from the settings screen.
  *
  * ## Why these two rows are files and not a settings key
@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * ## Where the value is written
  *
- * `app.runtime.systemPrompt` → `<agentDir>/SYSTEM.md`, `app.runtime.appendSystemPrompt` →
+ * `app.prompts.system` → `<agentDir>/SYSTEM.md`, `app.prompts.append` →
  * `<agentDir>/APPEND_SYSTEM.md` ([PromptFileSlot]). The project-scoped copies under the
  * workspace stay reachable through the 「Pi 文件」 screen and through the workspace tree —
  * the settings rows own the **global** file only, which is what the rows say.
@@ -84,10 +84,10 @@ import java.util.concurrent.atomic.AtomicLong
 /** One of the two prompt files this store owns. */
 enum class PromptFileSlot(val settingKey: String, val fileName: String) {
     /** 整份替换 pi 自带的系统提示 — pi's CLI help: "System prompt (default: coding assistant prompt)". */
-    SystemPrompt("app.runtime.systemPrompt", "SYSTEM.md"),
+    SystemPrompt("app.prompts.system", "SYSTEM.md"),
 
     /** 追加在系统提示之后 — pi's CLI help: "Append text or file contents to the system prompt". */
-    AppendSystemPrompt("app.runtime.appendSystemPrompt", "APPEND_SYSTEM.md"),
+    AppendSystemPrompt("app.prompts.append", "APPEND_SYSTEM.md"),
     ;
 
     companion object {

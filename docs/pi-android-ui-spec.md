@@ -708,9 +708,10 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 - 凭证：API Key / OAuth（L2 表单 + Custom Tabs 登录 + 登出）
 
 **提示词（本应用新增的分组；§6.4 原 14 组里没有它）**
-- 自定义系统提示（TextRow，多行）· 追加系统提示（TextRow，多行），两行都是 `需重启引擎`
-- 这两行对应 pi 的 `--system-prompt` / `--append-system-prompt` 启动参数（`cli/args.ts:110` / `:112`），pi 的 `Settings` 里没有对应的键，所以它们没有能归属的 pi 设置分组 —— 原先挂在「运行时与诊断 → 进程」下。用户不会到「运行时」下面找「模型被交代了什么」；pi 自己的 CLI 里 `--model` 与 `--system-prompt` 是相邻的（`cli/args.ts:108-112`），所以这一组排在「模型与推理」**之后**。整份系统提示词是几千字的 Markdown，编辑器必须是**多行 + 框内可滚动**（`PiSetting.multiline = true`，见 §6.2）。
-- 只搬显示位置：键仍是 `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`（`app.` 前缀，App 自己组进启动参数），已经写在 `settings.json` 里的值照旧读得出来。
+- 自定义系统提示（TextRow，多行）· 追加系统提示（TextRow，多行），两行都是 `新会话`（文件在每次会话重建资源加载器时读，`core/agent-session-services.js:63-69`）
+- 两条**都不是 pi 的设置键**：pi 只把它们做成文件 —— `<agentDir>/SYSTEM.md`（整份替换）与 `<agentDir>/APPEND_SYSTEM.md`（追加）。设置行直接读写这两个文件（`app/pi/ui/PromptFileSettingsStore.kt`），**留空 = 删掉文件**。原先它们拼成 `--system-prompt` / `--append-system-prompt` 发给引擎，那会让 pi 的 `resourceLoader` 跳过文件发现（`core/resource-loader.js:475`），用户自己写的 `SYSTEM.md` 在设置页非空时永远是死的 —— 2026-10-16 起不再发射（`docs/pre-spawn-config.md`）。
+- 行身份仍是 `app.` 前缀的键（`app.prompts.system` / `app.prompts.append`），但**框上沿显示的是真正被写的文件路径**（`PiSetting.keyLabel` → `~/.pi/agent/SYSTEM.md`）：这一行没有 pi 的键可写，写一个像键的字符串等于指认一个不存在的东西（2026-10-17 之前那里写的是 `app.runtime.systemPrompt`，用户报的就是「上面写着 app runtime，是不是过时了」）。
+- 这一组的位置理由不变：用户不会到「运行时」下面找「模型被交代了什么」；pi 自己的 CLI 里 `--model` 与 `--system-prompt` 是相邻的（`cli/args.ts:108-112`），所以这一组排在「模型与推理」**之后**。整份系统提示词是几千字的 Markdown，编辑器必须是**多行 + 框内可滚动**（`PiSetting.multiline = true`，见 §6.2）。
 
 **L0-2 消息与队列**
 - 引导模式（ValueRow：逐条/全部）· 后续模式（ValueRow）· HTTP 空闲超时（Number，0=禁用）· WebSocket 连接超时（Number）· HTTP 代理（Text，全局）

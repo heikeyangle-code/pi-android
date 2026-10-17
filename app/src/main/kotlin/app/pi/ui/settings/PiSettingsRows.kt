@@ -330,7 +330,12 @@ fun PiInfoNote(
     }
 }
 
-/** Monospace rendering of the raw dotted key, used by search results and L1. */
+/**
+ * Monospace rendering of a row's identity: its raw dotted key, used by search results and L1.
+ *
+ * The caller passes `PiSetting.keyLabel ?: PiSetting.key` — a row that is a pi **file** rather
+ * than a pi key (the two system-prompt rows) shows the file it writes instead.
+ */
 @Composable
 fun PiKeyLabel(key: String, modifier: Modifier = Modifier) {
     Text(

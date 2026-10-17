@@ -340,7 +340,7 @@ fun main() {
 
     // ------------------------------------------ the two prompt rows are pi's files
     //
-    // `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt` are
+    // `app.prompts.system` / `app.prompts.append` are
     // `<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md` (`ui/PromptFileSettingsStore.kt`). What the
     // row, pi and the 「Pi 文件」 screen have to agree on:
     //
@@ -369,8 +369,8 @@ fun main() {
         val decorator = PromptFileSettingsStoreDecorator(store(dir), sidecar)
         val systemFile = File(agentDir, "SYSTEM.md")
         val appendFile = File(agentDir, "APPEND_SYSTEM.md")
-        val systemKey = "app.runtime.systemPrompt"
-        val appendKey = "app.runtime.appendSystemPrompt"
+        val systemKey = "app.prompts.system"
+        val appendKey = "app.prompts.append"
 
         check(
             "the two keys map onto pi's two file names",

@@ -24,7 +24,8 @@ package app.pi.rpc
 //     extension pass-through — see the `preSpawnGroups` comment below).
 //
 // **What this file used to check that it now checks the opposite of.** The two prompt
-// rows (`app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`) were pre-spawn
+// rows (`app.prompts.system` / `app.prompts.append`, once `app.runtime.systemPrompt` /
+// `app.runtime.appendSystemPrompt`) were pre-spawn
 // knobs emitting `--system-prompt` / `--append-system-prompt`, and this harness pinned
 // that emission. Those rows are pi's own **files** now
 // (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`, `app.pi.ui.PromptFileSettingsStore`), and
@@ -131,8 +132,8 @@ fun main() {
     // re-added `systemPrompt` field would otherwise be invisible here.
     check(
         "the two prompt rows left the pre-spawn table",
-        piPreSpawnKnob("app.runtime.systemPrompt") == null &&
-            piPreSpawnKnob("app.runtime.appendSystemPrompt") == null,
+        piPreSpawnKnob("app.prompts.system") == null &&
+            piPreSpawnKnob("app.prompts.append") == null,
         "the rows are pi's files now (app.pi.ui.PromptFileSettingsStore); a pre-spawn knob would " +
             "re-emit --system-prompt/--append-system-prompt and kill the file discovery again " +
             "(core/resource-loader.js:475).",
@@ -589,7 +590,7 @@ fun main() {
         promptFileStore.contains("\"SYSTEM.md\"") && promptFileStore.contains("\"APPEND_SYSTEM.md\""),
         "expected $promptFileStoreFile to hold pi's two prompt file names.",
     )
-    for (key in listOf("app.runtime.systemPrompt", "app.runtime.appendSystemPrompt")) {
+    for (key in listOf("app.prompts.system", "app.prompts.append")) {
         val block = blockFor(registry, key)
         check("the prompt row is registered: $key", block != null)
         if (block == null) continue
@@ -614,8 +615,8 @@ fun main() {
     )
     check(
         "the launch mapping no longer reads the two prompt keys",
-        !viewModel.contains("readString(\"app.runtime.systemPrompt\")") &&
-            !viewModel.contains("readString(\"app.runtime.appendSystemPrompt\")"),
+        !viewModel.contains("readString(\"app.prompts.system\")") &&
+            !viewModel.contains("readString(\"app.prompts.append\")"),
         "PiSessionViewModel.launchOptions must not turn these rows into `--system-prompt` / " +
             "`--append-system-prompt`: a flag suppresses pi's file discovery.",
     )

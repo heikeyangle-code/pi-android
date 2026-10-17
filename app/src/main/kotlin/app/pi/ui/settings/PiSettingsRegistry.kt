@@ -113,8 +113,8 @@ data class PiSetting(
      * 文本行的编辑器用**多行**框（`PiTextEditorSheet`），单行框只给「一格值」。
      *
      * 判断标准是「这个值是不是一份文档」，凡是文档都写 `multiline = true`：这一行曾经按
-     * 「还能不能再进一层编辑器」去猜行数，于是 `app.runtime.systemPrompt`（几千字的整份系统
-     * 提示词）落进单行框，粘进去的文本只画得出第一行（换行之后的行落在 `maxLines = 1` 的
+     * 「还能不能再进一层编辑器」去猜行数，于是这两行里的「自定义系统提示」（几千字的整份
+     * 系统提示词）落进单行框，粘进去的文本只画得出第一行（换行之后的行落在 `maxLines = 1` 的
      * 布局之外），用户看到的就是「几万字只进去几十字」。
      *
      * `depth` 与 `globAware` 曾经是这里的两个字段（"还能再进一层编辑器" / "编辑器懂 glob"），
@@ -123,6 +123,20 @@ data class PiSetting(
      * `PiSetting` 的每个属性都必须有 `setting.<属性>` 的读者。
      */
     val multiline: Boolean = false,
+    /**
+     * 框上方那行小字要显示的东西；null 就是 [key] 本身。
+     *
+     * 默认显示点号键，因为一行设置要回答的是「我在改哪个键」（`PiSettingsEditors` 的
+     * `PiEditorField` 把这句话写在框上沿）。但**不是每一行都是键**：系统提示词那两行是
+     * pi 的**文件**（`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`），pi 的 settings 里
+     * 根本没有这个键，于是写一个像键的字符串上去只是在指认一个不存在的东西（用户看到的
+     * 是「上面写着 app runtime，是不是过时了」）。这两行把它填成真正被写的文件路径，
+     * 键名只留作行身份（`PromptFileSlot.settingKey`）。
+     *
+     * 读者：`PiSettingsEditors`（编辑器 sheet 的框上沿）与 `SettingsSearchScreen`（搜索
+     * 结果里那行等宽键名）。
+     */
+    val keyLabel: String? = null,
     /**
      * 空列表那一行的读数（"无覆盖"、"默认 npm"…）。**这个字段有读者**：`PiSetting.display`
      * 以接收者属性（裸名）读它，6 行用了非默认值。`settings-audit` 的字段检查为它保留了一条
@@ -529,11 +543,16 @@ object PiSettingsCatalog {
         // 所以那一行点明了它，并把「只是想补几条规矩」指到下面那行（追加不分叉、不影响任何
         // section，`if (appendSystemPrompt) addendum = 你的` 在分支之外）。
         PiSetting(
-            key = "app.runtime.systemPrompt",
+            // `app.prompts.*` 是这几行的身份（同组下面那行只读读数也在这个命名空间里）。
+            // 值不在 App 的设置里，由 `PromptFileSlot` 映射到 pi 的文件。
+            key = "app.prompts.system",
             title = "自定义系统提示",
             description = "整份替换 pi 自带的系统提示词 —— 连它附带的工具清单、工具使用规则、" +
                 "pi 文档指引也一起换掉。写进全局 ~/.pi/agent/SYSTEM.md；留空就删掉这个文件。" +
                 "只想补几条自己的规矩，用下面那行。",
+            // 框上沿写的是**真正被写的文件**，不是点号键：这一行不是 pi 的设置项，
+            // 写个像键的名字上去等于指认一个不存在的东西。
+            keyLabel = "~/.pi/agent/SYSTEM.md",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
@@ -546,10 +565,11 @@ object PiSettingsCatalog {
             aliases = listOf("system", "prompt"),
         ),
         PiSetting(
-            key = "app.runtime.appendSystemPrompt",
+            key = "app.prompts.append",
             title = "追加系统提示",
             description = "在 pi 组装好的提示词后面追加一段，不替换任何东西，也不影响工具清单与规则。" +
                 "写进全局 ~/.pi/agent/APPEND_SYSTEM.md；留空就删掉这个文件。",
+            keyLabel = "~/.pi/agent/APPEND_SYSTEM.md",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
@@ -1805,8 +1825,8 @@ object PiSettingsCatalog {
             // 摘要只报**长度**，不报开头：这两项的值是几千字的提示词，截出开头几十
             // 个字既要多一行省略号，又正是用户报的那个 bug 的表象（「只进去几十
             // 字」）。长度是这里唯一说得清、也不会被误读的读数。
-            val replaced = byKey["app.runtime.systemPrompt"]?.textIn(store).orEmpty()
-            val appended = byKey["app.runtime.appendSystemPrompt"]?.textIn(store).orEmpty()
+            val replaced = byKey["app.prompts.system"]?.textIn(store).orEmpty()
+            val appended = byKey["app.prompts.append"]?.textIn(store).orEmpty()
             // 空白等于没设，而这里读到的本来就是**文件**（`PromptFileStore`）：留空会删掉
             // 文件，文件不存在读回 null，于是一个空白值一个字符都不剩。
             val parts = buildList {

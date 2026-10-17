@@ -543,7 +543,9 @@ fun PiTextEditorSheet(
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = setting.key,
+                // 点号键是默认标签，但文件型的行（系统提示词那两行）写的是**真正被写的
+                // 文件**：它没有 pi 的键，标一个像键的字符串只是在指认不存在的东西。
+                label = setting.keyLabel ?: setting.key,
                 singleLine = !multiline,
                 maxLines = if (multiline) PiTextEditorMaxLines else 1,
                 readOnly = setting.readOnly,
@@ -1125,7 +1127,8 @@ internal fun PiSettingsSheet(
  *
  * @param label 框上方的一行 12 灰说明。M3 的浮动 label 在 v2 的框体里没有槽位，而原文
  *   显示的是**字段名/点号键**（`setting.key`、`浅色主题名`）——丢掉它不是排版问题，
- *   是把「我在改哪个键」从这一屏抹掉，所以它留在框上沿，用 v2 自己的 12 灰。
+ *   是把「我在改哪个键」从这一屏抹掉，所以它留在框上沿，用 v2 自己的 12 灰；文件型的行
+ *   （系统提示词那两行）用 `setting.keyLabel` 换成真正被写的文件路径。
  * @param trailing 框内右端的读数（数字编辑器的单位）：v2 `mono t14 c-muted`。
  * @param idleBorder 未聚焦时的边色；v2 的列表框用它自己的 `borderMuted`。
  * @param container 框底色；v2 列表框是 `surf-highest`，其余是 `surf-low`。

@@ -1061,8 +1061,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val extensionArgsStore: ExtensionArgsStore by lazy { ExtensionArgsStore(getApplication()) }
 
     /**
-     * The two prompt files behind `app.runtime.systemPrompt` /
-     * `app.runtime.appendSystemPrompt` (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`).
+     * The two prompt files behind `app.prompts.system` / `app.prompts.append`
+     * (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`).
      *
      * One instance for the whole ViewModel, not one per decorator construction: the store
      * caches each file's text against its `(size, mtime)`, and a fresh instance per
