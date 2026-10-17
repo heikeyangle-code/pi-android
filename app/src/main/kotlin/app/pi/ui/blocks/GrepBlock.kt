@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -51,8 +52,8 @@ internal fun GrepBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
-    var fullOutput by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var fullOutput by rememberSaveable { mutableStateOf(false) }
     val body = remember(item.output) { ToolOutputParse.grepBody(item.output) }
     if (body == null) {
         // 解析不出结果就回退通用卡：这正是 pi 没有专属渲染器的那种形状（`06 §3`）。

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -390,6 +392,76 @@ internal fun ExpandLabel(
 private val EXPAND_CHEVRON_SIZE = 13.dp
 
 /**
+ * Where the row being composed sits in the transcript's list, handed down to the blocks
+ * inside it.
+ *
+ * **What goes wrong without it.** A `LazyColumn` is anchored by `firstVisibleItemIndex`
+ * plus `firstVisibleItemScrollOffset` — pixels *into* the first visible row — and by
+ * nothing else. When that row shrinks on its own (the reader taps a tool card or a
+ * thinking block to collapse it), the offset is not re-interpreted against the new
+ * height: the measure pass consumes it against the rows that follow and advances the
+ * first visible item past the card
+ * (`LazyListMeasure.kt:232-247`: `currentMainAxisOffset <= minOffset` ⇒
+ * `currentFirstItemIndex = index + 1`), and when the content no longer fills the
+ * viewport it composes *backwards* instead (`:250-272`). So the reader lands wherever
+ * their old pixel offset happens to fall in the **new** geometry: the card they had
+ * scrolled into disappears above the fold and its own collapse is not what they see.
+ * That is the reported 「收回之后停在最后滑动到的位置，不是工具卡原来的位置」.
+ *
+ * **Why asking for the row again is the fix.** `requestScrollToItem(index, 0)` asks
+ * for the row whose height is about to change to keep its **start** at the viewport's
+ * start: the row's top stays put (at most a jump upward of the pixels already scrolled
+ * past it), the collapse happens under it, and the rows after it land where they now
+ * belong. It is applied by the next measure pass, and that pass is the same one that
+ * measures the collapsed card, so nothing is drawn twice: no extra frame, no animation,
+ * no scroll session (`requestScrollToItem` starts none by design).
+ *
+ * Only a **collapse** can need this: expanding does not move the row's top, so an
+ * expanded row's start is already where it was.
+ *
+ * **While the follow is armed it is the follow's call, not this one.** pi re-pins to the
+ * end whenever the content's height changes under an armed follow
+ * (`scroll-view.ts:189-201`, `updateLayout`), so a collapse there keeps the newest row in
+ * view — that is the position the reader chose, and a second owner asking for this row's
+ * top would be the two-effects-fighting bug the follow's own KDoc is about. The anchor
+ * therefore stands down while [isFollowing] answers true: it owns the case the follow
+ * cannot (a paused reader who scrolled into a row and collapsed it).
+ *
+ * @param index the row's index **in the list** (`itemsIndexed`'s index), not in the
+ *   transcript, because that is the coordinate `requestScrollToItem` takes.
+ * @param isFollowing the transcript's live follow state (`ChatScreen`'s `following`).
+ *   A lambda, not a value, because the click handler runs long after this object was
+ *   built and the follow is re-armed and paused by the user's own scrolling.
+ */
+internal class TranscriptRowAnchor(
+    private val listState: LazyListState,
+    private val index: Int,
+    private val isFollowing: () -> Boolean,
+) {
+    /**
+     * Called by [toggleContent] just before a row collapses. Does nothing unless the row's
+     * start has been scrolled above the viewport top — the only case where the list cannot
+     * keep it, and the only case where the reader was looking at the middle of the row —
+     * and nothing while the follow is armed (see the class KDoc).
+     */
+    fun onCollapse() {
+        if (isFollowing()) return
+        val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
+        // `offset` is relative to the viewport's start: negative means the row's top is
+        // above it, which is exactly when the pixel offset is about to stop meaning
+        // anything (this row is not going to be that tall any more).
+        if (row.offset >= 0) return
+        listState.requestScrollToItem(index, 0)
+    }
+}
+
+/**
+ * The transcript row a block is being composed inside, or null when the block is composed
+ * anywhere else (the extension pages use [toggleContent] too and have no transcript list).
+ */
+internal val LocalTranscriptRowAnchor = compositionLocalOf<TranscriptRowAnchor?> { null }
+
+/**
  * The single expand/collapse gesture: **the content is the hit target**.
  *
  * `ToggleRow` — a header-row hit target — was the app's other pattern. It is
@@ -417,21 +489,53 @@ private val EXPAND_CHEVRON_SIZE = 13.dp
  * @param enabled false for a block with nothing to disclose (a short hook
  *   message, say): the region then takes no clicks at all rather than toggling
  *   into an empty state.
+ *
+ * This function is `@Composable` because it reads [LocalTranscriptRowAnchor] — the row's
+ * own anchor, which a collapse must ask to stay in view before the height changes (see
+ * [TranscriptRowAnchor]). That read is a CompositionLocal lookup, so nothing below adds a
+ * recomposition scope: [ToggleContent] is unchanged and still just forwards here.
+ *
+ * ## Why the expand state behind [expanded] must be `rememberSaveable`, not `remember`
+ *
+ * Whether a card is expanded or collapsed is **the reader's** state, not something one
+ * composition derives from the transcript. The design doc says the same of it directly —
+ * `docs/pi-android-app-design.md:1066` lists 折叠状态 beside 滚动位置 as the little state
+ * the App itself owns. `remember` means "forget this the moment the call leaves the
+ * composition", so it is the wrong lifetime for it: the destination switch that hosts
+ * `ChatBody` (`PiRoot`'s `saveableStateHolder.SaveableStateProvider`) drops every plain
+ * `remember` inside it, and a card the reader had expanded collapses on its own the
+ * moment they come back — its row height then changes a frame later and the list
+ * re-anchors by pixel offset, which is the reported 「切回来会抖一下」. `rememberSaveable`
+ * is the right lifetime, and it is available here: the framework wraps every lazy item
+ * in a `LazySaveableStateHolder` (`androidx.compose.foundation.lazy.layout`), itself a
+ * `rememberSaveable`, so a value saved inside an item survives both scrolling past it
+ * and the destination switch. The second-level expansion (`fullOutput`, 「展开全部」) is
+ * the same reader state and is saved the same way.
  */
 // Callers: pass the lambda parenthesised — `Modifier.toggleContent(expanded, { … })`.
 // Kotlin binds a *trailing* lambda to the **last** parameter, which here is
 // `enabled`, so `toggleContent(expanded) { … }` does not compile.
+@Composable
 internal fun Modifier.toggleContent(
     expanded: Boolean,
     onToggle: () -> Unit,
     enabled: Boolean = true,
-): Modifier = then(
-    if (enabled) {
-        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { onToggle() }
-    } else {
-        Modifier
-    },
-)
+): Modifier {
+    val anchor = LocalTranscriptRowAnchor.current
+    return then(
+        if (enabled) {
+            Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") {
+                // The row is about to get shorter; ask the list to keep its start where the
+                // reader can see it *before* the height changes (see [TranscriptRowAnchor]).
+                // Expanding needs nothing: growing does not move this row's top.
+                if (expanded) anchor?.onCollapse()
+                onToggle()
+            }
+        } else {
+            Modifier
+        },
+    )
+}
 
 /**
  * [Modifier.toggleContent] for a block whose content is a column: the column —

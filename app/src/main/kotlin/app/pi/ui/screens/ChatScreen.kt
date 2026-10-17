@@ -127,7 +127,9 @@ import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
+import app.pi.ui.blocks.LocalTranscriptRowAnchor
 import app.pi.ui.blocks.PiImageViewer
+import app.pi.ui.blocks.TranscriptRowAnchor
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ContextSheet
@@ -2183,7 +2185,17 @@ private fun ChatBody(
                         RowHeightCache.shared.of(item.key) == null &&
                         (item.key in freshRowKeys || restoring) &&
                         piMarkdownParseBudget.allow(System.nanoTime())
+                    // The row's own place in the list, for a card that is about to change
+                    // its height (see `TranscriptRowAnchor`). `following` is handed over as
+                    // a lambda: an armed follow re-pins to the end on every height change
+                    // (pi's `updateLayout` does the same,
+                    // `scroll-view.ts:189-201`), so the two must not both own the position.
+                    // Read at click time, which is the only time it matters.
+                    val rowAnchor = remember(listState, sliceIndex) {
+                        TranscriptRowAnchor(listState, sliceIndex) { following }
+                    }
                     CompositionLocalProvider(
+                        LocalTranscriptRowAnchor provides rowAnchor,
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
                     ) {

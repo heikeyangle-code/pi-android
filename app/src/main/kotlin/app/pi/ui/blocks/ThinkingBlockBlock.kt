@@ -8,7 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,7 +37,7 @@ fun ThinkingBlockBlock(
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
     // row, exactly as pi re-applies expansion to all of its children.
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val pen = palette.thinking(item.level ?: "medium")
     val levelLabel = item.level?.takeIf { it.isNotBlank() }?.let { PiThinkingLevel.fromWire(it).label }
     // The row is a **two-voice** line, which is rule #7 (`docs/pi-android-ui-spec.md` §1) applied

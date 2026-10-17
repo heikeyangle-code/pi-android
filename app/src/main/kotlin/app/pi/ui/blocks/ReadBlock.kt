@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.rpc.PiImage
@@ -45,8 +46,8 @@ internal fun ReadBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
-    var fullOutput by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var fullOutput by rememberSaveable { mutableStateOf(false) }
     val body = remember(item.args, item.output) { ToolOutputParse.readBody(item.args, item.output) }
     val range = remember(item.args) { readRange(item.args) }
     val command = remember(item.args) { toolCommandText(item.args) }

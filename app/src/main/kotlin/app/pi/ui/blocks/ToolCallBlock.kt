@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,12 +52,12 @@ fun ToolCallBlock(
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
     // row, exactly as pi re-applies expansion to all of its children.
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     // F17 (`docs/rendering-review.md`): the card's own toggle and the spec's
     // 「展开全部」 are two different questions — the first asks "show the output at
     // all", the second "stop cutting it at 200 lines". Collapsing the card resets
     // nothing: the user asked to see the tail once and it stays visible.
-    var fullOutput by remember { mutableStateOf(false) }
+    var fullOutput by rememberSaveable { mutableStateOf(false) }
     // F31 (`docs/rendering-review.md`): these are O(output) scans on a row that
     // recomposes for every streamed chunk (F8's 200 ms throttle bounds how often),
     // so they are keyed on the value they scan rather than re-run per composition.
