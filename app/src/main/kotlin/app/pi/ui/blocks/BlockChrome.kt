@@ -408,28 +408,16 @@ private val EXPAND_CHEVRON_SIZE = 13.dp
  * scrolled into disappears above the fold and its own collapse is not what they see.
  * That is the reported 「收回之后停在最后滑动到的位置，不是工具卡原来的位置」.
  *
- * **The fix: give the row back the place it had when it was opened.** Expanding moves
- * nothing — the row's top stays where the reader sees it (`y` px below the viewport's
- * top, `LazyListItemInfo.offset`) and the body grows downward. So the place a collapse
- * has to come back to is **that `y`**, not the top of the screen: it is recorded on the
- * expand tap ([onExpand]) and re-requested on the collapse
- * (`requestScrollToItem(index, -y)`, which is how "the row's start `y` px below the
- * viewport's top" is spelled; the measure pass normalises the negative offset into the
- * previous row's positive one, `LazyListMeasure.kt:186-196`). The reader gets the
- * pre-expand view back — the same rows above the card, the card collapsed where it stood
- * — instead of being parked at the top edge, which is what offset 0 does, and what the
- * first version of this anchor did. That version was the reported
- * 「收到最顶端了，但没回到我点之前的位置」.
+ * **Why asking for the row again is the fix.** `requestScrollToItem(index, 0)` asks
+ * for the row whose height is about to change to keep its **start** at the viewport's
+ * start: the row's top stays put (at most a jump upward of the pixels already scrolled
+ * past it), the collapse happens under it, and the rows after it land where they now
+ * belong. It is applied by the next measure pass, and that pass is the same one that
+ * measures the collapsed card, so nothing is drawn twice: no extra frame, no animation,
+ * no scroll session (`requestScrollToItem` starts none by design).
  *
- * `0` is the fallback when there is no recorded tap: a card that the global switch
- * (`app.tools.expand`) expanded was never tapped open, so there is no earlier place to
- * return to, and the top edge is the only meaningful answer. A row whose top is **below**
- * the recorded place needs nothing either: the reader has scrolled back since, the list
- * is already keeping the row where they put it.
- *
- * The request is applied by the next measure pass — the same pass that measures the
- * collapsed card — so nothing is drawn twice: no extra frame, no animation, and no scroll
- * session (`requestScrollToItem` starts none by design).
+ * Only a **collapse** can need this: expanding does not move the row's top, so an
+ * expanded row's start is already where it was.
  *
  * **While the follow is armed it is the follow's call, not this one.** pi re-pins to the
  * end whenever the content's height changes under an armed follow
@@ -466,47 +454,22 @@ internal class TranscriptRowAnchor(
     private val onReveal: (fromListIndex: Int) -> Unit,
 ) {
     /**
-     * The row's top, in pixels below the viewport's top, at the moment the reader tapped to
-     * **open** it — the place a collapse has to come back to (see the class KDoc).
-     *
-     * Null until such a tap happens, and deliberately not Compose state: nothing draws it —
-     * one gesture writes it and the opposite gesture reads it.
-     */
-    private var expandedTopPx: Int? = null
-
-    /** Called by [toggleContent] on the opening tap: remember where the row stood. */
-    fun onExpand() {
-        expandedTopPx = rowTopPx()?.coerceAtLeast(0)
-    }
-
-    /**
      * Called by [toggleContent] just before a row collapses: first hands the rows below it
-     * to [onReveal] (the collapse is about to pull them into the viewport), then asks for
-     * the row's **start** to come back to where it stood when the reader opened it.
-     *
-     * Does nothing while the follow is armed (the class KDoc says why), when the row's top
-     * is already at or below that place (the list is keeping it there, and a request would
-     * move a reader who has scrolled since), or when the row is not on screen (nothing to
-     * anchor — a tap cannot come from an off-screen row).
+     * to [onReveal] (the collapse is about to pull them into the viewport), then keeps this
+     * row's start where the reader can see it — unless the follow is armed (see the class
+     * KDoc) or the row's start was visible all along, in which case the list already keeps
+     * it and the offset is still meaningful.
      */
     fun onCollapse() {
         onReveal(index)
         if (isFollowing()) return
-        val top = rowTopPx() ?: return
-        // No tap to remember means the card was expanded by the global switch: the top edge
-        // is the only place that means anything for it.
-        val target = expandedTopPx ?: 0
-        // `offset` is relative to the viewport's start, so "already at or below the place it
-        // stood" is `top >= target`; only a row whose start has been scrolled *above* that
-        // place has a pixel offset that is about to stop meaning anything (it is not going
-        // to be this tall any more).
-        if (top >= target) return
-        listState.requestScrollToItem(index, -target)
+        val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
+        // `offset` is relative to the viewport's start: negative means the row's top is
+        // above it, which is exactly when the pixel offset is about to stop meaning
+        // anything (this row is not going to be that tall any more).
+        if (row.offset >= 0) return
+        listState.requestScrollToItem(index, 0)
     }
-
-    /** The row's top relative to the viewport's start, or null when it is not composed. */
-    private fun rowTopPx(): Int? =
-        listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }?.offset
 }
 
 /**
@@ -579,11 +542,10 @@ internal fun Modifier.toggleContent(
     return then(
         if (enabled) {
             Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") {
-                // Two halves of one gesture, both *before* the height changes (see
-                // [TranscriptRowAnchor]): opening records where this row stands, so closing
-                // can bring it back there; closing also hands the rows it is about to
-                // reveal to the screen.
-                if (expanded) anchor?.onCollapse() else anchor?.onExpand()
+                // The row is about to get shorter; ask the list to keep its start where the
+                // reader can see it *before* the height changes (see [TranscriptRowAnchor]).
+                // Expanding needs nothing: growing does not move this row's top.
+                if (expanded) anchor?.onCollapse()
                 onToggle()
             }
         } else {
