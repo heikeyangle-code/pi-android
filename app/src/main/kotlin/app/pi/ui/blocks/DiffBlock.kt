@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -121,17 +122,24 @@ fun DiffBlock(
                 color = palette.toolPendingBg,
                 // F28: same content-region gesture as the tool card.
                 modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-                // `06 §2` 颜色行 gives this card the plain hairline token rather than a
-                // state colour at 35 %: the diff is neutral by definition, and v2 draws it
-                // `1px solid var(--border-muted)`.
-                borderColor = palette.borderMuted,
-                // `06 §2` 工具卡 / diff 卡: this card's rows inset by 10, not 12.
-                padding = BlockCardRowPadding,
+                // **No border**, for the tool card's reason: `06 §2`'s 1 px status outline is
+                // gone from that card too (`ToolBlockChrome.ToolCard`'s KDoc), and the diff is
+                // neutral by definition — the fill alone is the card's ground.
+                borderColor = null,
+                // The tool card's own row inset (`ToolCardRowPadding`, 10 / 7): the two
+                // cards sit in the same stream, so they read as one geometry.
+                padding = ToolCardRowPadding,
+                // The tool card's 8 dp, from its one definition — not a second copy of the
+                // number, which would drift from `TOOL_CARD_SHAPE`.
+                shape = TOOL_CARD_SHAPE,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.toolName.ifEmpty { "diff" },
-                        style = PiTheme.text.monoSmall,
+                        // **Bold, because the tool card bolds it**: pi paints every tool name
+                        // `theme.bold`ed (`components/tool-execution.js:312`), and this header's
+                        // first cell is the same cell (`ToolBlockChrome.ToolHeader`).
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
                         // The leading cell of a tool card is the tool's **name**, and pi paints every
                         // tool name with `toolTitle` (`core/tools/renderers/edit.js:53`, `write.js:90`,
                         // `read.js:27`, and the fallback header at
@@ -165,7 +173,9 @@ fun DiffBlock(
                     Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
                     Spacer(Modifier.width(PiSpacing.inline))
                     // v2's diff card carries the same disclosure chevron as a tool card's
-                    // header (`direction-b-v2.html:1523`); its *label* below is plain text.
+                    // header (`direction-b-v2.html:1523`). There is no second row any more: the
+                    // card folds to this one line, exactly like a tool card, so the row below
+                    // holds the body and nothing else.
                     Icon(
                         imageVector = if (expanded) {
                             Icons.Filled.KeyboardArrowDown
@@ -175,29 +185,6 @@ fun DiffBlock(
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
                         tint = palette.bodyOnTool,
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "新增 ${item.added} 行 · 删除 ${item.removed} 行",
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.meta,
-                        color = palette.muted,
-                    )
-                    // F19 (`docs/rendering-review.md`): the 「全屏」 label used to sit
-                    // behind an `onOpenFull` the host never supplied — the app has no
-                    // full-screen diff route — so both are deleted rather than left
-                    // claiming the affordance (spec §4.8 still asks for one; that is
-                    // new UI, recorded in the review's F19 row).
-                    //
-                    // A plain label, as v2 draws it: the chevron lives on the header row
-                    // above (`direction-b-v2.html:1523`) and this row's word is inert —
-                    // the card's own surface is the hit target (`toggleContent`).
-                    Text(
-                        text = if (expanded) "收起" else "展开",
-                        style = PiTheme.text.meta,
-                        color = palette.muted,
                     )
                 }
 

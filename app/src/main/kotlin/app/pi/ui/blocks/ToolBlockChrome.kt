@@ -642,10 +642,12 @@ internal fun ToolCard(
  * `06 §2` 工具卡's corner radius, decision D2: v2's board draws this card's shell square
  * (a terminal has no rounds), and the app keeps **8 dp** because a transcript card is a
  * phone container rather than a terminal cell. It is passed to [BlockCard] explicitly,
- * since that card's own default ([BlockCardShape]) is 10 and is shared with the diff,
- * error and custom cards.
+ * since that card's own default ([BlockCardShape]) is 10 and is shared with the error
+ * and custom cards. The diff card passes **this** shape too — it is a tool-card sibling,
+ * not one of the plain cards (2026-10-17: it used to take the 10 dp default and was the
+ * odd one out beside an `edit` card).
  */
-private val TOOL_CARD_SHAPE = RoundedCornerShape(8.dp)
+internal val TOOL_CARD_SHAPE = RoundedCornerShape(8.dp)
 
 /**
  * The long-press actions of §4.8, shared by every tool card: the command, the output, and

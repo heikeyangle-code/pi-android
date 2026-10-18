@@ -261,8 +261,9 @@ internal val BlockCardShape = RoundedCornerShape(10.dp)
  * selection, only a long press is.
  *
  * @param shape the container's corner radius. Defaults to [BlockCardShape] (`06 §2`'s
- *   10 dp); the tool card passes its own 8 dp because v2 tightens *that* card and the
- *   default is shared with the diff, error and custom cards (`ToolBlockChrome.ToolCard`).
+ *   10 dp); the tool card passes its own 8 dp because v2 tightens *that* card, and the
+ *   diff card now passes the same 8 dp (it sits beside the `edit` card it came from).
+ *   The 10 dp default is shared by the error and custom cards.
  */
 @Composable
 internal fun BlockCard(
