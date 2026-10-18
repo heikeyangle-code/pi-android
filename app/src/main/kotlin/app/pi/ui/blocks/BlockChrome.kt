@@ -428,41 +428,24 @@ private val EXPAND_CHEVRON_SIZE = 13.dp
  * therefore stands down while [isFollowing] answers true: it owns the case the follow
  * cannot (a paused reader who scrolled into a row and collapsed it).
  *
- * **The second half: the rows it reveals must not arrive at zero height.** Killing the
- * jump only decides *which* rows are on screen; if those rows have never been measured,
- * a markdown row is laid out at zero for one frame (`MarkdownState.Loading` draws an empty
- * `Box`, `Markdown.kt:112`) and grows when its parse lands — the reader sees the collapse
- * happen, then a small settle under it, which is the 「收回完事儿之后抖一下」 half of the
- * report. [onReveal] is that half: it marks the rows the collapse is about to expose so
- * their **first** layout is already the right height, the same rule the transcript
- * already applies to the rows a widening window gains (`ChatScreen`'s `freshRowKeys`,
- * cost bounded by `piMarkdownParseBudget`). It runs on every collapse, not only the ones
- * that re-anchor: a row's content shrinking pulls the rows below into the viewport in
- * both cases.
- *
  * @param index the row's index **in the list** (`itemsIndexed`'s index), not in the
  *   transcript, because that is the coordinate `requestScrollToItem` takes.
  * @param isFollowing the transcript's live follow state (`ChatScreen`'s `following`).
  *   A lambda, not a value, because the click handler runs long after this object was
  *   built and the follow is re-armed and paused by the user's own scrolling.
- * @param onReveal called with [index] before the collapse; the caller marks the rows that
- *   follow it (see the KDoc above) so they do not reach the layout at zero height.
  */
 internal class TranscriptRowAnchor(
     private val listState: LazyListState,
     private val index: Int,
     private val isFollowing: () -> Boolean,
-    private val onReveal: (fromListIndex: Int) -> Unit,
 ) {
     /**
-     * Called by [toggleContent] just before a row collapses: first hands the rows below it
-     * to [onReveal] (the collapse is about to pull them into the viewport), then keeps this
-     * row's start where the reader can see it — unless the follow is armed (see the class
-     * KDoc) or the row's start was visible all along, in which case the list already keeps
-     * it and the offset is still meaningful.
+     * Called by [toggleContent] just before a row collapses. Does nothing unless the row's
+     * start has been scrolled above the viewport top — the only case where the list cannot
+     * keep it, and the only case where the reader was looking at the middle of the row —
+     * and nothing while the follow is armed (see the class KDoc).
      */
     fun onCollapse() {
-        onReveal(index)
         if (isFollowing()) return
         val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
         // `offset` is relative to the viewport's start: negative means the row's top is

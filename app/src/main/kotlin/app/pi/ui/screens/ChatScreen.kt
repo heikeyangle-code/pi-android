@@ -2191,35 +2191,8 @@ private fun ChatBody(
                     // (pi's `updateLayout` does the same,
                     // `scroll-view.ts:189-201`), so the two must not both own the position.
                     // Read at click time, which is the only time it matters.
-                    //
-                    // `onReveal` is the other half of the same gesture: a card that closes
-                    // pulls the rows below it into the viewport, and a row that has never
-                    // been measured is laid out at zero height for one frame (its markdown
-                    // is still parsing) — the small settle the user sees *after* the card
-                    // has closed, and the same one a re-entry avoids through `restoring`.
-                    // Marking them here makes their first layout the right one; the eager
-                    // parse is spent on the frame the reader asked for, once per row
-                    // (`RowHeightCache` latches it), and `piMarkdownParseBudget` bounds it.
                     val rowAnchor = remember(listState, sliceIndex) {
-                        TranscriptRowAnchor(
-                            listState = listState,
-                            index = sliceIndex,
-                            isFollowing = { following },
-                            onReveal = { from ->
-                                // `anchorWindow` is the live list, read at click time rather
-                                // than captured: the window can have been re-cut by a
-                                // publication since this lambda was built (the anchor
-                                // tracker uses it for exactly that reason).
-                                val rows = anchorWindow
-                                val keys = ArrayList<String>(COLLAPSE_REVEAL_ROWS)
-                                for (k in (from + 1)..minOf(from + COLLAPSE_REVEAL_ROWS, rows.size - 1)) {
-                                    keys += rows[k].key
-                                }
-                                if (keys.isNotEmpty()) {
-                                    freshRowKeys = freshRowKeysAfter(freshRowKeys, keys, FRESH_ROW_KEYS_MAX)
-                                }
-                            },
-                        )
+                        TranscriptRowAnchor(listState, sliceIndex) { following }
                     }
                     CompositionLocalProvider(
                         LocalTranscriptRowAnchor provides rowAnchor,
@@ -3995,21 +3968,6 @@ private const val TRANSCRIPT_WINDOW_STEP = 50
  * height); it never costs correctness, and the set cannot grow with the session.
  */
 private const val FRESH_ROW_KEYS_MAX = 200
-
-/**
- * How many rows a collapse may mark as「first layout must not be zero」
- * (`TranscriptRowAnchor.onReveal`).
- *
- * The marker is not a promise about *which* rows get seen: a marked row only pays the
- * eager parse the first time it actually composes (`RowHeightCache` is the latch), and
- * `piMarkdownParseBudget` bounds the cost per frame. So being a few rows too generous
- * cannot cost anything but a parse that would have been async, and being too shy leaves
- * the settle on the row right under the collapsed card — the one the reader is about to
- * read. One viewport holds on the order of eight short rows, which is where the number
- * comes from; the rows further down are handled by the budget picking them up as they
- * arrive.
- */
-private const val COLLAPSE_REVEAL_ROWS = 8
 
 /** The two floating scroll arrows: v2's dense control step, and 8dp apart. */
 private val SCROLL_ARROWS_GAP = 8.dp
