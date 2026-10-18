@@ -18,7 +18,21 @@ on:
     # 这里故意不写 `branches: ['**']`：一次性的分支不值得每次都花掉两个 targetSdk
     # 变体的完整构建（含 ~65 MB 运行时装配），而 PR 那一侧本来就覆盖了评审场景。
     branches: [main, 'proroot-*']
+    # 纯文案 / 纯截图 / 纯标志图改动不进构建。一次 main 上的 push 会跑两个 targetSdk
+    # 变体的完整构建（含 ~65 MB 运行时装配），而改一个字的 README 不可能让它们变红。
+    # 注意只列「构建不可能读」的东西：`docs/` 里目前全是 markdown 与截图，
+    # 一旦往里放会被构建读到的产物（JSON 夹具之类），这条清单就得收紧。
+    paths-ignore:
+      - '**.md'
+      - 'docs/screenshots/**'
+      - 'brand/**/*.svg'
+      - '.github/ISSUE_TEMPLATE/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/screenshots/**'
+      - 'brand/**/*.svg'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 
 concurrency:
