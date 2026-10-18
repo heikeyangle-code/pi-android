@@ -119,20 +119,22 @@ JSON 令牌表，提示词是一段 markdown。都是普通文件，放在普通
 </tr>
 </table>
 
-失败不会糊成一句「已完成」：
+每一次调用都是一行，耗时、行数、成败都摆在明面上：
 
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
-  <a href="./docs/screenshots/chat-theme-purple.jpg"><img src="./docs/screenshots/chat-theme-purple.jpg" alt="暗紫主题：一条红框的失败命令卡（退出码 127）与紧跟的成功重试" width="280" /></a>
+  <a href="./docs/screenshots/chat-theme-slate.jpg"><img src="./docs/screenshots/chat-theme-slate.jpg" alt="深青主题：工作区里一串 bash / read / write 工具调用，每行带耗时与行数" width="280" /></a>
 </td>
 <td width="50%" valign="top" align="center">
-  <a href="./docs/screenshots/chat-theme-teal.jpg"><img src="./docs/screenshots/chat-theme-teal.jpg" alt="青绿主题下的同一场对话、同一个位置" width="280" /></a>
+  <a href="./docs/screenshots/chat-theme-purple.jpg"><img src="./docs/screenshots/chat-theme-purple.jpg" alt="暗紫主题：同一场对话、同一个位置，只换了主题文件" width="280" /></a>
 </td>
 </tr>
 </table>
 
-上面两张是**同一场对话、同一个滚动位置**，唯一不同的是主题文件：界面、代码高亮、diff、成功与失败的颜色一起换。中间那条红框写着 `失败 · 退出码 127 · 耗时 0.2 秒 · 4 行`，紧跟着同一条命令的成功重试——退出码、耗时、行数都摆出来。
+上面两张是**同一场对话、同一个滚动位置**，唯一不同的是主题文件：界面、代码高亮、强调色一起换。
+
+每条工具调用只占一行——`bash` 后面跟着 `0.5s · 32 行`，`read` 后面跟着 `7ms · 55 行`，`write` 后面跟着 `7ms · 117 行`。哪一步慢、哪一步读了多少，不用展开卡片就能看见；长命令在这里按宽度截断，点开才是全文。
 
 ### 工作区
 
