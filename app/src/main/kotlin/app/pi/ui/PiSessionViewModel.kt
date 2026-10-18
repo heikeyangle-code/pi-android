@@ -380,9 +380,11 @@ data class ExportedFile(
  * (`core/settings-manager.ts:119`, `:962`), the registry row only mirrored it,
  * and the transcript was never told about it.
  *
- * The four `app.terminal.*` rows are siblings of these and deliberately not
+ * The four `app.terminal.*` keys are siblings of these and deliberately not
  * repeated here: `ui/terminal/TerminalSettings.kt` is their consumer, so a second
- * reader in the ViewModel would be a second truth about the same key.
+ * reader in the ViewModel would be a second truth about the same key. (Their 设置
+ * rows were deleted with the 终端与 Shell group; the keys still work when a
+ * `settings.json` names them.)
  */
 /**
  * How much of a session's history the transcript currently holds.

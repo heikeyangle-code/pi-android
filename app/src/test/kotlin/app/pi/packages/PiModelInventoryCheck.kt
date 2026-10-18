@@ -3,20 +3,20 @@ package app.pi.packages
 // A bare-JVM harness for the 设置 → 模型 list: `PiModelInventory.kt`.
 //
 // Why this needs a harness of its own: the whole point of that file is that it
-// answers "why is the model I imported not in the list?" with one of three
-// different sentences, and two of them are *inferences* (`PENDING_RESTART`) or
-// *silences* (`UNKNOWN`) rather than things pi tells us. An inference that is
-// wrong in the quiet direction is the failure this repository keeps paying for
-// (§M11/§M12 in `docs/known-gaps.md`): the screen would say "已经生效" while the
-// engine has never read the file. Compose cannot be compiled on this machine, so
-// the only way to prove any of it is to keep the decisions in a pure object and
-// run them here. Registered in `tools/run-app-pure-checks.sh` as
+// answers "why is the model I imported not in the list?" with one of a handful of
+// different sentences, and two of them are *inferences* (`PENDING_RESTART` /
+// `NOT_LISTED`) or *silences* (`UNKNOWN`) rather than things pi tells us. An
+// inference that is wrong in the quiet direction is the failure this repository
+// keeps paying for (§M11/§M12 in `docs/known-gaps.md`): the screen would say
+// "已经生效" while the engine has never read the file. Compose cannot be compiled
+// on this machine, so the only way to prove any of it is to keep the decisions in a
+// pure object and run them here. Registered in `tools/run-app-pure-checks.sh` as
 // `models-inventory`.
 //
 // The checks are grouped by the question each one answers:
 //
 //   1. 来源：pi 目录 / 手写申报 / 覆盖   —— 三者必须能分开，也允许同时成立
-//   2. 状态：已生效 / 等待重启 / 缺凭证 / 读不到引擎
+//   2. 状态：已生效 / 等待重启 / pi 未列出 / 缺凭证 / 读不到引擎
 //   3. 选择：enabledModels 的 glob、默认模型、项目级覆盖
 //   4. 坏输入：坏 JSON、缺键、注释、空文件 —— 一律不崩、不猜、不出现路径
 //
@@ -117,10 +117,13 @@ fun main() {
         deepseek.models.first { it.id == "deepseek-chat" }.status,
         PiModelInventory.Status.READY,
     )
+    // 「引擎没列出它」**本身不再等于**「要重启」：`deepseek-reasoner` 来自 pi 的官方
+    // 目录，而目录要等一次引擎启动才进快照。以前这里断言 PENDING_RESTART，用户看到的
+    // 就是「明明啥也没干，也显示到什么模型没生效，非让我重启」。
     check(
-        "a credentialed provider the engine does not list is PENDING_RESTART",
+        "a catalog model the engine does not list is 'pi 未列出', not PENDING_RESTART",
         deepseek.models.first { it.id == "deepseek-reasoner" }.status,
-        PiModelInventory.Status.PENDING_RESTART,
+        PiModelInventory.Status.NOT_LISTED,
     )
     check(
         "a provider with no credential is MISSING_CREDENTIAL, not PENDING_RESTART",
@@ -132,7 +135,80 @@ fun main() {
         inventory.providers.first { it.id == "anthropic" }.hasCredential,
         true,
     )
-    check("the restart banner counts providers, not models", inventory.providersPendingRestart.map { it.id }, listOf("deepseek"))
+    check("no app write means nothing is waiting for a restart", inventory.restartPending, false)
+
+    // ------------------------------------- 2b 等待重启只认 App 自己的记账
+
+    // `deepseek` 有凭证，且 models.json 里**申报**了一个、**覆盖**了一个 —— 正是"App 写过
+    // 模型文件"的两种来源。是否说「等待重启」由 `pendingRestart`（`PendingModelRestart`
+    // 的读数）决定：只有它为 true 时才成立。
+    val declaredAndOverridden = """
+    {
+      "providers": {
+        "deepseek": {
+          "baseUrl": "https://api.deepseek.com",
+          "api": "openai-completions",
+          "models": [ { "id": "deepseek-chat" } ],
+          "modelOverrides": { "deepseek-reasoner": { "contextWindow": 8192 } }
+        }
+      }
+    }
+    """
+    val afterWrite = PiModelInventory.assemble(
+        modelsJson = declaredAndOverridden,
+        authJson = AUTH_JSON,
+        catalogJson = CATALOG_JSON,
+        engineModels = emptyList(),
+        pendingRestart = true,
+    )
+    check("the inventory carries the ledger flag", afterWrite.restartPending, true)
+    check(
+        "a declared model pi has not loaded is PENDING_RESTART after an app write",
+        afterWrite.models.first { it.id == "deepseek-chat" }.status,
+        PiModelInventory.Status.PENDING_RESTART,
+    )
+    check(
+        "an overridden model counts as an app write too",
+        afterWrite.models.first { it.id == "deepseek-reasoner" }.status,
+        PiModelInventory.Status.PENDING_RESTART,
+    )
+    check(
+        "等待重启 N 个数的是模型",
+        afterWrite.count(PiModelInventory.Status.PENDING_RESTART),
+        2,
+    )
+    val beforeWrite = PiModelInventory.assemble(
+        modelsJson = declaredAndOverridden,
+        authJson = AUTH_JSON,
+        catalogJson = CATALOG_JSON,
+        engineModels = emptyList(),
+        pendingRestart = false,
+    )
+    check(
+        "without the app's own write the same models are just 'pi 未列出'",
+        beforeWrite.models.map { it.status }.distinct(),
+        listOf(PiModelInventory.Status.NOT_LISTED),
+    )
+
+    // 官方目录里的模型**永远**不会是「等待重启」，即使标记置位：pi 只在启动时把目录并进
+    // 快照（`core/model-runtime.ts:180`），"不在快照里"是常态，不是用户要做的动作。
+    val catalogOnly = PiModelInventory.assemble(
+        modelsJson = null,
+        authJson = AUTH_JSON,
+        catalogJson = CATALOG_JSON,
+        engineModels = emptyList(),
+        pendingRestart = true,
+    )
+    check(
+        "a catalog-only model never says 等待重启, even with the ledger set",
+        catalogOnly.models.map { it.status }.distinct(),
+        listOf(PiModelInventory.Status.NOT_LISTED),
+    )
+    check(
+        "and the summary counts zero of them",
+        catalogOnly.count(PiModelInventory.Status.PENDING_RESTART),
+        0,
+    )
 
     val engineUnknown = PiModelInventory.assemble(
         modelsJson = MODELS_JSON,
@@ -154,7 +230,7 @@ fun main() {
             catalogJson = CATALOG_JSON,
             engineModels = emptyList(),
         ).models.first { it.id == "deepseek-chat" }.status,
-        PiModelInventory.Status.PENDING_RESTART,
+        PiModelInventory.Status.NOT_LISTED,
     )
 
     // A provider the app has no file evidence for can still be listed by the engine

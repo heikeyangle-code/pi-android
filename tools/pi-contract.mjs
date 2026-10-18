@@ -1750,6 +1750,16 @@ function checkAppTables(piDir) {
 		skills: "资源列表：由「已发现的资源」屏展示",
 		themes: "资源列表：主题由「主题」屏选择（PiThemeFiles 自己扫描目录）",
 		terminal: "终端能力覆盖（hyperlinks/trueColor/images）：App 不经过终端渲染",
+		// 这三个 pi 键的行原来在「终端与 Shell」组里，整组按用户裁定删除（终端页退役）。
+		// pi 仍然读它们，所以它们是"App 不暴露"而不是"pi 删了"：已有的 settings.json 手写值
+		// 照旧生效（App 的写入路径锁内重读整份文档，不会顺手删掉别人的键），但设置页没有入口
+		// —— 没有终端页可验证时，`shellPath` 写错的后果是 pi 的每条 bash 命令全失败。
+		shellPath:
+			"pi 跑 bash 用的 shell：原「终端与 Shell」组的行已删除（终端页退役）；settings.json 里已有的值照旧生效",
+		shellCommandPrefix:
+			"pi 每条 bash 命令的前缀：原「终端与 Shell」组的行已删除（终端页退役）；已有值照旧生效",
+		npmCommand:
+			"pi 装包用的 npm argv：原「终端与 Shell」组的行已删除（终端页退役）；已有值照旧生效",
 		warnings: "pi 的警告开关（anthropicExtraUsage）",
 		sessionDir: "会话目录：App 在命令行上固定它（--session-dir），见 G_SESSIONS 的分组摘要",
 		treeFilterMode: "/tree 的默认过滤器：App 的会话树有自己的筛选",

@@ -61,7 +61,13 @@ object PiProviderPresets {
     }
 
     data class Preset(
-        /** The provider id written into `models.json` and `auth.json`. */
+        /**
+         * The provider id written into `models.json` and `auth.json`.
+         *
+         * For a provider pi already ships this has to be **pi's own id** — the one string
+         * pi matches on — not this app's spelling: `llama.cpp`, never `llamacpp`. See the
+         * local-model entry in [all].
+         */
         val id: String,
         /** What the user sees. pi's own `name` where it has one. */
         val displayName: String,
@@ -88,7 +94,14 @@ object PiProviderPresets {
         Preset("mistral", "Mistral", "https://api.mistral.ai", "mistral-conversations", ScanStyle.OpenAiCompatible, true, true, "云端"),
         Preset("zai", "Z.AI", "https://api.z.ai/api/coding/paas/v4", "openai-completions", ScanStyle.OpenAiCompatible, true, true, "云端"),
         Preset("ollama", "Ollama（本机/局域网）", "http://localhost:11434/v1", "openai-completions", ScanStyle.Keyless, true, false, "本地"),
-        Preset("llamacpp", "llama.cpp / LM Studio / vLLM", "http://localhost:8080/v1", "openai-completions", ScanStyle.Keyless, true, false, "本地"),
+        // **id 用 pi 自己的 `llama.cpp`，不是一个 App 自造的短名。**
+        // 这个字符串会原样写进 `models.json` 的厂商块与 `auth.json` 的凭证条目，即
+        // pi 的 provider id —— 而 pi 内建的那个就叫 `llama.cpp`（注册表 `providerOptions`
+        // 里同一串，"llama.cpp" to "本地 llama.cpp"）。写 `llamacpp` 会在 pi 眼里造出
+        // **第二个厂商**：内建的 `llama.cpp` 一个模型都没有，用户配的那个只在 App 的拼写
+        // 下存在，模型选择器里于是同时有两条互不相干的本地厂商。这里不做迁移（这个 App
+        // 还没发布过，`llamacpp` 只存在于本轮之前的源码里）。
+        Preset("llama.cpp", "llama.cpp / LM Studio / vLLM", "http://localhost:8080/v1", "openai-completions", ScanStyle.Keyless, true, false, "本地"),
         Preset("custom", "自定义（OpenAI 兼容）", "", "openai-completions", ScanStyle.OpenAiCompatible, true, false, "自定义"),
     )
 

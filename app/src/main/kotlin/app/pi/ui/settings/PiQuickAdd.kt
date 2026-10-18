@@ -66,7 +66,7 @@ object PiQuickAdd {
      * 两处差异，都在**调用方**处理、不改这条规则：
      *
      *  - pi 的基准是写死的 `DEFAULT_TOOL_NAMES`（`:213`），这里参数化成 [baseline]：`defaultTools`
-     *    行的基线就是默认四件套，`app.terminal.keyBar` 行的基线就是默认按键条，两者语义相同；
+     *    行的基线就是默认四件套，别的"空 = 默认值"的行也可以传自己的基线；
      *  - [entries] 为空在 App 里等于「键不存在」= 用默认值（见文件头），所以 [effective] 在调用
      *    本函数**之前**就把空列表直接判成 [baseline]；pi 的 `resolveDefaultTools([])` 按 `:236`
      *    返回 `[]`（显式空列表 = 一个内建工具都不要），这个区别由 [persist] 保留。

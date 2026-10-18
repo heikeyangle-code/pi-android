@@ -733,32 +733,14 @@ fun main() {
             PiQuickAdd.persist(listOf("-literal"), emptyList()) == listOf("-literal"),
     )
 
-    // Rule 15b: `app.terminal.keyBar` is the same shape — an unset/empty value means the
-    // default row of keys (`TerminalSettings.keyBarOf`: absent *and* empty both mean the
-    // default bar, `ui/terminal/TerminalSettings.kt:112-124`) — so its chips have to add on
-    // that baseline too. Tapping one chip on an unset row used to write a bar holding exactly
-    // that one key: the same "one tap locks you in" defect as the tools row.
-    val keyBarSource =
-        Regex("""private val termKeyBarPresets = listOf\(([^)]*)\)""").find(registry)?.groupValues?.get(1)
-    check("the terminal key-bar preset list was found", keyBarSource != null)
-    val keyBarNames = keyBarSource?.split(",")?.map { it.trim().trim('"') }?.filter { it.isNotEmpty() }.orEmpty()
-    val firstKey = keyBarNames.firstOrNull().orEmpty()
-    val chipFromUnset = PiQuickAdd.add(emptyList(), firstKey, keyBarNames, keyBarNames)
-    check(
-        "a key-bar chip tapped on an unset row never writes a one-key bar",
-        keyBarNames.isNotEmpty() && chipFromUnset != listOf(firstKey) &&
-            PiQuickAdd.persist(chipFromUnset, keyBarNames).isEmpty(),
-        "tapping \"$firstKey\" on an unset row produced $chipFromUnset",
-    )
-    check(
-        "dropping one key-bar chip keeps the other default keys",
-        PiQuickAdd.remove(keyBarNames, firstKey, keyBarNames, keyBarNames) == keyBarNames.filter { it != firstKey },
-        "got ${PiQuickAdd.remove(keyBarNames, firstKey, keyBarNames, keyBarNames)}",
-    )
-    check(
-        "the key-bar row declares the baseline (a chip adds to the default bar)",
-        rows.contains("presetBaseline = termKeyBarPresets"),
-    )
+    // Rule 15b used to pin `app.terminal.keyBar` — the terminal key bar was the second
+    // row with the "unset means the default value" shape, so a one-chip tap on an unset
+    // row had to add to the default bar rather than replace it. That row was **deleted**
+    // on its own merits (the 终端与 Shell group went away: the terminal page is retired
+    // and `shellPath` / `shellCommandPrefix` / `npmCommand` / `app.terminal.*` were the
+    // five rows the user asked to drop), so there is no row left whose chips need that
+    // rule. The list editor's baseline mechanism itself is still pinned by rule 15
+    // (`defaultTools`), which is the row that actually shipped the defect.
 
     // One layer up from a dead row: a search hint whose chip selects a query that
     // matches nothing. Only the `examples` list is read — taking every standalone

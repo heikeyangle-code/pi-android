@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.packages.AgentLayout
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.ExtensionLifecycle
+import app.pi.packages.PendingModelRestart
 import app.pi.packages.PiCredentialService
 import app.pi.packages.PiModelCatalog
 import app.pi.packages.PiModelInventory
@@ -107,9 +108,10 @@ internal val MODEL_SELECTION_KEYS = setOf(
  *     `reloadTick++` → 200ms 合并一次重读。AI 新增的厂商/模型**当场出现在③**。
  *
  * 文件出现 ≠ 引擎已加载（pi 的真实边界：RPC 下没有任何命令调 `ModelRuntime.refresh()`，
- * `get_available_models` 返回启动期快照，`modes/rpc/rpc-mode.ts:490-493`），所以这类条目
- * 由 `PiModelInventory` 标 `PENDING_RESTART`，屏上给 ① 的重启卡 —— 说的是 pi 的事实，
- * 不是本屏的承诺。
+ * `get_available_models` 返回启动期快照，`modes/rpc/rpc-mode.ts:490-493`），所以重启卡的判据
+ * 是**本 App 自己写过模型/凭证文件**（`PendingModelRestart`，写入在 `PiCredentialService`，
+ * 引擎开始服务时清位），不是"清单里的模型不在引擎快照里"—— 后者什么也没干的时候也成立，
+ * 用户原话是「明明啥也没干，也显示到什么模型没生效，非让我重启」。
  *
  * ## 官方没有、本屏自己加的（都只写官方文件）
  *
@@ -336,8 +338,18 @@ fun ModelProviderScreen(
                         Note("引擎现在没有运行，所以下面的模型都无法判断是不是已经能用。已经保存的配置不会因此丢失。")
                     }
                 }
-                if (data.providersPendingRestart.isNotEmpty()) {
-                    item { RestartCard(data, lifecycle, coordinator) { question = it } }
+                // 只在「App 写过模型/凭证文件」+「有引擎可以重启」时出现。引擎没跑
+                // （`coordinator == null`）就一个按钮都不放：按了只能弹一句提示的假按钮
+                // 比没有按钮更坏。重启成功 → 引擎开始服务时标记被清 → 这一行自己消失。
+                if (data.restartPending && coordinator != null) {
+                    item {
+                        RestartCard(
+                            lifecycle = lifecycle,
+                            coordinator = coordinator,
+                            onQuestion = { question = it },
+                            onNote = { note = it },
+                        )
+                    }
                 }
                 note?.let { msg -> item { Note(msg) } }
 
@@ -426,7 +438,7 @@ fun ModelProviderScreen(
                     // 删除后搬到这里：同一个导入 sheet，只是预选到本地端点那一档。
                     OutlinedButton(
                         onClick = {
-                            sheetPreset = "llamacpp"
+                            sheetPreset = "llama.cpp"
                             sheetOpen = true
                         },
                         modifier = Modifier.padding(
@@ -523,6 +535,12 @@ fun ModelProviderScreen(
                     scope.launch {
                         note = when (val outcome = engine.confirm("用户确认重启引擎以加载新模型")) {
                             is EngineRestartCoordinator.Outcome.Ok -> {
+                                // 重启成功了，App 那本「改完还没重启」的账当场结清：主清位点是
+                                // 引擎开始服务那一刻（`PiEngineSession.probeServing`），但那次
+                                // 探针是异步的，这一屏此刻已经要重读清单了 —— 只靠探针的话，
+                                // 标记会在下面这次重读之后才清，卡片要多留一屏（而"重启成功卡片
+                                // 却不消失"正是这一版要删掉的状态）。
+                                PendingModelRestart.clear()
                                 // 引擎换了，模型列表要重新问一次；这里不是猜它已经好了。
                                 onLoadAvailableModels()
                                 reloadTick++
@@ -572,9 +590,8 @@ fun ModelProviderScreen(
  *    候选，不扫描就一个都列不出）。初始勾选见 prefill：循环范围没设 = 全勾，设了 =
  *    只勾本来轮得到的（上次主动排除的不会因为打开过表单又被勾回来）；
  *  - **默认模型不抢**：这张 sheet **不写** `defaultProvider` / `defaultModel`
- *    （`service.save` 的 `setAsDefault` 保持默认 false）。这里原来写着"单选第一项是
- *    保持当前默认"，但那个单选在现在的界面里并不存在 —— 要改默认模型，用清单页的
- *    「默认模型」那一行（它一次写两个键）；
+ *    （`PiCredentialService.save` 没有这条分支）。要改默认模型，用清单页的「默认模型」
+ *    那一行（`DefaultModelPairStore` 一次写两个键）；
  *  - **保存后就地刷新**：只重读「已配置」那几个字段，本次保存的步骤显示不被清掉（旧版
  *    表单保存后 prefill 不重跑，凭证状态要退出重进才对）。
  */
@@ -879,7 +896,7 @@ private fun ImportSheet(
     }
 
     // 保存：一次写凭证 + 厂商块 + 循环列表（`PiCredentialService.save`）。不写默认模型 ——
-    // `setAsDefault` 保持 false，默认那两把键在清单页的「默认模型」一行里写。
+    // 默认那两把键在清单页的「默认模型」一行里写（`DefaultModelPairStore`）。
     val save: () -> Unit = {
         val chosen = candidates.filter { it in selected }
         sheetScope.launch {
@@ -1415,12 +1432,13 @@ private fun Summary(data: PiModelInventory.Inventory) {
 
 @Composable
 private fun RestartCard(
-    data: PiModelInventory.Inventory,
     lifecycle: ExtensionLifecycle,
-    coordinator: EngineRestartCoordinator?,
-    onMessage: (String) -> Unit,
+    coordinator: EngineRestartCoordinator,
+    /** 真要重启时就地问一句：这条路径必须弹确认框。 */
+    onQuestion: (String) -> Unit,
+    /** 其余结果（有回合在跑 / 已经重启过 / 正在装包）只在列表顶部说一句。 */
+    onNote: (String) -> Unit,
 ) {
-    val providers = data.providersPendingRestart
     PiSettingsCard(modifier = Modifier.padding(top = PiSpacing.small)) {
         Column(
             Modifier
@@ -1428,36 +1446,45 @@ private fun RestartCard(
                 .padding(PiSettingsMetrics.cardPaddingLoose),
         ) {
             Text(
-                "有 ${providers.size} 个厂商已经配好了，但引擎还没有加载它们。",
+                "刚改过模型或凭证的配置，pi 只在引擎启动时读它们 —— 重启一次才生效。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = PiTheme.palette.warning,
-            )
-            Text(
-                providers.joinToString("、") { it.id } +
-                    " 下的模型要重启引擎之后才会出现在模型选择器里。已保存的配置不会丢失。",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.gutter))
             OutlinedButton(
                 onClick = {
-                    if (coordinator == null) {
-                        onMessage("重启没有接上：配置已经保存好，重启 App 或引擎之后生效。")
-                    } else {
-                        when (coordinator.request("新配置的模型需要被 pi 重新加载")) {
-                            ExtensionLifecycle.RequestOutcome.NeedsConfirmation -> {
-                                val waiting = lifecycle.current as? ExtensionLifecycle.State.AwaitingConfirmation
-                                onMessage(waiting?.question ?: "重启引擎以加载新配置的模型？")
-                            }
-
-                            ExtensionLifecycle.RequestOutcome.WaitingForTurn ->
-                                onMessage(
-                                    "有回合正在运行。重启会中断模型调用与正在执行的工具，" +
-                                        "所以这次没有重启；回合结束后再点一次。",
-                                )
-
-                            else -> onMessage("当前没有待重启的变更（可能已经重启过）。")
+                    // 卡片本身就是"有改动等着"的证据，而状态机只认它自己的账：先把它
+                    // 记进去，`requestRestart` 才会从 NeedsRestart 走到 NeedsConfirmation。
+                    // 不记的话答案是 `NothingPending`，用户点「重启引擎」只会看到一句话、
+                    // 引擎一次也不会真的重启（这正是这一版要修的 bug 的另一半）。
+                    if (!lifecycle.pendingRestart) {
+                        lifecycle.noteExternalChange(
+                            changes = listOf("模型与凭证的配置"),
+                            detail = "刚改过模型或凭证的配置，重启一次才生效。",
+                        )
+                    }
+                    // 路由：只有 NeedsConfirmation 该弹确认框；其余全是"一句话说明"，绝不再
+                    // 借 `question` 弹一个带「重启」按钮的框（用户看到的是「有回合正在运行」
+                    // 却也给了个重启按钮）。
+                    when (coordinator.request("新配置的模型需要被 pi 重新加载")) {
+                        ExtensionLifecycle.RequestOutcome.NeedsConfirmation -> {
+                            val waiting = lifecycle.current as? ExtensionLifecycle.State.AwaitingConfirmation
+                            onQuestion(waiting?.question ?: "重启引擎以加载新配置的模型？")
                         }
+
+                        ExtensionLifecycle.RequestOutcome.WaitingForTurn -> onNote(
+                            "有回合正在运行。重启会中断模型调用与正在执行的工具，" +
+                                "所以这次没有重启；回合结束后再点一次。",
+                        )
+
+                        ExtensionLifecycle.RequestOutcome.AlreadyReady ->
+                            onNote("引擎已经在用这份配置了，不需要再重启。")
+
+                        ExtensionLifecycle.RequestOutcome.BusyWithPackageCommand ->
+                            onNote("正在安装包或重启引擎，等它结束再点。")
+
+                        ExtensionLifecycle.RequestOutcome.NothingPending ->
+                            onNote("还没有需要重启的改动。")
                     }
                 },
             ) { Text("重启引擎") }
@@ -1619,6 +1646,7 @@ private fun StatusTag(status: PiModelInventory.Status) {
     val color = when (status) {
         PiModelInventory.Status.READY -> MaterialTheme.colorScheme.primary
         PiModelInventory.Status.PENDING_RESTART -> MaterialTheme.colorScheme.tertiary
+        PiModelInventory.Status.NOT_LISTED -> MaterialTheme.colorScheme.onSurfaceVariant
         PiModelInventory.Status.MISSING_CREDENTIAL -> MaterialTheme.colorScheme.onSurfaceVariant
         PiModelInventory.Status.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1634,6 +1662,9 @@ private fun StatusTag(status: PiModelInventory.Status) {
 private fun statusText(status: PiModelInventory.Status): String = when (status) {
     PiModelInventory.Status.READY -> "现在可用"
     PiModelInventory.Status.PENDING_RESTART -> "等待重启"
+    // 「pi 未列出」只说 pi 现在的回答（目录里的模型要等一次启动才进快照，App 外改的文件
+    // 也不经过本 App 的记账），不替用户推测"你该重启了"。
+    PiModelInventory.Status.NOT_LISTED -> "pi 未列出"
     PiModelInventory.Status.MISSING_CREDENTIAL -> "缺凭证"
     PiModelInventory.Status.UNKNOWN -> "无法判断"
 }
@@ -1818,9 +1849,8 @@ private fun modelWire(
  * 为什么需要它：pi 用 `defaultProvider` 决定由谁提供 `defaultModel`
  * （`core/settings-manager.ts:108-109`），而这一屏的模型选择器一次选择就同时决定两者。
  * 只写 `defaultModel` 会让 `defaultProvider` 继续指着上一个厂商，选的模型根本不是那个厂商
- * 的；而手打一个 pi 不认识的模型，pi 不报错、静默退回占位模型。
- * （`ModelSelectionPlan.writeDefault` 是 pi 自己那条"两把键一起写"的形状；导入 sheet 目前
- * 没有入口调用它 —— 要改默认模型，就是这一行。）
+ * 的；而手打一个 pi 不认识的模型，pi 不报错、静默退回占位模型。导入 sheet 不写这两个键 ——
+ * 要改默认模型，就是这一行。
  *
  * 三条行为，其余键原样转给 [base]：
  *

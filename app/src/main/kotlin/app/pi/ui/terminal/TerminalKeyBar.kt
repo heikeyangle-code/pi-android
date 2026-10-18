@@ -131,10 +131,9 @@ data class TerminalBarKey(
          * Every chip a stored `app.terminal.keyBar` list may name.
          *
          * It is a superset of [defaultRows] on purpose: `pipe` and `tilde` are
-         * not in Termux's default bar, but they are in the preset list the
-         * Settings screen offers (`PiSettingsRegistry.kt`, `termKeyBarPresets`),
-         * so a user who configured the old bar keeps exactly those chips instead
-         * of silently losing two.
+         * not in Termux's default bar, but a `settings.json` that names them (the
+         * key survives even though 设置 no longer has a row for it) keeps exactly
+         * those chips instead of silently losing two.
          */
         val catalog: List<TerminalBarKey> = listOf(
             ESC, TAB, CTRL, ALT, UP, DOWN, LEFT, RIGHT,

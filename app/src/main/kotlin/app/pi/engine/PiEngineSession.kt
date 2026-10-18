@@ -1,5 +1,6 @@
 package app.pi.engine
 
+import app.pi.packages.PendingModelRestart
 import app.pi.rpc.JsonlFramer
 import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
@@ -542,6 +543,11 @@ class PiEngineSession(
                 // keep visible, so counting it would erase the evidence.
                 if (response.success) {
                     lastServingMs = (System.nanoTime() - startedAt) / 1_000_000
+                    // 引擎从这里开始服务，也就是它已经读过磁盘上现在的 `models.json` /
+                    // `auth.json` / 选择键了。App 那本「改完还没重启」的账（写入在
+                    // `PiCredentialService`，卡片在「模型与供应商」）到这里就还清：重启
+                    // 成功也会走到这一行，于是卡片自己消失。没有标记时是空操作。
+                    PendingModelRestart.clear()
                 }
             }
         }

@@ -588,13 +588,16 @@ class PiModelsFile(
 }
 
 /**
- * The `settings.json` writes the import needs: which provider/model to use, and
- * which models are enabled for cycling.
+ * The `settings.json` writes the import needs: which models are enabled for cycling.
  *
- * These are the only three keys in pi's `Settings` that describe a *selection*
- * rather than a definition (`core/settings-manager.ts:108-139`):
- * `defaultProvider`, `defaultModel`, `enabledModels`. The definitions themselves are
- * in `auth.json` / `models.json` — see [PiConfigFiles].
+ * `enabledModels` is the only key that import writes. pi's `Settings` has three
+ * *selection* keys (`core/settings-manager.ts:108-139`) — `defaultProvider`,
+ * `defaultModel`, `enabledModels` — but the first two are edited on the model screen
+ * itself (`DefaultModelPairStore`, which writes them as one pair), not here: the
+ * import form never had a "设为默认" control, so the writer that could only be
+ * called from that non-existent control was removed rather than left as a dead
+ * path. The definitions themselves are in `auth.json` / `models.json` — see
+ * [PiConfigFiles].
  *
  * The write goes through `PiSettingsFileStore` (which already owns merge rules,
  * atomic replace and project-over-global precedence) and is wrapped in pi's own
@@ -634,28 +637,6 @@ class PiEnginePreferences(
 
     /** The instance every read and write here goes through. */
     private val store: PiSettingsFileStore get() = sharedStore ?: ownStore
-
-    /**
-     * `defaultProvider` + `defaultModel`，**只在用户明确「设为默认」时调**（判定在
-     * [ModelSelectionPlan.settings] 的 `writeDefault`）。
-     *
-     * 旧的 `selectModel` 把这三个键的写入绑成一次无条件调用：给已有厂商加一个模型，
-     * 默认模型也被顺手切走 —— 用户报的「导入完了也有 bug」的其中一半。拆开之后，
-     * "要不要写"由判定对象回答，这里只负责落盘。
-     *
-     * @return null on success, else a message.
-     */
-    fun setSelection(providerId: String, modelId: String): String? = runCatching {
-        // pi locks `settings.json` itself on every save (`settings-manager.ts:236-256`),
-        // so an unlocked write here can be overwritten by pi's next persistence with
-        // no error at all.
-        PiConfigFiles.withLock(File(agentDir, "settings.json")) {
-            store.write("defaultProvider", JsonPrimitive(providerId))
-            store.write("defaultModel", JsonPrimitive(modelId))
-            store.invalidate()
-            null
-        }
-    }.getOrElse { error -> "写入设置失败：${error.message ?: error::class.java.simpleName}" }
 
     /**
      * `enabledModels` **整表**写入 —— 列表怎么算（保留谁、替换谁、要不要写）是

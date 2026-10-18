@@ -667,7 +667,6 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 │ 💾 会话                   ~/.pi/sessions  ⟩ │
 │ 🧩 扩展与资源             12 个扩展        ⟩ │
 │ 🎨 外观                   深色 · 跟随系统  ⟩ │
-│ ⌨️ 终端与 Shell           等宽 13sp        ⟩ │
 │ 👆 交互                   双击返回：会话树 ⟩ │
 │ 🛡️ 安全与信任             项目：询问       ⟩ │
 │ 📱 设备能力               无障碍：开       ⟩ │
@@ -701,7 +700,7 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 
 ### 6.4 完整设置清单（按层级）
 
-> **本节的组数 vs 本应用实际的组数。** 这一节是**规格**，按 14 组写（含「交互」「设备能力」两组）。本应用落地的设置注册表是 **13 组**（`PiSettingsCatalog.groups`，`PiSettingsRegistry.kt:1415-1500`）：这 14 组里作为设置分组实现的 12 组 —— `模型与推理`、`消息与网络`、`上下文与压缩`、`重试与网络`、`工具`、`会话`、`扩展与资源`、`外观`、`终端与 Shell`、`安全与信任`、`运行时与诊断`、`隐私与关于` —— 加上本应用自己的第 13 组 **`提示词`**（下面紧跟 L0-1 列出；两行系统提示词没有 pi 的 settings 键，规格里没有它们的落点）。`交互` 与 `设备能力` 在本应用里不是设置分组（设备能力是设置首页的独立入口）。
+> **本节的组数 vs 本应用实际的组数。** 这一节是**规格**，最初按 14 组写（含「交互」「设备能力」两组）。本应用落地的设置注册表是 **11 组**（`PiSettingsCatalog.groups`，`PiSettingsRegistry.kt`）：这 14 组里作为设置分组实现的 10 组 —— `模型与推理`、`消息与网络`、`上下文与压缩`、`重试`、`工具`、`会话`、`扩展与资源`、`外观`、`安全与隐私`、`运行时与诊断` —— 加上本应用自己的第 11 组 **`提示词`**（下面紧跟 L0-1 列出；两行系统提示词没有 pi 的 settings 键，规格里没有它们的落点）。`交互` 与 `设备能力` 在本应用里不是设置分组（设备能力是设置首页的独立入口）。**`终端与 Shell` 整组已删除**（用户裁定）：终端页退役，`shellPath` / `shellCommandPrefix` / `npmCommand` / `app.terminal.fontSize` / `app.terminal.keyBar` 五行一起删掉，`images.autoResize` / `images.blockImages` 两行移进 `消息与网络 → 图片`。
 
 **L0-1 模型与推理**
 - L1：默认厂商（ValueRow，40 个 Provider 选择器）· 默认模型（ValueRow）· 默认思考等级（ValueRow，7 档）· 逐模型思考等级（ListRow → L2 列表 → L3 单模型）· 思考预算（ListRow → L3，4 档数值）· 循环模型（ListRow，勾选+排序）· 隐藏思考块（Switch）· 缓存未命中提示（Switch，高级）· 传输方式（ValueRow：auto/sse/websocket/websocket-cached）
@@ -713,8 +712,10 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 - 行身份仍是 `app.` 前缀的键（`app.prompts.system` / `app.prompts.append`），但**框上沿显示的是真正被写的文件路径**（`PiSetting.keyLabel` → `~/.pi/agent/SYSTEM.md`）：这一行没有 pi 的键可写，写一个像键的字符串等于指认一个不存在的东西（2026-10-17 之前那里写的是 `app.runtime.systemPrompt`，用户报的就是「上面写着 app runtime，是不是过时了」）。
 - 这一组的位置理由不变：用户不会到「运行时」下面找「模型被交代了什么」；pi 自己的 CLI 里 `--model` 与 `--system-prompt` 是相邻的（`cli/args.ts:108-112`），所以这一组排在「模型与推理」**之后**。整份系统提示词是几千字的 Markdown，编辑器必须是**多行 + 框内可滚动**（`PiSetting.multiline = true`，见 §6.2）。
 
-**L0-2 消息与队列**
+**L0-2 消息与队列**（应用里叫「消息与网络」）
 - 引导模式（ValueRow：逐条/全部）· 后续模式（ValueRow）· HTTP 空闲超时（Number，0=禁用）· WebSocket 连接超时（Number）· HTTP 代理（Text，全局）
+- **图片**小节：图片自动缩放 `images.autoResize`（Switch，新会话）· 屏蔽图片 `images.blockImages`（Switch，新会话）
+  （这两行原先在「外观」，随 `终端与 Shell` 删除一起搬到这里：它们是发给模型的图片行为，与终端无关。）
 
 **L0-3 上下文与压缩**
 - 自动压缩（Switch）· 保留 token（Number，默认 16384）· 保留最近 token（Number，默认 20000）· 逐模型覆盖（ListRow → L3）· 分支摘要保留 token（Number）· 跳过"要摘要吗"询问（Switch）
@@ -737,22 +738,26 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 - 扩展（ListRow）· 资源包（ListRow + 安装/更新/移除）· 技能（ListRow）· 提示模板（ListRow）· 主题（ListRow + 导入）· 技能命令开关（Switch）· 上下文文件（ListRow → 编辑器）· 信任名单（ListRow）
 
 **L0-8 外观**
-- 主题（ValueRow，含自动模式 `"浅/深"` 字面量）· 动态取色（Switch，Android 12+）· 字号微调（Number ±2sp）· 消息密度（ValueRow：舒适/紧凑/宽松）· 时间戳显示（Switch）· 思考块默认折叠（Switch）· 用户消息内边距 `outputPad`（ValueRow 0/1）· 编辑器水平内边距 `editorPaddingX`（0–3）· 补全最大可见项 `autocompleteMaxVisible`（3–20）· 代码块缩进 `markdown.codeBlockIndent`（Text）· Mermaid 渲染 `markdown.mermaid`（off/final/streaming）· 图片自动缩放（Switch）· 屏蔽图片（Switch）· 隐藏启动信息卡 `quietStartup`（Switch）
+- 主题（ValueRow，含自动模式 `"浅/深"` 字面量）· 动态取色（Switch，Android 12+）· 字号微调（Number ±2sp）· 消息密度（ValueRow：舒适/紧凑/宽松）· 时间戳显示（Switch）· 思考块默认折叠（Switch）· 用户消息内边距 `outputPad`（ValueRow 0/1）· 编辑器水平内边距 `editorPaddingX`（0–3）· 补全最大可见项 `autocompleteMaxVisible`（3–20）· 代码块缩进 `markdown.codeBlockIndent`（Text）· Mermaid 渲染 `markdown.mermaid`（off/final/streaming）· 隐藏启动信息卡 `quietStartup`（Switch）
+  （`images.autoResize` / `images.blockImages` 已移到 L0-2 的「图片」小节。）
 
-**L0-9 终端与 Shell**
-- Shell 路径 `shellPath`（Text）· 命令前缀 `shellCommandPrefix`（Text）· npm 命令 `npmCommand`（ListRow）· 终端字号 · 光标样式 · 滚回行数 · 终端图片 `terminal.showImages`（Switch）· 图片宽度 `terminal.imageWidthCells`（Number）· 收缩清屏 `terminal.clearOnShrink`（Switch）· 终端进度 `terminal.showTerminalProgress`（Switch）· 超链接 `terminal.hyperlinks`（ValueRow，高级）· 图片协议 `terminal.images`（ValueRow，高级）· 真彩 `terminal.trueColor`（ValueRow，高级）· 键盘按键条自定义（ListRow）
+> **`终端与 Shell` 组已删除**（用户裁定）：终端页退役，组里落地的五行
+> （`shellPath` / `shellCommandPrefix` / `npmCommand` / `app.terminal.fontSize` /
+> `app.terminal.keyBar`）一起从注册表删掉；上面这些只被 pi 的 TUI 读的键本来就不在
+> 注册表里。图片两行见 L0-2。`TerminalSettings` 仍读 `app.terminal.*`（旧 `settings.json`
+> 手写值照旧生效），只是设置页不再有为它们准备的行。
 
-**L0-10 交互**
+**L0-9 交互**
 - 双击返回动作 `doubleEscapeAction`（ValueRow：会话树/分叉/无）· 选中即复制 `fullscreenCopyOnSelect`（Switch）· 滚动条策略 `fullscreenScrollbar`（ValueRow：auto/always/hidden）· 退出时输出 `fullscreenExitOutput`（ValueRow）· TUI 模式 `tuiMode`（ValueRow：regular/fullscreen）· 树过滤器 `treeFilterMode`（ValueRow，5 种）· 硬件光标 `showHardwareCursor`（Switch）· 对话内搜索范围（ValueRow）· 手势开关（ListRow：滑动删除、双击回顶等）· 触觉档位（ValueRow）· 音效（Switch）· 动效强度（ValueRow：完整/减少/跟随系统）· 低端设备模式（Switch）
 
-**L0-11 安全与信任**
+**L0-10 安全与信任**
 - 项目信任策略 `defaultProjectTrust`（ValueRow：询问/总是/从不）· 项目信任名单（ListRow）· 扩展信任（ListRow）· 危险操作分级阈值（ValueRow）· Anthropic 额外用量警告 `warnings.anthropicExtraUsage`（Switch）· 审计日志（ListRow → 查看器）· 紧急停止（Action）
 
-**L0-12 设备能力**（见 5.6）
+**L0-11 设备能力**（见 5.6）
 
-**L0-13 运行时与诊断**（见 5.7）
+**L0-12 运行时与诊断**（见 5.7）
 
-**L0-14 隐私与关于**
+**L0-13 隐私与关于**
 - 安装遥测 `enableInstallTelemetry`（Switch）· 开源许可。**匿名分析 / 追踪 ID / 版本与 changelog 已不在设置页**：
   前两个 pi 自己只写不读，changelog 那两个键只有原版 TUI 读——理由见 `settings-review.md` §1.2、§9.1。
   **原始配置编辑器不做**：pi 的 `/settings` 是类型化表单，没有原始编辑器；见 `settings-review.md` §8。

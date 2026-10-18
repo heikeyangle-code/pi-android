@@ -39,7 +39,11 @@ import kotlinx.serialization.json.JsonPrimitive
  *    through `DECSCUSR`, which libvterm honours.
  *
  * Those two rows are no longer in `PiSettingsRegistry.kt`: the registry audit in
- * this pass removed them, so there is nothing left here to keep in sync.
+ * this pass removed them, so there is nothing left here to keep in sync. The two
+ * keys **still read below** lost their rows too (用户裁定：`终端与 Shell` 整组删除，
+ * 终端页退役) — a hand-written `settings.json` value keeps working, but `设置` no
+ * longer has a row for them, so this file owns their default values now (see
+ * [TerminalPreferences]).
  *
  * **Same store, not a second one.** The paths are built from the same two
  * canonical resolvers the rest of the app uses — `PiPaths` for the agent dir (as
@@ -56,9 +60,9 @@ import kotlinx.serialization.json.JsonPrimitive
  * switch sees the new workspace's project settings; the tab is re-entered rather
  * than hot-swapped, which is also why no rebuild hook is needed here.
  *
- * Reads happen once per composition of the Workbench screen, and `app.terminal.*`
- * commands are documented as needing a reload; the tab is re-entered rather than
- * hot-swapped, which matches `EffectiveKind.Reload` on the key-bar row.
+ * Reads happen once per composition of the Workbench screen; the tab is re-entered
+ * rather than hot-swapped, so a changed value lands when the terminal page is next
+ * opened.
  */
 internal fun terminalSettingsStore(context: Context): PiSettingsStore {
     val app = context.applicationContext ?: context
@@ -75,26 +79,35 @@ internal fun terminalSettingsStore(context: Context): PiSettingsStore {
 /**
  * Resolved values for one Workbench composition.
  *
- * Defaults are read from the registry (`PiSettingsCatalog.byKey`) rather than
- * repeated here, so the Settings screen and the terminal cannot drift apart about
- * what "unset" means.
+ * Defaults come from the registry row when there is one (`PiSettingsCatalog.byKey`),
+ * and from the constants in this file when there is not: `app.terminal.fontSize` /
+ * `app.terminal.keyBar` lost their rows with the 终端与 Shell group, and a missing
+ * row used to mean `fallback = 0.0` — a terminal that measured its grid with a 0sp
+ * font. The numbers below are that row's declared default (`num(13)`) and the bar's
+ * own [TerminalBarKey.defaultRows], so a stored value still wins over either.
  */
 internal data class TerminalPreferences(
     val fontSize: Float,
     val keyBar: List<List<TerminalBarKey>>,
 ) {
     companion object {
+        /** 已删除的 `app.terminal.fontSize` 行的默认值（当年注册表里写的就是这个数）。 */
+        private const val DEFAULT_FONT_SIZE = 13.0
+
         fun read(store: PiSettingsStore): TerminalPreferences = TerminalPreferences(
-            fontSize = number(store, "app.terminal.fontSize").toFloat(),
+            fontSize = number(store, "app.terminal.fontSize", DEFAULT_FONT_SIZE).toFloat(),
             keyBar = keyBarOf(store),
         )
 
-        /** The registry's value if set, else its declared default, clamped to its declared range. */
-        private fun number(store: PiSettingsStore, key: String): Number {
+        /**
+         * The stored value, else the registry row's declared default, else [fallback],
+         * clamped to the row's declared range when the row exists.
+         */
+        private fun number(store: PiSettingsStore, key: String, fallback: Double): Number {
             val setting = PiSettingsCatalog.byKey[key]
             val stored = (store.read(key) as? JsonPrimitive)?.content?.toDoubleOrNull()
-            val fallback = (setting?.defaultValue as? JsonPrimitive)?.content?.toDoubleOrNull() ?: 0.0
-            val raw = stored ?: fallback
+            val declared = (setting?.defaultValue as? JsonPrimitive)?.content?.toDoubleOrNull()
+            val raw = stored ?: declared ?: fallback
             return raw
                 .coerceAtLeast(setting?.min?.toDouble() ?: raw)
                 .coerceAtMost(setting?.max?.toDouble() ?: raw)

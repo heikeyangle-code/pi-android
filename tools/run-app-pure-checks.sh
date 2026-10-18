@@ -699,7 +699,7 @@ run_harness utf8-stream \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Utf8StreamDecoder.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt"
 
-# app.pi.ui.settings: the registry audit. `PiSettingsRegistry.kt` is data — 67 rows
+# app.pi.ui.settings: the registry audit. `PiSettingsRegistry.kt` is data — 76 rows
 # transcribed from pi's settings documents — and nothing ever compared it against
 # the rest of the tree, so a row that is persisted and read by nobody could only be
 # found by hand. That defect has shipped three times (§I7, §I10, §I11 in

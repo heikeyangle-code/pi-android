@@ -494,7 +494,7 @@ fun PiSettingsStack(
     val hostActions: Map<String, () -> Unit> = mapOf(
         "app.models.inventory" to { openModelFlow(null, false, null) },
         "app.credentials.apiKey" to { openModelFlow(null, true, null) },
-        "app.localModels.manage" to { openModelFlow("llamacpp", true, null) },
+        "app.localModels.manage" to { openModelFlow("llama.cpp", true, null) },
         // The `packages` row is a read-only *view* of what `pi install` wrote
         // (`PiSettingsRegistry.kt` says so on the row). Editing the array by hand
         // bypasses the download/resolve step and can leave a spec that looks

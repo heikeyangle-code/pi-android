@@ -269,7 +269,8 @@ fun SettingsHome(
                 }
             }
             // v2 把当时的 12 个分组放进**一张**卡片，行间是 1px inset hairline；分组
-            // 行数不多（现在是 13 行，见 `PiSettingsCatalog.groups`），所以整块是一个
+            // 行数不多（现在是 10 行：11 组减掉下面被过滤的「模型与推理」，见
+            // `PiSettingsCatalog.groups`），所以整块是一个
             // LazyColumn item，不拆成一个个 item。
             item {
                 PiSettingsSectionHeader(

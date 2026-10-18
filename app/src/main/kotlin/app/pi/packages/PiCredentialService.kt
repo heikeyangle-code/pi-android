@@ -159,6 +159,7 @@ class PiCredentialService(
             catalogJson = readTextOrNull(File(mirrorAgentDir, "models-store.json")),
             selection = selection,
             engineModels = engineModels,
+            pendingRestart = PendingModelRestart.isPending(),
         )
     }
 
@@ -300,19 +301,16 @@ class PiCredentialService(
     )
 
     /**
-     * Write everything: `auth.json` → `models.json` → 以及**只在用户要求时**才写
-     * `settings.json` 里的选择键。
+     * Write everything: `auth.json` → `models.json` → 勾选有变化时 `settings.json` 的
+     * `enabledModels`。
      *
-     * 选择键（`defaultProvider`/`defaultModel`/`enabledModels`）由
-     * [ModelSelectionPlan] 判定，**默认一个都不写**：
-     *
-     *  - [setAsDefault] 为 true 且 [defaultModelId] 非空 ⇒ 写默认选择；
-     *  - 勾选集合与 [configuredModelIds] 不同 ⇒ 重写 `enabledModels`（整表，但别的
-     *    厂商的条目保留）。
-     *
-     * 旧版把这三键绑成一次无条件写入（`modelId ?: choices.first().id`），于是"给已有
-     * 厂商加一个模型"会顺手切默认、"导入第二个厂商"会冲掉第一个厂商的循环条目和用户
-     * 手写的 pattern —— 用户报的「导入完了也有 bug」（B1）。
+     * `defaultProvider`/`defaultModel` **这一条路一个都不写**：默认模型在「模型与供应商」
+     * 清单页的「默认模型」那一行里改（`DefaultModelPairStore` 一次写两个键），导入流程
+     * 只负责"这个厂商有哪些模型、循环范围是哪些"。旧版把三个键绑成一次无条件写入
+     * （`modelId ?: choices.first().id`），于是"给已有厂商加一个模型"会顺手切默认、
+     * "导入第二个厂商"会冲掉第一个厂商的循环条目和用户手写的 pattern —— 用户报的
+     * 「导入完了也有 bug」（B1）。`enabledModels` 要不要写、写什么，判定全在
+     * [ModelSelectionPlan]。
      */
     fun save(
         preset: PiProviderPresets.Preset,
@@ -347,10 +345,6 @@ class PiCredentialService(
          * 没读到 + pi 自带厂商 → 退回什么都不申报（写一条就是把官方数据换成默认值）。
          */
         officialCatalogRead: Boolean = false,
-        /** 用户是否明确点了「设为默认」；没点就不写默认选择。 */
-        setAsDefault: Boolean = false,
-        /** [setAsDefault] 为 true 时写入的模型 id；false 时忽略。 */
-        defaultModelId: String? = null,
     ): SaveResult {
         val steps = mutableListOf<String>()
         // 保存前 `models.json` 里为这个厂商申报过哪些模型：`declared` 为空时下面的 upsert 会
@@ -493,16 +487,7 @@ class PiCredentialService(
             providerId = preset.id,
             checkedIds = choices.map { it.id },
             configuredIds = configuredModelIds,
-            setAsDefault = setAsDefault,
-            requestedDefaultModelId = defaultModelId,
         )
-        val defaultId = plan.defaultModelId
-        if (plan.writeDefault && defaultId != null) {
-            preferences().setSelection(preset.id, defaultId)?.let { error ->
-                return SaveResult(false, steps + error, null)
-            }
-            steps += "已设为默认模型：${preset.id}/$defaultId"
-        }
         plan.enabledModels?.let { patterns ->
             preferences().setEnabledModels(patterns)?.let { error ->
                 return SaveResult(false, steps + error, null)
@@ -515,6 +500,12 @@ class PiCredentialService(
                 "循环列表已更新（${patterns.size} 条，其他厂商的条目保留）"
             }
         }
+
+        // 写盘已经成功：从这里开始，引擎快照里的模型与凭证就是旧的了。记账的位置在
+        // **所有**落盘之后（凭证、厂商块、循环列表），失败的分支都在上面提前 return，
+        // 所以这里置位等价于"这一屏确实改了什么"。清位在引擎开始服务那一刻
+        // （`PiEngineSession.probeServing`）—— 重启成功走的就是那条路，卡片自己消失。
+        PendingModelRestart.mark()
 
         return SaveResult(
             ok = true,
@@ -530,10 +521,17 @@ class PiCredentialService(
         )
     }
 
-    /** Remove a provider from `auth.json` and `models.json`. Returns null on success. */
+    /**
+     * Remove a provider from `auth.json` and `models.json`. Returns null on success.
+     *
+     * 成功之后同样置「等重启」标记：删掉的厂商/凭证还在引擎的启动快照里，要一次启动
+     * 才会消失（`PendingModelRestart`）。
+     */
     fun remove(providerId: String): String? {
         auth().remove(providerId)?.let { return it }
-        return models().remove(providerId)
+        models().remove(providerId)?.let { return it }
+        PendingModelRestart.mark()
+        return null
     }
 
     /** For the UI's "which agent dir is this actually in" disclosure. */

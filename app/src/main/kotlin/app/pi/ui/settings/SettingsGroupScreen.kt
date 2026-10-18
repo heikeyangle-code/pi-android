@@ -30,7 +30,7 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * Settings level 1: one group, rendered straight from the registry.
  *
- * Rows are grouped by their `section`, so a long group such as 终端与 Shell keeps
+ * Rows are grouped by their `section`, so a long group such as 运行时与诊断 keeps
  * "basic vs advanced" legible. The screen owns its editor state, so it is usable
  * on its own, and it accepts a [highlightKey] so a global-search hit can jump to
  * a row and tint it (spec §6.3).

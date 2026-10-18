@@ -92,9 +92,10 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     val piPalette = PiTheme.palette
     val palette = remember(piPalette) { TerminalPalette.of(piPalette) }
     // The `app.terminal.*` settings, read from the same documents the Settings
-    // screen writes. A read happens once per Workbench composition, and the keys
-    // the user edits are `EffectiveKind.Reload` rows, so re-entering the tab is the
-    // documented way to apply them.
+    // screen writes. A read happens once per Workbench composition, so re-entering
+    // the tab applies a changed value. (These keys no longer have 设置 rows — the
+    // 终端与 Shell group was deleted — but a hand-written `settings.json` value
+    // still wins over `TerminalPreferences`' defaults.)
     val settingsStore = remember(context) { terminalSettingsStore(context) }
     val preferences = remember(settingsStore) { TerminalPreferences.read(settingsStore) }
 

@@ -18,8 +18,8 @@ import kotlinx.serialization.json.JsonPrimitive
  *  - "我导入过的模型在哪？" —— 没有一处能列出来；
  *  - "它为什么不在模型列表里？" —— 选择器只显示结果，不显示为什么。
  *
- * 第二个问题的答案有且只有三种，本文件把它们区分开（[Status]）：**缺凭证**、**引擎还
- * 没加载**、**已经生效**。前两种在界面上是两句不同的话，也是两条不同的下一步动作。
+ * 第二个问题的答案有且只有几种，本文件把它们区分开（[Status]）：**缺凭证**、**改完还没
+ * 重启**、**pi 未列出**、**已经生效**。每种在界面上是一句不同的话，也是不同的下一步。
  *
  * ## 输入全是"文件的原文"，不是路径
  *
@@ -43,7 +43,9 @@ import kotlinx.serialization.json.JsonPrimitive
  *  - **引擎有没有加载**：`ModelConfig.load` 只在 `ModelRuntime.create`
  *    （`core/model-runtime.ts:176`）与 `ModelRuntime.refresh`（`:699`）里调用，而
  *    `--mode rpc` 下没有任何命令会 refresh（唯一一次是启动期 `main.ts:925-936` 的
- *    `void refresh(...)`）。所以"文件里有、引擎列表里没有、且有凭证"= **要重启引擎**。
+ *    `void refresh(...)`）。所以"文件里有、引擎列表里没有"**不足以**说明要重启 ——
+ *    pi 的官方目录本来就要等一次启动才进快照。真正能说的是"本 App 写过、之后没重启过"，
+ *    那是 [PendingModelRestart] 的记账，由调用方作为 `pendingRestart` 传进来。
  *  - **哪个被启用**：`settings.json` 的 `enabledModels`（`core/settings-manager.ts:139`），
  *    是**模式**（minimatch 语法，对 `provider/modelId` 或裸 id 匹配，见
  *    `core/model-resolver.ts:311-317`），不是 id 清单。
@@ -66,9 +68,13 @@ import kotlinx.serialization.json.JsonPrimitive
  *    合并对数组是**替换**（`PiSettingsFileStore` 头部），所以"项目有就用项目的"与 pi 的
  *    深合并在这三个键上**结果相同**，不需要引入一份合并实现。
  *  - [Status.PENDING_RESTART] 是**推断**而不是 pi 的答案：RPC 没有任何命令能回答"引擎
- *    读过这个文件了吗"，可观测的只有"引擎现在列不列它"。这个方法在两种情况下会误报成
- *    "要重启"：凭证其实不可用（例如 `models.json` 里写的是 `$ENV_VAR` 而变量没设），
- *    以及 `models.json` 本身解析失败（那种情况由 [Inventory.modelsJsonError] 单独说明）。
+ *    读过这个文件了吗"。它同时要求两件事 —— `models.json` 里申报/覆盖过这个 id，且本 App
+ *    的写入记账还没被一次引擎启动清掉 —— 所以"什么也没干却让用户重启"那条路已经关掉。
+ *    剩下会让它误报的只有凭证其实不可用（例如 `models.json` 里写的是 `$ENV_VAR` 而变量
+ *    没设）；`models.json` 解析失败由 [Inventory.modelsJsonError] 单独说明。
+ *  - 反过来，**在 App 之外**改的文件（对话里让 AI 写、手改 `models.json`）不经过
+ *    [PendingModelRestart]，于是它们的条目落在 [Status.NOT_LISTED]（「pi 未列出」）而不是
+ *    「等待重启」。这是有意的：App 没有资格替 AI 的一次写入判断"你该重启了"。
  */
 object PiModelInventory {
 
@@ -89,8 +95,23 @@ object PiModelInventory {
         /** 引擎的 `get_available_models` 里有它：现在就能用。 */
         READY,
 
-        /** 有凭证、文件里也写好了，但引擎的列表里没有 —— 引擎还没重新读文件。 */
+        /**
+         * 有凭证、`models.json` 里**申报或覆盖**过它，而本 App 之后还没重启过引擎
+         * （`PendingModelRestart`）—— 引擎确实还没读这份文件。
+         *
+         * 只有这个组合才算"等待重启"。官方目录自带的模型不在引擎快照里是常态（pi 只在
+         * 启动时把目录并进快照），不能因此说用户要重启；那种情况是 [NOT_LISTED]。
+         */
         PENDING_RESTART,
+
+        /**
+         * 引擎没有列出它，但 App 没有"改完还没重启"的记账。
+         *
+         * 两种来源：pi 官方目录里就有、只是不在这次启动的快照里；或者有人在 App 之外
+         * 改了 `models.json`（对话里让 AI 写、手改文件），那种改动不经过
+         * [PendingModelRestart]。措辞是「pi 未列出」—— 它只说 pi 现在的回答，不推测原因。
+         */
+        NOT_LISTED,
 
         /** 这个厂商没有凭证，pi 因此不列出它的任何模型（`docs/models.md:34-36`）。 */
         MISSING_CREDENTIAL,
@@ -143,14 +164,15 @@ object PiModelInventory {
         val selection: Selection,
         /** 含本实现不支持的 glob 语法、因而无法判断的模式。 */
         val unjudgedPatterns: List<String>,
+        /**
+         * [PendingModelRestart] 的读数（组装这一刻）。重启卡只在它与"引擎在跑"同时成立时出现；
+         * 逐模型的 [Status.PENDING_RESTART] 也由它决定。
+         */
+        val restartPending: Boolean = false,
     ) {
         val models: List<Model> get() = providers.flatMap { it.models }
 
         fun count(status: Status): Int = models.count { it.status == status }
-
-        /** 有几个厂商"文件里写好了但引擎还没加载" —— 重启横幅用的就是它。 */
-        val providersPendingRestart: List<Provider>
-            get() = providers.filter { provider -> provider.models.any { it.status == Status.PENDING_RESTART } }
     }
 
     // ------------------------------------------------------------------ 组装
@@ -161,6 +183,10 @@ object PiModelInventory {
      * @param engineModels null 表示**读不到引擎的回答**（引擎没在跑），与"引擎回答了一个
      *        空列表"是两件事：前者所有状态 [Status.UNKNOWN]，后者是正常的"还没有任何可用
      *        模型"。这个区分不能用空列表代替。
+     * @param pendingRestart [PendingModelRestart] 的读数：本 App 写过模型/凭证文件之后置位，
+     *        引擎开始服务时清位。**只有它为 true** 时，"申报/覆盖过、引擎却没列出"才可以说
+     *        成 [Status.PENDING_RESTART]；其余一律 [Status.NOT_LISTED]（用户原话：「明明啥也
+     *        没干，也显示到什么模型没生效，非让我重启」）。
      */
     fun assemble(
         modelsJson: String?,
@@ -168,6 +194,7 @@ object PiModelInventory {
         catalogJson: String?,
         selection: Selection = Selection(),
         engineModels: List<EngineModel>? = null,
+        pendingRestart: Boolean = false,
     ): Inventory {
         val modelsRead = readProviders(modelsJson)
         val authRead = readCredentials(authJson)
@@ -228,7 +255,12 @@ object PiModelInventory {
                             engine == null -> Status.UNKNOWN
                             engine != null && (providerId to id) in engine -> Status.READY
                             !hasCredential -> Status.MISSING_CREDENTIAL
-                            else -> Status.PENDING_RESTART
+                            // 目录里来的模型（只含 PI_CATALOG）永远不说"等待重启"：pi
+                            // 只在启动时把目录并进快照，不在快照里是常态，不是用户要做的动作。
+                            pendingRestart &&
+                                (Origin.DECLARED in origins || Origin.OVERRIDDEN in origins) ->
+                                Status.PENDING_RESTART
+                            else -> Status.NOT_LISTED
                         },
                     )
                 }
@@ -251,6 +283,7 @@ object PiModelInventory {
             engineKnown = engineModels != null,
             selection = selection,
             unjudgedPatterns = selection.enabledPatterns.filter { hasUnsupportedGlobSyntax(it) },
+            restartPending = pendingRestart,
         )
     }
 
