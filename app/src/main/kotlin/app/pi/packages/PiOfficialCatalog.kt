@@ -101,6 +101,46 @@ object PiOfficialCatalog {
 
     const val MANIFEST_NAME = ".manifest.json"
 
+    /**
+     * 官方模型目录在 rootfs 里的**候选位置**，按可能性排序；调用方取第一份带
+     * [MANIFEST_NAME] 的（[readFromRootfs]）。
+     *
+     * 为什么不是一个常量：这个目录的深度由 npm 的依赖树决定，而它会变。载荷里曾经是
+     * **嵌套**布局（`@earendil-works/pi-ai` 挂在 `pi-coding-agent/node_modules` 下，
+     * 那个常量是 `9fb65b7` 引入的）；pi 1.3.0 的 `tools/pi-engine.lock.json` 把全部
+     * `@earendil-works/…` **提升到顶层**（键是 `node_modules/@earendil-works/pi-ai`，
+     * `pi-coding-agent` 下嵌套数 0）。写死任何一种布局，升级一次引擎就会让整张厂商表
+     * 消失：导入 sheet 的 `providerChoices` 只剩 `PiProviderPresets` 里的几档，用户看到的
+     * 是「已有厂商，再点导入模型，列表里只有三个，搜也搜不出来」。
+     *
+     * 路径基准是 `tools/fetch-runtime.mjs` 的 `{ name: "pi-engine", prefix: "rootfs/opt/pi" }`：
+     * 载荷解包后 pi 的 npm 树就在 `<rootfs>/opt/pi` 下。`pi-official-catalog-path` harness
+     * 从 lock 文件里读出 `pi-ai` 的**实际**位置，断言这份列表包含
+     * `opt/pi/<该键>/dist/providers/data` —— 依赖树再搬家时 CI 直接红，而不是让用户看到短表。
+     */
+    val ROOTFS_DATA_DIRECTORIES: List<String> = listOf(
+        // pi 1.3.0 起的提升布局：lock 里的键就是 `node_modules/@earendil-works/pi-ai`。
+        "opt/pi/node_modules/@earendil-works/pi-ai/dist/providers/data",
+        // 旧载荷的嵌套布局：保留只为兼容已经装好的旧载荷 —— 依赖树是 npm 的决定，不是这里的承诺。
+        "opt/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/data",
+    )
+
+    /**
+     * 在 [rootfs] 下按 [ROOTFS_DATA_DIRECTORIES] 的顺序找官方目录，用第一份带清单的。
+     *
+     * 都找不到时 problems 里**逐个列出试过的路径**：只说一句「读不到」，屏幕上的「厂商少了」
+     * 就无法与「载荷换了依赖树布局」区分开，下一次升级还会再犯一遍。
+     */
+    fun readFromRootfs(rootfs: File): Catalog {
+        val attempted = ROOTFS_DATA_DIRECTORIES.map { File(rootfs, it) }
+        val tried = "试过的位置：" + attempted.joinToString("、") { it.path }
+        val found = attempted.firstOrNull { File(it, MANIFEST_NAME).isFile }
+            ?: return Catalog(emptyList(), listOf("官方模型目录读不到。$tried"))
+        val catalog = readDirectory(found)
+        // 目录在、却一份都没解出来（清单坏、哈希全不符…）：路径同样要留在 problems 里。
+        return if (catalog.providers.isEmpty()) catalog.copy(problems = catalog.problems + tried) else catalog
+    }
+
     /** 读一个目录（设备上就是 `<rootfs>/opt/pi/…/providers/data`）。 */
     fun readDirectory(dataDir: File): Catalog {
         val manifest = File(dataDir, MANIFEST_NAME)

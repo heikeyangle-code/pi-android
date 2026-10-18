@@ -381,8 +381,12 @@ object PiSettingsCatalog {
             // command union (`modes/rpc/rpc-types.ts:20-74`) has no login command at all.
             // The terminal page is the only surface that can run it; saying so is the
             // honest form of "not built in".
-            description = "Anthropic、OpenAI、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 等" +
-                "订阅账号登录请到 工作区 → 终端 里运行 /login；只想填厂商 API Key 用上面那行。",
+            //
+            // 用户裁定（2026-02）：「终端页是半成品」，所以这句话不再把用户支使过去 ——
+            // 只留事实（订阅登录要终端、它还不完善）与这一行旁边就能做的事（API Key）。
+            // 原句是「…订阅账号登录请到 工作区 → 终端 里运行 /login；只想填厂商 API Key
+            // 用上面那行。」
+            description = "订阅登录（OAuth）需要终端，终端页还不完善；只想用 API Key 就用上面那行。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -442,7 +446,13 @@ object PiSettingsCatalog {
         PiSetting(
             key = "modelThinkingLevels",
             title = "逐模型思考等级",
-            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级，键必须精确匹配、不支持通配符。" +
+            // 合法等级与 `defaultThinkingLevel` 的选项同一份（`PiThinkingLevel`）：写错一个
+            // 拼错的等级，pi 不报错，只是这一个模型继续用默认等级（`core/sdk.ts:218` 读的是
+            // `Record<"provider/modelId", ThinkingLevel>`，值不在枚举里就落回默认）。
+            //
+            // 这一行现在由专用编辑器打开（模型点选 + 等级点选，没有文本输入），所以描述里
+            // 不再教 `名字 = 值` 的写法，只留"选谁、有哪些等级"。
+            description = "按模型覆盖启动思考等级，等级为 off、minimal、low、medium、high、xhigh、max。" +
                 "清空并保存 = 回到默认。",
             kind = PiRowKind.List,
             group = G_MODEL,
@@ -455,8 +465,11 @@ object PiSettingsCatalog {
         PiSetting(
             key = "thinkingBudgets",
             title = "思考预算",
-            description = "逐等级的思考 token 预算（minimal/low/medium/high）。" +
-                "清空并保存 = 回到默认（用各厂商自己的预算）。",
+            // 合法键只有这四个（`packages/ai/src/types.ts:100-105` 的 `ThinkingBudgets`）；
+            // 多写的键 pi 原样透传给厂商，厂商不认识就只是白写一行。值是 token 数，pi 不给
+            // 默认值（消费侧 `?? 厂商默认`），所以专用编辑器里"留空 = 用厂商默认"才是正确用法。
+            description = "逐等级的思考 token 预算，键只能是 minimal、low、medium、high；留空 = 用厂商默认。" +
+                "清空并保存 = 回到默认。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "逐模型与预算",

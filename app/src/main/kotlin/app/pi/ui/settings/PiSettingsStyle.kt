@@ -227,10 +227,18 @@ internal val PiSettingsSheetShape = RoundedCornerShape(
 internal fun PiSettingsSectionHeader(
     label: String,
     count: String? = null,
+    /**
+     * 折叠段的头（这一屏的「推理」）：整行可点，右侧显示 [trailing]。
+     * null = 普通节标题，**几何与以前逐像素相同**（`clickable` 只加在需要的那一处）。
+     */
+    onClick: (() -> Unit)? = null,
+    /** 右侧那格可点提示（「展开 / 收起」）；只有 [onClick] 非空时才有意义。 */
+    trailing: String? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
@@ -253,6 +261,13 @@ internal fun PiSettingsSectionHeader(
             )
         }
         Spacer(Modifier.weight(1f))
+        if (trailing != null) {
+            Text(
+                trailing,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 

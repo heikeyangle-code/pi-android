@@ -464,7 +464,16 @@ class PiModelsFile(
         }
     }
 
-    data class Snapshot(val providers: JsonObject, val error: String?) {
+    /**
+     * @property root 整份文档（注释已剥）。写回时 `providers` 之外**原样保留** —— pi 的
+     *   `models.json` 允许根上有别的键（`$schema` 是最常见的那个），重建文档会把它抹掉
+     *   （`PiModelsMerge.root`）。
+     */
+    data class Snapshot(
+        val providers: JsonObject,
+        val error: String?,
+        val root: JsonObject = JsonObject(emptyMap()),
+    ) {
         val healthy: Boolean get() = error == null
     }
 
@@ -483,7 +492,7 @@ class PiModelsFile(
             ?: return Snapshot(JsonObject(emptyMap()), "模型配置不是 JSON 对象（${effective.absolutePath}）")
         val providers = document["providers"] as? JsonObject
             ?: return Snapshot(JsonObject(emptyMap()), "模型配置格式不对：缺少厂商清单")
-        return Snapshot(providers, null)
+        return Snapshot(providers, null, document)
     }
 
     /** The file a read should use: primary, else mirror. */
@@ -545,9 +554,9 @@ class PiModelsFile(
 
         val next = LinkedHashMap<String, JsonElement>(snapshot.providers)
         next[provider.id] = mergeProvider(snapshot.providers[provider.id] as? JsonObject, provider)
-        val root = buildJsonObject {
-            put("providers", JsonObject(next))
-        }
+        // 根也走合并：`providers` 之外（`$schema`、别人写的键）原样保留 —— 以前这里重建
+        // 文档，保存一次厂商就把它们全抹了（`PiModelsMerge.root`）。
+        val root = PiModelsMerge.root(snapshot.root, JsonObject(next))
         val text = root.toString()
         if (!PiConfigFiles.write(file, text)) {
             return "写入模型配置失败（${file.absolutePath}）"
@@ -570,7 +579,7 @@ class PiModelsFile(
         snapshot.error?.let { return "已拒绝写入：$it" }
         val next = LinkedHashMap<String, JsonElement>(snapshot.providers)
         if (next.remove(providerId) == null) return null
-        val root = buildJsonObject { put("providers", JsonObject(next)) }
+        val root = PiModelsMerge.root(snapshot.root, JsonObject(next))
         val text = root.toString()
         if (!PiConfigFiles.write(file, text)) return "写入模型配置失败"
         mirror?.let { PiConfigFiles.write(it, text) }

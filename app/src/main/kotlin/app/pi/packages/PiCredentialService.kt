@@ -116,12 +116,17 @@ class PiCredentialService(
      * 「不能直读官方文件展示出来吗？自己不维护了不行吗？」）。
      *
      * 路径来自 `tools/fetch-runtime.mjs` 的 `{ name: "pi-engine", prefix: "rootfs/opt/pi" }`：
-     * 载荷解包后 pi 的 npm 树就在 `<rootfs>/opt/pi/node_modules` 下，`pi-ai` 的目录数据在
-     * 它嵌套的 node_modules 里。**运行时还没解包时返回一条 problem**（调用方必须显示），
+     * 载荷解包后 pi 的 npm 树就在 `<rootfs>/opt/pi` 下。`pi-ai` 的目录数据**在树的哪一层
+     * 由 npm 的依赖提升决定、而且变过**（1.3.0 起是顶层 `node_modules/@earendil-works/pi-ai`，
+     * 之前嵌在 `pi-coding-agent/node_modules` 下），所以这里交给
+     * [PiOfficialCatalog.readFromRootfs] 按候选列表找，而不是写死一种布局 ——
+     * 写死的那种在载荷升级后会整张表读不到，屏幕上的厂商就只剩 App 自带的几档。
+     *
+     * **运行时还没解包时返回一条 problem**（调用方必须显示，且里面带着试过的每个位置），
      * 而不是一个空列表 —— 空列表会被读成"pi 没有提供商"。
      */
     fun officialCatalog(): PiOfficialCatalog.Catalog =
-        PiOfficialCatalog.readDirectory(File(layout.paths.rootfs, OFFICIAL_CATALOG_IN_ROOTFS))
+        PiOfficialCatalog.readFromRootfs(layout.paths.rootfs)
 
     // ------------------------------------------------------------- 已导入清单
 
@@ -243,12 +248,22 @@ class PiCredentialService(
      * exactly what went wrong and what to do. There is deliberately **no separate
      * "test connection" button** — a successful listing is the proof, and asking the
      * user to prove it twice is the interaction this replaces.
+     *
+     * [apiKey] 留空时用 `auth.json` 里**已保存的那条**去探测。导入 sheet 把已配置厂商的 Key
+     * 收成一行（「已存凭证 · 留空＝沿用」），而「检测并扫描模型」仍是常驻按钮 —— 拿空 Key 去
+     * 探测只会得到 401，"已配置的厂商"反而不能扫描。留空 = 沿用文件里那条，与 [save] 对空
+     * Key 的语义是同一条。
      */
     suspend fun probe(
         preset: PiProviderPresets.Preset,
         apiKey: String,
         baseUrl: String? = null,
-    ): PiModelScanner.Result = scanner.scan(preset, apiKey, baseUrl)
+    ): PiModelScanner.Result {
+        val key = apiKey.ifBlank {
+            (auth().read() as? PiAuthStorage.Read.Ok)?.entries?.get(preset.id)?.key.orEmpty()
+        }
+        return scanner.scan(preset, key, baseUrl)
+    }
 
     // ------------------------------------------------------------------ save
 
@@ -338,6 +353,11 @@ class PiCredentialService(
         defaultModelId: String? = null,
     ): SaveResult {
         val steps = mutableListOf<String>()
+        // 保存前 `models.json` 里为这个厂商申报过哪些模型：`declared` 为空时下面的 upsert 会
+        // **删掉 `models` 这个键**（`PiModelsMerge.provider` 的 ABSENCE_IS_A_STATEMENT），
+        // 而用户最常见的动作是「已有模型、只换一个 Key」—— 没有任何提示就把手写定义清掉，
+        // 那是数据丢失，不是"沿用官方目录"。所以保存后要把这句话说出来。
+        val existingDeclared = models().configuredModelIds(preset.id)
         // 空选择只对「本 App 申报模型」的厂商是错误：那里 `models[]` 是唯一定义，一个都
         // 不勾等于写一个没有模型的空壳。pi 自带目录的厂商不申报任何模型（见下），"只加
         // 一个 Key、别的都不动"是完全合法的保存 —— 以前这里一视同仁地拒绝，把最常见的
@@ -461,6 +481,11 @@ class PiCredentialService(
         } else {
             "模型清单已保存：${preset.id}（${declared.size} 个模型）"
         }
+        // 手写定义被这次保存清掉了：`declared` 为空 + 原来有 → upsert 删掉了 `models` 键。
+        // 必须说出来（「模型信息沿用 pi 自带的目录」听起来像什么都没发生）。
+        if (declared.isEmpty() && existingDeclared.isNotEmpty()) {
+            steps += "models.json 里原有 ${existingDeclared.size} 条手写定义已移除"
+        }
 
         // 选择键：判定（写不写、写什么）全在 ModelSelectionPlan，这里只执行并汇报。
         val plan = ModelSelectionPlan.settings(
@@ -522,12 +547,5 @@ class PiCredentialService(
          * `models.json.lock` 这类"有人正在写"的信号也算——它们正是原子写入的中间态。
          */
         val MODEL_FILES = listOf("models.json", "auth.json", "models-store.json", "settings.json")
-
-        /**
-         * 官方模型目录在 rootfs 里的位置：`fetch-runtime.mjs` 把 pi 载荷解到
-         * `rootfs/opt/pi`，`pi-ai` 的目录数据在它嵌套的 node_modules 下。
-         */
-        const val OFFICIAL_CATALOG_IN_ROOTFS =
-            "opt/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/data"
     }
 }

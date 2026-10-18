@@ -36,6 +36,24 @@ fun PiSettingEditorSheet(
      * therefore start from the override, exactly like the row does.
      */
     valueOverrides: Map<String, String> = emptyMap(),
+    /**
+     * 「选项来自清单」的选择器需要的四件东西，只有「模型与供应商」一屏的默认模型 / 默认厂商
+     * 两行会用（默认全关，其余枚举选择器一个像素都不变）。
+     *
+     * 选项列表与 `presets` **不**在这里再开一个入口：调用方用
+     * `setting.copy(options = …)` / `setting.copy(presets = …)` 传进来，于是"这一行为什么
+     * 列这些项"只有一处（清单），编辑器不必知道清单的存在。理由：`defaultModel` 注册在
+     * `PiSettingsRegistry.kt:403-414` 时 `options` 是空的，选择器里只剩一个「自定义值」输入框，
+     * 用户只能手打 —— 而手打一个不存在的模型，pi 不报错、静默退回占位模型
+     * （`docs/engine-exit-review.md:55`）。
+     */
+    pickerSearchHint: String? = null,
+    /** 选择器正文里的一行警告（写前提示，例如厂商与模型对不上）；null = 不显示。 */
+    pickerWarning: String? = null,
+    /** 手输值的写前校验：返回要显示的那句话（此时不落盘）；null = 这个值可以直接用。 */
+    pickerCustomCheck: ((String) -> String?)? = null,
+    /** 底部「清除 / 跟随默认」动作的文案；null = 没有这个动作。 */
+    pickerClearLabel: String? = null,
     onWritten: (PiSetting) -> Unit = {},
 ) {
     when (setting.kind) {
@@ -66,6 +84,20 @@ fun PiSettingEditorSheet(
                         onWritten(setting)
                     },
                     onDismiss = onDismiss,
+                    searchHint = pickerSearchHint,
+                    warning = pickerWarning,
+                    customCheck = pickerCustomCheck,
+                    clearLabel = pickerClearLabel,
+                    // 「清除」= `remove`（pi 的未设置），不是写空串：这一行在磁盘上要么是
+                    // 一个字符串，要么不存在，`""` 会被 pi 当成一个模型 ID 去找。
+                    onClear = if (pickerClearLabel != null) {
+                        {
+                            store.remove(setting.key)
+                            onWritten(setting)
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }

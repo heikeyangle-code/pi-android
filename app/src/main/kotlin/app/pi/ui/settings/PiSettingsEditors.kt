@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,6 +65,7 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeScope
+import app.pi.ui.theme.PiThinkingLevel
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -154,7 +156,26 @@ fun PiEffectiveDialog(
     )
 }
 
-/** Enum picker (spec §6.2 ValueRow). One tap, then it closes. */
+/**
+ * 枚举选择器（spec §6.2 的 ValueRow）：点一项就写、然后关掉。
+ *
+ * 后面四个可选参数是给「选项来自清单」的两行（默认模型 / 默认厂商）用的，默认全关 ——
+ * 所以枚举型选择器的几何一个像素都不变。
+ *
+ * @param searchHint 选项多到一屏翻不完时的搜索框标签（默认模型的清单可能有上百个模型）。
+ *   null = 没有搜索框。
+ * @param warning 正文里的一行警告，**写前**说清这次选择会落成什么样（例如「厂商和模型对不上」）。
+ *   null = 不显示。
+ * @param customCheck 手输值的**写前**校验：返回要显示的那句话，此时**不落盘**（等用户点
+ *   「仍然使用」）；返回 null = 这个值可以直接用。回调为 null = 这一行不校验。
+ *   没有它的时候，手输一个清单里不存在的 `defaultModel` 会被原样写进 settings.json，而 pi 对
+ *   这种情况**不报错**、静默退回占位模型（`docs/engine-exit-review.md:55`：`defaultModel` 写成
+ *   不存在的模型，退出码 0、stderr 空，模型退回 `contextWindow: 0` 的占位模型）。
+ * @param clearLabel 底部「清除 / 跟随默认」动作的文案。选择器的第一等公民是"选一个"，但
+ *   「回到 pi 的默认」同样是合法选择（默认模型那行对应的是两个键一起删）。
+ * @param onClear 「清除」要执行的动作；与 [clearLabel] 同时非空时那一行才出现 —— 只有文案没有
+ *   动作会是一个点不动的按钮。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PiOptionPickerSheet(
@@ -165,8 +186,27 @@ fun PiOptionPickerSheet(
     allowCustom: Boolean,
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
+    searchHint: String? = null,
+    warning: String? = null,
+    customCheck: ((String) -> String?)? = null,
+    clearLabel: String? = null,
+    onClear: (() -> Unit)? = null,
 ) {
     var custom by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    // 手输了清单里没有的值：先给一行警告 + 「仍然使用 / 取消」，点了才落盘（见 [customCheck]）。
+    var pending by remember { mutableStateOf<String?>(null) }
+    var refusal by remember { mutableStateOf<String?>(null) }
+    val visible = remember(options, query) {
+        val needle = query.trim()
+        if (needle.isEmpty()) {
+            options
+        } else {
+            options.filter { option ->
+                option.wire.contains(needle, ignoreCase = true) || option.label.contains(needle, ignoreCase = true)
+            }
+        }
+    }
     PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
@@ -188,6 +228,24 @@ fun PiOptionPickerSheet(
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            warning?.let { text ->
+                Spacer(Modifier.height(PiSpacing.small))
+                Text(
+                    text,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.warning,
+                )
+            }
+            if (searchHint != null) {
+                Spacer(Modifier.height(PiSpacing.small))
+                PiEditorField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = searchHint,
+                    height = PiNumberFieldHeight,
+                )
+            }
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             Column(
                 Modifier
@@ -198,7 +256,7 @@ fun PiOptionPickerSheet(
                 // v2 的选项行（`phone40` / HTML:2283-2293）：`padding:11px 14px`、
                 // 前导 `✓/○`（等宽 12，选中用正文色、未选中 muted）、标签 14、选中行
                 // 铺 `--selected-bg` + 右侧一枚「当前」徽标，**行间没有分隔线**。
-                options.forEach { option ->
+                visible.forEach { option ->
                     val selected = option.wire == currentWire
                     Row(
                         modifier = Modifier
@@ -248,13 +306,31 @@ fun PiOptionPickerSheet(
                         }
                     }
                 }
+                if (searchHint != null && visible.isEmpty()) {
+                    Text(
+                        "没有匹配的选项",
+                        modifier = Modifier.padding(
+                            start = PiSettingsMetrics.pageHorizontal,
+                            end = PiSettingsMetrics.pageHorizontal,
+                            top = PiOptionRowPadding,
+                            bottom = PiOptionRowPadding,
+                        ),
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             if (allowCustom) {
                 Spacer(Modifier.height(PiSpacing.unit))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     PiEditorField(
                         value = custom,
-                        onValueChange = { custom = it },
+                        onValueChange = {
+                            custom = it
+                            // 改了字就把上一条警告撤掉：它说的是刚才那串字，不是现在这串。
+                            pending = null
+                            refusal = null
+                        },
                         modifier = Modifier.weight(1f),
                         label = "自定义值",
                         height = PiNumberFieldHeight,
@@ -263,15 +339,62 @@ fun PiOptionPickerSheet(
                     TextButton(
                         onClick = {
                             val trimmed = custom.trim()
-                            if (trimmed.isNotEmpty()) {
+                            if (trimmed.isEmpty()) return@TextButton
+                            val message = customCheck?.invoke(trimmed)
+                            if (message == null) {
                                 onPick(trimmed)
                                 onDismiss()
+                            } else {
+                                pending = trimmed
+                                refusal = message
                             }
                         },
                     ) { Text("使用") }
                 }
             } else {
                 Spacer(Modifier.height(PiSpacing.unit))
+            }
+            val pendingWire = pending
+            val refusalText = refusal
+            if (pendingWire != null && refusalText != null) {
+                Spacer(Modifier.height(PiSpacing.small))
+                Text(
+                    refusalText,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.error,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = {
+                            pending = null
+                            refusal = null
+                        },
+                    ) { Text("取消") }
+                    TextButton(
+                        onClick = {
+                            pending = null
+                            refusal = null
+                            onPick(pendingWire)
+                            onDismiss()
+                        },
+                    ) { Text("仍然使用") }
+                }
+            }
+            if (clearLabel != null && onClear != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = {
+                            onClear()
+                            onDismiss()
+                        },
+                    ) { Text(clearLabel) }
+                }
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
@@ -1280,3 +1403,367 @@ private val PiSliderLabelGap = 10.dp
 
 /** 选项行 / 主题行：v2 是 `padding:11px 14px`（横向 14 由 sheet 正文的页边给）。 */
 private val PiOptionRowPadding = 11.dp
+
+// =====================================================================================
+// 「推理」里两个不再手填的专有编辑器（用户：点开只有一个输入框，我该填什么呢？）
+// =====================================================================================
+
+/**
+ * 「逐模型思考等级」的专用编辑器：**没有任何文本输入** —— 模型从清单点、等级从枚举点。
+ *
+ * 为什么必须有它：这一行原来是 `container = Object` 的通用列表编辑器，用户看到的只有
+ * 一个「新增一项」输入框，而答案是一行 `"provider/modelId" = level` 的 JSON 文本 ——
+ * 用户原话「点了也是一个输入框让自己填，我该填什么呢？所有的我都不想自己填」。
+ *
+ * 两件事都是 pi 的事实，不是本编辑器的发明：
+ *
+ *  - 键是 `Record<"provider/modelId", ModelThinkingLevel>`，**精确、大小写敏感**，模型 id
+ *    自己可以带斜杠（`core/settings-manager.ts:805`、`docs/settings-audit-pi-gap.md:471`）；
+ *  - 值就是 `defaultThinkingLevel` 那 7 档（`packages/ai/src/types.ts:83-84` 的
+ *    `ThinkingLevel | "off"`；注册表里 `thinkingLevelOptions` 也是同一份 [PiThinkingLevel]），
+ *    所以两颗选择器不会各说各话。
+ *
+ * 写回的语义照旧交给 host 的 `PiSetting.elementFromEntries`：空列表 = 删键（回到默认），
+ * 不是写 `{}`。
+ *
+ * @param models 清单里的模型，`wire` 是 `厂商/模型`（清单页 `modelPickerOptions` 的同一份）。
+ * @param initialEntries 当前值，`名字 = 值` 原文行（`PiSetting.editableEntries`）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PiModelThinkingLevelsSheet(
+    title: String,
+    description: String,
+    initialEntries: List<String>,
+    models: List<PiOption>,
+    onSet: (List<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    fun nameOf(line: String): String = line.substringBefore('=').trim()
+    fun valueOf(line: String): String = line.substringAfter('=', "").trim()
+
+    var entries by remember(initialEntries) {
+        mutableStateOf(initialEntries.map { it.trim() }.filter { it.isNotEmpty() })
+    }
+    var query by remember { mutableStateOf("") }
+    // 一次只展开一行模型的等级 chips：点模型 → 点等级 → 这一条就加好了。
+    var expanded by remember { mutableStateOf<String?>(null) }
+    val levelByKey = remember(entries) { entries.associate { nameOf(it) to valueOf(it) } }
+    val shownModels = remember(models, query) {
+        val needle = query.trim()
+        if (needle.isEmpty()) {
+            models
+        } else {
+            models.filter {
+                it.wire.contains(needle, ignoreCase = true) || it.label.contains(needle, ignoreCase = true)
+            }
+        }
+    }
+
+    PiSettingsSheet(onDismiss = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(PiSpacing.small))
+            Text(
+                description,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = PiSettingsMetrics.sheetBodyMax)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                // 当前覆盖：一行一条，右侧一个删除。键不在清单里（厂商/模型被删掉了）
+                // 也照实显示 —— 那是用户文件里真实存在的一条，不能凭空藏掉。
+                if (entries.isEmpty()) {
+                    Text(
+                        "还没有覆盖。下面点一个模型、再点一个等级就加上了。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    entries.forEach { line ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    models.firstOrNull { it.wire == nameOf(line) }?.label ?: nameOf(line),
+                                    style = PiTheme.text.mono,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    "等级 ${valueOf(line)}",
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(
+                                onClick = { entries = entries.filterNot { nameOf(it) == nameOf(line) } },
+                            ) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = "删除这一条",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+                Text(
+                    "选一个模型，再点等级",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(PiSpacing.gutter))
+                PiEditorField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "搜模型",
+                    height = PiNumberFieldHeight,
+                )
+                Spacer(Modifier.height(PiSpacing.unit))
+                shownModels.forEach { option ->
+                    val level = levelByKey[option.wire]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = if (expanded == option.wire) null else option.wire }
+                            .padding(vertical = PiSpacing.small),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                if (level != null) "等级 $level" else option.description.orEmpty(),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            if (expanded == option.wire) "−" else "+",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    if (expanded == option.wire) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(bottom = PiSpacing.small),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PiThinkingLevel.entries.forEach { levelOption ->
+                                PiChoiceChip(
+                                    label = levelOption.label,
+                                    selected = level == levelOption.wire,
+                                    onClick = {
+                                        entries = entries.filterNot { nameOf(it) == option.wire } +
+                                            "${option.wire} = ${levelOption.wire}"
+                                        expanded = null
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (shownModels.isEmpty()) {
+                    Text(
+                        "清单里没有匹配的模型",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            HorizontalDivider(
+                thickness = PiSettingsMetrics.hairline,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(
+                    onClick = {
+                        onSet(entries)
+                        onDismiss()
+                    },
+                ) { Text("保存") }
+            }
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
+        }
+    }
+}
+
+/**
+ * 「思考预算」的专用编辑器：**固定 4 行、只填数字**，键名不用手打。
+ *
+ * pi 的 `ThinkingBudgets` 只有四个键 `minimal` / `low` / `medium` / `high`，值是 token 数
+ * （`packages/ai/src/types.ts:100-105`、`docs/settings-audit-pi-gap.md:263`）。pi **不给
+ * 默认数字**：消费侧是 `?? 各厂商自己的默认`（`core/settings-manager.ts:1174-1176`、
+ * `core/sdk.ts:370`），所以**留空就是正确用法** —— 这里不编造任何"官方数值"。
+ *
+ * 四行都空 = 整个键删掉（host 走 `store.remove`），不是写 `{}`。只接受非负整数：
+ * 一个非数字写下去只会让这个思考等级退回厂商默认，静默无效（这就是以前手打那种行的
+ * 下场）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PiThinkingBudgetsSheet(
+    title: String,
+    description: String,
+    initialEntries: List<String>,
+    onSet: (List<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val keys = THINKING_BUDGET_KEYS
+    val values = remember(initialEntries) {
+        mutableStateMapOf<String, String>().apply {
+            initialEntries.forEach { line ->
+                val name = line.substringBefore('=').trim()
+                val value = line.substringAfter('=', "").trim()
+                if (name.isNotEmpty()) put(name, value)
+            }
+        }
+    }
+    val invalid = keys.any { key ->
+        val text = values[key].orEmpty().trim()
+        text.isNotEmpty() && parseThinkingBudget(text) == null
+    }
+
+    PiSettingsSheet(onDismiss = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(PiSpacing.small))
+            Text(
+                description,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
+            keys.forEach { key ->
+                PiEditorField(
+                    value = values[key].orEmpty(),
+                    onValueChange = { values[key] = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = key,
+                    height = PiNumberFieldHeight,
+                    trailing = {
+                        Text(
+                            "token",
+                            style = PiTheme.text.mono,
+                            color = PiTheme.palette.muted,
+                        )
+                    },
+                )
+                Spacer(Modifier.height(PiSpacing.small))
+            }
+            Spacer(Modifier.height(PiSpacing.unit))
+            Text(
+                if (invalid) "只接受非负整数" else "留空 = 用厂商默认",
+                style = PiTheme.text.meta,
+                color = if (invalid) PiTheme.palette.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            HorizontalDivider(
+                thickness = PiSettingsMetrics.hairline,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(
+                    enabled = !invalid,
+                    onClick = {
+                        // 只写有字的行；四行全空 = 空列表 = 删键（host 负责）。
+                        onSet(
+                            keys.mapNotNull { key ->
+                                values[key]?.trim()?.takeIf { it.isNotEmpty() }?.let { "$key = $it" }
+                            },
+                        )
+                        onDismiss()
+                    },
+                ) { Text("保存") }
+            }
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
+        }
+    }
+}
+
+/** pi 的 `ThinkingBudgets` 四个合法键，顺序按 token 从小到大（`types.ts:100-105`）。 */
+private val THINKING_BUDGET_KEYS = listOf("minimal", "low", "medium", "high")
+
+/** 思考预算的一格：空、非负整数，其它都不收。超出 `Long` 的数字同样不收（那是打字错误）。 */
+private fun parseThinkingBudget(text: String): Long? =
+    text.trim().toLongOrNull()?.takeIf { it >= 0 }
+
+/**
+ * v2 的 chip（与 `PiListEditorSheet` 的「快捷添加」同一副样子：高 26、圆角 999、
+ * 1px `borderMuted` 描边，选中的那枚换 `surfaceContainerHigh` 底）。
+ */
+@Composable
+private fun PiChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .padding(end = PiSpacing.inline)
+            .height(PiSettingsMetrics.chipHeight)
+            .clickable(onClick = onClick),
+        shape = PiShapes.badge,
+        color = if (selected) {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        border = BorderStroke(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                label,
+                style = PiTheme.text.monoSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}

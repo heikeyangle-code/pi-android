@@ -671,6 +671,19 @@ run_harness official-catalog \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
 
+# app.pi.packages: **官方目录在载荷里的位置**（`PiOfficialCatalog.ROOTFS_DATA_DIRECTORIES` /
+# `readFromRootfs`）。为什么必须在这里：那个目录的深度由 npm 的依赖树决定，而它已经搬过一次
+# —— `9fb65b7` 的载荷把 `@earendil-works/pi-ai` 嵌在 `pi-coding-agent/node_modules` 下，
+# pi 1.3.0 的 `tools/pi-engine.lock.json` 又把它提升到顶层。旧代码写死嵌套路径，于是升级后
+# 整张官方目录读不到，导入 sheet 的厂商列表塌成 App 自带的几档（用户报「已有厂商，再点导入
+# 模型，列表里只有三个」）。这条 harness 直接读 lock 文件里 pi-ai 的**实际**安装位置，断言
+# 候选目录覆盖它，并在临时目录里钉住「两种布局都在 → 提升的赢」「只有嵌套 → 仍然能读」
+# 「都读不到 → problems 逐个列出试过的路径」。纯逻辑 + java.io/nio + kotlinx.serialization。
+run_harness official-catalog-path \
+  app.pi.packages.PiOfficialCatalogPathCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogPathCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
+
 # :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
 # read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
 # stream - so a CJK character straddling two reads became one replacement character

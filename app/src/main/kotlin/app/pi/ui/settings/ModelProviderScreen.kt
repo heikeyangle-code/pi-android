@@ -24,6 +24,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +36,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.packages.AgentLayout
@@ -56,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -192,6 +195,8 @@ fun ModelProviderScreen(
     var editingKey by rememberSaveable { mutableStateOf(initialEditorKey) }
     var sheetOpen by rememberSaveable { mutableStateOf(openImportSheet) }
     var sheetPreset by rememberSaveable { mutableStateOf(initialPresetId) }
+    // 「推理」那段默认收起：六行都是低频旋钮，平铺会把三行选择和厂商卡挤到屏外。
+    var reasoningOpen by rememberSaveable { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
 
     // 三个选择键的描述符仍在注册表里（分组屏不再渲染它们：编辑入口搬进了本屏，注册表
@@ -200,32 +205,112 @@ fun ModelProviderScreen(
     LaunchedEffect(editingKey) {
         if (editingKey != null && PiSettingsCatalog.byKey[editingKey] == null) editingKey = null
     }
-    val editingDescriptor = editingKey?.let { PiSettingsCatalog.byKey[it] }
-    if (editingDescriptor != null) {
-        PiSettingEditorSheet(
-            setting = editingDescriptor,
-            store = store,
-            onDismiss = { editingKey = null },
-            onWritten = { written ->
-                onSettingWritten(written.key)
-                editTick++
-            },
-        )
-    }
 
-    // ② 的三个读数：store 的有效值（项目级覆盖在 store 里已合并），键带 editTick。
-    val defaultProviderValue = remember(store, editTick) {
+    // ② 的三个读数：store 的有效值（项目级覆盖在 store 里已合并）。
+    //
+    // 键里必须同时有 `editTick`（本屏自己写完 → 行重读）与 `reloadTick`（**外部**改完 →
+    // `PiDirectoryWatch` 重读清单）：只带 editTick 时，AI/终端改了 `settings.json`，下面的
+    // 清单已经按新值标「默认」，而这三行还停在旧值上 —— 同一屏两个答案。`reloadTick` 是
+    // 文件事件驱动的，不是每帧都变，所以这里不会变成每帧读盘（`store.read` 本身也只是内存读）。
+    val defaultProviderValue = remember(store, editTick, reloadTick) {
         (store.read("defaultProvider") as? JsonPrimitive)?.content
     }
-    val defaultModelValue = remember(store, editTick) {
+    val defaultModelValue = remember(store, editTick, reloadTick) {
         (store.read("defaultModel") as? JsonPrimitive)?.content
     }
-    val enabledModelsValue = remember(store, editTick) {
+    val enabledModelsValue = remember(store, editTick, reloadTick) {
         ((store.read("enabledModels") as? JsonArray) ?: emptyList())
             .mapNotNull { (it as? JsonPrimitive)?.content?.takeIf { s -> s.isNotBlank() } }
     }
 
     val data = inventory
+
+    // 三个选择键的候选**一律从清单派生**，`remember` 键在清单与读数上：不新增每帧计算，
+    // 也不再额外读盘（清单本来就是这一屏从文件原文拼出来的那一份）。以前 `defaultModel`
+    // 注册成 `options = emptyList()`（`PiSettingsRegistry.kt:403-414`），选择器里只有一个
+    // 「自定义值」输入框 —— 用户只能手打，而手打的模型名不在清单里时 pi **不报错**、静默
+    // 退回占位模型（`docs/engine-exit-review.md:55`）。
+    val modelOptions = remember(data) { modelPickerOptions(data) }
+    val providerOptions = remember(data) { providerPickerOptions(data) }
+    val cyclePresets = remember(data) { cycleModelPresets(data) }
+    // 两键都已设置、却明显对不上时的那一句话（没有清单就不猜，见 modelProviderMismatch）。
+    val selectionMismatch = remember(data, defaultProviderValue, defaultModelValue) {
+        modelProviderMismatch(data, defaultProviderValue, defaultModelValue)
+    }
+    val unknownModelCheck = remember(data) { { typed: String -> unknownModelWarning(data, typed) } }
+    // 只在这一屏用的 store 装饰器：写 `defaultModel` 时**两个键一起写**（pi 用
+    // `defaultProvider` 决定由谁提供 `defaultModel`），并且把两键拼成选择器的 wire
+    // （`厂商/模型`），选中态与「当前默认」于是只有一个判据。其余键原样转给 store。
+    val selectionStore = remember(store, data) {
+        DefaultModelPairStore(base = store, providers = data?.providers.orEmpty())
+    }
+
+    // 列表型的两行（逐模型思考等级 / 思考预算）写完的值：空列表 = 删键（pi 的未设置），
+    // 不是写 `{}`；写法和 `PiSettingEditorSheet` 的 List 分支同一条规则。
+    val writeEntries: (PiSetting, List<String>) -> Unit = { setting, entries ->
+        if (entries.isEmpty()) {
+            store.remove(setting.key)
+        } else {
+            store.write(setting.key, setting.elementFromEntries(entries))
+        }
+        onSettingWritten(setting.key)
+        editTick++
+    }
+
+    val editingDescriptor = editingKey?.let { PiSettingsCatalog.byKey[it] }
+    if (editingDescriptor != null) {
+        val edited = editingDescriptor.key
+        // 这两行有自己的点选编辑器（没有文本输入）；其余行仍是同一把 `PiSettingEditorSheet`，
+        // 选项与快捷预设都由清单派生（用 `copy`，不另开"候选从哪来"的入口）。
+        val entries = editingDescriptor.editableEntries(
+            store.read(edited) ?: editingDescriptor.defaultValue,
+        )
+        when (edited) {
+            "modelThinkingLevels" -> PiModelThinkingLevelsSheet(
+                title = editingDescriptor.title,
+                description = editingDescriptor.description,
+                initialEntries = entries,
+                models = modelOptions,
+                onSet = { written -> writeEntries(editingDescriptor, written) },
+                onDismiss = { editingKey = null },
+            )
+
+            "thinkingBudgets" -> PiThinkingBudgetsSheet(
+                title = editingDescriptor.title,
+                description = editingDescriptor.description,
+                initialEntries = entries,
+                onSet = { written -> writeEntries(editingDescriptor, written) },
+                onDismiss = { editingKey = null },
+            )
+
+            else -> PiSettingEditorSheet(
+                setting = when (edited) {
+                    "defaultModel" -> editingDescriptor.copy(options = modelOptions)
+                    "defaultProvider" -> editingDescriptor.copy(options = providerOptions)
+                    "enabledModels" -> editingDescriptor.copy(presets = cyclePresets)
+                    else -> editingDescriptor
+                },
+                store = selectionStore,
+                onDismiss = { editingKey = null },
+                // 只有这两行的选项多到一屏翻不完（清单可能上百个模型 / 几十个厂商）。
+                pickerSearchHint = when (edited) {
+                    "defaultModel" -> "搜模型（厂商或模型名）"
+                    "defaultProvider" -> "搜厂商（名字或 id）"
+                    else -> null
+                },
+                pickerWarning = selectionMismatch,
+                pickerCustomCheck = if (edited == "defaultModel") unknownModelCheck else null,
+                pickerClearLabel = if (edited == "defaultModel") "跟随 pi 默认（清除）" else null,
+                onWritten = { written ->
+                    onSettingWritten(written.key)
+                    // 默认模型那一行一次写两个键（`defaultProvider` 也跟着变）：宿主与这一屏的
+                    // 两行读数都要跟着刷新 —— 少通知一个 key，另一行就会停在旧值上。
+                    if (written.key == "defaultModel") onSettingWritten("defaultProvider")
+                    editTick++
+                },
+            )
+        }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "模型与供应商", onBack = onBack)
         LazyColumn(
@@ -256,6 +341,7 @@ fun ModelProviderScreen(
                 }
                 note?.let { msg -> item { Note(msg) } }
 
+                // ---- 默认模型 / 默认厂商 / 循环模型：三行都是点开在清单里点选，不再手打。
                 item { PiSettingsSectionHeader("当前与循环") }
                 item {
                     LinkRow(
@@ -282,27 +368,28 @@ fun ModelProviderScreen(
                         onClick = { editingKey = "enabledModels" },
                     )
                 }
+                // 两键对不上时先在这里说一句：选模型时两个键一起写，所以这种不一致只可能
+                // 来自手输（点过「仍然使用」）、外部改 settings.json，或者只换了厂商。
+                // 判据只读清单（`modelProviderMismatch`，remember 在 data 与两个读数上）。
+                selectionMismatch?.let { mismatch -> item { Note(mismatch, tone = PiTheme.palette.warning) } }
                 // 生效时机照 pi：三个键都在 settings.json，每个新会话重建 runtime 时重新读、
                 // 重新解析循环作用域（`main.ts:788-797` 的 resolveModelScope 在 createRuntime
                 // 闭包里，闭包每会话跑一次）——不是"改完要重启"。
                 item { Note("这三个键就是 settings.json 里的选择。改完开一个新会话生效。") }
 
-                item { PiSettingsSectionHeader("推理与上下文") }
-                // pi 官方把这几行和上面三个选择键放在同一个「模型与推理」分组里；分组入口
-                // 已按用户裁定删除，编辑器整组搬进这一屏 —— 点开还是同一把
-                // `PiSettingEditorSheet`（搜索点到这些 key 也路由到这里）。
-                item { SettingLinkRow("defaultThinkingLevel", store, editTick) { editingKey = it } }
-                item { SettingLinkRow("modelThinkingLevels", store, editTick) { editingKey = it } }
-                item { SettingLinkRow("thinkingBudgets", store, editTick) { editingKey = it } }
-                item { SettingLinkRow("hideThinkingBlock", store, editTick) { editingKey = it } }
-                item { SettingLinkRow("cacheWarming", store, editTick) { editingKey = it } }
-                item { SettingLinkRow("showCacheMissNotices", store, editTick) { editingKey = it } }
-
+                // ---- 厂商卡与两个导入入口。
                 item {
                     PiSettingsSectionHeader(
                         label = "这台设备上配好的模型",
                         count = "${data.providers.size} 个厂商",
                     )
+                }
+                // 下面每张卡的模型副行写的就是「pi 目录 / 手写申报 / 覆盖」这三个词，
+                // 解释跟着它们放在同一段（页尾不再堆说明）。
+                if (data.providers.isNotEmpty()) {
+                    item {
+                        Note("「pi 目录」是 pi 自带的模型定义；「手写申报」写在你的模型配置里（同名条目会被它替换）；「覆盖」只改目录里的字段。")
+                    }
                 }
                 if (data.providers.isEmpty()) {
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
@@ -348,11 +435,31 @@ fun ModelProviderScreen(
                         ),
                     ) { Text("本地模型（llama.cpp / LM Studio）") }
                 }
-                item { PiSettingsSectionHeader("说明") }
-                item { Note("订阅登录（Anthropic / OpenAI / GitHub Copilot 等订阅账号）去 工作区 → 终端 里运行 /login；这一屏写的是 API Key。") }
-                item { Note("「pi 目录」是 pi 自带的模型定义；「手写申报」写在你的模型配置里；「覆盖」只改 pi 目录里的某几个字段。") }
-                item { Note("一个厂商的模型一旦手写申报，就会替换这个厂商在 pi 目录里的同名条目；没动的厂商不受影响。") }
+
+                // ---- 推理：默认收起的一段，六行一个都不删，点开就是原来的编辑器。
+                item {
+                    PiSettingsSectionHeader(
+                        label = "推理",
+                        onClick = { reasoningOpen = !reasoningOpen },
+                        trailing = if (reasoningOpen) "收起" else "展开",
+                    )
+                }
+                if (reasoningOpen) {
+                    // pi 官方把这几行和上面三个选择键放在同一个「模型与推理」分组里；分组入口
+                    // 已按用户裁定删除，编辑器整组搬进这一屏 —— 点开还是同一把
+                    // `PiSettingEditorSheet`（搜索点到这些 key 也路由到这里）。
+                    item { SettingLinkRow("defaultThinkingLevel", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingLinkRow("modelThinkingLevels", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingLinkRow("thinkingBudgets", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingLinkRow("hideThinkingBlock", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingLinkRow("cacheWarming", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingLinkRow("showCacheMissNotices", store, editTick, reloadTick) { editingKey = it } }
+                }
+
+                // ---- 页尾只留两句（用户裁定：说明不堆在页尾）。
                 item { Note("这一屏读写的都是 pi 的官方文件（models.json、auth.json、settings.json）；对话里让 AI 改这些文件，列表会自动跟上。") }
+                // 终端页是半成品：只说事实（订阅登录要它、它还不完善），不再把用户支使过去。
+                item { Note("订阅登录（OAuth）要走终端，终端页还不完善；这一屏写的是 API Key。") }
                 item { Spacer(Modifier.height(PiSettingsMetrics.groupGap)) }
             }
         }
@@ -363,6 +470,9 @@ fun ModelProviderScreen(
             initialPresetId = sheetPreset,
             service = service,
             availableModels = availableModels,
+            // 清单里的厂商：让"官方目录里没有、models.json 里却已经有"的厂商在 sheet 里
+            // 有一档自己的连接信息（以前它会静默退化成 openai，保存就把块写到 openai 名下）。
+            knownProviders = data?.providers.orEmpty(),
             enabledPatterns = enabledModelsValue,
             onClose = { sheetOpen = false },
             onSaved = {
@@ -440,17 +550,31 @@ fun ModelProviderScreen(
 // ===========================================================================
 
 /**
- * 「选厂商 → 粘 Key → 扫描 → 勾选 → 保存」，一张滚动卡走完（对齐 pi 的 login-dialog
+ * 「选厂商 → 粘 Key → 勾模型 → 保存」，一张 sheet 走完（对齐 pi 的 login-dialog
  * 节奏：同一张卡推进，从不换屏）。
  *
- * 与旧表单的三处行为差异，都是用户报的「导入完了也有 bug」：
+ * 这一版的顺序与折叠规则是用户裁定（「这一块太乱了」「导入再优化一下」）：
+ *
+ *  - **一进来就看见厂商列表**：已配置的排最前并标「已配置 · N 个模型」，未配置在后；
+ *    点一个即选中并收起（「更换」还能再展开）。没传 `initialPresetId` 时**不默认 openai**
+ *    —— 未选厂商时下面三步都不出现，先让用户点一个；
+ *  - **已配置的厂商不再问 Key**：「2 粘 Key」收成一行「已存凭证（sk-…）· 留空＝沿用」，
+ *    「更换」展开才出现 Key，`Base URL` / `api` 收进「高级」（默认收起）；扫描只是一个
+ *    按钮行，不占节标题；
+ *  - **模型列表能搜、能全选**：按 id 或名字过滤，标题行给「已勾选 N / 共 M」；
+ *  - **保存固定在底部**：内容区滚动，按钮与状态不动；这次保存会删掉已申报的模型定义时，
+ *    按钮上方先说一行「这次会删除 N 个模型定义」。
+ *
+ * 行为上没变的三条（都是用户报的「导入完了也有 bug」）：
  *
  *  - **官方目录直接列模型**：候选 = 已保存 + 扫描到 + **pi 目录里的** + 手输 —— 官方
  *    文件里有的，不粘 Key 就能看见、能选（旧版目录只给已存在的 id 补标签，不产生
  *    候选，不扫描就一个都列不出）。初始勾选见 prefill：循环范围没设 = 全勾，设了 =
  *    只勾本来轮得到的（上次主动排除的不会因为打开过表单又被勾回来）；
- *  - **默认模型不抢**：单选第一项是「保持当前默认」（null = 不写这两个键）；只有用户
- *    明确选了某个模型才写（`ModelSelectionPlan.writeDefault`）；
+ *  - **默认模型不抢**：这张 sheet **不写** `defaultProvider` / `defaultModel`
+ *    （`service.save` 的 `setAsDefault` 保持默认 false）。这里原来写着"单选第一项是
+ *    保持当前默认"，但那个单选在现在的界面里并不存在 —— 要改默认模型，用清单页的
+ *    「默认模型」那一行（它一次写两个键）；
  *  - **保存后就地刷新**：只重读「已配置」那几个字段，本次保存的步骤显示不被清掉（旧版
  *    表单保存后 prefill 不重跑，凭证状态要退出重进才对）。
  */
@@ -460,18 +584,356 @@ private fun ImportSheet(
     initialPresetId: String?,
     service: PiCredentialService,
     availableModels: List<PiResponses.ModelInfo>,
+    /**
+     * 清单里的厂商（这一屏刚读到的那份）。两件事：给「官方目录里没有、但 `models.json`
+     * 里已经有」的厂商现构一档（AI 手写 `models.json` 时用的 id 只存在于那份文件里，
+     * 而它恰恰是用户从厂商卡点进来的那个 id）；以及把已配置的厂商排在列表最前、
+     * 标出它们的模型数。
+     */
+    knownProviders: List<PiModelInventory.Provider>,
     /** 当前 `enabledModels` 范围（settings.json 的有效值），决定目录模型初始勾不勾。 */
     enabledPatterns: List<String>,
     onSaved: () -> Unit,
     onClose: () -> Unit,
 ) {
+    // 未选厂商 = 空串（不是 null）：`presetId` 还要当记忆键与 effect 键用，空语义只留一种。
+    // 没传 `initialPresetId` 时**不默认 openai** —— 下面的 2/3 两节直接不出现（用户裁定：
+    // 先让用户点一个，而不是替他选一个官方厂商）。
+    var presetId by remember(initialPresetId) { mutableStateOf(initialPresetId.orEmpty()) }
+    var apiKey by remember { mutableStateOf("") }
+    var baseUrl by remember { mutableStateOf("") }
+    var api by remember { mutableStateOf("") }
+    var maskedKey by remember { mutableStateOf<String?>(null) }
+    var credentialPresent by remember { mutableStateOf(false) }
+    var configuredProviderIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelsFileError by remember { mutableStateOf<String?>(null) }
+    var authFileError by remember { mutableStateOf<String?>(null) }
+    var existingIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var scanned by remember { mutableStateOf<List<PiModelScanner.ScannedModel>>(emptyList()) }
+    var manualIds by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 打开表单时的初始勾选 —— 保存时「动没动」的对账基准（见 ModelSelectionPlan）。
+    var initialChecked by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var scanEndpoint by remember { mutableStateOf<String?>(null) }
+    var scanNote by remember { mutableStateOf<String?>(null) }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf(false) }
+    var saveSteps by remember { mutableStateOf<List<String>>(emptyList()) }
+    var savedOk by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var storeCatalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
+    // 官方目录（41 个厂商 + 全部模型元数据）与它的读取问题。
+    var officialProviders by remember { mutableStateOf<List<PiOfficialCatalog.Provider>>(emptyList()) }
+    var officialProblems by remember { mutableStateOf<List<String>>(emptyList()) }
+    // 厂商列表**一进来就展开**：藏在「更换」后面时，用户根本不知道"已经有厂商也能在这里换"
+    // —— 这正是「已有厂商，再点导入模型，列表里只有三个」的另一半。
+    var pickerOpen by remember { mutableStateOf(true) }
+    var pickerQuery by remember { mutableStateOf("") }
+    // 已配置厂商的 Key 与「高级」（Base URL / api）都默认收起；换厂商即回到收起。
+    var keyOpen by remember(presetId) { mutableStateOf(false) }
+    var advancedOpen by remember(presetId) { mutableStateOf(false) }
+    var modelQuery by remember(presetId) { mutableStateOf("") }
+    val sheetScope = rememberCoroutineScope()
+
+    // **官方目录一次读完**（41 份 `<provider>.json` + SHA-256 校验）：提供商列表、
+    // 每个厂商的模型、以及它们的 baseUrl/api/上下文/价格/图片能力都来自这份文件。
+    // 用户裁定：不自己维护表；升级 `PI_VERSION` 换载荷，列表自动跟着变。
+    LaunchedEffect(Unit) {
+        val result = withContext(Dispatchers.IO) { service.officialCatalog() }
+        officialProviders = result.providers
+        officialProblems = result.problems
+    }
+    val officialCounts = remember(officialProviders) {
+        officialProviders.associate { it.id to it.models.size }
+    }
+    // 选择列表 = 官方目录（有手写预设的用预设的连接信息，其余从官方数据现构）
+    // + `PiProviderPresets.all` 里剩下的（App 自建的 ollama / llama.cpp / 自定义，
+    // 以及目录读不到时的官方那十档）。
+    //
+    // **基线是预设表，不是目录。** 目录整份读不到时（载荷换了依赖树布局、还没解包），
+    // 原来这里只剩「App 自建」那三个，用户报的正是「已有厂商，再点导入模型，列表里
+    // 只有三个，搜也搜不出来」；目录正常时它仍然排在前（41+），两边都成立。
+    val providerChoices = remember(officialProviders) {
+        val fromCatalog = officialProviders.map { provider ->
+            PiProviderPresets.byId(provider.id) ?: presetFromOfficial(provider)
+        }
+        val covered = fromCatalog.mapTo(HashSet()) { it.id }
+        fromCatalog + PiProviderPresets.all.filterNot { it.id in covered }
+    }
+    // **选中的那一档必须从同一张表里取。** 这里曾经是 `byId(presetId) ?: all.first()`：
+    // 手写表只有 13 个 id，官方目录有 42 个，于是选中 `kimi-coding` 这类官方独有的厂商时
+    // 它会**静默退化成 openai** —— 标题写着 OpenAI、Base URL 填的是 api.openai.com、
+    // 保存时 `save(preset = preset)` 把厂商块与凭证写到 `openai` 名下（覆盖用户真正的
+    // openai 配置）。
+    //
+    // 现在：表里没有时按该厂商**自己的**连接信息现构一档「自定义厂商」（见
+    // `customPresetFromInventory`）；连厂商都找不到时只是占位（下面禁用保存并说明），
+    // **绝不回退到任何官方厂商**。厂商卡传进来的 `initialPresetId` 就是
+    // `models.json`/`auth.json` 里的 id，它不一定在官方目录里 —— 那正是这条路。
+    val knownProvider = remember(knownProviders, presetId) {
+        knownProviders.firstOrNull { it.id == presetId }
+    }
+    val presetProblem = remember(providerChoices, knownProvider, presetId) {
+        if (presetId.isNotEmpty() && providerChoices.none { it.id == presetId } && knownProvider == null) {
+            "这个厂商既不在模型配置里、也不在官方目录里：先在上面重新选一个厂商。"
+        } else {
+            null
+        }
+    }
+    val preset = remember(providerChoices, knownProvider, presetId) {
+        providerChoices.firstOrNull { it.id == presetId }
+            ?: knownProvider?.let { customPresetFromInventory(it) }
+            ?: placeholderPreset(presetId)
+    }
+    val officialForPreset = remember(officialProviders, presetId) {
+        officialProviders.firstOrNull { it.id == presetId }?.models.orEmpty()
+    }
+
+    // 已配置的厂商 = 清单里有凭证/厂商块的（`knownProviders`），加上 auth.json 里出现过的
+    // id（`configuredProviderIds`：清单还没刷新时也认得）。两份都已在内存里，不读盘。
+    val configuredIds = remember(knownProviders, configuredProviderIds) {
+        configuredProviderIds.toSet() +
+            knownProviders.filter { it.hasCredential || it.configured }.map { it.id }
+    }
+    // 「N 个模型」：清单里的实际模型数优先（那是这台设备上真正配着的），没有才用目录的。
+    val modelCounts = remember(knownProviders, officialCounts) {
+        val fromInventory = knownProviders.associate { it.id to it.models.size }
+        fromInventory + officialCounts.filterKeys { it !in fromInventory }
+    }
+    // 已配置的排最前，其余保持目录/预设的原顺序。
+    val orderedChoices = remember(providerChoices, configuredIds) {
+        val (configured, pending) = providerChoices.partition { it.id in configuredIds }
+        configured + pending
+    }
+    val shownChoices = remember(orderedChoices, pickerQuery) {
+        val query = pickerQuery.trim().lowercase()
+        if (query.isEmpty()) {
+            orderedChoices
+        } else {
+            orderedChoices.filter { option ->
+                option.id.lowercase().contains(query) || option.displayName.lowercase().contains(query)
+            }
+        }
+    }
+
+    // prefill + 目录一次读完（IO 线程）：分开两个 effect 会有目录晚到、
+    // 「默认全勾」漏掉目录那批的竞态。切厂商即重置，和旧表单同一个键。
+    LaunchedEffect(presetId) {
+        if (presetId.isEmpty()) return@LaunchedEffect
+        val (existing, entries) = withContext(Dispatchers.IO) {
+            service.prefill(presetId) to service.catalogModels(presetId)
+        }
+        baseUrl = existing.baseUrl ?: preset.baseUrl
+        api = existing.api ?: preset.api
+        maskedKey = existing.maskedKey
+        credentialPresent = existing.credentialPresent
+        configuredProviderIds = existing.configuredProviderIds
+        modelsFileError = existing.modelsFileError
+        authFileError = existing.authFileError
+        existingIds = existing.configuredModelIds
+        // `models-store.json` 的条目只是兜底：真正的来源是下面那份派生出来的
+        // `catalog`（官方目录优先，且官方晚到时也会跟着变）。
+        storeCatalog = entries
+        apiKey = ""
+        scanned = emptyList()
+        manualIds = ""
+        scanEndpoint = null
+        scanNote = null
+        scanError = null
+        saveSteps = emptyList()
+        savedOk = false
+        saveError = null
+        // 初始勾选 = 「申报过的全部 + pi 目录里在循环范围内的」：
+        //  - 申报过的（手写 models[]）必须全勾 —— 取消勾选会在保存时删掉它的
+        //    定义，自定义厂商就再也没有这个模型了；
+        //  - 目录里的按 enabledModels 范围过滤：范围没设 = 全部可循环 = 全勾
+        //    （首次导入的默认形态）；范围设了 = 只勾本来就轮得到的，上次主动
+        //    排除的模型不会因为"打开过表单"又被勾回来（Bug①）。
+        // 判据与清单页同一个：PiModelInventory.matches。
+        val inScope = { id: String ->
+            enabledPatterns.isEmpty() ||
+                enabledPatterns.any { PiModelInventory.matches(it, presetId, id) }
+        }
+        selected = existing.configuredModelIds.toSet() +
+            entries.map { it.id }.filter(inScope).toSet()
+        initialChecked = selected
+    }
+
+    // 连接信息晚到的补偿：`LaunchedEffect(presetId)` 用的是**打开那一刻**的 `preset`，而
+    // 官方目录是异步读到的 —— 那一刻 `preset` 可能还是 `models.json` 里现构的自定义档
+    // （`api`/`baseUrl` 都空）。`auth.json` 里有、`models.json` 里没有块的厂商（`/login`
+    // 出来的）正好落到这条路上：保存时 `PiConfigFiles.upsert` 拒"Base URL 不能为空"，
+    // 而那个框在已配置厂商上默认收起 —— 用户只看到页脚一行红字，却找不到要填的框。
+    // 只补**空着**的字段，绝不覆盖用户已经输入或 `models.json` 里已有的值。
+    LaunchedEffect(preset.baseUrl, preset.api) {
+        if (baseUrl.isBlank()) baseUrl = preset.baseUrl
+        if (api.isBlank()) api = preset.api
+    }
+
+    // 目录的**派生值**，两个官方来源取"更新的那个"：
+    //  - `models-store.json` 是 pi 自己刷新过的缓存（RPC 启动时后台刷，含 pi.dev 的覆盖
+    //    目录，`core/remote-catalog-provider.ts` 的 `DEFAULT_CATALOG_BASE_URL`），所以
+    //    同一个 id 以它为准；
+    //  - 随包静态目录（41 份 JSON）永远在，补 store 里没有的厂商/模型。
+    // 引擎快照与我们的扫描都不进这里 —— 它们是下面 `knownById` 的后备。
+    // 做成派生值是因为两个来源都是异步读到的：写成状态就会停在"打开表单那一刻"。
+    val catalog = remember(officialForPreset, storeCatalog) {
+        if (storeCatalog.isEmpty()) {
+            officialForPreset.map { it.toCatalogEntry() }
+        } else {
+            val byId = LinkedHashMap<String, PiModelCatalog.Entry>()
+            officialForPreset.forEach { model -> byId[model.id] = model.toCatalogEntry() }
+            storeCatalog.forEach { entry -> byId[entry.id] = entry }
+            byId.values.toList()
+        }
+    }
+
+    // 官方目录晚到时补一次初始勾选：**只在用户还没有任何勾选时**才动，绝不覆盖
+    // 用户已经做过的选择（打开表单时官方数据可能还没读完）。
+    LaunchedEffect(officialForPreset, presetId) {
+        if (presetId.isEmpty() || officialForPreset.isEmpty() || selected.isNotEmpty()) return@LaunchedEffect
+        val inScope = { id: String ->
+            enabledPatterns.isEmpty() ||
+                enabledPatterns.any { PiModelInventory.matches(it, presetId, id) }
+        }
+        selected = officialForPreset.map { it.id }.filter(inScope).toSet()
+        initialChecked = selected
+    }
+
+    val manualList = remember(manualIds) {
+        manualIds.split(',', '\n', ' ', '\t').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    }
+    val catalogIds = remember(catalog) { catalog.map { it.id }.toSet() }
+    val scannedIds = remember(scanned) { scanned.map { it.id }.toSet() }
+    // 候选 = 已保存（编辑时置顶）+ 扫描到 + pi 目录 + 手输。
+    val candidates = remember(scanned, manualList, existingIds, catalogIds) {
+        (existingIds + scanned.map { it.id } + catalogIds + manualList).distinct()
+    }
+
+    // 元数据三源，**官方优先、扫描兜底**（用户裁定：pi 官方文件有数据就用官方的，
+    // pi 暂时没有的才用这次 API 扫到的）：pi 目录（models-store.json）→ 引擎快照
+    // → 扫描里厂商自己给的数据。引擎排在扫描前是因为它是 pi 组合后的官方视图；
+    // 扫描数据只在 pi 一无所知时补位 —— 补的正是"模型官方的"那几个字段（上下文、
+    // 最大输出、图片、价格），这也是价格以前永远不显示的原因：扫描器只读了 id。
+    val scannedById = remember(scanned) { scanned.associateBy { it.id } }
+    val knownById = remember(availableModels, catalog, presetId, scanned) {
+        val fromCatalog = catalog.associateBy { it.id }
+        val fromEngine = availableModels.filter { it.provider == presetId }.associateBy { it.id }
+        (fromCatalog.keys + fromEngine.keys + scannedById.keys).associateWith { id ->
+            val entry = fromCatalog[id]
+            val engine = fromEngine[id]
+            val scan = scannedById[id]
+            KnownModel(
+                name = entry?.name ?: engine?.name ?: scan?.displayName,
+                reasoning = entry?.reasoning ?: engine?.reasoning,
+                acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages
+                    ?: scan?.acceptsImages ?: false,
+                contextWindow = entry?.contextWindow ?: engine?.contextWindow
+                    ?: scan?.contextWindow,
+                maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens,
+                costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion,
+                costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion,
+            )
+        }
+    }
+
+    // 列表里的搜索：按 id 或名字过滤。remember 在源数据 + 查询上，不每次重组重算。
+    val shownCandidates = remember(candidates, modelQuery, knownById) {
+        val query = modelQuery.trim()
+        if (query.isEmpty()) {
+            candidates
+        } else {
+            candidates.filter { id ->
+                id.contains(query, ignoreCase = true) ||
+                    knownById[id]?.name?.contains(query, ignoreCase = true) == true
+            }
+        }
+    }
+
+    fun choicesFor(ids: List<String>): List<PiCredentialService.ModelChoice> = ids.map { id ->
+        val known = knownById[id]
+        PiCredentialService.ModelChoice(
+            id = id,
+            name = known?.name,
+            reasoning = known?.reasoning,
+            contextWindow = known?.contextWindow,
+            maxTokens = known?.maxTokens,
+            // 只说知道的：官方目录或厂商自己说了"支持图片"才写 ["text","image"]，
+            // 否则**不写这个键** —— 省略时 pi 自己按纯文本处理
+            // （`provider-composer.ts:158`），那才是官方默认。以前无论知不知道都写
+            // ["text"]，等于替厂商断言一次它没说过的话，界面也因此不得不问用户
+            // "支持图片吗"（用户裁定：这个不让用户选）。
+            input = if (known?.acceptsImages == true) listOf("text", "image") else emptyList(),
+            costInput = known?.costInput,
+            costOutput = known?.costOutput,
+        )
+    }
+
+    // 这次保存会删掉几个**已申报**的模型定义：对账基准（`initialChecked`）里被取消勾选的、
+    // 且真在 models.json 里申报过的那些（取消勾选 = pi 那边同 id 的整条定义被删掉，
+    // `provider-composer.ts:203-206` 的整条替换反过来就是"没有定义"）。保存成功后
+    // `initialChecked` 前移到本次勾选，这一行自己消失。
+    val deletingCount = remember(initialChecked, selected, existingIds) {
+        val declared = existingIds.toSet()
+        (initialChecked - selected).count { it in declared }
+    }
+
+    // 保存：一次写凭证 + 厂商块 + 循环列表（`PiCredentialService.save`）。不写默认模型 ——
+    // `setAsDefault` 保持 false，默认那两把键在清单页的「默认模型」一行里写。
+    val save: () -> Unit = {
+        val chosen = candidates.filter { it in selected }
+        sheetScope.launch {
+            saveError = null
+            saveSteps = emptyList()
+            savedOk = false
+            val result = withContext(Dispatchers.IO) {
+                service.save(
+                    preset = preset,
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
+                    api = api,
+                    choices = choicesFor(chosen),
+                    configuredModelIds = initialChecked,
+                    // pi 官方目录已经知道的模型**不申报**：官方数据就是权威，
+                    // 写一条只会把它替换成我们手上的副本（价格会归零、上下文
+                    // 会退回 128k）。官方不认识的（还没更新的新模型）必须申报
+                    // —— 那是"增加"，否则模型永远不出现。
+                    officiallyKnownIds = catalogIds,
+                    // **这个厂商那份**目录读到了没有，不是"整份目录读到过没有"：
+                    // `PiOfficialCatalog` 对单份坏掉的 `<provider>.json` 只记 problem 并继续，
+                    // 于是整份 `officialProviders` 非空、这一家却是空。传错的话
+                    // `PiCredentialService` 会把"官方认识"判断成"一个都不认识"，把扫描/引擎
+                    // 数据写进 `models[]` —— pi 同 id 整条替换，价格 0、上下文 128k
+                    // （§M11 那个事故）。
+                    officialCatalogRead = officialForPreset.isNotEmpty(),
+                )
+            }
+            // 失败时最后一步就是错误句，它在固定页脚里显示 —— 正文不再重复一遍。
+            saveSteps = if (result.ok) result.steps else result.steps.dropLast(1)
+            savedOk = result.ok
+            if (result.ok) {
+                onSaved()
+                // B2：只重读「已配置」那几个字段与错误态，本次保存的步骤
+                // 显示不清掉 —— 旧表单整段 prefill 会把 savedOk 抹回 false，
+                // 用户看到的是「刚保存完结果就没了」。
+                val fresh = withContext(Dispatchers.IO) { service.prefill(presetId) }
+                maskedKey = fresh.maskedKey
+                credentialPresent = fresh.credentialPresent
+                configuredProviderIds = fresh.configuredProviderIds
+                existingIds = fresh.configuredModelIds
+                modelsFileError = fresh.modelsFileError
+                authFileError = fresh.authFileError
+                // 对账基准随保存前进：下一次保存只对"这次改了什么"负责。
+                initialChecked = selected
+            } else {
+                saveError = result.steps.lastOrNull()
+            }
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onClose) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = PiSettingsMetrics.groupGap),
-        ) {
+        // 内容区自己滚，底部那行（保存 + 状态）固定 —— 用户不用滚过整张模型列表才能按保存。
+        Column(Modifier.fillMaxWidth()) {
             Text(
                 "导入模型",
                 style = MaterialTheme.typography.titleMedium,
@@ -481,260 +943,159 @@ private fun ImportSheet(
                     vertical = PiSpacing.small,
                 ),
             )
-
-            var presetId by remember(initialPresetId) {
-                mutableStateOf(initialPresetId ?: PiProviderPresets.all.first().id)
-            }
-            var apiKey by remember { mutableStateOf("") }
-            var baseUrl by remember { mutableStateOf("") }
-            var api by remember { mutableStateOf("") }
-            var maskedKey by remember { mutableStateOf<String?>(null) }
-            var credentialPresent by remember { mutableStateOf(false) }
-            var configuredProviderIds by remember { mutableStateOf<List<String>>(emptyList()) }
-            var modelsFileError by remember { mutableStateOf<String?>(null) }
-            var authFileError by remember { mutableStateOf<String?>(null) }
-            var existingIds by remember { mutableStateOf<List<String>>(emptyList()) }
-            var scanned by remember { mutableStateOf<List<PiModelScanner.ScannedModel>>(emptyList()) }
-            var manualIds by remember { mutableStateOf("") }
-            var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
-            // 打开表单时的初始勾选 —— 保存时「动没动」的对账基准（见 ModelSelectionPlan）。
-            var initialChecked by remember { mutableStateOf<Set<String>>(emptySet()) }
-            var scanEndpoint by remember { mutableStateOf<String?>(null) }
-            var scanNote by remember { mutableStateOf<String?>(null) }
-            var scanError by remember { mutableStateOf<String?>(null) }
-            var scanning by remember { mutableStateOf(false) }
-            var saveSteps by remember { mutableStateOf<List<String>>(emptyList()) }
-            var savedOk by remember { mutableStateOf(false) }
-            var saveError by remember { mutableStateOf<String?>(null) }
-            var storeCatalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
-            // 官方目录（41 个厂商 + 全部模型元数据）与它的读取问题；还有那个竖列表选择器的开关。
-            var officialProviders by remember { mutableStateOf<List<PiOfficialCatalog.Provider>>(emptyList()) }
-            var officialProblems by remember { mutableStateOf<List<String>>(emptyList()) }
-            var pickerOpen by remember { mutableStateOf(false) }
-            var pickerQuery by remember { mutableStateOf("") }
-            val sheetScope = rememberCoroutineScope()
-
-            // **官方目录一次读完**（41 份 `<provider>.json` + SHA-256 校验）：提供商列表、
-            // 每个厂商的模型、以及它们的 baseUrl/api/上下文/价格/图片能力都来自这份文件。
-            // 用户裁定：不自己维护表；升级 `PI_VERSION` 换载荷，列表自动跟着变。
-            LaunchedEffect(Unit) {
-                val result = withContext(Dispatchers.IO) { service.officialCatalog() }
-                officialProviders = result.providers
-                officialProblems = result.problems
-            }
-            val officialCounts = remember(officialProviders) {
-                officialProviders.associate { it.id to it.models.size }
-            }
-            // 选择列表 = 官方 41 个（有手写预设的用预设的连接信息，其余从官方数据现构）
-            // + App 自建的 3 个（ollama / llama.cpp / 自定义）。
-            val providerChoices = remember(officialProviders) {
-                officialProviders.map { provider ->
-                    PiProviderPresets.byId(provider.id) ?: presetFromOfficial(provider)
-                } + PiProviderPresets.all.filterNot { it.builtInPi }
-            }
-            // **选中的那一档必须从同一张表里取。** 这里曾经是 `byId(presetId) ?: all.first()`：
-            // 手写表只有 13 个 id，官方目录有 42 个，于是选中 `kimi-coding` 这类官方独有的厂商时
-            // 它会**静默退化成 openai** —— 标题写着 OpenAI、Base URL 填的是 api.openai.com、
-            // 保存时 `save(preset = preset)` 把厂商块与凭证写到 `openai` 名下（覆盖用户真正的
-            // openai 配置）。选择器列出 41 个、解析只认 13 个，是同一条数据的两套解析。
-            // 现在两边是同一个 `providerChoices`，不可能再各说各话。
-            val preset = remember(providerChoices, presetId) {
-                providerChoices.firstOrNull { it.id == presetId } ?: PiProviderPresets.all.first()
-            }
-            val officialForPreset = remember(officialProviders, presetId) {
-                officialProviders.firstOrNull { it.id == presetId }?.models.orEmpty()
-            }
-
-            // prefill + 目录一次读完（IO 线程）：分开两个 effect 会有目录晚到、
-            // 「默认全勾」漏掉目录那批的竞态。切厂商即重置，和旧表单同一个键。
-            LaunchedEffect(presetId) {
-                val (existing, entries) = withContext(Dispatchers.IO) {
-                    service.prefill(presetId) to service.catalogModels(presetId)
-                }
-                baseUrl = existing.baseUrl ?: preset.baseUrl
-                api = existing.api ?: preset.api
-                maskedKey = existing.maskedKey
-                credentialPresent = existing.credentialPresent
-                configuredProviderIds = existing.configuredProviderIds
-                modelsFileError = existing.modelsFileError
-                authFileError = existing.authFileError
-                existingIds = existing.configuredModelIds
-                // `models-store.json` 的条目只是兜底：真正的来源是下面那份派生出来的
-                // `catalog`（官方目录优先，且官方晚到时也会跟着变）。
-                storeCatalog = entries
-                apiKey = ""
-                scanned = emptyList()
-                manualIds = ""
-                scanEndpoint = null
-                scanNote = null
-                scanError = null
-                saveSteps = emptyList()
-                savedOk = false
-                saveError = null
-                // 初始勾选 = 「申报过的全部 + pi 目录里在循环范围内的」：
-                //  - 申报过的（手写 models[]）必须全勾 —— 取消勾选会在保存时删掉它的
-                //    定义，自定义厂商就再也没有这个模型了；
-                //  - 目录里的按 enabledModels 范围过滤：范围没设 = 全部可循环 = 全勾
-                //    （首次导入的默认形态）；范围设了 = 只勾本来就轮得到的，上次主动
-                //    排除的模型不会因为"打开过表单"又被勾回来（Bug①）。
-                // 判据与清单页同一个：PiModelInventory.matches。
-                val inScope = { id: String ->
-                    enabledPatterns.isEmpty() ||
-                        enabledPatterns.any { PiModelInventory.matches(it, presetId, id) }
-                }
-                selected = existing.configuredModelIds.toSet() +
-                    entries.map { it.id }.filter(inScope).toSet()
-                initialChecked = selected
-            }
-
-            // 目录的**派生值**，两个官方来源取"更新的那个"：
-            //  - `models-store.json` 是 pi 自己刷新过的缓存（RPC 启动时后台刷，含 pi.dev 的覆盖
-            //    目录，`core/remote-catalog-provider.ts` 的 `DEFAULT_CATALOG_BASE_URL`），所以
-            //    同一个 id 以它为准；
-            //  - 随包静态目录（41 份 JSON）永远在，补 store 里没有的厂商/模型。
-            // 引擎快照与我们的扫描都不进这里 —— 它们是下面 `knownById` 的后备。
-            // 做成派生值是因为两个来源都是异步读到的：写成状态就会停在"打开表单那一刻"。
-            val catalog = remember(officialForPreset, storeCatalog) {
-                if (storeCatalog.isEmpty()) {
-                    officialForPreset.map { it.toCatalogEntry() }
-                } else {
-                    val byId = LinkedHashMap<String, PiModelCatalog.Entry>()
-                    officialForPreset.forEach { model -> byId[model.id] = model.toCatalogEntry() }
-                    storeCatalog.forEach { entry -> byId[entry.id] = entry }
-                    byId.values.toList()
-                }
-            }
-
-            // 官方目录晚到时补一次初始勾选：**只在用户还没有任何勾选时**才动，绝不覆盖
-            // 用户已经做过的选择（打开表单时官方数据可能还没读完）。
-            LaunchedEffect(officialForPreset, presetId) {
-                if (officialForPreset.isEmpty() || selected.isNotEmpty()) return@LaunchedEffect
-                val inScope = { id: String ->
-                    enabledPatterns.isEmpty() ||
-                        enabledPatterns.any { PiModelInventory.matches(it, presetId, id) }
-                }
-                selected = officialForPreset.map { it.id }.filter(inScope).toSet()
-                initialChecked = selected
-            }
-
-            val manualList = remember(manualIds) {
-                manualIds.split(',', '\n', ' ', '\t').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-            }
-            val catalogIds = remember(catalog) { catalog.map { it.id }.toSet() }
-            val scannedIds = remember(scanned) { scanned.map { it.id }.toSet() }
-            // 候选 = 已保存（编辑时置顶）+ 扫描到 + pi 目录 + 手输。
-            val candidates = remember(scanned, manualList, existingIds, catalogIds) {
-                (existingIds + scanned.map { it.id } + catalogIds + manualList).distinct()
-            }
-
-            // 元数据三源，**官方优先、扫描兜底**（用户裁定：pi 官方文件有数据就用官方的，
-            // pi 暂时没有的才用这次 API 扫到的）：pi 目录（models-store.json）→ 引擎快照
-            // → 扫描里厂商自己给的数据。引擎排在扫描前是因为它是 pi 组合后的官方视图；
-            // 扫描数据只在 pi 一无所知时补位 —— 补的正是"模型官方的"那几个字段（上下文、
-            // 最大输出、图片、价格），这也是价格以前永远不显示的原因：扫描器只读了 id。
-            val scannedById = remember(scanned) { scanned.associateBy { it.id } }
-            val knownById = remember(availableModels, catalog, presetId, scanned) {
-                val fromCatalog = catalog.associateBy { it.id }
-                val fromEngine = availableModels.filter { it.provider == presetId }.associateBy { it.id }
-                (fromCatalog.keys + fromEngine.keys + scannedById.keys).associateWith { id ->
-                    val entry = fromCatalog[id]
-                    val engine = fromEngine[id]
-                    val scan = scannedById[id]
-                    KnownModel(
-                        name = entry?.name ?: engine?.name ?: scan?.displayName,
-                        reasoning = entry?.reasoning ?: engine?.reasoning,
-                        acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages
-                            ?: scan?.acceptsImages ?: false,
-                        contextWindow = entry?.contextWindow ?: engine?.contextWindow
-                            ?: scan?.contextWindow,
-                        maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens,
-                        costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion,
-                        costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion,
-                    )
-                }
-            }
-
-            fun choicesFor(ids: List<String>): List<PiCredentialService.ModelChoice> = ids.map { id ->
-                val known = knownById[id]
-                PiCredentialService.ModelChoice(
-                    id = id,
-                    name = known?.name,
-                    reasoning = known?.reasoning,
-                    contextWindow = known?.contextWindow,
-                    maxTokens = known?.maxTokens,
-                    // 只说知道的：官方目录或厂商自己说了"支持图片"才写 ["text","image"]，
-                    // 否则**不写这个键** —— 省略时 pi 自己按纯文本处理
-                    // （`provider-composer.ts:158`），那才是官方默认。以前无论知不知道都写
-                    // ["text"]，等于替厂商断言一次它没说过的话，界面也因此不得不问用户
-                    // "支持图片吗"（用户裁定：这个不让用户选）。
-                    input = if (known?.acceptsImages == true) listOf("text", "image") else emptyList(),
-                    costInput = known?.costInput,
-                    costOutput = known?.costOutput,
-                )
-            }
-
-            // ---------------------------------------------------------- 1 选厂商
-            PiSettingsSectionHeader("1 选厂商")
-            // **竖列表 + 搜索，不是横滑 chips**（用户："横选了啥时候也看不完"）：官方 41 个
-            // 加 App 自建 3 个，一屏能翻、能搜，长名字也不会被挤没。
-            Row(
-                modifier = Modifier
+            Column(
+                Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                verticalAlignment = Alignment.CenterVertically,
+                    // `fill = false`：内容短时 sheet 就短，内容长时才撑到剩余高度再滚。
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        preset.displayName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        buildString {
-                            append(preset.id)
-                            officialCounts[preset.id]?.let { append(" · ").append(it).append(" 个模型") }
-                            if (preset.id in configuredProviderIds) append(" · 已配置")
-                            append(if (preset.builtInPi) " · pi 官方" else " · App 自建")
-                        },
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedButton(onClick = { pickerOpen = !pickerOpen }) {
-                    Text(if (pickerOpen) "收起" else "更换")
-                }
-            }
-            if (pickerOpen) {
-                val query = pickerQuery.trim().lowercase()
-                val shownChoices = providerChoices.filter { option ->
-                    query.isEmpty() ||
-                        option.id.lowercase().contains(query) ||
-                        option.displayName.lowercase().contains(query)
-                }
-                OutlinedTextField(
-                    value = pickerQuery,
-                    onValueChange = { pickerQuery = it },
-                    label = { Text("搜厂商（名字或 id）") },
-                    singleLine = true,
+                // ------------------------------------------------------ 1 选厂商
+                PiSettingsSectionHeader("1 选厂商")
+                // **竖列表 + 搜索，不是横滑 chips**（用户："横选了啥时候也看不完"）：官方目录
+                // 正常时 41 档、目录读不到时预设表的 13 档，一屏能翻、能搜，长名字也不会被挤没。
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                )
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 260.dp)
-                        .verticalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    shownChoices.forEach { option ->
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (presetId.isEmpty()) "还没有选厂商" else preset.displayName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (presetId.isEmpty()) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                        Text(
+                            if (presetId.isEmpty()) {
+                                "点下面的一个厂商"
+                            } else {
+                                buildString {
+                                    append(preset.id)
+                                    modelCounts[preset.id]?.let { append(" · ").append(it).append(" 个模型") }
+                                    if (preset.id in configuredIds) append(" · 已配置")
+                                    append(if (preset.builtInPi) " · pi 官方" else " · App 自建")
+                                }
+                            },
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(onClick = { pickerOpen = !pickerOpen }) {
+                        Text(if (pickerOpen) "收起" else "更换")
+                    }
+                }
+                // 说不出选中的厂商时**先别让保存**：保存写的是 models.json 的厂商块与 auth.json
+                // 的凭证，写到猜出来的厂商名下就是覆盖别人的配置（这个 sheet 修的就是这种事故）。
+                presetProblem?.let { SheetNote(it) }
+                if (officialProblems.isNotEmpty()) {
+                    // 两种失败要分开说：目录整份读不到（载荷换了依赖树布局、还没解包）时列表
+                    // 只有预设表里的那些，一句话说清来源；只有某几份文件坏了时，逐份念出来才有用
+                    // —— problems 里那串候选路径是给诊断看的，不是屏幕文案。
+                    if (officialProviders.isEmpty()) {
+                        SheetNote("官方目录读不到，下面的厂商只有 App 自带的 ${providerChoices.size} 个。")
+                    } else {
+                        SheetNote(
+                            "官方目录有 ${officialProblems.size} 处读不出来，下面的厂商可能少几个：" +
+                                officialProblems.joinToString("；"),
+                        )
+                    }
+                }
+                if (modelsFileError != null) {
+                    SheetNote("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
+                }
+                if (authFileError != null) {
+                    SheetNote("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
+                }
+                if (pickerOpen) {
+                    OutlinedTextField(
+                        value = pickerQuery,
+                        onValueChange = { pickerQuery = it },
+                        label = { Text("搜厂商（名字或 id）") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                    )
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        shownChoices.forEach { option ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        presetId = option.id
+                                        pickerOpen = false
+                                        pickerQuery = ""
+                                    }
+                                    .padding(
+                                        horizontal = PiSettingsMetrics.cardPadding,
+                                        vertical = PiSpacing.small,
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    if (option.id == presetId) "✓" else "○",
+                                    style = PiTheme.text.monoSmall,
+                                    color = if (option.id == presetId) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        PiTheme.palette.muted
+                                    },
+                                )
+                                Spacer(Modifier.width(PiSpacing.small))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        option.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Text(
+                                        // 「已配置」是这一屏最重要的一格：它决定下面的 Key/扫描
+                                        // 要不要填。机器 id 放最后。
+                                        buildList {
+                                            if (option.id in configuredIds) add("已配置")
+                                            modelCounts[option.id]?.let { add("$it 个模型") }
+                                            add(option.id)
+                                        }.joinToString(" · "),
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        if (shownChoices.isEmpty()) {
+                            Text(
+                                "没有匹配的厂商",
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSpacing.small,
+                                ),
+                            )
+                        }
+                    }
+                }
+
+                // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
+                if (presetId.isNotEmpty()) {
+                    // ------------------------------------------------------ 2 粘 Key
+                    PiSettingsSectionHeader("2 粘 Key")
+                    if (credentialPresent && !keyOpen) {
+                        // 已配置的厂商：一行说清"凭证已经在文件里、留空就是沿用"，
+                        // 想看/换 Key 才展开（展开后与未配置时同一个表单）。
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    presetId = option.id
-                                    pickerOpen = false
-                                    pickerQuery = ""
-                                }
                                 .padding(
                                     horizontal = PiSettingsMetrics.cardPadding,
                                     vertical = PiSpacing.small,
@@ -742,289 +1103,257 @@ private fun ImportSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                if (option.id == presetId) "✓" else "○",
+                                buildString {
+                                    append(if (maskedKey != null) "已存凭证（$maskedKey）" else "已存凭证")
+                                    append(" · 留空＝沿用")
+                                },
+                                modifier = Modifier.weight(1f),
                                 style = PiTheme.text.monoSmall,
-                                color = if (option.id == presetId) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    PiTheme.palette.muted
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TextButton(onClick = { keyOpen = true }) { Text("更换") }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = apiKey,
+                            onValueChange = { apiKey = it },
+                            label = { Text("API Key") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                        )
+                        if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
+                            SheetNote(
+                                "这个端点不校验鉴权，留空会写入占位值「" +
+                                    PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.padding(
+                                horizontal = PiSettingsMetrics.cardPadding,
+                                vertical = PiSpacing.unit,
+                            ),
+                        ) {
+                            TextButton(onClick = { advancedOpen = !advancedOpen }) {
+                                Text(if (advancedOpen) "收起高级" else "高级")
+                            }
+                        }
+                        if (advancedOpen) {
+                            OutlinedTextField(
+                                value = baseUrl,
+                                onValueChange = { baseUrl = it },
+                                label = { Text("Base URL") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        horizontal = PiSettingsMetrics.cardPadding,
+                                        vertical = PiSpacing.small,
+                                    ),
+                            )
+                            OutlinedTextField(
+                                value = api,
+                                onValueChange = { api = it },
+                                label = { Text("api（协议实现）") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        horizontal = PiSettingsMetrics.cardPadding,
+                                        vertical = PiSpacing.small,
+                                    ),
+                            )
+                        }
+                    }
+
+                    // ------------------------------------------------------ 扫描（一个按钮行）
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = PiSettingsMetrics.cardPadding,
+                            vertical = PiSpacing.small,
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            enabled = !scanning,
+                            onClick = {
+                                sheetScope.launch {
+                                    scanning = true
+                                    scanError = null
+                                    scanNote = null
+                                    scanEndpoint = null
+                                    try {
+                                        // 已配置厂商的 Key 是收起的：留空时 `probe` 用
+                                        // `auth.json` 里那条去探测，否则"已配置"的厂商
+                                        // 反而扫描不了（见 `PiCredentialService.probe`）。
+                                        when (val result = service.probe(preset, apiKey, baseUrl.ifBlank { null })) {
+                                            is PiModelScanner.Result.Ok -> {
+                                                scanned = result.models
+                                                scanEndpoint = result.endpoint
+                                                scanNote = result.note
+                                                // 扫描到的并入勾选、保留已做的勾选；默认模型一个都
+                                                // 不动（这张 sheet 本来也不写默认模型）。
+                                                selected = selected + result.models.map { it.id }
+                                            }
+
+                                            is PiModelScanner.Result.Failed -> {
+                                                // Failed.allowManual 恒为 true，失败永远不是死路。
+                                                scanError = result.message + "\n" + result.suggestion
+                                                scanEndpoint = result.endpoint
+                                            }
+                                        }
+                                    } finally {
+                                        // 按钮在扫描中禁用，但抛出的异常也必须把状态放回来。
+                                        scanning = false
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(if (scanning) "正在扫描…" else "检测并扫描模型")
+                        }
+                        if (scanEndpoint != null) {
+                            Spacer(Modifier.width(PiSpacing.inline))
+                            Text(scanEndpoint.orEmpty(), style = PiTheme.text.monoSmall)
+                        }
+                    }
+                    if (scanNote != null) SheetNote(scanNote.orEmpty())
+                    if (scanError != null) SheetNote(scanError.orEmpty())
+
+                    // ------------------------------------------------------ 3 勾选模型
+                    PiSettingsSectionHeader("3 勾选模型")
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = PiSettingsMetrics.cardPadding,
+                            vertical = PiSpacing.small,
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "已勾选 ${selected.size} / 共 ${candidates.size}",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        TextButton(onClick = { selected = selected + candidates }) { Text("全选") }
+                        TextButton(onClick = { selected = emptySet() }) { Text("清空") }
+                    }
+                    OutlinedTextField(
+                        value = modelQuery,
+                        onValueChange = { modelQuery = it },
+                        label = { Text("搜模型（id 或名字）") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                    )
+                    OutlinedTextField(
+                        value = manualIds,
+                        onValueChange = { manualIds = it },
+                        label = { Text("手动模型名（逗号、空格或换行分隔）") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                    )
+                    shownCandidates.forEach { id ->
+                        val known = knownById[id]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PiSpacing.inline),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = id in selected,
+                                onCheckedChange = { on ->
+                                    selected = if (on) selected + id else selected - id
                                 },
                             )
-                            Spacer(Modifier.width(PiSpacing.small))
                             Column(Modifier.weight(1f)) {
+                                Text(id, style = PiTheme.text.mono)
                                 Text(
-                                    option.displayName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    buildString {
-                                        append(option.id)
-                                        officialCounts[option.id]?.let {
-                                            append(" · ").append(it).append(" 个模型")
-                                        }
-                                        if (option.id in configuredProviderIds) append(" · 已配置")
-                                    },
+                                    candidateMeta(
+                                        id = id,
+                                        known = known,
+                                        fromScan = id in scannedIds,
+                                        fromCatalog = id in catalogIds,
+                                        alreadySaved = id in existingIds,
+                                        builtInPi = preset.builtInPi,
+                                    ),
                                     style = PiTheme.text.meta,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
                     }
-                    if (shownChoices.isEmpty()) {
-                        Text(
-                            "没有匹配的厂商",
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(
-                                horizontal = PiSettingsMetrics.cardPadding,
-                                vertical = PiSpacing.small,
-                            ),
-                        )
+                    if (candidates.isEmpty()) {
+                        SheetNote("pi 目录里还没有这个厂商的模型：点上面的扫描，或手动填一个模型名。")
+                    } else if (shownCandidates.isEmpty()) {
+                        SheetNote("没有匹配的模型")
                     }
+                    saveSteps.forEach { step -> SheetNote(step) }
                 }
             }
-            if (officialProblems.isNotEmpty()) {
-                SheetNote(
-                    "官方目录有 ${officialProblems.size} 处读不出来，下面的厂商可能少几个：" +
-                        officialProblems.joinToString("；"),
-                )
-            }
-            if (modelsFileError != null) {
-                SheetNote("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
-            }
-            if (authFileError != null) {
-                SheetNote("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
-            }
-
-            // ----------------------------------------------------------- 2 粘 Key
-            PiSettingsSectionHeader("2 粘 Key")
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = { Text("API Key") },
-                singleLine = true,
-                modifier = Modifier
+            // 底部固定在 sheet 上：保存按钮、本次会删除什么、结果/下一步，都在这几行里。
+            Column(
+                Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-            )
-            if (credentialPresent) {
-                val shown = maskedKey?.let { "（$it）" }.orEmpty()
-                SheetNote("这个厂商已经保存过凭证$shown。Key 留空就不改动它；要换新的就粘贴一条。")
-            }
-            if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
-                SheetNote(
-                    "这个端点不校验鉴权，但 pi 仍要求填写凭证，否则不会列出该厂商的模型。" +
-                        "还没有凭证时留空会写入占位值「" + PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
-                )
-            }
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                label = { Text("Base URL") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-            )
-            OutlinedTextField(
-                value = api,
-                onValueChange = { api = it },
-                label = { Text("api（协议实现）") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-            )
-            SheetNote("写错 api 时厂商会注册成功、第一条消息才失败。请从上面的预设带出来，不要凭印象改。")
-            SheetNote("扫描即可确认 Key 可用；厂商自己给的上下文/价格/图片会被带上，没给的用 pi 默认值。")
-
-            // --------------------------------------------------------- 3 扫描
-            PiSettingsSectionHeader("3 检测并扫描模型")
-            SheetNote("扫描成功即表示 Key 可用。pi 目录里已经列出的厂商可以跳过这一步直接保存。")
-            Row(
-                modifier = Modifier.padding(
-                    horizontal = PiSettingsMetrics.cardPadding,
-                    vertical = PiSpacing.small,
-                ),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(
+                        horizontal = PiSettingsMetrics.cardPadding,
+                        vertical = PiSpacing.small,
+                    ),
             ) {
-                OutlinedButton(
-                    enabled = !scanning,
-                    onClick = {
-                        sheetScope.launch {
-                            scanning = true
-                            scanError = null
-                            scanNote = null
-                            scanEndpoint = null
-                            try {
-                                when (val result = service.probe(preset, apiKey, baseUrl.ifBlank { null })) {
-                                    is PiModelScanner.Result.Ok -> {
-                                        scanned = result.models
-                                        scanEndpoint = result.endpoint
-                                        scanNote = result.note
-                                        // 扫描到的并入勾选、保留已做的勾选；默认模型一个都
-                                        // 不动（写不写由「保持当前默认」那一项决定）。
-                                        selected = selected + result.models.map { it.id }
-                                    }
-
-                                    is PiModelScanner.Result.Failed -> {
-                                        // Failed.allowManual 恒为 true，失败永远不是死路。
-                                        scanError = result.message + "\n" + result.suggestion
-                                        scanEndpoint = result.endpoint
-                                    }
-                                }
-                            } finally {
-                                // 按钮在扫描中禁用，但抛出的异常也必须把状态放回来。
-                                scanning = false
-                            }
-                        }
-                    },
-                ) {
-                    Text(if (scanning) "正在扫描…" else "检测并扫描模型")
+                if (deletingCount > 0) {
+                    Text(
+                        "这次会删除 $deletingCount 个模型定义",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.warning,
+                    )
                 }
-                if (scanEndpoint != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        // `presetProblem` 非空 = 说不出这一档是谁：保存会写错厂商名下的块与凭证。
+                        enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
+                            (selected.isNotEmpty() || preset.builtInPi),
+                        onClick = save,
+                    ) { Text("保存") }
                     Spacer(Modifier.width(PiSpacing.inline))
-                    Text(scanEndpoint.orEmpty(), style = PiTheme.text.monoSmall)
-                }
-            }
-            if (scanNote != null) SheetNote(scanNote.orEmpty())
-            if (scanError != null) SheetNote(scanError.orEmpty())
+                    Text(
+                        // 一行状态：没选厂商说下一步，有错报错，否则报勾选数与保存门槛。
+                        when {
+                            presetId.isEmpty() -> "先选一个厂商"
+                            saveError != null ->
+                                saveError.orEmpty().lineSequence().firstOrNull().orEmpty()
 
-            // ------------------------------------------------- 4 勾选要导入的模型
-            PiSettingsSectionHeader("4 勾选要导入的模型")
-            SheetNote(
-                "一个勾 = 这个模型。上下文、价格、是否支持图片一律先取 pi 官方目录，" +
-                    "pi 没有的用上面扫描到的厂商数据；两边都没有就不写，交给 pi 用默认值。",
-            )
-            OutlinedTextField(
-                value = manualIds,
-                onValueChange = { manualIds = it },
-                label = { Text("手动模型名（逗号、空格或换行分隔）") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-            )
-            candidates.forEach { id ->
-                val known = knownById[id]
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = PiSpacing.inline),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Checkbox(
-                        checked = id in selected,
-                        onCheckedChange = { on ->
-                            selected = if (on) selected + id else selected - id
+                            savedOk -> "已保存；新厂商若标「等待重启」就回清单页重启引擎"
+                            selected.isNotEmpty() -> "已勾选 ${selected.size} 个"
+                            // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
+                            // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
+                            // 被一个勾选门槛挡住（Bug②）。
+                            preset.builtInPi -> "不勾也能保存（不改循环列表）"
+                            else -> "至少要勾选一个模型"
+                        },
+                        style = PiTheme.text.meta,
+                        color = if (saveError != null) {
+                            PiTheme.palette.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
-                    Column(Modifier.weight(1f)) {
-                        Text(id, style = PiTheme.text.mono)
-                        Text(
-                            candidateMeta(
-                                id = id,
-                                known = known,
-                                fromScan = id in scannedIds,
-                                fromCatalog = id in catalogIds,
-                                alreadySaved = id in existingIds,
-                                builtInPi = preset.builtInPi,
-                            ),
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
             }
-            if (candidates.isEmpty()) {
-                SheetNote("pi 目录里还没有这个厂商的模型：点上面的扫描，或手动填一个模型名。")
-            }
-
-            Row(
-                modifier = Modifier.padding(
-                    horizontal = PiSettingsMetrics.cardPadding,
-                    vertical = PiSpacing.inline,
-                ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Button(
-                    enabled = !scanning && (selected.isNotEmpty() || preset.builtInPi),
-                    onClick = {
-                        val chosen = candidates.filter { it in selected }
-                        sheetScope.launch {
-                            saveError = null
-                            saveSteps = emptyList()
-                            savedOk = false
-                            val result = withContext(Dispatchers.IO) {
-                                service.save(
-                                    preset = preset,
-                                    apiKey = apiKey,
-                                    baseUrl = baseUrl,
-                                    api = api,
-                                    choices = choicesFor(chosen),
-                                    configuredModelIds = initialChecked,
-                                    // pi 官方目录已经知道的模型**不申报**：官方数据就是权威，
-                                    // 写一条只会把它替换成我们手上的副本（价格会归零、上下文
-                                    // 会退回 128k）。官方不认识的（还没更新的新模型）必须申报
-                                    // —— 那是"增加"，否则模型永远不出现。
-                                    officiallyKnownIds = catalogIds,
-                                    officialCatalogRead = officialProviders.isNotEmpty(),
-                                )
-                            }
-                            saveSteps = result.steps
-                            savedOk = result.ok
-                            if (result.ok) {
-                                onSaved()
-                                // B2：只重读「已配置」那几个字段与错误态，本次保存的步骤
-                                // 显示不清掉 —— 旧表单整段 prefill 会把 savedOk 抹回 false，
-                                // 用户看到的是「刚保存完结果就没了」。
-                                val fresh = withContext(Dispatchers.IO) { service.prefill(presetId) }
-                                maskedKey = fresh.maskedKey
-                                credentialPresent = fresh.credentialPresent
-                                configuredProviderIds = fresh.configuredProviderIds
-                                existingIds = fresh.configuredModelIds
-                                modelsFileError = fresh.modelsFileError
-                                authFileError = fresh.authFileError
-                                // 对账基准随保存前进：下一次保存只对"这次改了什么"负责。
-                                initialChecked = selected
-                            } else {
-                                saveError = result.steps.lastOrNull()
-                            }
-                        }
-                    },
-                ) {
-                    Text("保存")
-                }
-                Spacer(Modifier.width(PiSpacing.inline))
-                Text(
-                    when {
-                        selected.isNotEmpty() -> "已选 ${selected.size} 个"
-                        // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
-                        // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
-                        // 被一个勾选门槛挡住（Bug②）。
-                        preset.builtInPi -> "不勾也能保存（不改循环列表）"
-                        else -> "至少要勾选一个模型"
-                    },
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            saveSteps.forEach { step -> SheetNote(step) }
-            if (saveError != null) SheetNote(saveError.orEmpty())
-            if (savedOk) {
-                SheetNote("保存完成。回到上面的清单：新厂商如果标着「等待重启」，去那张卡重启引擎。")
-            }
-            SheetNote("手写的模型配置可以带注释，不会被判成损坏。")
-            SheetNote("只为 pi 官方不认识的模型写定义；官方目录里有的不会被覆盖，价格与上下文仍来自 pi。")
-            Spacer(Modifier.height(PiSettingsMetrics.groupGap))
         }
     }
 }
 
-/** One paragraph of explanation, muted settings style (screen width). */
+/**
+ * One paragraph of explanation, muted settings style (screen width).
+ *
+ * [tone] 只换字色，不换底色/间距：设置页的提示条本来就是「同一张底 + 不同字色」
+ * （`PiInfoNote` 的同一个约定）。目前只有「厂商和模型对不上」那一行用 warning 色。
+ */
 @Composable
-private fun Note(text: String) {
+private fun Note(text: String, tone: Color? = null) {
     Text(
         text,
         modifier = Modifier.padding(
@@ -1032,7 +1361,7 @@ private fun Note(text: String) {
             vertical = PiSpacing.small,
         ),
         style = PiTheme.text.meta,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = tone ?: MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -1060,9 +1389,18 @@ private fun Summary(data: PiModelInventory.Inventory) {
     val ready = data.count(PiModelInventory.Status.READY)
     val pending = data.count(PiModelInventory.Status.PENDING_RESTART)
     val noCredential = data.count(PiModelInventory.Status.MISSING_CREDENTIAL)
+    // 「N 个模型」只数**这台设备上配置过的**：`data.models` 把 pi 目录里这个厂商的全部模型
+    // 都算进来了，只配一个 openrouter 会写成「1 个厂商 · 381 个模型」—— 那个数字是 pi 的
+    // 目录规模，不是用户配置的规模（注册表那行叫的是「已导入的模型」）。手写申报、覆盖、
+    // 引擎里出现过的都算；只有 pi 目录里有的不算。
+    val configured = data.models.count { model ->
+        model.origins.isEmpty() ||
+            PiModelInventory.Origin.DECLARED in model.origins ||
+            PiModelInventory.Origin.OVERRIDDEN in model.origins
+    }
     Text(
         buildString {
-            append("${data.providers.size} 个厂商 · ${data.models.size} 个模型 · 现在可用 $ready 个")
+            append("${data.providers.size} 个厂商 · $configured 个模型 · 现在可用 $ready 个")
             if (pending > 0) append(" · 等待重启 $pending 个")
             if (noCredential > 0) append(" · 缺凭证 $noCredential 个")
         },
@@ -1133,10 +1471,12 @@ private fun SettingLinkRow(
     key: String,
     store: PiSettingsStore,
     editTick: Int,
+    /** 外部改动（`PiDirectoryWatch` → `reloadTick`）也要让读数重读，理由同上面三行。 */
+    reloadTick: Int,
     onEdit: (String) -> Unit,
 ) {
     val setting = PiSettingsCatalog.byKey[key] ?: return
-    val value = remember(store, editTick, key) { PiSettingsCatalog.summaryText(store, key) }
+    val value = remember(store, editTick, reloadTick, key) { PiSettingsCatalog.summaryText(store, key) }
     LinkRow(title = setting.title, value = value, onClick = { onEdit(key) })
 }
 
@@ -1276,13 +1616,26 @@ private fun ModelLine(model: PiModelInventory.Model) {
 /** 三句不同的话，对应三种不同的下一步动作。 */
 @Composable
 private fun StatusTag(status: PiModelInventory.Status) {
-    val (text, color) = when (status) {
-        PiModelInventory.Status.READY -> "现在可用" to MaterialTheme.colorScheme.primary
-        PiModelInventory.Status.PENDING_RESTART -> "等待重启" to MaterialTheme.colorScheme.tertiary
-        PiModelInventory.Status.MISSING_CREDENTIAL -> "缺凭证" to MaterialTheme.colorScheme.onSurfaceVariant
-        PiModelInventory.Status.UNKNOWN -> "无法判断" to MaterialTheme.colorScheme.onSurfaceVariant
+    val color = when (status) {
+        PiModelInventory.Status.READY -> MaterialTheme.colorScheme.primary
+        PiModelInventory.Status.PENDING_RESTART -> MaterialTheme.colorScheme.tertiary
+        PiModelInventory.Status.MISSING_CREDENTIAL -> MaterialTheme.colorScheme.onSurfaceVariant
+        PiModelInventory.Status.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(text, style = MaterialTheme.typography.labelMedium, color = color)
+    Text(statusText(status), style = MaterialTheme.typography.labelMedium, color = color)
+}
+
+/**
+ * 一个状态的措辞，**只有这一处**：清单页的标签与默认模型选择器的副标题都用它。
+ *
+ * 新造第二套说法会让同一份清单在两个地方各说各话（标签写「等待重启」、选择器里写
+ * 「需重启引擎」），而这两句话说的是同一件事，用户没法知道它们等价。
+ */
+private fun statusText(status: PiModelInventory.Status): String = when (status) {
+    PiModelInventory.Status.READY -> "现在可用"
+    PiModelInventory.Status.PENDING_RESTART -> "等待重启"
+    PiModelInventory.Status.MISSING_CREDENTIAL -> "缺凭证"
+    PiModelInventory.Status.UNKNOWN -> "无法判断"
 }
 
 private fun originText(model: PiModelInventory.Model): String {
@@ -1298,6 +1651,233 @@ private fun originText(model: PiModelInventory.Model): String {
     }
 }
 
+// ===========================================================================
+// 三个选择键：候选一律从清单派生（默认模型 / 默认厂商 / 循环模型 / 逐模型思考等级）
+// ===========================================================================
+
+/**
+ * 「快捷添加」最多列几枚 chip —— 循环模型那一行。
+ *
+ * 这排 chip 是横向滚动的（`PiListEditorSheet`），而一份真实清单可能上百个模型
+ * （openrouter 一家就几百）：上百枚 chip 就是用户说的「横选了啥时候也看不完」。
+ * 超出的模型照样能手输 —— 这一行从来都允许手输。
+ */
+private const val MAX_MODEL_PRESETS = 40
+
+/** `enabledModels` 原有的通配符预设（注册表那一行是它们的唯一出处，这里不抄第二份）。 */
+private fun enabledModelWildcards(): List<String> =
+    PiSettingsCatalog.byKey["enabledModels"]?.presets.orEmpty()
+
+/**
+ * 清单里的模型，写成 `厂商/模型` —— 循环模型那一行的快捷添加。
+ *
+ * 用 `厂商/模型` 而不是裸模型 id：`enabledModels` 的通配模式按 `provider/modelId` 与裸
+ * modelId 各匹配一次（`PiModelInventory.matches` / pi 的 `resolveModelScope`），裸 id 在
+ * 两家有同名模型时会指错厂商。
+ */
+private fun modelPresets(data: PiModelInventory.Inventory?): List<String> =
+    data?.providers.orEmpty()
+        .flatMap { provider -> provider.models.map { model -> "${provider.id}/${model.id}" } }
+        .distinct()
+        .take(MAX_MODEL_PRESETS)
+
+/**
+ * 循环模型那行的快捷添加：清单里的模型在前（点一枚加一条），**原有的通配符预设在后面**。
+ * 通配符是这一行原来唯一的入口，一个都不能少，所以模型让出几枚位置给它们。
+ */
+private fun cycleModelPresets(data: PiModelInventory.Inventory?): List<String> {
+    val wildcards = enabledModelWildcards()
+    val room = (MAX_MODEL_PRESETS - wildcards.size).coerceAtLeast(0)
+    return (modelPresets(data).take(room) + wildcards).distinct()
+}
+
+/**
+ * 默认模型选择器的每一行：`厂商 / 模型`，副标题是一句话的状态（措辞复用 [statusText]）。
+ *
+ * `wire` 是 `厂商/模型`，不是裸模型 id：同名模型可以出现在多个厂商下（官方目录里
+ * `gemini-*` 同时在 google 与 google-vertex，openrouter 转发的更多），而这一行选中之后
+ * 要写的是**这个厂商**下的这个模型。解码在 [DefaultModelPairStore] 里（写两个键）。
+ */
+private fun modelPickerOptions(data: PiModelInventory.Inventory?): List<PiOption> =
+    data?.providers.orEmpty().flatMap { provider ->
+        provider.models.map { model ->
+            PiOption(
+                wire = "${provider.id}/${model.id}",
+                label = "${provider.id} / ${model.id}",
+                description = buildList {
+                    add(statusText(model.status))
+                    if (model.isDefault) add("当前默认")
+                }.joinToString(" · "),
+            )
+        }
+    }
+
+/**
+ * 默认厂商的选项，三层：
+ *
+ *  1. **清单里出现的厂商**放在最前，带「已配置 / N 个模型」—— 自定义厂商（AI 手写
+ *     `models.json` 的那些）只有这里点得到，写死的 40 项里没有它们；
+ *  2. `PiProviderPresets` 的官方预设补其后（去重，清单里已有的以清单为准，连接信息也是）；
+ *  3. 注册表原来的 40 项里前两层没有的 —— 不丢：`minimax-cn` 这类「清单里还没出现、
+ *     官方目录里也没有」的厂商，删掉它们只会把手打的范围扩大，那不是改善。
+ */
+private fun providerPickerOptions(data: PiModelInventory.Inventory?): List<PiOption> {
+    val fromInventory = data?.providers.orEmpty().map { provider ->
+        PiOption(
+            wire = provider.id,
+            // 与厂商卡的标题同一个判据（`ProviderCard`）：预设里的官方显示名优先。
+            label = PiProviderPresets.byId(provider.id)?.displayName ?: provider.name ?: provider.id,
+            description = buildList {
+                add(provider.id)
+                add(if (provider.configured) "已配置" else "未配置")
+                if (provider.models.isNotEmpty()) add("${provider.models.size} 个模型")
+            }.joinToString(" · "),
+        )
+    }
+    val taken = fromInventory.mapTo(LinkedHashSet()) { it.wire }
+    val fromPresets = PiProviderPresets.all.filter { taken.add(it.id) }.map { preset ->
+        PiOption(
+            wire = preset.id,
+            label = preset.displayName,
+            description = if (preset.builtInPi) "pi 官方厂商" else "App 自建",
+        )
+    }
+    val fromRegistry = PiSettingsCatalog.byKey["defaultProvider"]?.options.orEmpty()
+        .filter { taken.add(it.wire) }
+    return fromInventory + fromPresets + fromRegistry
+}
+
+/**
+ * 两键都已设置、却明显对不上时的那一句话；null = 不打扰。
+ *
+ * 只在能**证明**不一致时才说：厂商不在清单里、或这个厂商还没有任何模型（信息不足）都返回
+ * null。判据只读清单，不额外读盘，也不会每帧重算（调用点 remember 在清单与两个读数上）。
+ *
+ * 为什么值得一行字：`selectModel` 把两键**一起**写，所以这种不一致只可能来自手输（用户点过
+ * 「仍然使用」）、外部改 `settings.json`，或者只换了厂商 —— 而 pi 的解析顺序会让模型落回
+ * 占位模型，不报错（`docs/engine-exit-review.md:55`）。
+ */
+private fun modelProviderMismatch(
+    data: PiModelInventory.Inventory?,
+    provider: String?,
+    model: String?,
+): String? {
+    if (provider.isNullOrBlank() || model.isNullOrBlank()) return null
+    val known = data?.providers?.firstOrNull { it.id == provider } ?: return null
+    if (known.models.isEmpty()) return null
+    val normalized = model.removePrefix("$provider/")
+    if (known.models.any { it.id == normalized }) return null
+    return "厂商和模型对不上：现在会写 $provider / $model"
+}
+
+/**
+ * 手输的模型名在清单里找不到时给的那句话（选择器里的**写前**警告，pi 那边是静默退回占位
+ * 模型：`docs/engine-exit-review.md:55` 实测 `defaultModel` 写成不存在的模型，退出码 0、
+ * stderr 空，模型退回 `contextWindow: 0`）。找到就不打扰；清单还没读到时也不猜。
+ */
+private fun unknownModelWarning(data: PiModelInventory.Inventory?, typed: String): String? {
+    val providers = data?.providers.orEmpty()
+    if (providers.isEmpty()) return null
+    if (modelWire(typed, providers, null) != null) return null
+    return "清单里没有这个模型：pi 会静默退回占位模型"
+}
+
+/**
+ * 选择器的 wire → 真正要写的 `(厂商, 模型 id)`；null = 清单里没有它。
+ *
+ * wire 有两种形态：选择器给的 `厂商/模型`（模型 id 本身可以带斜杠，比如 openrouter 的
+ * `anthropic/claude-*`），以及用户手输的裸模型 id。判定顺序是"先认整串是某个模型的 id，
+ * 再认斜杠前是厂商" —— 反过来的话 `openrouter/anthropic/claude-x` 会被拆成
+ * `openrouter` + `anthropic/claude-x`（对），但裸的 `anthropic/claude-x` 会被拆成
+ * `anthropic` 厂商（可能是错的），而它作为 openrouter 的模型 id 是精确的。
+ */
+private fun modelWire(
+    wire: String,
+    providers: List<PiModelInventory.Provider>,
+    preferredProvider: String?,
+): Pair<String, String>? {
+    val trimmed = wire.trim()
+    if (trimmed.isEmpty()) return null
+    val owners = providers.filter { provider -> provider.models.any { it.id == trimmed } }.map { it.id }
+    if (owners.isNotEmpty()) {
+        val provider = preferredProvider?.takeIf { it in owners } ?: owners.first()
+        return provider to trimmed
+    }
+    val slash = trimmed.indexOf('/')
+    if (slash > 0) {
+        val provider = trimmed.substring(0, slash)
+        val model = trimmed.substring(slash + 1)
+        if (model.isNotEmpty() && providers.any { it.id == provider }) return provider to model
+    }
+    return null
+}
+
+/**
+ * 只在这一屏用的 store 装饰器：`defaultModel` 与 `defaultProvider` 是**一对**键。
+ *
+ * 为什么需要它：pi 用 `defaultProvider` 决定由谁提供 `defaultModel`
+ * （`core/settings-manager.ts:108-109`），而这一屏的模型选择器一次选择就同时决定两者。
+ * 只写 `defaultModel` 会让 `defaultProvider` 继续指着上一个厂商，选的模型根本不是那个厂商
+ * 的；而手打一个 pi 不认识的模型，pi 不报错、静默退回占位模型。
+ * （`ModelSelectionPlan.writeDefault` 是 pi 自己那条"两把键一起写"的形状；导入 sheet 目前
+ * 没有入口调用它 —— 要改默认模型，就是这一行。）
+ *
+ * 三条行为，其余键原样转给 [base]：
+ *
+ *  - `write("defaultModel", "厂商/模型")` → **两个键一起写**；清单里找不到这个模型时只写
+ *    `defaultModel`（用户点过「仍然使用」，此时不猜厂商，猜错会覆盖另一个厂商的配置）；
+ *  - `remove("defaultModel")` → 两个键一起删（选择器底部的「跟随 pi 默认」；只删模型会让
+ *    `defaultProvider` 继续把厂商钉住）；
+ *  - `read("defaultModel")` → 两键一致时返回 `厂商/模型`，于是选择器能标出当前那一行。
+ *
+ * 只交给本屏的编辑器用（行上的读数仍读原始 store）：这是"编辑时的一对键"的语义，不是
+ * `settings.json` 的真实形状。
+ */
+private class DefaultModelPairStore(
+    private val base: PiSettingsStore,
+    private val providers: List<PiModelInventory.Provider>,
+) : PiSettingsStore by base {
+
+    private fun providerValue(): String? = base.read(DEFAULT_PROVIDER_KEY)?.primitiveText()
+
+    override fun read(key: String): JsonElement? {
+        if (key != DEFAULT_MODEL_KEY) return base.read(key)
+        val stored = base.read(DEFAULT_MODEL_KEY)?.primitiveText() ?: return null
+        val provider = providerValue() ?: return JsonPrimitive(stored)
+        val wire = modelWire(stored, providers, provider) ?: return JsonPrimitive(stored)
+        return JsonPrimitive("${wire.first}/${wire.second}")
+    }
+
+    override fun write(key: String, value: JsonElement) {
+        if (key != DEFAULT_MODEL_KEY) {
+            base.write(key, value)
+            return
+        }
+        val wire = value.primitiveText().orEmpty()
+        val resolved = modelWire(wire, providers, providerValue())
+        if (resolved == null) {
+            base.write(DEFAULT_MODEL_KEY, JsonPrimitive(wire))
+            return
+        }
+        // 先写厂商再写模型：中途失败时 `defaultModel` 还是旧的、`defaultProvider` 已经是新的，
+        // 反过来则是"新模型 + 旧厂商"—— 两种都错，但前者至少模型名仍然属于配置过的厂商。
+        base.write(DEFAULT_PROVIDER_KEY, JsonPrimitive(resolved.first))
+        base.write(DEFAULT_MODEL_KEY, JsonPrimitive(resolved.second))
+    }
+
+    override fun remove(key: String) {
+        if (key != DEFAULT_MODEL_KEY) {
+            base.remove(key)
+            return
+        }
+        base.remove(DEFAULT_PROVIDER_KEY)
+        base.remove(DEFAULT_MODEL_KEY)
+    }
+}
+
+private const val DEFAULT_MODEL_KEY = "defaultModel"
+private const val DEFAULT_PROVIDER_KEY = "defaultProvider"
+
 /**
  * 官方目录里的一档，在**没有手写预设**时构成一个可选厂商：连接信息取它第一个模型的
  * `api`/`baseUrl`，探测方式由 `api` 推导（anthropic → x-api-key，google → key 查询，
@@ -1306,23 +1886,69 @@ private fun originText(model: PiModelInventory.Model): String {
 private fun presetFromOfficial(provider: PiOfficialCatalog.Provider): PiProviderPresets.Preset {
     val sample = provider.models.firstOrNull()
     val api = sample?.api ?: "openai-completions"
-    val anthropic = api.contains("anthropic", ignoreCase = true)
-    val google = api.contains("google", ignoreCase = true)
+    val scanStyle = scanStyleFor(api)
     return PiProviderPresets.Preset(
         id = provider.id,
         displayName = provider.id,
         baseUrl = sample?.baseUrl.orEmpty(),
         api = api,
-        scanStyle = when {
-            anthropic -> PiProviderPresets.ScanStyle.Anthropic
-            google -> PiProviderPresets.ScanStyle.Google
-            else -> PiProviderPresets.ScanStyle.OpenAiCompatible
-        },
-        authHeader = !anthropic && !google,
+        scanStyle = scanStyle,
+        authHeader = scanStyle == PiProviderPresets.ScanStyle.OpenAiCompatible,
         builtInPi = true,
         group = "官方",
     )
 }
+
+/**
+ * 连接信息 → 探测方式（anthropic → x-api-key，google → key 查询，其余 OpenAI 兼容）。
+ * 官方目录里的一档与 `models.json` 里已有的自定义厂商共用这一个判据。
+ */
+private fun scanStyleFor(api: String): PiProviderPresets.ScanStyle = when {
+    api.contains("anthropic", ignoreCase = true) -> PiProviderPresets.ScanStyle.Anthropic
+    api.contains("google", ignoreCase = true) -> PiProviderPresets.ScanStyle.Google
+    else -> PiProviderPresets.ScanStyle.OpenAiCompatible
+}
+
+/**
+ * `models.json` 里已有、但既不在官方目录也不在预设表里的厂商 —— 导入 sheet 的「自定义厂商」。
+ *
+ * 这是 `byId(presetId) ?: all.first()` 那个洞的补丁：AI 手写 `models.json` / `auth.json`
+ * 时用的厂商 id 只存在于那份文件里，而厂商卡传进来的 `initialPresetId` 就是它。以前它
+ * 静默退化成 `openai` —— 标题写着 OpenAI、Base URL 填的是 api.openai.com，保存时把厂商块
+ * 与凭证写到 openai 名下，覆盖用户真正的 OpenAI 配置。
+ *
+ * `displayName` 就用 id：那份文件里没有显示名，编一个只会让标题与文件里的 id 对不上。
+ */
+private fun customPresetFromInventory(provider: PiModelInventory.Provider): PiProviderPresets.Preset {
+    val api = provider.api ?: ""
+    val scanStyle = scanStyleFor(api)
+    return PiProviderPresets.Preset(
+        id = provider.id,
+        displayName = provider.id,
+        baseUrl = provider.baseUrl.orEmpty(),
+        api = api,
+        scanStyle = scanStyle,
+        authHeader = scanStyle == PiProviderPresets.ScanStyle.OpenAiCompatible,
+        builtInPi = false,
+        group = "自定义",
+    )
+}
+
+/**
+ * 说不出选中的厂商时的**占位档**：表里、清单里都没有这个 id。保存被禁用（见
+ * `presetProblem`），但标题与 id 仍然照实显示 —— 不冒充任何官方厂商。
+ */
+private fun placeholderPreset(providerId: String): PiProviderPresets.Preset =
+    PiProviderPresets.Preset(
+        id = providerId,
+        displayName = providerId,
+        baseUrl = "",
+        api = "",
+        scanStyle = PiProviderPresets.ScanStyle.OpenAiCompatible,
+        authHeader = true,
+        builtInPi = false,
+        group = "自定义",
+    )
 
 /**
  * 官方目录的一条 → App 自己的目录条目。映射写在这里而不是 `PiOfficialCatalog` 里：

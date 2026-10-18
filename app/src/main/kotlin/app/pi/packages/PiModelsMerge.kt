@@ -64,6 +64,23 @@ internal object PiModelsMerge {
     }
 
     /**
+     * 整份 `models.json`：[providers] 换成写好的那份，**根上其余键原样保留**。
+     *
+     * 为什么要单独一条：`PiModelsFile.upsert` / `remove` 以前是
+     * `buildJsonObject { put("providers", …) }` —— 把整份文档重建成只有一个键。pi 的
+     * `models.json` 允许根上有别的键（`$schema` 是最常见的那个，编辑器与 schema 校验都写它），
+     * 保存一次厂商就把它抹掉了。规矩与 [provider] 同一条：**App 只拥有它写的那一块**。
+     *
+     * 注释不在这个保证里：写入是重新序列化（`docs/models.md` 允许注释是给**读**用的），
+     * 根键与厂商块里的未知字段保留，注释会丢 —— 那是本写入器一贯的行为，不是这一条引入的。
+     */
+    fun root(existing: JsonObject?, providers: JsonObject): JsonObject {
+        val merged = LinkedHashMap<String, JsonElement>(existing ?: emptyMap())
+        merged["providers"] = providers
+        return JsonObject(merged)
+    }
+
+    /**
      * The keys [provider] treats as authoritative: absent from the written block means
      * "delete what is in the file". `authHeader` is deliberately **not** here — the form has
      * no field for it, so `PiCredentialService.save` always writes it (one key that keeps a

@@ -670,6 +670,29 @@ fun main() {
         priorBlock["headers"],
     )
     check("原本没有这个厂商时原样写出", PiModelsMerge.provider(null, writtenBlock), writtenBlock)
+
+    // 整份文件的根也要合并：`PiModelsFile.upsert` / `remove` 以前用
+    // `buildJsonObject { put("providers", …) }` 重建文档，pi 允许的根键（`$schema` 与用户
+    // 自己写的键）就在保存一次厂商时被抹掉了。App 只拥有 `providers` 这一块。
+    val priorRoot = buildJsonObject {
+        put("\$schema", JsonPrimitive("https://example.invalid/models.schema.json"))
+        put("providers", JsonObject(emptyMap()))
+        put("customRootKey", JsonPrimitive("keep"))
+    }
+    val mergedRoot = PiModelsMerge.root(priorRoot, JsonObject(mapOf("alpha" to writtenBlock)))
+    check("根上的 \$schema 原样保留", mergedRoot["\$schema"], priorRoot["\$schema"])
+    check("根上未建模的键原样保留", mergedRoot["customRootKey"], priorRoot["customRootKey"])
+    check(
+        "providers 换成写好的那份（其余根键不动）",
+        mergedRoot["providers"],
+        JsonObject(mapOf("alpha" to writtenBlock)),
+    )
+    check(
+        "原本没有根键时只写 providers",
+        PiModelsMerge.root(null, JsonObject(emptyMap())),
+        buildJsonObject { put("providers", JsonObject(emptyMap())) },
+    )
+
     check(
         "申报的模型里有一个是文件里没有的，就原样写它",
         (PiModelsMerge.models(
