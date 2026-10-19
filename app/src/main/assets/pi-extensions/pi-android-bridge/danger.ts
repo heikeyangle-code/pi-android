@@ -88,16 +88,12 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	android_download: "control",
 	android_files: "control",
 
-	// 波2 的六个新工具（输入法 / 设备管理员 / 通知监听 / 自动化 / 本地 VPN / 投屏）按上面
-	// 同一条规则记 `control`：每一个都是多 action 的合并体，既有「看一眼状态」的分支，也有
-	// 改设备策略的分支；整块记成 `dangerous` 会让每次读通知都弹一次确认，确认也就贬值了。
-	// 其中不可逆的那几条由 App 侧端点在执行前取人工确认；闸门这一层仍然只有一条判据：
-	// 只有 `android_shell` 是 `dangerous`，而它里面只有那 7 条正则会被问。
-	android_ime: "control",
+	// 波2 的通知监听工具按上面同一条规则记 `control`：它是多 action 的合并体，既有
+	// 「看一眼状态」的分支，也有改通知的分支；整块记成 `dangerous` 会让每次读通知都弹
+	// 一次确认，确认也就贬值了。其中不可逆的那几条由 App 侧端点在执行前取人工确认；
+	// 闸门这一层仍然只有一条判据：只有 `android_shell` 是 `dangerous`，而它里面只有那 7 条
+	// 正则会被问。
 	android_notify: "control",
-	android_automation: "control",
-	android_net: "control",
-	android_capture: "control",
 };
 
 export const DANGEROUS_TOOLS: readonly string[] = Object.entries(DANGER_LEVELS)

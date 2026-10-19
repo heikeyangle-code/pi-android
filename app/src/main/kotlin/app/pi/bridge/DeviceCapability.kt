@@ -1,7 +1,7 @@
 package app.pi.bridge
 
 /**
- * The five device-capability groups of the authorization page
+ * The three device-capability groups of the authorization page
  * (docs/pi-android-ui-spec.md §5.6, docs/pi-android-app-design.md §21.4).
  *
  * Every group is an explicit user opt-in. The bridge never infers consent from
@@ -9,11 +9,11 @@ package app.pi.bridge
  * happens to hold is *necessary* but not *sufficient*, because the user's
  * decision here is about what the agent may do, not about what the app can.
  *
- * [defaultEnabled] 现在五组全是 `false` —— 用户要求「默认全关」：装完之后一组都不开，
+ * [defaultEnabled] 现在三组全是 `false` —— 用户要求「默认全关」：装完之后一组都不开，
  * 要用哪组由用户在「设置 → 设备能力」里自己说。字段保留而不是删掉，是因为它记录的是
  * 「这个 App 有没有替用户做过默认决定」；将来若某一组该默认开，改一个布尔值即可。
  *
- * 通知监听、自动化、VPN 与投屏没有各自的分组：它们并入 基础（contract 里写死的那条）。
+ * 通知监听没有自己的分组：它并入 基础（contract 里写死的那条）。
  * 把「通知监听」单开一个开关看起来更缜密，但它与 android_say（同一个通知权限/同一个
  * 用户预期）拆成两组之后，用户要对两个开关做同一个决定 —— 分组多一层，判断反而多一层。
  */
@@ -75,19 +75,6 @@ enum class DeviceCapability(
             "执行日常读命令（getprop、dumpsys、pm list、logcat、ls、cat、df、ps 等）",
             "执行日常写命令（cp、mv、rm、mkdir、sed、tar、curl 等）；命令名不检查，写入不限工作区",
             "在装有 Shizuku 的设备上以 ADB 身份（uid=2000）运行，从而使用 input、pm、am、settings get 等",
-        ),
-        defaultEnabled = false,
-    ),
-
-    Ime(
-        id = "ime",
-        title = "输入法",
-        summary = "读取并改写你正在输入的内容，以及替你提交（发送/搜索）—— 密码框不读、不记内容",
-        allows = listOf(
-            "读取当前输入框里的文本、光标位置与所属应用（密码框一律不读，只留一条「发生过输入」的记录）",
-            "在光标处插入文字、整框替换、删除光标前后的文字",
-            "提交当前输入框的动作（发送 / 搜索 / 完成 / 回车）",
-            "读取最近的输入历史与剪贴板历史，最旧的自动丢弃",
         ),
         defaultEnabled = false,
     ),

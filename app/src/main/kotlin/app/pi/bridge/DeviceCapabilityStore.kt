@@ -232,30 +232,6 @@ class DeviceCapabilityStore private constructor(context: Context) {
                     hint = "让用户在「设置 → 设备能力 → 基础」点「授予存储权限」。",
                 )
             }
-
-        // 输入法：组级问两件事 —— 系统里启用了吗、它是不是当前输入法。两者必须分开说，
-        // 因为用户要做的动作不同：前者去系统设置里启用，后者只要在键盘切换器里切一下。
-        //
-        // 「已启用但不是当前输入法」当 denial，而不是放行，理由与无障碍那条一样：这一组
-        // 的每个读/写动作都先得有当前输入框，放行只会换来一串「没有可写的输入框」
-        // （PiInputMethodService.withConnection），而那句话说不清用户该做什么。注意它与
-        // 无障碍的 NOT_CONNECTED 不同：这里不会自己好，必须有人在键盘选择器里点一下，
-        // 所以不是 retryable。
-        DeviceCapability.Ime -> when {
-            !PiInputMethodService.available(appContext) -> DeviceDenial(
-                code = DeviceDenial.NO_PERMISSION,
-                reason = "本应用的输入法还没在系统里启用，读不到也改不了输入框。",
-                hint = "让用户在「设置 → 系统 → 语言和输入法」里启用「PI 设备桥」，再把它选为当前输入法。",
-            )
-
-            !PiInputMethodService.isDefaultInputMethod(appContext) -> DeviceDenial(
-                code = DeviceDenial.NO_PERMISSION,
-                reason = "本应用的输入法已启用，但当前输入法不是它：输入框还没交给它。",
-                hint = "让用户在键盘切换器里切到「PI 设备桥」（输入框弹出键盘时下方那颗键盘图标），再重试。",
-            )
-
-            else -> null
-        }
     }
 
     /** True when the app already holds the location runtime permission. */

@@ -423,138 +423,6 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                // ------------------------------------------------ 输入法（「输入法」组）----
-                //
-                // 这一组全经 PiInputMethodService：组件自己已经把「读不到输入框」翻译成明确
-                // 原因，也把密码框的内容挡在写历史之前。路由这里只做两件事 —— 能力闸门，以及
-                // 把组件的 `{ok:false,reason}` 变成 DeviceDenial（桥的约定是失败带 code）。
-
-                "/app/ime/status" -> withCapability(DeviceCapability.Ime) {
-                    PiInputMethodService.status(context)
-                }
-
-                "/app/ime/text" -> withCapability(DeviceCapability.Ime) {
-                    val text = requireInputMethod().currentText()
-                    JSONObject()
-                        .put("ok", true)
-                        .put("text", text ?: JSONObject.NULL)
-                        .put("chars", text?.length ?: 0)
-                        // null 的两个来源必须说清，否则读到的「空」会被当成「输入框是空的」。
-                        .put(
-                            "note",
-                            if (text == null) {
-                                "text 为 null：密码框一律不返回内容；或还没有可读的输入框快照。"
-                            } else {
-                                "text 是当前输入框的文本（密码框永远为 null）。"
-                            },
-                        )
-                }
-
-                "/app/ime/history" -> withCapability(DeviceCapability.Ime) {
-                    val history = requireInputMethod().readHistory(params.int("limit", 20))
-                    JSONObject().put("ok", true).put("count", history.length()).put("history", history)
-                }
-
-                "/app/ime/insert" -> withCapability(DeviceCapability.Ime) {
-                    okOrDenial(
-                        result = requireInputMethod().insertText(params.strRequired("text")),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "在光标处插入文本",
-                    )
-                }
-
-                "/app/ime/replace" -> withCapability(DeviceCapability.Ime) {
-                    okOrDenial(
-                        result = requireInputMethod().replaceText(params.strRequired("text")),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "替换输入框内容",
-                    )
-                }
-
-                "/app/ime/delete" -> withCapability(DeviceCapability.Ime) {
-                    val before = params.int("before", 0)
-                    val after = params.int("after", 0)
-                    if (before < 0 || after < 0) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "before/after 必须 >= 0，收到 $before/$after。",
-                            ),
-                        )
-                    }
-                    if (before == 0 && after == 0) {
-                        // 「删 0 个字符」不能报成功：那会让模型以为删除生效了，而输入框一个
-                        // 字符都没少。
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "before 与 after 都是 0，没有要删的字符。",
-                                hint = "传 before（光标前）或 after（光标后）要删的字符数。",
-                            ),
-                        )
-                    }
-                    okOrDenial(
-                        result = requireInputMethod().deleteSurrounding(before, after),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "删除光标前后的文本",
-                    )
-                }
-
-                "/app/ime/surround" -> withCapability(DeviceCapability.Ime) {
-                    // 光标前后的文本。组件没有单独暴露 getSurroundingText，所以这里用它的两个
-                    // 公开读数拼：整段快照（currentText，真正的文本）与选区（status 的
-                    // selection*，是绝对偏移）。不能用 status 的 currentText —— 那份被截到
-                    // 400 字符，拿它切片等于把偏移量对到被截断的串上。
-                    val ime = requireInputMethod()
-                    val status = ime.status()
-                    val snapshot = ime.currentText()
-                    val start = status.optInt("selectionStart", -1)
-                    val end = status.optInt("selectionEnd", -1)
-                    val inside = snapshot != null && start in 0..snapshot.length && end in start..snapshot.length
-                    JSONObject().apply {
-                        put("ok", true)
-                        put("text", snapshot ?: JSONObject.NULL)
-                        put("chars", snapshot?.length ?: 0)
-                        put("selectionStart", start)
-                        put("selectionEnd", end)
-                        put("package", status.opt("package") ?: JSONObject.NULL)
-                        put("fieldKind", status.optString("fieldKind", "unknown"))
-                        put("isPassword", status.optBoolean("isPassword"))
-                        put(
-                            "before",
-                            if (snapshot != null && inside) snapshot.substring(0, start) else JSONObject.NULL,
-                        )
-                        put("after", if (snapshot != null && inside) snapshot.substring(end) else JSONObject.NULL)
-                        put("partial", snapshot != null && start >= 0 && !inside)
-                        put(
-                            "note",
-                            when {
-                                start < 0 -> "还没有光标位置（输入框可能没有焦点）。"
-                                inside -> "before/after 是光标前后的文本；text 是当前快照。"
-                                else ->
-                                    "输入框比读取窗口（2000 字符）长，选区落在窗口之外：before/after 只能为 null，" +
-                                        "text 也只是窗口内的一段。"
-                            },
-                        )
-                    }
-                }
-
-                "/app/ime/submit" -> withCapability(DeviceCapability.Ime) {
-                    val ime = requireInputMethod()
-                    // `action` 可选：不传就用输入框自己的 imeOptions（普通输入框里等于回车），
-                    // 传了就是明确的 EditorInfo.IME_ACTION_* 码。
-                    val action = params.intOrNull("action")
-                    okOrDenial(
-                        result = if (action != null && action > 0) {
-                            ime.performEditorAction(action)
-                        } else {
-                            ime.submit()
-                        },
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "提交输入框",
-                    )
-                }
-
                 // -------------------------------------------- 通知监听（并入「基础」组）----
                 //
                 // 归属是契约定的：「基础开着」不等于「通知监听连上了」—— 后者还要用户在系统里
@@ -647,193 +515,6 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                // ------------------------------------------- 自动化（并入「基础」组）----
-                //
-                // 引擎必须先 apply() 才会注册网络/屏幕接收器、订阅通知事件、起工作线程 ——
-                // 没启动时规则落盘了也永远不会触发。所以每个入口都先 apply（幂等），而不是把
-                // 「谁应该调 apply」留给一个没人负责的假设。
-
-                "/app/automation/status" -> withCapability(DeviceCapability.Basic) {
-                    PiAutomation.apply(context)
-                }
-
-                "/app/automation/apply" -> withCapability(DeviceCapability.Basic) {
-                    PiAutomation.apply(context)
-                }
-
-                "/app/automation/list" -> withCapability(DeviceCapability.Basic) {
-                    PiAutomation.apply(context)
-                    val rules = JSONArray(PiAutomation.list().map { it.toJson() })
-                    JSONObject().put("ok", true).put("count", rules.length()).put("rules", rules)
-                }
-
-                "/app/automation/add" -> withCapability(DeviceCapability.Basic) {
-                    PiAutomation.apply(context)
-                    // 规则形状与 PiAutomation.Rule.toJson 一致；`rule` 嵌一层也认 —— 两端并行
-                    // 接线时，一处写外层、一处写内层是最容易出现的分歧。
-                    val raw = params.body().optJSONObject("rule") ?: params.body()
-                    if (raw.length() == 0) {
-                        // 空对象会让 Rule.fromJson 造出一条「time 触发器 + 空动作」的无意义规则；
-                        // 报错比默默落盘一条永远不触发的规则诚实。
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "规则是空的。",
-                                hint = "至少传 trigger 与 actions（形状见 /app/automation/status 的 triggerTypes/actionTypes）。",
-                            ),
-                        )
-                    }
-                    val stored = PiAutomation.add(PiAutomation.Rule.fromJson(raw))
-                    JSONObject().put("ok", true).put("rule", stored.toJson())
-                }
-
-                "/app/automation/remove" -> withCapability(DeviceCapability.Basic) {
-                    PiAutomation.apply(context)
-                    val id = params.strRequired("id")
-                    if (!PiAutomation.remove(id)) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.NOT_FOUND,
-                                reason = "没有 id 为「$id」的规则，未删除任何东西。",
-                                hint = "先用 /app/automation/list 看现有规则 id。",
-                            ),
-                        )
-                    }
-                    JSONObject().put("ok", true).put("id", id)
-                }
-
-                "/app/automation/history" -> withCapability(DeviceCapability.Basic) {
-                    PiAutomation.apply(context)
-                    val history = JSONArray(PiAutomation.history(params.int("limit", 20)))
-                    JSONObject().put("ok", true).put("count", history.length()).put("history", history)
-                }
-
-                // ----------------------------------------- 本地 VPN（并入「基础」组）----
-                //
-                // 授权不能由端点代替：VpnService.prepare 的结果只能由用户在系统对话框里点一下
-                // （consentIntent 要一个 Activity）。所以未授权时 /app/vpn/start 如实回
-                // NO_PERMISSION，并把用户该点哪里说清。
-
-                "/app/vpn/status" -> withCapability(DeviceCapability.Basic) {
-                    PiVpnService.status(context)
-                }
-
-                "/app/vpn/start" -> withCapability(DeviceCapability.Basic) {
-                    val raw = params.body().optJSONObject("config") ?: params.body()
-                    val config = PiVpnService.TunnelConfig.fromJson(raw.toString())
-                    if (!PiVpnService.start(context, config)) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.NO_PERMISSION,
-                                reason = "VPN 没有启动：系统还没把 VPN 授权给本应用，或拒绝了这个配置。",
-                                hint = "让用户在 pi-android 里点一次「授权 VPN」并在系统弹窗里同意；" +
-                                    "授权是一次性的，之后 /app/vpn/start 可以直接调。",
-                            ),
-                        )
-                    }
-                    // 不说「已启动」：隧道是服务在另一个调用里建立的，`running` 才是事实。
-                    PiVpnService.status(context).put("requested", true)
-                }
-
-                "/app/vpn/stop" -> withCapability(DeviceCapability.Basic) {
-                    val wasRunning = PiVpnService.stop(context)
-                    PiVpnService.status(context).put("wasRunning", wasRunning)
-                }
-
-                "/app/vpn/queries" -> withCapability(DeviceCapability.Basic) {
-                    val queries = PiVpnService.readQueries(params.int("limit", 100))
-                    JSONObject()
-                        .put("ok", true)
-                        .put("count", queries.length())
-                        .put("queries", queries)
-                        .put("blockedCount", PiVpnService.blockedCount())
-                }
-
-                "/app/vpn/blocklist" -> withCapability(DeviceCapability.Basic) {
-                    // 参数缺失与「空列表」必须分开：后者是「清空黑名单」这个合法动作，前者是
-                    // 打错了参数名 —— 一律按清空处理，会让一次手滑静默解除全部拦截。
-                    if (!params.has("domains") && !params.has("blocklist")) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "缺少参数「domains」。",
-                                hint = "传域名列表（JSON 数组或逗号分隔）；传空列表即清空现有黑名单。",
-                            ),
-                        )
-                    }
-                    PiVpnService.setBlocklist(
-                        params.stringList("domains").ifEmpty { params.stringList("blocklist") },
-                    )
-                }
-
-                // --------------------------------------------- 投屏（并入「基础」组）----
-                //
-                // 授权只能由用户点，而点的那一下必须在 App 自己的前台界面上发生：系统只把
-                // MediaProjection 的同意结果交给一个 Activity，桥和模型都代替不了。所以
-                // /app/capture/consent 不假装能授权，它如实回答「现在需不需要授权、以及那一
-                // 下只能在哪里点」。
-
-                "/app/capture/status" -> withCapability(DeviceCapability.Basic) {
-                    PiScreenCapture.status().put("available", PiScreenCapture.available(context))
-                }
-
-                "/app/capture/consent" -> withCapability(DeviceCapability.Basic) {
-                    val capturing = PiScreenCapture.isCapturing()
-                    JSONObject()
-                        .put("ok", true)
-                        .put("capturing", capturing)
-                        .put("consentNeeded", !capturing)
-                        .put("consentEntryInApp", CAPTURE_CONSENT_ENTRY_IN_APP)
-                        .put(
-                            "note",
-                            if (capturing) {
-                                "已经在投屏，不需要重新授权。"
-                            } else if (CAPTURE_CONSENT_ENTRY_IN_APP) {
-                                "投屏授权只能由用户在 pi-android 的界面上点系统对话框同意：系统只把 " +
-                                    "MediaProjection 的同意结果交给一个前台 Activity，设备桥与模型都代替不了这一下。"
-                            } else {
-                                "投屏授权只能由用户在 App 的前台界面上点系统对话框同意，而本应用目前没有这个入口" +
-                                    "（也没有 mediaProjection 类型的前台服务在跑）；所以在接入之前，这一项一律回 NO_PERMISSION，" +
-                                    "不要把用户引到一个不存在的按钮上。"
-                            },
-                        )
-                }
-
-                "/app/capture/grab" -> withCapability(DeviceCapability.Basic) {
-                    if (!PiScreenCapture.isCapturing()) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.NO_PERMISSION,
-                                reason = "还没有投屏授权（或还没建立虚拟显示），没有可抓的帧。",
-                                hint = "先看 /app/capture/consent：授权必须由用户在 App 界面上点一次系统对话框。" +
-                                    "Android 14+ 还要求已有一个 mediaProjection 类型的前台服务在跑。",
-                            ),
-                        )
-                    }
-                    val quality = params.int("quality", 70)
-                    val force = params.bool("force", false)
-                    val bytes = PiScreenCapture.grabJpeg(
-                        quality = quality,
-                        force = force,
-                        waitMs = params.int("waitMs", 800).toLong(),
-                    )
-                    if (bytes == null) {
-                        // 组件是增量语义：画面没变或首帧还没到都会返回 null。这不是失败，
-                        // 也不是「屏幕是黑的」，所以如实说「没拿到新帧」，并给出 force。
-                        JSONObject()
-                            .put("ok", true)
-                            .put("grabbed", false)
-                            .put("note", "没拿到新帧：画面自上次抓取后没有变化（增量语义），或首帧还没到；需要强制重编码时传 force=true。")
-                    } else {
-                        JSONObject()
-                            .put("ok", true)
-                            .put("grabbed", true)
-                            .put("mimeType", "image/jpeg")
-                            .put("base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
-                            .put("bytes", bytes.size)
-                    }
-                }
-
                 // The pi-side permission gate reports what it has approved. Display
                 // only: nothing here changes policy (the gate's own memory is the
                 // enforcement), and the UI labels it as extension-reported.
@@ -911,23 +592,6 @@ class DeviceBridgeRouter(
         }
 
     /**
-     * 输入法服务的活实例。
-     *
-     * 组级前置已经保证「已启用且是当前输入法」，所以走到这里拿不到实例只剩一种情况：
-     * 刚切过去，系统还没把输入法服务绑起来（与无障碍的 NOT_CONNECTED 同一类，一两秒
-     * 自己就好）。报 NO_PERMISSION 会把用户再赶去一次设置，而他已经设好了。
-     */
-    private fun requireInputMethod(): PiInputMethodService =
-        PiInputMethodService.running() ?: throw DeviceActionException(
-            DeviceDenial(
-                code = DeviceDenial.NOT_CONNECTED,
-                reason = "输入法服务还没连上（刚被选为当前输入法）。",
-                hint = "等约 1 秒后原样重试同一次调用，不用改设置。",
-                retryable = true,
-            ),
-        )
-
-    /**
      * 通知监听这一路的前置。
      *
      * 「没有通知使用权」和「已授权但系统还没绑定」是两种状态、两种修法：前者要用户去
@@ -957,13 +621,12 @@ class DeviceBridgeRouter(
     }
 
     /**
-     * 波1 组件的动作失败约定是 `{ok:false, reason:…}`（[PiNotificationListener]、
-     * [PiInputMethodService]、[PiVpnService] 都是这个形状），而桥的约定是
-     * 「失败必须带 code」。这里做唯一一处翻译：ok=false 时抛 [DeviceActionException]，
-     * 由 [withCapability] 统一转成 denial —— 组件不必为了端点的形状多包一层。
+     * 波1 组件的动作失败约定是 `{ok:false, reason:…}`（[PiNotificationListener] 就是这个
+     * 形状），而桥的约定是「失败必须带 code」。这里做唯一一处翻译：ok=false 时抛
+     * [DeviceActionException]，由 [withCapability] 统一转成 denial —— 组件不必为了端点
+     * 的形状多包一层。
      *
-     * [code] 由调用点给：通知那一路的失败基本都是「这条通知被系统收回了」（ERROR），
-     * 通知那一路基本都是「这条通知已经被系统收回了」（ERROR）。
+     * [code] 由调用点给：通知那一路的失败基本都是「这条通知已经被系统收回了」（ERROR）。
      */
     private fun okOrDenial(result: JSONObject, code: String, action: String): JSONObject {
         if (result.optBoolean("ok", false)) return result
@@ -1145,20 +808,6 @@ class DeviceBridgeRouter(
                 DeviceDenial(DeviceDenial.BAD_REQUEST, "缺少必填参数「${names.first()}」。"),
             )
 
-        /** 字符串列表：JSON 数组，或逗号分隔的字符串。 */
-        fun stringList(name: String): List<String> {
-            val raw = value(name) ?: return emptyList()
-            if (raw is JSONArray) {
-                return (0 until raw.length()).mapNotNull { index ->
-                    raw.optString(index).takeIf { it.isNotEmpty() }
-                }
-            }
-            return raw.toString().split(',').map { it.trim() }.filter { it.isNotEmpty() }
-        }
-
-        /** 参数是否存在（空数组也算存在）：用来区分「清空」与「参数名打错了」。 */
-        fun has(name: String): Boolean = value(name) != null
-
         /**
          * 「禁用/恢复」这类参数：`disabled` 与反义的 `enabled` 都认，缺一个就报错。
          *
@@ -1323,24 +972,6 @@ class DeviceBridgeRouter(
         const val BRIDGE_VERSION = "2"
 
         /**
-         * 投屏授权在 App 界面上有没有入口（拉起系统授权对话框的那一下）。
-         *
-         * 系统只把 `MediaProjection` 的同意结果交给一个前台 Activity，模型与设备桥都没有
-         * 替代品 —— 所以没有这个入口时，`/app/capture/consent` 只能说「需要用户在 App 里
-         * 点一次」，绝不能把用户指向一个不存在的按钮；`/app/capture/grab` 也会如实回
-         * NO_PERMISSION。接上入口时改这一处，并同步 `DeviceCapabilityScreen` 上投屏那一段。
-                  *
-         * **这个常量曾经是 false，而入口早就有了** —— `DeviceCapabilityScreen` 的投屏卡片上
-         * 摆着「开始投屏」（`ActivityResultContracts.StartActivityForResult` +
-         * `PiScreenCapture.consentIntent`），而 `/app/capture/consent` 一直回答
-         * 「本应用没有这个入口」，把一个存在的按钮说成不存在。这是实测发现的：用户问投屏
-         * 能不能用，端点说不能，而界面上就摆着那个按钮。
-         *
-         * 改这个常量时同步检查 `DeviceCapabilityScreen` 上投屏那一段。
-*/
-        const val CAPTURE_CONSENT_ENTRY_IN_APP = true
-
-        /**
          * The port the bridge listens on. Deliberately not 3090: the shipping DSH
          * app on this device owns that port, and two local bridges answering the
          * same paths on one phone is a debugging trap with a security smell.
@@ -1400,16 +1031,7 @@ class DeviceBridgeRouter(
             "POST /app/files/write",
             "POST /app/shell",
             "POST /app/gate/report",
-            // 「输入法」组
-            "GET  /app/ime/status",
-            "GET  /app/ime/text",
-            "GET  /app/ime/history",
-            "POST /app/ime/insert",
-            "POST /app/ime/replace",
-            "POST /app/ime/delete",
-            "GET  /app/ime/surround",
-            "POST /app/ime/submit",
-            // 以下四路并入「基础」组（契约规定，不另开开关）
+            // 通知监听并入「基础」组（契约规定，不另开开关）
             "GET  /app/notify/status",
             "GET  /app/notify/recent",
             "POST /app/notify/reply",
@@ -1417,21 +1039,6 @@ class DeviceBridgeRouter(
             "POST /app/notify/dismiss-all",
             "POST /app/notify/snooze",
             "GET  /app/notify/events",
-            "GET  /app/automation/status",
-            "GET  /app/automation/list",
-            "POST /app/automation/add",
-            "POST /app/automation/remove",
-            "POST /app/automation/apply",
-            "GET  /app/automation/history",
-            "GET  /app/vpn/status",
-            "POST /app/vpn/start",
-            "POST /app/vpn/stop",
-            "GET  /app/vpn/queries",
-            "GET  /app/vpn/blocklist",
-            "POST /app/vpn/blocklist",
-            "GET  /app/capture/status",
-            "POST /app/capture/consent",
-            "POST /app/capture/grab",
         )
     }
 }

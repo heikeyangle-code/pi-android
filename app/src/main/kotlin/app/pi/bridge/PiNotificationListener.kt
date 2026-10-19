@@ -10,7 +10,6 @@ import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.CopyOnWriteArrayList
 
 /** 通知环形缓冲的上限。 */
 private const val MAX_ENTRIES = 60
@@ -51,8 +50,7 @@ private fun clipText(raw: CharSequence?, max: Int = 200): String {
  *  1. **环形缓冲** [Entry]：最近 [MAX_ENTRIES] 条通知（全量与增量合并），供
  *     `recent()` / `/app/health` 使用；
  *  2. **事件队列** [NotificationEvent]：`posted` / `removed` / `replied` /
- *     `reply_failed` / `dismissed` / `snoozed` 的统一流水，供 [PiAutomation] 的
- *     触发器消费；
+ *     `reply_failed` / `dismissed` / `snoozed` 的统一流水，供 `/app/notify/events` 读取；
  *  3. **活通知表**：key → [Notification]，应答（[reply]）与撤销（[dismiss]）要用
  *     它的 action PendingIntent 和 RemoteInput，这是唯一一份带"能不能回"的信息。
  *
@@ -61,13 +59,13 @@ private fun clipText(raw: CharSequence?, max: Int = 200): String {
  *
  * ### 为什么 `onNotificationPosted` 里只记录
  *
- * 该回调跑在系统主线程上，任何重活都会拖住系统 UI。这里只做字符串裁剪、入队和投递回调；
- * 真正的规则匹配与动作执行由 [PiAutomation] 自己的 HandlerThread 完成。
+ * 该回调跑在系统主线程上，任何重活都会拖住系统 UI。这里只做字符串裁剪和入队；
+ * 消费者是 `/app/notify/recent` 与 `/app/notify/events` 这两个只读端点。
  *
  * ### 隐私边界
  *
  * 通知内容只活在本进程内存里：环形缓冲与事件队列都不落盘，进程被杀即消失，也只被
- * 规则匹配和本机 UI 读取。它不写日志、不发网络、不跨进程共享。用户在系统里关掉
+ * 本机 UI 读取。它不写日志、不发网络、不跨进程共享。用户在系统里关掉
  * 「通知使用权」时，[onListenerDisconnected] 会清空实例并停止投递。
  */
 class PiNotificationListener : NotificationListenerService() {
@@ -219,9 +217,6 @@ class PiNotificationListener : NotificationListenerService() {
         /** 统一事件队列（有界）。 */
         private val events = ArrayDeque<NotificationEvent>()
 
-        /** 事件订阅者；[PiAutomation] 在这里挂触发器。 */
-        private val listeners = CopyOnWriteArrayList<(JSONObject) -> Unit>()
-
         @Volatile
         private var instance: PiNotificationListener? = null
 
@@ -266,16 +261,6 @@ class PiNotificationListener : NotificationListenerService() {
             isConnected() -> "connected"
             isEnabledInSettings(context) -> "enabled_not_connected"
             else -> "not_enabled"
-        }
-
-        /** 订阅事件流（到达/移除/应答成功失败都会投递）。 */
-        fun addListener(listener: (JSONObject) -> Unit) {
-            listeners.addIfAbsent(listener)
-        }
-
-        /** 退订。 */
-        fun removeListener(listener: (JSONObject) -> Unit) {
-            listeners.remove(listener)
         }
 
         /** 环形缓冲，最新在前；带 `removed` 标记，调用方自己决定要不要过滤。 */
@@ -478,7 +463,7 @@ class PiNotificationListener : NotificationListenerService() {
             detail: String,
             entry: Entry? = null,
         ) {
-            val event = synchronized(lock) {
+            synchronized(lock) {
                 sequence += 1
                 val created = NotificationEvent(
                     seq = sequence,
@@ -494,10 +479,7 @@ class PiNotificationListener : NotificationListenerService() {
                 )
                 events.addLast(created)
                 while (events.size > MAX_EVENTS) events.removeFirst()
-                created
             }
-            val json = event.toJson()
-            for (listener in listeners) runCatching { listener(json) }
         }
 
         /** 从活通知里取正文，给事件 detail 用（不参与匹配，只帮助人读日志）。 */
