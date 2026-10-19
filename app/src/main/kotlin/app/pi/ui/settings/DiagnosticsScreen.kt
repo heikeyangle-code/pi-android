@@ -12,12 +12,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -116,10 +115,10 @@ fun DiagnosticsScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 val text = report
-                Button(
+                TextButton(
                     enabled = text != null && !working,
                     onClick = {
-                        val current = report ?: return@Button
+                        val current = report ?: return@TextButton
                         val name = DiagnosticsExport.fileName()
                         scope.launch {
                             status = withContext(Dispatchers.IO) {
@@ -128,10 +127,10 @@ fun DiagnosticsScreen(
                         }
                     },
                 ) { Text("保存到 Download") }
-                OutlinedButton(
+                TextButton(
                     enabled = text != null && !working,
                     onClick = {
-                        val current = report ?: return@OutlinedButton
+                        val current = report ?: return@TextButton
                         val name = DiagnosticsExport.fileName()
                         scope.launch {
                             status = withContext(Dispatchers.IO) {

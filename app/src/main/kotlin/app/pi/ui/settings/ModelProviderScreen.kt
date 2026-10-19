@@ -21,8 +21,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -416,7 +414,7 @@ fun ModelProviderScreen(
                 }
 
                 item {
-                    OutlinedButton(
+                    TextButton(
                         onClick = {
                             sheetPreset = null
                             sheetOpen = true
@@ -430,7 +428,7 @@ fun ModelProviderScreen(
                 item {
                     // 「本地模型（llama.cpp）」原来是分组屏里的一行 Action，入口随分组一起
                     // 删除后搬到这里：同一个导入 sheet，只是预选到本地端点那一档。
-                    OutlinedButton(
+                    TextButton(
                         onClick = {
                             sheetPreset = "llama.cpp"
                             sheetOpen = true
@@ -1002,7 +1000,7 @@ private fun ImportSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    OutlinedButton(onClick = { pickerOpen = !pickerOpen }) {
+                    TextButton(onClick = { pickerOpen = !pickerOpen }) {
                         Text(if (pickerOpen) "收起" else "更换")
                     }
                 }
@@ -1029,12 +1027,12 @@ private fun ImportSheet(
                     SheetNote("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
                 }
                 if (pickerOpen) {
-                    OutlinedTextField(
+                    PiEditorField(
                         value = pickerQuery,
                         onValueChange = { pickerQuery = it },
-                        label = { Text("搜厂商（名字或 id）") },
-                        singleLine = true,
-                        modifier = Modifier
+                        label = "搜厂商（名字或 id）",
+                        height = 44.dp,
+                                                modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                     )
@@ -1131,12 +1129,12 @@ private fun ImportSheet(
                             TextButton(onClick = { keyOpen = true }) { Text("更换") }
                         }
                     } else {
-                        OutlinedTextField(
+                        PiEditorField(
                             value = apiKey,
                             onValueChange = { apiKey = it },
-                            label = { Text("API Key") },
-                            singleLine = true,
-                            modifier = Modifier
+                            label = "API Key",
+                            height = 44.dp,
+                                                        modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                         )
@@ -1157,24 +1155,24 @@ private fun ImportSheet(
                             }
                         }
                         if (advancedOpen) {
-                            OutlinedTextField(
+                            PiEditorField(
                                 value = baseUrl,
                                 onValueChange = { baseUrl = it },
-                                label = { Text("Base URL") },
-                                singleLine = true,
-                                modifier = Modifier
+                                label = "Base URL",
+                                height = 44.dp,
+                                                                modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(
                                         horizontal = PiSettingsMetrics.cardPadding,
                                         vertical = PiSpacing.small,
                                     ),
                             )
-                            OutlinedTextField(
+                            PiEditorField(
                                 value = api,
                                 onValueChange = { api = it },
-                                label = { Text("api（协议实现）") },
-                                singleLine = true,
-                                modifier = Modifier
+                                label = "api（协议实现）",
+                                height = 44.dp,
+                                                                modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(
                                         horizontal = PiSettingsMetrics.cardPadding,
@@ -1192,7 +1190,7 @@ private fun ImportSheet(
                         ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        OutlinedButton(
+                        TextButton(
                             enabled = !scanning,
                             onClick = {
                                 sheetScope.launch {
@@ -1255,19 +1253,20 @@ private fun ImportSheet(
                         TextButton(onClick = { selected = selected + candidates }) { Text("全选") }
                         TextButton(onClick = { selected = emptySet() }) { Text("清空") }
                     }
-                    OutlinedTextField(
+                    PiEditorField(
                         value = modelQuery,
                         onValueChange = { modelQuery = it },
-                        label = { Text("搜模型（id 或名字）") },
-                        singleLine = true,
-                        modifier = Modifier
+                        label = "搜模型（id 或名字）",
+                        height = 44.dp,
+                                                modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                     )
-                    OutlinedTextField(
+                    PiEditorField(
                         value = manualIds,
                         onValueChange = { manualIds = it },
-                        label = { Text("手动模型名（逗号、空格或换行分隔）") },
+                        label = "手动模型名（逗号、空格或换行分隔）",
+                        height = 44.dp,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
@@ -1451,7 +1450,7 @@ private fun RestartCard(
                 color = PiTheme.palette.warning,
             )
             Spacer(Modifier.height(PiSpacing.gutter))
-            OutlinedButton(
+            TextButton(
                 onClick = {
                     // 卡片本身就是"有改动等着"的证据，而状态机只认它自己的账：先把它
                     // 记进去，`requestRestart` 才会从 NeedsRestart 走到 NeedsConfirmation。

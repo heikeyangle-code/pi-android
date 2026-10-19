@@ -1117,7 +1117,8 @@ private fun InstallCard(
                             PackageStrings.SCOPE_PROJECT
                         },
                         active = scope == state.scope,
-                        onClick = { if (!state.busy) onScopeChange(scope) },
+                        enabled = !state.busy,
+                        onClick = { onScopeChange(scope) },
                     )
                 }
             }

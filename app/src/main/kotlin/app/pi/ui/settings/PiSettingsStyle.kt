@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -335,9 +336,12 @@ internal fun PiSettingsChip(
     modifier: Modifier = Modifier,
     active: Boolean = false,
     glyph: String? = null,
+    /** 忙碌的行（例如正在安装）上置灰并吞掉点击，避免“看着能点却没反应”。 */
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = modifier
+            .alpha(if (enabled) 1f else 0.45f)
             .height(PiSettingsMetrics.chipHeight)
             .clip(PiShapes.badge)
             .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
@@ -346,7 +350,7 @@ internal fun PiSettingsChip(
                 if (active) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline,
                 PiShapes.badge,
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),

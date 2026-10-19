@@ -314,7 +314,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.models.inventory",
             title = "已导入的模型",
-            description = "这台设备配了哪些厂商、哪些模型已经能用、哪些还要重启引擎。",
+            description = "这台设备可用哪些厂商与模型。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "本机模型",
@@ -332,7 +332,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.localModels.manage",
             title = "本地模型（llama.cpp）",
-            description = "配置 llama.cpp router 的端点地址，默认 http://127.0.0.1:8080。",
+            description = "配置 llama.cpp 端点地址。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "本机模型",
@@ -371,7 +371,7 @@ object PiSettingsCatalog {
             // 只留事实（订阅登录要终端、它还不完善）与这一行旁边就能做的事（API Key）。
             // 原句是「…订阅账号登录请到 工作区 → 终端 里运行 /login；只想填厂商 API Key
             // 用上面那行。」
-            description = "订阅登录要在终端页里运行 pi，终端页还不完善；只想用 API Key 就用上面那行。",
+            description = "订阅登录要在终端页跑 pi。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -379,7 +379,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultProvider",
             title = "默认厂商",
-            description = "启动时使用的厂商，例如 anthropic、openai。",
+            description = "启动时使用的厂商，例如 anthropic。",
             kind = PiRowKind.Value,
             group = G_MODEL,
             section = "默认模型",
@@ -415,7 +415,7 @@ object PiSettingsCatalog {
             // 会话都会重新执行一次**（`agent-session-runtime.ts:226-252` 重建 runtime），所以新
             // 会话就会重新解析这份作用域，不必换进程。（原先这里标 `RestartEngine`，理由只看了
             // "一个进程里调用点只有一处"，漏了闭包本身每会话重跑。）
-            description = "循环切换时用的模型，支持通配符。清空并保存 = 回到默认（全部模型都能循环）。",
+            description = "循环切换的模型，支持通配符；清空 = 全部模型。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "默认模型",
@@ -446,8 +446,7 @@ object PiSettingsCatalog {
             // 合法键只有这四个（`packages/ai/src/types.ts:100-105` 的 `ThinkingBudgets`）；
             // 多写的键 pi 原样透传给厂商，厂商不认识就只是白写一行。值是 token 数，pi 不给
             // 默认值（消费侧 `?? 厂商默认`），所以专用编辑器里"留空 = 用厂商默认"才是正确用法。
-            description = "逐等级的思考 token 预算（键：minimal、low、medium、high）；留空 = 厂商默认。" +
-                "清空并保存 = 回到默认。",
+            description = "逐档思考预算，留空 = 厂商默认。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "逐模型与预算",
@@ -467,7 +466,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "cacheWarming",
             title = "缓存预热",
-            description = "长工具调用与空闲时段里续住提示缓存，每次刷新都要花钱。",
+            description = "空闲时续住提示缓存（花钱）。",
             kind = PiRowKind.Value,
             group = G_MODEL,
             section = "行为",
@@ -490,7 +489,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "showCacheMissNotices",
             title = "缓存未命中提示",
-            description = "提示严重的提示词缓存未命中，以及压缩、分支摘要与厂商恢复诊断。",
+            description = "提示严重的缓存未命中等诊断。",
             kind = PiRowKind.Switch,
             group = G_MODEL,
             section = "行为",
@@ -584,7 +583,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.prompts.effectiveSource",
             title = "提示词文件",
-            description = "pi 会读的提示词文件：工作区优先，且只在该项目受信任时才读。",
+            description = "pi 会读的提示词文件（工作区优先）。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "当前生效",
@@ -618,7 +617,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "transport",
             title = "传输方式",
-            description = "支持多种传输的厂商优先用哪一种；自动会挑当前最合适的。",
+            description = "多传输厂商优先用哪一种。",
             kind = PiRowKind.Value,
             group = G_MESSAGES,
             section = "网络",
@@ -643,7 +642,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "websocketConnectTimeoutMs",
             title = "WebSocket 连接超时",
-            description = "WebSocket 建连握手的超时（毫秒）；0 = 不超时。",
+            description = "握手超时（毫秒，0 不限）。",
             kind = PiRowKind.Number,
             group = G_MESSAGES,
             section = "网络",
@@ -667,7 +666,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "images.autoResize",
             title = "图片自动缩放",
-            description = "把图片缩到最大 2000x2000，对附件与工具返回的图片都生效。",
+            description = "图片自动缩到最大 2000×2000。",
             kind = PiRowKind.Switch,
             group = G_MESSAGES,
             section = "图片",
@@ -677,7 +676,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "images.blockImages",
             title = "屏蔽图片",
-            description = "阻止所有图片发送给模型；图片仍能附加，只是不随请求发出去。",
+            description = "不把图片发给模型（附件仍可加）。",
             kind = PiRowKind.Switch,
             group = G_MESSAGES,
             section = "图片",
@@ -700,7 +699,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "compaction.reserveTokens",
             title = "保留 token",
-            description = "为模型回复预留的 token 数；设为 0 会没有回复余量，摘要预算也归零。",
+            description = "为回复预留 token；0 = 无余量。",
             kind = PiRowKind.Number,
             group = G_COMPACTION,
             section = "压缩",
@@ -728,7 +727,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "compaction.modelOverrides",
             title = "逐模型覆盖",
-            description = "按精确的「厂商/模型 ID」覆盖上面两项。清空并保存 = 回到默认。",
+            description = "按厂商/模型覆盖上面两项。",
             kind = PiRowKind.List,
             group = G_COMPACTION,
             section = "压缩",
@@ -739,7 +738,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "branchSummary.reserveTokens",
             title = "分支摘要保留 token",
-            description = "选分支历史时为提示词与回复预留的 token（输出上限 4096）。",
+            description = "分支摘要预留 token（输出上限 4096）。",
             kind = PiRowKind.Number,
             group = G_COMPACTION,
             section = "压缩",
@@ -758,7 +757,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.compaction.runNow",
             title = "立即压缩",
-            description = "对当前会话手动压缩一次；要带自定义指令，在对话里发 /compact <指令>。",
+            description = "手动压缩当前会话。",
             kind = PiRowKind.Action,
             group = G_COMPACTION,
             section = "动作",
@@ -821,7 +820,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "retry.provider.timeoutMs",
             title = "Provider 超时",
-            description = "单次请求的超时（毫秒）；留空 = 用 SDK 默认值。",
+            description = "单次请求超时（留空用默认）。",
             kind = PiRowKind.Number,
             group = G_RETRY,
             section = "Provider 重试（高级）",
@@ -834,7 +833,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "retry.provider.maxRetries",
             title = "Provider 重试次数",
-            description = "SDK 自己的重试次数，默认 0；调高后限流这类错误可能先被吞掉并长时间阻塞。",
+            description = "SDK 重试次数，默认 0；调高可能让限流先被吞掉。",
             kind = PiRowKind.Number,
             group = G_RETRY,
             section = "Provider 重试（高级）",
@@ -880,7 +879,7 @@ object PiSettingsCatalog {
             // 解析再展示与写回，不能把原数组当成生效集合 —— `["+codemode"]` 长度 1、生效 5 个。
             // 另：`getDefaultTools()` 在 0.99.2 也变成返回解析后的列表（`:1429-1435`），
             // 0.87.1 的「原样返回」不再成立。见 `PiQuickAdd`。
-            description = "**默认 4 个：read、bash、edit、write**；快捷添加在此之上加，清空并保存 = 回到默认。",
+            description = "默认 read/bash/edit/write。",
             kind = PiRowKind.List,
             group = G_TOOLS,
             section = "工具",
@@ -892,7 +891,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "codemode.mode",
             title = "Codemode 方式",
-            description = "codemode 怎么向模型交代工具：on 给每个工具附一句调用方式，only 只列 codemode 能调的。",
+            description = "on 附调用方式，only 只列 codemode。",
             kind = PiRowKind.Value,
             group = G_TOOLS,
             section = "工具",
@@ -908,7 +907,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "codemode.inlineBudget",
             title = "Codemode 声明预算",
-            description = "codemode 描述里允许花在工具声明上的估算 token 数（字符数 / 4）。",
+            description = "工具声明可花的估算 token（字符数 / 4）。",
             kind = PiRowKind.Number,
             group = G_TOOLS,
             section = "工具",
@@ -1014,7 +1013,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.extensions",
             title = "已发现的扩展",
-            description = "pi 自动发现了哪些扩展；加新扩展用下面的「查看资源文件」。",
+            description = "pi 发现的扩展。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -1024,7 +1023,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.skills",
             title = "已发现的技能",
-            description = "pi 自动发现了哪些技能；加新技能用下面的「查看资源文件」放一个 SKILL.md。",
+            description = "pi 发现的技能；加新技能放一个 SKILL.md。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -1034,7 +1033,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.prompts",
             title = "已发现的提示模板",
-            description = "pi 自动发现了哪些提示模板；用 /名字 调用，支持 $1、$@ 这类参数。",
+            description = "pi 发现的提示模板；用 /名字 调用，支持 $1。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -1044,7 +1043,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.themes",
             title = "已发现的主题",
-            description = "pi 自动发现了哪些主题；用哪一个在「外观」的「主题」里选。",
+            description = "pi 发现的主题；在「外观」里选。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -1062,7 +1061,7 @@ object PiSettingsCatalog {
             // extension they installed — pi accepts any `--flag` it does not know and
             // hands it to the extensions that declared it, so there is nothing to pick
             // from a list here (`core/agent-session-services.ts:107-111`).
-            description = "照命令行上给 pi 的方式写，例如 --plan；只对声明了该参数的扩展生效。",
+            description = "按命令行方式传参，例如 --plan。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "技能命令与扩展参数",
@@ -1072,7 +1071,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "enableSkillCommands",
             title = "技能命令",
-            description = "把技能注册成 /skill:name 命令；关掉后技能仍能读，只是不出现在命令面板。",
+            description = "技能注册成 /skill:name 命令。",
             kind = PiRowKind.Switch,
             group = G_RESOURCES,
             section = "技能命令与扩展参数",
@@ -1099,7 +1098,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "packages",
             title = "资源包",
-            description = "已安装的资源包；手改会写出「看起来装了、其实没生效」的条目。",
+            description = "已安装的资源包；手改易失效。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "资源包",
@@ -1113,7 +1112,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.openFiles",
             title = "查看资源文件",
-            description = "打开「Pi 文件」，直接看和改技能、提示模板、主题与扩展。",
+            description = "打开 Pi 文件查看与编辑资源。",
             kind = PiRowKind.Action,
             group = G_RESOURCES,
             section = "动作",
@@ -1173,8 +1172,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.typography",
             title = "排版",
-            description = "整体排版档位：正文大小与行高、段间距、列表与标题字号、代码与表格字号一起动。" +
-                "圆角、列宽与底色不跟档。",
+            description = "正文、行高、段距与各种字号一起换档；底色不跟。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",
@@ -1189,7 +1187,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.lineHeight",
             title = "行距",
-            description = "在排版档位的行高上再乘一档：紧 0.92、标准 1.0、松 1.08；只动行高不动字号。",
+            description = "行高再乘一档：紧/标准/松。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",
@@ -1203,7 +1201,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.fontSize",
             title = "字号",
-            description = "在排版档位的字号上再偏移：小 −1、标准 0、大 +1、更大 +2 sp；作用于全部文本。",
+            description = "字号偏移：−1 到 +2 sp。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",
@@ -1218,7 +1216,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.showTimestamps",
             title = "显示时间戳",
-            description = "开着时消息带时间、通知行带时间、跨天插日期分隔。**默认关**。",
+            description = "消息带时间、跨天插日期（默认关）。",
             kind = PiRowKind.Switch,
             group = G_APPEARANCE,
             section = "外观",
@@ -1286,7 +1284,7 @@ object PiSettingsCatalog {
             // **整棵目录** —— 解包出来的 Linux 系统树（里面包含 agent 目录：npm 包、会话文件）、
             // proot 的临时目录、载荷记账文件；不跟随符号链接，按已分配块数计（不是表观大小）。
             // 原来的文案写「与包缓存的磁盘占用」，既没说清是整棵树，也没说会话也在里面。
-            description = "内置运行时目录占用的实际磁盘空间（含系统树与临时目录），不跟随符号链接。",
+            description = "运行时目录实际占用（含系统树与临时目录）。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时状态",
@@ -1310,7 +1308,7 @@ object PiSettingsCatalog {
             // engine starts or a turn runs, and released when idle (`PiEngineLifecyclePolicy`),
             // so "未持有" while the app sits idle is normal — the old text ("最长 6
             // 小时") described the old always-held lock and would now read as a fault.
-            description = "持有中表示引擎在启动或正有回合在跑，此时息屏也能继续；空闲时自动释放。",
+            description = "引擎忙时保持唤醒，空闲自动释放。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时状态",
@@ -1342,8 +1340,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.proroot",
             title = "运行时加速（实验性）",
-            description = "用闭源运行时 proroot 代替 proot 跑引擎与命令，装机仍走 proot。" +
-                "打开后当场探针，通过就自动重启切过去；闭源不可审计。",
+            description = "proroot 跑引擎；会探针并重启（闭源）。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "运行时选择",
@@ -1358,8 +1355,7 @@ object PiSettingsCatalog {
             // 值下面还会列出探针逐阶段的原始判读：说明文字必须指向那两块内容，否则用户仍然
             // 不知道「探针未通过」到底卡在哪一步（缺陷原形：开关开着，行上只有半句话，
             // 唯一能看到证据的地方是导出的报告）。
-            description = "这次实际用的是哪个运行时，没用上 proroot 时原因跟在括号里。" +
-                "值下面列出探针逐阶段的判读。",
+            description = "这次用的运行时；没用上时括号里写原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时选择",
@@ -1398,7 +1394,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.offline",
             title = "离线模式",
-            description = "关闭 pi 启动时的联网动作（更新检查、包更新、安装遥测）；模型调用照常联网。",
+            description = "关闭启动时的联网检查、包更新与遥测；模型照常联网。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1408,7 +1404,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.cacheRetention",
             title = "缓存保留策略",
-            description = "长保留向厂商申请更长的提示缓存，只有支持的厂商有差别。",
+            description = "向厂商申请更长提示缓存。",
             kind = PiRowKind.Value,
             group = G_RUNTIME,
             section = "进程",
@@ -1422,7 +1418,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.noContextFiles",
             title = "不加载上下文文件",
-            description = "开启后不再读取工作区里的上下文文件，模型只看到系统提示。",
+            description = "不读工作区的上下文文件。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1436,7 +1432,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.noExtensions",
             title = "停用扩展发现",
-            description = "打开后连 pi 自带的扩展一起停：设备能力工具、本地模型与 /mcp 都会消失。",
+            description = "连 pi 自带扩展一起停。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1446,7 +1442,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.noSkills",
             title = "停用技能发现",
-            description = "打开后不再发现和加载技能，技能也不会出现在命令面板里。",
+            description = "不发现、不加载技能。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1456,7 +1452,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.noPromptTemplates",
             title = "停用提示模板发现",
-            description = "打开后不再发现和加载提示模板，模板也不会出现在命令面板里。",
+            description = "不发现、不加载提示模板。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1466,7 +1462,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.noThemes",
             title = "停用主题发现",
-            description = "打开后不再发现和加载主题；本应用自己的界面配色不受影响。",
+            description = "不发现、不加载主题。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1483,7 +1479,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.keepAlive",
             title = "后台保活",
-            description = "用前台服务与唤醒锁让回合在后台继续；关闭后后台被杀时回合会中断。",
+            description = "后台继续跑回合（前台服务保活）。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1493,7 +1489,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.restartEngine",
             title = "重启引擎",
-            description = "让上面的进程开关生效；重启会终止正在进行的回合，已写入磁盘的会话不会丢失。",
+            description = "重启让上面的开关生效；会终止进行中的回合。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
             section = "动作",
@@ -1508,8 +1504,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.diagnostics",
             title = "导出诊断报告",
-            description = "把引擎最近的失败、运行时状态与设备信息汇总成纯文本，存到 Download 或分享。" +
-                "引擎已退出时也可用，敏感值已脱敏。",
+            description = "导出引擎失败、运行时与设备信息；引擎退出后也能用。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
             section = "动作",
@@ -1523,7 +1518,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.security.emergencyStop",
             title = "紧急停止",
-            description = "立刻中止当前轮次、停掉正在运行的 bash 命令并清空队列；不会回滚已写入的改动。",
+            description = "中止本轮、停命令、清空队列。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
             section = "动作",
@@ -1536,7 +1531,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultProjectTrust",
             title = "项目信任策略",
-            description = "没有已保存的信任决定时怎么办：询问忽略项目资源，总是信任会加载执行，从不信任始终忽略。",
+            description = "未决定时：询问、总是信任、或始终忽略项目资源。",
             kind = PiRowKind.Value,
             group = G_SECURITY,
             section = "信任与隐私",
@@ -1548,7 +1543,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "enableInstallTelemetry",
             title = "安装遥测",
-            description = "发送匿名的安装/更新上报，部分厂商请求会带来源标识；关掉后两者都停，不影响更新检查。",
+            description = "发送匿名安装/更新上报；关掉后两者都停。",
             kind = PiRowKind.Switch,
             group = G_SECURITY,
             section = "信任与隐私",
