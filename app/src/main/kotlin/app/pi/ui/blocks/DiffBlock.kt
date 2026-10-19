@@ -109,156 +109,159 @@ fun DiffBlock(
     }
     val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
 
-    BlockColumn(modifier) {
-        // The diff card used to sit on the execution rail beside the calls it belongs to,
-        // with the one node that is not a state — `±` (`06 §3` 构件 1). The rail and its
-        // nodes are gone (`ToolRail.kt`'s KDoc: the state glyph moved into a tool card's
-        // header row), so this card is now inset by the same shared left edge as a tool
-        // card and draws no node at all. It carries **no duration tick** either (`06 §2`:
-        // diff 卡不显示 — nothing here was timed, and the row is already the densest in
-        // the stream).
-        ToolRailFrame {
-            BlockCard(
-                color = palette.toolPendingBg,
-                // F28: same content-region gesture as the tool card.
-                modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-                // **No border**, for the tool card's reason: `06 §2`'s 1 px status outline is
-                // gone from that card too (`ToolBlockChrome.ToolCard`'s KDoc), and the diff is
-                // neutral by definition — the fill alone is the card's ground.
-                borderColor = null,
-                // The tool card's own row inset (`ToolCardRowPadding`, 10 / 7): the two
-                // cards sit in the same stream, so they read as one geometry.
-                padding = ToolCardRowPadding,
-                // The tool card's 8 dp, from its one definition — not a second copy of the
-                // number, which would drift from `TOOL_CARD_SHAPE`.
-                shape = TOOL_CARD_SHAPE,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = item.toolName.ifEmpty { "diff" },
-                        // **Bold, because the tool card bolds it**: pi paints every tool name
-                        // `theme.bold`ed (`components/tool-execution.js:312`), and this header's
-                        // first cell is the same cell (`ToolBlockChrome.ToolHeader`).
-                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                        // The leading cell of a tool card is the tool's **name**, and pi paints every
-                        // tool name with `toolTitle` (`core/tools/renderers/edit.js:53`, `write.js:90`,
-                        // `read.js:27`, and the fallback header at
-                        // `components/tool-execution.js:91`). This card's name is the one from the call
-                        // it was lifted out of (`rpc/.../Transcript.kt:541-564` passes `toolName`
-                        // through), so it is the same cell and takes the same token. It used to be
-                        // `muted` because v2's prototype draws it so; the 「全修的一致」 ruling puts
-                        // pi's semantics first (`07` D40.1).
-                        color = palette.toolTitle,
-                        maxLines = 1,
-                    )
-                    Spacer(Modifier.width(PiSpacing.inline))
-                    Text(
-                        text = item.path.ifEmpty { "未命名文件" },
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.monoSmall,
-                        // A path in a tool card is `accent`: pi's `renderToolPath` returns
-                        // `theme.fg("accent", shortenPath(value))`
-                        // (`core/tools/render-utils.js:57-63`), and `edit`/`write` hand that to the
-                        // card's path cell (`renderers/edit.js:52`, `write.js:89`). `text` was v2's
-                        // `c-text`; pi's token wins on the same ruling as the name above. Same shape
-                        // as `ToolHeader`'s `toolPathPart`, spelled out here because this card has its
-                        // own header row instead of going through `ToolHeader`.
-                        color = palette.accent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.width(PiSpacing.inline))
-                    Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
-                    Spacer(Modifier.width(PiSpacing.gutter))
-                    Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
-                    Spacer(Modifier.width(PiSpacing.inline))
-                    // v2's diff card carries the same disclosure chevron as a tool card's
-                    // header (`direction-b-v2.html:1523`). There is no second row any more: the
-                    // card folds to this one line, exactly like a tool card, so the row below
-                    // holds the body and nothing else.
-                    Icon(
-                        imageVector = if (expanded) {
-                            Icons.Filled.KeyboardArrowDown
-                        } else {
-                            Icons.Filled.KeyboardArrowRight
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = palette.bodyOnTool,
-                    )
-                }
-
-                if (expanded) {
-                    if (plan.isEmpty()) {
-                        // A diff `parseDiff` could not structure (neither unified nor pi's
-                        // readable shape). Its text has no cap of its own — it comes from
-                        // the tool's `details`, not from a truncated tool result — so it
-                        // is painted through the same app-side budget the other bodies
-                        // use, and the omission is said in the app's existing sentence
-                        // (`ShellBlock`'s 「上方还有 N 行未显示」). Without this, one
-                        // unparsable diff was the only transcript body with no ceiling:
-                        // a single `Text` holding all of it, re-measured on every
-                        // publication while the turn streamed.
-                        val raw = item.diffText
-                        val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
-                        val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
-                        MonoText(
-                            text = painted.ifEmpty { "（无差异内容）" },
-                            // F13: `toolOutput` is 3.37:1 on the success card; the
-                            // derived variant clears §9's 4.5:1 body floor.
-                            color = palette.bodyOnTool,
+    // 长按复制差异正文（与工具卡同一个 `ToolActionMenu`）。只加交互，不改任何绘制。
+    ToolActionMenu(command = null, output = item.diffText, fullOutputPath = null) {
+        BlockColumn(modifier) {
+            // The diff card used to sit on the execution rail beside the calls it belongs to,
+            // with the one node that is not a state — `±` (`06 §3` 构件 1). The rail and its
+            // nodes are gone (`ToolRail.kt`'s KDoc: the state glyph moved into a tool card's
+            // header row), so this card is now inset by the same shared left edge as a tool
+            // card and draws no node at all. It carries **no duration tick** either (`06 §2`:
+            // diff 卡不显示 — nothing here was timed, and the row is already the densest in
+            // the stream).
+            ToolRailFrame {
+                BlockCard(
+                    color = palette.toolPendingBg,
+                    // F28: same content-region gesture as the tool card.
+                    modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
+                    // **No border**, for the tool card's reason: `06 §2`'s 1 px status outline is
+                    // gone from that card too (`ToolBlockChrome.ToolCard`'s KDoc), and the diff is
+                    // neutral by definition — the fill alone is the card's ground.
+                    borderColor = null,
+                    // The tool card's own row inset (`ToolCardRowPadding`, 10 / 7): the two
+                    // cards sit in the same stream, so they read as one geometry.
+                    padding = ToolCardRowPadding,
+                    // The tool card's 8 dp, from its one definition — not a second copy of the
+                    // number, which would drift from `TOOL_CARD_SHAPE`.
+                    shape = TOOL_CARD_SHAPE,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = item.toolName.ifEmpty { "diff" },
+                            // **Bold, because the tool card bolds it**: pi paints every tool name
+                            // `theme.bold`ed (`components/tool-execution.js:312`), and this header's
+                            // first cell is the same cell (`ToolBlockChrome.ToolHeader`).
+                            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                            // The leading cell of a tool card is the tool's **name**, and pi paints every
+                            // tool name with `toolTitle` (`core/tools/renderers/edit.js:53`, `write.js:90`,
+                            // `read.js:27`, and the fallback header at
+                            // `components/tool-execution.js:91`). This card's name is the one from the call
+                            // it was lifted out of (`rpc/.../Transcript.kt:541-564` passes `toolName`
+                            // through), so it is the same cell and takes the same token. It used to be
+                            // `muted` because v2's prototype draws it so; the 「全修的一致」 ruling puts
+                            // pi's semantics first (`07` D40.1).
+                            color = palette.toolTitle,
+                            maxLines = 1,
                         )
-                        if (hidden > 0) {
-                            Text(
-                                text = "上方还有 $hidden 行未显示",
-                                style = PiTheme.text.meta,
-                                color = palette.muted,
-                                modifier = Modifier.padding(top = PiSpacing.tiny),
+                        Spacer(Modifier.width(PiSpacing.inline))
+                        Text(
+                            text = item.path.ifEmpty { "未命名文件" },
+                            modifier = Modifier.weight(1f),
+                            style = PiTheme.text.monoSmall,
+                            // A path in a tool card is `accent`: pi's `renderToolPath` returns
+                            // `theme.fg("accent", shortenPath(value))`
+                            // (`core/tools/render-utils.js:57-63`), and `edit`/`write` hand that to the
+                            // card's path cell (`renderers/edit.js:52`, `write.js:89`). `text` was v2's
+                            // `c-text`; pi's token wins on the same ruling as the name above. Same shape
+                            // as `ToolHeader`'s `toolPathPart`, spelled out here because this card has its
+                            // own header row instead of going through `ToolHeader`.
+                            color = palette.accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.width(PiSpacing.inline))
+                        Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
+                        Spacer(Modifier.width(PiSpacing.gutter))
+                        Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
+                        Spacer(Modifier.width(PiSpacing.inline))
+                        // v2's diff card carries the same disclosure chevron as a tool card's
+                        // header (`direction-b-v2.html:1523`). There is no second row any more: the
+                        // card folds to this one line, exactly like a tool card, so the row below
+                        // holds the body and nothing else.
+                        Icon(
+                            imageVector = if (expanded) {
+                                Icons.Filled.KeyboardArrowDown
+                            } else {
+                                Icons.Filled.KeyboardArrowRight
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = palette.bodyOnTool,
+                        )
+                    }
+
+                    if (expanded) {
+                        if (plan.isEmpty()) {
+                            // A diff `parseDiff` could not structure (neither unified nor pi's
+                            // readable shape). Its text has no cap of its own — it comes from
+                            // the tool's `details`, not from a truncated tool result — so it
+                            // is painted through the same app-side budget the other bodies
+                            // use, and the omission is said in the app's existing sentence
+                            // (`ShellBlock`'s 「上方还有 N 行未显示」). Without this, one
+                            // unparsable diff was the only transcript body with no ceiling:
+                            // a single `Text` holding all of it, re-measured on every
+                            // publication while the turn streamed.
+                            val raw = item.diffText
+                            val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
+                            val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
+                            MonoText(
+                                text = painted.ifEmpty { "（无差异内容）" },
+                                // F13: `toolOutput` is 3.37:1 on the success card; the
+                                // derived variant clears §9's 4.5:1 body floor.
+                                color = palette.bodyOnTool,
                             )
-                        }
-                    } else {
-                        for (row in plan) {
-                            when (row) {
-                                is DiffRow.Header -> Text(
-                                    text = row.text,
-                                    style = PiTheme.text.monoSmall,
+                            if (hidden > 0) {
+                                Text(
+                                    text = "上方还有 $hidden 行未显示",
+                                    style = PiTheme.text.meta,
                                     color = palette.muted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = PiSpacing.tiny),
                                 )
-
-                                is DiffRow.Fold -> Text(
-                                    text = "… ${row.count} 行未变",
-                                    // `06 §2` diff 卡: the fold line lines up with the code
-                                    // column, i.e. past the symbol column (16) and the
-                                    // number column (30) — v2 draws it behind a 46 px
-                                    // spacer for the same reason (`direction-b-v2.html:766`).
-                                    modifier = Modifier.padding(
-                                        start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
-                                        top = PiSpacing.tiny,
-                                        bottom = PiSpacing.tiny,
-                                    ),
-                                    // The fold is the one line of this body that is not code, but it
-                                    // is still machine output: v2 draws it **inside** the body's own
-                                    // monospace container and only overrides the size to 12
-                                    // (`direction-b-v2.html:762-768`, `06 §2`「折叠行 12」), and its
-                                    // number is a row count — one of the six readings `05 §4.2` keeps
-                                    // on the machine face (「耗时/退出码/行数/token/费用/秒数 六类改成
-                                    // `numeric`」). `meta` was the only mono-block line in the UI face,
-                                    // which broke the column rhythm the comment above protects.
-                                    style = PiTheme.text.monoSmall,
-                                    color = palette.muted,
-                                )
-
-                                is DiffRow.Line -> DiffLineRow(row)
                             }
-                        }
-                        if (omitted) {
-                            Text(
-                                text = "差异过长，仅显示前 $MAX_DIFF_ROWS 行",
-                                style = PiTheme.text.meta,
-                                color = palette.muted,
-                            )
+                        } else {
+                            for (row in plan) {
+                                when (row) {
+                                    is DiffRow.Header -> Text(
+                                        text = row.text,
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+
+                                    is DiffRow.Fold -> Text(
+                                        text = "… ${row.count} 行未变",
+                                        // `06 §2` diff 卡: the fold line lines up with the code
+                                        // column, i.e. past the symbol column (16) and the
+                                        // number column (30) — v2 draws it behind a 46 px
+                                        // spacer for the same reason (`direction-b-v2.html:766`).
+                                        modifier = Modifier.padding(
+                                            start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
+                                            top = PiSpacing.tiny,
+                                            bottom = PiSpacing.tiny,
+                                        ),
+                                        // The fold is the one line of this body that is not code, but it
+                                        // is still machine output: v2 draws it **inside** the body's own
+                                        // monospace container and only overrides the size to 12
+                                        // (`direction-b-v2.html:762-768`, `06 §2`「折叠行 12」), and its
+                                        // number is a row count — one of the six readings `05 §4.2` keeps
+                                        // on the machine face (「耗时/退出码/行数/token/费用/秒数 六类改成
+                                        // `numeric`」). `meta` was the only mono-block line in the UI face,
+                                        // which broke the column rhythm the comment above protects.
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.muted,
+                                    )
+
+                                    is DiffRow.Line -> DiffLineRow(row)
+                                }
+                            }
+                            if (omitted) {
+                                Text(
+                                    text = "差异过长，仅显示前 $MAX_DIFF_ROWS 行",
+                                    style = PiTheme.text.meta,
+                                    color = palette.muted,
+                                )
+                            }
                         }
                     }
                 }

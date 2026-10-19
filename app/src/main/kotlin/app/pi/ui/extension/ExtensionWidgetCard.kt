@@ -278,7 +278,7 @@ private fun WidgetDisclosure(
         Spacer(Modifier.width(PiSpacing.gutter))
         // A label, not a second hit target: the card is the toggle (`toggleContent`), which is
         // the one expand idiom the tree has (`ExpandLabel`'s KDoc).
-        ExpandLabel(expanded = expanded, expandText = "详情", collapseText = "收起")
+        ExpandLabel(expanded = expanded, expandText = "展开", collapseText = "收起")
     }
     if (!expanded) return
     // **A bounded detail area, like the raw payload below it.** The card sits above the
@@ -320,7 +320,7 @@ private fun WidgetRawPayload(raw: String) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        ExpandLabel(expanded = open.value, expandText = "查看", collapseText = "收起")
+        ExpandLabel(expanded = open.value, expandText = "展开", collapseText = "收起")
     }
     if (!open.value) return
     Text(

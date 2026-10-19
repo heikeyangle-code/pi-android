@@ -103,7 +103,7 @@ fun ErrorBlock(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = if (expanded) "收起" else "详情",
+                            text = if (expanded) "收起" else "展开",
                             style = MaterialTheme.typography.labelMedium,
                             // v2 paints the error card's disclosure in the card's own
                             // colour (`c-err`), not in the accent: the label belongs to

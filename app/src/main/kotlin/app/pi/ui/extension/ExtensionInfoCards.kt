@@ -177,7 +177,7 @@ private fun InfoCard(
             )
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.width(PiSpacing.gutter))
-            ExpandLabel(expanded = expanded.value, expandText = "详情", collapseText = "收起")
+            ExpandLabel(expanded = expanded.value, expandText = "展开", collapseText = "收起")
         }
         if (expanded.value) content()
     }

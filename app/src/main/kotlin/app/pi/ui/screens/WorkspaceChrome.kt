@@ -549,7 +549,7 @@ internal fun WsErrBlock(
             }
             if (detail != null) {
                 Text(
-                    if (open) "收起" else "详情",
+                    if (open) "收起" else "展开",
                     modifier = Modifier
                         .padding(top = PiSettingsMetrics.notePaddingVertical)
                         .clickable { open = !open },
