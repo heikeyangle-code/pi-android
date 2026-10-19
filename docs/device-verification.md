@@ -355,7 +355,7 @@ ls -la /root/.pi/agent/sessions 2>&1
 **操作**：说「结束微信」→ 首次应弹确认；再试着让它结束一个系统应用（例如"系统界面"/设置）
 **预期**：用户应用在确认后真的被杀；系统应用/关键进程被**拒绝**并说明
 **判据**：用户应用任务从最近任务消失；系统应用请求收到拒绝原因
-**失败含义**：`DeviceAppActions.stop`（`requireExactPackage` + 自身包拒绝 + `criticalPackages` 拒绝 + `FLAG_SYSTEM` 拒绝；**它自己不刷新清单**，找不到包时提示先调 `android_apps`）。`KILL_BACKGROUND_PROCESSES` 已声明，但注释写明 OEM 仍可能拒绝——那种情况必须回"平台拒绝"的原话，而不是报成功。若确认框不出现，问题在 guest 扩展的 permission gate（`assets/pi-extensions/pi-android-permission-gate.ts` 的 `android_stop_app` 属 dangerous），属于"没有确认通道就直接拒绝"那一路。
+**失败含义**：`DeviceAppActions.stop`（`requireExactPackage` + 自身包拒绝 + `criticalPackages` 拒绝 + `FLAG_SYSTEM` 拒绝；**它自己不刷新清单**，找不到包时提示先调 `android_app` 的 list）。`KILL_BACKGROUND_PROCESSES` 已声明，但注释写明 OEM 仍可能拒绝——那种情况必须回"平台拒绝"的原话，而不是报成功。若确认框不出现，问题在 guest 扩展的 permission gate（`assets/pi-extensions/pi-android-permission-gate.ts` 的 `android_app`（stop）属 dangerous），属于"没有确认通道就直接拒绝"那一路。
 
 ### D10. SAF 目录授权与文件读写
 **状态**：未验

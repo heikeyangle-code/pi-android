@@ -1088,17 +1088,15 @@ App 内起仅绑 `127.0.0.1` 的 HTTP 服务（**独立端口 + 独立 token，�
 
 | 类别 | 工具 |
 |---|---|
-| 屏幕/UI | `android_ui_dump` `android_tap` `android_input` `android_key` `android_keyevent` `android_swipe` `android_screenshot`（**返回 ImageContent，模型能直接"看"屏幕**） |
-| 应用 | `android_app`（`action="list"/"launch"`） `android_stop_app` |
-| 交互 | `android_say`（`kind="notification"/"toast"/"speak"`） `android_vibrate` `android_share` `android_open` `android_ask` |
-| 数据 | `android_clipboard`（给 `text` 写、不给则读） `android_files_list` `android_files`（`op="read"/"write"`） `android_download`（`op="read"/"write"`） |
-| 传感 | `android_device_state`（`what="battery"/"location"/"sensors"/"sensor"`） `android_torch` |
-| 媒体 | `android_camera_photo` |
-| 高级（可选） | `android_shell`（Shizuku/ADB，uid=2000；套用与 DSH 相同的策略守卫：禁块设备/SELinux/`settings put`/挂载/清数据；结束应用前刷新清单并区分用户/系统应用） |
+| 状态 | `android_status`（常驻；桥、能力组、前台应用、无障碍、Shell 身份、已授权目录） |
+| 屏幕 | `android_screen`（`look`/`tap`/`type`/`swipe`/`key`/`wait`/`shot`/`steps`；动作后自带前后 diff，`shot` 返回 ImageContent） |
+| 应用 | `android_app`（`list`/`launch`/`stop`） |
+| 文件 | `android_files`（`dirs`/`list`/`read`/`write`/`export`/`import`） |
+| 对外动作 | `android_comm`（剪贴板、通知、Toast、朗读、震动、分享、打开链接、收件箱） |
+| 读数 | `android_device`（电量、手电、定位、传感器） |
+| 高级 | `android_shell`（Shizuku/ADB，uid=2000；套用设备策略守卫） |
 
-这张表是 D32 合并之后的最终工具面（30 → 21），裁决与理由见
-`design/ui-refactor/07-construction-decisions.md` 的 D32；`android_ask` 与
-`android_camera_photo` 是当时规划、至今未实现的端点。
+这张表是设备桥 v2 的最终工具面（30 → 7），理由与迁移见 `docs/device-bridge-v2.md`。
 
 另外注册：
 - **策略扩展**（危险操作分级确认，参考 `permission-gate.ts` 的写法）
