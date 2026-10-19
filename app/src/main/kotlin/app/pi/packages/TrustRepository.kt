@@ -229,7 +229,7 @@ class TrustRepository(
         )
     }
 
-        // -------------------------------------------------------- canonicalisation
+    // -------------------------------------------------------- canonicalisation
 
     /**
      * `canonicalizePath(resolvePath(cwd))` (`trust-manager.ts:40-42`): `realpathSync`

@@ -292,7 +292,7 @@ class ExtensionLifecycle {
     var lastMessage: String? = null
         private set
 
-        private fun confirmQuestion(changes: List<String>): String = buildString {
+    private fun confirmQuestion(changes: List<String>): String = buildString {
         append("重启引擎以加载新资源？\n\n")
         if (changes.isNotEmpty()) {
             append(changes.joinToString("\n") { "· $it" })
