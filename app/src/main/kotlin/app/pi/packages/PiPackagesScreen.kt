@@ -15,10 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -889,7 +886,7 @@ private fun InvalidTrustCard(message: String, busy: Boolean, onRepair: () -> Uni
                     color = palette.muted,
                 )
                 Spacer(Modifier.height(PiSpacing.inner))
-                Button(onClick = onRepair, enabled = !busy) { Text(PackageStrings.TRUST_INVALID_ACTION) }
+                TextButton(onClick = onRepair, enabled = !busy) { Text(PackageStrings.TRUST_INVALID_ACTION) }
             }
         }
     }
@@ -979,7 +976,7 @@ private fun LifecycleCard(
                     )
                     Spacer(Modifier.height(PiSpacing.inner))
                     Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                        Button(onClick = onRestartClick) { Text(PackageStrings.RESTART_BUTTON) }
+                        TextButton(onClick = onRestartClick) { Text(PackageStrings.RESTART_BUTTON) }
                         TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) }
                     }
                 }
@@ -995,7 +992,7 @@ private fun LifecycleCard(
                     Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                         // Re-checks the turn rather than promising a restart: the
                         // dialog only appears when the engine reports idle.
-                        OutlinedButton(onClick = onRestartClick) { Text(PackageStrings.RESTART_BUTTON) }
+                        TextButton(onClick = onRestartClick) { Text(PackageStrings.RESTART_BUTTON) }
                         TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) }
                     }
                 }
@@ -1011,7 +1008,7 @@ private fun LifecycleCard(
                     )
                     Spacer(Modifier.height(PiSpacing.inner))
                     Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                        Button(onClick = onConfirm) { Text(PackageStrings.RESTART_CONFIRM) }
+                        TextButton(onClick = onConfirm) { Text(PackageStrings.RESTART_CONFIRM) }
                         TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) }
                     }
                 }
@@ -1133,10 +1130,10 @@ private fun InstallCard(
             }
             Spacer(Modifier.height(PiSpacing.inner))
             Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                Button(onClick = onInstall, enabled = !state.busy && state.spec.isNotBlank()) {
+                TextButton(onClick = onInstall, enabled = !state.busy && state.spec.isNotBlank()) {
                     Text(if (state.busy) PackageStrings.RUNNING else PackageStrings.INSTALL_LABEL)
                 }
-                OutlinedButton(onClick = onRefresh, enabled = !state.busy) {
+                TextButton(onClick = onRefresh, enabled = !state.busy) {
                     Text(PackageStrings.REFRESH_LABEL)
                 }
             }
@@ -1149,7 +1146,7 @@ private fun InstallCard(
 /**
  * The one "update everything" affordance, above the rows.
  *
- * An `OutlinedButton` in the same shape the install card's 刷新列表 uses, rather than
+ * A text action in the same shape the install card's 刷新列表 uses, rather than
  * a bare `TextButton`: this is a command that goes to the network for every installed
  * package, and it should not look like a row's inline edit link. The caveat it needs
  * (`PackageStrings.UPDATE_NOTE`) is rendered by the caller, directly under it, so the
@@ -1359,12 +1356,12 @@ private fun FilterAddRow(busy: Boolean, onAdd: (String) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        OutlinedTextField(
+        PiEditorField(
             value = draft,
             onValueChange = { draft = it },
-            singleLine = true,
+            placeholder = "如 skills/legacy* 或 +src/ext/**",
+            height = 44.dp,
             modifier = Modifier.weight(1f),
-            placeholder = { Text("如 skills/legacy* 或 +src/ext/**") },
         )
         TextButton(
             onClick = {

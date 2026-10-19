@@ -1739,15 +1739,6 @@ object PiSettingsCatalog {
     fun sectionsIn(groupId: String): List<String> =
         settingsIn(groupId).map { it.section }.distinct()
 
-    private fun isSubsequence(haystack: String, needle: String): Boolean {
-        var index = 0
-        for (character in haystack) {
-            if (index < needle.length && character == needle[index]) index++
-            if (index == needle.length) return true
-        }
-        return index == needle.length
-    }
-
     /** Human summary of one key, falling back to the row's default. */
     fun summaryText(store: PiSettingsStore, key: String): String {
         val setting = byKey[key] ?: return "未设置"

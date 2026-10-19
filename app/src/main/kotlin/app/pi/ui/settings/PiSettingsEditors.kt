@@ -1334,6 +1334,8 @@ internal fun PiEditorField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     label: String? = null,
+    /** 空值时框里的灰字提示（单行框用；有 label 时也可以同时有）。 */
+    placeholder: String? = null,
     singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     enabled: Boolean = true,
@@ -1390,6 +1392,19 @@ internal fun PiEditorField(
                 textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(PiTheme.palette.accent),
                 interactionSource = interaction,
+                decorationBox = { innerTextField ->
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                        if (value.isEmpty() && placeholder != null) {
+                            Text(
+                                placeholder,
+                                style = textStyle,
+                                color = PiTheme.palette.muted,
+                                maxLines = 1,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
             )
             if (trailing != null) trailing()
         }

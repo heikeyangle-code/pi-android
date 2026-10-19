@@ -240,7 +240,6 @@ internal fun Modifier.settingsPageTopInset(contentPadding: PaddingValues): Modif
     padding(top = contentPadding.calculateTopPadding())
 
 /** `06 §2`「搜索框 / 输入框：圆角 9」。 */
-internal val PiSettingsFieldShape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius)
 
 /** `06 §2`「sheet：顶部圆角 16」（只有上两个角，下沿贴屏底）。 */
 internal val PiSettingsSheetShape = RoundedCornerShape(
