@@ -147,12 +147,11 @@ internal object PiSettingsMetrics {
     val sheetFooterBottom: Dp = 14.dp
 
     /**
-     * 清单编辑器与主题编辑器内嵌的滚动区上限。§2 只给了 sheet 正文的 420；
-     * 这两个列表下面还有输入框与按钮，所以各自收紧一档，值来自 v2 HTML
-     * （`EditorSheetBody('list')` / `('theme')` 的可视高度）。
+     * 清单编辑器内嵌的滚动区上限。§2 只给了 sheet 正文的 420；这个列表下面还有
+     * 输入框与按钮，所以收紧一档，值来自 v2 HTML（`EditorSheetBody('list')` 的可视高度）。
+     * 主题列表不在这里：它要占屏幕的一半以上，由主题 sheet 自己按屏高算。
      */
     val sheetListMax: Dp = 300.dp
-    val sheetThemeMax: Dp = 200.dp
 
     /** `06 §2`「页脚说明 16px 14px 0、13/1.6」。 */
     val footerTop: Dp = 16.dp

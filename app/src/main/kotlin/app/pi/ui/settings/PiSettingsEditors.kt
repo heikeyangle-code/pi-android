@@ -1,6 +1,12 @@
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.fillMaxHeight
 package app.pi.ui.settings
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -990,194 +996,231 @@ fun PiThemeEditorSheet(
     onSet: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val auto = splitAutoTheme(currentRaw)
-    var raw by remember(currentRaw) { mutableStateOf(currentRaw) }
-    var lightTheme by remember(currentRaw) { mutableStateOf(auto?.first ?: "light") }
-    var darkTheme by remember(currentRaw) { mutableStateOf(auto?.second ?: "dark") }
+    val auto = remember(currentRaw) { splitAutoTheme(currentRaw) }
+    var followSystem by remember(currentRaw) { mutableStateOf(auto != null) }
+    var light by remember(currentRaw) { mutableStateOf(auto?.first ?: "light") }
+    var dark by remember(currentRaw) { mutableStateOf(auto?.second ?: "dark") }
+    var fixed by remember(currentRaw) { mutableStateOf(if (auto == null) currentRaw else "dark") }
+    var picking by remember { mutableStateOf<ThemePick?>(null) }
+
     val entries = buildList {
         add(PiThemeEntry("dark", null, PiThemeScope.Builtin))
         add(PiThemeEntry("light", null, PiThemeScope.Builtin))
         knownThemes.forEach { entry -> if (none { it.name == entry.name }) add(entry) }
     }
+    fun applyPair() {
+        onSet(light.trim() + "/" + dark.trim())
+    }
 
-    PiSettingsSheet(onDismiss = onDismiss) {
+    PiSettingsSheet(onDismiss = onDismiss, fullHeight = true) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .fillMaxHeight()
                 .padding(
                     start = PiSettingsMetrics.pageHorizontal,
                     end = PiSettingsMetrics.pageHorizontal,
                     top = PiSettingsMetrics.sheetHeadTop,
                 ),
         ) {
-            Text(
-                "主题",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(PiSpacing.small))
-            Text(
-                "自动模式需要分别填写浅色与深色主题名。" +
-                    "下面的自定义主题来自 pi 的主题目录与 themes 设置。",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (error != null) {
-                Spacer(Modifier.height(PiSpacing.inline))
-                PiInfoNote(error)
-            }
-            if (notes.isNotEmpty()) {
-                Spacer(Modifier.height(PiSpacing.inline))
-                PiInfoNote("当前主题有部分颜色无法照搬：\n" + notes.joinToString("\n") { "· $it" })
-            }
-            Spacer(Modifier.height(PiSpacing.unit))
-            Text(
-                "单主题",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(PiSpacing.gutter))
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = PiSettingsMetrics.sheetThemeMax)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                // v2 的主题行（`phone44` / HTML:2337-2344）：`padding:11px 14px`、
-                // 主题名**等宽 13**、右侧「当前」徽标、副行 12 灰 mt3、选中行铺
-                // `--selected-bg`，行间没有分隔线，也不用 ✓ 图标。
-                entries.forEach { entry ->
-                    // 自动模式的值是一个**配对**字面量 `lightTheme/darkTheme`，所以
-                    // `currentRaw == entry.name` 在自动模式下永远为假 —— 选中的那一行
-                    // 不显示「当前」，用户看不出现在到底在用哪个主题（`phone44` 画的是
-                    // 选中行铺 `--selected-bg` + 「当前」徽标）。这里把配对拆开比：
-                    // 两个成员各自都会被标出来，这正是自动模式的实情。
-                    val selected = currentRaw == entry.name ||
-                        splitAutoTheme(currentRaw)?.let { (light, dark) ->
-                            entry.name == light || entry.name == dark
-                        } == true
+            when (val target = picking) {
+                null -> {
+                    Text(
+                        "主题",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(PiSpacing.small))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                if (selected) PiTheme.palette.selectedBg else Color.Transparent,
-                            )
                             .clickable {
-                                onSet(entry.name)
-                                onDismiss()
+                                followSystem = !followSystem
+                                if (followSystem) applyPair() else onSet(fixed)
                             }
-                            .padding(
-                                start = PiSettingsMetrics.pageHorizontal,
-                                end = PiSettingsMetrics.pageHorizontal,
-                                top = PiOptionRowPadding,
-                                bottom = PiOptionRowPadding,
-                            ),
+                            .padding(vertical = PiSpacing.inline),
                         verticalAlignment = Alignment.CenterVertically,
-                        // v2 的主题行是 `rw gap:8`。
-                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                entry.name,
-                                style = PiTheme.text.mono,
+                                "跟随系统",
+                                style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                entry.path?.let { "${entry.scope.label} · ${it.substringAfterLast('/')}" }
-                                    ?: entry.scope.label,
+                                "系统浅色与深色各用一套主题。",
                                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                                 style = PiTheme.text.meta,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        if (selected) {
-                            PiSettingsBadge(label = "当前", tone = PiTheme.palette.accent)
+                        Switch(checked = followSystem, onCheckedChange = { on ->
+                            followSystem = on
+                            if (on) applyPair() else onSet(fixed)
+                        })
+                    }
+                    if (followSystem) {
+                        ThemeSlotRow(
+                            label = "浅色用",
+                            value = light,
+                            onClick = { picking = ThemePick.Light },
+                        )
+                        ThemeSlotRow(
+                            label = "深色用",
+                            value = dark,
+                            onClick = { picking = ThemePick.Dark },
+                        )
+                    }
+                    if (error != null) {
+                        Spacer(Modifier.height(PiSpacing.inline))
+                        PiInfoNote(error)
+                    }
+                    if (notes.isNotEmpty()) {
+                        Spacer(Modifier.height(PiSpacing.inline))
+                        PiInfoNote("当前主题有部分颜色无法照搬：\n" + notes.joinToString("\n") { "· $it" })
+                    }
+                    Spacer(Modifier.height(PiSpacing.unit))
+                    Text(
+                        "固定主题",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.height(PiSpacing.gutter))
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    ) {
+                        items(entries) { entry ->
+                            val selected = if (followSystem) {
+                                entry.name == light || entry.name == dark
+                            } else {
+                                entry.name == fixed
+                            }
+                            ThemeEntryRow(
+                                entry = entry,
+                                selected = selected,
+                                onClick = {
+                                    followSystem = false
+                                    fixed = entry.name
+                                    onSet(entry.name)
+                                },
+                            )
+                        }
+                    }
+                }
+
+                else -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = { picking = null }) { Text("返回") }
+                        Text(
+                            if (target == ThemePick.Light) "浅色用哪个主题" else "深色用哪个主题",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    Spacer(Modifier.height(PiSpacing.gutter))
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    ) {
+                        items(entries) { entry ->
+                            val selected = entry.name == if (target == ThemePick.Light) light else dark
+                            ThemeEntryRow(
+                                entry = entry,
+                                selected = selected,
+                                onClick = {
+                                    if (target == ThemePick.Light) light = entry.name else dark = entry.name
+                                    applyPair()
+                                    picking = null
+                                },
+                            )
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
+        }
+    }
+}
+
+private enum class ThemePick { Light, Dark }
+
+@Composable
+private fun ThemeSlotRow(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiOptionRowPadding,
+                bottom = PiOptionRowPadding,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+    ) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            value,
+            style = PiTheme.text.mono,
+            color = PiTheme.palette.accent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+            tint = PiTheme.palette.muted,
+        )
+    }
+}
+
+@Composable
+private fun ThemeEntryRow(entry: PiThemeEntry, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) PiTheme.palette.selectedBg else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiOptionRowPadding,
+                bottom = PiOptionRowPadding,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+    ) {
+        Column(Modifier.weight(1f)) {
             Text(
-                "自动模式",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+                entry.name,
+                style = PiTheme.text.mono,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(PiSpacing.gutter))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PiEditorField(
-                    value = lightTheme,
-                    onValueChange = { lightTheme = it },
-                    modifier = Modifier.weight(1f),
-                    label = "浅色主题名",
-                    height = PiNumberFieldHeight,
-                )
-                Spacer(Modifier.width(PiSpacing.inline))
-                PiEditorField(
-                    value = darkTheme,
-                    onValueChange = { darkTheme = it },
-                    modifier = Modifier.weight(1f),
-                    label = "深色主题名",
-                    height = PiNumberFieldHeight,
-                )
-            }
-            Spacer(Modifier.height(PiSpacing.gutter))
-            // 两段声音（规则 #7）：「保存为 」是我们的词 → 系统字；`dark/light` 是主题 id，
-            // 是这一行唯一的机器值 → 等宽。裁决 ②-2：混排行一律拆两段，不许整行 mono。
-            PiMixedLine(
-                prefix = "保存为 ",
-                machine = lightTheme.trim() + "/" + darkTheme.trim(),
-                suffix = "",
+            Text(
+                entry.path?.let { "${entry.scope.label} · ${it.substringAfterLast('/')}" }
+                    ?: entry.scope.label,
+                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
-            Text(
-                "原始值",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(PiSpacing.gutter))
-            PiEditorField(
-                value = raw,
-                onValueChange = { raw = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = "theme",
-                height = PiNumberFieldHeight,
-            )
-            // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
-            HorizontalDivider(
-                thickness = PiSettingsMetrics.hairline,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(
-                    onClick = {
-                        val pair = lightTheme.trim() + "/" + darkTheme.trim()
-                        if (!pair.startsWith("/") && !pair.endsWith("/")) {
-                            onSet(pair)
-                            onDismiss()
-                        }
-                    },
-                ) { Text("应用自动模式") }
-                TextButton(
-                    onClick = {
-                        if (raw.isNotBlank()) {
-                            onSet(raw.trim())
-                            onDismiss()
-                        }
-                    },
-                ) { Text("使用原始值") }
-            }
-            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
+        }
+        if (selected) {
+            PiSettingsBadge(label = "当前", tone = PiTheme.palette.accent)
         }
     }
 }
@@ -1193,12 +1236,16 @@ fun PiThemeEditorSheet(
 @Composable
 internal fun PiSettingsSheet(
     onDismiss: () -> Unit,
+    /** 主题列表要一屏：真全高，并直接展开到顶（不再有半屏那一档）。 */
+    fullHeight: Boolean = false,
     // M3 的 sheet 正文槽是 `ColumnScope.() -> Unit`，所以这里照它的类型收：
     // 传一个 `() -> Unit` 是**不兼容**的（接收者算一个参数），编译期就会报错。
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        modifier = if (fullHeight) Modifier.fillMaxHeight() else Modifier,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = fullHeight),
         shape = PiSettingsSheetShape,
         // `06 §2` / `.b-sheet`：底色是 `--surf-high`（`surfaceContainerHigh`），不是
         // `surf-low` —— 对话框与 sheet 在 v2 里是同一个表面阶，这也是本次对话框合并

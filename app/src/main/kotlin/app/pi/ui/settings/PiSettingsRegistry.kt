@@ -1181,7 +1181,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "theme",
             title = "主题",
-            description = "主题名：dark、light 或自定义主题；自动模式可分别指定浅色与深色。",
+            description = "固定一个主题，或跟随系统分别选浅色与深色。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",
