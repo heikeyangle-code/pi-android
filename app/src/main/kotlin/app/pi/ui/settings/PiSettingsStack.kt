@@ -684,7 +684,6 @@ fun PiSettingsStack(
                     highlightKey = null
                     backReturnsToSearch = false
                 },
-                onOpenSearch = { searching = true },
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
                 onOpenPackages = { packages = true },
                 onOpenLicenses = { licenses = true },

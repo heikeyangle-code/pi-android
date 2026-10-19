@@ -1,6 +1,5 @@
 package app.pi.ui.settings
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,25 +7,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,15 +36,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.PiPackagesEntryRow
 import app.pi.ui.PiTopBar
-import app.pi.ui.PiTopBarIcon
 import app.pi.ui.device.DeviceCapabilityEntryRow
 import app.pi.ui.screens.PiFilesScreen
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
 
 /**
- * Settings level 0 (spec §6.1), 按 v2 重排：搜索入口 → 当前模型卡 → 设备 / 扩展 /
- * 关于 → 全部设置（13 个分组：spec §6.4 的 12 组 + 本应用自己的「提示词」）→ 页脚说明。
+ * Settings level 0 (spec §6.1), 按 v2 重排：当前模型卡 → 设备 / 扩展 / 关于 →
+ * 全部设置（13 个分组：spec §6.4 的 12 组 + 本应用自己的「提示词」）。
  *
  * 层级与取值来自 `06-v2-construction-reference.md` §2：屏水平 14、分组容器圆角 10
  * 且无描边无阴影、行 `padding:10px 12px`、标题 15/500、副行 12 灰、chevron 14、
@@ -68,7 +61,6 @@ fun SettingsHome(
     store: PiSettingsStore,
     contentPadding: PaddingValues,
     onOpenGroup: (String) -> Unit,
-    onOpenSearch: () -> Unit,
     /** `null` hides the row, which is what a preview or a test wants. */
     onOpenDeviceCapabilities: (() -> Unit)? = null,
     /**
@@ -153,29 +145,14 @@ fun SettingsHome(
     // 手绘 `PiTopBar` 不吃状态栏 inset，而这一屏只消费 `contentPadding` 的底边 ——
     // 顶边在这里补一次（见 `settingsPageTopInset`）。
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(
-            title = "设置",
-            actions = {
-                PiTopBarIcon(
-                    onClick = onOpenSearch,
-                    contentDescription = "搜索设置",
-                    icon = Icons.Filled.Search,
-                )
-            },
-        )
+        PiTopBar(title = "设置")
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
-            item {
-                SearchEntry(onOpenSearch)
-            }
             // 模型与供应商：首页最顶栏的第一扇门（用户拍板的位置）——取代原来那张
             // 「当前模型」卡（卡已按用户裁定删除：同一个东西两处显示，就是"乱"）。
             if (onOpenModels != null) {
-                item {
-                    PiSettingsSectionHeader("模型与供应商")
-                }
                 item {
                     PiSettingsCard {
                         PiEntryRow(
@@ -195,9 +172,6 @@ fun SettingsHome(
             // `DeviceCapabilityStore`.
             if (onOpenDeviceCapabilities != null) {
                 item {
-                    PiSettingsSectionHeader("设备")
-                }
-                item {
                     PiSettingsCard {
                         DeviceCapabilityEntryRow(
                             store = DeviceCapabilityStore.get(context),
@@ -214,9 +188,6 @@ fun SettingsHome(
             // this screen is the app's own, not a transcription of pi's.
             if (onOpenPackages != null) {
                 item {
-                    PiSettingsSectionHeader("扩展")
-                }
-                item {
                     PiSettingsCard {
                         PiPackagesEntryRow(onClick = onOpenPackages)
                     }
@@ -229,9 +200,6 @@ fun SettingsHome(
             // 「Pi 文件」是第三行，按同一条件成立：它既不是 pi 的设置键，也不是 pi 的功能，
             // 而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3 说它为什么在这里）。
             // 这一节现在**没有条件**：Pi 文件那一行永远可用，所以整节永远该在。
-            item {
-                PiSettingsSectionHeader("其他")
-            }
             item {
                 PiSettingsCard {
                     if (onOpenTerminal != null) {
@@ -246,9 +214,6 @@ fun SettingsHome(
             // 许可证原文与源码获取方式是**本应用**的义务。诊断报告则是运行时与诊断分组
             // 里那一行的第二个入口（引擎已经退出时，用户先翻的往往是「关于」）。
             if (onOpenLicenses != null || onOpenDiagnostics != null) {
-                item {
-                    PiSettingsSectionHeader("关于")
-                }
                 item {
                     PiSettingsCard {
                         if (onOpenLicenses != null) {
@@ -273,10 +238,6 @@ fun SettingsHome(
             // `PiSettingsCatalog.groups`），所以整块是一个
             // LazyColumn item，不拆成一个个 item。
             item {
-                PiSettingsSectionHeader(
-                    label = "全部设置",
-                    count = "${PiSettingsCatalog.settings.size} 项",
-                )
                 PiSettingsCard {
                     // 「模型与推理」这一组的入口**按用户裁定删除**：组里的行（选择与推理）
                     // 全都搬进了顶栏的「模型与供应商」一屏，首页不再有任何一条路进那个分组屏。
@@ -293,69 +254,6 @@ fun SettingsHome(
                     }
                 }
             }
-            item {
-                Text(
-                    "共 ${PiSettingsCatalog.settings.size} 项设置。搜索同时匹配标题、说明与字段名，" +
-                        "输入 reserveTokens 或 /compact 都能直达。",
-                    modifier = Modifier.padding(
-                        start = PiSettingsMetrics.pageHorizontal,
-                        end = PiSettingsMetrics.pageHorizontal,
-                        top = PiSettingsMetrics.footerTop,
-                        bottom = PiSettingsMetrics.groupGap,
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-/**
- * 搜索入口（v2：高 40、圆角 9、`surfaceContainerLow` 底、1px `borderMuted` 描边、
- * 内 `padding:0 12px`，图标 16，文字 14 灰，右侧项数 12 灰）。
- */
-@Composable
-private fun SearchEntry(onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.cardPadding,
-            )
-            .height(PiSettingsMetrics.searchFieldHeight)
-            .clickable(onClick = onClick),
-        shape = PiSettingsFieldShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(
-            PiSettingsMetrics.hairline,
-            MaterialTheme.colorScheme.outline,
-        ),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.Search,
-                contentDescription = null,
-                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                tint = PiTheme.palette.muted,
-            )
-            Spacer(Modifier.width(PiSettingsMetrics.searchIconGap))
-            Text(
-                "搜索设置",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                color = PiTheme.palette.muted,
-            )
-            Text(
-                "${PiSettingsCatalog.settings.size} 项",
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-            )
         }
     }
 }
@@ -412,7 +310,7 @@ private fun GroupEntry(
 }
 
 /**
- * 首页上的一行入口：前置图标 + 标题 + 副行 + 「打开」 + chevron
+ * 首页上的一行入口：前置图标 + 标题 + 副行 + chevron
  * （v2 `SettingsHome` 的 `Row`：`padding:10px 12px`、图标 16 灰、标题 15/500、
  * 副行 12 灰、尾部值 13、chevron 14）。
  *
@@ -459,11 +357,6 @@ private fun PiEntryRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            "打开",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
         Icon(
             Icons.Filled.KeyboardArrowRight,
             contentDescription = null,
