@@ -75,7 +75,6 @@ import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
-import app.pi.ui.settings.PiSettingsSectionHeader
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -308,9 +307,21 @@ internal fun PiFilesScreen(
             }
         }
 
-        PiSettingsSectionHeader(
-            label = piFilesBreadcrumb(root.label, relative),
-            count = entries?.let { "${it.size} 项" },
+        // 当前目录的路径行。它原来是一个节标题（`PiSettingsSectionHeader`，右边还挂着
+        // 「N 项」）；统一后的设置面不再有节标题、也不再有「N 项」—— 这是一条**你在哪**
+        // 的读数，不是分区名，所以按等宽路径画一行。
+        Text(
+            piFilesBreadcrumb(root.label, relative),
+            modifier = Modifier.padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.groupGap,
+                bottom = PiSettingsMetrics.groupHeaderGap,
+            ),
+            style = PiTheme.text.monoSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
 
         if (relative.isNotEmpty()) {

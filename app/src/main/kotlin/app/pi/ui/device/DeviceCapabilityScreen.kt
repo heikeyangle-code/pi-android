@@ -13,20 +13,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,8 +32,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.bridge.DeviceAccessibilityService
 import app.pi.bridge.DeviceCapability
@@ -49,9 +40,11 @@ import app.pi.bridge.DeviceSafStore
 import app.pi.bridge.DeviceShizuku
 import app.pi.ui.PiTopBar
 import app.pi.ui.rememberPiScreenVisible
-import app.pi.ui.settings.PiSettingsCardShape
+import app.pi.ui.settings.PiSettingsCard
+import app.pi.ui.settings.PiSettingsEntryRow
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsToggleRow
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
@@ -147,42 +140,57 @@ fun DeviceCapabilityScreen(
                         StatusDot("目录", grants.isNotEmpty()) { directoryPicker.launch(null) }
                     }
 
-                    Card {
-                        CapabilityRow(
+                    // 与设置面**同一张卡、同一套行**（`PiSettingsCard` + 布尔行）：
+                    // 标题 15/500、说明 12 灰一行、开关贴右，行间 1px hairline。
+                    // 缺权限时那句提示并进说明行（警示色），不再有第二行与行内按钮 ——
+                    // 去系统设置的入口就是上面那 4 个状态点。
+                    PiSettingsCard {
+                        PiSettingsToggleRow(
                             title = "屏幕",
-                            description = "看、点、输入、滑动、截图",
+                            supporting = if (screen.enabled && !screen.usable) {
+                                "无障碍未开启 · 点上方圆点去设置"
+                            } else {
+                                "看、点、输入、滑动、截图"
+                            },
+                            supportingTone = if (screen.enabled && !screen.usable) {
+                                PiTheme.palette.warning
+                            } else {
+                                null
+                            },
                             checked = screen.enabled,
                             onCheckedChange = {
                                 store.setEnabled(DeviceCapability.Accessibility, it)
                                 revision += 1
                             },
-                            hint = if (screen.enabled && !screen.usable) "无障碍未开启" else null,
-                            actionLabel = "去设置",
-                            onAction = openAccessibility,
                         )
-                        PiSettingsHairline(inset = 0.dp)
-                        CapabilityRow(
+                        PiSettingsHairline()
+                        PiSettingsToggleRow(
                             title = "系统与文件",
-                            description = "文件、剪贴板、通知、分享",
+                            supporting = "文件、剪贴板、通知、分享",
                             checked = basic.enabled,
                             onCheckedChange = {
                                 store.setEnabled(DeviceCapability.Basic, it)
                                 revision += 1
                             },
                         )
-                        PiSettingsHairline(inset = 0.dp)
-                        CapabilityRow(
+                        PiSettingsHairline()
+                        PiSettingsToggleRow(
                             title = "Shell",
-                            description = "命令行（危险）",
+                            supporting = if (shell.enabled && !shizuku.optBoolean("ready")) {
+                                "Shizuku 未就绪 · 点上方圆点去授权"
+                            } else {
+                                "命令行（危险）"
+                            },
+                            supportingTone = if (shell.enabled && !shizuku.optBoolean("ready")) {
+                                PiTheme.palette.warning
+                            } else {
+                                null
+                            },
                             checked = shell.enabled,
                             onCheckedChange = {
                                 store.setEnabled(DeviceCapability.Shell, it)
                                 revision += 1
                             },
-                            danger = true,
-                            hint = if (shell.enabled && !shizuku.optBoolean("ready")) "Shizuku 未就绪" else null,
-                            actionLabel = "去授权",
-                            onAction = requestShizuku,
                         )
                     }
                 }
@@ -198,33 +206,15 @@ fun DeviceCapabilityScreen(
 @Composable
 fun DeviceCapabilityEntryRow(store: DeviceCapabilityStore, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val states = store.states()
-    Row(
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick)
-            .padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal, vertical = PiSettingsMetrics.rowPaddingVertical),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-    ) {
-        Icon(Icons.Filled.Security, null, tint = PiTheme.palette.muted, modifier = Modifier.size(PiSettingsMetrics.searchIconSize))
-        Column(Modifier.weight(1f)) {
-            Text(
-                "设备能力",
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "${states.count { it.usable }}/${states.size} 组能力可用",
-                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Text("查看", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-        Icon(Icons.Filled.KeyboardArrowRight, null, modifier = Modifier.size(PiSettingsMetrics.chevronSize), tint = PiTheme.palette.muted)
-    }
+    // 首页入口行与统一行同一个构件：图标 + 标题 + 一行说明 + chevron，
+    // 没有「查看」这类文字尾巴。
+    PiSettingsEntryRow(
+        title = "设备能力",
+        supporting = "${states.count { it.usable }}/${states.size} 组能力可用",
+        onClick = onClick,
+        modifier = modifier,
+        leadingIcon = Icons.Filled.Security,
+    )
 }
 
 @Composable
@@ -243,46 +233,6 @@ private fun StatusDot(label: String, on: Boolean, onClick: () -> Unit) {
                 .clip(CircleShape)
                 .background(if (on) MaterialTheme.colorScheme.primary else PiTheme.palette.muted),
         )
-    }
-}
-
-@Composable
-private fun CapabilityRow(
-    title: String, description: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit,
-    danger: Boolean = false, hint: String? = null, actionLabel: String = "", onAction: () -> Unit = {},
-) {
-    Column(Modifier.padding(vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (danger) PiTheme.palette.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
-        }
-        if (hint != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(hint, style = PiTheme.text.meta, color = PiTheme.palette.warning)
-                TextButton(onClick = onAction) { Text(actionLabel) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Card(content: @Composable () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(
-            horizontal = PiSettingsMetrics.pageHorizontal,
-            vertical = PiSettingsMetrics.notePaddingVertical,
-        ),
-        shape = PiSettingsCardShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
-        Column(Modifier.padding(PiSettingsMetrics.cardPadding)) { content() }
     }
 }
 

@@ -1,54 +1,38 @@
 package app.pi.ui.settings
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.PiPackagesEntryRow
 import app.pi.ui.PiTopBar
 import app.pi.ui.device.DeviceCapabilityEntryRow
 import app.pi.ui.screens.PiFilesScreen
-import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiThinkingLevel
 
 /**
  * Settings level 0 (spec §6.1), 按 v2 重排：当前模型卡 → 设备 / 扩展 / 关于 →
  * 全部设置（13 个分组：spec §6.4 的 12 组 + 本应用自己的「提示词」）。
  *
- * 层级与取值来自 `06-v2-construction-reference.md` §2：屏水平 14、分组容器圆角 10
- * 且无描边无阴影、行 `padding:10px 12px`、标题 15/500、副行 12 灰、chevron 14、
- * 搜索框 40 高圆角 9。当前模型卡是 v2 里 accent 的合法用法之一：卡内左缘一条
- * 2px accent 条 + 模型 id 用 accent。
+ * 层级与取值来自 `06-v2-construction-reference.md` §2：屏水平 14、卡片圆角 10
+ * 且无描边无阴影、行 `14 横向 / 10 纵向`、标题 15/500、说明 12 灰**一行**、chevron 14。
+ * 首页没有标题、没有搜索框，也没有文字尾巴：每一行就是
+ * [PiSettingsEntryRow]（图标 + 标题 + 一行说明 + chevron），与「设备能力」页同一个构件。
  *
  * The screen owns no routes: every destination is the caller's, which is why it takes
  * callbacks rather than owning navigation. The one exception is a fallback — the
@@ -272,47 +256,18 @@ private fun GroupEntry(
     // 摘要从 store 读（`PiSettingsGroup.summary`），所以它是这一行唯一需要重读的东西：
     // 键里带 `freshness` 就是那个「有东西写过设置」的信号，见 [SettingsHome] 的 `freshness`。
     val summary = remember(store, group.id, freshness) { group.summary(store) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                group.title,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                summary,
-                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            Icons.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
-            tint = PiTheme.palette.muted,
-        )
-    }
+    PiSettingsEntryRow(
+        title = group.title,
+        supporting = summary,
+        onClick = onClick,
+    )
 }
 
 /**
- * 首页上的一行入口：前置图标 + 标题 + 副行 + chevron
- * （v2 `SettingsHome` 的 `Row`：`padding:10px 12px`、图标 16 灰、标题 15/500、
- * 副行 12 灰、尾部值 13、chevron 14）。
+ * 首页上的一行入口：前置图标 + 标题 + 一行说明 + chevron。
+ *
+ * 形状就是 [PiSettingsEntryRow]（行内 `14 / 10`、图标 16 灰、标题 15/500、说明 12 灰
+ * **一行**、chevron 14），与「设备能力」页的入口行逐像素相同；没有文字尾巴。
  *
  * 「其他」与「关于」两节里的四行形状完全一样，所以这里只写一次。
  */
@@ -323,47 +278,12 @@ private fun PiEntryRow(
     supporting: String,
     onClick: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = PiTheme.palette.muted,
-            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-        )
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                supporting,
-                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            Icons.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
-            tint = PiTheme.palette.muted,
-        )
-    }
+    PiSettingsEntryRow(
+        title = title,
+        supporting = supporting,
+        onClick = onClick,
+        leadingIcon = icon,
+    )
 }
 
 /**

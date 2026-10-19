@@ -106,8 +106,6 @@ data class PiSetting(
     val allowCustom: Boolean = false,
     val readOnly: Boolean = false,
     val dangerous: Boolean = false,
-    /** Slash commands and alternate spellings that should also find this row. */
-    val aliases: List<String> = emptyList(),
     /**
      * 文本行的编辑器用**多行**框（`PiTextEditorSheet`），单行框只给「一格值」。
      *
@@ -315,7 +313,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "本机模型",
-            aliases = listOf("model", "models", "provider", "模型", "厂商"),
         ),
         // The half of pi's `/llama` this row can actually do is the endpoint:
         // `models.json` plus a placeholder credential, which is what the form
@@ -334,7 +331,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "本机模型",
-            aliases = listOf("llama", "local"),
         ),
         PiSetting(
             key = "app.credentials.apiKey",
@@ -346,7 +342,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
-            aliases = listOf("auth", "login", "key"),
         ),
         PiSetting(
             key = "app.credentials.oauth",
@@ -375,7 +370,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
-            aliases = listOf("login", "auth", "oauth"),
         ),
         PiSetting(
             key = "defaultProvider",
@@ -387,7 +381,6 @@ object PiSettingsCatalog {
             effective = EffectiveKind.NewSession,
             options = providerOptions,
             allowCustom = true,
-            aliases = listOf("model", "provider"),
         ),
         PiSetting(
             key = "defaultModel",
@@ -398,7 +391,6 @@ object PiSettingsCatalog {
             section = "默认模型",
             effective = EffectiveKind.NewSession,
             allowCustom = true,
-            aliases = listOf("model"),
         ),
         PiSetting(
             key = "defaultThinkingLevel",
@@ -409,7 +401,6 @@ object PiSettingsCatalog {
             section = "默认模型",
             effective = EffectiveKind.NewSession,
             options = thinkingLevelOptions,
-            aliases = listOf("thinking"),
         ),
         PiSetting(
             key = "enabledModels",
@@ -426,7 +417,6 @@ object PiSettingsCatalog {
             effective = EffectiveKind.NewSession,
             presets = listOf("claude-*", "gpt-*", "gemini-*", "deepseek-*", "qwen-*"),
             emptyListLabel = "全部模型",
-            aliases = listOf("cycle", "model"),
         ),
         PiSetting(
             key = "modelThinkingLevels",
@@ -444,7 +434,6 @@ object PiSettingsCatalog {
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
             emptyListLabel = "无覆盖",
-            aliases = listOf("thinking", "model-thinking"),
         ),
         PiSetting(
             key = "thinkingBudgets",
@@ -460,7 +449,6 @@ object PiSettingsCatalog {
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
             emptyListLabel = "未设置",
-            aliases = listOf("thinking", "budget"),
         ),
         PiSetting(
             key = "hideThinkingBlock",
@@ -470,7 +458,6 @@ object PiSettingsCatalog {
             group = G_MODEL,
             section = "行为",
             defaultValue = bool(false),
-            aliases = listOf("thinking"),
         ),
         PiSetting(
             key = "cacheWarming",
@@ -494,7 +481,6 @@ object PiSettingsCatalog {
                 PiOption("streaming", "仅流式中（默认）"),
                 PiOption("idle", "含空闲时段"),
             ),
-            aliases = listOf("cache", "prompt cache"),
         ),
         PiSetting(
             key = "showCacheMissNotices",
@@ -504,7 +490,6 @@ object PiSettingsCatalog {
             group = G_MODEL,
             section = "行为",
             defaultValue = bool(false),
-            aliases = listOf("cache"),
         ),
         // ------------------------------------------------------------------
         // 2 系统提示词
@@ -557,7 +542,6 @@ object PiSettingsCatalog {
             // 标记，于是落进单行框，粘进去只剩第一行可见。
             multiline = true,
             effective = EffectiveKind.NewSession,
-            aliases = listOf("system", "prompt"),
         ),
         PiSetting(
             key = "app.prompts.append",
@@ -571,7 +555,6 @@ object PiSettingsCatalog {
             // 同上一行：追加的通常是几段文字，不是一条命令。
             multiline = true,
             effective = EffectiveKind.NewSession,
-            aliases = listOf("system", "prompt", "append"),
         ),
         // 只读读数：pi 会读的那几份提示词文件（**两份名字 × 两个层级**，不是只有 `SYSTEM.md`）。
         // 值由 `PiSettingsStack` 在 IO 上算好、经 `valueOverrides` 传下来（与「已发现的主题」
@@ -599,7 +582,6 @@ object PiSettingsCatalog {
             section = "当前生效",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("system", "prompt", "source", "来源", "文件", "SYSTEM.md"),
         ),
         // ------------------------------------------------------------------
         // 3 消息与网络
@@ -614,7 +596,6 @@ object PiSettingsCatalog {
             section = "送达",
             defaultValue = str("one-at-a-time"),
             options = deliveryOptions,
-            aliases = listOf("引导", "steer", "queue"),
         ),
         PiSetting(
             key = "followUpMode",
@@ -625,7 +606,6 @@ object PiSettingsCatalog {
             section = "送达",
             defaultValue = str("one-at-a-time"),
             options = deliveryOptions,
-            aliases = listOf("followup", "queue"),
         ),
         PiSetting(
             key = "transport",
@@ -637,7 +617,6 @@ object PiSettingsCatalog {
             defaultValue = str("auto"),
             effective = EffectiveKind.NewSession,
             options = transportOptions,
-            aliases = listOf("websocket", "sse"),
         ),
         PiSetting(
             key = "httpIdleTimeoutMs",
@@ -652,7 +631,6 @@ object PiSettingsCatalog {
             max = 3600000,
             step = 1000,
             unit = "ms",
-            aliases = listOf("timeout"),
         ),
         PiSetting(
             key = "websocketConnectTimeoutMs",
@@ -667,7 +645,6 @@ object PiSettingsCatalog {
             max = 300000,
             step = 1000,
             unit = "ms",
-            aliases = listOf("websocket", "timeout"),
         ),
         PiSetting(
             key = "httpProxy",
@@ -678,7 +655,6 @@ object PiSettingsCatalog {
             section = "网络",
             defaultValue = str(""),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("proxy"),
         ),
         PiSetting(
             key = "images.autoResize",
@@ -689,7 +665,6 @@ object PiSettingsCatalog {
             section = "图片",
             effective = EffectiveKind.NewSession,
             defaultValue = bool(true),
-            aliases = listOf("images", "resize"),
         ),
         PiSetting(
             key = "images.blockImages",
@@ -700,7 +675,6 @@ object PiSettingsCatalog {
             section = "图片",
             effective = EffectiveKind.NewSession,
             defaultValue = bool(false),
-            aliases = listOf("images", "block"),
         ),
         // ------------------------------------------------------------------
         // 4 上下文与压缩
@@ -714,7 +688,6 @@ object PiSettingsCatalog {
             group = G_COMPACTION,
             section = "压缩",
             defaultValue = bool(true),
-            aliases = listOf("compact", "autocompact"),
         ),
         PiSetting(
             key = "compaction.reserveTokens",
@@ -729,7 +702,6 @@ object PiSettingsCatalog {
             max = 1000000,
             step = 1024,
             unit = "token",
-            aliases = listOf("reserveTokens", "compact"),
         ),
         PiSetting(
             key = "compaction.keepRecentTokens",
@@ -744,7 +716,6 @@ object PiSettingsCatalog {
             max = 1000000,
             step = 1024,
             unit = "token",
-            aliases = listOf("keepRecentTokens", "compact"),
         ),
         PiSetting(
             key = "compaction.modelOverrides",
@@ -756,7 +727,6 @@ object PiSettingsCatalog {
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
             emptyListLabel = "无覆盖",
-            aliases = listOf("override", "compact"),
         ),
         PiSetting(
             key = "branchSummary.reserveTokens",
@@ -771,7 +741,6 @@ object PiSettingsCatalog {
             max = 1000000,
             step = 1024,
             unit = "token",
-            aliases = listOf("branch", "summary"),
         ),
         // Implemented: `PiRoot` calls `session.compact()`, i.e. the RPC command
         // `compact` (`rpc-types.ts:44`). The command also takes
@@ -785,7 +754,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_COMPACTION,
             section = "动作",
-            aliases = listOf("compact"),
         ),
         // ------------------------------------------------------------------
         // 5 重试
@@ -799,7 +767,6 @@ object PiSettingsCatalog {
             group = G_RETRY,
             section = "重试",
             defaultValue = bool(true),
-            aliases = listOf("retry", "auto-retry"),
         ),
         PiSetting(
             key = "retry.maxRetries",
@@ -814,7 +781,6 @@ object PiSettingsCatalog {
             max = 20,
             step = 1,
             unit = "次",
-            aliases = listOf("retry"),
         ),
         PiSetting(
             key = "retry.baseDelayMs",
@@ -829,7 +795,6 @@ object PiSettingsCatalog {
             max = 60000,
             step = 100,
             unit = "ms",
-            aliases = listOf("retry", "backoff"),
         ),
         PiSetting(
             key = "retry.maxAgentDelayMs",
@@ -844,7 +809,6 @@ object PiSettingsCatalog {
             max = 600000,
             step = 1000,
             unit = "ms",
-            aliases = listOf("retry", "backoff"),
         ),
         PiSetting(
             key = "retry.provider.timeoutMs",
@@ -858,7 +822,6 @@ object PiSettingsCatalog {
             max = 3600000,
             step = 1000,
             unit = "ms",
-            aliases = listOf("retry", "timeout", "provider"),
         ),
         PiSetting(
             key = "retry.provider.maxRetries",
@@ -873,7 +836,6 @@ object PiSettingsCatalog {
             max = 20,
             step = 1,
             unit = "次",
-            aliases = listOf("retry", "provider"),
         ),
         PiSetting(
             key = "retry.provider.maxRetryDelayMs",
@@ -888,7 +850,6 @@ object PiSettingsCatalog {
             max = 3600000,
             step = 1000,
             unit = "ms",
-            aliases = listOf("retry", "provider"),
         ),
         // ------------------------------------------------------------------
         // 6 工具
@@ -919,7 +880,6 @@ object PiSettingsCatalog {
             presets = optionalTools,
             presetBaseline = PiQuickAdd.builtinToolDefaults,
             emptyListLabel = "默认 read/bash/edit/write",
-            aliases = listOf("tools", "builtin"),
         ),
         PiSetting(
             key = "codemode.mode",
@@ -936,7 +896,6 @@ object PiSettingsCatalog {
                 PiOption("on", "on（默认）"),
                 PiOption("only", "only"),
             ),
-            aliases = listOf("codemode", "mcp", "tool search"),
         ),
         PiSetting(
             key = "codemode.inlineBudget",
@@ -952,7 +911,6 @@ object PiSettingsCatalog {
             max = 200000,
             step = 100,
             unit = "token",
-            aliases = listOf("codemode", "budget"),
         ),
         // `fullscreenWheelScrollLines`（0.99.0 新键）**故意不在这里**：它只影响原版 pi TUI 在
         // 全屏模式下的鼠标滚轮行数，本应用不发它、界面上也没有鼠标滚轮 —— 与
@@ -978,7 +936,6 @@ object PiSettingsCatalog {
             group = G_TOOLS,
             section = "工具",
             defaultValue = bool(false),
-            aliases = listOf("tools", "expand"),
         ),
         // ------------------------------------------------------------------
         // 7 会话
@@ -1028,7 +985,6 @@ object PiSettingsCatalog {
             section = "存储",
             defaultValue = bool(true),
             effective = EffectiveKind.RestartApp,
-            aliases = listOf("continue", "resume", "last"),
         ),
         // ------------------------------------------------------------------
         // 8 扩展与资源
@@ -1056,7 +1012,6 @@ object PiSettingsCatalog {
             section = "实际发现",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("extensions", "扩展", "发现"),
         ),
         PiSetting(
             key = "app.resources.discovered.skills",
@@ -1067,7 +1022,6 @@ object PiSettingsCatalog {
             section = "实际发现",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("skills", "技能", "发现"),
         ),
         PiSetting(
             key = "app.resources.discovered.prompts",
@@ -1078,7 +1032,6 @@ object PiSettingsCatalog {
             section = "实际发现",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("prompts", "提示模板", "发现"),
         ),
         PiSetting(
             key = "app.resources.discovered.themes",
@@ -1089,7 +1042,6 @@ object PiSettingsCatalog {
             section = "实际发现",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("themes", "主题", "发现"),
         ),
         PiSetting(
             key = "app.extensions.args",
@@ -1108,7 +1060,6 @@ object PiSettingsCatalog {
             section = "技能命令与扩展参数",
             defaultValue = str(""),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("extension flags", "cli flags", "args", "参数", "启动参数"),
         ),
         PiSetting(
             key = "enableSkillCommands",
@@ -1126,7 +1077,6 @@ object PiSettingsCatalog {
             // (`PiSessionViewModel.onSettingWritten` → `refreshCommands`) — so the
             // row takes effect at once, which is also what pi's TUI does.
             effective = EffectiveKind.Immediate,
-            aliases = listOf("skills", "commands"),
         ),
         // Read-only on purpose, and an entry point rather than an editor. The
         // array is written by the package manager: `pi install` records a source
@@ -1148,7 +1098,6 @@ object PiSettingsCatalog {
             defaultValue = list(),
             effective = EffectiveKind.RestartEngine,
             readOnly = true,
-            aliases = listOf("install", "packages", "npm", "git"),
         ),
         // 出口：这一节报的是"发现了什么"，而看/改它们的地方是「Pi 文件」屏（`PiFilesScreen`，
         // 本栈已有的层级 `piFiles`，不新造导航）。它同时替掉被删掉的那四条手填路径：想加资源
@@ -1160,7 +1109,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_RESOURCES,
             section = "动作",
-            aliases = listOf("files", "pi files", "资源", "目录", "skill", "theme"),
         ),
         // ------------------------------------------------------------------
         // 9 外观
@@ -1199,7 +1147,6 @@ object PiSettingsCatalog {
             // 承诺的对象，也不是"重载"能解决的 —— 那条路要重开终端。alias 里的 `reload` 留着：
             // 它是 pi 自己的词（pi 的 TUI 用 `/reload` 应用主题），是搜索用的，不是时间承诺。
             allowCustom = true,
-            aliases = listOf("appearance", "dark", "light", "reload"),
         ),
         // `app.appearance.dynamicColor` was deleted here. Android dynamic colour
         // cannot coexist with the rule this app runs on — every colour comes from
@@ -1230,7 +1177,6 @@ object PiSettingsCatalog {
                 "comfortable" to "舒适",
                 "loose" to "宽松",
             ),
-            aliases = listOf("typography", "排版", "density", "spacing"),
         ),
         PiSetting(
             key = "app.appearance.lineHeight",
@@ -1245,7 +1191,6 @@ object PiSettingsCatalog {
                 "normal" to "标准",
                 "loose" to "松",
             ),
-            aliases = listOf("line height", "leading", "行距"),
         ),
         PiSetting(
             key = "app.appearance.fontSize",
@@ -1261,7 +1206,6 @@ object PiSettingsCatalog {
                 "large" to "大",
                 "xlarge" to "更大",
             ),
-            aliases = listOf("font", "size", "字号"),
         ),
         PiSetting(
             key = "app.appearance.showTimestamps",
@@ -1273,7 +1217,6 @@ object PiSettingsCatalog {
             // 默认从 true 改 false（用户裁定）。这里、`UiPrefs.showTimestamps` 和
             // `readPrefs` 的兜底是**同一件事的三处写法**，改一处就是三处不一致。
             defaultValue = bool(false),
-            aliases = listOf("timestamp", "time"),
         ),
         PiSetting(
             key = "app.appearance.thinkingCollapsedByDefault",
@@ -1283,7 +1226,6 @@ object PiSettingsCatalog {
             group = G_APPEARANCE,
             section = "外观",
             defaultValue = bool(true),
-            aliases = listOf("thinking", "collapse"),
         ),
         // ------------------------------------------------------------------
         // 10 运行时与诊断
@@ -1306,7 +1248,6 @@ object PiSettingsCatalog {
             section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("version", "update"),
         ),
         // `app.runtime.checkUpdate` and `app.runtime.rollback` used to sit here and
         // were removed on purpose. pi's own check is a network call the app turns
@@ -1329,7 +1270,6 @@ object PiSettingsCatalog {
             section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("node", "version"),
         ),
         PiSetting(
             key = "app.runtime.rootfsUsage",
@@ -1344,7 +1284,6 @@ object PiSettingsCatalog {
             section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("storage", "disk"),
         ),
         PiSetting(
             key = "app.runtime.engineStartup",
@@ -1355,7 +1294,6 @@ object PiSettingsCatalog {
             section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("startup", "engine"),
         ),
         PiSetting(
             key = "app.runtime.wakeLock",
@@ -1370,7 +1308,6 @@ object PiSettingsCatalog {
             section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("wakelock"),
         ),
 
         // ------------------------------------------------------------------
@@ -1404,7 +1341,6 @@ object PiSettingsCatalog {
             section = "运行时选择",
             defaultValue = bool(false),
             effective = EffectiveKind.AutoRestartEngine,
-            aliases = listOf("proroot", "proot", "runtime", "engine", "加速", "运行时"),
         ),
         PiSetting(
             key = "app.runtime.prorootStatus",
@@ -1421,7 +1357,6 @@ object PiSettingsCatalog {
             section = "运行时选择",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("proroot", "proot", "runtime", "状态"),
         ),
 
         // ------------------------------------------------------------------
@@ -1461,7 +1396,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("offline", "network"),
         ),
         PiSetting(
             key = "app.runtime.cacheRetention",
@@ -1476,7 +1410,6 @@ object PiSettingsCatalog {
                 "short" to "默认",
                 "long" to "长保留",
             ),
-            aliases = listOf("cache", "retention"),
         ),
         PiSetting(
             key = "app.runtime.noContextFiles",
@@ -1487,7 +1420,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("context", "agents"),
         ),
         // The four discovery suppressions. They are here (rather than beside the
         // 扩展与资源 rows they affect) because what they change is *how the engine is
@@ -1502,7 +1434,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("extensions", "discover", "扩展"),
         ),
         PiSetting(
             key = "app.runtime.noSkills",
@@ -1513,7 +1444,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("skills", "技能"),
         ),
         PiSetting(
             key = "app.runtime.noPromptTemplates",
@@ -1524,7 +1454,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("prompts", "templates", "模板"),
         ),
         PiSetting(
             key = "app.runtime.noThemes",
@@ -1535,7 +1464,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-            aliases = listOf("themes", "主题"),
         ),
         // `app.runtime.cleanNpmCache` was removed rather than wired: pi has no
         // cache-clearing command (nothing in `cli.ts` or `package-manager-cli.ts`
@@ -1553,7 +1481,6 @@ object PiSettingsCatalog {
             section = "进程",
             defaultValue = bool(true),
             effective = EffectiveKind.RestartApp,
-            aliases = listOf("keepalive", "wakelock", "background"),
         ),
         PiSetting(
             key = "app.runtime.restartEngine",
@@ -1563,7 +1490,6 @@ object PiSettingsCatalog {
             group = G_RUNTIME,
             section = "动作",
             dangerous = true,
-            aliases = listOf("restart", "reload"),
         ),
         // 为线上事故加的入口：界面只显示 "rpc: engine exited with code 1"，而用户没有
         // ADB、看不到 logcat，`PiEngineSession` 捕获的 stderr 又只留在已经死掉的对象里。
@@ -1579,7 +1505,6 @@ object PiSettingsCatalog {
             kind = PiRowKind.Action,
             group = G_RUNTIME,
             section = "动作",
-            aliases = listOf("diagnostics", "report", "log", "stderr", "crash", "日志", "崩溃"),
         ),
         // Implemented, and each clause of the description is one RPC command:
         // "中止当前轮次" + "清空队列" are `clear_queue` and `abort`
@@ -1595,7 +1520,6 @@ object PiSettingsCatalog {
             group = G_RUNTIME,
             section = "动作",
             dangerous = true,
-            aliases = listOf("stop", "abort", "kill"),
         ),
         // ------------------------------------------------------------------
         // 11 安全与隐私
@@ -1611,7 +1535,6 @@ object PiSettingsCatalog {
             defaultValue = str("ask"),
             effective = EffectiveKind.RestartEngine,
             options = trustOptions,
-            aliases = listOf("trust", "approve"),
         ),
 
         PiSetting(
@@ -1623,7 +1546,6 @@ object PiSettingsCatalog {
             section = "信任与隐私",
             effective = EffectiveKind.NewSession,
             defaultValue = bool(true),
-            aliases = listOf("telemetry", "privacy"),
         ),
         // `app.about.changelog` was the other signpost to pi's own TUI: the
         // changelog is behind the built-in `/changelog` (`interactive-mode.ts:3022-3025`)

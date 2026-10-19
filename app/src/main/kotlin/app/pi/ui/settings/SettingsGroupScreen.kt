@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.EffectiveKind
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,10 +26,11 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * Settings level 1: one group, rendered straight from the registry.
  *
- * Rows are grouped by their `section`, so a long group such as 运行时与诊断 keeps
- * "basic vs advanced" legible. The screen owns its editor state, so it is usable
- * on its own, and it accepts a [highlightKey] so a global-search hit can jump to
- * a row and tint it (spec §6.3).
+ * Rows are still **grouped** by their `section`, but the group is now only a card's
+ * boundary: there is no section header and no「N 项」on it — 设置面与「设备能力」页同一套
+ * （一张接一张的卡、卡内不分组）。The screen owns its editor state, so it is usable
+ * on its own, and it accepts a [highlightKey] so a jump can scroll to a row and
+ * tint it (spec §6.3).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,16 +170,15 @@ fun SettingsGroupScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(
+                top = PiSettingsMetrics.groupGap,
+                bottom = contentPadding.calculateBottomPadding(),
+            ),
         ) {
             items(sections) { section ->
-                PiSettingsSectionHeader(
-                    label = section.label,
-                    count = "${section.settings.size} 项",
-                )
-                // v2 的分组容器：圆角 10、surfaceContainerLow 底、组内 1px inset
-                // hairline，无描边无阴影（06 §2「分组容器」）。
-                PiSettingsCard {
+                // 一张接一张的卡，**没有节标题、没有「N 项」、卡内不分组**：
+                // 与「设备能力」页同一套（用户裁定的统一口径）。卡间留 `groupGap`。
+                PiSettingsCard(modifier = Modifier.padding(bottom = PiSettingsMetrics.groupGap)) {
                     section.settings.forEachIndexed { index, setting ->
                         if (index > 0) PiSettingsHairline()
                         SettingSlot(
@@ -304,7 +302,6 @@ private fun SettingSlot(
             setting = setting,
             valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
             checked = setting.boolIn(store, false),
-            current = isCurrentValue(setting, store),
             highlighted = highlighted,
             onToggle = { next -> onToggle(setting, next) },
             onOpen = { onOpen(setting) },
@@ -328,8 +325,13 @@ private fun SettingSlot(
     }
 }
 
-/** 一个分区（v2 的 `Section`）：分区头 + 一组行，是 LazyColumn 的一个 item。 */
-private class GroupSection(val label: String, val settings: List<PiSetting>)
+/**
+ * 一屏里的一组行，是 LazyColumn 的一个 item（也就是一张卡）。
+ *
+ * 分组只决定**哪些行躺在一张卡里、以什么次序**；原来那个 `label` 字段（节标题）
+ * 已经删掉 —— 统一后的设置面不再有节标题，也不再显示「N 项」。
+ */
+private class GroupSection(val settings: List<PiSetting>)
 
 private fun buildGroupSections(groupId: String): List<GroupSection> {
     val settings = PiSettingsCatalog.settingsIn(groupId)
@@ -339,25 +341,9 @@ private fun buildGroupSections(groupId: String): List<GroupSection> {
         // 否则搜索会点进一个不存在的行。
         .filterNot { it.key in MODEL_SELECTION_KEYS }
     return PiSettingsCatalog.sectionsIn(groupId).mapNotNull { section ->
-        val rows = settings.filter { it.section == section }
-        // 过滤后空掉的段连同段头一起去掉：一个没有行的段头就是新的「点了没反应」。
-        if (rows.isEmpty()) null else GroupSection(section, rows)
+        val rows = settings.filter { setting -> setting.section == section }
+        // 过滤后空掉的一段整段去掉：一张没有行的卡就是一块空白。
+        if (rows.isEmpty()) null else GroupSection(rows)
     }
 }
 
-/**
- * 这一行是不是「当前生效值」（v2 数据里的 `cur`，画左缘 2px accent 条）。
- *
- * v2 的两处 `cur` 是「默认模型」与「主题」，都是 Value 行，且都是用户自己选过的
- * 那一个值；注册表里没有 `cur` 字段，可用的事实是「这个键在 store 里有显式值」
- * （`isExplicit` = `store.read(key) != null`），也就是它不再等于 pi 的内置默认。
- * 因此判定 = 行型是 Value 且值被显式写过。Switch / Action 行不参与 —— v2 也没给
- * 它们画条。
- *
- * 为什么**不**限制成「每组只画一条」：显式写过的每一行都确实在生效，把其中几条
- * 压掉是为了视觉整齐而撒谎；注册表里也没有 `cur` 这类字段可以抄，加一个宿主传入的
- * `currentKeys` 等于为一个纯视觉的约束新增参数。所以一个分组下出现多条 accent 条
- * 是允许的、也是诚实的。
- */
-private fun isCurrentValue(setting: PiSetting, store: PiSettingsStore): Boolean =
-    setting.kind == PiRowKind.Value && setting.isExplicit(store)

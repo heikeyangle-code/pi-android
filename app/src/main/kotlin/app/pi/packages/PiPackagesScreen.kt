@@ -42,7 +42,6 @@ import app.pi.ui.settings.PiSettingsDialog
 import app.pi.ui.settings.PiSettingsListExpander
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
-import app.pi.ui.settings.PiSettingsSectionHeader
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -238,19 +237,16 @@ fun PiPackagesScreen(
     // 阈值也共用同一个数字（`PiSettingsCollapseAbove`）。
     var extensionsExpanded by remember { mutableStateOf(false) }
     val expandedKinds = remember { mutableStateMapOf<PiResourceDiscovery.Kind, Boolean>() }
-    // v2 的页面节奏（06 §2）：卡片自带左右 14px 页边（`PiSettingsCard`），分区头自带
-    // `marginTop:18px / margin-bottom:7px`，所以整列不再要水平内边距，也不要统一的
-    // 10px 行距 —— 那会把分区的层级压平。整页第一块用 14px 顶距代替 v2 的页首留白。
+    // v2 的页面节奏（06 §2）：卡片自带左右 14px 页边（`PiSettingsCard`），卡与卡之间留
+    // `groupGap`。**没有分区头**：统一后的设置面只有一张接一张的卡，原来每个分区头上
+    // 那句标题与「N 个 / N 项」都删掉了（与「设备能力」页同一套）。
     LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
             .background(palette.pageBg),
     ) {
         trust?.let { panel ->
-            item {
-                PiSettingsSectionHeader("项目信任")
-                TrustCard(panel, state.busy, onOpenTrustPrompt)
-            }
+            item { TrustCard(panel, state.busy, onOpenTrustPrompt) }
         }
         state.trustInvalid?.let { message ->
             item { InvalidTrustCard(message, state.busy, onTrustRepair) }
@@ -262,13 +258,9 @@ fun PiPackagesScreen(
         // （都是 pi 会加载的扩展），差别在**每一行的来源徽标**上（`App 自带` / `全局`），不在
         // 标题上。原来它们是两张卡、两个标题，其中一个标题写着「其他扩展（不是随 App 安装的）」
         // —— 标题本身就在说这些是次要的东西，而它们每一个都是 pi 会加载的扩展。见
-        // `PackageStrings.EXTENSIONS_TITLE` 上面那段。
+        // `PackageStrings` 里 built in vs installed 那一段。
         item(key = "extensions") {
-            val count = state.builtins.size + state.discovered.size
-            PiSettingsSectionHeader(
-                label = PackageStrings.EXTENSIONS_TITLE,
-                count = "$count 个",
-            )
+            // 节标题与「N 个」已删（统一口径：卡片直接堆叠，卡间 groupGap）。
             ExtensionsCard(
                 builtins = state.builtins,
                 discovered = state.discovered,
@@ -291,10 +283,6 @@ fun PiPackagesScreen(
         PiResourceDiscovery.Kind.entries.forEach { kind ->
             val rows = state.resources.filter { it.kind == kind }
             item(key = "resources:${kind.name}") {
-                PiSettingsSectionHeader(
-                    label = PackageStrings.resourceKind(kind),
-                    count = "${rows.size} 个",
-                )
                 ResourceKindCard(
                     kind = kind,
                     rows = rows,
@@ -305,10 +293,6 @@ fun PiPackagesScreen(
         }
 
         item {
-            PiSettingsSectionHeader(
-                label = PackageStrings.LIST_SECTION_TITLE,
-                count = "${state.entries.size} 项",
-            )
             if (state.projectPackagesHidden) {
                 PiInfoNote(PackageStrings.PROJECT_PACKAGES_HIDDEN, tone = palette.warning)
             }
@@ -343,7 +327,7 @@ fun PiPackagesScreen(
                 )
             } else {
                 // v2 的分组容器：一张圆角 10 的卡，包与包之间 1px inset hairline。
-                PiSettingsCard {
+                PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
                     state.entries.forEachIndexed { index, entry ->
                         if (index > 0) PiSettingsHairline()
                         PackageRow(entry, state.busy, onRemove, onUpdate, onFilterAdd, onFilterRemove)
@@ -356,13 +340,7 @@ fun PiPackagesScreen(
         // extensions / skills / prompts / themes 不在任何 RPC 载荷里，所以这一区是
         // 本应用自己扫安装目录的结果 —— 标题和说明都写明这一点（见 PackageStrings）。
         if (state.packageScans.isNotEmpty()) {
-            item {
-                PiSettingsSectionHeader(
-                    label = PackageStrings.PACKAGE_RESOURCES_TITLE,
-                    count = "${state.packageScans.size} 个包",
-                )
-                PiInfoNote(PackageStrings.PACKAGE_RESOURCES_NOTE)
-            }
+            item { PiInfoNote(PackageStrings.PACKAGE_RESOURCES_NOTE) }
             state.packageScans.forEach { scan ->
                 item(key = "pkgscan:${scan.label}") { PackageResourcesCard(scan) }
             }
@@ -416,7 +394,7 @@ private fun ExtensionsCard(
     } else {
         rows.take(PiSettingsCollapseAbove)
     }
-    PiSettingsCard {
+    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
         if (rows.isEmpty()) {
             Text(
                 PackageStrings.EXTENSIONS_EMPTY,
@@ -481,7 +459,7 @@ private fun ResourceKindCard(
     } else {
         rows.take(PiSettingsCollapseAbove)
     }
-    PiSettingsCard {
+    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
         if (rows.isEmpty()) {
             Text(
                 PackageStrings.resourceEmpty(kind),
@@ -561,7 +539,7 @@ private fun ResourceRowView(found: PiResourceDiscovery.Found) {
 @Composable
 private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
     val palette = PiTheme.palette
-    PiSettingsCard {
+    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -772,9 +750,9 @@ private fun OriginBadgeView(badge: PackageStrings.OriginBadge) {
     WsBadge(text = badge.text, mono = badge.mono, tone = StateTone.Muted)
 }
 
-// 列表区的标题由页面的分区头承担（`PiSettingsSectionHeader`，v2 的 Section）：
 // 这一区是 `pi install` 写进 `settings.json` 的 `packages`，也就是 `pi list` 报告的
-// 全部内容（`package-manager-cli.ts:970-1002`）。原来的卡内标题与它重复，已删。
+// 全部内容（`package-manager-cli.ts:970-1002`）。卡内标题与它重复，已删；页面的节标题
+// （`PiSettingsSectionHeader`）也随统一口径一起删了 —— 现在它就是一张卡。
 
 // ------------------------------------------------------------------ trust card
 
@@ -802,7 +780,7 @@ private fun TrustCard(
         false -> "⊘"
         null -> "◌"
     }
-    PiSettingsCard {
+    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
         Column(
             Modifier
                 .fillMaxWidth()

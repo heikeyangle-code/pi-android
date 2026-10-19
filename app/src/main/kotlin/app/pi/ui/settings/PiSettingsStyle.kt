@@ -27,7 +27,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.ui.components.EffectiveKind
@@ -37,12 +36,14 @@ import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.theme.PiShapes
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * The settings surfaces' v2 geometry and the three components the settings
- * screens share (section header, badge, switch).
+ * The settings surfaces' v2 geometry and the components the settings screens
+ * share (card, badge, switch, dialog).
+ *
+ * 分组标题（`PiSettingsSectionHeader`）已删：设置面现在只有**一张接一张的卡**，
+ * 卡里也不分组 —— 与「设备能力」页同一套（没有节标题、没有「N 项」、没有文字尾巴）。
  *
  * ## Why the numbers live here instead of `PiSpacing` / `PiShapes`
  *
@@ -62,9 +63,15 @@ internal object PiSettingsMetrics {
     /** `06 §2`「屏水平 14px」：设置页所有横向留白。 */
     val pageHorizontal: Dp = 14.dp
 
-    /** `06 §2`「行（Row）：`padding:10px 12px`」。 */
+    /**
+     * 行内边距，**全设置面统一** `14 横向 / 10 纵向`（「设备能力」页那一套）。
+     *
+     * `06 §2` 原稿写的是 `padding:10px 12px`，本次按设备能力页的实际取值收到 14：
+     * 卡外页边也是 14，横向对齐之后文字离屏边 28，且与卡内 hairline 的 14 缩进
+     * （[dividerInset]）落在同一条竖线上。
+     */
     val rowPaddingVertical: Dp = 10.dp
-    val rowPaddingHorizontal: Dp = 12.dp
+    val rowPaddingHorizontal: Dp = 14.dp
 
     /** `06 §2`「副行 12 灰、mt 3」：标题行到副行之间。 */
     val supportingGap: Dp = 3.dp
@@ -212,65 +219,6 @@ internal val PiSettingsSheetShape = RoundedCornerShape(
 )
 
 /**
- * `06 §2`「分组头 `padding:0 14px; margin-bottom:7px`」，标签 12/500 正文色，
- * 右侧可选计数（v2 的 `Section` 组件）。
- *
- * 不复用 `ui/components/PiCommon.kt` 的 `PiSectionHeader`：那个还服务对话页的
- * sheet 与会话列表，改它会牵动本批范围外的屏，而 v2 对设置页给的是另一套取值。
- *
- * 曾经还有一个 `aside`（右侧那句说明），唯一的调用方是分组页页尾固定的危险行 ——
- * 那段逻辑已删（「紧急停止」只在它自己那一组里出现一次），于是这个参数也删掉了，
- * 不留一个没有任何调用方的形参。
- */
-@Composable
-internal fun PiSettingsSectionHeader(
-    label: String,
-    count: String? = null,
-    /**
-     * 折叠段的头（这一屏的「推理」）：整行可点，右侧显示 [trailing]。
-     * null = 普通节标题，**几何与以前逐像素相同**（`clickable` 只加在需要的那一处）。
-     */
-    onClick: (() -> Unit)? = null,
-    /** 右侧那格可点提示（「展开 / 收起」）；只有 [onClick] 非空时才有意义。 */
-    trailing: String? = null,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.groupGap,
-                bottom = PiSettingsMetrics.groupHeaderGap,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
-    ) {
-        Text(
-            label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        if (count != null) {
-            Text(
-                count,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        if (trailing != null) {
-            Text(
-                trailing,
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
-}
-
-/**
  * `06 §2`「组内 inset hairline（`borderMuted` 55%），无描边无阴影」的 1px 线。
  *
  * `outlineVariant` 就是 `borderMuted.copy(alpha = 0.55f)`（`PiPalette.colorScheme()`），
@@ -295,7 +243,7 @@ internal fun PiSettingsHairline(inset: Dp = PiSettingsMetrics.dividerInset) {
  *
  * 字色与字号照 v2：`t12` + `--accent`（这里就是 `text.meta` + `primary`，与
  * `ModelProviderScreen` 原来那条逐字相同，不新增任何颜色）；按压面是整行加
- * `notePaddingVertical`。**水平位置由调用方给**：本页的卡里行自带 `0 12px` 内边距，
+ * `notePaddingVertical`。**水平位置由调用方给**：本页的卡里行自带 `14` 横向内边距，
  * 而模型屏的厂商卡外层已经缩进 14，两种落点只能由卡自己决定。
  */
 @Composable
@@ -316,9 +264,12 @@ internal fun PiSettingsListExpander(
 }
 
 /**
- * `06 §2`「分组容器」：圆角 10、`surfaceContainerLow` 底、无描边，左右各留
- * 14px 页边（v2 的 `Card` 是 `margin:0 14px`）。卡内的行自带 `10px 12px`
- * 内边距，所以文本离屏边 26px。
+ * 设置面唯一的一种卡：圆角 10、`surfaceContainerLow` 底、无描边，左右各留 14px
+ * 页边（v2 的 `Card` 是 `margin:0 14px`）。
+ *
+ * **卡内不加任何 padding**：行自己带 `14 横向 / 10 纵向`，所以文本离屏边 28px，
+ * 卡内第一行的上沿与最后一行下沿不需要卡再补一层。「设备能力」页的那张卡与
+ * 设置分组页的卡是**同一个**构件，视觉不再分叉。
  */
 @Composable
 internal fun PiSettingsCard(
@@ -505,39 +456,6 @@ internal fun PiSettingsSwitch(
                     if (checked) MaterialTheme.colorScheme.surface else PiTheme.palette.muted,
                 ),
         )
-    }
-}
-
-/**
- * 开关行右侧的三重编码（`06 §4`）：符号 + 字 + 控件，颜色只是第三层。
- * 复用 M3 `Switch` 的旧调用点不受影响；这里给设置行用。
- */
-@Composable
-internal fun PiSettingsSwitchRowTrailing(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
-        ) {
-            Text(
-                if (checked) "✓" else "○",
-                style = PiTheme.text.monoSmall,
-                color = if (checked) PiTheme.palette.success else PiTheme.palette.muted,
-            )
-            Text(
-                if (checked) "开" else "关",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        PiSettingsSwitch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

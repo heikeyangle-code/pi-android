@@ -109,14 +109,12 @@ object PackageStrings {
     // KDoc and in the ledgers, **not** on screen: the file-level note above forbids doc
     // paths and design rationale in strings.
     //
-    // **That distinction is a per-row origin badge now, not a section title.** It used
+    // **That distinction is a per-row origin badge, not a section title.** It used
     // to be two titles — 随 App 提供的扩展（不能用 pi 卸载） / 其他扩展（不是随 App 安装的）
     // — and a title that says 其他 tells the reader the rows under it are the leftovers,
-    // while every one of them is an extension pi loads. One section per kind with the
-    // origin on the row (`App 自带` / `全局`) keeps every fact and ranks nothing: the
-    // category is the title, the provenance is the badge.
-
-    const val EXTENSIONS_TITLE = "扩展"
+    // while every one of them is an extension pi loads. The provenance is the badge
+    // (`App 自带` / `全局`), and the section title itself is gone: the settings surfaces
+    // carry no section titles at all now.
 
     /**
      * The one fact the old title carried that a badge cannot: the shipped extensions
@@ -130,8 +128,6 @@ object PackageStrings {
 
     const val EXTENSIONS_EMPTY =
         "还没有发现任何扩展。要加一个，把 .ts 或 .js 放进 extensions/（或放一个带入口的目录）。"
-
-    const val LIST_SECTION_TITLE = "已安装的资源包"
 
     const val DISCOVERED_PRESENCE = "pi 会加载它"
 
@@ -204,17 +200,11 @@ object PackageStrings {
         PiResourceDiscovery.Found.Scope.Package -> OriginBadge("包")
     }
 
-    /**
-     * The section that shows what each **installed package** carries.
-     *
-     * Its title and its note both say 本应用自己扫的 because that is the one thing a
-     * reader has to know here: `pi list` reports a package's spec and install path
-     * and nothing inside it, so everything below is this app walking the same
-     * directory pi walks (`core/package-manager.ts:2066-2072`). Presenting it as
-     * pi's own report would be a claim about a list nobody received.
-     */
-    const val PACKAGE_RESOURCES_TITLE = "资源包里的资源（本应用自己扫的）"
-
+    // 每个**已安装资源包**内部的资源那一区原来还有一个节标题（「资源包里的资源（本应用
+    // 自己扫的）」）。设置面不再有节标题，那件事改由下面这条说明说：`pi list` 只报 spec 与
+    // 安装路径，包里有什么是本应用自己走同一个目录扫出来的
+    // （`core/package-manager.ts:2066-2072`）—— 把它说成 pi 的报告才是在声称一份没人收到
+    // 过的清单。
     /**
      * The fourth kind a package can carry.
      *

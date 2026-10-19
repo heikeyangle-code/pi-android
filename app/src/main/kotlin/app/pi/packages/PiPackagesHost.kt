@@ -1,22 +1,14 @@
 package app.pi.packages
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -25,16 +17,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.PiTopBar
-import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsEntryRow
 import app.pi.ui.settings.settingsPageTopInset
-import app.pi.ui.theme.PiTheme
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,46 +41,16 @@ fun PiPackagesEntryRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 这一行画在设置首页的卡片里（v2 的 Row：`padding:10px 12px`、前置图标 16 灰、
-    // 标题 15/500、尾部值 + chevron 14），所以它自己不再铺一层 `surface` 底 ——
-    // 那会在卡上压出一条比卡片更暗的带子（浅色主题下尤其明显）。
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-    ) {
-        Icon(
-            Icons.Filled.Extension,
-            contentDescription = null,
-            tint = PiTheme.palette.muted,
-            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-        )
-        Text(
-            PackageStrings.TITLE,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            "打开",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Icon(
-            Icons.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
-            tint = PiTheme.palette.muted,
-        )
-    }
+    // 设置首页的一行，与统一行同一个构件：图标 + 标题 + 一行说明 + chevron，
+    // 没有「打开」这类文字尾巴。行自己不再铺 `surface` 底 —— 那会在卡上压出一条
+    // 比卡片更暗的带子（浅色主题下尤其明显）。
+    PiSettingsEntryRow(
+        title = PackageStrings.TITLE,
+        supporting = "安装、更新、过滤与项目信任——pi 的扩展包与技能、提示模板、主题",
+        onClick = onClick,
+        modifier = modifier,
+        leadingIcon = Icons.Filled.Extension,
+    )
 }
 
 /**

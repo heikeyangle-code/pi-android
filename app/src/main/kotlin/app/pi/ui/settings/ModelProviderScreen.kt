@@ -354,7 +354,7 @@ fun ModelProviderScreen(
                 note?.let { msg -> item { Note(msg) } }
 
                 // ---- 默认模型 / 默认厂商 / 循环模型：三行都是点开在清单里点选，不再手打。
-                item { PiSettingsSectionHeader("当前与循环") }
+                // 原来这里的「当前与循环」节标题已删：设置面不再有节标题（统一口径）。
                 item {
                     LinkRow(
                         title = "默认模型",
@@ -389,13 +389,7 @@ fun ModelProviderScreen(
                 // 闭包里，闭包每会话跑一次）——不是"改完要重启"。
                 item { Note("这三个键就是 settings.json 里的选择。改完开一个新会话生效。") }
 
-                // ---- 厂商卡与两个导入入口。
-                item {
-                    PiSettingsSectionHeader(
-                        label = "这台设备上配好的模型",
-                        count = "${data.providers.size} 个厂商",
-                    )
-                }
+                // ---- 厂商卡与两个导入入口（没有节标题，也没有「N 个厂商」：统一口径）。
                 // 下面每张卡的模型副行写的就是「pi 目录 / 手写申报 / 覆盖」这三个词，
                 // 解释跟着它们放在同一段（页尾不再堆说明）。
                 if (data.providers.isNotEmpty()) {
@@ -449,12 +443,17 @@ fun ModelProviderScreen(
                 }
 
                 // ---- 推理：默认收起的一段，六行一个都不删，点开就是原来的编辑器。
+                // 折叠头从节标题换成统一的行：标题 + 一行说明 + chevron（展开时转 90°），
+                // 不再有「展开 / 收起」这种文字尾巴。
                 item {
-                    PiSettingsSectionHeader(
-                        label = "推理",
-                        onClick = { reasoningOpen = !reasoningOpen },
-                        trailing = if (reasoningOpen) "收起" else "展开",
-                    )
+                    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
+                        PiSettingsEntryRow(
+                            title = "推理",
+                            supporting = "思考等级、预算、思考块与缓存提示：点开就是原来的编辑器",
+                            onClick = { reasoningOpen = !reasoningOpen },
+                            expanded = reasoningOpen,
+                        )
+                    }
                 }
                 if (reasoningOpen) {
                     // pi 官方把这几行和上面三个选择键放在同一个「模型与推理」分组里；分组入口
@@ -968,7 +967,7 @@ private fun ImportSheet(
                     .verticalScroll(rememberScrollState()),
             ) {
                 // ------------------------------------------------------ 1 选厂商
-                PiSettingsSectionHeader("1 选厂商")
+                // （节标题已删，动作词并进下面这一行的标题。）
                 // **竖列表 + 搜索，不是横滑 chips**（用户："横选了啥时候也看不完"）：官方目录
                 // 正常时 41 档、目录读不到时预设表的 13 档，一屏能翻、能搜，长名字也不会被挤没。
                 Row(
@@ -979,7 +978,8 @@ private fun ImportSheet(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            if (presetId.isEmpty()) "还没有选厂商" else preset.displayName,
+                            // 「1 选厂商」这个节标题已删，动作词并进这一行的标题。
+                            if (presetId.isEmpty()) "选厂商" else preset.displayName,
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (presetId.isEmpty()) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -1106,7 +1106,7 @@ private fun ImportSheet(
                 // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
                 if (presetId.isNotEmpty()) {
                     // ------------------------------------------------------ 2 粘 Key
-                    PiSettingsSectionHeader("2 粘 Key")
+                    // （节标题已删：下面的「API Key」输入框 / 已存凭证就是这一步。）
                     if (credentialPresent && !keyOpen) {
                         // 已配置的厂商：一行说清"凭证已经在文件里、留空就是沿用"，
                         // 想看/换 Key 才展开（展开后与未配置时同一个表单）。
@@ -1238,7 +1238,7 @@ private fun ImportSheet(
                     if (scanError != null) SheetNote(scanError.orEmpty())
 
                     // ------------------------------------------------------ 3 勾选模型
-                    PiSettingsSectionHeader("3 勾选模型")
+                    // （节标题已删，动作词并进下面这一行的标题。）
                     Row(
                         modifier = Modifier.padding(
                             horizontal = PiSettingsMetrics.cardPadding,
@@ -1247,7 +1247,7 @@ private fun ImportSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "已勾选 ${selected.size} / 共 ${candidates.size}",
+                            "勾选模型 · 已勾选 ${selected.size} / 共 ${candidates.size}",
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -1509,28 +1509,9 @@ private fun SettingLinkRow(
 
 @Composable
 private fun LinkRow(title: String, value: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text(
-                value,
-                // 三个值都是机器值（model id、provider id、pattern 列表），与设置里其他行的
-                // 读数同一张机器字脸（`PiSettingsRows.kt` 的 valueMono）。
-                style = PiTheme.text.mono,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Text("修改", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-    }
+    // 值行：标题 + 值（13 等宽一行）+ chevron。原来行尾的「修改」文字已删 ——
+    // 统一后的行没有文字尾巴，可点这件事由 chevron 说。
+    PiSettingsValueRow(title = title, value = value, onClick = onClick)
 }
 
 @Composable

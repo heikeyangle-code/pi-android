@@ -24,22 +24,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiShapes
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * 设置行构件：v2 的六种行型（`02-real-content.md` §4.3）共用一套行骨架。
+ * 设置行构件：全设置面（含「设备能力」页）共用**一套行骨架、三种尾巴**。
  *
- * 行骨架照 `06-v2-construction-reference.md` §2「行（Row）」实现：
- * `padding:10px 12px`、标题 15/500、副行 12 灰、尾部值 13 等宽 + tabular、
- * chevron 14、「当前生效值」左缘 2px accent 条。分层只用 1px 线与表面阶梯，
- * 没有任何阴影与 2px 以上的描边。
+ * ## 三种尾巴（用户裁定的统一口径）
+ *
+ *  1. 布尔行：`标题 15/500 + 一行说明 12 灰 + Switch`，开关贴右；
+ *  2. 值行：`标题 + 一行说明 + 值 13 等宽 + chevron`；
+ *  3. 动作行：`标题（accent，危险用 error）+ 一行说明 + chevron`。
+ *
+ * 行内边距 `14 横向 / 10 纵向`（[PiSettingsMetrics]），说明**最多一行**（超出省略），
+ * 行与行之间的 1px hairline 由页面给。任何行都不出现「查看 / 打开 / 编辑 / 阅读」
+ * 这类文字尾巴 —— 有 chevron 的那一行本来就是可点的。
+ *
+ * 「设备能力」页此前自己画了一套 `Card` 与 `CapabilityRow`（标题 `titleSmall`、说明
+ * 不截断、M3 `Switch`），与设置行两套取值；现在两边都只走这里。
  *
  * 这里不复用 `ui/components/PiCommon.kt` 的 `PiSwitchRow` / `PiValueRow`：
  * 那两个还服务对话页的 sheet 与会话列表（本批范围外），且它们的取值来自旧 spec
@@ -59,26 +68,22 @@ fun PiSettingRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     /**
-     * 这一行显示的就是**当前生效的值**（v2 数据里的 `cur`）。
-     * 判定见 [SettingsGroupScreen]：值被显式写过、且行型是 Value —— 也就是
-     * 「用户选的那一个」，不是 pi 的内置默认。
-     */
-    current: Boolean = false,
-    /**
-     * 这一行是搜索命中跳转的目标（计划 S8：1px accent 左线 + `surfaceContainerLow` 底，
-     * 取代原来的 `secondaryContainer` 底色）。
+     * 这一行是命中跳转的目标（1px accent 左线 + `selectedBg` 底）。
+     *
+     * 「当前生效值」的 2px accent 条已删：统一后的设置行只有三种尾巴，行内不再
+     * 挂第二种标记；主题选择列表里的「当前」徽标仍然保留（那是一个选项列表）。
      */
     highlighted: Boolean = false,
 ) {
     when (setting.kind) {
-        PiRowKind.Switch -> PiSettingsRowShell(highlighted, current, modifier) {
+        PiRowKind.Switch -> PiSettingsRowShell(highlighted = highlighted, modifier = modifier) {
             RowBody(
                 title = setting.title,
                 supporting = setting.description,
                 effective = setting.effective,
                 onExplainEffect = onExplainEffect,
             )
-            PiSettingsSwitchRowTrailing(
+            PiSettingsSwitch(
                 checked = checked,
                 onCheckedChange = onToggle,
                 enabled = enabled,
@@ -87,7 +92,6 @@ fun PiSettingRow(
 
         PiRowKind.Action -> PiSettingsRowShell(
             highlighted = highlighted,
-            current = current,
             modifier = modifier,
             onClick = onOpen,
             enabled = enabled,
@@ -104,35 +108,16 @@ fun PiSettingRow(
                     MaterialTheme.colorScheme.primary
                 },
             )
-            // v2 的危险行在尾部写「! 执行」（error 色），普通 Action 行尾部为空。
-            // 两个声音（规则 #7 + 裁决 ②-2）：`!` 是符号层 → 等宽；「执行」是我们的词 →
-            // 系统字。形状与 `WsBadge` / `PiSettingsEffectiveBadge`（符号等宽 + 词系统字）
-            // 相同，整条改 mono 会让一个动词读成标识符。
-            if (setting.dangerous) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-                ) {
-                    Text(
-                        text = "!",
-                        style = PiTheme.text.monoSmall,
-                        color = PiTheme.palette.error,
-                    )
-                    Text(
-                        text = "执行",
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.error,
-                    )
-                }
-            }
+            // 动作行的尾巴就是 chevron（原来的「! 执行」文字尾巴已按统一口径删掉）：
+            // 危险由 error 色的标题承担，不再往行尾再挂一个动词。
+            PiSettingsChevron()
         }
 
-        // Value / Number / Text / List 都是「尾部值 + chevron」，只有编辑器与尾部
-        // 文案不同（06 §2：尾部值 13 等宽 + tabular）。
+        // Value / Number / Text / List 都是「尾部值 + chevron」，只有编辑器不同
+        // （06 §2：尾部值 13 等宽 + tabular）。
         PiRowKind.Value, PiRowKind.Number, PiRowKind.Text, PiRowKind.List ->
             PiSettingsRowShell(
                 highlighted = highlighted,
-                current = current,
                 modifier = modifier,
                 // 只读行（运行时事实）没有可打开的东西，所以**点击与 chevron 用同一个条件**：
                 // 以前只藏了 chevron，行却还能点开一个空的、禁用的编辑器 —— 行上写着当时的
@@ -149,54 +134,142 @@ fun PiSettingRow(
                 Text(
                     valueText,
                     style = PiTheme.text.mono,
-                    color = if (current) {
-                        PiTheme.palette.accent
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
+                    color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.End,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 // 只读行（运行时事实）没有可打开的东西，v2 也不给它 chevron。
                 if (!setting.readOnly) {
-                    Icon(
-                        Icons.Filled.KeyboardArrowRight,
-                        contentDescription = null,
-                        modifier = Modifier.size(PiSettingsMetrics.chevronSize),
-                        tint = PiTheme.palette.muted,
-                    )
+                    PiSettingsChevron()
                 }
             }
     }
 }
 
 /**
- * 行骨架：底色（命中/普通）+ 左缘竖线 + `10px 12px` 的行内边距。
+ * 布尔行：`标题 15/500 + 一行说明 12 灰 + Switch`（开关贴右）。
  *
- * 左缘两条线的分工是 v2 里的两件事，不能互相替代：
- *  - 命中高亮（搜索跳转）：1px accent + `selectedBg` 填充；
- *  - 当前生效值：2px accent，上下各缩进 8（`06 §2`）。
+ * 「设备能力」页的三行能力开关走这一条；`description` 与「未开启」这类提示合成
+ * **一行**（[supportingTone] 非空时整句换警示色），不再有第二行与行内按钮。
+ */
+@Composable
+internal fun PiSettingsToggleRow(
+    title: String,
+    supporting: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    supportingTone: Color? = null,
+) {
+    PiSettingsRowShell(highlighted = false, modifier = modifier) {
+        RowBody(
+            title = title,
+            supporting = supporting,
+            supportingTone = supportingTone,
+        )
+        PiSettingsSwitch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
+    }
+}
+
+/**
+ * 值行：`标题 + 一行说明（这里放值）+ chevron`。
+ *
+ * 值放在**第二行**（整行宽、13 等宽、一行省略）而不是贴右：模型 id 与 pattern 列表可以很长，
+ * 贴右会把最要紧的那几个字截掉。原来这条尾巴是一个「修改」词（模型与供应商那三行），
+ * 已按统一口径换成 chevron。
+ */
+@Composable
+internal fun PiSettingsValueRow(
+    title: String,
+    value: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    leadingIcon: ImageVector? = null,
+) {
+    PiSettingsRowShell(highlighted = false, modifier = modifier, onClick = onClick) {
+        if (leadingIcon != null) {
+            Icon(
+                leadingIcon,
+                contentDescription = null,
+                tint = PiTheme.palette.muted,
+                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            )
+        }
+        RowBody(
+            title = title,
+            supporting = value,
+            supportingMono = true,
+        )
+        PiSettingsChevron()
+    }
+}
+
+/**
+ * 入口 / 动作行：`标题 + 一行说明 + chevron`。
+ *
+ * 设置首页的入口行（模型与供应商、设备能力、扩展包、Pi 文件、许可、诊断）、
+ * 许可页的每一条通告、以及文末的分组入口都走这一条 —— 以前它们各自抄了一遍
+ * `Row(padding = 10/12) + Icon + Column(title, supporting) + Text(查看/打开) + chevron`，
+ * 于是同一个形状在四个文件里有四种字号与三种文字尾巴。
+ *
+ * 动作行的标题色（accent / 危险 error）由 `PiSettingRow` 自己按注册表的 `dangerous`
+ * 决定，所以这里**不留一个 `tone` 形参**：它没有任何调用方会传。
+ *
+ * @param leadingIcon 前置图标（16 灰）；分组入口行没有图标，传 null。
+ * @param monoTitle 标题用等宽（许可通告的组件名，要与 `dpkg -l` 对得上）。
+ * @param expanded 只有折叠行传值：chevron 展开时转 90°。
+ */
+@Composable
+internal fun PiSettingsEntryRow(
+    title: String,
+    supporting: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    leadingIcon: ImageVector? = null,
+    monoTitle: Boolean = false,
+    expanded: Boolean? = null,
+) {
+    PiSettingsRowShell(highlighted = false, modifier = modifier, onClick = onClick) {
+        if (leadingIcon != null) {
+            Icon(
+                leadingIcon,
+                contentDescription = null,
+                tint = PiTheme.palette.muted,
+                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            )
+        }
+        RowBody(
+            title = title,
+            supporting = supporting,
+            mono = monoTitle,
+        )
+        PiSettingsChevron(expanded = expanded)
+    }
+}
+
+/**
+ * 行骨架：底色（命中/普通）+ 左缘竖线 + `14px / 10px` 的行内边距。
+ *
+ * 命中高亮（`highlighted`）是唯一还留在行上的标记：1px accent + `selectedBg` 填充。
+ * 它是**搜索跳转**的落点，不是「当前值」—— 后者那种 2px accent 条已经删掉
+ * （统一后的行只有三种尾巴，行内不再挂第二种标记）。
  *
  * 命中填充为什么是 `selectedBg`：它就是 pi 的「选中」令牌（也就是 v2 的
  * `--selected-bg: #3A3A4A`），`colorScheme()` 里另映射到 `primaryContainer`。
- * 计划 S8 原本写 `surfaceContainerLow` —— 但设置行现在躺在同为
- * `surfaceContainerLow` 的卡片里，那样填等于没填，只剩那 1px 竖线。改成
- * `selectedBg` 后命中行既有可见填充、又不引入任何新颜色。
- *
- * 可读性（同 v2 自己那一对令牌的取值，未做任何调色）：
- *  - 深色 `#3A3A4A`：正文 `#D4D4D4` 7.5:1、副行 `#808080` 2.8:1、accent 5.4:1；
- *  - 浅色 `#D0D0E0`：正文 10.4:1、副行 3.5:1、accent 2.85:1。
- * 深色副行 2.8:1 与浅色 accent 2.85:1 略低于 3:1 的元信息/图形地板，但这不是新
- * 组合：v2 的选中行本来就是 `--selected-bg` + `--muted` / `--accent`，且同一行
- * 另有正文色标题承担信息（`06 §4` 的图形类规则）。
+ * 设置行躺在同为 `surfaceContainerLow` 的卡片里，填 `surfaceContainerLow` 等于没填，
+ * 只剩那 1px 竖线。改成 `selectedBg` 后命中行既有可见填充、又不引入任何新颜色。
  *
  * `onClick` 为 null 时整行不可点（Switch 行由控件自己吃点击）。
  */
 @Composable
 private fun PiSettingsRowShell(
     highlighted: Boolean,
-    current: Boolean,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     enabled: Boolean = true,
@@ -207,7 +280,7 @@ private fun PiSettingsRowShell(
             .fillMaxWidth()
             .background(
                 // 命中填充 = pi 的 selectedBg（v2 的 --selected-bg）；见上方 KDoc
-                // 里「为什么不填 surfaceContainerLow」与对比度实测。
+                // 里「为什么不填 surfaceContainerLow」。
                 if (highlighted) PiTheme.palette.selectedBg else Color.Transparent,
             )
             .then(
@@ -231,18 +304,6 @@ private fun PiSettingsRowShell(
             horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
             content = content,
         )
-        if (current) {
-            Box(
-                Modifier
-                    .padding(
-                        top = PiSettingsMetrics.currentBarInset,
-                        bottom = PiSettingsMetrics.currentBarInset,
-                    )
-                    .fillMaxHeight()
-                    .width(PiSettingsMetrics.currentBarWidth)
-                    .background(PiTheme.palette.accent),
-            )
-        }
         if (highlighted) {
             Box(
                 Modifier
@@ -257,14 +318,21 @@ private fun PiSettingsRowShell(
 /**
  * 标题 + 生效徽标 + 副行。徽标紧跟标题（v2 的 Row 把 `badge` 放在标题行里，
  * 不是钉在最右侧），点它弹生效说明。
+ *
+ * 副行只有**一行**：说明文案本来就有几百条，行高不能被其中几条长的撑开
+ * （超出省略）。
  */
 @Composable
 private fun RowScope.RowBody(
     title: String,
     supporting: String?,
-    effective: EffectiveKind,
-    onExplainEffect: () -> Unit,
+    effective: EffectiveKind? = null,
+    onExplainEffect: (() -> Unit)? = null,
     titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    supportingTone: Color? = null,
+    mono: Boolean = false,
+    /** 副行是**机器值**（模型 id、pattern 列表）：等宽脸。 */
+    supportingMono: Boolean = false,
 ) {
     Column(Modifier.weight(1f)) {
         Row(
@@ -273,12 +341,18 @@ private fun RowScope.RowBody(
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                style = if (mono) {
+                    PiTheme.text.mono
+                } else {
+                    MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium)
+                },
                 color = titleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (effective != EffectiveKind.Immediate) {
+            // 生效徽标（需重载 / 新会话 / 需重启…）保留：它说的是「这一行什么时候生效」，
+            // 是设置面唯一必须留的徽标。Immediate 不出徽标。
+            if (effective != null && effective != EffectiveKind.Immediate && onExplainEffect != null) {
                 PiSettingsEffectiveBadge(
                     kind = effective,
                     modifier = Modifier.clickable(onClick = onExplainEffect),
@@ -289,13 +363,26 @@ private fun RowScope.RowBody(
             Text(
                 supporting,
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                style = if (supportingMono) PiTheme.text.mono else PiTheme.text.meta,
+                color = supportingTone ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
     }
+}
+
+/** 行尾的 chevron（14，muted）。折叠行展开时转 90°。 */
+@Composable
+private fun PiSettingsChevron(expanded: Boolean? = null) {
+    Icon(
+        Icons.Filled.KeyboardArrowRight,
+        contentDescription = null,
+        modifier = Modifier
+            .size(PiSettingsMetrics.chevronSize)
+            .then(if (expanded == true) Modifier.rotate(90f) else Modifier),
+        tint = PiTheme.palette.muted,
+    )
 }
 
 /** 灰底说明卡：glob 语法、主题告警与只读提示共用（`06 §2` 卡片：圆角 10、内 12/14）。 */

@@ -130,9 +130,10 @@ import kotlinx.coroutines.launch
 /**
  * 段头：左边标签 + 计数，右边一个 slot（design 稿 ④ 的「新建」入口、⑤ 的计数都在那儿）。
  *
- * 与设置页的 `PiSettingsSectionHeader` 同几何（`06 §2`「分组头 padding:0 14px;
- * margin-bottom:7px」+「分组块 marginTop:18px」），差别只有一个：aside 是**可点的
- * slot**而不是一行字 —— 稿子 ④ 段头右侧那颗「+ 新建」是一个控件。
+ * 几何按 `06 §2`「分组头 padding:0 14px; margin-bottom:7px」+「分组块 marginTop:18px」。
+ * （设置面自己已经**没有**分组头了 —— 那一屏统一成「一张接一张的卡」，这个段头只服务
+ * 工作区/会话这些列表屏。）aside 是**可点的 slot** 而不是一行字：稿子 ④ 段头右侧那颗
+ * 「+ 新建」是一个控件。
  */
 @Composable
 internal fun WsSectionHeader(
