@@ -229,35 +229,7 @@ class TrustRepository(
         )
     }
 
-    /**
-     * Push the authoritative copy into the rootfs, for the boot path after
-     * provisioning.
-     *
-     * **Kept for compatibility, and it currently has no caller.** Since the engine
-     * binds the durable directory over `/root/.pi/agent` (`PiEngineHost.kt:285-294`),
-     * the rootfs copy is shadowed and this step is no longer load-bearing; a guest
-     * command binds the same directory too ([GuestCommand.bindList]). It is left
-     * because it is idempotent and harmless, and removing public API from this layer
-     * is a separate decision.
-     *
-     * Idempotent, and a no-op when the rootfs copy already exists and parses: the
-     * engine's copy is the one pi maintains, and overwriting a newer decision with a
-     * stale copy would be a silent security regression.
-     *
-     * @return true when something was published.
-     */
-    fun publishIntoRootfs(): Boolean {
-        if (!layout.paths.rootfs.isDirectory) return false
-        val rootfsExists = rootfsFile.isFile
-        if (rootfsExists) return false
-        if (!engineFile.isFile) return false
-        val engine = readFile(engineFile)
-        if (engine is TrustFile.Parse.Invalid) return false
-        val text = runCatching { engineFile.readText() }.getOrNull() ?: return false
-        return writeFile(rootfsFile, text)
-    }
-
-    // -------------------------------------------------------- canonicalisation
+        // -------------------------------------------------------- canonicalisation
 
     /**
      * `canonicalizePath(resolvePath(cwd))` (`trust-manager.ts:40-42`): `realpathSync`

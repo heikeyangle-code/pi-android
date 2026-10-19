@@ -427,54 +427,5 @@ fun PiInfoNote(
  * than a pi key (the two system-prompt rows) shows the file it writes instead.
  */
 @Composable
-fun PiKeyLabel(key: String, modifier: Modifier = Modifier) {
-    Text(
-        key,
-        modifier = modifier
-            .clip(PiShapes.badge)
-            .border(
-                PiSettingsMetrics.hairline,
-                MaterialTheme.colorScheme.outline,
-                PiShapes.badge,
-            )
-            .padding(
-                horizontal = PiSettingsMetrics.badgePaddingStart,
-                vertical = PiSettingsMetrics.badgePaddingVertical,
-            ),
-        style = PiTheme.text.monoSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
 /** One-line key/value pair, for read-only diagnostics rows. */
 @Composable
-fun PiKeyValueRow(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            label,
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(PiSettingsMetrics.rowGap))
-        Text(
-            value,
-            style = PiTheme.text.mono,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
