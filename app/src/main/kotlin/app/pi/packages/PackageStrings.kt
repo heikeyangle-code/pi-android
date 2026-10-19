@@ -234,7 +234,7 @@ object PackageStrings {
 
     /** One line per shipped extension: what it is for, in the app's words. */
     fun builtinPurpose(name: String): String = when (name) {
-        "pi-android-bridge" -> "设备能力工具：读屏、点按、截屏、通知、剪贴板、导出…"
+        "pi-android-bridge" -> "设备能力：屏幕、应用、文件、Shell、通知…"
         "pi-android-permission-gate" -> "设备工具的授权确认：调用前先经确认"
         "pi-highlight" -> "代码高亮服务"
         else -> ""
