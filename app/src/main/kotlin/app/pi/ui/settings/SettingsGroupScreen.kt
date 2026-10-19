@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.ui.PiTopBar
-import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -113,11 +111,6 @@ fun SettingsGroupScreen(
      * `PiEffectiveDialog` call.
      */
     onRestartEngine: (() -> Unit)? = null,
-    /**
-     * 顶栏右侧那个搜索图标（v2 `SettingsGroup` 的 `TopBar right`）。`null` 时不画它，
-     * 因为一个打不开搜索的入口就是第二处「看起来能点但没反应」。
-     */
-    onOpenSearch: (() -> Unit)? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
     val sections = remember(groupId, freshness) { buildGroupSections(groupId) }
@@ -174,19 +167,6 @@ fun SettingsGroupScreen(
         PiTopBar(
             title = group?.title ?: "设置",
             onBack = onBack,
-            // v2 的分组页顶栏右侧是搜索图标（`phone34`–`phone38` 五台都有）：进了分组
-            // 才发现要找的是另一组时，不用先退回首页。
-            actions = if (onOpenSearch != null) {
-                {
-                    PiTopBarIcon(
-                        onClick = onOpenSearch,
-                        contentDescription = "搜索设置",
-                        icon = Icons.Filled.Search,
-                    )
-                }
-            } else {
-                null
-            },
         )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),

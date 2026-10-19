@@ -159,8 +159,6 @@ fun PiSettingsStack(
     // as they are; editor state that holds a `PiSetting` deliberately does not.
     var groupId by rememberSaveable { mutableStateOf<String?>(null) }
     var highlightKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var searching by rememberSaveable { mutableStateOf(false) }
-    var backReturnsToSearch by rememberSaveable { mutableStateOf(false) }
     // The device capability screen is the one branch of this stack that is not a
     // group in pi's settings catalog — the switches grant the *phone's* abilities
     // to the agent, and pi has no such settings (docs/pi-android-app-design.md §21).
@@ -451,14 +449,11 @@ fun PiSettingsStack(
             modelFlowImport = false
             modelFlowEditor = key
             modelFlow = true
-            searching = false
         } else {
             val setting = PiSettingsCatalog.byKey[key]
             if (setting != null) {
-                backReturnsToSearch = searching
                 groupId = setting.group
                 highlightKey = key
-                searching = false
             }
         }
     }
@@ -516,7 +511,7 @@ fun PiSettingsStack(
     )
 
     BackHandler(
-        enabled = searching || groupId != null || deviceCapabilities || packages || modelFlow || licenses || diagnostics || piFiles,
+        enabled = groupId != null || deviceCapabilities || packages || modelFlow || licenses || diagnostics || piFiles,
     ) {
         // `piFiles` 排在最前：它是这一栈里最深的一层，返回键先关它（回到设置首页），
         // 而不是继续往外退。正常情况下 `PiFilesScreen` 自己那个 `BackHandler` 会先拿到
@@ -524,8 +519,6 @@ fun PiSettingsStack(
         // 上一级目录**、到根才是 `onBack()`；这一支是它不在组合里时的兜底。
         if (piFiles) {
             piFiles = false
-        } else if (searching) {
-            searching = false
         } else if (licenses) {
             licenses = false
         } else if (diagnostics) {
@@ -541,7 +534,6 @@ fun PiSettingsStack(
         } else if (deviceCapabilities) {
             deviceCapabilities = false
         } else {
-            if (backReturnsToSearch) searching = true
             groupId = null
             highlightKey = null
         }
@@ -616,15 +608,6 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
             )
 
-            searching -> SettingsSearchScreen(
-                store = effectiveStore,
-                freshness = rowsEpoch,
-                contentPadding = contentPadding,
-                onBack = { searching = false },
-                onOpenSetting = openSetting,
-                valueOverrides = runtimeOverrides(facts) + resourceOverrides + promptOverrides,
-            )
-
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
                 store = effectiveStore,
@@ -635,7 +618,6 @@ fun PiSettingsStack(
                 freshness = rowsEpoch,
                 contentPadding = contentPadding,
                 onBack = {
-                    if (backReturnsToSearch) searching = true
                     groupId = null
                     highlightKey = null
                 },
@@ -663,13 +645,6 @@ fun PiSettingsStack(
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
-                // The top bar's search icon (v2's group page has one). It raises the
-                // same level-2 search the home's search row does, and the back
-                // handler already knows to return to the group afterwards.
-                onOpenSearch = {
-                    backReturnsToSearch = true
-                    searching = true
-                },
             )
 
             else -> SettingsHome(
@@ -682,7 +657,6 @@ fun PiSettingsStack(
                 onOpenGroup = { id ->
                     groupId = id
                     highlightKey = null
-                    backReturnsToSearch = false
                 },
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
                 onOpenPackages = { packages = true },

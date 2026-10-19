@@ -742,34 +742,6 @@ fun main() {
     // rule. The list editor's baseline mechanism itself is still pinned by rule 15
     // (`defaultTools`), which is the row that actually shipped the defect.
 
-    // One layer up from a dead row: a search hint whose chip selects a query that
-    // matches nothing. Only the `examples` list is read — taking every standalone
-    // string in the file would let an unrelated literal fail the build later — and a
-    // chip is checked against the *rows region* of the registry (from the settings
-    // list up to the lookup table), not the whole file, so a chip that only matched
-    // a KDoc comment cannot pass.
-    val searchScreen = File(root, "app/src/main/kotlin/app/pi/ui/settings/SettingsSearchScreen.kt")
-    val chip = Regex("""^\s*"([^"]+)",\s*$""")
-    val chipBlock = searchScreen.takeIf { it.isFile }
-        ?.readText()
-        ?.substringAfter("val examples = listOf(", "")
-        ?.substringBefore("\n    )", "")
-        ?: ""
-    val chips = chipBlock.lines()
-        .mapNotNull { chip.find(it)?.groupValues?.get(1) }
-        .filter { it.isNotBlank() && !it.contains("$") }
-    check("the search screen's hint chips were found", chips.isNotEmpty())
-    // `rows` is already comment-stripped above: the registry explains its own removals
-    // in comments that live *inside* the settings list, and a chip matching one of
-    // those would be a false pass (it happened: a comment mentioning the removed
-    // `app.sessions.import` kept the "导入" chip green).
-    val dangling = chips.filter { !rows.contains(it.removePrefix("/")) }
-    check(
-        "every search hint chip resolves to a registered row",
-        dangling.isEmpty(),
-        dangling.joinToString { "\"$it\" matches no key, alias, title or description" },
-    )
-
     // Rule 13: a switch whose default is written in three places has to agree with itself, and
     // the thing it claims to control has to actually read it.
     //

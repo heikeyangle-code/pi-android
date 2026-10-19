@@ -132,8 +132,7 @@ data class PiSetting(
      * 是「上面写着 app runtime，是不是过时了」）。这两行把它填成真正被写的文件路径，
      * 键名只留作行身份（`PromptFileSlot.settingKey`）。
      *
-     * 读者：`PiSettingsEditors`（编辑器 sheet 的框上沿）与 `SettingsSearchScreen`（搜索
-     * 结果里那行等宽键名）。
+     * 读者：`PiSettingsEditors`（编辑器 sheet 的框上沿）。
      */
     val keyLabel: String? = null,
     /**
@@ -166,16 +165,6 @@ class PiSettingsGroup(
     /** Live "current value summary" shown on level 0 (spec §6.1). */
     val summary: (PiSettingsStore) -> String,
 )
-
-/** A search result: the setting plus the breadcrumb the spec asks us to show. */
-data class PiSearchHit(
-    val setting: PiSetting,
-    val score: Int,
-    val groupTitle: String,
-    val section: String,
-) {
-    val breadcrumb: String get() = "$groupTitle · $section"
-}
 
 /**
  * pi 的「模型与推理」分组。**首页不再列它**（用户裁定：删掉那个分组入口）——组里的行
@@ -1653,8 +1642,7 @@ object PiSettingsCatalog {
         //    plain JSON files at a documented path (`settings-manager.ts:154-181`).
         //  - `app.about.rawSettings` — pi has no raw settings.json editor. Its
         //    `/settings` is a menu of typed editors (`components/settings-selector.ts`),
-        //    and this app already has the equivalent per-key editors plus a search
-        //    over every registered key (`SettingsSearchScreen`). A second, raw JSON
+        //    and this app already has the equivalent per-key editors. A second, raw JSON
         //    editor would also be the same foot-gun the `packages` row was changed
         //    for: it lets a user write a file pi's own writers would never produce.
         //  - `app.about.reset` — pi has no reset; the settings menu exposes no
@@ -1825,52 +1813,6 @@ object PiSettingsCatalog {
     /** Distinct section names of a group, in the order they first appear. */
     fun sectionsIn(groupId: String): List<String> =
         settingsIn(groupId).map { it.section }.distinct()
-
-    /**
-     * Fuzzy search across title, description and the raw dotted key, so that
-     * `reserveTokens` finds `compaction.reserveTokens` (spec §6.3). Slash
-     * commands map onto settings too: `/compact` lands on 自动压缩.
-     */
-    fun search(query: String, limit: Int = 80): List<PiSearchHit> {
-        val needle = query.trim().lowercase().removePrefix("/")
-        if (needle.isEmpty()) return emptyList()
-        return settings
-            .mapNotNull { setting ->
-                val score = scoreOf(setting, needle) ?: return@mapNotNull null
-                PiSearchHit(setting, score, groupTitle(setting.group), setting.section)
-            }
-            .sortedByDescending { it.score }
-            .take(limit)
-    }
-
-    private fun scoreOf(setting: PiSetting, needle: String): Int? {
-        val key = setting.key.lowercase()
-        val title = setting.title.lowercase()
-        val description = setting.description.lowercase()
-        var best: Int? = null
-
-        fun keep(value: Int) {
-            val current = best
-            if (current == null || value > current) best = value
-        }
-
-        if (key == needle) keep(1000)
-        if (key.substringAfterLast('.') == needle) keep(950)
-        for (alias in setting.aliases) {
-            val normalized = alias.lowercase().removePrefix("/")
-            if (normalized == needle) keep(900)
-        }
-        if (key.contains(needle)) keep(800 - key.indexOf(needle).coerceAtMost(200))
-        if (title.contains(needle)) keep(700 - title.indexOf(needle).coerceAtMost(200))
-        for (alias in setting.aliases) {
-            val normalized = alias.lowercase().removePrefix("/")
-            if (normalized.contains(needle)) keep(600)
-        }
-        if (description.contains(needle)) keep(400)
-        if (best == null && isSubsequence(title, needle)) best = 200
-        if (best == null && isSubsequence(key, needle)) best = 150
-        return best
-    }
 
     private fun isSubsequence(haystack: String, needle: String): Boolean {
         var index = 0

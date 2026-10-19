@@ -121,7 +121,7 @@ fun SettingsHome(
     onOpenPiFiles: (() -> Unit)? = null,
     /**
      * 让首页的读数在「有东西写过设置」之后重读 `store` 的 epoch —— 与
-     * [SettingsGroupScreen.freshness]、[SettingsSearchScreen.freshness] 同一个东西，
+     * [SettingsGroupScreen.freshness] 同一个东西，
      * 由 `PiSettingsStack` 的 `rowsEpoch` 供给（外部改动 + 本进程写入）。
      *
      * 这一屏的每条分组摘要（`GroupEntry` 的 `group.summary`）与「当前模型」卡都是从 store
