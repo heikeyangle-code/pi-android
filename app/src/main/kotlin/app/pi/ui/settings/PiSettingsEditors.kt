@@ -639,7 +639,16 @@ fun PiTextEditorSheet(
     // 光标落在这个框里并弹键盘：`phone42` 画的就是这个状态（框带 borderAccent 环、末尾有
     // 光标）。用户打开这一页就是为了改这一格，多一次点击没有意义。
     val focusRequester = remember { FocusRequester() }
-    PiSettingsSheet(onDismiss = onDismiss) {
+    // 返回（下滑 / 点遮罩 / 系统返回）时把改过的内容写回去。这几个编辑器的按钮是
+    // 「保存 / 清除」，但手机上最容易发生的是按返回 —— 粘贴了几千字再丢一次，
+    // 比多写一次文件糟得多。按钮自己调的仍是原来的 `onDismiss`，所以「清除」不会被
+    // 这里的回写覆盖。
+    PiSettingsSheet(
+        onDismiss = {
+            if (!setting.readOnly && text != initial) onSet(text)
+            onDismiss()
+        },
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -694,6 +703,13 @@ fun PiTextEditorSheet(
                     "这一项只读。",
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Spacer(Modifier.height(PiSpacing.inline))
+                Text(
+                    "返回会自动保存；清空后保存 = 删除。",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
                 )
             }
             // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。

@@ -152,7 +152,13 @@ internal fun PiSetting.display(element: JsonElement?): String {
 
         PiRowKind.Text -> {
             val text = element.primitiveText()
-            if (text.isNullOrEmpty()) "未设置" else text
+            when {
+                text.isNullOrEmpty() -> "未设置"
+                // 多行文本（系统提示词那两行）不能把整段塞进行尾：几万字的粘贴会把
+                // 标题挤成 0 宽（用户报的「粘贴完返回，设置名都没了」）。行上只报字数。
+                multiline -> "已填写 · ${text.length} 字"
+                else -> text
+            }
         }
 
         PiRowKind.List -> {

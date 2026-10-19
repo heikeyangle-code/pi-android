@@ -133,6 +133,9 @@ fun PiSettingRow(
                 )
                 Text(
                     valueText,
+                    // 值再长也只能吃 40%：不封顶时它是 Row 里第一个被测量的子项，
+                    // 长值会把标题挤成 0 宽（同 `display` 里那条多行摘要的另一半保险）。
+                    modifier = Modifier.weight(0.4f, fill = false),
                     style = PiTheme.text.mono,
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.End,
