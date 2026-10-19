@@ -778,7 +778,7 @@ fun main() {
     println(
         "\naudit: ${keys.size} registered keys ($piKeys pi, $appKeys app): " +
             "${keys.size - owned.size} read by this app, ${owned.size} declared pi-owned, " +
-            "${chips.size} search hints, ${fields.size} PiSetting fields",
+            "${fields.size} PiSetting fields",
     )
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) exitProcess(1)
