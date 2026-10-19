@@ -455,16 +455,6 @@ fun SessionsScreen(
                         active = namedOnly,
                         onClick = { namedOnly = !namedOnly },
                     )
-                    Spacer(Modifier.weight(1f))
-                    // The delete action is a long press, so the row has to say so: an
-                    // action nobody can find is the same complaint as one that does not
-                    // exist. pi reaches it with Ctrl+D (`docs/sessions.md:48`), which a
-                    // phone has no key for.
-                    Text(
-                        "长按一行可删除该会话",
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
-                    )
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
