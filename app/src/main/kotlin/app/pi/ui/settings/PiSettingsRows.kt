@@ -191,7 +191,7 @@ internal fun PiSettingsToggleRow(
 internal fun PiSettingsValueRow(
     title: String,
     value: String,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector? = null,
 ) {
@@ -209,7 +209,7 @@ internal fun PiSettingsValueRow(
             supporting = value,
             supportingMono = true,
         )
-        PiSettingsChevron()
+        if (onClick != null) PiSettingsChevron()
     }
 }
 
@@ -232,7 +232,7 @@ internal fun PiSettingsValueRow(
 internal fun PiSettingsEntryRow(
     title: String,
     supporting: String?,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector? = null,
     monoTitle: Boolean = false,
@@ -252,7 +252,7 @@ internal fun PiSettingsEntryRow(
             supporting = supporting,
             mono = monoTitle,
         )
-        PiSettingsChevron(expanded = expanded)
+        if (onClick != null) PiSettingsChevron(expanded = expanded)
     }
 }
 

@@ -168,6 +168,35 @@ internal object PiSettingsMetrics {
 internal val PiSettingsCardShape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
 
 /**
+ * 卡片切片：列表要放进 `LazyColumn` 一项一行（上千项的目录不能一次性组合），
+ * 但视觉上仍是一张卡 —— 第一项给上圆角、最后一项给下圆角，中间只有左右边。
+ * 行间线由调用方画（`if (index > 0) PiSettingsHairline()`），与 `PiSettingsCard` 一致。
+ */
+@Composable
+internal fun PiSettingsCardSlice(
+    first: Boolean,
+    last: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val radius = PiSettingsMetrics.cardRadius
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+        shape = RoundedCornerShape(
+            topStart = if (first) radius else 0.dp,
+            topEnd = if (first) radius else 0.dp,
+            bottomStart = if (last) radius else 0.dp,
+            bottomEnd = if (last) radius else 0.dp,
+        ),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column { content() }
+    }
+}
+
+/**
  * `PiSettingsCard` 内部一次显示多少行之后开始收敛（多出来的折进一条「显示全部 N 个」）。
  *
  * 一处一个数字：原来的 8 是「模型」那一屏私有的 `COLLAPSE_ABOVE`

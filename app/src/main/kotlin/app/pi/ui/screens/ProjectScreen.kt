@@ -84,6 +84,7 @@ import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsCard
+import app.pi.ui.settings.PiSettingsCardSlice
 import app.pi.ui.settings.PiSettingsEntryRow
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
@@ -883,9 +884,9 @@ fun ProjectScreen(
                         }
                     }
                 } else {
-                    item {
-                        PiSettingsCard {
-                            entries.forEachIndexed { index, entry ->
+                    entries.forEachIndexed { index, entry ->
+                        item(key = entry.name) {
+                            PiSettingsCardSlice(first = index == 0, last = index == entries.lastIndex) {
                                 if (index > 0) PiSettingsHairline()
                                 // 这一行的**工作区相对**路径。`entry.path` 是**相对 `currentDir`**
                                 // 的名字（`WorkspaceFiles.list` 的定义），拿它去比转录里的路径只在
@@ -994,9 +995,9 @@ fun ProjectScreen(
                         }
                     }
                 } else {
-                    item {
-                        PiSettingsCard {
-                            shownResources.forEachIndexed { index, resource ->
+                    shownResources.forEachIndexed { index, resource ->
+                        item(key = resource.displayPath) {
+                            PiSettingsCardSlice(first = index == 0, last = index == shownResources.lastIndex) {
                                 if (index > 0) PiSettingsHairline()
                                 Box(
                                     // **只压暗「项目 .pi」那一族，这是与稿子的一处有意偏离。**
@@ -1616,7 +1617,6 @@ private fun RunningCommandRow(
                     elapsed?.let { append(" · 已运行 ").append(secondsText(it)) }
                     if (run.lines > 0) append(" · ").append(run.lines).append(" 行")
                 },
-                onClick = { },
                 modifier = Modifier.weight(1f),
                 leadingIcon = Icons.Filled.Terminal,
             )
@@ -1728,7 +1728,6 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
                         append(" · 已收到 ").append(pending.receivedLines).append(" 行")
                     }
                 },
-                onClick = { },
                 modifier = Modifier.weight(1f),
                 leadingIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
