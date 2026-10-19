@@ -23,33 +23,12 @@ enum class DeviceCapability(
     val title: String,
     /** One-line summary shown under the title. */
     val summary: String,
-    /**
-     * What the agent would be able to do with this group. Rendered verbatim on
-     * the card so the switch is never a mystery (spec §5.6: 每项显示当前能力清单).
-     */
-    val allows: List<String>,
     val defaultEnabled: Boolean,
 ) {
     Basic(
         id = "basic",
         title = "基础",
         summary = "剪贴板、通知、打开链接、分享、提示音与语音，以及文件、定位、传感器、电量与手电筒",
-        allows = listOf(
-            "读取与写入系统剪贴板",
-            "发送系统通知（可点击回到会话）",
-            "在屏幕上弹出短提示（Toast）与震动",
-            "打开网址或交给其他 App 处理",
-            "把文本分享到其他 App",
-            "朗读文本（TTS）",
-            "列出已安装应用并启动其中一个",
-            "读写你在本页授权的目录（SAF，重启后仍然有效）",
-            "把 Agent 生成的文件写入 Download（用户可见、可撤销）",
-            "从 Download 读回文件交给 Agent（API 33+ 只能读本应用自己的文件）",
-            "读取当前定位（取决于系统是否已授予定位权限）",
-            "列出传感器并读取一次采样值",
-            "读取电池电量与充电状态",
-            "开关手电筒（相机闪光灯）",
-        ),
         defaultEnabled = false,
     ),
 
@@ -57,13 +36,6 @@ enum class DeviceCapability(
         id = "accessibility",
         title = "屏幕",
         summary = "读屏/点按/输入/滑动/按键/截图",
-        allows = listOf(
-            "读取当前屏幕的控件树（文本、按钮、输入框）",
-            "点按控件、手势滑动、长按",
-            "向输入框写入文本、执行返回/主页/最近任务",
-            "截屏并把图片交给模型查看",
-            "结束指定的用户应用（危险：可能丢失未保存内容）",
-        ),
         defaultEnabled = false,
     ),
 
@@ -71,11 +43,6 @@ enum class DeviceCapability(
         id = "shell",
         title = "Shell",
         summary = "在设备上执行受策略守卫限制的命令（默认关闭；危险操作第一次确认后可选择本会话不再询问）",
-        allows = listOf(
-            "执行日常读命令（getprop、dumpsys、pm list、logcat、ls、cat、df、ps 等）",
-            "执行日常写命令（cp、mv、rm、mkdir、sed、tar、curl 等）；命令名不检查，写入不限工作区",
-            "在装有 Shizuku 的设备上以 ADB 身份（uid=2000）运行，从而使用 input、pm、am、settings get 等",
-        ),
         defaultEnabled = false,
     ),
 

@@ -744,7 +744,6 @@ class DeviceBridgeRouter(
                     put("enabledForSession", state.enabledForSession)
                     put("usable", state.usable)
                     if (state.reason != null) put("reason", state.reason)
-                    put("allows", JSONArray(state.capability.allows))
                 },
             )
         }
