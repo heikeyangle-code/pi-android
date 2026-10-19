@@ -66,11 +66,6 @@ import app.pi.ui.PiTopBarTextAction
 import app.pi.ui.chat.SessionFileRow
 import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.chat.forkParentNameOf
-import app.pi.ui.components.PiDialog
-import app.pi.ui.components.PiDialogAction
-import app.pi.ui.components.PiDialogActions
-import app.pi.ui.components.PiDialogBody
-import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.components.PiEmptyStateTopAnchored
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
@@ -181,7 +176,6 @@ fun SessionsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var byName by rememberSaveable { mutableStateOf(false) }
     var namedOnly by rememberSaveable { mutableStateOf(false) }
-    var confirming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
     // Long-press opens pi's two per-session actions. Both exist in pi's session
     // selector; ours live here because a phone has no Ctrl+D and no `new_session`
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
@@ -608,8 +602,8 @@ fun SessionsScreen(
     // session (`components/session-selector.ts:206-231`). We pass the guest path so
     // the recorded parent resolves where pi reads it.
     //
-    // v2 draws these three as a **bottom sheet** (`phone23`: 抓手 + 会话名 +
-    // 「对这个会话做什么？」+ 三行), not as a centred dialog, because a row's own menu
+    // v2 draws these two as a **bottom sheet** (`phone23`: 抓手 + 会话名 +
+    // 「对这个会话做什么？」+ 两行), not as a centred dialog, because a row's own menu
     // belongs to the row that was pressed. The sheet shell is the settings editors'
     // one (`PiSettingsSheet`), so the handle, radius and scrim are the board's.
     val acting = actions
@@ -647,65 +641,12 @@ fun SessionsScreen(
                 session.newChildSession(acting)
             }
             SessionActionRow(
-                label = "✗ 删除",
-                tone = PiTheme.palette.error,
-            ) {
-                actions = null
-                confirming = acting
-            }
-            SessionActionRow(
                 label = "取消",
                 tone = MaterialTheme.colorScheme.onSurface,
             ) { actions = null }
         }
     }
 
-    // pi always confirms a delete (`docs/sessions.md:48`: "delete with Ctrl+D,
-    // then confirm"), and deleting the session pi is currently appending to would
-    // leave the engine writing to a removed file — so the active row is refused
-    // rather than confirmed.
-    //
-    // v2's delete confirmation is `.b-dlg` with a leading glyph — `!` in error for
-    // an ordinary session, `⊘` in muted for the current one (`SessionsOverlay`:
-    // `glyph={ask==='current'?'⊘':'!'}`) — and its actions are ordered
-    // `[删除, 取消]`, the primary first, which is the opposite of every other
-    // dialog on the board. Both are why this one composes `PiDialog` directly
-    // instead of going through the cancel-first helper.
-    val pending = confirming
-    if (pending != null) {
-        val isActive = activeFile != null && pending.file.name == activeFile
-        PiDialog(onDismissRequest = { confirming = null }) {
-            PiDialogTitle(
-                title = "删除会话",
-                glyph = if (isActive) "⊘" else "!",
-                glyphTone = if (isActive) PiTheme.palette.muted else PiTheme.palette.error,
-            )
-            PiDialogBody(
-                if (isActive) {
-                    "「${pending.displayName}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。"
-                } else {
-                    "删除「${pending.displayName}」？这个会话会被移除，无法恢复。"
-                },
-            )
-            PiDialogActions {
-                PiDialogAction(
-                    label = "删除",
-                    primary = true,
-                    enabled = !isActive,
-                    tone = PiTheme.palette.error,
-                    onClick = {
-                        session.deleteSession(pending)
-                        confirming = null
-                    },
-                )
-                PiDialogAction(
-                    label = "取消",
-                    primary = false,
-                    onClick = { confirming = null },
-                )
-            }
-        }
-    }
 }
 
 /**
