@@ -1,6 +1,6 @@
-package app.pi.packages
-
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+idx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,12 +35,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import app.pi.ui.screens.WsBadge
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsBadge
+import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsCardShape
 import app.pi.ui.settings.PiSettingsCollapseAbove
 import app.pi.ui.settings.PiSettingsDialog
 import app.pi.ui.settings.PiSettingsListExpander
 import app.pi.ui.settings.PiSettingsHairline
+import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiSpacing
@@ -296,22 +298,6 @@ fun PiPackagesScreen(
             if (state.projectPackagesHidden) {
                 PiInfoNote(PackageStrings.PROJECT_PACKAGES_HIDDEN, tone = palette.warning)
             }
-            // The update action, and the two sentences that make it honest. Both are
-            // shown *above* the rows so the caveat is read before the button, not after
-            // a result that cannot be told apart from a no-op: pi prints one and the
-            // same `Updated …` line either way (`package-manager-cli.ts:1013-1021`),
-            // and it has no "is there a newer version?" query on this path at all
-            // (`checkForAvailableUpdates` exists but only pi's terminal UI calls it,
-            // `modes/interactive/interactive-mode.ts:1054`). Offering the button only
-            // when pi can actually change something is the other half.
-            if (state.entries.isNotEmpty()) {
-                if (state.entries.any { PiPackageUpdate.canUpdate(it.source) }) {
-                    UpdateAllRow(state.busy, onUpdateAll)
-                    PiInfoNote(PackageStrings.UPDATE_NOTE)
-                } else {
-                    PiInfoNote(PackageStrings.UPDATE_NOTHING_TO_UPDATE)
-                }
-            }
             if (state.entries.isEmpty()) {
                 // Three different facts, three different sentences. "Nothing ran" must
                 // never read as "nothing is installed" — that is the lie this branch
@@ -326,13 +312,40 @@ fun PiPackagesScreen(
                     tone = if (notReady != null || state.listUnparsed) palette.warning else null,
                 )
             } else {
-                // v2 的分组容器：一张圆角 10 的卡，包与包之间 1px inset hairline。
+                // 一张卡：卡头是「已安装」+ 更新动作，下面是包。更新只在真的有可更新的源
+                // 时出现（pi 没有“检查新版本”的查询，见 `PiPackageUpdate` 的 KDoc）。
+                val canUpdate = state.entries.any { PiPackageUpdate.canUpdate(it.source) }
                 PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                vertical = PiSettingsMetrics.rowPaddingVertical,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            PackageStrings.INSTALLED_LABEL,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (canUpdate) {
+                            TextButton(onClick = onUpdateAll, enabled = !state.busy) {
+                                Text(if (state.busy) PackageStrings.RUNNING else PackageStrings.UPDATE_ALL_LABEL)
+                            }
+                        }
+                    }
+                    PiSettingsHairline()
                     state.entries.forEachIndexed { index, entry ->
                         if (index > 0) PiSettingsHairline()
                         PackageRow(entry, state.busy, onRemove, onUpdate, onFilterAdd, onFilterRemove)
                     }
                 }
+                if (canUpdate) PiInfoNote(PackageStrings.UPDATE_NOTE)
             }
         }
 
@@ -790,33 +803,36 @@ private fun TrustCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
             ) {
+                Text(
+                    "项目信任",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 Text(decisionGlyph, style = PiTheme.text.monoSmall, color = decisionColor)
                 Text(
                     decisionText,
-                    modifier = Modifier.weight(1f),
-                    style = PiTheme.text.mono,
+                    style = PiTheme.text.monoSmall,
                     color = decisionColor,
                 )
-                OutlinedButton(onClick = onOpenPrompt, enabled = !busy) {
-                    Text("作出信任决定…")
-                }
+                TextButton(onClick = onOpenPrompt, enabled = !busy) { Text("更改…") }
             }
-            Spacer(Modifier.height(PiSpacing.gutter))
-            Text(
-                text = trust.explanation,
-                style = PiTheme.text.meta,
-                color = if (trust.skippingResources) {
-                    palette.warning
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-            if (trust.blocksProjectPackages) {
+            if (trust.decision != true || trust.skippingResources || trust.blocksProjectPackages) {
                 Spacer(Modifier.height(PiSpacing.gutter))
                 Text(
-                    text = PackageStrings.SCOPE_PROJECT_LOCKED,
+                    text = if (trust.blocksProjectPackages) {
+                        PackageStrings.SCOPE_PROJECT_LOCKED
+                    } else {
+                        trust.explanation
+                    },
                     style = PiTheme.text.meta,
-                    color = palette.warning,
+                    color = if (trust.skippingResources || trust.blocksProjectPackages) {
+                        palette.warning
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
         }
@@ -1083,31 +1099,26 @@ private fun InstallCard(
                 .fillMaxWidth()
                 .padding(PiSettingsMetrics.cardPaddingLoose),
         ) {
-            OutlinedTextField(
+            PiEditorField(
                 value = state.spec,
                 onValueChange = onSpecChange,
-                label = { Text(PackageStrings.SPEC_HINT) },
-                singleLine = true,
-                enabled = !state.busy,
+                label = PackageStrings.SPEC_HINT,
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !state.busy,
+                height = 44.dp,
             )
             Spacer(Modifier.height(PiSpacing.inline))
             Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                 PiPackageScope.entries.forEach { scope ->
-                    val selected = scope == state.scope
-                    OutlinedButton(
-                        onClick = { onScopeChange(scope) },
-                        enabled = !state.busy,
-                    ) {
-                        Text(
-                            text = if (scope == PiPackageScope.User) {
-                                PackageStrings.SCOPE_USER
-                            } else {
-                                PackageStrings.SCOPE_PROJECT
-                            },
-                            color = if (selected) palette.accent else palette.muted,
-                        )
-                    }
+                    PiSettingsChip(
+                        text = if (scope == PiPackageScope.User) {
+                            PackageStrings.SCOPE_USER
+                        } else {
+                            PackageStrings.SCOPE_PROJECT
+                        },
+                        active = scope == state.scope,
+                        onClick = { if (!state.busy) onScopeChange(scope) },
+                    )
                 }
             }
             if (state.scope == PiPackageScope.Project) {
@@ -1142,23 +1153,6 @@ private fun InstallCard(
  * (`PackageStrings.UPDATE_NOTE`) is rendered by the caller, directly under it, so the
  * button and the sentence that limits what it can claim travel together.
  */
-@Composable
-private fun UpdateAllRow(busy: Boolean, onUpdateAll: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.cardPaddingLoose,
-            ),
-    ) {
-        OutlinedButton(onClick = onUpdateAll, enabled = !busy) {
-            Text(if (busy) PackageStrings.RUNNING else PackageStrings.UPDATE_ALL_LABEL)
-        }
-    }
-}
-
 // ----------------------------------------------------------------- package row
 
 @Composable

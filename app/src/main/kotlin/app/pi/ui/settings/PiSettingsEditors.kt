@@ -1329,7 +1329,7 @@ internal fun PiSettingsSheet(
  *   正确（自己套那个的话，输入到框底时光标会跑到视野外）。单行框固定 1。
  */
 @Composable
-private fun PiEditorField(
+internal fun PiEditorField(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,

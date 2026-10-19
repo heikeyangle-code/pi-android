@@ -79,6 +79,7 @@ object PackageStrings {
     // paying for.
 
     const val UPDATE_ALL_LABEL = "全部更新"
+    const val INSTALLED_LABEL = "已安装"
     const val UPDATE_LABEL = "更新"
 
     /** What the update command really does, and the question it cannot answer. */
