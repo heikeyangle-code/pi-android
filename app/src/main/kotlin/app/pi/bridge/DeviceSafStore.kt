@@ -266,7 +266,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
         }
         val target = resolve(clean) ?: throw notFound(clean)
         if (target.isDirectory) {
-            throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "「$clean」是目录，请用 android_files_list。"))
+            throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "「$clean」是目录，请用 android_files 的 list。"))
         }
         val limit = maxBytes.coerceIn(1024, 4 * 1024 * 1024)
         val bytes = runCatching {
@@ -299,7 +299,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
                     reason = "写入需要「根目录名/相对路径」形式的 path。",
-                    hint = "先用 android_files_list 看已授权的根目录名。",
+                    hint = "先用 android_files 的 list 看已授权的根目录名。",
                 ),
             )
         }
@@ -426,7 +426,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
         DeviceDenial(
             code = DeviceDenial.NOT_FOUND,
             reason = "在已授权目录里找不到「$path」。",
-            hint = "先用 android_files_list 看根目录名（路径=根名/相对）。",
+            hint = "先用 android_files 的 list 看根目录名（路径=根名/相对）。",
         ),
     )
 

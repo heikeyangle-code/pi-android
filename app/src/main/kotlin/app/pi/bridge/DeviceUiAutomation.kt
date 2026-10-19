@@ -57,7 +57,7 @@ private const val SPACE = "display"
  * There is exactly one pixel space in every payload this object produces:
  * **`display`** — the *unscaled* pixel grid of the default display, which is what
  * `AccessibilityNodeInfo.getBoundsInScreen` returns, what a gesture path takes,
- * and what `android_screenshot`'s `region` accepts. A screenshot that was scaled
+ * and what `android_screen`'s `shot` region accepts. A screenshot that was scaled
  * or cropped reports `sourceWidth`/`sourceHeight`/`scale`/`region`, so an image
  * pixel can always be mapped back: `display = region.topLeft + image / scale`.
  * Before this, a 1280-wide screenshot of a 1440-wide screen had no field saying
@@ -551,7 +551,7 @@ object DeviceUiAutomation {
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
                 reason = what,
-                hint = "先用 android_ui_dump 看屏幕或调大 timeoutMs；弹窗先处理。",
+                hint = "先用 android_screen 的 look 看屏幕或调大 timeoutMs；弹窗先处理。",
             ),
         )
     }
@@ -632,7 +632,7 @@ object DeviceUiAutomation {
                     DeviceDenial(
                         code = DeviceDenial.NOT_FOUND,
                         reason = "按选择器找不到可点控件：${selector.describe()}。",
-                        hint = "先用 android_ui_dump 看屏幕，或用 waitFor 等它出现。",
+                        hint = "先用 android_screen 的 look 看屏幕，或用 wait 等它出现。",
                     ),
                 )
             // 记下目标身份，动作完成后由 ActionContext 复核它是否还在——
@@ -835,7 +835,7 @@ object DeviceUiAutomation {
         // 走到这里有两种情形，两种都不该报错：
         //   1. 找不到 isScrollable 的节点。**这在 MIUI / HyperOS 上是常态，不是异常** ——
         //      实测无障碍设置页 42 个节点、scrollable 为 0（列表是 RecyclerView，只是不上报
-        //      那个属性）。旧代码在这里直接抛 UNSUPPORTED，把调用方推到 android_swipe 上，
+        //      那个属性）。旧代码在这里直接抛 UNSUPPORTED，把调用方推到另一个滚动入口上，
         //      可「把这一屏滚一下」本来就是同一个意图，没有理由换一个工具。
         //   2. 节点存在但拒绝滚动（到尽头，或正在动画）。
         // 坐标滑动不依赖任何节点属性，是同一件事的另一条路。
@@ -1153,7 +1153,7 @@ object DeviceUiAutomation {
             DeviceDenial(
                 code = DeviceDenial.UNSUPPORTED,
                 reason = "无障碍不能注入按键「$key」。可用：" + globalActions.keys.sorted().joinToString("、") + "。",
-                hint = "原始按键改用 android_keyevent（需 Shizuku）。",
+                hint = "原始按键改用 android_screen 的 key（需 Shizuku），或用 android_shell 执行 input keyevent。",
             ),
         )
     }

@@ -218,7 +218,7 @@ object DeviceAppActions {
                 ).put(
                     "note",
                     "已调用 startActivity，但无障碍服务没有运行，无法验证前台是否真的切换。" +
-                        "要确认结果，让用户打开「设备能力 → 无障碍」，或先用 android_bridge_status 看「前台」行。",
+                        "要确认结果，让用户打开「设备能力 → 无障碍」，或先用 android_status 看「前台」行。",
                 )
             }
             verifiedForeground(context, packageName)?.let { seen ->

@@ -553,7 +553,7 @@ object DeviceSystemActions {
             DeviceDenial(
                 code = DeviceDenial.UNSUPPORTED,
                 reason = "这台设备没有带闪光灯的相机（权限已授予）。",
-                hint = "改用 android_say（kind=\"notification\"/\"toast\"）。",
+                hint = "改用 android_comm 的 notify 或 toast。",
             ),
         )
         return try {
