@@ -669,6 +669,10 @@ fun PiTextEditorSheet(
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            setting.editorNote?.let { note ->
+                Spacer(Modifier.height(PiSpacing.inline))
+                PiInfoNote(note, modifier = Modifier.padding(horizontal = 0.dp))
+            }
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             // 只读行不抢焦点：那里没有可输入的东西，弹键盘等于骗人。
             if (!setting.readOnly) PiAutoFocus(focusRequester)

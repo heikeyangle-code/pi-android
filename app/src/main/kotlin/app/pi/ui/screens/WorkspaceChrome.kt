@@ -122,7 +122,7 @@ import kotlinx.coroutines.launch
  * | [WsSheet] | `function Sheet` (`:514-532`) | scrim `.32` + `surf-high` + 上圆角 16 + 1px 上边；抓手 `32×3`、头 `12px 14px 8px`、标题 15/600 + ✕ `28×28` 圆角 8、副标题 12 muted `mt 4`、正文 `maxHeight 420` / 底部 8、页脚 `10px 14px 14px` |
  * | [WsSectionHeader] | `function Section` (`:424-435`) | `padding:0 14px`、`margin-bottom:7px`、12 标签（`.02em`）+ 12 计数 + 右侧 aside |
  * | [WsRow] | `function Row` (`:452-471`) | `padding:10px 12px`、`gap:10`、标题 15（字重 **500**，strong 时 600；等宽行 `mono` 14）+ 副行 12 + 右值 13 |
- * | [WsCard] / [WsCardSlice] | `function Card` (`:421-423`) + `Rows` (`:437-449`) | 卡壳：`surf-low` 底、圆角 10、左右 14 页边；列表里由**每一片**自带卡壳（首片圆上角、末片圆下角、行间线在卡内），这样 `LazyColumn` 的懒加载不被 `Rows` 的整列写法牺牲 |
+ * | [WsCard] | `function Card` (`:421-423`) | 卡壳：`surf-low` 底、圆角 10、左右 14 页边（**列表**不再用它：列表卡统一走 `PiSettingsCard`） |
  */
 
 // ------------------------------------------------------------------ 段头 ----
@@ -709,9 +709,9 @@ internal fun WsHairline(inset: Boolean = true) {
 
 /** 一行里那个「更多」按钮（稿子的 `MoreBtn`：26×26 圆角 7）。 */
 @Composable
-internal fun WsMoreButton(onClick: () -> Unit) {
+internal fun WsMoreButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
-        Modifier
+        modifier
             .size(26.dp)
             .clip(RoundedCornerShape(7.dp))
             .clickable(onClick = onClick),
@@ -808,48 +808,6 @@ internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Un
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column { content() }
-    }
-}
-
-/**
- * 一张卡在 `LazyColumn` 里的**一片**。
- *
- * 稿子的 `Rows` 是「一个 `Card` 里塞整列 + 行间 `.div`」（`workspace-final.html:437-449`），
- * 那是原型写法：④ 的目录可能有几千个文件，把整列放进一个 item 就等于放弃懒加载。
- * 所以卡壳由**每一片自己带**：左右 14 的页边、`surf-low` 底、圆角 10 —— 只有首片圆上角、
- * 末片圆下角，中间不圆；行间那条 hairline 由非首片画在卡片**内部**（与稿子
- * `i>0 ? <div className="div"/>` 同一个位置）。屏幕上一列相邻的片因此看起来仍是一张卡。
- *
- * 行构件自己**不再**画末尾那条线（原来是 `ChangedFileRow`/`WorkspaceEntryRow` 各自收尾），
- * 于是④ 最后一行下面不会多出一条悬空的 hairline。
- *
- * @param index 这一片在列表里的序号；0 的那一片圆上角、不画上方的线。
- * @param lastIndex 最后一片的序号；它圆下角。
- */
-@Composable
-internal fun WsCardSlice(
-    index: Int,
-    lastIndex: Int,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val radius = PiSettingsMetrics.cardRadius
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-        shape = RoundedCornerShape(
-            topStart = if (index == 0) radius else 0.dp,
-            topEnd = if (index == 0) radius else 0.dp,
-            bottomStart = if (index == lastIndex) radius else 0.dp,
-            bottomEnd = if (index == lastIndex) radius else 0.dp,
-        ),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
-        Column {
-            if (index > 0) WsHairline()
-            content()
-        }
     }
 }
 

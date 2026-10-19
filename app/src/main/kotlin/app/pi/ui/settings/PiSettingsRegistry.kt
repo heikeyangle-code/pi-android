@@ -80,6 +80,11 @@ data class PiSetting(
     val key: String,
     val title: String,
     val description: String,
+    /**
+     * 编辑 sheet 里的补充说明。行上的 description 只有一行（统一后会被截断），
+     * 需要展开讲的规则（例如两份提示词文件的差别）放这里，读的人点开才看见。
+     */
+    val editorNote: String? = null,
     val kind: PiRowKind,
     val group: String,
     val section: String,
@@ -528,8 +533,9 @@ object PiSettingsCatalog {
             // 值不在 App 的设置里，由 `PromptFileSlot` 映射到 pi 的文件。
             key = "app.prompts.system",
             title = "自定义系统提示",
-            description = "整份替换 pi 自带的提示词，连工具清单与规则也一起换掉。" +
-                "留空并保存 = 删掉这份，回到 pi 自带；只想补几条规矩用下一行。",
+            description = "整份替换 pi 的提示词，要追加用下一行。",
+            editorNote = "整份替换：连 pi 的工具清单与使用规则也会被这份替换掉。" +
+                "留空并保存 = 删掉这份文件，回到 pi 自带；只想补几条规矩，用「追加系统提示」。",
             // 框上沿写的是**真正被写的文件**，不是点号键：这一行不是 pi 的设置项，
             // 写个像键的名字上去等于指认一个不存在的东西。
             keyLabel = "~/.pi/agent/SYSTEM.md",
@@ -546,7 +552,9 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.prompts.append",
             title = "追加系统提示",
-            description = "在 pi 组装好的提示词后面追加一段，不替换任何东西；留空并保存 = 删掉追加。",
+            description = "在 pi 的提示词后面追加，不替换。",
+            editorNote = "只追加：pi 组装好的提示词一个字都不动，这段接在最后。" +
+                "留空并保存 = 删掉追加。",
             keyLabel = "~/.pi/agent/APPEND_SYSTEM.md",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
