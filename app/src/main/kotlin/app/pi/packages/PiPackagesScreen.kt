@@ -1,6 +1,6 @@
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.unit.dp
-idx.compose.foundation.BorderStroke
+package app.pi.packages
+
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,17 +32,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import app.pi.ui.settings.PiEditorField
+import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.screens.WsBadge
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsBadge
-import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsCardShape
 import app.pi.ui.settings.PiSettingsCollapseAbove
 import app.pi.ui.settings.PiSettingsDialog
 import app.pi.ui.settings.PiSettingsListExpander
 import app.pi.ui.settings.PiSettingsHairline
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiSpacing
