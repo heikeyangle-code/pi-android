@@ -128,7 +128,6 @@ export interface HealthCapability {
 	enabledForSession: boolean;
 	usable: boolean;
 	reason?: string;
-	allows: string[];
 }
 
 export interface HealthPayload {
