@@ -251,6 +251,16 @@ fun ProjectScreen(
     val currentDir = remember(guestRootfs, crumbs) {
         crumbs.fold(guestRootfs) { dir, segment -> File(dir, segment) }
     }
+    // 面包屑是**从 rootfs 根算起**的，而 `relativeParent` 是给 `File(workspace, …)` 用的，
+    // 只能相对**工作区**。两者混用会把 `workspace/pi/workspaces/<name>` 再拼到 workspace 后面，
+    // 新建的文件因此落在 `…/workspace/workspace/pi/workspaces/…`（用户报的“新建不落在当前层”）。
+    val insideWorkspace = crumbs.size >= homeCrumbs.size && crumbs.subList(0, homeCrumbs.size) == homeCrumbs
+    val parentRelative = if (insideWorkspace) crumbs.drop(homeCrumbs.size).joinToString("/") else ""
+    val whereLabel = if (insideWorkspace) {
+        "工作区" + parentRelative.split('/').filter { it.isNotEmpty() }.joinToString("") { " / $it" }
+    } else {
+        currentDir.absolutePath
+    }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
         listing = null
         listingError = null
@@ -887,9 +897,9 @@ fun ProjectScreen(
                                         inputDialog = WorkspaceInputDialog(
                                             kind = WorkspaceInputKind.NewFile,
                                             title = "新建文件",
-                                            where = "工作区" + crumbs.joinToString("") { " / $it" },
-                                            relativeParent = crumbs.joinToString("/"),
-                                            absoluteParent = null,
+                                            where = whereLabel,
+                                            relativeParent = parentRelative,
+                                            absoluteParent = currentDir,
                                             initial = "",
                                         )
                                     },
@@ -1361,16 +1371,16 @@ fun ProjectScreen(
     // ------------------------------------------------------------ 浮层：新建（文件 / 文件夹）
     if (newSheet) {
         WorkspaceNewSheet(
-            where = workspaceName + crumbs.joinToString("") { " / $it" },
+            where = whereLabel,
             onClose = { newSheet = false },
             onNewFile = {
                 newSheet = false
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewFile,
                     title = "新建文件",
-                    where = "工作区" + crumbs.joinToString("") { " / $it" },
-                    relativeParent = crumbs.joinToString("/"),
-                    absoluteParent = null,
+                    where = whereLabel,
+                    relativeParent = parentRelative,
+                    absoluteParent = currentDir,
                     initial = "",
                 )
             },
@@ -1379,9 +1389,9 @@ fun ProjectScreen(
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewDir,
                     title = "新建文件夹",
-                    where = "工作区" + crumbs.joinToString("") { " / $it" },
-                    relativeParent = crumbs.joinToString("/"),
-                    absoluteParent = null,
+                    where = whereLabel,
+                    relativeParent = parentRelative,
+                    absoluteParent = currentDir,
                     initial = "",
                 )
             },
@@ -1406,17 +1416,15 @@ fun ProjectScreen(
                     inputDialog = null
                     when (dialog.kind) {
                         WorkspaceInputKind.NewFile -> {
-                            val parent = File(workspace, dialog.relativeParent.orEmpty())
-                            val relative = listOf(dialog.relativeParent, typed)
-                                .filterNotNull()
-                                .filter { it.isNotEmpty() }
-                                .joinToString("/")
+                            val parent = dialog.absoluteParent ?: File(workspace, dialog.relativeParent.orEmpty())
+                            val created = File(parent, typed)
+                            val display = workspaceDisplayPath(workspace, created)
                             runFileOp(
                                 what = "已新建文件 · $typed",
                                 onDone = { ok ->
                                     // 稿子：「建完直接进编辑态，写什么由你。」
                                     if (ok) {
-                                        openRelative(relative, File(parent, typed), startInEdit = true)
+                                        openRelative(display, created, startInEdit = true)
                                     }
                                 },
                             ) {
@@ -1425,7 +1433,10 @@ fun ProjectScreen(
                         }
 
                         WorkspaceInputKind.NewDir -> runFileOp("已新建文件夹 · $typed") {
-                            WorkspaceFiles.createDir(File(workspace, dialog.relativeParent.orEmpty()), typed)
+                            WorkspaceFiles.createDir(
+                                dialog.absoluteParent ?: File(workspace, dialog.relativeParent.orEmpty()),
+                                typed,
+                            )
                         }
 
                         WorkspaceInputKind.Rename -> {
@@ -2801,6 +2812,13 @@ private fun WorkspaceNameDialog(
         // 这一行永远是路径/位置（`dialogSub` 是重命名时那条绝对路径，`where` 是
         // 「工作区 / src」这种拼法）—— 规则 #7：机器产出的路径走等宽。
         PiDialogBody(dialog.dialogSub ?: dialog.where, mono = true)
+        val trimmed = name.trim()
+        val problem = when (dialog.kind) {
+            // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
+            WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
+            else -> WorkspaceFiles.nameProblem(name)
+        }
+        val showProblem = problem != null && name.isNotEmpty()
         Box(
             Modifier
                 .fillMaxWidth()
@@ -2810,10 +2828,9 @@ private fun WorkspaceNameDialog(
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .border(
                     PiSettingsMetrics.hairline,
-                    PiTheme.palette.borderAccent,
+                    if (showProblem) PiTheme.palette.error else PiTheme.palette.borderAccent,
                     RoundedCornerShape(NAME_FIELD_RADIUS),
-                )
-                .padding(horizontal = PiSettingsMetrics.rowGap),
+                ),
             contentAlignment = Alignment.CenterStart,
         ) {
             androidx.compose.foundation.text.BasicTextField(
@@ -2825,35 +2842,64 @@ private fun WorkspaceNameDialog(
                 singleLine = true,
                 textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = NAME_FIELD_PADDING),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (name.isEmpty()) {
+                            Text(
+                                when (dialog.kind) {
+                                    WorkspaceInputKind.NewFile -> "文件名，例如 notes.md"
+                                    WorkspaceInputKind.NewDir -> "文件夹名"
+                                    WorkspaceInputKind.Rename -> "新名字"
+                                    WorkspaceInputKind.RenameWorkspace -> "显示名"
+                                },
+                                style = PiTheme.text.mono,
+                                color = PiTheme.palette.muted,
+                                maxLines = 1,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
             )
         }
         Text(
-            when (dialog.kind) {
-                WorkspaceInputKind.Rename -> "只改文件名，内容不动。"
-                // 显示名（label）与目录名是两回事：改它不移动目录，所以 pi 的会话记录与
-                // 项目信任（都挂在目录路径上）一条都不会丢 —— 这是 `WorkspaceStore.rename`
-                // 特意选的做法，输入框旁边得把这件事说出来。
-                WorkspaceInputKind.RenameWorkspace -> "只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。"
-                else -> "建在当前目录下。"
+            if (showProblem) {
+                problem.orEmpty()
+            } else {
+                when (dialog.kind) {
+                    WorkspaceInputKind.Rename -> "只改文件名，内容不动。"
+                    // 显示名（label）与目录名是两回事：改它不移动目录，所以 pi 的会话记录与
+                    // 项目信任（都挂在目录路径上）一条都不会丢 —— 这是 `WorkspaceStore.rename`
+                    // 特意选的做法，输入框旁边得把这件事说出来。
+                    WorkspaceInputKind.RenameWorkspace -> "只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。"
+                    else -> "建在当前目录下。"
+                }
             },
             modifier = Modifier.padding(top = PiSpacing.inline),
             style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
+            color = if (showProblem) PiTheme.palette.error else PiTheme.palette.muted,
         )
         PiDialogActions {
             PiDialogAction(label = "取消", primary = false, onClick = onClose)
             PiDialogAction(
                 label = "确定",
                 primary = true,
-                onClick = { onSubmit(name.trim()) },
+                enabled = trimmed.isNotEmpty() && problem == null,
+                onClick = { onSubmit(trimmed) },
             )
         }
     }
 }
 
-/** 稿子给输入框的 `height:38; border-radius:9`。 */
-private val NAME_FIELD_HEIGHT = 38.dp
+/** 名字输入框：从 38 抬到 48（38 在手机上又矮又难戳），左右留 12 的内边距。 */
+private val NAME_FIELD_HEIGHT = 48.dp
 private val NAME_FIELD_RADIUS = 9.dp
+private val NAME_FIELD_PADDING = 12.dp
 
 // ================================================================ Snackbar
 
@@ -2979,4 +3025,15 @@ private fun relativeTime(epochMillis: Long): String {
         minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)} 天前"
         else -> "${minutes / (60 * 24 * 7)} 周前"
     }
+}
+
+/**
+ * 新建之后要打开的那条「显示路径」：在工作区里就是相对工作区的路径（`src/a.md`），
+ * 面包屑已经走到工作区外（rootfs 的 `/opt` 等）就用绝对路径 —— viewer 的 displayPath
+ * 只是标签，真正读写的是传入的 [file]。
+ */
+private fun workspaceDisplayPath(workspace: File, file: File): String {
+    val base = runCatching { workspace.canonicalPath }.getOrDefault(workspace.absolutePath).trimEnd('/')
+    val created = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
+    return if (base.isNotEmpty() && created.startsWith("$base/")) created.removePrefix("$base/") else created
 }
