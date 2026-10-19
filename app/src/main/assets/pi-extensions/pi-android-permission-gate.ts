@@ -5,8 +5,8 @@
  * that watches `tool_call` and returns `{ block: true, reason }`. This is the
  * device-bridge instance of that pattern, modelled on
  * `examples/extensions/permission-gate.ts`, and it exists because a phone agent is
- * categorically more dangerous than a desktop one — a wrong `android_stop_app` or
- * `android_shell` can lose work or hand the device to a stranger.
+ * categorically more dangerous than a desktop one — a wrong `android_app(action="stop")`
+ * or `android_shell` can lose work or hand the device to a stranger.
  *
  * ## Jurisdiction: device tools only — this is a hard rule, not a default
  *
@@ -25,8 +25,8 @@
  *    ever passing through here, so this layer is a speed bump against a bad
  *    decision, not a security boundary;
  *  - the parts that cannot be bypassed from the guest are in the app's process:
- *    the capability opt-in, the shell whitelist and its 放宽模式 syntax rule, and the
- *    workspace write boundary. Those are what the user's consent actually rests on.
+ *    the capability opt-in and the Kotlin guard that inspects every `/app/shell`
+ *    command. Those are what the user's consent actually rests on.
  *
  * ## The three properties that matter here
  *
@@ -38,20 +38,21 @@
  *     remembered set is cleared on every `session_start`. That kills confirmation
  *     fatigue (which turns real approvals into a reflex) without turning into a
  *     permanent grant; a new session asks again.
- *  3. **Shell asks instead of refusing.** The hard blocklist is empty on both sides
+ *  3. **The shell asks instead of refusing.** The hard blocklist is empty on both sides
  *     (`danger.FORBIDDEN_SHELL_PATTERNS` mirrors `DeviceShellGuard.hardBlocks`), so
- *     there is nothing left that can never be allowed: `needsApproval` names the
- *     irreversible commands (a `dd` write, `mkfs`, `/dev/block`, `pm clear`) and the
- *     user is asked, while every other command runs without a dialog.
+ *     there is nothing left that can never be allowed: `approvalRuleFor` names the
+ *     irreversible calls (a `dd` write, `mkfs`, `/dev/block`, `pm clear`,
+ *     `pm uninstall`, and `android_app(action="stop")`) and the user is asked, while
+ *     every other call runs without a dialog.
  */
 
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { reportGate } from "./pi-android-bridge/client";
 import {
+	approvalRuleFor,
 	dangerLevelOf,
 	describeDangerousCall,
 	isDeviceTool,
-	needsApproval,
 	type ApprovalRule,
 } from "./pi-android-bridge/danger";
 
@@ -66,24 +67,19 @@ const sessionGrants = new Set<string>();
 /**
  * The key an approval is remembered under.
  *
- * Three cases, and the first is the one that had to change:
+ * A call that matched a rule is remembered **per rule**, never per tool: one
+ * 「同意并记住本次会话」 on `pm clear` must not also silence `mkfs`, `dd` and
+ * `pm uninstall` for the rest of the session — that would collapse seven curated
+ * rules to zero on a single click, the opposite of what a curated list is for.
+ * `android_app(action="stop")` is remembered under its own 「结束应用」 rule for the
+ * same reason: approving one `stop` is not approving every future one.
  *
- *  - **A tool with a per-call rule list** (`android_shell`) is
- *    remembered **per matched rule**, never per tool. Keying those by tool name meant
- *    one 「同意并记住本次会话」 on `pm clear` also silenced `mkfs`, `dd` and
- *    `rm -rf /sdcard` for the rest of the session — seven curated rules collapsing to
- *    zero on a single click, which is the opposite of what a curated list is for. The
- *    rule's `id` is a short readable name, `grantLabel` shows it, so the scope is
- *    stated in the dialog and in the confirmation note as well as here.
- *  - **A direction** (`android_download`, `android_files`) keeps `op` in the key: those
- *    used to be two tools with two separate grants, and remembering
- *    `android_files_write` never silenced `android_files_read`.
- *  - **Everything else** keeps its bare tool name, exactly as before.
+ * Only rule-carrying tools reach a dialog at all (see [approvalRuleFor]); anything
+ * else keeps its bare tool name, so a future dangerous tool still has a stable key
+ * before anyone curates its rules.
  */
-function grantKey(toolName: string, input: Record<string, unknown>, rule: ApprovalRule | null): string {
-	if (rule !== null) return `${toolName}:${rule.id}`;
-	const op = input.op;
-	return typeof op === "string" && op.length > 0 ? `${toolName}:${op}` : toolName;
+function grantKey(toolName: string, rule: ApprovalRule | null): string {
+	return rule === null ? toolName : `${toolName}:${rule.id}`;
 }
 
 /** What the user is shown for a remembered grant — `android_files（write）`. */
@@ -121,24 +117,17 @@ export default function (pi: ExtensionAPI) {
 		const level = dangerLevelOf(toolName);
 		const input = event.input as Record<string, unknown>;
 
-		// (3) Two rules are about the *call*, not the tool.
+		// (3) Danger is a property of the *call*, not of the tool.
 		//
-		// The level is a property of the tool, but what is worth asking about belongs to
-		// one call: an irreversible shell command. `android_shell` is `dangerous` as a
-		// tool, but most of what it runs is not worth asking about, so the rule list
-		// decides per call and the level check below covers tools with no rule of their
-		// own.
-		let approvalReason: ApprovalRule | null = null;
-		if (toolName === "android_shell") {
-			const command = typeof input.command === "string" ? input.command : "";
-			approvalReason = needsApproval(command);
-		}
-
-		if (toolName === "android_shell") {
-			// A tool with its own rule: a call that matched none of them runs silently.
+		// `android_shell` runs anything, but most of what it runs deserves no dialog;
+		// `android_app` has three actions and only `stop` is irreversible. So those two
+		// are judged by their rule list, and a call that matched none of the rules runs
+		// silently. Everything else falls back to the level check below.
+		const approvalReason: ApprovalRule | null = approvalRuleFor(toolName, input);
+		const judgedPerCall = toolName === "android_shell" || toolName === "android_app";
+		if (judgedPerCall) {
 			if (approvalReason === null) return undefined;
 		} else if (level !== "dangerous") {
-			// No rule of its own and not a dangerous tool: not the gate's business.
 			return undefined;
 		}
 
@@ -154,7 +143,7 @@ export default function (pi: ExtensionAPI) {
 
 		// (2) Already remembered for this session: do not ask again. The key carries the
 		// matched rule, so this only skips the *same* consequence — see [grantKey].
-		const key = grantKey(toolName, input, approvalReason);
+		const key = grantKey(toolName, approvalReason);
 		if (sessionGrants.has(key)) {
 			approvals.set(toolName, (approvals.get(toolName) ?? 0) + 1);
 			await publish(`${grantLabel(toolName, key)} 在本会话内已被记住，未再次询问。`);

@@ -4,9 +4,19 @@ Three entries, copied into the agent dir on first boot (`DeviceBridgeController`
 
 | entry | what it is |
 |---|---|
-| `pi-android-bridge/index.ts` | one tool per device capability, over the app's loopback bridge |
-| `pi-android-permission-gate.ts` | asks before a device tool runs |
+| `pi-android-bridge/index.ts` | seven device tools over the app's loopback bridge |
+| `pi-android-permission-gate.ts` | asks before an irreversible device call runs |
 | `pi-highlight/index.ts` | syntax highlighting service |
+
+The seven tools are `android_status`, `android_screen`, `android_app`, `android_files`,
+`android_shell`, `android_comm`, `android_device`. Each one is a closed `action` set
+(`android_screen(action="tap")`) rather than a family of aliases, because every tool
+pays its `description`, `promptSnippet`, `promptGuidelines` and parameter schema on
+every request — one endpoint described once instead of once per alias. `tap` / `type` /
+`swipe` / `key` follow themselves with `POST /app/ui/diff`, so one call returns both
+"what I did" and "what changed". `android_shell` and `android_app(action="stop")` are
+the two calls that can ask the user first; `danger.ts` holds both the levels and the
+per-call rules. The design is `docs/device-bridge-v2.md`.
 
 They ship as **TypeScript sources**, and that is deliberate — do not "optimise" it
 into a build step. Three facts for whoever comes next:

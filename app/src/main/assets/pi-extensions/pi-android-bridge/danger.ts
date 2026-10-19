@@ -39,11 +39,12 @@
  *                  no UI to ask through, and the first approval may be remembered
  *                  for the rest of the session (see the permission gate).
  *
- * A tool that merged two capabilities carries the **highest** level of its branches,
- * because the gate classifies a call by tool name: `android_app` lists apps (read) and
- * launches them (control), so it is control; `android_clipboard` reads (read) and
- * writes (control), so it is control. The merge is recorded as D32 in
- * `design/ui-refactor/07-construction-decisions.md`.
+ * A tool that merged several capabilities carries the **highest** level of its
+ * branches, because the gate classifies a call by tool name: `android_app` lists apps
+ * (read), launches them and stops them (control), so it is control;
+ * `android_comm` reads the clipboard (read) and writes it (control), so it is control.
+ * The per-call exceptions (`action="stop"`, the shell's irreversible commands) are not
+ * levels at all — they are [approvalRuleFor]'s rules, checked per call.
  */
 
 export type DangerLevel = "read" | "control" | "dangerous";
@@ -52,53 +53,23 @@ export type DangerLevel = "read" | "control" | "dangerous";
 export const DEVICE_TOOL_PREFIX = "android_";
 
 export const DANGER_LEVELS: Record<string, DangerLevel> = {
-	// --- direct：常驻，进提示词 ----------------------------------------------
+	// --- v2 的 7 个工具 ---------------------------------------------------------
 	//
-	// 合并后的工具若按「各分支里最高的那一级」记，`android_ui` / `android_io` /
-	// `android_fs` / `android_app` 都会变成 `dangerous` —— 而它们绝大多数调用是
-	// 读屏、点一下、存个文件。每次都弹窗等于把确认变成条件反射，真正的确认也
-	// 就不值钱了。所以只有 `android_shell` 留在 `dangerous`，其余四个是 `control`；
-	// 需要用户过目的不可逆命令由 `needsApproval` 在 shell 那一支单独收窄。
+	// 合并后的工具若按「各分支里最高的那一级」记，`android_screen` / `android_app` /
+	// `android_files` / `android_comm` 都会变成 `dangerous` —— 而它们绝大多数调用是读屏、
+	// 点一下、存个文件。每次都弹窗等于把确认变成条件反射，真正的确认也就不值钱了。
+	//
+	// 所以工具级的 `dangerous` 只剩 `android_shell` 一个；「按调用才危险」的分支
+	// （`android_app` 的 `action="stop"`、shell 里那 7 条不可逆命令）由
+	// [approvalRuleFor] 单独收窄 —— 判据是这一次调用，不是这个工具。
 	android_status: "read",
-	android_ui: "control",
+	android_screen: "control",
 	android_app: "control",
-	android_io: "control",
-	android_fs: "control",
-	android_shell: "dangerous",
-
-	// --- 细粒度工具（合并入口展开的那些）--------------------------------------------------
-	android_bridge_status: "read",
-	android_ui_dump: "read",
-	android_screenshot: "read",
-	android_device_state: "read",
-	android_files_list: "read",
-
-	android_tap: "control",
-	android_key: "control",
-	android_swipe: "control",
-	android_say: "control",
-	android_vibrate: "control",
-	android_clipboard: "control",
-	android_torch: "control",
-	android_input: "control",
-	android_keyevent: "control",
-	android_stop_app: "control",
-	android_share: "control",
-	android_open: "control",
-	android_download: "control",
 	android_files: "control",
-
-	// 波2 的通知监听工具按上面同一条规则记 `control`：它是多 action 的合并体，既有
-	// 「看一眼状态」的分支，也有改通知的分支；整块记成 `dangerous` 会让每次读通知都弹
-	// 一次确认，确认也就贬值了。其中不可逆的那几条由 App 侧端点在执行前取人工确认；
-	// 闸门这一层仍然只有一条判据：只有 `android_shell` 是 `dangerous`，而它里面只有那 7 条
-	// 正则会被问。
-	android_notify: "control",
+	android_comm: "control",
+	android_device: "control",
+	android_shell: "dangerous",
 };
-
-export const DANGEROUS_TOOLS: readonly string[] = Object.entries(DANGER_LEVELS)
-	.filter(([, level]) => level === "dangerous")
-	.map(([name]) => name);
 
 /**
  * True when a tool name belongs to the device layer — the gate's whole jurisdiction.
@@ -140,24 +111,8 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
 	switch (toolName) {
 		case "android_shell":
 			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令本身不做任何过滤，成败取决于身份：装了 Shizuku 是 ADB 级 uid=2000，否则是应用自身身份（pm、input、dumpsys、screencap 会以 SecurityException 失败）。`;
-		case "android_stop_app":
+		case "android_app":
 			return `结束应用：\n\n  ${asString(input, "package")}\n\n后台进程会被结束，未保存的内容可能丢失。`;
-		case "android_share":
-			return `把内容分享给其他应用：\n\n  ${truncate(asString(input, "text") || asString(input, "url"), 300)}\n\n这会打开系统分享面板，等于以你的名义把内容交出去。`;
-		case "android_open":
-			return `打开链接：\n\n  ${truncate(asString(input, "url"), 300)}\n\n系统会跳转到能处理它的应用（浏览器、邮件、其他 App）。`;
-		case "android_input":
-			return `向当前界面的输入框写入文本：\n\n  ${truncate(asString(input, "text"), 300)}${input.submit === true ? "\n\n并尝试提交（回车）。" : ""}\n\n文本会进入其他应用的输入框，可能被直接发送出去；直接写入被拒绝时会改用剪贴板粘贴（会替换剪贴板内容）。`;
-		case "android_keyevent":
-			return `注入原始按键：\n\n  ${asString(input, "keys")}${Number(input.repeat ?? 1) > 1 ? ` ×${input.repeat}` : ""}\n\n按键会送到当前焦点所在的应用，等同于你亲手按。`;
-		case "android_download":
-			return asString(input, "op") === "read"
-				? `从公共 Download 目录读入文件：\n\n  ${asString(input, "name")}\n\n文件内容会进入模型上下文。`
-				: `把文件写入公共 Download 目录：\n\n  ${asString(input, "name")}\n\n文件会离开沙箱，设备上的其他应用与用户都能看到。`;
-		case "android_files":
-			return asString(input, "op") === "read"
-				? `读取用户已授权（SAF）目录里的文件：\n\n  ${asString(input, "path")}\n\n文件内容会进入模型上下文。`
-				: `写入用户已授权（SAF）目录：\n\n  ${asString(input, "path")}\n\n这个目录之外的一切不受影响，但目录之内的现有文件可能被覆盖。`;
 		default:
 			return `执行设备操作：${toolName}`;
 	}
@@ -268,6 +223,26 @@ export interface ApprovalRule {
 	readonly label: string;
 }
 
+/** `android_app(action="stop")` 的规则：它不可逆，而且和 shell 的命令规则不是一回事。 */
+export const APP_STOP_RULE: ApprovalRule = {
+	id: "结束应用",
+	label: "结束应用（后台进程会被杀掉，未保存的内容可能丢失）",
+};
+
+/**
+ * 这一次调用值不值得问用户。
+ *
+ * 判据是**调用**而不是工具：`android_shell` 里 99% 的命令不值得问，`android_app` 的
+ * `list` / `launch` 也不值得问；真正需要过目的是 shell 里那 7 条不可逆命令，和
+ * `android_app(action="stop")`。返回 null = 不问。
+ */
+export function approvalRuleFor(toolName: string, input: Record<string, unknown>): ApprovalRule | null {
+	if (toolName === "android_shell") {
+		return needsApproval(typeof input.command === "string" ? input.command : "");
+	}
+	if (toolName === "android_app" && input.action === "stop") return APP_STOP_RULE;
+	return null;
+}
 
 /**
  * @returns the rule the command matched — its consequence sentence for the dialog and

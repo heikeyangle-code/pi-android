@@ -16,11 +16,16 @@
  *  - errors are signalled by **throwing**, and the thrown message is already the
  *    Chinese explanation plus the user's next step, because a disabled capability
  *    must never be a silent failure;
- *  - every tool is *declared* to the model while its capability group is on, and a group
- *    that is off is not registered at all — so the prompt cost is the open groups' schemas
- *    and nothing else. Six of them (`android_status`, `android_ui`, `android_app`,
- *    `android_io`, `android_fs`, `android_shell`) merge the finer-grained tools by adding
- *    an `action`; the merged tools stay registered so an endpoint and its wording exist once;
+ *  - the tool surface is **seven** tools (`android_status`, `android_screen`, `android_app`,
+ *    `android_files`, `android_shell`, `android_comm`, `android_device`), each a closed
+ *    `action` set instead of a family of aliases: one endpoint's description, snippet,
+ *    guideline and schema are paid for once per request instead of once per alias
+ *    (`docs/device-bridge-v2.md` §1-2);
+ *  - an action reports its own effect: `tap` / `type` / `swipe` / `key` fetch `/app/ui/diff`
+ *    immediately after acting and say whether the screen actually moved (§3);
+ *  - with no capability group usable, **nothing** is registered — not even the status tool:
+ *    the system prompt then carries no device text at all, and the app's
+ *    「设置 → 设备能力」 page is what explains the state;
  *  - every tool truncates its own output with pi's own utilities (50KB / 2000
  *    lines) and says when it did;
  *  - string enums use `StringEnum` for Google API compatibility.
@@ -123,8 +128,8 @@ async function guarded(run: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
  * The device-side node selector, as the bridge wants it: one nested object.
  *
  * Nested rather than flat so it can never be confused with a tool's own
- * parameters — `android_input` already has a `text` (the string to type) that
- * would otherwise be read as a node selector by name.
+ * parameters — `android_screen` already has a `text` (the string to type, or the
+ * text to match) that would otherwise be read as a node selector by name.
  */
 function selectorBody(p: { text?: string; desc?: string; resourceId?: string; packageName?: string }): Record<string, unknown> {
 	const selector: Record<string, unknown> = {};
@@ -136,23 +141,11 @@ function selectorBody(p: { text?: string; desc?: string; resourceId?: string; pa
 }
 
 /**
- * The verification every UI action carries back: the foreground package before
- * and after, and whether the screen changed at all. A gesture that was sent but
- * changed nothing is the failure mode a plain "已点按" hides.
- */
-function actionEnvelope(data: ActionData): string {
-	const bits: string[] = [];
-	if (data.before !== undefined || data.after !== undefined) {
-		bits.push(`前台 ${data.before ?? "?"} → ${data.after ?? "?"}`);
-	}
-	if (data.changed === false) bits.push("屏幕没有变化（动作可能没有生效）");
-	else if (data.changed === true) bits.push("屏幕已变化");
-	return bits.length > 0 ? `（${bits.join("；")}）` : "";
-}
-
-/**
  * A parameter mistake the schema cannot catch, in the bridge's own refusal shape
  * (`[CODE] 原因` + `提示：`), naming the parameter and its allowed values.
+ *
+ * 合并工具的每个参数都只能是可选（不同 action 的必填集不同），所以「缺了哪个参数」
+ * 这条精度由各 action 自己补回来 —— 这个函数就是那句拒绝的形状。
  */
 function badParam(tool: string, param: string, allowed: string[], got: unknown): Error {
 	const values = allowed.map((value) => `"${value}"`).join(" 或 ");
@@ -170,8 +163,7 @@ function badParam(tool: string, param: string, allowed: string[], got: unknown):
  *
  * 这个联合类型里**只放 App 侧真的有的组**。多写一个成员不会让任何工具成功注册
  * （`shouldRegister` 拿它去 `usable.has` 里查，永远查不到），却会让「这组能力是存在的」
- * 这句话变成假的 —— 曾经这里还写着 `storage` / `sensors` / `admin`，前两个是已并入 `basic`
- * 的历史名字，`admin` 则在 App 侧从来没有过对应的组，也没有任何端点。
+ * 这句话变成假的。
  *
  * 这里是一份**抄写**，不是第二份真相：注册时拿它去 `/app/health` 的
  * `capabilities[].id` 里查状态，而那份 JSON 就是授权页和桥端点共用的
@@ -179,32 +171,6 @@ function badParam(tool: string, param: string, allowed: string[], got: unknown):
  * 能力时这里会查不到、对应工具不会注册（而不是猜着注册），所以错法是保守的。
  */
 type DeviceCapabilityId = "basic" | "accessibility" | "shell";
-
-interface DeviceToolSpec {
-	name: string;
-	/**
-	 * 这个工具属于哪一组能力；`null` 表示不依赖任何一组（只有 `android_bridge_status`），
-	 * 永远注册。
-	 *
-	 * 判据只能从两处读出来：工具用到的桥端点被 `DeviceBridgeRouter.kt` 的哪个
-	 * `withCapability(...)` 包着，以及能力卡上 `DeviceCapability.kt` 的 `allows` 文案。
-	 */
-	capability: DeviceCapabilityId | null;
-	/**
-	 * `hidden` = 注册但不声明给模型。给的是那些「已经被某个合并入口转交」的细粒度工具：
-	 * `android_ui` / `android_io` 的 action 表、`android_fs` 与 `android_status` 的
-	 * `deviceTool(...)` 都直接调它们，所以能力一个不少，只是同一件事不在提示词里写两遍。
-	 * 省略即 `direct`。与 `deferred` 的区别：`hidden` 不进提示词也不再需要任何
-	 * 「抳回来」的机制（`tool_search`），因为调用入口本来就在。
-	 */
-	exposure?: "hidden";
-	label: string;
-	description: string;
-	promptSnippet: string;
-	promptGuidelines?: string[];
-	parameters: TSchema;
-	run: (params: Record<string, unknown>, ctx: ExtensionContext) => Promise<ToolOutcome>;
-}
 
 // Shapes of the bridge's JSON payloads, mirrored from DeviceBridgeRouter.kt.
 interface DumpData {
@@ -392,184 +358,144 @@ function shellFailureStatus(data: ShellData): string | null {
 // tool registry
 // ---------------------------------------------------------------------------
 
-const ScreenKey = StringEnum(
-	["back", "home", "recents", "notifications", "quicksettings", "powermenu", "lock", "screenshot", "split"] as const,
-	{
-		description: "Global action: lock needs Android 9+, screenshot 11+, split 12+. The accessibility channel does only these.",
-	},
+/**
+ * v2 的 7 个工具：`status` / `screen` / `app` / `files` / `shell` / `comm` / `device`。
+ *
+ * 合并不是为了少写几行，而是为了少付每轮的 token：`android_ui` / `ui_dump` / `tap` /
+ * `input` / `key` / `keyevent` / `swipe` / `screenshot` 讲的是同一块屏幕，`io` / `fs` /
+ * `files` / `files_list` / `download` 讲的是同一批文件 —— 每多一个工具就要多付一份
+ * `description`、`promptSnippet`、`promptGuidelines` 和整份参数 schema。合并后一张
+ * action 表只付一次（`docs/device-bridge-v2.md` §2）。
+ *
+ * 合并会让 schema 失去 `required` 的精度（不同 action 的必填集不同），所以每个 action
+ * 自己用 `[BAD_PARAM]` 把它补回来；`tap` / `type` / `swipe` / `key` 之后还会立刻取一次
+ * `/app/ui/diff`，把「界面到底变没变」写进同一份结果（同文件 §3）。
+ */
+
+const SCREEN_ACTIONS = ["look", "tap", "type", "swipe", "key", "wait", "shot", "steps"] as const;
+const APP_ACTIONS = ["list", "launch", "stop"] as const;
+const FILE_ACTIONS = ["dirs", "list", "read", "write", "export", "import", "download"] as const;
+const COMM_ACTIONS = [
+	"clipboard",
+	"notify",
+	"toast",
+	"tts",
+	"vibrate",
+	"share",
+	"open",
+	"inbox",
+	"reply",
+	"dismiss",
+	"snooze",
+] as const;
+const DEVICE_ACTIONS = ["battery", "torch", "location", "sensors", "sensor"] as const;
+
+/** 全局动作键（无障碍 `performGlobalAction` 认得的那几个）。 */
+const GLOBAL_KEYS = [
+	"back",
+	"home",
+	"recents",
+	"notifications",
+	"quicksettings",
+	"powermenu",
+	"lock",
+	"screenshot",
+	"split",
+];
+
+/** `steps` 一次最多几步。超过就当场拒绝：一个调用连做十几步，出问题时没人知道错在第几步。 */
+const STEPS_LIMIT = 8;
+
+const ScreenAction = Type.Union(
+	[
+		Type.Literal("look"),
+		Type.Literal("tap"),
+		Type.Literal("type"),
+		Type.Literal("swipe"),
+		Type.Literal("key"),
+		Type.Literal("wait"),
+		Type.Literal("shot"),
+		Type.Literal("steps"),
+	],
+	{ description: "look · tap · type · swipe · key · wait · shot · steps" },
 );
 
-const ScreenshotFormat = StringEnum(["jpeg", "png"] as const, {
-	description: "Image format: jpeg is smaller (default), png is lossless.",
+const AppAction = Type.Union([Type.Literal("list"), Type.Literal("launch"), Type.Literal("stop")], {
+	description: "list · launch · stop",
 });
 
-/**
- * 四个合并工具（`android_ui` / `android_app` / `android_io` / `android_fs`）的 action。
- *
- * 用 `Type.Union` + `Type.Literal` 而不是 `StringEnum`：action 是合并出来的分支选择器，
- * 每个字面量都要在 schema 里单独摆出来，模型看到的才是闭集。`StringEnum`（`type:string` + `enum`）
- * 留给其它单值枚举（`kind` / `op` / `what` / `direction` / `format`）。
- */
-const AppAction = Type.Union(
-	[Type.Literal("list"), Type.Literal("launch")],
-	{ description: "list = list apps, launch = start one. (Stopping an app is android_stop_app — it needs the accessibility capability, not basic.)" },
-);
-
-const UiAction = Type.Union(
+const FileAction = Type.Union(
 	[
-		Type.Literal("dump"),
-		Type.Literal("elements"),
-		Type.Literal("diff"),
-		Type.Literal("select"),
-		Type.Literal("idle"),
-		Type.Literal("wait"),
-		Type.Literal("verify"),
-		Type.Literal("tap"),
-		Type.Literal("swipe"),
-		Type.Literal("input"),
-		Type.Literal("key"),
-		Type.Literal("keyevent"),
-		Type.Literal("screenshot"),
-		Type.Literal("memory"),
-		Type.Literal("visual"),
-		Type.Literal("macroStart"),
-		Type.Literal("macroStep"),
-		Type.Literal("macroStop"),
-		Type.Literal("macroPlay"),
-	],
-	{ description: "dump=read tree, elements=structured table, diff=changes since last dump, select=self-healing multi-strategy lookup, idle=wait for the tree to settle, wait=wait for a selector to appear (or pass gone=true to wait for it to disappear), verify=what sits at (x,y) and whether a tap there would land, tap, swipe, input=type, key=global action, keyevent=raw keys (Shizuku), screenshot, memory=per-app element memory, visual=screenshot handoff, macroStart/Step/Stop/Play=record and replay a recipe." },
-);
-
-const IoAction = Type.Union(
-	[
-		Type.Literal("clipboard"),
-		Type.Literal("say"),
-		Type.Literal("vibrate"),
-		Type.Literal("share"),
-		Type.Literal("open"),
-	],
-	{ description: "clipboard=read/write, say=notify/toast/speak, vibrate, share=system sheet, open=URL/deep link." },
-);
-
-const FsAction = Type.Union(
-	[
+		Type.Literal("dirs"),
 		Type.Literal("list"),
 		Type.Literal("read"),
 		Type.Literal("write"),
+		Type.Literal("export"),
+		Type.Literal("import"),
 		Type.Literal("download"),
 	],
-	{ description: "list/read/write = authorized (SAF) dirs; download = public Download (needs op)." },
+	{ description: "dirs · list · read · write · export · import · download" },
 );
 
-/**
- * 通知监听工具（`android_notify`）的 action。
- *
- * 与上面几个合并工具同一形状：`Type.Union` + `Type.Literal`，每个字面量单独摆出来，
- * 模型看到的才是闭集。
- */
-const NotifyAction = Type.Union(
+const CommAction = Type.Union(
 	[
-		Type.Literal("status"),
-		Type.Literal("recent"),
+		Type.Literal("clipboard"),
+		Type.Literal("notify"),
+		Type.Literal("toast"),
+		Type.Literal("tts"),
+		Type.Literal("vibrate"),
+		Type.Literal("share"),
+		Type.Literal("open"),
+		Type.Literal("inbox"),
 		Type.Literal("reply"),
 		Type.Literal("dismiss"),
-		Type.Literal("dismiss-all"),
 		Type.Literal("snooze"),
-		Type.Literal("events"),
 	],
-	{ description: "status/recent/events=read; reply/dismiss/dismiss-all/snooze=act on one notification by its key." },
+	{ description: "clipboard · notify · toast · tts · vibrate · share · open · inbox · reply · dismiss · snooze" },
 );
 
-/** `android_ui` / `android_io` 的 action → 它展开成哪个细粒度工具。 */
-const UI_ACTIONS: Record<string, string> = {
-	dump: "android_ui_dump",
-	tap: "android_tap",
-	swipe: "android_swipe",
-	input: "android_input",
-	key: "android_key",
-	keyevent: "android_keyevent",
-	screenshot: "android_screenshot",
-};
+const DeviceAction = Type.Union(
+	[
+		Type.Literal("battery"),
+		Type.Literal("torch"),
+		Type.Literal("location"),
+		Type.Literal("sensors"),
+		Type.Literal("sensor"),
+	],
+	{ description: "battery · torch · location · sensors · sensor" },
+);
 
-/**
- * action → 端点：那些**没有细粒度工具**的动作直接打端点。
- *
- * 波1 给 [DeviceUiAutomation] 写了一整套可靠性函数（结构化元素表、差分、自愈选择器、
- * 空闲等待、UI 宏、App 记忆、视觉交接），但没有一个只为了转发而存在的
- * `DeviceToolSpec`。曾经它们因此完全够不到 —— 函数在、端点没挂、action 表里也没有。
- * 这里把它们接到端点上，机制与 `UI_ACTIONS` 一致（同样走 `dispatch` 的校验），
- * 区别只是不经过一个中间工具。
- */
-const UI_DIRECT: Record<string, string> = {
-	elements: "/app/ui/elements",
-	diff: "/app/ui/diff",
-	select: "/app/ui/select",
-	idle: "/app/ui/idle",
-	wait: "/app/ui/wait",
-	verify: "/app/ui/verify",
-	memory: "/app/ui/memory",
-	visual: "/app/ui/visual",
-	macroStart: "/app/ui/macro/start",
-	macroStep: "/app/ui/macro/step",
-	macroStop: "/app/ui/macro/stop",
-	macroPlay: "/app/ui/macro/play",
-};
+/** One `steps` entry: the same parameters as the action it names. */
+const StepSpec = Type.Object({
+	action: Type.Union(
+		[
+			Type.Literal("look"),
+			Type.Literal("tap"),
+			Type.Literal("type"),
+			Type.Literal("swipe"),
+			Type.Literal("key"),
+			Type.Literal("wait"),
+		],
+		{ description: "step action" },
+	),
+	text: Type.Optional(Type.String({ description: "tap/swipe: match text; type: text to write" })),
+	index: Type.Optional(Type.Number({ description: "node index" })),
+	resourceId: Type.Optional(Type.String({ description: "resource id part" })),
+	x: Type.Optional(Type.Number({ description: "x px" })),
+	y: Type.Optional(Type.Number({ description: "y px" })),
+	key: Type.Optional(Type.String({ description: "key name" })),
+	direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "scroll direction" })),
+	submit: Type.Optional(Type.Boolean({ description: "type: press enter" })),
+	waitMs: Type.Optional(Type.Number({ description: "wait timeout ms" })),
+	gone: Type.Optional(Type.Boolean({ description: "wait for it to go" })),
+});
 
-const IO_ACTIONS: Record<string, string> = {
-	clipboard: "android_clipboard",
-	say: "android_say",
-	vibrate: "android_vibrate",
-	share: "android_share",
-	open: "android_open",
-};
-
-/** 合并工具里本该由原 schema 的 `required` 把关的字段，按 action 列出来。 */
-const UI_REQUIRED: Record<string, string[]> = {
-	input: ["text"],
-	key: ["key"],
-	keyevent: ["keys"],
-};
-
-const IO_REQUIRED: Record<string, string[]> = {
-	say: ["kind", "text"],
-	open: ["url"],
-};
-
-/**
- * pi 的工具分组名。模型的工具列表按它成组。
- */
 const DEVICE_NAMESPACE: ToolNamespace = {
 	name: "pi-android",
 	description: "pi-android device bridge (android_*)",
 };
 
-/**
- * 常驻工具把一次调用转交给它展开的细粒度工具。
- *
- * 合并工具只多一个 `action`，其余参数原样传下去；被展开的工具仍然注册着，
- * 所以端点和结果文案只有一份。
- */
-function deviceTool(name: string): DeviceToolSpec {
-	const tool = DEVICE_TOOLS.find((entry) => entry.name === name);
-	if (tool === undefined) throw new Error(`[BUG] 设备扩展里没有 ${name}，请用 /device-reload 重新加载扩展。`);
-	return tool;
-}
-
-/** 去掉合并工具的 `action`，其余参数原样交给被展开的工具。 */
-function withoutAction(params: Record<string, unknown>): Record<string, unknown> {
-	const rest: Record<string, unknown> = {};
-	for (const [key, value] of Object.entries(params)) {
-		if (key !== "action") rest[key] = value;
-	}
-	return rest;
-}
-
-/**
- * 合并工具里本该由 schema 的 `required` 把关的字段。
- *
- * 合并之后每个参数都只能声明成可选（不同 action 的必填集不同），这条检查补回原工具
- * schema 的精度：缺字段当场抛 `[BAD_PARAM]`，不让桥端点去猜。
- */
+/** 缺字段时的统一说法：报缺哪个参数、下一步怎么办。 */
 function requireText(tool: string, action: string, params: Record<string, unknown>, names: string[]): void {
 	for (const name of names) {
 		const value = params[name];
@@ -581,40 +507,6 @@ function requireText(tool: string, action: string, params: Record<string, unknow
 	}
 }
 
-/** 展开一个 action 表：非法 action 抛 `[BAD_PARAM]`，必填项缺失也抛。
- *
- * `direct` 是「没有细粒度工具、直接打端点」的那一组（见 `UI_DIRECT`）。它和 `actions`
- * 共用同一套 action 名校验与必填项校验，只是最后不经过 `deviceTool()`。
- */
-async function dispatch(
-	tool: string,
-	actions: Record<string, string>,
-	required: Record<string, string[]>,
-	params: Record<string, unknown>,
-	ctx: ExtensionContext,
-	direct: Record<string, string> = {},
-): Promise<ToolOutcome> {
-	const action = typeof params.action === "string" ? params.action : "";
-	const endpoint = direct[action];
-	if (endpoint === undefined && actions[action] === undefined) {
-		throw badParam(tool, "action", [...Object.keys(actions), ...Object.keys(direct)], params.action);
-	}
-	requireText(tool, action, params, required[action] ?? []);
-	if (endpoint !== undefined) {
-		const data = await bridgePost<Record<string, unknown>>(endpoint, withoutAction(params));
-		return textResult(JSON.stringify(data, null, 2), data);
-	}
-	return deviceTool(actions[action]).run(withoutAction(params), ctx);
-}
-
-/** 一个状态字段的显示值：缺字段显示 `?`（而不是 `undefined`），对象按 JSON 摆出来。 */
-function show(value: unknown): string {
-	if (value === undefined || value === null) return "?";
-	if (typeof value === "object") return JSON.stringify(value);
-	return String(value);
-}
-
-/** 与 [requireText] 同一件事，给数字参数用；返回校验过的数字。 */
 function requireNumber(tool: string, action: string, params: Record<string, unknown>, name: string): number {
 	const value = params[name];
 	if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -625,26 +517,11 @@ function requireNumber(tool: string, action: string, params: Record<string, unkn
 	return value;
 }
 
-/**
- * 与 [requireText] 同一件事，给布尔参数用。
- *
- * 不给默认值：`hidden` / `disabled` / `suspended` 这些参数只可能默认成其中一个方向，猜错
- * 就是替用户做了相反的决定（把「恢复应用」当成「隐藏应用」）。
- */
-function requireBoolean(tool: string, action: string, params: Record<string, unknown>, name: string): boolean {
-	const value = params[name];
-	if (typeof value !== "boolean") {
-		throw new Error(
-			`[BAD_PARAM] ${tool} 的 action="${action}" 需要布尔参数 ${name}（true 或 false）。\n提示：补上 ${name} 后重新调用 ${tool}。`,
-		);
-	}
-	return value;
-}
-
-/** 字符串数组参数；非法项丢掉，由调用方按「必填的列表不能为空」报 BAD_PARAM。 */
-function stringList(value: unknown): string[] {
-	if (!Array.isArray(value)) return [];
-	return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+/** 一个状态字段的显示值：缺字段显示 `?`（而不是 `undefined`）。 */
+function show(value: unknown): string {
+	if (value === undefined || value === null) return "?";
+	if (typeof value === "object") return JSON.stringify(value);
+	return String(value);
 }
 
 /** 波1 动作函数的返回形状：成功 `{ok:true,…}`，失败 `{ok:false, reason, hint}`。 */
@@ -658,11 +535,9 @@ interface ActionPayload {
 /**
  * 把 `{ok:false}` 当失败报出去。
  *
- * 波1 的动作函数（`PiInputMethodService.withConnection`、`PiNotificationListener.failure`、
- * `PiVpnService` 的各个动作）**不抛异常**，而是把失败写进返回值；端点若原样透传
- * 这个对象，这里就必须自己收下它。“把 `ok:false` 渲染成已完成”是这一层唯一会骗到模型的错：
- * 模型会据此认定操作生效，然后既不再试也不告诉用户。端点若已经把失败翻译成 denial，
- * `bridgePost` 就先抛了 `BridgeError`，根本走不到这里。
+ * 设备侧的动作函数（`PiNotificationListener` 的几个）**不抛异常**，而是把失败写进返回值。
+ * 「把 `ok:false` 渲染成已完成」是这一层最容易骗到模型的错：模型会据此认定操作生效，
+ * 然后既不再试也不告诉用户。端点若已经把失败翻译成 denial，`bridgePost` 就先抛了。
  */
 function requireActionOk(tool: string, data: ActionPayload): void {
 	if (data.ok !== false) return;
@@ -671,13 +546,7 @@ function requireActionOk(tool: string, data: ActionPayload): void {
 	throw new Error(`[ACTION_FAILED] ${reason}${hint}`);
 }
 
-/**
- * 列表类端点的取值：把载荷里那个数组拿出来交给调用方渲染。
- *
- * 取「数组本身」而不是猜一个键名，是因为键名由 App 侧端点决定（波1 的 `recent()` / `events()`
- * / `history()` / `readQueries()` 返回的都是 JSONArray）。猜错的代价不是报错，而是把一屏通知
- * 渲染成「0 条」—— 看起来像设备上真的没有通知，模型会据此回答用户。
- */
+/** 列表类端点的取值：把载荷里那个数组拿出来交给调用方渲染。 */
 function listField(data: Record<string, unknown>): unknown[] | null {
 	for (const value of Object.values(data)) {
 		if (Array.isArray(value)) return value;
@@ -685,7 +554,7 @@ function listField(data: Record<string, unknown>): unknown[] | null {
 	return null;
 }
 
-/** 列表为空时报「0 条」而不是空正文；条目怎么渲染由调用方给，因为它才知道字段含义。 */
+/** 列表为空时报「0 条」而不是空正文。 */
 function listText(
 	label: string,
 	entries: unknown[],
@@ -696,1256 +565,1106 @@ function listText(
 	return `${label}：${entries.length} 条\n${lines.join("\n")}`;
 }
 
-const DEVICE_TOOLS: DeviceToolSpec[] = [
-	// ----------------------------------------------------------- 常驻工具 ----
-	//
-	// 声明给模型的全部就是「当前开着的那几组」。一组关掉 = 它的工具根本不注册，
-	// 所以提示词的成本只等于开着的那几组的 schema，不需要额外的按需加载机制。
-	{
-		name: "android_status",
-		capability: null,
-		label: "设备桥状态",
-		description: "Bridge + capability groups, foreground app, accessibility, permissions, shell backend/uid, SAF dirs, workspace boundary.",
-		promptSnippet: "Bridge + capability status",
-		promptGuidelines: [
-			"On [DISABLED]/[NO_PERMISSION] read android_status; relay its reason, no retry.",
-		],
-		parameters: Type.Object({}),
-		run: (params, ctx) => deviceTool("android_bridge_status").run(params, ctx),
-	},
-	{
-		name: "android_bridge_status",
-		exposure: "hidden",
-		capability: null,
-		label: "设备桥状态",
-		description: "Bridge + capability state: groups on/usable, accessibility, missing permissions, screenshot support.",
-		promptSnippet: "Bridge + capability status",
-		promptGuidelines: [
-			"On [DISABLED]/[NO_PERMISSION] read android_bridge_status; relay its reason, no retry.",
-		],
-		parameters: Type.Object({}),
-		run: async () => {
-			let health: HealthPayload;
-			try {
-				health = await bridgeHealth();
-			} catch (error) {
-				const text = error instanceof BridgeError
-					? error.toModelMessage()
-					: `设备桥不可用：${String(error)}`;
-				return textResult(`设备桥状态：未连接\n\n${text}`, { connected: false });
-			}
-			const lines: string[] = [];
-			lines.push(`设备桥：运行中（127.0.0.1:${health.port}，协议 v${health.version}）`);
-			lines.push(`设备：Android ${health.androidRelease}（SDK ${health.sdkInt}）`);
-			// Decisive context for an agent: which app it is about to act on. Printed
-			// before anything else so a stale assumption is visible immediately.
-			if (health.foreground) {
-				lines.push(`前台：${health.foreground.packageName ?? "未知"}${health.foreground.class ? `/${health.foreground.class}` : ""}`);
-			} else {
-				lines.push("前台：未知（无障碍服务未连接，无法读取前台应用）");
-			}
-			if (health.audit?.lastUnpaired) {
-				lines.push(`上次执行异常终止：${health.audit.lastUnpaired}`);
-			}
-			lines.push(
-				`无障碍服务：${
-					health.accessibilityState === "connected"
-						? "运行中"
-						: health.accessibilityState === "enabled_not_connected"
-							? "已启用，正在连接中（稍等重试即可）"
-							: health.accessibilityRunning
-								? "运行中"
-								: "未运行"
-				}（系统设置中${health.accessibilityEnabledInSettings ? "已启用" : "未启用"}）`,
-			);
-			lines.push(`截图：${health.screenshotSupported ? "支持" : "不支持（需要 Android 11+）"}`);
-			lines.push(
-				`系统权限：定位${health.locationPermissionGranted ? "已授予" : "未授予"} · ` +
-					`通知${health.notificationPermissionGranted ? "已授予" : "未授予"} · ` +
-					`震动${health.vibratePermissionGranted ? "已授予" : "未授予"}`,
-			);
-			lines.push("");
-			lines.push("能力分组：");
-			for (const capability of health.capabilities) {
-				const state = !capability.enabled
-					? "已关闭"
-					: capability.enabledForSession === false
-						? "本会话暂时禁用"
-						: capability.usable
-							? "可用"
-							: "已开启但不可用";
-				lines.push(`- ${capability.title}（${capability.id}）：${state}`);
-				if (!capability.usable && capability.reason) lines.push(`    原因：${capability.reason}`);
-			}
-			const shells = health.shellBackends.map((backend) => `${backend.label}${backend.available ? "" : "（不可用）"}`);
-			lines.push("");
-			lines.push(`Shell 后端：${shells.length > 0 ? shells.join("、") : "无"}`);
-			const shizuku = health.shizuku;
-			if (shizuku) {
-				// The identity, not just a label: "已就绪（ADB 身份，uid=2000）" is what
-				// tells the model that input/am/screencap are actually available.
-				const identity = shizuku.ready
-					? shizuku.uid === 0
-						? "已就绪（root，uid=0）"
-						: `已就绪（ADB 身份，uid=${shizuku.uid}）`
-					: "未就绪";
-				lines.push(`Shizuku：${identity} —— ${shizuku.note}`);
-			}
-			const workspace = health.workspace;
-			if (workspace) {
-				// Two guest spellings of one host directory exist, and they are not
-				// interchangeable: the engine mounts the workspace at
-				// `/workspace/<relative-to-filesDir>` (which is this process's cwd), while
-				// the app's terminal tab mounts the same host directory at plain
-				// `/workspace`. Both are printed so a model never has to guess.
-				const aliases = workspace.guestPathAliases?.filter((alias) => alias !== workspace.guestPath) ?? [];
-				lines.push(
-					`工作区：${workspace.shellPath ?? "未确定"}（guest 内是 ${workspace.guestPath}` +
-						(aliases.length > 0 ? `；终端标签页是 ${aliases.join("、")}` : "") +
-						"）—— 仅供定位，不再是写入边界（Shell 不再限制写哪里）。",
-				);
-			}
-			// 这里曾经报「Shell 放宽模式：已开启/已关闭」。那个开关控制的两件事（命令替换
-			// 检查、白名单）在 DeviceShellGuard.inspect 里都已取消，健康检查里回读到的
-			// shellSyntaxRelaxed 不会再改变任何行为，所以不再拿它去告诉模型“可以期待什么”。
-			const saf = health.saf;
-			if (saf) {
-				lines.push(
-					saf.count > 0
-						? `已授权（SAF）目录：${saf.roots.join("、")}`
-						: "已授权（SAF）目录：无 —— 需要用户在「设置 → 设备能力 → 存储」授权目录后，android_files 才可用。",
-				);
-			}
-			const gate = health.gate;
-			if (gate?.reported) {
-				const grants = gate.sessionGrants ?? [];
-				lines.push(
-					`本会话已记住同意的设备操作：${grants.length > 0 ? grants.join("、") : "无（每个危险操作都会单独询问）"}`,
-				);
-			}
-			lines.push(`审计日志：${health.auditLogPath}`);
-			return textResult(lines.join("\n"), {
-				connected: true,
-				port: health.port,
-				capabilities: health.capabilities,
-			});
-		},
-	},
+// --------------------------------------------------------------- 动作反馈 ----
 
-	// ------------------------------------------------------------ 屏幕 / UI ----
-	{
-		name: "android_ui",
-		capability: "accessibility",
-		label: "屏幕操作",
-		description: "Screen: action=dump|elements|diff|select|idle|wait|verify|tap|swipe|input|key|keyevent|screenshot|memory|visual|macroStart|macroStep|macroStop|macroPlay. Dump first; its indices feed tap and input.",
-		promptSnippet: "Read screen / tap / type / swipe / screenshot",
-		promptGuidelines: [
-			"Dump before acting; on NOT_FOUND re-dump or pass text/desc/resourceId to action=tap.",
-			"action=select tries resourceId→text→desc→neighbour→relative position→coordinate and reports why each strategy failed; action=idle waits for the tree to settle; action=wait blocks until a selector appears (or, with gone=true, disappears); action=diff reports only added/removed/changed since the last dump.",
-			"action=verify tells you what is at a coordinate and whether a tap there would land on something clickable — use it when a tap seemed to do nothing, before retrying with different coordinates.",
-			"macroStart → macroStep（每步一个动作）→ macroStop 录一段配方；macroPlay 回放，回放时按当前屏幕重新解析选择器。",
-			"Custom UI / games / video: action=screenshot (crop with region); raw keys need Shizuku.",
-		],
-		parameters: Type.Object({
-			action: UiAction,
-			filter: Type.Optional(
-				Type.String({ description: "dump: keep nodes whose text/description/id contains this, plus ancestors." }),
-			),
-			maxNodes: Type.Optional(Type.Number({ description: "dump: max nodes, default 400, cap 2000." })),
-			waitForText: Type.Optional(
-				Type.String({ description: "dump: wait until a node text contains this; NOT_FOUND on timeout." }),
-			),
-			waitForId: Type.Optional(
-				Type.String({ description: "dump: wait until a node resource id contains this." }),
-			),
-			waitMs: Type.Optional(Type.Number({ description: "dump: wait timeout ms, default 5000, cap 30000." })),
-			diff: Type.Optional(Type.Boolean({ description: "dump: only changes since the last dump, default false." })),
-			index: Type.Optional(Type.Number({ description: "tap/input: node index from the last dump." })),
-			x: Type.Optional(Type.Number({ description: "tap: X in display px; with y, index is ignored." })),
-			y: Type.Optional(Type.Number({ description: "tap: Y in display px." })),
-			text: Type.Optional(
-				Type.String({ description: "tap/swipe: match node text (substring, case-insensitive). input: the text to write." }),
-			),
-			desc: Type.Optional(Type.String({ description: "tap/input: match contentDescription substring." })),
-			resourceId: Type.Optional(Type.String({ description: "tap/input/swipe: match resource id substring, e.g. btn_send." })),
-			longPress: Type.Optional(Type.Boolean({ description: "tap: long-press, default false." })),
-			x1: Type.Optional(Type.Number({ description: "swipe: start x in display px." })),
-			y1: Type.Optional(Type.Number({ description: "swipe: start y." })),
-			x2: Type.Optional(Type.Number({ description: "swipe: end x." })),
-			y2: Type.Optional(Type.Number({ description: "swipe: end y." })),
-			durationMs: Type.Optional(Type.Number({ description: "swipe: gesture ms, default 300." })),
-			direction: Type.Optional(
-				StringEnum(["forward", "backward"] as const, {
-					description: "swipe: scroll the node at index/text/resourceId instead of dragging.",
-				}),
-			),
-			submit: Type.Optional(Type.Boolean({ description: "input: attempt enter after writing, default false." })),
-			key: Type.Optional(ScreenKey),
-			keys: Type.Optional(
-				Type.String({ description: "keyevent: space/comma-separated, e.g. \"ENTER\"; KEYCODE_ prefix optional." }),
-			),
-			repeat: Type.Optional(Type.Number({ description: "keyevent: 1-20, default 1." })),
-			format: Type.Optional(ScreenshotFormat),
-			maxDimension: Type.Optional(Type.Number({ description: "screenshot: longest side cap in px, default 1280 (240-4096)." })),
-			quality: Type.Optional(Type.Number({ description: "screenshot: JPEG quality 20-100, default 82." })),
-			region: Type.Optional(
-				Type.Array(Type.Number(), { description: "screenshot: crop [left,top,right,bottom] in display px." }),
-			),
-			marks: Type.Optional(Type.Boolean({ description: "screenshot: draw the last dump's clickable indices, default false." })),
-		}),
-		run: (params, ctx) => dispatch("android_ui", UI_ACTIONS, UI_REQUIRED, params, ctx, UI_DIRECT),
-	},
-	{
-		name: "android_ui_dump",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "读取屏幕",
-		description: "Read the screen node tree (indexed); indices feed android_tap and android_input. Coordinates are display pixels.",
-		promptSnippet: "Read screen tree (indexed)",
-		promptGuidelines: [
-			"Dump before acting; on NOT_FOUND re-dump or pass text/desc/id to android_tap; wait via waitForText/waitForId.",
-		],
-		parameters: Type.Object({
-			filter: Type.Optional(
-				Type.String({ description: "Keep nodes whose text/description/resource id contains this, plus ancestors." }),
-			),
-			maxNodes: Type.Optional(
-				Type.Number({ description: `Max nodes, default ${400}, cap 2000.` }),
-			),
-			waitForText: Type.Optional(
-				Type.String({ description: "Wait until a node text contains this, then dump; NOT_FOUND on timeout." }),
-			),
-			waitForId: Type.Optional(
-				Type.String({ description: "Wait until a node resource id contains this, then dump." }),
-			),
-			waitMs: Type.Optional(
-				Type.Number({ description: "Timeout ms, default 5000, cap 30000; with waitForText/waitForId." }),
-			),
-			diff: Type.Optional(
-				Type.Boolean({ description: "Only changes since the last dump (added/changed/removed), default false." }),
-			),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					filter?: string;
-					maxNodes?: number;
-					waitForText?: string;
-					waitForId?: string;
-					waitMs?: number;
-					diff?: boolean;
-				};
-				const waiting = p.waitForText !== undefined || p.waitForId !== undefined;
-				const data = await bridgePost<DumpData>("/app/ui/dump", {
-					filter: p.filter,
-					maxNodes: p.maxNodes,
-					diff: p.diff === true,
-					...(waiting
-						? {
-								selector: { text: p.waitForText, resourceId: p.waitForId },
-								waitMs: p.waitMs ?? 5000,
-							}
-						: {}),
-				});
-				const header =
-					`包名 ${data.packageName} · 屏幕 ${data.screen.width}×${data.screen.height} · ` +
-					`控件 ${data.nodeCount}/${data.totalNodeCount}` +
-					`${data.coordinateSpace ? ` · 坐标 ${data.coordinateSpace}` : ""}` +
-					`${data.diff ? ` · 差异 新增${data.added ?? 0}/变化${data.changed ?? 0}/消失${data.removed ?? 0}` : ""}` +
-					`${data.truncated ? "（已按上限截断）" : ""}`;
-				const body = data.text.length > 0 ? data.text : "（没有可读控件：界面可能是空白，或无障碍服务被限制）";
-				return textResult(`${header}\n\n${truncateForModel(body, "屏幕控件树")}`, {
-					packageName: data.packageName,
-					nodeCount: data.nodeCount,
-					truncated: data.truncated,
-				});
-			}),
-	},
-	{
-		name: "android_tap",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "点按",
-		description: "Tap by dump index (most reliable), x/y, or text/desc/resourceId resolved on-device. longPress for long press.",
-		promptSnippet: "Tap node or coordinate",
-		parameters: Type.Object({
-			index: Type.Optional(Type.Number({ description: "Node index from the last dump." })),
-			x: Type.Optional(Type.Number({ description: "X in display px; with y, index is ignored." })),
-			y: Type.Optional(Type.Number({ description: "Y in display px." })),
-			text: Type.Optional(Type.String({ description: "Match node text (substring, case-insensitive); exclusive with index/x/y." })),
-			desc: Type.Optional(Type.String({ description: "Match contentDescription substring." })),
-			resourceId: Type.Optional(Type.String({ description: "Match resource id substring, e.g. btn_send." })),
-			longPress: Type.Optional(Type.Boolean({ description: "Long-press, default false." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					index?: number;
-					x?: number;
-					y?: number;
-					text?: string;
-					desc?: string;
-					resourceId?: string;
-					longPress?: boolean;
-				};
-				const data = await bridgePost<ActionData>("/app/ui/tap", {
-					index: p.index,
-					x: p.x,
-					y: p.y,
-					longPress: p.longPress === true,
-					...selectorBody(p),
-				});
-				const target = typeof data.target === "string" ? data.target : p.index !== undefined ? `#${p.index}` : "";
-				const where = data.x !== undefined ? `(${data.x}, ${data.y})` : target || data.selector || "";
-				return textResult(
-					`已${p.longPress === true ? "长按" : "点按"} ${where}${target && where !== target ? ` ${target}` : ""}（方式：${data.mode}）${actionEnvelope(data)}`,
-					{ mode: data.mode, changed: data.changed, after: data.after },
+/** `/app/ui/diff` 里的元素引用（`ElementRef.brief()`：key / text / bounds / resourceId）。 */
+interface DiffRef {
+	key?: string;
+	text?: string;
+	resourceId?: string;
+}
+
+interface DiffData {
+	/** true = 这台设备还没有可比对的上一屏（`diffSinceLast` 只在有基线时才 diff）。 */
+	first?: boolean;
+	same?: boolean;
+	packageName?: string;
+	packageChanged?: boolean;
+	counts?: { added?: number; removed?: number; changed?: number };
+	added?: Array<{ after?: DiffRef | null }>;
+	removed?: Array<{ before?: DiffRef | null }>;
+	changed?: Array<{ after?: DiffRef | null; fields?: string[] }>;
+}
+
+/**
+ * diff 的基线只有 `/app/ui/elements` 会建。
+ *
+ * `DeviceUiAutomation.elements()` 才写 `lastElementsJson`（`DeviceUiAutomation.kt:1829`），
+ * `dump()` 不写（它写的是 `lastSnapshot`，那是给 `index` 用的）。所以第一次动作前要先静默
+ * 建一次基线，否则 `diff` 永远回 `first:true`，反馈层就只能说「还没得比」。
+ *
+ * 它**不碰** `lastSnapshot`，所以 `look` 拿到的编号在这之后依然有效。
+ * 只建一次：失败也置位，不让每个动作都白付一次往返 —— 动作自己的报错比这里更具体。
+ */
+let diffBaselineReady = false;
+
+/**
+ * 注册那一刻的能力组，留给运行期回答「这个 action 现在能不能用」。
+ *
+ * 工具是按**组**注册的，而 v2 把几个组的分支合进了同一个工具：`android_app(action="stop")`
+ * 要无障碍，可它挂在 `basic` 下。只开 basic 时工具在表里、动作却调不动 —— 与其让桥回一个
+ * 端点级的 NO_PERMISSION，不如在这里就说清缺哪一组（`[DISABLED]` 是 v1 就定下的口径）。
+ */
+let usableGroups: ReadonlySet<string> = new Set();
+
+async function ensureDiffBaseline(): Promise<void> {
+	if (diffBaselineReady) return;
+	diffBaselineReady = true;
+	try {
+		await bridgePost("/app/ui/elements", { maxNodes: 400 });
+	} catch {
+		// 建不起来就先欠着：反馈层会按 `first` 老实说「还没有上一屏」。
+	}
+}
+
+function refLabel(ref: DiffRef | null | undefined): string {
+	if (ref === null || ref === undefined) return "?";
+	if (typeof ref.text === "string" && ref.text.length > 0) return ref.text;
+	if (typeof ref.resourceId === "string" && ref.resourceId.length > 0) return ref.resourceId;
+	if (typeof ref.key === "string" && ref.key.length > 0) return ref.key;
+	return "?";
+}
+
+/** 一句话里最多点几个名字：再多就不如让模型自己 look。 */
+function brief(items: string[], limit = 4): string {
+	return items.length <= limit ? items.join("、") : `${items.slice(0, limit).join("、")}…`;
+}
+
+/**
+ * 把 diff 载荷压成「变了没有 + 一句话」。
+ *
+ * 三种结论必须分得清，因为模型的下一个动作完全不同：
+ *  - `changed:true`  —— 生效了，接着往下走；
+ *  - `changed:false` ——「界面没变，可能没点中」，换编号/坐标或先 look；
+ *  - `changed:null`  —— 还没有上一屏，不能说变了也不能说没变（编一个就是骗它重试）。
+ */
+function verdictOf(diff: DiffData): { text: string; details: Record<string, unknown> } {
+	const added = (diff.added ?? []).map((entry) => refLabel(entry.after));
+	const removed = (diff.removed ?? []).map((entry) => refLabel(entry.before));
+	const updated = (diff.changed ?? []).map((entry) => refLabel(entry.after));
+	const screen = typeof diff.packageName === "string" ? diff.packageName : undefined;
+	if (diff.first === true) {
+		return {
+			text: "还没有上一屏可对比：先 action=look 看一眼，下一次动作就能比出变化。",
+			details: { changed: null, screen, added, removed, updated },
+		};
+	}
+	if (diff.same === true) {
+		return {
+			text: "界面没变，可能没点中：换一个编号/坐标再试，或先 action=look 看当前屏幕。",
+			details: { changed: false, screen, added, removed, updated },
+		};
+	}
+	const parts: string[] = [];
+	if (added.length > 0) parts.push(`出现 ${added.length} 个：${brief(added)}`);
+	if (removed.length > 0) parts.push(`消失 ${removed.length} 个：${brief(removed)}`);
+	if (updated.length > 0) parts.push(`变化 ${updated.length} 个：${brief(updated)}`);
+	if (parts.length === 0) parts.push(diff.packageChanged === true ? "前台应用换了" : "节点表有变化");
+	return {
+		text: `界面变了：${parts.join("；")}`,
+		details: { changed: true, screen, added, removed, updated },
+	};
+}
+
+/**
+ * 动作 → 立刻取一次 diff → 一句话。
+ *
+ * diff 拿不到（无障碍在动作中途断开、端点拒绝）时**只报动作本身**：把反馈层的失败
+ * 说成动作失败，是这一层唯一会骗到模型的错。
+ */
+async function withFeedback(
+	line: string,
+	details: Record<string, unknown> = {},
+	notes: string[] = [],
+): Promise<ToolOutcome> {
+	let diff: DiffData | null = null;
+	try {
+		diff = await bridgePost<DiffData>("/app/ui/diff", {});
+	} catch {
+		return textResult([line, ...notes, "（这次取不到界面变化：diff 端点没有返回）"].join("\n"), details);
+	}
+	const verdict = verdictOf(diff);
+	return textResult([line, ...notes, verdict.text].join("\n"), { ...details, ...verdict.details });
+}
+
+// ------------------------------------------------------------------ 屏幕 ----
+
+interface ScreenParams {
+	action?: string;
+	filter?: string;
+	maxNodes?: number;
+	index?: number;
+	x?: number;
+	y?: number;
+	text?: string;
+	desc?: string;
+	resourceId?: string;
+	longPress?: boolean;
+	direction?: string;
+	x1?: number;
+	y1?: number;
+	x2?: number;
+	y2?: number;
+	durationMs?: number;
+	submit?: boolean;
+	key?: string;
+	repeat?: number;
+	waitMs?: number;
+	gone?: boolean;
+	format?: "jpeg" | "png";
+	maxDimension?: number;
+	region?: number[];
+	steps?: Record<string, unknown>[];
+}
+
+function hasSelector(p: ScreenParams): boolean {
+	return (
+		(typeof p.text === "string" && p.text.length > 0) ||
+		(typeof p.desc === "string" && p.desc.length > 0) ||
+		(typeof p.resourceId === "string" && p.resourceId.length > 0)
+	);
+}
+
+/** `key` 归一化：Kotlin 侧同样去掉 `-` / `_` 并小写（`DeviceUiAutomation.kt:1132`）。 */
+function normalizedKey(key: string): string {
+	return key.trim().toLowerCase().replace(/[-_]/g, "");
+}
+
+async function screenLook(p: ScreenParams): Promise<ToolOutcome> {
+	const data = await bridgePost<DumpData>("/app/ui/dump", { filter: p.filter, maxNodes: p.maxNodes });
+	const header =
+		`[look] ${data.packageName} · ${data.screen.width}×${data.screen.height} · ` +
+		`控件 ${data.nodeCount}/${data.totalNodeCount}${data.truncated ? "（已按上限截断）" : ""}`;
+	const body = data.text.length > 0 ? data.text : "（没有可读控件：界面可能是空白，或无障碍服务被限制）";
+	return textResult(`${header}\n\n${truncateForModel(body, "屏幕控件树")}`, {
+		packageName: data.packageName,
+		nodeCount: data.nodeCount,
+		truncated: data.truncated,
+	});
+}
+
+async function screenTap(p: ScreenParams): Promise<ToolOutcome> {
+	const byIndex = typeof p.index === "number";
+	const byPoint = typeof p.x === "number" && typeof p.y === "number";
+	if (!byIndex && !byPoint && !hasSelector(p)) {
+		throw new Error(
+			'[BAD_PARAM] android_screen 的 action="tap" 需要 index、x+y 或 text/desc/resourceId 之一。' +
+				"\n提示：先 action=look 拿控件编号，编号比坐标稳。",
+		);
+	}
+	await ensureDiffBaseline();
+	const data = await bridgePost<ActionData>("/app/ui/tap", {
+		index: p.index,
+		x: p.x,
+		y: p.y,
+		longPress: p.longPress === true,
+		...selectorBody({ text: p.text, desc: p.desc, resourceId: p.resourceId }),
+	});
+	const where = data.x !== undefined
+		? `(${data.x}, ${data.y})`
+		: byIndex
+			? `#${p.index}`
+			: (p.text ?? p.resourceId ?? p.desc ?? "目标");
+	return withFeedback(
+		`[tap] 已${p.longPress === true ? "长按" : "点按"} ${where}（${data.mode ?? "?"}）`,
+		{ mode: data.mode, index: p.index },
+	);
+}
+
+async function screenType(p: ScreenParams, params: Record<string, unknown>): Promise<ToolOutcome> {
+	requireText("android_screen", "type", params, ["text"]);
+	await ensureDiffBaseline();
+	const data = await bridgePost<{
+		chars: number;
+		submitted: boolean;
+		mechanism?: string;
+		clipboardNote?: string;
+		submitHint?: string;
+	}>("/app/ui/input", {
+		text: p.text,
+		index: p.index,
+		submit: p.submit === true,
+		...selectorBody({ desc: p.desc, resourceId: p.resourceId }),
+	});
+	const line =
+		`[type] 已写入 ${data.chars} 个字符${data.submitted ? "，并已提交" : ""}` +
+		`${data.mechanism === "clipboard_paste" ? "（改用剪贴板粘贴完成）" : ""}`;
+	const notes = [data.clipboardNote, data.submitHint].filter(
+		(note): note is string => typeof note === "string" && note.length > 0,
+	);
+	return withFeedback(line, { chars: data.chars, submitted: data.submitted, mechanism: data.mechanism }, notes);
+}
+
+async function screenSwipe(p: ScreenParams): Promise<ToolOutcome> {
+	if (p.direction !== undefined) {
+		if (!hasSelector(p) && typeof p.index !== "number") {
+			throw new Error(
+				'[BAD_PARAM] android_screen 的 action="swipe" 用 direction 滚动时还要指明滚哪个控件：' +
+					"index、text 或 resourceId 至少给一个。" +
+					"\n提示：先 action=look 找带 scrollable 的控件。",
+			);
+		}
+		await ensureDiffBaseline();
+		const data = await bridgePost<ActionData>("/app/ui/scroll", {
+			direction: p.direction,
+			index: p.index,
+			...selectorBody({ text: p.text, resourceId: p.resourceId }),
+		});
+		return withFeedback(
+			`[swipe] 已${p.direction === "forward" ? "向后" : "向前"}滚动（${data.mode ?? "?"}）`,
+			{ mode: data.mode },
+		);
+	}
+	if (p.x1 === undefined || p.y1 === undefined || p.x2 === undefined || p.y2 === undefined) {
+		throw new Error(
+			'[BAD_PARAM] android_screen 的 action="swipe" 需要 x1/y1/x2/y2，或者 direction + index/text/resourceId。' +
+				"\n提示：滚动列表优先用 direction，坐标滑动留给画布类界面。",
+		);
+	}
+	await ensureDiffBaseline();
+	const data = await bridgePost<ActionData & { durationMs: number }>("/app/ui/swipe", {
+		x1: p.x1,
+		y1: p.y1,
+		x2: p.x2,
+		y2: p.y2,
+		durationMs: p.durationMs,
+	});
+	return withFeedback(
+		`[swipe] 已从 (${p.x1}, ${p.y1}) 划到 (${p.x2}, ${p.y2})，${data.durationMs}ms`,
+		{ durationMs: data.durationMs },
+	);
+}
+
+async function screenKey(p: ScreenParams, params: Record<string, unknown>): Promise<ToolOutcome> {
+	requireText("android_screen", "key", params, ["key"]);
+	const raw = typeof p.key === "string" ? p.key : "";
+	await ensureDiffBaseline();
+	if (GLOBAL_KEYS.includes(normalizedKey(raw))) {
+		const data = await bridgePost<{ key: string; mode: string }>("/app/ui/key", { key: raw });
+		return withFeedback(`[key] 已执行全局动作 ${data.key}（${data.mode}）`, { key: data.key, mode: data.mode });
+	}
+	const data = await bridgePost<{ keys: string[]; repeat: number; mode: string; backend: string }>(
+		"/app/ui/keyevent",
+		{ keys: raw, repeat: p.repeat },
+	);
+	return withFeedback(
+		`[key] 已注入 ${data.keys.join(" ")}${data.repeat > 1 ? ` ×${data.repeat}` : ""}（${data.mode}，后端 ${data.backend}）`,
+		{ keys: data.keys, mode: data.mode, backend: data.backend },
+	);
+}
+
+async function screenWait(p: ScreenParams, params: Record<string, unknown>): Promise<ToolOutcome> {
+	if (!hasSelector(p) && typeof p.index !== "number") {
+		throw new Error(
+			'[BAD_PARAM] android_screen 的 action="wait" 需要 text、desc 或 resourceId 之一。' +
+				"\n提示：wait 只认选择器，不认坐标。",
+		);
+	}
+	const data = await bridgePost<{
+		found?: boolean;
+		gone?: boolean;
+		selector?: string;
+		elapsedMs?: number;
+		polls?: number;
+		node?: { text?: string; description?: string; resourceId?: string };
+	}>("/app/ui/wait", {
+		selector: {
+			...(typeof p.text === "string" ? { text: p.text } : {}),
+			...(typeof p.desc === "string" ? { desc: p.desc } : {}),
+			...(typeof p.resourceId === "string" ? { resourceId: p.resourceId } : {}),
+		},
+		timeoutMs: p.waitMs ?? 5000,
+		gone: p.gone === true,
+	});
+	const what = data.gone === true ? "已消失" : "已出现";
+	const label = data.node ? ` ${data.node.text ?? data.node.description ?? data.node.resourceId ?? ""}`.trimEnd() : "";
+	return textResult(
+		`[wait] ${what}：${data.selector ?? "选择器"}（${data.elapsedMs ?? 0}ms，${data.polls ?? 0} 次检查）${label}`,
+		{ found: data.found, gone: data.gone, elapsedMs: data.elapsedMs },
+	);
+}
+
+async function screenShot(p: ScreenParams): Promise<ToolOutcome> {
+	const data = await bridgePost<ScreenshotData>(
+		"/app/screenshot",
+		{ format: p.format, maxDimension: p.maxDimension, region: p.region },
+		60_000,
+	);
+	const scale =
+		data.scale !== undefined && data.scale !== 1
+			? `，已缩放 ×${data.scale.toFixed(3)}（原图 ${data.sourceWidth}×${data.sourceHeight}）`
+			: "";
+	const notes = [
+		`[shot] ${data.width}×${data.height}（${data.mimeType}，${formatSize(data.bytes)}）${scale}`,
+	];
+	if (data.region) notes.push(`裁剪区域（display 像素）：[${data.region.join(", ")}]`);
+	notes.push("文字看不清时：调大 maxDimension、改用 png，或用 region 只截那一块。");
+	return imageResult(data.base64, data.mimeType, notes.join("\n"), {
+		width: data.width,
+		height: data.height,
+		bytes: data.bytes,
+		scale: data.scale,
+		region: data.region,
+	});
+}
+
+/** 一步的结果压成一行：`[tap] 已点按 #3（action_click） → 界面变了：出现 1 个：发送`。 */
+function oneLine(outcome: ToolOutcome): string {
+	const first = outcome.content.find((part) => part.type === "text");
+	const text = first !== undefined && first.type === "text" ? first.text : "";
+	return text.split("\n").join(" → ");
+}
+
+async function screenSteps(p: ScreenParams, params: Record<string, unknown>): Promise<ToolOutcome> {
+	const steps = Array.isArray(p.steps) ? p.steps : [];
+	if (steps.length === 0) {
+		throw new Error(
+			'[BAD_PARAM] android_screen 的 action="steps" 需要 steps 数组（最多 8 步）。' +
+				'\n提示：每步形如 {"action":"tap","text":"搜索框"}。',
+		);
+	}
+	if (steps.length > STEPS_LIMIT) {
+		throw new Error(
+			`[BAD_PARAM] android_screen 的 action="steps" 最多 ${STEPS_LIMIT} 步，收到 ${steps.length} 步。` +
+				"\n提示：拆成两次调用，每次不超过 8 步。",
+		);
+	}
+	// 先把每一步的 action 校验完再动手：打错一个字就「跑了前三步然后停」是最难查的
+	// 失败方式 —— 屏幕已经被动过，模型却不知道从哪一步开始重来。
+	const allowed = ["look", "tap", "type", "swipe", "key", "wait"];
+	for (const [index, raw] of steps.entries()) {
+		const step = (raw ?? {}) as Record<string, unknown>;
+		const name = typeof step.action === "string" ? step.action : "";
+		if (!allowed.includes(name)) {
+			throw new Error(
+				`[BAD_PARAM] android_screen 的 steps[${index}].action 只能是 "look" / "tap" / "type" / ` +
+					`"swipe" / "key" / "wait"，收到 ${JSON.stringify(step.action)}。` +
+					"\n提示：一步都没执行（先校验再动手），改对再来。",
+			);
+		}
+	}
+	const lines: string[] = [];
+	let last: Record<string, unknown> = {};
+	for (const [index, raw] of steps.entries()) {
+		const step = (raw ?? {}) as Record<string, unknown>;
+		const name = typeof step.action === "string" ? step.action : "";
+		try {
+			const outcome = await screenAction({ ...step, action: name } as Record<string, unknown>);
+			last = outcome.details;
+			lines.push(`${index + 1}. ${oneLine(outcome)}`);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			lines.push(`${index + 1}. [失败] ${reason}`);
+			return textResult(
+				`[steps] 第 ${index + 1}/${steps.length} 步失败，已停下：\n${lines.join("\n")}`,
+				{ failedAt: index + 1, steps: steps.length },
+			);
+		}
+	}
+	return textResult(`[steps] ${steps.length} 步全部完成：\n${lines.join("\n")}`, {
+		steps: steps.length,
+		...last,
+	});
+}
+
+async function screenAction(params: Record<string, unknown>): Promise<ToolOutcome> {
+	return guarded(async () => {
+		const p = params as ScreenParams;
+		const action = typeof p.action === "string" ? p.action : "";
+		switch (action) {
+			case "look":
+				return screenLook(p);
+			case "tap":
+				return screenTap(p);
+			case "type":
+				return screenType(p, params);
+			case "swipe":
+				return screenSwipe(p);
+			case "key":
+				return screenKey(p, params);
+			case "wait":
+				return screenWait(p, params);
+			case "shot":
+				return screenShot(p);
+			case "steps":
+				return screenSteps(p, params);
+			default:
+				throw badParam("android_screen", "action", [...SCREEN_ACTIONS], p.action);
+		}
+	});
+}
+
+// -------------------------------------------------------------------- 应用 ----
+
+interface AppParams {
+	action?: string;
+	q?: string;
+	includeSystem?: boolean;
+	limit?: number;
+	package?: string;
+}
+
+async function appAction(params: Record<string, unknown>): Promise<ToolOutcome> {
+	return guarded(async () => {
+		const p = params as AppParams;
+		const action = typeof p.action === "string" ? p.action : "";
+		if (action === "list") {
+			const data = await bridgeGet<AppsData>("/app/apps", {
+				q: p.q,
+				includeSystem: p.includeSystem,
+				limit: p.limit,
+			});
+			const lines = data.apps.map(
+				(app) => `${app.label}  ${app.packageName}${app.system ? "  [系统]" : ""}${app.launchable ? "" : "  [不可启动]"}`,
+			);
+			if (lines.length === 0) lines.push("（没有匹配的应用）");
+			const body = `${lines.join("\n")}\n\n共 ${data.count} 条${data.truncated ? "（已截断）" : ""}`;
+			const note = data.note ? `\n\n说明：${data.note}` : "";
+			return textResult(`[list] ${truncateForModel(body, "应用列表")}${note}`, { count: data.count });
+		}
+		if (action === "launch") {
+			requireText("android_app", "launch", params, ["package"]);
+			const data = await bridgePost<{
+				packageName: string;
+				component: string;
+				mode?: string;
+				foreground?: string;
+				verified?: boolean;
+				note?: string;
+			}>("/app/apps/launch", { package: p.package });
+			// 桥自己会复核前台包名：被 Android 10+ 丢掉的那次启动会以错误回来，
+			// 所以能走到这里就等于真的启动了。
+			const how = data.verified
+				? `，前台已切到 ${data.foreground ?? data.packageName}（${data.mode}）`
+				: "（未能验证前台，以 android_status 的「前台」行为准）";
+			return textResult(
+				`[launch] 已启动 ${data.packageName}${data.component ? `（${data.component}）` : ""}${how}` +
+					`${data.note ? `\n${data.note}` : ""}`,
+				{ packageName: data.packageName, foreground: data.foreground },
+			);
+		}
+		if (action === "stop") {
+			requireText("android_app", "stop", params, ["package"]);
+			if (!usableGroups.has("accessibility")) {
+				throw new Error(
+					'[DISABLED] android_app 的 action="stop" 属于无障碍组，它现在没有开：' +
+						"结束应用走的是无障碍通道，不是基础组。" +
+						"\n提示：让用户在「设置 → 设备能力」打开「屏幕」那一组后重试；不要换工具绕过。",
 				);
-			}),
-	},
-	{
-		name: "android_input",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "输入文本",
-		description: "Type into the focused field or a dump index; falls back to clipboard paste (replaces the clipboard) when refused.",
-		promptSnippet: "Type into a field",
-		parameters: Type.Object({
-			text: Type.String({ description: "Text to write (replaces field contents)." }),
-			index: Type.Optional(Type.Number({ description: "Field index from the last dump; omit for the focused field." })),
-			desc: Type.Optional(Type.String({ description: "Match the field by contentDescription substring." })),
-			resourceId: Type.Optional(Type.String({ description: "Match the field by resource id substring, e.g. input_box." })),
-			submit: Type.Optional(Type.Boolean({ description: "Attempt enter after writing, default false." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { text: string; index?: number; desc?: string; resourceId?: string; submit?: boolean };
-				const data = await bridgePost<{
-					chars: number;
-					submitted: boolean;
-					submitHint?: string;
-					mechanism?: string;
-					clipboardNote?: string;
-					before?: string | null;
-					after?: string | null;
-					changed?: boolean;
-				}>("/app/ui/input", {
+			}
+			const data = await bridgePost<{ packageName: string; mode: string; note?: string }>("/app/apps/stop", {
+				package: p.package,
+			});
+			return textResult(
+				`[stop] 已请求结束后台进程：${data.packageName}（${data.mode}）${data.note ? `\n${data.note}` : ""}`,
+				{ packageName: data.packageName, mode: data.mode },
+			);
+		}
+		throw badParam("android_app", "action", [...APP_ACTIONS], p.action);
+	});
+}
+
+// -------------------------------------------------------------------- 文件 ----
+
+interface FileParams {
+	action?: string;
+	path?: string;
+	name?: string;
+	content?: string;
+	base64?: string;
+	mimeType?: string;
+	maxBytes?: number;
+}
+
+async function filesAction(params: Record<string, unknown>): Promise<ToolOutcome> {
+	return guarded(async () => {
+		const p = params as FileParams;
+		const action = typeof p.action === "string" ? p.action : "";
+		if (action === "dirs") {
+			const data = await bridgeGet<SafRootsData>("/app/files");
+			const lines = data.roots.map((root) => `- ${root.name}${root.exists ? "" : "（授权已失效）"}`);
+			if (lines.length === 0) lines.push("（还没有授权任何目录）");
+			return textResult(`已授权目录（${data.count}）：\n\n${lines.join("\n")}\n\n${data.note}`, {
+				count: data.count,
+			});
+		}
+		if (action === "list") {
+			const data = await bridgePost<SafListData>("/app/files/list", { path: p.path });
+			const lines = data.entries.map(
+				(entry) => `${entry.directory ? "[目录]" : `[${formatSize(entry.bytes)}]`} ${entry.name}`,
+			);
+			if (lines.length === 0) lines.push("（空目录）");
+			return textResult(
+				truncateForModel(
+					`${data.path}：\n\n${lines.join("\n")}\n\n共 ${data.count} 项${data.truncated ? "（已截断）" : ""}`,
+					"目录列表",
+				),
+				{ path: data.path, count: data.count },
+			);
+		}
+		if (action === "read") {
+			requireText("android_files", "read", params, ["path"]);
+			const data = await bridgePost<SafReadData>("/app/files/read", { path: p.path, maxBytes: p.maxBytes });
+			if (typeof data.text === "string") {
+				return textResult(
+					`已读入 ${data.path}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
+						truncateForModel(data.text, "文件内容"),
+					{ path: data.path, bytes: data.bytes },
+				);
+			}
+			return textResult(
+				`已读入 ${data.path}（${formatSize(data.bytes)}），它是二进制文件，以 base64 返回：\n\n` +
+					truncateForModel(data.base64 ?? "", "base64"),
+				{ path: data.path, bytes: data.bytes, binary: true },
+			);
+		}
+		if (action === "write") {
+			requireText("android_files", "write", params, ["path"]);
+			const data = await bridgePost<SafWriteData>("/app/files/write", {
+				path: p.path,
+				content: p.content,
+				base64: p.base64,
+				mimeType: p.mimeType,
+			});
+			return textResult(
+				`已${data.created ? "创建" : "覆盖"} ${data.path}（${formatSize(data.bytes)}，${data.mimeType}）\nURI：${data.uri}`,
+				{ path: data.path, bytes: data.bytes, created: data.created },
+			);
+		}
+		if (action === "export" || action === "download") {
+			requireText("android_files", action, params, ["name"]);
+			const data = await bridgePost<ExportData>("/app/export", {
+				name: p.name,
+				content: p.content,
+				base64: p.base64,
+				mimeType: p.mimeType,
+			});
+			return textResult(
+				`已导出到 ${data.location}/${data.displayName}（${formatSize(data.bytes)}）\nURI：${data.uri}`,
+				{ displayName: data.displayName, bytes: data.bytes },
+			);
+		}
+		if (action === "import") {
+			requireText("android_files", "import", params, ["name"]);
+			const data = await bridgePost<ImportData>("/app/import", { name: p.name, maxBytes: p.maxBytes });
+			if (typeof data.text === "string") {
+				return textResult(
+					`已读入 ${data.displayName}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
+						truncateForModel(data.text, "文件内容"),
+					{ displayName: data.displayName, bytes: data.bytes },
+				);
+			}
+			return textResult(
+				`已读入 ${data.displayName}（${formatSize(data.bytes)}），它是二进制文件。` +
+					"要看内容可以在 guest 里用 bash 处理。",
+				{ displayName: data.displayName, bytes: data.bytes, binary: true },
+			);
+		}
+		throw badParam("android_files", "action", [...FILE_ACTIONS], p.action);
+	});
+}
+
+// ------------------------------------------------------------------ Shell ----
+
+interface ShellParams {
+	command?: string;
+	timeoutMs?: number;
+}
+
+async function shellRun(params: Record<string, unknown>): Promise<ToolOutcome> {
+	return guarded(async () => {
+		const p = params as ShellParams;
+		requireText("android_shell", "run", params, ["command"]);
+		const command = typeof p.command === "string" ? p.command : "";
+		const data = await bridgePost<ShellData>("/app/shell", { command, timeoutMs: p.timeoutMs }, 90_000);
+		const parts: string[] = [`$ ${command}`];
+		if (data.stdout.trim().length > 0) parts.push(data.stdout.trimEnd());
+		if (data.stderr.trim().length > 0) parts.push(`[stderr]\n${data.stderr.trimEnd()}`);
+		parts.push(`[退出码 ${data.exitCode}${data.timedOut ? "，超时被杀" : ""}]`);
+		// 不写这一行，50 KiB 的上限对模型就是不可见的：被截断的 stdout 会看起来像
+		// 完整输出，而「截断的 stdout」和「截断的 stderr」意思完全不同（少了结果 vs 少了原因）。
+		const clipped = [data.stdoutTruncated ? "stdout" : "", data.stderrTruncated ? "stderr" : ""].filter(
+			(name) => name.length > 0,
+		);
+		if (clipped.length > 0) {
+			parts.push(`[输出被截断：${clipped.join(" 与 ")} 只保留了前 50 KB；要看全部请缩小输出]`);
+		} else if (data.truncated) {
+			parts.push("[输出被截断：stdout 或 stderr 只保留了前 50 KB；要看全部请缩小输出]");
+		}
+		parts.push(`[后端 ${data.backendLabel}，uid=${data.uid}]`);
+		parts.push(data.note);
+		if (data.policy) parts.push(data.policy);
+		const text = truncateForModel(parts.join("\n"), "Shell 输出", "tail");
+		// pi 的失败口径（`core/tools/bash.ts:368-373`）：超时 / 无退出码 / 非零退出都是
+		// 错误，用 throw 表达；正文里保留 pi 的原句，App 的退出码解析因此仍然成立。
+		const failure = shellFailureStatus(data);
+		if (failure !== null) throw new Error(`${text}\n\n${failure}`);
+		return textResult(text, { exitCode: data.exitCode, backend: data.backend, uid: data.uid });
+	});
+}
+
+// -------------------------------------------------------------- 对外动作 ----
+
+interface CommParams {
+	action?: string;
+	text?: string;
+	title?: string;
+	key?: string;
+	url?: string;
+	subject?: string;
+	ms?: number;
+	language?: string;
+	rate?: number;
+	long?: boolean;
+	limit?: number;
+}
+
+async function commAction(params: Record<string, unknown>): Promise<ToolOutcome> {
+	return guarded(async () => {
+		const p = params as CommParams;
+		const action = typeof p.action === "string" ? p.action : "";
+		switch (action) {
+			case "clipboard": {
+				if (typeof p.text === "string") {
+					const data = await bridgePost<{ chars: number }>("/app/clipboard", { text: p.text });
+					return textResult(`已写入剪贴板（${data.chars} 字符）`, { chars: data.chars });
+				}
+				const data = await bridgeGet<ClipboardData>("/app/clipboard");
+				if (data.empty) {
+					return textResult(`剪贴板为空或不可读。${data.note ? `\n${data.note}` : ""}`, { empty: true });
+				}
+				return textResult(
+					`剪贴板内容（${data.text.length} 字符）：\n\n${truncateForModel(data.text, "剪贴板")}`,
+					{ length: data.text.length },
+				);
+			}
+			case "notify": {
+				requireText("android_comm", "notify", params, ["text"]);
+				const data = await bridgePost<{ id: number; channel: string }>("/app/notify", {
 					text: p.text,
-					index: p.index,
-					submit: p.submit === true,
-					...selectorBody({ desc: p.desc, resourceId: p.resourceId }),
+					title: p.title,
 				});
-				let text = `已写入 ${data.chars} 个字符${data.submitted ? "，并已提交" : ""}`;
-				if (data.mechanism === "clipboard_paste") text += "（改用剪贴板粘贴完成）";
-				text += actionEnvelope(data);
-				if (data.clipboardNote) text += `\n${data.clipboardNote}`;
-				if (data.submitHint) text += `\n${data.submitHint}`;
-				return textResult(text, { chars: data.chars, submitted: data.submitted, mechanism: data.mechanism });
-			}),
-	},
-	{
-		name: "android_key",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "系统按键",
-		description: "Run a system global action. For raw keys (enter/delete/arrows) use android_keyevent (needs Shizuku).",
-		promptSnippet: "Global action (back/home/lock)",
-		promptGuidelines: [
-			"Raw keys need android_keyevent + Shizuku; else android_key.",
-		],
-		parameters: Type.Object({
-			key: ScreenKey,
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { key: string };
-				const data = await bridgePost<{ key: string; mode: string }>("/app/ui/key", { key: p.key });
-				return textResult(`已执行按键 ${data.key}（${data.mode}）`, data as unknown as Record<string, unknown>);
-			}),
-	},
-	{
-		name: "android_keyevent",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "注入原始按键",
-		description: "Inject raw keys into the focused window via Shizuku (ADB uid=2000); refuses without it.",
-		promptSnippet: "Inject raw keys (Shizuku)",
-		parameters: Type.Object({
-			keys: Type.String({ description: "Space/comma-separated, e.g. \"ENTER\" or \"DPAD_DOWN DPAD_DOWN\"; KEYCODE_ prefix optional." }),
-			repeat: Type.Optional(Type.Number({ description: "1-20, default 1." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { keys: string; repeat?: number };
-				const data = await bridgePost<{ keys: string[]; repeat: number; mode: string; backend: string }>(
-					"/app/ui/keyevent",
-					{ keys: p.keys, repeat: p.repeat },
-				);
-				return textResult(
-					`已注入 ${data.keys.join(" ")}${data.repeat > 1 ? ` ×${data.repeat}` : ""}（${data.mode}，后端 ${data.backend}）`,
-					data as unknown as Record<string, unknown>,
-				);
-			}),
-	},
-	{
-		name: "android_swipe",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "滑动 / 滚动",
-		description: "Swipe in display pixels, or scroll the node at index/selector with direction (accessibility scroll action).",
-		promptSnippet: "Swipe or scroll a node",
-		parameters: Type.Object({
-			x1: Type.Optional(Type.Number({ description: "Start x in display pixels." })),
-			y1: Type.Optional(Type.Number({ description: "Start y." })),
-			x2: Type.Optional(Type.Number({ description: "End x." })),
-			y2: Type.Optional(Type.Number({ description: "End y." })),
-			durationMs: Type.Optional(Type.Number({ description: "Gesture ms, default 300." })),
-			direction: Type.Optional(
-				StringEnum(["forward", "backward"] as const, {
-					description: "Scroll the node instead: forward/backward; needs index/selector.",
-				}),
-			),
-			index: Type.Optional(Type.Number({ description: "Scrollable node index." })),
-			text: Type.Optional(Type.String({ description: "Match the scrollable node by text substring." })),
-			resourceId: Type.Optional(Type.String({ description: "Match the scrollable node by resource id substring." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					x1?: number;
-					y1?: number;
-					x2?: number;
-					y2?: number;
-					durationMs?: number;
-					direction?: string;
-					index?: number;
-					text?: string;
-					resourceId?: string;
-				};
-				if (p.direction !== undefined) {
-					if (p.index === undefined && p.text === undefined && p.resourceId === undefined) {
-						throw new Error(
-							"[BAD_PARAM] android_swipe 用 direction 滚动时还需要指明滚哪个控件：index、text 或 resourceId 至少给一个。" +
-								"\n提示：先在 android_ui_dump 里找带 scrollable 的控件，或直接给它一个 text/resourceId。",
-						);
-					}
-					const data = await bridgePost<ActionData>("/app/ui/scroll", {
-						direction: p.direction,
-						index: p.index,
-						...selectorBody({ text: p.text, resourceId: p.resourceId }),
-					});
-					return textResult(
-						`已${p.direction === "forward" ? "向后" : "向前"}滚动列表（方式：${data.mode}）${actionEnvelope(data)}`,
-						{ mode: data.mode, changed: data.changed },
-					);
-				}
-				if (p.x1 === undefined || p.y1 === undefined || p.x2 === undefined || p.y2 === undefined) {
-					throw new Error(
-						"[BAD_PARAM] android_swipe 需要 x1/y1/x2/y2，或者 direction + index/selector（滚动控件）。" +
-							"\n提示：滚动列表优先用 direction，坐标滑动留给画布类界面。",
-					);
-				}
-				const data = await bridgePost<ActionData & { durationMs: number }>("/app/ui/swipe", {
-					x1: p.x1,
-					y1: p.y1,
-					x2: p.x2,
-					y2: p.y2,
-					durationMs: p.durationMs,
-				});
-				return textResult(
-					`已从 (${p.x1}, ${p.y1}) 滑动到 (${p.x2}, ${p.y2})，用时 ${data.durationMs}ms${actionEnvelope(data)}`,
-					{ durationMs: data.durationMs, changed: data.changed },
-				);
-			}),
-	},
-	{
-		name: "android_screenshot",
-		exposure: "hidden",
-		capability: "accessibility",
-		label: "截屏",
-		description: "Capture the screen (Android 11+); region crops it, marks draws the last dump's indices. Secure windows fail.",
-		promptSnippet: "Capture the screen",
-		promptGuidelines: [
-			"Custom UI/games/video: android_screenshot; crop small text with region.",
-		],
-		parameters: Type.Object({
-			format: Type.Optional(ScreenshotFormat),
-			maxDimension: Type.Optional(Type.Number({ description: "Longest side cap in px, default 1280 (240-4096)." })),
-			quality: Type.Optional(Type.Number({ description: "JPEG quality 20–100, default 82." })),
-			region: Type.Optional(
-				Type.Array(Type.Number(), { description: "Crop [left,top,right,bottom] in display px; omit for full screen." }),
-			),
-			marks: Type.Optional(
-				Type.Boolean({ description: "Draw the last dump's clickable indices, default false." }),
-			),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					format?: "jpeg" | "png";
-					maxDimension?: number;
-					quality?: number;
-					region?: number[];
-					marks?: boolean;
-				};
-				const data = await bridgePost<ScreenshotData>(
-					"/app/screenshot",
-					{
-						format: p.format,
-						maxDimension: p.maxDimension,
-						quality: p.quality,
-						region: p.region,
-						marks: p.marks === true,
-					},
+				return textResult(`已发送通知（id=${data.id}）`, { id: data.id, channel: data.channel });
+			}
+			case "toast": {
+				requireText("android_comm", "toast", params, ["text"]);
+				const data = await bridgePost<{ duration: string }>("/app/toast", { text: p.text, long: p.long === true });
+				return textResult(`已显示提示（${data.duration}）`, { duration: data.duration });
+			}
+			case "tts": {
+				requireText("android_comm", "tts", params, ["text"]);
+				const data = await bridgePost<{ spoken: boolean; finished: boolean; language: string; chars: number }>(
+					"/app/tts",
+					{ text: p.text, language: p.language, rate: p.rate },
 					60_000,
 				);
-				const mapping =
-					data.scale !== undefined && data.scale !== 1
-						? `，已缩放 ×${data.scale.toFixed(3)}（原图 ${data.sourceWidth}×${data.sourceHeight}，坐标空间 ${data.coordinateSpace ?? "display"}）`
-						: "";
-				const notes: string[] = [
-					`截图 ${data.width}×${data.height}（${data.mimeType}，${formatSize(data.bytes)}）${mapping}。`,
-				];
-				if (data.region) notes.push(`裁剪区域（display 像素）：[${data.region.join(", ")}]。`);
-				if (data.marks === true || data.markedIndices !== undefined) {
-					notes.push(`已标注 ${data.markedIndices ?? 0} 个可点控件编号，可以直接用这些编号调用 android_tap。`);
-				}
-				if (data.marksNote) notes.push(data.marksNote);
-				notes.push("如果画面文字看不清，可以调大 maxDimension、改用 png，或用 region 只截需要的那一块。");
-				return imageResult(data.base64, data.mimeType, notes.join(""), {
-					width: data.width,
-					height: data.height,
-					bytes: data.bytes,
-					scale: data.scale,
-					coordinateSpace: data.coordinateSpace,
-				});
-			}),
-	},
-
-	// ---------------------------------------------------------------- 应用 ----
-	{
-		name: "android_app",
-		capability: "basic",
-		label: "应用列表 / 启动 / 结束",
-		description: "List apps or launch one by exact package (find it with action=\"list\" first). To stop one use android_stop_app.",
-		promptSnippet: "List / launch apps",
-		parameters: Type.Object({
-			action: AppAction,
-			q: Type.Optional(Type.String({ description: "Substring filter on name or package; list only." })),
-			includeSystem: Type.Optional(Type.Boolean({ description: "Include system apps, default false; list only." })),
-			limit: Type.Optional(Type.Number({ description: "Max rows, default 60, cap 500; list only." })),
-			package: Type.Optional(Type.String({ description: "Exact package, e.g. org.telegram.messenger; required for launch." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { action: string; q?: string; includeSystem?: boolean; limit?: number; package?: string };
-				if (p.action === "list") {
-					const data = await bridgeGet<AppsData>("/app/apps", {
-						q: p.q,
-						includeSystem: p.includeSystem,
-						limit: p.limit,
-					});
-					const lines = data.apps.map(
-						(app) =>
-							`${app.label}  ${app.packageName}` +
-							`${app.system ? "  [系统]" : ""}${app.launchable ? "" : "  [不可启动]"}`,
-					);
-					if (lines.length === 0) lines.push("（没有匹配的应用）");
-					const body = `${lines.join("\n")}\n\n共 ${data.count} 条${data.truncated ? "（已截断）" : ""}`;
-					const note = data.note ? `\n\n说明：${data.note}` : "";
-					return textResult(`[action list] ${truncateForModel(body, "应用列表")}${note}`, { count: data.count });
-				}
-				if (p.action === "launch") {
-					if (typeof p.package !== "string" || p.package.trim().length === 0) {
-						throw new Error(
-							"[BAD_PARAM] android_app 的 action=\"launch\" 需要 package（精确包名，先用 action=\"list\" 查）。" +
-								"\n提示：请传入 package 后重新调用 android_app。",
-						);
-					}
-					const data = await bridgePost<{
-						packageName: string;
-						component: string;
-						mode?: string;
-						foreground?: string;
-						verified?: boolean;
-						movedToFront?: boolean;
-						note?: string;
-					}>("/app/apps/launch", {
-						package: p.package,
-					});
-					// The bridge verifies that the foreground package really changed; a
-					// launch that was dropped by Android 10+ arrives as an error instead,
-					// so reaching this line means it happened.
-					const how = data.verified
-						? `，前台已切到 ${data.foreground ?? data.packageName}（${data.mode}）`
-						: "（未能验证前台，请以 android_bridge_status 的「前台」行为准）";
-					return textResult(
-						`[action launch] 已启动 ${data.packageName}${data.component ? `（${data.component}）` : ""}${how}` +
-							`${data.note ? `\n${data.note}` : ""}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				throw badParam("android_app", "action", ["list", "launch"], p.action);
-			}),
-	},
-	{
-		name: "android_stop_app",
-		capability: "accessibility",
-		label: "结束应用",
-		description: "Kill a user app's background process; system apps, critical processes and pi-android are refused.",
-		promptSnippet: "Kill a background app",
-		parameters: Type.Object({
-			package: Type.String({ description: "Exact package name." }),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { package: string };
-				const data = await bridgePost<{ packageName: string; mode: string; note?: string }>("/app/apps/stop", {
-					package: p.package,
-				});
-				const note = data.note ? `\n${data.note}` : "";
-				return textResult(`已请求结束后台进程：${data.packageName}（${data.mode}）${note}`, data as unknown as Record<string, unknown>);
-			}),
-	},
-
-	// ------------------------------------------------------------ 交互/输出 ----
-	{
-		name: "android_io",
-		capability: "basic",
-		label: "对外输出",
-		description: "User-visible output: action=clipboard|say|vibrate|share|open. share opens the system sheet, open launches a URL.",
-		promptSnippet: "Clipboard / notify / vibrate / share / open",
-		parameters: Type.Object({
-			action: IoAction,
-			text: Type.Optional(
-				Type.String({ description: "clipboard: text to write (omit to read). say: text to send or read. share: body to share." }),
-			),
-			kind: Type.Optional(
-				StringEnum(["notification", "toast", "speak"] as const, {
-					description: "say: notification, toast, or speak.",
-				}),
-			),
-			title: Type.Optional(Type.String({ description: "say: notification title, default pi." })),
-			id: Type.Optional(Type.Number({ description: "say: notification id (overwrites the same one); default auto." })),
-			long: Type.Optional(Type.Boolean({ description: "say: toast long duration, default false." })),
-			language: Type.Optional(Type.String({ description: "say: BCP-47 tag, e.g. zh-CN; default system." })),
-			rate: Type.Optional(Type.Number({ description: "say: speech rate 0.1-3.0, default 1.0." })),
-			pitch: Type.Optional(Type.Number({ description: "say: pitch 0.1-3.0, default 1.0." })),
-			ms: Type.Optional(Type.Number({ description: "vibrate: length ms, default 200, cap 10000." })),
-			pattern: Type.Optional(
-				Type.Array(Type.Number(), { description: "vibrate: pattern ms, e.g. [0,120,80,120]; overrides ms." }),
-			),
-			url: Type.Optional(Type.String({ description: "share: link to attach. open: full URL, mailto:, or intent://…." })),
-			subject: Type.Optional(Type.String({ description: "share: title." })),
-		}),
-		run: (params, ctx) => dispatch("android_io", IO_ACTIONS, IO_REQUIRED, params, ctx),
-	},
-	{
-		name: "android_say",
-		exposure: "hidden",
-		capability: "basic",
-		label: "通知 / 短提示 / 朗读",
-		description: "Post a notification, show a short on-screen message, or read text with TTS.",
-		promptSnippet: "Notify / toast / speak",
-		parameters: Type.Object({
-			kind: StringEnum(["notification", "toast", "speak"] as const, {
-				description: "notification, toast, or speak.",
-			}),
-			text: Type.String({ description: "Text to send or read." }),
-			title: Type.Optional(Type.String({ description: "Notification title, default pi." })),
-			id: Type.Optional(Type.Number({ description: "Notification id (overwrites the same one); default auto." })),
-			long: Type.Optional(Type.Boolean({ description: "Long duration, default false." })),
-			language: Type.Optional(Type.String({ description: "BCP-47 tag, e.g. zh-CN; default system." })),
-			rate: Type.Optional(Type.Number({ description: "Speech rate 0.1-3.0, default 1.0." })),
-			pitch: Type.Optional(Type.Number({ description: "Pitch 0.1-3.0, default 1.0." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					kind: string;
-					text: string;
-					title?: string;
-					id?: number;
-					long?: boolean;
-					language?: string;
-					rate?: number;
-					pitch?: number;
-				};
-				if (p.kind === "notification") {
-					const data = await bridgePost<{ id: number; channel: string }>("/app/notify", {
-						text: p.text,
-						title: p.title,
-						id: p.id,
-					});
-					return textResult(`[kind notification] 已发送通知（id=${data.id}）`, data as unknown as Record<string, unknown>);
-				}
-				if (p.kind === "toast") {
-					const data = await bridgePost<{ duration: string }>("/app/toast", { text: p.text, long: p.long === true });
-					return textResult(`[kind toast] 已显示提示（${data.duration}）`, data as unknown as Record<string, unknown>);
-				}
-				if (p.kind === "speak") {
-					const data = await bridgePost<{ spoken: boolean; finished: boolean; language: string; chars: number }>(
-						"/app/tts",
-						{ text: p.text, language: p.language, rate: p.rate, pitch: p.pitch },
-						60_000,
-					);
-					return textResult(
-						`[kind speak] 已朗读 ${data.chars} 个字符（${data.language}）${data.finished ? "，已读完" : "，仍在播放"}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				throw badParam("android_say", "kind", ["notification", "toast", "speak"], p.kind);
-			}),
-	},
-	{
-		name: "android_vibrate",
-		exposure: "hidden",
-		capability: "basic",
-		label: "震动",
-		description: "Vibrate the phone.",
-		promptSnippet: "Vibrate the phone",
-		parameters: Type.Object({
-			ms: Type.Optional(Type.Number({ description: "Length ms, default 200, cap 10000." })),
-			pattern: Type.Optional(
-				Type.Array(Type.Number(), { description: "Pattern ms, e.g. [0,120,80,120] (off-on-off-on); overrides ms." }),
-			),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { ms?: number; pattern?: number[] };
-				const data = await bridgePost<{ ok: boolean }>("/app/vibrate", { ms: p.ms, pattern: p.pattern });
-				return textResult("已触发震动", data as unknown as Record<string, unknown>);
-			}),
-	},
-	{
-		name: "android_share",
-		exposure: "hidden",
-		capability: "basic",
-		label: "分享",
-		description: "Share text or a link via the system sheet; to open a URL use android_open.",
-		promptSnippet: "Share to another app",
-		parameters: Type.Object({
-			text: Type.Optional(Type.String({ description: "Body to share." })),
-			url: Type.Optional(Type.String({ description: "Link to attach." })),
-			subject: Type.Optional(Type.String({ description: "Title." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { text?: string; url?: string; subject?: string };
+				return textResult(
+					`已朗读 ${data.chars} 个字符（${data.language}）${data.finished ? "，已读完" : "，仍在播放"}`,
+					{ chars: data.chars, language: data.language },
+				);
+			}
+			case "vibrate": {
+				const data = await bridgePost<{ ok: boolean }>("/app/vibrate", { ms: p.ms });
+				return textResult(`已触发震动${typeof p.ms === "number" ? `（${p.ms}ms）` : ""}`, { ok: data.ok });
+			}
+			case "share": {
 				const data = await bridgePost<{ ok: boolean; action: string }>("/app/share", {
 					text: p.text,
 					url: p.url,
 					subject: p.subject,
 				});
-				return textResult("已打开系统分享面板，请让用户选择目标应用。", data as unknown as Record<string, unknown>);
-			}),
-	},
-	{
-		name: "android_open",
-		exposure: "hidden",
-		capability: "basic",
-		label: "打开链接",
-		description: "Open a URL/deep link with the default app; intent: URLs fall back to browser_fallback_url.",
-		promptSnippet: "Open URL / deep link",
-		parameters: Type.Object({
-			url: Type.String({
-				description:
-					"Full URL: https://…, mailto:…, or intent://…#Intent;scheme=…;package=…;S.browser_fallback_url=…;end.",
-			}),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { url: string };
+				return textResult("已打开系统分享面板，请让用户选目标应用。", { ok: data.ok, action: data.action });
+			}
+			case "open": {
+				requireText("android_comm", "open", params, ["url"]);
 				const data = await bridgePost<{ ok: boolean; action: string }>("/app/open", { url: p.url });
-				return textResult(`已请求打开 ${p.url}`, data as unknown as Record<string, unknown>);
-			}),
-	},
-
-	// ------------------------------------------------------------ 剪贴板 ----
-	{
-		name: "android_clipboard",
-		exposure: "hidden",
-		capability: "basic",
-		label: "剪贴板",
-		description: "Pass text to write the clipboard, omit it to read; reads work only in the foreground (Android 10+).",
-		promptSnippet: "Read/write clipboard",
-		parameters: Type.Object({
-			text: Type.Optional(Type.String({ description: "Text to write; omit to read the clipboard." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { text?: string };
-				if (typeof p.text === "string") {
-					const data = await bridgePost<{ chars: number }>("/app/clipboard", { text: p.text });
-					return textResult(`[clipboard write] 已写入剪贴板（${data.chars} 字符）`, data as unknown as Record<string, unknown>);
-				}
-				const data = await bridgeGet<ClipboardData>("/app/clipboard");
-				if (data.empty) {
-					const note = data.note ? `\n${data.note}` : "";
-					return textResult(`[clipboard read] 剪贴板为空或不可读。${note}`, { empty: true });
-				}
-				return textResult(
-					`[clipboard read] 剪贴板内容（${data.text.length} 字符）：\n\n${truncateForModel(data.text, "剪贴板")}`,
-					{ length: data.text.length },
-				);
-			}),
-	},
-
-	// -------------------------------------------------------------- 存储 ----
-	{
-		name: "android_fs",
-		capability: "basic",
-		label: "文件",
-		description: "Files: action=list|read|write on user-authorized (SAF) dirs, or action=download for the public Download folder (needs op).",
-		promptSnippet: "Authorized-dir / Download files",
-		parameters: Type.Object({
-			action: FsAction,
-			path: Type.Optional(
-				Type.String({ description: "list: omit for root names, else \"root/relative\". read/write: \"root/relative\"." }),
-			),
-			op: Type.Optional(
-				StringEnum(["write", "read"] as const, { description: "download: write = export, read = import." }),
-			),
-			name: Type.Optional(Type.String({ description: "download: file name, no path; e.g. report.md." })),
-			content: Type.Optional(Type.String({ description: "write/download: text (not with base64)." })),
-			base64: Type.Optional(Type.String({ description: "write/download: binary as base64 (not with content)." })),
-			mimeType: Type.Optional(Type.String({ description: "write/download: MIME type, default text/plain." })),
-			maxBytes: Type.Optional(Type.Number({ description: "read/download: max bytes, default 1MB, cap 4MB." })),
-		}),
-		run: async (params, ctx) => {
-			const action = typeof params.action === "string" ? params.action : "";
-			const rest = withoutAction(params);
-			if (action === "list" || action === "download") {
-				if (action === "download") {
-					requireText("android_fs", action, params, ["op", "name"]);
-					return deviceTool("android_download").run(rest, ctx);
-				}
-				return deviceTool("android_files_list").run(rest, ctx);
+				return textResult(`已请求打开 ${p.url}`, { ok: data.ok, action: data.action });
 			}
-			if (action === "read" || action === "write") {
-				requireText("android_fs", action, params, ["path"]);
-				return deviceTool("android_files").run({ ...rest, op: action }, ctx);
-			}
-			throw badParam("android_fs", "action", ["list", "read", "write", "download"], params.action);
-		},
-	},
-	{
-		name: "android_download",
-		exposure: "hidden",
-		capability: "basic",
-		label: "公共 Download 读写",
-		description: "Read/write the public Download folder; user-authorized dirs use android_files. write: no permission on API 29+, storage permission on 8/9. read: own exports only on 33+, storage permission on 30-32.",
-		promptSnippet: "Public Download files",
-		parameters: Type.Object({
-			op: StringEnum(["write", "read"] as const, {
-				description: "write = export, read = import.",
-			}),
-			name: Type.String({ description: "File name, no path; e.g. report.md." }),
-			content: Type.Optional(Type.String({ description: "Text; with write, not base64." })),
-			base64: Type.Optional(Type.String({ description: "Binary as base64; with write, not content." })),
-			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain." })),
-			maxBytes: Type.Optional(Type.Number({ description: "Max bytes, default 1MB, cap 4MB." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					op: string;
-					name: string;
-					content?: string;
-					base64?: string;
-					mimeType?: string;
-					maxBytes?: number;
-				};
-				if (p.op === "write") {
-					const data = await bridgePost<ExportData>("/app/export", {
-						name: p.name,
-						content: p.content,
-						base64: p.base64,
-						mimeType: p.mimeType,
-					});
-					return textResult(
-						`[op write] 已导出到 ${data.location}/${data.displayName}（${formatSize(data.bytes)}）\nURI：${data.uri}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				if (p.op === "read") {
-					const data = await bridgePost<ImportData>("/app/import", { name: p.name, maxBytes: p.maxBytes });
-					if (typeof data.text === "string") {
-						return textResult(
-							`[op read] 已读入 ${data.displayName}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
-								truncateForModel(data.text, "文件内容"),
-							{ bytes: data.bytes },
-						);
+			case "inbox": {
+				const status = await bridgeGet<
+					ActionPayload & {
+						connected?: boolean;
+						enabledInSettings?: boolean;
+						state?: string;
+						activeCount?: number;
+						replyableCount?: number;
+						eventCount?: number;
 					}
-					return textResult(
-						`[op read] 已读入 ${data.displayName}（${formatSize(data.bytes)}），它是二进制文件。` +
-							"如需查看，可以再调用一次并让用户确认，或改用 bash 工具在 guest 内处理。",
-						{ bytes: data.bytes, binary: true },
+				>("/app/notify/status");
+				const state = status.connected === true
+					? "已连接"
+					: status.enabledInSettings === true
+						? "已授权，系统还没绑定服务（稍等约 1 秒）"
+						: "没有通知使用权";
+				const head = [
+					`通知监听：${state}（${show(status.state)}）`,
+					`当前 ${show(status.activeCount)} 条，其中可回复 ${show(status.replyableCount)} 条`,
+				];
+				if (status.connected !== true) {
+					if (typeof status.note === "string") head.push("", status.note);
+					return textResult(head.join("\n"), status);
+				}
+				const recent = await bridgePost<ActionPayload & Record<string, unknown>>("/app/notify/recent", {
+					limit: p.limit,
+				});
+				const entries = listField(recent);
+				if (entries === null) return textResult(head.join("\n"), recent);
+				return textResult(
+					`${head.join("\n")}\n\n${listText("最近通知", entries, (entry) => {
+						const body = typeof entry.text === "string" && entry.text.length > 0 ? `：${entry.text}` : "";
+						const flags = [
+							entry.replyable === true ? "可回复" : "",
+							entry.isOngoing === true ? "常驻" : "",
+							entry.isClearable === false ? "不可撤销" : "",
+						].filter((flag) => flag.length > 0);
+						return `- [${show(entry.key)}] ${show(entry.packageName)}｜${show(entry.title)}${body}` +
+							`${flags.length > 0 ? `（${flags.join("、")}）` : ""}`;
+					})}`,
+					recent,
+				);
+			}
+			case "reply": {
+				requireText("android_comm", "reply", params, ["key", "text"]);
+				const data = await bridgePost<ActionPayload & { chars?: number }>("/app/notify/reply", {
+					key: p.key,
+					text: p.text,
+				});
+				requireActionOk("android_comm", data);
+				return textResult(`已回复通知「${p.key}」（${data.chars ?? 0} 字符）。`, data);
+			}
+			case "dismiss": {
+				if (typeof p.key === "string" && p.key.trim().length > 0) {
+					const data = await bridgePost<ActionPayload>("/app/notify/dismiss", { key: p.key });
+					requireActionOk("android_comm", data);
+					return textResult(`已撤销通知「${p.key}」。`, data);
+				}
+				const data = await bridgePost<ActionPayload>("/app/notify/dismiss-all", {});
+				requireActionOk("android_comm", data);
+				return textResult("已撤销所有可撤销的通知。", data);
+			}
+			case "snooze": {
+				requireText("android_comm", "snooze", params, ["key"]);
+				const ms = requireNumber("android_comm", "snooze", params, "ms");
+				const data = await bridgePost<ActionPayload & { durationMs?: number }>("/app/notify/snooze", {
+					key: p.key,
+					ms,
+				});
+				requireActionOk("android_comm", data);
+				return textResult(`已把通知「${p.key}」延后 ${data.durationMs ?? ms} 毫秒。`, data);
+			}
+			default:
+				throw badParam("android_comm", "action", [...COMM_ACTIONS], p.action);
+		}
+	});
+}
+
+// -------------------------------------------------------------- 设备读数 ----
+
+interface DeviceParams {
+	action?: string;
+	on?: boolean;
+	typeName?: string;
+	type?: number;
+	timeoutMs?: number;
+}
+
+async function deviceAction(params: Record<string, unknown>): Promise<ToolOutcome> {
+	return guarded(async () => {
+		const p = params as DeviceParams;
+		const action = typeof p.action === "string" ? p.action : "";
+		switch (action) {
+			case "battery": {
+				const data = await bridgeGet<{ percent: number; status: string; plugged: boolean; temperatureC: number }>(
+					"/app/battery",
+				);
+				return textResult(
+					`电量 ${data.percent}% · ${data.status} · ${data.plugged ? "已接电源" : "未接电源"} · ${data.temperatureC}°C`,
+					{ percent: data.percent, plugged: data.plugged },
+				);
+			}
+			case "torch": {
+				if (typeof p.on !== "boolean") {
+					throw new Error(
+						'[BAD_PARAM] android_device 的 action="torch" 需要 on（true 开 / false 关）。' +
+							"\n提示：on 不给默认值 —— 猜错就是替用户做了相反的决定。",
 					);
 				}
-				throw badParam("android_download", "op", ["write", "read"], p.op);
-			}),
-	},
-	{
-		name: "android_files_list",
-		exposure: "hidden",
-		capability: "basic",
-		label: "已授权目录",
-		description: "List user-authorized (SAF) dirs; omit path for root names. Read/write them with android_files.",
-		promptSnippet: "List authorized dirs",
-		parameters: Type.Object({
-			path: Type.Optional(Type.String({ description: "Omit for root names; else \"root/relative\"." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { path?: string };
-				if (!p.path || p.path.trim().length === 0) {
-					const data = await bridgeGet<SafRootsData>("/app/files");
-					const lines = data.roots.map((root) => `- ${root.name}${root.exists ? "" : "（授权已失效）"}`);
-					if (lines.length === 0) lines.push("（还没有授权任何目录）");
-					return textResult(`已授权目录（${data.count}）：\n\n${lines.join("\n")}\n\n${data.note}`, {
-						count: data.count,
-					});
-				}
-				const data = await bridgePost<SafListData>("/app/files/list", { path: p.path });
-				const lines = data.entries.map(
-					(entry) => `${entry.directory ? "[目录]" : `[${formatSize(entry.bytes)}]`} ${entry.name}`,
-				);
-				if (lines.length === 0) lines.push("（空目录）");
+				const data = await bridgePost<{ on: boolean; cameraId: string }>("/app/torch", { on: p.on });
+				return textResult(`手电筒已${data.on ? "打开" : "关闭"}（camera ${data.cameraId}）`, { on: data.on });
+			}
+			case "location": {
+				const data = await bridgeGet<{
+					latitude: number;
+					longitude: number;
+					accuracyMeters: number;
+					provider: string;
+					ageSeconds: number;
+					stale: boolean;
+				}>("/app/location");
+				const freshness = data.stale
+					? `（数据已有 ${data.ageSeconds} 秒，可能已过时）`
+					: `（${data.ageSeconds} 秒前）`;
 				return textResult(
-					truncateForModel(`${data.path}：\n\n${lines.join("\n")}\n\n共 ${data.count} 项${data.truncated ? "（已截断）" : ""}`, "目录列表"),
+					`位置：${data.latitude}, ${data.longitude}（约 ${Math.round(data.accuracyMeters)} 米，来自 ${data.provider}）${freshness}`,
+					data as unknown as Record<string, unknown>,
+				);
+			}
+			case "sensors": {
+				const data = await bridgeGet<SensorsData>("/app/sensors");
+				const lines = data.sensors.map(
+					(sensor) => `${sensor.typeName}（type=${sensor.type}）  ${sensor.name}  ${sensor.vendor}`,
+				);
+				return textResult(
+					truncateForModel(`共 ${data.count} 个传感器：\n\n${lines.join("\n")}`, "传感器列表"),
 					{ count: data.count },
 				);
-			}),
+			}
+			case "sensor": {
+				const data = await bridgeGet<SensorSampleData>("/app/sensor", {
+					typeName: p.typeName,
+					type: p.type,
+					timeoutMs: p.timeoutMs,
+				});
+				return textResult(
+					`${data.name}（${data.typeName}）：${data.values.join(", ")}${data.units ? ` ${data.units}` : ""}`,
+					data as unknown as Record<string, unknown>,
+				);
+			}
+			default:
+				throw badParam("android_device", "action", [...DEVICE_ACTIONS], p.action);
+		}
+	});
+}
+
+// -------------------------------------------------------------------- 状态 ----
+
+async function statusBridge(): Promise<ToolOutcome> {
+	return guarded(async () => {
+		let health: HealthPayload;
+		try {
+			health = await bridgeHealth();
+		} catch (error) {
+			const text = error instanceof BridgeError
+				? error.toModelMessage()
+				: `设备桥不可用：${String(error)}`;
+			return textResult(`设备桥状态：未连接\n\n${text}`, { connected: false });
+		}
+		const lines: string[] = [];
+		lines.push(`设备桥：运行中（127.0.0.1:${health.port}，协议 v${health.version}）`);
+		lines.push(`设备：Android ${health.androidRelease}（SDK ${health.sdkInt}）`);
+		// 模型最需要的上下文就是「我接下来要动的是哪个应用」，所以先报前台。
+		lines.push(
+			health.foreground
+				? `前台：${health.foreground.packageName ?? "未知"}${health.foreground.class ? `/${health.foreground.class}` : ""}`
+				: "前台：未知（无障碍服务未连接，读不到前台应用）",
+		);
+		if (health.audit?.lastUnpaired) lines.push(`上次执行异常终止：${health.audit.lastUnpaired}`);
+		lines.push(
+			`无障碍：${
+				health.accessibilityState === "connected"
+					? "运行中"
+					: health.accessibilityState === "enabled_not_connected"
+						? "已启用，正在连接（稍等重试）"
+						: health.accessibilityRunning
+							? "运行中"
+							: "未运行"
+			}（系统设置中${health.accessibilityEnabledInSettings ? "已启用" : "未启用"}）`,
+		);
+		lines.push(`截图：${health.screenshotSupported ? "支持" : "不支持（需要 Android 11+）"}`);
+		lines.push(
+			`系统权限：定位${health.locationPermissionGranted ? "已授予" : "未授予"} · ` +
+				`通知${health.notificationPermissionGranted ? "已授予" : "未授予"} · ` +
+				`震动${health.vibratePermissionGranted ? "已授予" : "未授予"}`,
+		);
+		const groups = health.capabilities.map((capability) => {
+			const state = !capability.enabled
+				? "已关闭"
+				: capability.enabledForSession === false
+					? "本会话禁用"
+					: capability.usable
+						? "可用"
+						: `已开启但不可用${capability.reason ? `（${capability.reason}）` : ""}`;
+			return `${capability.id}=${state}`;
+		});
+		lines.push(`能力：${groups.join(" · ")}`);
+		const shizuku = health.shizuku;
+		if (shizuku) {
+			// 身份，而不只是标签：「已就绪（ADB 身份，uid=2000）」才是模型判断
+			// pm / input / screencap 能不能用的依据。
+			const identity = shizuku.ready
+				? shizuku.uid === 0
+					? "已就绪（root，uid=0）"
+					: `已就绪（ADB 身份，uid=${shizuku.uid}）`
+				: "未就绪";
+			lines.push(`Shell：${identity} —— ${shizuku.note}`);
+		}
+		const saf = health.saf;
+		if (saf) {
+			lines.push(
+				saf.count > 0
+					? `已授权（SAF）目录：${saf.roots.join("、")}`
+					: "已授权（SAF）目录：无 —— 需要用户在「设置 → 设备能力 → 存储」授权",
+			);
+		}
+		const gate = health.gate;
+		if (gate?.reported) {
+			const grants = gate.sessionGrants ?? [];
+			lines.push(`本会话已记住的危险操作：${grants.length > 0 ? grants.join("、") : "无（每次都会问）"}`);
+		}
+		return textResult(lines.join("\n"), {
+			connected: true,
+			port: health.port,
+			capabilities: health.capabilities,
+		});
+	});
+}
+
+// ------------------------------------------------------------------ 注册表 ----
+
+interface DeviceToolSpec {
+	name: string;
+	/** 这个工具属于哪一组能力；`null` 表示不依赖任何一组（只有 `android_status`），永远注册。 */
+	capability: DeviceCapabilityId | null;
+	label: string;
+	description: string;
+	promptSnippet: string;
+	promptGuidelines?: string[];
+	parameters: TSchema;
+	run: (params: Record<string, unknown>, ctx: ExtensionContext) => Promise<ToolOutcome>;
+}
+
+const DEVICE_TOOLS: DeviceToolSpec[] = [
+	{
+		name: "android_status",
+		capability: null,
+		label: "设备状态",
+		description: "Bridge status: capability groups, app, shell uid, SAF.",
+		promptSnippet: "Bridge status",
+		parameters: Type.Object({}),
+		run: () => statusBridge(),
+	},
+	{
+		name: "android_screen",
+		capability: "accessibility",
+		label: "屏幕",
+		description: "Screen: look, tap, type, swipe, key, wait, shot, steps.",
+		promptSnippet: "Screen read + act",
+		promptGuidelines: [
+			"Destructive actions ask first; if declined, stop and say so — never work around it.",
+		],
+		parameters: Type.Object({
+			action: ScreenAction,
+			steps: Type.Optional(Type.Array(StepSpec, { description: "up to 8 steps, stops at the first error" })),
+			filter: Type.Optional(Type.String({ description: "look: keep nodes containing this" })),
+			maxNodes: Type.Optional(Type.Number({ description: "look: node cap, default 400" })),
+			index: Type.Optional(Type.Number({ description: "node index from look" })),
+			x: Type.Optional(Type.Number({ description: "x in display px" })),
+			y: Type.Optional(Type.Number({ description: "y in display px" })),
+			text: Type.Optional(Type.String({ description: "tap/swipe: text to match; type: text to write" })),
+			desc: Type.Optional(Type.String({ description: "contentDescription part" })),
+			resourceId: Type.Optional(Type.String({ description: "resource id part, e.g. btn_send" })),
+			longPress: Type.Optional(Type.Boolean({ description: "tap: long press" })),
+			direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "swipe: scroll direction" })),
+			x1: Type.Optional(Type.Number({ description: "swipe: start x" })),
+			y1: Type.Optional(Type.Number({ description: "swipe: start y" })),
+			x2: Type.Optional(Type.Number({ description: "swipe: end x" })),
+			y2: Type.Optional(Type.Number({ description: "swipe: end y" })),
+			durationMs: Type.Optional(Type.Number({ description: "swipe: ms, default 300" })),
+			submit: Type.Optional(Type.Boolean({ description: "type: press enter after" })),
+			key: Type.Optional(Type.String({ description: "back/home/recents/lock… or ENTER, KEYCODE_*" })),
+			repeat: Type.Optional(Type.Number({ description: "key: repeat 1-20" })),
+			waitMs: Type.Optional(Type.Number({ description: "wait: timeout ms, default 5000" })),
+			gone: Type.Optional(Type.Boolean({ description: "wait: until it disappears" })),
+			format: Type.Optional(StringEnum(["jpeg", "png"] as const, { description: "shot: png is lossless" })),
+			maxDimension: Type.Optional(Type.Number({ description: "shot: long side cap, default 1280" })),
+			region: Type.Optional(Type.Array(Type.Number(), { description: "shot: crop [left,top,right,bottom]" })),
+		}),
+		run: (params) => screenAction(params),
+	},
+	{
+		name: "android_app",
+		capability: "basic",
+		label: "应用",
+		description: "App: list, launch, stop.",
+		promptSnippet: "App list/launch/stop",
+		promptGuidelines: ["stop kills the app's background process; unsaved work may be lost."],
+		parameters: Type.Object({
+			action: AppAction,
+			package: Type.Optional(Type.String({ description: "exact package, e.g. org.telegram.messenger" })),
+			q: Type.Optional(Type.String({ description: "list: filter on name or package" })),
+			includeSystem: Type.Optional(Type.Boolean({ description: "list: include system apps" })),
+			limit: Type.Optional(Type.Number({ description: "list: row cap, default 60" })),
+		}),
+		run: (params) => appAction(params),
 	},
 	{
 		name: "android_files",
-		exposure: "hidden",
 		capability: "basic",
-		label: "授权目录读写",
-		description: "Read/write files under a user-authorized (SAF) dir. write: creates parent dirs, overwrites. read: text direct, binary as base64. Public Download uses android_download.",
-		promptSnippet: "Authorized-dir files",
+		label: "文件",
+		description: "Files: dirs, list, read, write, export, import, download.",
+		promptSnippet: "SAF + Download files",
 		parameters: Type.Object({
-			op: StringEnum(["write", "read"] as const, {
-				description: "write or read.",
-			}),
-			path: Type.String({ description: "\"root/relative\", e.g. Documents/notes/todo.md; must start with an authorized root name." }),
-			content: Type.Optional(Type.String({ description: "Text; with write, not base64." })),
-			base64: Type.Optional(Type.String({ description: "Binary as base64; with write, not content." })),
-			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain." })),
-			maxBytes: Type.Optional(Type.Number({ description: "Max bytes, default 1MB, cap 4MB." })),
+			action: FileAction,
+			path: Type.Optional(Type.String({ description: "\"root/relative\"; omit on list for root names" })),
+			name: Type.Optional(Type.String({ description: "Download file name, e.g. report.md" })),
+			content: Type.Optional(Type.String({ description: "text content" })),
+			base64: Type.Optional(Type.String({ description: "binary as base64, not with content" })),
+			mimeType: Type.Optional(Type.String({ description: "MIME, default text/plain" })),
+			maxBytes: Type.Optional(Type.Number({ description: "bytes to read, default 1MB, cap 4MB" })),
 		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					op: string;
-					path: string;
-					content?: string;
-					base64?: string;
-					mimeType?: string;
-					maxBytes?: number;
-				};
-				if (p.op === "read") {
-					const data = await bridgePost<SafReadData>("/app/files/read", { path: p.path, maxBytes: p.maxBytes });
-					if (typeof data.text === "string") {
-						return textResult(
-							`[op read] 已读入 ${data.path}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
-								truncateForModel(data.text, "文件内容"),
-							{ path: data.path, bytes: data.bytes },
-						);
-					}
-					return textResult(
-						`[op read] 已读入 ${data.path}（${formatSize(data.bytes)}），它是二进制文件，以 base64 返回：\n\n` +
-							truncateForModel(data.base64 ?? "", "base64"),
-						{ path: data.path, bytes: data.bytes, binary: true },
-					);
-				}
-				if (p.op === "write") {
-					const data = await bridgePost<SafWriteData>("/app/files/write", {
-						path: p.path,
-						content: p.content,
-						base64: p.base64,
-						mimeType: p.mimeType,
-					});
-					return textResult(
-						`[op write] 已${data.created ? "创建" : "覆盖"} ${data.path}（${formatSize(data.bytes)}，${data.mimeType}）\nURI：${data.uri}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				throw badParam("android_files", "op", ["write", "read"], p.op);
-			}),
+		run: (params) => filesAction(params),
 	},
-
-	// ------------------------------------------------- 位置 / 传感器 / 相机 ----
-	{
-		name: "android_device_state",
-		capability: "basic",
-		label: "设备状态",
-		description: "Read battery, last known location, the sensor list, or one sensor sample.",
-		promptSnippet: "Battery / location / sensors",
-		parameters: Type.Object({
-			what: StringEnum(["battery", "location", "sensors", "sensor"] as const, {
-				description: "battery = level, location = position (needs the system location permission), sensors = list, sensor = one sample.",
-			}),
-			typeName: Type.Optional(
-				Type.String({ description: "Sensor type name, e.g. accelerometer; with sensor, not type." }),
-			),
-			type: Type.Optional(
-				Type.Number({ description: "Android Sensor.TYPE_*; with sensor, not typeName." }),
-			),
-			timeoutMs: Type.Optional(Type.Number({ description: "Sample timeout ms, default 1500." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { what: string; typeName?: string; type?: number; timeoutMs?: number };
-				if (p.what === "battery") {
-					const data = await bridgeGet<{ percent: number; status: string; plugged: boolean; temperatureC: number }>(
-						"/app/battery",
-					);
-					return textResult(
-						`[what battery] 电量 ${data.percent}% · 状态 ${data.status} · ${data.plugged ? "已接电源" : "未接电源"} · ${data.temperatureC}°C`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				if (p.what === "location") {
-					const data = await bridgeGet<{
-						latitude: number;
-						longitude: number;
-						accuracyMeters: number;
-						provider: string;
-						ageSeconds: number;
-						stale: boolean;
-					}>("/app/location");
-					const freshness = data.stale
-						? `（数据已有 ${data.ageSeconds} 秒，可能已经过时）`
-						: `（${data.ageSeconds} 秒前）`;
-					return textResult(
-						`[what location] 位置：${data.latitude}, ${data.longitude}（精度约 ${Math.round(data.accuracyMeters)} 米，来自 ${data.provider}）${freshness}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				if (p.what === "sensors") {
-					const data = await bridgeGet<SensorsData>("/app/sensors");
-					const lines = data.sensors.map(
-						(sensor) => `${sensor.typeName}（type=${sensor.type}）  ${sensor.name}  ${sensor.vendor}`,
-					);
-					return textResult(
-						truncateForModel(`[what sensors] 共 ${data.count} 个传感器：\n\n${lines.join("\n")}`, "传感器列表"),
-						{ count: data.count },
-					);
-				}
-				if (p.what === "sensor") {
-					const data = await bridgeGet<SensorSampleData>("/app/sensor", {
-						typeName: p.typeName,
-						type: p.type,
-						timeoutMs: p.timeoutMs,
-					});
-					return textResult(
-						`[what sensor] ${data.name}（${data.typeName}）：${data.values.join(", ")}${data.units ? ` ${data.units}` : ""}`,
-						data as unknown as Record<string, unknown>,
-					);
-				}
-				throw badParam("android_device_state", "what", ["battery", "location", "sensors", "sensor"], p.what);
-			}),
-	},
-	{
-		name: "android_torch",
-		capability: "basic",
-		label: "手电筒",
-		description: "Flashlight (camera LED) on/off; some ROMs need the camera permission.",
-		promptSnippet: "Flashlight on/off",
-		parameters: Type.Object({
-			on: Type.Boolean({ description: "true = on, false = off." }),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { on: boolean };
-				const data = await bridgePost<{ on: boolean; cameraId: string }>("/app/torch", { on: p.on });
-				return textResult(`手电筒已${data.on ? "打开" : "关闭"}（camera ${data.cameraId}）`, data as unknown as Record<string, unknown>);
-			}),
-	},
-
-	// --------------------------------------------------------------- Shell ----
 	{
 		name: "android_shell",
 		capability: "shell",
 		label: "设备 Shell",
-		description: "Device shell — nothing is filtered: _any_ binary, any write path, `$(...)` and backticks all pass. Identity decides what actually works: Shizuku = uid 2000, else the app uid (pm / input / dumpsys / screencap then fail).",
-		promptSnippet: "Device shell (identity decides)",
+		description: "Device shell: any command, guarded by device policy.",
+		promptSnippet: "Device shell",
 		promptGuidelines: [
-			"android_shell only for device identity; workspace git/npm/builds use bash.",
-			"For uid 2000 this tool is the wrong route — its only backends are Shizuku and the app uid. Even when adb shell id says 2000, run uid-2000 commands through bash + adb instead (references/elevate.md).",
+			"Shell is guarded by device policy: irreversible commands ask for confirmation.",
 		],
 		parameters: Type.Object({
-			command: Type.String({ description: "One command; split multiple actions into separate calls." }),
-			timeoutMs: Type.Optional(Type.Number({ description: "Timeout in ms, default 15000, cap 60000." })),
+			command: Type.String({ description: "one command; split several actions into calls" }),
+			timeoutMs: Type.Optional(Type.Number({ description: "timeout ms, default 15000, cap 60000" })),
 		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { command: string; timeoutMs?: number };
-				const data = await bridgePost<ShellData>("/app/shell", { command: p.command, timeoutMs: p.timeoutMs }, 90_000);
-				const parts: string[] = [];
-				parts.push(`$ ${p.command}`);
-				if (data.stdout.trim().length > 0) parts.push(data.stdout.trimEnd());
-				if (data.stderr.trim().length > 0) parts.push(`[stderr]\n${data.stderr.trimEnd()}`);
-				parts.push(`[退出码 ${data.exitCode}${data.timedOut ? "，超时被杀" : ""}]`);
-				// Without this line the bridge's 50 KiB cap was invisible to the model:
-				// `ShellData.truncated` existed but nothing read it, so a clipped
-				// `stdout` (or a `stderr` cut while stdout looked complete) arrived
-				// looking like the whole output. Name the stream, because the two mean
-				// different things: a clipped stdout is a lost result, a clipped stderr
-				// is a lost explanation.
-				const clipped = [data.stdoutTruncated ? "stdout" : "", data.stderrTruncated ? "stderr" : ""].filter(
-					(name) => name.length > 0,
-				);
-				if (clipped.length > 0) {
-					parts.push(`[输出被截断：${clipped.join(" 与 ")} 只保留了前 50 KB；要看全部请缩小命令的输出]`);
-				} else if (data.truncated) {
-					// A bridge that predates the per-stream fields: it can say "something
-					// was cut" but not which.
-					parts.push("[输出被截断：stdout 或 stderr 只保留了前 50 KB；要看全部请缩小命令的输出]");
-				}
-				parts.push(`[后端 ${data.backendLabel}，uid=${data.uid}]`);
-				parts.push(data.note);
-				if (data.policy) parts.push(data.policy);
-				const text = truncateForModel(parts.join("\n"), "Shell 输出", "tail");
-				// pi 的失败口径（`core/tools/bash.ts:368-373`）：超时 / 无退出码 / 非零
-				// 退出都是错误，用 throw 表达。见 `shellFailureStatus` 的 KDoc：正文里
-				// 保留 pi 的原句，App 的退出码解析因此仍然成立。
-				const failure = shellFailureStatus(data);
-				if (failure !== null) throw new Error(`${text}\n\n${failure}`);
-				return textResult(text, {
-					exitCode: data.exitCode,
-					backend: data.backend,
-					uid: data.uid,
-				});
-			}),
+		run: (params) => shellRun(params),
 	},
-
-	// ------------------------------------------------------------ 通知 ----
-	//
-	// 通知监听（`PiNotificationListener`）：只有在系统「通知使用权」里勾选过 PI、且服务已连上
-	// 时才有内容。`recent` 是当前缓冲区（按 key 去重，最新在末），`events` 是到达/移除/应答的
-	// 流水；回复、撤销、延后要的是**当前那条**通知的 key，它只存在于这两个列表的输出里。
 	{
-		name: "android_notify",
+		name: "android_comm",
 		capability: "basic",
-		label: "通知监听",
-		description: "Notification listener: action=status|recent|reply|dismiss|dismiss-all|snooze|events.",
-		promptSnippet: "Read/reply/dismiss notifications",
-		promptGuidelines: [
-			"reply needs a notification with a RemoteInput action; action=recent marks those as 可回复.",
-			"dismiss/snooze take the key printed by recent or events; a stale key is refused, do not retry it.",
-		],
+		label: "对外动作",
+		description: "Comms: clipboard, notify/toast/tts, share, open, inbox.",
+		promptSnippet: "Comms & clipboard",
 		parameters: Type.Object({
-			action: NotifyAction,
-			key: Type.Optional(Type.String({ description: "reply/dismiss/snooze: the notification key from action=recent." })),
-			text: Type.Optional(Type.String({ description: "reply: the text to send." })),
-			ms: Type.Optional(Type.Number({ description: "snooze: milliseconds to postpone it, >0 and capped at 24h." })),
-			limit: Type.Optional(Type.Number({ description: "recent/events: entries, default 20 / 50." })),
-			since: Type.Optional(
-				Type.Number({ description: "events: only events newer than this sequence number (the cursor the previous call printed)." }),
-			),
+			action: CommAction,
+			text: Type.Optional(Type.String({ description: "body; clipboard reads when omitted" })),
+			title: Type.Optional(Type.String({ description: "notify: title, default pi" })),
+			key: Type.Optional(Type.String({ description: "reply/dismiss/snooze: key from inbox" })),
+			url: Type.Optional(Type.String({ description: "share: link; open: full URL or intent://" })),
+			subject: Type.Optional(Type.String({ description: "share: title" })),
+			ms: Type.Optional(Type.Number({ description: "vibrate ms / snooze delay ms" })),
+			language: Type.Optional(Type.String({ description: "tts: BCP-47, e.g. zh-CN" })),
+			rate: Type.Optional(Type.Number({ description: "tts: rate 0.1-3.0" })),
+			long: Type.Optional(Type.Boolean({ description: "toast: long duration" })),
+			limit: Type.Optional(Type.Number({ description: "inbox: rows, default 20" })),
 		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { action?: string; key?: string; text?: string; ms?: number; limit?: number; since?: number };
-				const action = typeof p.action === "string" ? p.action : "";
-				switch (action) {
-					case "status": {
-						const data = await bridgeGet<
-							ActionPayload & {
-								connected?: boolean;
-								enabledInSettings?: boolean;
-								state?: string;
-								activeCount?: number;
-								replyableCount?: number;
-								eventCount?: number;
-							}
-						>("/app/notify/status");
-						const state = data.connected === true
-							? "已连接"
-							: data.enabledInSettings === true
-								? "已授权，但系统还没绑定服务（稍等约 1 秒）"
-								: "没有通知使用权";
-						const lines = [
-							`通知监听：${state}（${show(data.state)}）`,
-							`当前通知 ${show(data.activeCount)} 条，其中可回复 ${show(data.replyableCount)} 条；事件流水 ${show(data.eventCount)} 条`,
-						];
-						if (typeof data.note === "string") lines.push("", data.note);
-						return textResult(lines.join("\n"), data);
-					}
-					case "recent": {
-						const data = await bridgePost<ActionPayload & Record<string, unknown>>("/app/notify/recent", { limit: p.limit });
-						const entries = listField(data);
-						if (entries === null) return textResult(`最近通知：设备没有返回列表。\n${JSON.stringify(data)}`, data);
-						return textResult(
-							listText("最近通知", entries, (entry) => {
-								const body = typeof entry.text === "string" && entry.text.length > 0 ? `：${entry.text}` : "";
-								const flags = [
-									entry.replyable === true ? "可回复" : "",
-									entry.isOngoing === true ? "常驻" : "",
-									entry.isClearable === false ? "不可撤销" : "",
-								].filter((flag) => flag.length > 0);
-								return `- [${show(entry.key)}] ${show(entry.packageName)}｜${show(entry.title)}${body}${flags.length > 0 ? `（${flags.join("、")}）` : ""}`;
-							}),
-							data,
-						);
-					}
-					case "reply": {
-						requireText("android_notify", action, params, ["key", "text"]);
-						const text = p.text ?? "";
-						const data = await bridgePost<ActionPayload & { chars?: number }>("/app/notify/reply", { key: p.key, text });
-						requireActionOk("android_notify", data);
-						return textResult(`已回复通知「${p.key}」（${data.chars ?? text.length} 字符）。`, data);
-					}
-					case "dismiss": {
-						requireText("android_notify", action, params, ["key"]);
-						const data = await bridgePost<ActionPayload>("/app/notify/dismiss", { key: p.key });
-						requireActionOk("android_notify", data);
-						return textResult(`已撤销通知「${p.key}」。`, data);
-					}
-					case "dismiss-all": {
-						const data = await bridgePost<ActionPayload>("/app/notify/dismiss-all", {});
-						requireActionOk("android_notify", data);
-						return textResult("已撤销所有可撤销的通知。", data);
-					}
-					case "snooze": {
-						requireText("android_notify", action, params, ["key"]);
-						const ms = requireNumber("android_notify", action, params, "ms");
-						const data = await bridgePost<ActionPayload & { durationMs?: number }>("/app/notify/snooze", { key: p.key, ms });
-						requireActionOk("android_notify", data);
-						return textResult(`已把通知「${p.key}」延后 ${data.durationMs ?? ms} 毫秒。`, data);
-					}
-					case "events": {
-						const data = await bridgePost<ActionPayload & { cursor?: number } & Record<string, unknown>>("/app/notify/events", {
-							limit: p.limit,
-							since: p.since,
-						});
-						const entries = listField(data);
-						if (entries === null) return textResult(`通知事件：设备没有返回列表。\n${JSON.stringify(data)}`, data);
-						const cursor = typeof data.cursor === "number" ? `\n（cursor=${data.cursor}；下次带 since 只取增量）` : "";
-						return textResult(
-							listText("通知事件", entries, (entry) => {
-								const when = typeof entry.at === "number" ? new Date(entry.at).toISOString() : "?";
-								const detail = typeof entry.detail === "string" ? `：${entry.detail}` : "";
-								return `- ${when} [${show(entry.seq)}] ${show(entry.type)} ${show(entry.packageName)} ${show(entry.title)}${detail}`;
-							}) + cursor,
-							data,
-						);
-					}
-					default:
-						throw badParam(
-							"android_notify",
-							"action",
-							["status", "recent", "reply", "dismiss", "dismiss-all", "snooze", "events"],
-							p.action,
-						);
-				}
-			}),
+		run: (params) => commAction(params),
 	},
-
-
+	{
+		name: "android_device",
+		capability: "basic",
+		label: "设备读数",
+		description: "Device: battery, torch, location, sensors, sensor.",
+		promptSnippet: "Device readings",
+		parameters: Type.Object({
+			action: DeviceAction,
+			on: Type.Optional(Type.Boolean({ description: "torch: true on, false off" })),
+			typeName: Type.Optional(Type.String({ description: "sensor: type name, e.g. accelerometer" })),
+			type: Type.Optional(Type.Number({ description: "sensor: Android Sensor.TYPE_*" })),
+			timeoutMs: Type.Optional(Type.Number({ description: "sensor: sample timeout ms, default 1500" })),
+		}),
+		run: (params) => deviceAction(params),
+	},
 ];
 
 // ---------------------------------------------------------------------------
@@ -1955,202 +1674,142 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 const SKILL_NAME = "pi-android-device";
 
 /**
- * 技能正文：`SKILL.md` 只是路标（frontmatter + 一张索引表），细节按主题拆在
+ * 技能正文：`SKILL.md` 是路标（frontmatter + 一份索引 + 四句话的套路），细节按主题拆在
  * `references/*.md` 里；附件不进每轮提示词，进去的只有 frontmatter 的 name/description。
+ *
+ * **按开启的能力组裁剪**，因为技能是写给「这一轮真的存在的工具」看的：
+ * 只开 `basic` 时 `references/ui.md` 根本不写、索引里也没有屏幕那一行；`shell` 段同理。
+ * 模型因此不会读到一套它调不到的工具（那正是 v1 里「说明文字太多」的一半来源：
+ * 技能在讲工具，而工具有没有注册是另一回事）。
  *
  * 键是相对技能目录（`<agentDir>/skills/<SKILL_NAME>/`）的路径，因为文件由下面
  * `resources_discover` 写到磁盘上。
  */
-const SKILL_FILES: Record<string, string> = {
-	"SKILL.md": `---
+function skillFiles(usable: ReadonlySet<string>): Record<string, string> {
+	const accessibility = usable.has("accessibility");
+	const shell = usable.has("shell");
+	const basic = usable.has("basic");
+
+	const rows: string[] = [];
+	if (accessibility) rows.push("| screen: read, tap, type, swipe, key, shot | about to touch the UI | `references/ui.md` |");
+	rows.push("| paths, identity, boundary | unsure where a file lives, or running a device command | `references/env.md` |");
+
+	const bullets: string[] = [];
+	if (accessibility) {
+		bullets.push(
+			"- `[n]` in `look` output is the `index` for `tap` / `type`; use coordinates only without it.",
+			"- The second line of an action result is the verdict: act on it before trying anything else.",
+			"- Several actions at once: `action=\"steps\"` (max 8, stops at the first error and says which).",
+		);
+	}
+	if (basic) {
+		bullets.push(
+			"- Files: `android_files` dirs/list/read/write on authorized dirs; export/import on public Download.",
+			"- Notifications, clipboard, vibration, share, links: `android_comm`; battery, torch, location, sensors: `android_device`.",
+		);
+	}
+	if (shell) {
+		bullets.push("- Device commands: `android_shell` — the identity decides what works (`references/env.md`).");
+	}
+
+	const skill = `---
 name: ${SKILL_NAME}
 description: "How to drive this phone with the android_* tools. Read before acting on it."
 ---
 
-# pi-android 设备环境
+# pi-android device environment
 
-pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工具。先读这张表，再按需打开附件。
+pi runs in proot Ubuntu; the \`android_*\` tools drive this phone.
+A capability group that is off has **no tools at all**: the tool is absent, the call is not refused.
 
-| 主题 | 什么时候读 | 附件 |
+Loop: \`look\` → act (the result carries the diff) → nothing changed? look again.
+
+| topic | read it when | file |
 |---|---|---|
-| 屏幕与输入 | 读屏、点按、输入、滑动、按键、截图 | \`references/ui.md\` |
-| 工具总表 | 有哪些工具、属于哪组、某个 action 怎么用 | \`references/tools.md\` |
-| 设备 Shell | 要在设备上跑命令、想弄清它跑在什么身份上 | \`references/shell.md\` |
-| 路径 | /workspace、/sdcard、agentDir 各是什么 | \`references/paths.md\` |
-| 常见坑 | 报 [DISABLED] / NOT_FOUND / 截断时 | \`references/pitfalls.md\` |
-| ADB 身份 | 要 input/pm/am/settings，要 uid 2000 | \`references/elevate.md\` |
-`,
+${rows.join("\n")}
 
-	"references/ui.md": `# 屏幕与输入（android_ui）
+${bullets.join("\n")}
+`;
 
-## 看清屏幕
+	const ui = `# Screen (android_screen)
 
-| action | 做什么 | 关键参数 |
+One action per call; a missing parameter is reported by name.
+
+| action | parameters | notes |
 |---|---|---|
-| \`dump\` | 读控件树（带编号） | filter、maxNodes、diff、waitForText/waitForId/waitMs |
-| \`elements\` | 结构化元素表（可操作元素 + 中心点），比 dump 更适合拿来判断 | maxNodes、maxDepth |
-| \`diff\` | 只报「相对上一次 dump 的新增 / 消失 / 变化」——屏幕只小改时省 token | maxNodes、maxDepth |
-| \`idle\` | 等界面稳定（控件树连续两次不变才算空闲），别用 sleep | timeoutMs |
-| \`wait\` | 等某个选择器**出现**（\`gone: true\` 则等它**消失**）——事件驱动，不是轮询 | text/desc/resourceId、gone、timeoutMs |
-| \`verify\` | 问「(x,y) 上到底是什么、点下去会不会生效」——返回命中的节点与可点击祖先链 | x、y |
-| \`select\` | **自愈查找**：resourceId→text→desc→邻居文本→相对位置→坐标，逐个试并回报每个策略为什么失败 | text/desc/resourceId/anchor/direction/occurrence/timeoutMs |
-| \`memory\` | 这个应用里见过哪些元素、各自能做什么 | package |
+| look | filter, maxNodes | one screen as \`[n] class "text" clickable @[x,y][x,y]\` |
+| tap | index, or x+y, or text/desc/resourceId, longPress | index first; it goes stale when the screen changes |
+| type | text, index or desc/resourceId, submit | focused field, or the given index |
+| swipe | direction + index/text, or x1/y1/x2/y2 | direction scrolls a list; coordinates for canvases |
+| key | key, repeat | back/home/recents/lock/screenshot…; raw keys need Shizuku |
+| wait | text or resourceId, waitMs, gone | waits for a node; gone=true waits for it to disappear |
+| shot | format, region, maxDimension | screenshot; enlarge or crop when text is unreadable |
 
-## 动作
+## The diff attached to every action
 
-| action | 做什么 | 关键参数 |
-|---|---|---|
-| \`tap\` | 点按 | index，或 x/y，或 text/desc/resourceId；longPress |
-| \`swipe\` | 坐标滑动，或滚动控件 | x1/y1/x2/y2/durationMs，或 direction+index/text/resourceId |
-| \`input\` | 向输入框写文本 | text，index/desc/resourceId，submit |
-| \`key\` | 全局动作 | key = back/home/recents/notifications/quicksettings/powermenu/lock/screenshot/split |
-| \`keyevent\` | 注入原始按键（要 ADB 身份） | keys、repeat |
+\`tap\` / \`type\` / \`swipe\` / \`key\` fetch \`/app/ui/diff\` right after acting, so the same result
+carries the verdict:
 
-## 录一段，以后一键回放
+- \`界面变了：…\` → \`changed: true\`: the nodes that appeared, disappeared or changed; continue.
+- \`界面没变，可能没点中\` → \`changed: false\`: \`look\` again and pick another index, or pass
+  text/resourceId. Do not repeat the identical call.
+- \`还没有上一屏可对比\` → \`changed: null\`: no baseline yet; \`look\` once and the next action can
+  be compared.
 
-| action | 做什么 |
+## Pitfalls
+
+- NOT_FOUND: the index is stale (look again) or the text does not match (use resourceId).
+- DISABLED / NO_PERMISSION: that group is off — read \`android_status\`, tell the user, do not retry.
+- \`已按上限截断\`: narrow the read with filter / maxNodes instead of asking for more.
+- Password fields: the tree cannot read them; \`type\` writes but nothing reads back.
+`;
+
+	const shellSection = shell
+		? `
+## Shell identity
+
+\`android_shell\` has two backends: Shizuku (uid 2000) and the app's own uid.
+
+- \`uid=2000\`: \`pm\`, \`settings\`, \`am\`, \`input\`, \`dumpsys\`, \`screencap\` all work.
+- app uid: those commands fail with SecurityException — the command is not wrong.
+- \`/data/data/<pkg>\` needs root; neither backend reaches it.
+
+Irreversible commands (\`dd\`, \`mkfs\`, \`/dev/block\`, \`pm clear\`, \`pm uninstall\`) ask first.
+When the user declines, stop — do not route around it.
+`
+		: "";
+
+	const env = `# Paths, identity, boundary
+
+| path | what it is |
 |---|---|
-| \`macroStart\` | 开始录制（name） |
-| \`macroStep\` | 记一步（body 就是那一步：action + 选择器） |
-| \`macroStop\` | 停止并返回配方 |
-| \`macroPlay\` | 回放；回放时按当前屏幕**重新解析选择器**（锚点自愈），单步失败有界重试 |
+| /workspace | the workspace (engine and terminal mount it separately) |
+| /sdcard | shared phone storage; public Download goes through \`android_files\` export |
+| ~/.pi/agent | pi's agent dir (SYSTEM.md, skills/, device-bridge.json) |
 
-## 其他
+- Guest work (git, npm, builds) uses pi's \`bash\`, never \`android_shell\`.
+- Files outside the authorized dirs: export to public Download, or have the user authorize a dir.
+${shellSection}`;
 
-| action | 做什么 |
-|---|---|
-| \`screenshot\` | 截屏（Android 11+）：format、maxDimension、quality、region、marks |
-| \`visual\` | 视觉兜底：把「截图 + 目标描述」打包交给上层判断（本组件不调模型） |
+	const files: Record<string, string> = { "SKILL.md": skill, "references/env.md": env };
+	if (accessibility) files["references/ui.md"] = ui;
+	return files;
+}
 
-## 规则
-
-1. 先 dump / elements 再动作。编号只在最近一次 dump 里有效；能按 text/desc/resourceId 定位就别记编号。
-2. 找不到元素时用 **\`select\`**：它按稳定性从高到低逐个策略试，并告诉你每个为什么失败 —— 比反复 dump 一次一次猜快。
-3. 界面在加载或动画时别急着点：用 **\`idle\`** 等它稳定，用 **\`wait\`** 等某个具体元素出现（或 pass gone=true 等它消失），或用 dump 的 waitForText / waitForId。
-4. 屏幕只变了一点时用 **\`diff\`**（只报变化），别重新 dump 整棵树。
-5. 同一串操作要做很多遍 → **录成宏**（macroStart → macroStep → macroStop → macroPlay）。
-6. 每个动作的返回都带「前台 A → B」和「屏幕已变化 / 没有变化」。说没有变化就是真没生效，别当成功报。
-7. 画布 / 游戏 / 视频这类读不到内容的界面：用 \`screenshot\`（region 裁、调 maxDimension），或 **\`visual\`** 交上层。
-8. 点了一下但界面没反应，别急着换坐标重试：先用 **\`verify\`** 看那个坐标上到底是什么、它有没有可点击的祖先链 —— 有点不动的，也有点到了空处的。
-9. keyevent 走 ADB 身份（uid 2000），见 references/elevate.md；key 走无障碍，不需要。
-10. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
-`,
-
-	"references/tools.md": `# 工具
-
-声明给模型的是 14 个：表一的 6 个合并入口，表二的 8 个没有合并入口的直连工具。另外还有 16 个细粒度工具（\`android_tap\`、\`android_files\`、\`android_bridge_status\` 等）被合并入口转交，同样注册着但不单独声明 —— 它们的动作都在表一的 action 里。开关打开的那一组才有它的工具；**五组默认全关**。
-
-| 工具 | 覆盖 | action |
-|---|---|---|
-| \`android_status\` | 桥、能力组、前台、权限、Shell 后端与 uid、SAF 目录、工作区路径 | — |
-| \`android_ui\` | 屏幕 | dump / elements / diff / select / idle / wait / verify / tap / swipe / input / key / keyevent / screenshot / memory / visual / macroStart / macroStep / macroStop / macroPlay |
-| \`android_app\` | 应用 | list / launch（**结束应用不是它**，见下表的 \`android_stop_app\`：那一步要屏幕能力，basic 开不出来） |
-| \`android_io\` | 用户可见的输出 | clipboard / say / vibrate / share / open |
-| \`android_fs\` | 文件 | list、read、write（授权目录 SAF）、download（公共 Download，要 op） |
-| \`android_shell\` | 设备命令 | — |
-
-- 能力组四组：basic（基础）/ accessibility（屏幕）/ ime（输入法）/ shell。**四组默认全关**：一组都不开时只有 android_status 会注册，其余工具既不注册也不进提示词；要用哪组在「设置 → 设备能力」里开。
-- [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
-- 危险动作会弹确认；用户拒绝就停。
-
-## 另外九个直连工具
-
-它们没有合并入口，所以单独声明。
-
-| 工具 | 能力组 | 覆盖 | action |
-|---|---|---|---|
-| \`android_ime\` | ime | 经 PI 输入法读/写当前聚焦的输入框 | insert / replace / delete / surround / submit / history / text |
-| \`android_notify\` | basic | 通知监听：读、回复、撤销、延后、事件流水 | status / recent / reply / dismiss / dismiss-all / snooze / events |
-| \`android_automation\` | basic | 自动化规则（触发器 + 条件 + 动作） | status / list / add / remove / apply / history |
-| \`android_net\` | basic | 本地 VPN：隧道、DNS 查询记录、黑名单 | status / start / stop / queries / blocklist |
-| \`android_capture\` | basic | 投屏（MediaProjection）截图与系统音频 | status / consent / grab |
-| \`android_stop_app\` | accessibility | 结束一个用户应用的进程；系统应用、关键进程与 pi-android 自己会被拒 | package |
-| \`android_device_state\` | basic | 电量 / 上次定位 / 传感器列表 / 一次采样 | action |
-| \`android_torch\` | basic | 手电筒开关（部分 ROM 要相机权限） | on |
-
-- \`android_ime\` 只在 PI 是当前输入法时有内容可读；密码框读不到（连长度都不报）；surround 读的是光标前后的文本，不是改选区。
-- \`android_capture\` 的 consent 只回答「现在需不需要授权」；真正那一下要用户在 pi-android 界面上点系统对话框，然后 grab。
-- \`android_automation\` 的每个端点自己会先启动引擎（apply 幂等），add 之后不用再手动启动。
-`,
-
-	"references/shell.md": `# 设备 Shell（android_shell）
-
-- 一条命令一次调用。**命令不做任何检查**：\`su\` / \`mount\` / \`dd\` / 任意二进制、写任意路径、\`$(...)\` 与反引号，全部直接放行。
-- 但真正决定成败的不是这条守卫，是**身份**。后端与身份写在回复的 \`[后端 …，uid=N]\` 里：
-  - 默认是**应用自身**（uid=u0_aXXX）→ \`pm\`、\`input\`、\`dumpsys\`、\`screencap\`、\`settings put\` 会以 \`SecurityException\` 失败。**这不是被策略拒，是系统不给权限**，换命令头、换写法都没用。
-  - 拿到 ADB 身份（uid 2000）→ 上面那些才真正可用。见 references/elevate.md。
-- ⚠️ **\`android_shell\` 不走 adb。** 它只有两档后端：Shizuku（uid 2000）与应用自身。所以即使 \`adb shell id\` 已经是 uid=2000，通过这个工具跑同样的命令**仍然是应用身份、仍然会失败**。需要 uid 2000 的活请走 \`bash\` + \`adb -s <ip:port> shell "<cmd>"\`（客户端与连接都在客机里）。
-- 每条流 50 KB 上限；被截断时点名是 stdout 还是 stderr。
-- 超时 / 没有退出码 / 非零退出都算失败，正文保留 pi 的原句 Command exited with code N。
-`,
-
-	"references/paths.md": `# 路径
-
-| 路径 | 是什么 |
-|---|---|
-| \`/root/.pi/agent\` | pi agentDir：settings、extensions、skills、sessions、auth.json |
-| \`/workspace\` | 工作区（应用私有、快，编译 / npm 用） |
-| \`/sdcard\`、\`/storage/emulated/0\` | 共享存储（FUSE，慢，用户可见） |
-| \`/tmp\` | 可写临时目录 |
-
-- 设备策略只管 android_* 工具；工作区里的 bash/read/write 不受限。
-- 工作区**不再是写入边界**：android_shell 不限制写哪里，工作区只是 agent 的默认落点。guest 里工作区的挂载点有两个拼写，看 android_status 的「工作区」行。
-- 本技能的附件在 <agentDir>/skills/pi-android-device/ 下（上面表格里的路径都相对该目录）。
-`,
-
-	"references/pitfalls.md": `# 常见坑
-
-1. [DISABLED] / [NO_PERMISSION]：那组能力关着或系统权限没给。原因在正文里，原样转述，别重试。
-2. NOT_FOUND：控件没命中 —— 重新 dump，或换 text/desc/resourceId，或 waitForText/waitForId。
-3. 编号失效：index 只属于最近一次 dump；跨步骤用选择器。
-4. 动作「成功」但界面没变：返回里的「屏幕没有变化」就是判据，别当成功报。
-5. 二进制读回：android_fs 以 base64 返回；要处理就在工作区里用 bash 解。
-6. 剪贴板读取：Android 10+ 只有前台应用读得到；为空就是看不到，别反复试。
-7. 截屏失败：密码框、银行类安全窗口系统禁止截屏。
-8. 输出被截断：缩小范围重跑（Shell 每流 50 KB；工具结果 50 KB / 2000 行）。
-9. 危险操作会确认：用户拒绝就停，别换条路再试。
-`,
-
-	"references/elevate.md": `# ADB identity (uid 2000)
-
-input / pm / am / settings need uid 2000. Trigger: those fail as the app uid.
-Alternative: the user starts Shizuku from Wireless debugging; android_status then reports uid 2000.
-
-## 0. Client (once per rootfs)
-    command -v adb || apt-get install -y adb
-
-## 1. Pair (once)
-Drive Settings with android_ui; read the screen with android_ui(action="dump").
-  a. About phone -> tap "OS version" x7 (skip if Developer options exist)
-  b. Developer options -> Wireless debugging -> ON (needs Wi-Fi)
-  c. Tap "Pair device with pairing code" -> dump -> read the code and ip:port
-  d. adb pair <ip>:<pairport> <code>
-
-## 2. Connect (every session)
-  a. Wireless debugging page -> dump -> read "IP address & port"
-  b. adb connect <ip>:<connectport>
-  c. adb shell id   ->   uid=2000(shell)
-
-## 3. Spending it — 这一段最容易搞错
-
-\`android_shell\` **不走 adb**。它只有两档后端（Shizuku、应用自身），所以即使 \`adb shell id\`
-已经是 uid=2000，通过那个工具跑 \`pm list\` 仍然是应用身份、仍然失败。
-
-需要 uid 2000 的活走 \`bash\` —— 客户端与已连上的连接都在客机里：
-
-    ADB=/usr/lib/android-sdk/platform-tools/adb
-    $ADB devices                              # 172.19.0.1:39599  device
-    $ADB -s 172.19.0.1:39599 shell "pm list packages -3 | wc -l"
-
-这就是 uid 2000：\`pm\` / \`settings\` / \`am\` / \`input\` / \`dumpsys\` / \`screencap\` / \`cmd\` 都能用。
-**仍然做不到的：** 读别的应用私有数据（\`/data/data/<pkg>\`）—— 那需要 root，uid 2000 不够。
-
-## 4. Fallback
-Ask the user to open Wireless debugging and read out the code / port.
-Ports change every time; Wi-Fi off = wireless debugging off.
-Rebooting the phone drops the connection — step 2 is the per-session part.
-`,
-};
+/**
+ * v1 写过、v2 不再有的附件：能力组一换，它们就必须从磁盘上消失。
+ *
+ * 列在这里而不是只靠「不写」，是因为 pi 只按目录扫盘 —— 索引里没写不等于文件不在，
+ * 留着它模型读到的就是一份没人维护的旧说明。
+ */
+const STALE_SKILL_FILES = [
+	"references/tools.md",
+	"references/paths.md",
+	"references/shell.md",
+	"references/elevate.md",
+	"references/pitfalls.md",
+	"references/ui.md",
+];
 
 /**
  * 技能被写到磁盘上的哪个目录。
@@ -2184,7 +1843,7 @@ function environmentGuidance(): string {
 		"",
 		"## Android device environment (pi-android)",
 		"",
-		"pi runs in proot Ubuntu; the `android_*` tools drive this phone. Read the pi-android-device skill before acting on it.",
+		"pi runs in proot Ubuntu; the `android_*` tools drive this phone, and `android_screen` reports the diff of its own action. Read the pi-android-device skill before acting on it.",
 	].join("\n");
 }
 
@@ -2202,11 +1861,10 @@ function environmentGuidance(): string {
  * 而且会把“开关开着但系统侧还没就绪”的那一组（例如无障碍已启用但服务还没连上）当成可用 ——
  * 那正是这次要消灭的“注册了却调不动”。
  *
- * 读不到（桥没起来、token 文件读不到、超时）就返回 `null`，调用方按“一组都不注册、
- * 只留 `android_status`（和它展开的 `android_bridge_status`）”处理。桥不在时我们并不知道任何
- * 一组开着没有；这时注册全部
- * 工具等于把“注册了但调用失败”重新变成默认，而这次改动的全部意义就是不让不可用的东西进请求。
- * 对用户也不是死路：`android_status` 永远注册，它会说出“未连接”和下一步。
+ * 读不到（桥没起来、token 文件读不到、超时）就返回 `null`，调用方按「一组都不注册、
+ * 只留常驻的 `android_status`」处理。桥不在时我们并不知道任何一组开着没有；这时注册全部
+ * 工具等于把「注册了但调用失败」重新变成默认，而这次改动的全部意义就是不让不可用的东西进请求。
+ * 对用户也不是死路：`android_status` 会说出「未连接」和下一步。
  */
 async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 	try {
@@ -2220,11 +1878,13 @@ async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 /**
  * 这个工具此刻该不该注册。
  *
- * `capability === null` 的是 `android_status` / `android_bridge_status`：它是“为什么不可用”的
- * 唯一解释通道
- * （`health.capabilities[].reason` 只有它会读给模型听），成本约 100 字符，所以永远注册。
+ * `capability === null` 的是 `android_status`：**常驻**（用户拍板的例外）。它是
+ * `health.capabilities[].reason` 的唯一读者 —— 「某一组开着却不可用」是模型自己查不清的
+ * 那条事实，而它只有一句中文 + 一个英文 snippet，常驻的成本比「模型不知道为什么调不动」
+ * 便宜得多。
+ *
  * 其余工具只在它那一组 `usable` 时注册 —— 关掉的能力，它的 `description`、
- * `promptSnippet`、`promptGuidelines` 和参数 schema 一个字都不进请求。
+ * `promptSnippet`、`promptGuidelines` 和整份参数 schema 一个字都不进请求。
  */
 function shouldRegister(spec: DeviceToolSpec, usable: ReadonlySet<string> | null): boolean {
 	if (spec.capability === null) return true;
@@ -2257,6 +1917,7 @@ export default async function (pi: ExtensionAPI) {
 	// App 侧 `ui/device/DeviceCapabilityScreen.kt` 在「能力授权」标题下写了同一句话，
 	// 用户和模型看到的是同一个口径。
 	const usable = await usableCapabilities();
+	usableGroups = usable ?? new Set<string>();
 
 	// 能力全关（或桥根本没起来）时，把上一轮写出去的技能目录清掉 —— **必须在这里删**。
 	//
@@ -2280,12 +1941,13 @@ export default async function (pi: ExtensionAPI) {
 		}
 	}
 
-	// 这一轮到底有没有真正可用的设备工具。`android_status` 的能力是 `null`（它的职责就是
-	// 解释「为什么不能用」，所以永远注册），不能拿它当证据 —— 否则全关时也会以为有工具。
+	// 这一轮有没有**能力组**真的可用。`android_status` 的能力是 `null`（它常驻，用来解释
+	// 「为什么不能用」），不能拿它当证据 —— 否则全关时也会以为有工具可用，那段环境说明
+	// 就白进每一轮请求了。
 	let anyDeviceToolRegistered = false;
 	for (const tool of DEVICE_TOOLS) {
 		if (!shouldRegister(tool, usable)) continue;
-		if (tool.capability !== null && tool.exposure !== "hidden") anyDeviceToolRegistered = true;
+		if (tool.capability !== null) anyDeviceToolRegistered = true;
 		pi.registerTool({
 			name: tool.name,
 			label: tool.label,
@@ -2294,7 +1956,6 @@ export default async function (pi: ExtensionAPI) {
 			promptGuidelines: tool.promptGuidelines,
 			parameters: tool.parameters,
 			namespace: DEVICE_NAMESPACE,
-			...(tool.exposure === undefined ? {} : { exposure: tool.exposure }),
 			async execute(
 				_toolCallId: string,
 				params: Static<TSchema>,
@@ -2466,9 +2127,9 @@ export default async function (pi: ExtensionAPI) {
 	// Tell the agent what environment it woke up in — **but only while it can act on it**.
 	//
 	// 这里曾经无条件追加：全关时那段文字照样每轮进请求，告诉模型一套它根本调不到的工具。
-	// 现在的条件是「这一轮至少注册了一个非 hidden 的设备工具」（就是上面那个
-	// anyDeviceToolRegistered）。全关 = 只剩 android_status（它永远注册，用来解释为什么不能
-	// 用）—— 那种情况下不说环境，因为模型真的做不了任何设备操作。
+	// 现在的条件是「这一轮至少注册了一个能力组的工具」（就是上面那个
+	// anyDeviceToolRegistered）。全关 = 只剩常驻的 android_status（它只解释「为什么不能
+	// 用」）—— 那种情况下不说环境：模型真的做不了任何设备操作，这段说明只会每轮白占位置。
 	//
 	// Sentinel 防的是「扩展被加载两次」时的重复追加，不能替代上面那个条件。
 	pi.on("before_agent_start", async (event) => {
@@ -2486,10 +2147,17 @@ pi.on("resources_discover", async () => {
 	try {
 		const usable = await usableCapabilities();
 		if (usable === null || usable.size === 0) return {};
-		const { mkdir, writeFile } = await import("node:fs/promises");
+		const { mkdir, rm, writeFile } = await import("node:fs/promises");
 		const { dirname, join } = await import("node:path");
 		const skillDir = await skillDirectory();
-		for (const [relativePath, content] of Object.entries(SKILL_FILES)) {
+		const files = skillFiles(usable);
+		// 上一版写过、这一版不再有的附件必须真的删掉：pi 只按目录扫盘，索引里没写不等于
+		// 文件不在 —— 留着它，模型读到的就是一份没人维护的旧说明。
+		for (const stale of STALE_SKILL_FILES) {
+			if (files[stale] !== undefined) continue;
+			await rm(join(skillDir, stale), { force: true });
+		}
+		for (const [relativePath, content] of Object.entries(files)) {
 			const target = join(skillDir, relativePath);
 			await mkdir(dirname(target), { recursive: true });
 			await writeFile(target, content, "utf8");
