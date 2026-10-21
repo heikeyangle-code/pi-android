@@ -18,7 +18,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * 这里只做**解析**：怎么取回来、缓存多久，在 `PiCredentialService` 里。
  */
-internal object PiModelsDev {
+object PiModelsDev {
 
     /** 一个模型在 models.dev 里的那几个字段，单位与 pi 一致（价格是每百万美元）。 */
     data class Entry(

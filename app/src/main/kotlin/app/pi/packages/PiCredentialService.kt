@@ -137,8 +137,11 @@ class PiCredentialService(
     // 都能自动拿到档位"的数据源。缓存 7 天，只在厂商/目录都没数据时才查，失败就是 null，
     // 不影响导入。
 
-    /** `<files>/models-dev.json`：整份 api.json（约 6 MB）的缓存。 */
-    private val modelsDevCache: File get() = File(layout.paths.filesDir, "models-dev.json")
+    /**
+     * 整份 api.json（约 6 MB）的缓存，放在 pi 的 agent 目录里（`models-store.json` 旁边）：
+     * 那里本来就只放 pi 的运行时数据，不会被用户当成工作区文件看到；App 卸载时一起清掉。
+     */
+    private val modelsDevCache: File get() = File(truthAgentDir, "models-dev.cache.json")
 
     /** 7 天当"够新"：模型目录是月级变化，过期就下次联网再取一份。 */
     private val modelsDevMaxAgeMs = 7L * 24 * 60 * 60 * 1000
@@ -211,11 +214,6 @@ class PiCredentialService(
         modelsDevParsed = index
         modelsDevParsedStamp = modelsDevCache.lastModified()
         return index
-    }
-
-    private companion object {
-        /** 一次失败后 10 分钟内不再试：断网时 6 MB 的重试只会拖慢导入。 */
-        const val MODELS_DEV_RETRY_MS = 10L * 60 * 1000
     }
 
     // ------------------------------------------------------- 单条模型（导入后也能改）
@@ -599,5 +597,8 @@ class PiCredentialService(
          * `models.json.lock` 这类"有人正在写"的信号也算——它们正是原子写入的中间态。
          */
         val MODEL_FILES = listOf("models.json", "auth.json", "models-store.json", "settings.json")
+
+        /** 一次失败后 10 分钟内不再试：断网时 6 MB 的重试只会拖慢导入。 */
+        private const val MODELS_DEV_RETRY_MS = 10L * 60 * 1000
     }
 }
