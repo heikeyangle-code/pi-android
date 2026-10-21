@@ -228,7 +228,39 @@ fun ModelProviderScreen(
             .mapNotNull { (it as? JsonPrimitive)?.content?.takeIf { s -> s.isNotBlank() } }
     }
 
-    val data = inventory
+    // 删除是"文件已经删了、引擎快照还没刷"的一件事：pi 没有删厂商的 RPC，引擎会把删掉的
+    // 厂商/模型继续列到下一次启动。用户点完删除后它若还留在屏幕上，就是"点了没反应"。
+    // 这里按 id 本地隐藏，直到重启引擎（restartPending 归零）为止 —— 不改文件、不改引擎，
+    // 也不影响对话页的模型选择器（那只读引擎的实时回答）。
+    var hiddenProviders by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var hiddenModels by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val data = inventory?.let { list ->
+        if (hiddenProviders.isEmpty() && hiddenModels.isEmpty()) {
+            list
+        } else {
+            list.copy(
+                providers = list.providers.mapNotNull { provider ->
+                    if (provider.id in hiddenProviders) {
+                        null
+                    } else {
+                        provider.copy(
+                            models = provider.models.filterNot { model ->
+                                "${provider.id}/${model.id}" in hiddenModels
+                            },
+                        )
+                    }
+                },
+            )
+        }
+    }
+    // 引擎重启完成（本 App 记的"等待重启"归零）就是快照重读的时刻：本地隐藏可以撤了，
+    // 让清单回到"文件说什么就显示什么"。
+    LaunchedEffect(inventory?.restartPending) {
+        if (inventory?.restartPending == false) {
+            hiddenProviders = emptySet()
+            hiddenModels = emptySet()
+        }
+    }
 
     // 三个选择键的候选**一律从清单派生**，`remember` 键在清单与读数上：不新增每帧计算，
     // 也不再额外读盘（清单本来就是这一屏从文件原文拼出来的那一份）。以前 `defaultModel`
@@ -564,6 +596,7 @@ fun ModelProviderScreen(
                         service.resetModel(deleting.providerId, deleting.modelId)
                     }
                     if (error == null) {
+                        hiddenModels = hiddenModels + "${deleting.providerId}/${deleting.modelId}"
                         reloadTick++
                         onFilesWritten()
                         note = "已删除模型：${deleting.modelId}（重启引擎后生效）"
@@ -591,6 +624,7 @@ fun ModelProviderScreen(
                 scope.launch {
                     val error = withContext(Dispatchers.IO) { service.remove(del) }
                     if (error == null) {
+                        hiddenProviders = hiddenProviders + del
                         reloadTick++
                         note = "已删除「$del」的凭证与厂商块。"
                     } else {
