@@ -401,6 +401,8 @@ class PiModelsFile(
         val input: List<String> = emptyList(),
         val costInput: Double? = null,
         val costOutput: Double? = null,
+        val costCacheRead: Double? = null,
+        val costCacheWrite: Double? = null,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("id", JsonPrimitive(id))
@@ -416,8 +418,8 @@ class PiModelsFile(
                     buildJsonObject {
                         put("input", JsonPrimitive(costInput ?: 0.0))
                         put("output", JsonPrimitive(costOutput ?: 0.0))
-                        put("cacheRead", JsonPrimitive(0.0))
-                        put("cacheWrite", JsonPrimitive(0.0))
+                        put("cacheRead", JsonPrimitive(costCacheRead ?: 0.0))
+                        put("cacheWrite", JsonPrimitive(costCacheWrite ?: 0.0))
                     },
                 )
             }
@@ -448,6 +450,8 @@ class PiModelsFile(
                         ?: emptyList(),
                     costInput = doubleOrNull(cost?.get("input")),
                     costOutput = doubleOrNull(cost?.get("output")),
+                    costCacheRead = doubleOrNull(cost?.get("cacheRead")),
+                    costCacheWrite = doubleOrNull(cost?.get("cacheWrite")),
                 )
             }
 

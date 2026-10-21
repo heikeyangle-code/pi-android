@@ -320,6 +320,8 @@ class PiCredentialService(
          */
         val costInput: Double? = null,
         val costOutput: Double? = null,
+        val costCacheRead: Double? = null,
+        val costCacheWrite: Double? = null,
     )
 
     data class SaveResult(
@@ -504,6 +506,8 @@ class PiCredentialService(
                     input = choice.input,
                     costInput = choice.costInput,
                     costOutput = choice.costOutput,
+                    costCacheRead = choice.costCacheRead,
+                    costCacheWrite = choice.costCacheWrite,
                 )
             },
         )

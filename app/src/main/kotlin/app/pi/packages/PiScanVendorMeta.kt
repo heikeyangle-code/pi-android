@@ -31,13 +31,19 @@ internal data class ScanVendorMeta(
     val contextWindow: Long? = null,
     val maxTokens: Long? = null,
     val acceptsImages: Boolean? = null,
+    /** 这家厂商/这个端点会不会出思考内容（reasoning / thinking）。 */
+    val reasoning: Boolean? = null,
     val costInputPerMillion: Double? = null,
     val costOutputPerMillion: Double? = null,
+    /** 缓存读/写的单价，同一单位（USD / 每百万 token）；没给就是 null。 */
+    val costCacheReadPerMillion: Double? = null,
+    val costCacheWritePerMillion: Double? = null,
 ) {
     /** 厂商到底说没说话：一处都没有，就是没说。 */
     val any: Boolean
         get() = contextWindow != null || maxTokens != null || acceptsImages != null ||
-            costInputPerMillion != null || costOutputPerMillion != null
+            reasoning != null || costInputPerMillion != null || costOutputPerMillion != null ||
+            costCacheReadPerMillion != null || costCacheWritePerMillion != null
 }
 
 /**
@@ -82,13 +88,51 @@ internal fun scanVendorMeta(obj: JsonObject): ScanVendorMeta {
             ?: capabilitiesOf(obj["capabilities"])
             ?: modalitiesOf(obj["modalities"] as? JsonObject)
             ?: boolOf(obj["supports_vision"]),
+        reasoning = reasoningOf(obj),
         costInputPerMillion = priceOf(obj["pricing"], "prompt")
             ?: millionOf(obj["cost"], "input")
             ?: perTokenOf(obj["input_cost_per_token"]),
         costOutputPerMillion = priceOf(obj["pricing"], "completion")
             ?: millionOf(obj["cost"], "output")
             ?: perTokenOf(obj["output_cost_per_token"]),
+        costCacheReadPerMillion = priceOf(obj["pricing"], "input_cache_read")
+            ?: millionOf(obj["cost"], "cache_read")
+            ?: perTokenOf(obj["cache_read_input_token_cost"]),
+        costCacheWritePerMillion = priceOf(obj["pricing"], "input_cache_write")
+            ?: millionOf(obj["cost"], "cache_write")
+            ?: perTokenOf(obj["cache_creation_input_token_cost"]),
     )
+}
+
+
+/**
+ * 思考能力：各家给它的写法比价格还散 ——
+ *
+ *  - `reasoning: true`（models.dev）/ `supports_reasoning` / `supports_thinking`
+ *  - `capabilities: ["thinking", …]`（Ollama 的 `/api/show`）
+ *  - `capabilities: { reasoning: true }`（部分厂商的对象形状）
+ *  - `supported_parameters` 里出现 `reasoning` / `include_reasoning`（OpenRouter）
+ *
+ * `reasoning` 若是**对象**（OpenRouter 的推理配置）不算表态：它可能只是把开关参数摆出来，
+ * 并不等于"这个模型会思考"，真正的信号在同一份响应的 `supported_parameters` 里。
+ */
+private fun reasoningOf(obj: JsonObject): Boolean? {
+    boolOf(obj["reasoning"])?.let { return it }
+    boolOf(obj["supports_reasoning"])?.let { return it }
+    boolOf(obj["supports_thinking"])?.let { return it }
+    val capabilities = obj["capabilities"]
+    if (capabilities is JsonArray) {
+        val words = stringsOf(capabilities).orEmpty()
+        if (words.any { it == "thinking" || it == "reasoning" }) return true
+    }
+    if (capabilities is JsonObject) {
+        boolOf(capabilities["reasoning"])?.let { return it }
+        boolOf(capabilities["thinking"])?.let { return it }
+    }
+    stringsOf(obj["supported_parameters"])?.let { params ->
+        return params.any { it == "reasoning" || it == "include_reasoning" || it == "reasoning_effort" }
+    }
+    return null
 }
 
 private fun firstLong(obj: JsonObject, vararg keys: String): Long? {

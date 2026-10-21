@@ -49,6 +49,8 @@ object PiModelCatalog {
         /** `cost.input` / `cost.output`，pi 的单位（**每百万 token 美元**）。 */
         val costInput: Double? = null,
         val costOutput: Double? = null,
+        val costCacheRead: Double? = null,
+        val costCacheWrite: Double? = null,
     )
 
     /**
@@ -81,6 +83,8 @@ object PiModelCatalog {
                 maxTokens = (obj["maxTokens"] as? JsonPrimitive)?.content?.toLongOrNull(),
                 costInput = (cost?.get("input") as? JsonPrimitive)?.content?.toDoubleOrNull(),
                 costOutput = (cost?.get("output") as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                costCacheRead = (cost?.get("cacheRead") as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                costCacheWrite = (cost?.get("cacheWrite") as? JsonPrimitive)?.content?.toDoubleOrNull(),
             )
         }
     }

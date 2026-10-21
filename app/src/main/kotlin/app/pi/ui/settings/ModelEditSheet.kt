@@ -42,6 +42,8 @@ internal data class ModelFields(
     val images: Boolean? = null,
     val costInput: Double? = null,
     val costOutput: Double? = null,
+    val costCacheRead: Double? = null,
+    val costCacheWrite: Double? = null,
     val reasoning: Boolean? = null,
 ) {
     /** 变成 `models.json` 里的一条定义。只带知道的字段，未知的留空。 */
@@ -56,6 +58,8 @@ internal data class ModelFields(
         input = if (images == true) listOf("text", "image") else emptyList(),
         costInput = costInput,
         costOutput = costOutput,
+        costCacheRead = costCacheRead,
+        costCacheWrite = costCacheWrite,
     )
 
     companion object {
@@ -70,6 +74,8 @@ internal data class ModelFields(
             },
             costInput = model.costInput,
             costOutput = model.costOutput,
+            costCacheRead = model.costCacheRead,
+            costCacheWrite = model.costCacheWrite,
             reasoning = model.reasoning,
         )
     }
@@ -91,6 +97,8 @@ internal fun ModelFieldsForm(
     var images by remember { mutableStateOf(initial.images == true) }
     var costInText by remember { mutableStateOf(costText(initial.costInput)) }
     var costOutText by remember { mutableStateOf(costText(initial.costOutput)) }
+    var cacheReadText by remember { mutableStateOf(costText(initial.costCacheRead)) }
+    var cacheWriteText by remember { mutableStateOf(costText(initial.costCacheWrite)) }
     var reasoning by remember { mutableStateOf(initial.reasoning == true) }
     // 没碰过的开关**不写**：把它们当成 false 写下去，等于替厂商断言"不支持图片 /
     // 不是推理模型"，而目录里那条可能本来就是 true（也可能根本没说过）。只改一个价格
@@ -103,6 +111,8 @@ internal fun ModelFieldsForm(
         maxOutput: Long? = parseToken(maxOutputText),
         costIn: Double? = parseCost(costInText),
         costOut: Double? = parseCost(costOutText),
+        cacheRead: Double? = parseCost(cacheReadText),
+        cacheWrite: Double? = parseCost(cacheWriteText),
         imagesNow: Boolean = if (imagesTouched) images else initial.images == true,
         reasoningNow: Boolean = if (reasoningTouched) reasoning else initial.reasoning == true,
     ) {
@@ -114,6 +124,8 @@ internal fun ModelFieldsForm(
                 images = if (imagesTouched) imagesNow else initial.images,
                 costInput = costIn,
                 costOutput = costOut,
+                costCacheRead = cacheRead,
+                costCacheWrite = cacheWrite,
                 reasoning = if (reasoningTouched) reasoningNow else initial.reasoning,
             ),
         )
@@ -165,6 +177,30 @@ internal fun ModelFieldsForm(
             modifier = Modifier.fillMaxWidth(),
         )
         if (costOutText.isNotBlank() && parseCost(costOutText) == null) {
+            FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
+        }
+        Spacer(Modifier.height(PiSpacing.small))
+        PiEditorField(
+            value = cacheReadText,
+            onValueChange = { cacheReadText = it; emit() },
+            label = "缓存读价（美元 / 百万 token）",
+            placeholder = "留空 = 不写（pi 的默认）",
+            height = 44.dp,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (cacheReadText.isNotBlank() && parseCost(cacheReadText) == null) {
+            FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
+        }
+        Spacer(Modifier.height(PiSpacing.small))
+        PiEditorField(
+            value = cacheWriteText,
+            onValueChange = { cacheWriteText = it; emit() },
+            label = "缓存写价（美元 / 百万 token）",
+            placeholder = "留空 = 不写（pi 的默认）",
+            height = 44.dp,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (cacheWriteText.isNotBlank() && parseCost(cacheWriteText) == null) {
             FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
         }
         Spacer(Modifier.height(PiSpacing.small))

@@ -917,7 +917,10 @@ private fun ImportSheet(
             val cross = officialAcross.first[id] ?: officialAcross.second[id.substringAfterLast('/')]
             KnownModel(
                 name = entry?.name ?: engine?.name ?: scan?.displayName ?: cross?.name,
-                reasoning = entry?.reasoning ?: engine?.reasoning ?: cross?.reasoning,
+                // 思考能力：目录 → 引擎 → **这次扫描**（厂商自己说的）→ 跨厂商目录。
+                // 以前只认目录/引擎，所以「明明支持思考、目录里没有」的模型永远显示不出来。
+                reasoning = entry?.reasoning ?: engine?.reasoning ?: scan?.reasoning
+                    ?: cross?.reasoning,
                 acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages
                     ?: scan?.acceptsImages ?: cross?.acceptsImages ?: false,
                 contextWindow = entry?.contextWindow ?: engine?.contextWindow
@@ -927,6 +930,10 @@ private fun ImportSheet(
                 // 价格只认这一家/这次扫描的：cross 是别家的价，不属于这台设备。
                 costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion,
                 costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion,
+                costCacheRead = entry?.costCacheRead ?: engine?.cacheReadCost
+                    ?: scan?.costCacheReadPerMillion,
+                costCacheWrite = entry?.costCacheWrite ?: engine?.cacheWriteCost
+                    ?: scan?.costCacheWritePerMillion,
             )
         }
     }
@@ -965,6 +972,8 @@ private fun ImportSheet(
             },
             costInput = override?.costInput ?: known?.costInput,
             costOutput = override?.costOutput ?: known?.costOutput,
+            costCacheRead = override?.costCacheRead ?: known?.costCacheRead,
+            costCacheWrite = override?.costCacheWrite ?: known?.costCacheWrite,
         )
     }
 
@@ -2082,6 +2091,8 @@ private fun PiOfficialCatalog.Model.toCatalogEntry(): PiModelCatalog.Entry = PiM
     maxTokens = maxTokens,
     costInput = costInputPerMillion,
     costOutput = costOutputPerMillion,
+    costCacheRead = costCacheReadPerMillion,
+    costCacheWrite = costCacheWritePerMillion,
 )
 
 /**
@@ -2098,6 +2109,8 @@ private data class KnownModel(
     val maxTokens: Long?,
     val costInput: Double? = null,
     val costOutput: Double? = null,
+    val costCacheRead: Double? = null,
+    val costCacheWrite: Double? = null,
 )
 
 /**
@@ -2152,6 +2165,8 @@ private suspend fun loadModelEditTarget(
             images = engine.acceptsImages,
             costInput = engine.inputCost,
             costOutput = engine.outputCost,
+            costCacheRead = engine.cacheReadCost,
+            costCacheWrite = engine.cacheWriteCost,
             reasoning = engine.reasoning,
         )
         catalog != null -> ModelFields(
@@ -2161,6 +2176,8 @@ private suspend fun loadModelEditTarget(
             images = catalog.acceptsImages,
             costInput = catalog.costInputPerMillion,
             costOutput = catalog.costOutputPerMillion,
+            costCacheRead = catalog.costCacheReadPerMillion,
+            costCacheWrite = catalog.costCacheWritePerMillion,
             reasoning = catalog.reasoning,
         )
         else -> ModelFields()
@@ -2181,6 +2198,8 @@ private fun fieldsFromKnown(known: KnownModel?): ModelFields = ModelFields(
     images = known?.acceptsImages,
     costInput = known?.costInput,
     costOutput = known?.costOutput,
+    costCacheRead = known?.costCacheRead,
+    costCacheWrite = known?.costCacheWrite,
     reasoning = known?.reasoning,
 )
 
@@ -2203,10 +2222,13 @@ private fun candidateMeta(
         append(" · ").append(known.name?.takeIf { it != id } ?: "pi 认识它")
         known.contextWindow?.let { append(" · 上下文 ").append(it) }
         if (known.acceptsImages) append(" · 支持图片")
+        if (known.reasoning == true) append(" · 会思考")
         // 价格：官方目录/引擎/厂商扫描任意一处给了就显示（用户报「连价格都不显示」——
         // 扫描器以前只读 id，自建厂商的价格因此永远是空的）。
         known.costInput?.let { append(" · $").append(trimCostText(it)).append("/M 入") }
         known.costOutput?.let { append(" · $").append(trimCostText(it)).append("/M 出") }
+        known.costCacheRead?.let { append(" · $").append(trimCostText(it)).append("/M 缓存读") }
+        known.costCacheWrite?.let { append(" · $").append(trimCostText(it)).append("/M 缓存写") }
     } else if (builtInPi) {
         append(" · pi 不认识它，勾选后会写进模型配置")
     } else {

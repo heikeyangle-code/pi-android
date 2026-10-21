@@ -84,6 +84,9 @@ object PiOfficialCatalog {
         /** pi 的单位：**每百万 token 美元**（目录里就是这个单位，不再换算）。 */
         val costInputPerMillion: Double?,
         val costOutputPerMillion: Double?,
+        /** 缓存读/写单价，同一单位；目录里有就带上，没有就是 null。 */
+        val costCacheReadPerMillion: Double? = null,
+        val costCacheWritePerMillion: Double? = null,
     )
 
     /**
@@ -249,6 +252,8 @@ object PiOfficialCatalog {
             maxTokens = (obj["maxTokens"] as? JsonPrimitive)?.content?.toLongOrNull(),
             costInputPerMillion = (cost?.get("input") as? JsonPrimitive)?.content?.toDoubleOrNull(),
             costOutputPerMillion = (cost?.get("output") as? JsonPrimitive)?.content?.toDoubleOrNull(),
+            costCacheReadPerMillion = (cost?.get("cacheRead") as? JsonPrimitive)?.content?.toDoubleOrNull(),
+            costCacheWritePerMillion = (cost?.get("cacheWrite") as? JsonPrimitive)?.content?.toDoubleOrNull(),
         )
     }
 

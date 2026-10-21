@@ -54,10 +54,13 @@ fun main() {
             silent.contextWindow,
             silent.maxTokens,
             silent.acceptsImages,
+            silent.reasoning,
             silent.costInputPerMillion,
             silent.costOutputPerMillion,
+            silent.costCacheReadPerMillion,
+            silent.costCacheWritePerMillion,
         ),
-        listOf(null, null, null, null, null),
+        listOf(null, null, null, null, null, null, null, null),
     )
     check("and that is not 'metadata was supplied'", silent.any, false)
 
@@ -119,6 +122,46 @@ fun main() {
     val both = meta("""{"pricing":{"prompt":"0.000003"},"cost":{"output":15}}""")
     check("pricing wins for input", both.costInputPerMillion, 3.0)
     check("cost fills output", both.costOutputPerMillion, 15.0)
+
+    // -- 思考能力与缓存价：三个最容易被"拉不到"的字段 ---------------------------
+    //
+    // OpenRouter：`supported_parameters` 里有 reasoning / include_reasoning。
+    val orReasoning = meta(
+        """{"id":"x","supported_parameters":["temperature","reasoning","include_reasoning"]}""",
+    )
+    check("supported_parameters with reasoning means thinking", orReasoning.reasoning, true)
+    check(
+        "and the cache prices are per-token, converted once",
+        meta(
+            """{"id":"x","pricing":{"input_cache_read":"0.0000003","input_cache_write":"0.00000375"}}""",
+        ).let { it.costCacheReadPerMillion to it.costCacheWritePerMillion },
+        0.3 to 3.75,
+    )
+
+    // Ollama 的 capabilities 数组 / 厂商的对象形状。
+    check(
+        "capabilities with thinking means thinking",
+        meta("""{"id":"x","capabilities":["completion","thinking"]}""").reasoning,
+        true,
+    )
+    check(
+        "capabilities object with reasoning means thinking",
+        meta("""{"id":"x","capabilities":{"reasoning":true,"vision":false}}""").reasoning,
+        true,
+    )
+
+    // models.dev 的形状：reasoning 布尔 + 每百万美元缓存价。
+    val dev = meta("""{"id":"x","reasoning":true,"cost":{"cache_read":0.3,"cache_write":3.75}}""")
+    check("models.dev reasoning is read", dev.reasoning, true)
+    check("models.dev cache read is already per million", dev.costCacheReadPerMillion, 0.3)
+    check("models.dev cache write is already per million", dev.costCacheWritePerMillion, 3.75)
+
+    // 一个只会说话、不会思考的模型：`reasoning: false` 是明确的 no，不是未知。
+    check(
+        "an explicit reasoning=false is a no",
+        meta("""{"id":"x","reasoning":false}""").reasoning,
+        false,
+    )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)

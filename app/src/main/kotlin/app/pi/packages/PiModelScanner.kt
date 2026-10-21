@@ -71,8 +71,12 @@ class PiModelScanner(
         val contextWindow: Long? = null,
         val maxTokens: Long? = null,
         val acceptsImages: Boolean? = null,
+        /** 端点自己说会出思考内容（见 `PiScanVendorMeta.reasoning`）。 */
+        val reasoning: Boolean? = null,
         val costInputPerMillion: Double? = null,
         val costOutputPerMillion: Double? = null,
+        val costCacheReadPerMillion: Double? = null,
+        val costCacheWritePerMillion: Double? = null,
         /** True when the vendor's own payload said so; most do not. */
         val vendorSuppliedMetadata: Boolean = false,
     )
@@ -277,8 +281,11 @@ class PiModelScanner(
                     contextWindow = meta.contextWindow,
                     maxTokens = meta.maxTokens,
                     acceptsImages = meta.acceptsImages,
+                    reasoning = meta.reasoning,
                     costInputPerMillion = meta.costInputPerMillion,
                     costOutputPerMillion = meta.costOutputPerMillion,
+                    costCacheReadPerMillion = meta.costCacheReadPerMillion,
+                    costCacheWritePerMillion = meta.costCacheWritePerMillion,
                     vendorSuppliedMetadata = meta.any,
                 )
             }
@@ -298,8 +305,11 @@ class PiModelScanner(
                 contextWindow = meta.contextWindow,
                 maxTokens = meta.maxTokens,
                 acceptsImages = meta.acceptsImages,
+                reasoning = meta.reasoning,
                 costInputPerMillion = meta.costInputPerMillion,
                 costOutputPerMillion = meta.costOutputPerMillion,
+                costCacheReadPerMillion = meta.costCacheReadPerMillion,
+                costCacheWritePerMillion = meta.costCacheWritePerMillion,
                 vendorSuppliedMetadata = meta.any,
             )
         }
