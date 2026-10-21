@@ -205,8 +205,17 @@ private fun list(vararg values: String): JsonElement = JsonArray(values.map { Js
 private fun choices(vararg pairs: Pair<String, String>): List<PiOption> =
     pairs.map { (wire, label) -> PiOption(wire, label) }
 
+/**
+ * 设置面能选的思考等级。**没有 `off`**：pi 的 `Settings.defaultThinkingLevel` /
+ * `modelThinkingLevels` 类型是 `ThinkingLevel`（`packages/ai/src/types.ts:85`：
+ * minimal/low/medium/high/xhigh/max），`off` 只存在于**模型级**的
+ * `ModelThinkingLevel`（思考档位映射）里。写 `off` 到这两个键 pi 不报错，只是静默
+ * 回退到默认值 —— 界面上是一个「选了但不生效」的选项。
+ */
 private val thinkingLevelOptions: List<PiOption> =
-    PiThinkingLevel.entries.map { PiOption(it.wire, it.label) }
+    PiThinkingLevel.entries
+        .filter { it != PiThinkingLevel.Off }
+        .map { PiOption(it.wire, it.label) }
 
 /**
  * pi's 40 built-in providers (docs/pi-android-app-design.md §10.2), with the
@@ -405,6 +414,9 @@ object PiSettingsCatalog {
             group = G_MODEL,
             section = "默认模型",
             effective = EffectiveKind.NewSession,
+            // pi 没有这个键时用的就是 "medium"（`core/defaults.ts:3`）：不写默认值，
+            // 行上会显示成空，看起来像「没设过 = 没有等级」。
+            defaultValue = str("medium"),
             options = thinkingLevelOptions,
         ),
         PiSetting(

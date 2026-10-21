@@ -1658,7 +1658,10 @@ fun PiModelThinkingLevelsSheet(
                                 .padding(bottom = PiSpacing.small),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            PiThinkingLevel.entries.forEach { levelOption ->
+                            // 同 `thinkingLevelOptions`：`off` 不是 settings 里的合法等级。
+                            PiThinkingLevel.entries
+                                .filter { it != PiThinkingLevel.Off }
+                                .forEach { levelOption ->
                                 PiChoiceChip(
                                     label = levelOption.label,
                                     selected = level == levelOption.wire,
