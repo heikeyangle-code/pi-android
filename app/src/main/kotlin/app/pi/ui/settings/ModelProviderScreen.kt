@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
@@ -436,8 +437,11 @@ fun ModelProviderScreen(
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
                 }
 
-                items(data.providers, key = { it.id }) { provider ->
+                itemsIndexed(data.providers, key = { _, provider -> provider.id }) { index, provider ->
                     val isOpen = expanded[provider.id] ?: provider.defaultExpanded
+                    // 厂商之间留出卡距：统一成一张卡一片之后，多张卡贴在一起会读成一坨
+                    // （用户报「好几个厂商基本混在一起」）。第一张不加，页面顶距由上面的行负责。
+                    Box(Modifier.padding(top = if (index == 0) 0.dp else PiSettingsMetrics.groupGap)) {
                     ProviderCard(
                         provider = provider,
                         expanded = isOpen,
@@ -455,6 +459,7 @@ fun ModelProviderScreen(
                             }
                         },
                     )
+                    }
                 }
 
                 item {
@@ -1480,10 +1485,17 @@ private fun ImportSheet(
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                     )
-                    // 一个端点可能有几百个模型（OpenRouter 规模），这一列不是懒加载：
-                    // 全量组合会在低端机上明显卡顿。只画前 N 个，其余靠搜索定位 —— 勾选状态
-                    // 不受影响（「全选」仍然作用于全部候选）。
-                    shownCandidates.take(MAX_RENDERED_CANDIDATES).forEach { id ->
+                    // 一个端点可能有几百个模型（OpenRouter 规模）。候选列表放在一个**有界高度**
+                    // 的 LazyColumn 里：只组合屏幕内那几行，滚多少画多少，不再按上限截断。
+                    // 高度必须有界 —— 外层 Column 已经在纵向滚动，无界的 LazyColumn 会被
+                    // Compose 直接拒绝（infinity constraints）。
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp),
+                    ) {
+                        LazyColumn {
+                            items(shownCandidates, key = { id -> id }) { id ->
                         val known = knownById[id]
                         Row(
                             modifier = Modifier
@@ -1529,12 +1541,8 @@ private fun ImportSheet(
                             }
                             Spacer(Modifier.height(PiSpacing.small))
                         }
-                    }
-                    if (shownCandidates.size > MAX_RENDERED_CANDIDATES) {
-                        SheetNote(
-                            "共 ${shownCandidates.size} 个，先显示前 $MAX_RENDERED_CANDIDATES 个；" +
-                                "用上面的搜索找其余的。勾选与保存仍作用于全部候选。",
-                        )
+                            }
+                        }
                     }
                     if (candidates.isEmpty()) {
                         SheetNote("pi 目录里还没有这个厂商的模型：点上面的扫描，或手动填一个模型名。")
@@ -2156,11 +2164,6 @@ private class DefaultModelPairStore(
 private const val DEFAULT_MODEL_KEY = "defaultModel"
 private const val DEFAULT_PROVIDER_KEY = "defaultProvider"
 
-/**
- * 导入 sheet 一次最多画多少个候选：这不是懒加载列表（外层 Column 已经在滚），
- * 上千行会卡。500 覆盖绝大多数端点（OpenRouter 约 470 个），超过的用搜索定位。
- */
-private const val MAX_RENDERED_CANDIDATES = 500
 
 /**
  * 官方目录里的一档，在**没有手写预设**时构成一个可选厂商：连接信息取它第一个模型的
