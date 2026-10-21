@@ -143,13 +143,23 @@ class PiCredentialService(
     /** 7 天当"够新"：模型目录是月级变化，过期就下次联网再取一份。 */
     private val modelsDevMaxAgeMs = 7L * 24 * 60 * 60 * 1000
 
+    // 解析结果放在内存里：6 MB 的 JSON 每次打开模型编辑器都重解析一遍是白等的，
+    // 文件 mtime 不变就直接复用。
+    private var modelsDevParsed: Pair<Map<String, PiModelsDev.Entry>, Map<String, PiModelsDev.Entry>>? = null
+    private var modelsDevParsedStamp = -1L
+
     /** 缓存里的索引；没有、过期或读不动都是 null（调用方自己决定要不要联网）。 */
     fun modelsDevIndex(): Pair<Map<String, PiModelsDev.Entry>, Map<String, PiModelsDev.Entry>>? {
         val file = modelsDevCache
         if (!file.isFile) return null
-        if (System.currentTimeMillis() - file.lastModified() > modelsDevMaxAgeMs) return null
+        val stamp = file.lastModified()
+        if (System.currentTimeMillis() - stamp > modelsDevMaxAgeMs) return null
+        if (stamp == modelsDevParsedStamp) return modelsDevParsed
         val text = runCatching { file.readText() }.getOrNull() ?: return null
-        return runCatching { PiModelsDev.parse(text) }.getOrNull()
+        val parsed = runCatching { PiModelsDev.parse(text) }.getOrNull() ?: return null
+        modelsDevParsed = parsed
+        modelsDevParsedStamp = stamp
+        return parsed
     }
 
     /**
@@ -198,6 +208,8 @@ class PiCredentialService(
             }
         }
         modelsDevFailedAt = 0L
+        modelsDevParsed = index
+        modelsDevParsedStamp = modelsDevCache.lastModified()
         return index
     }
 
