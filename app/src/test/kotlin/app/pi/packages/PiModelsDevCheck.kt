@@ -32,9 +32,16 @@ fun main() {
             "models": {
               "claude-opus-4-6": {
                 "id": "claude-opus-4-6",
+                "name": "Claude Opus 4.6",
                 "reasoning": true,
                 "limit": {"context": 200000, "output": 64000},
-                "cost": {"input": 15, "output": 75, "cache_read": 1.5, "cache_write": 18.75},
+                "cost": {
+                  "input": 15, "output": 75, "cache_read": 1.5, "cache_write": 18.75,
+                  "tiers": [
+                    {"tier": {"type": "context", "size": 512000},
+                     "input": 30, "output": 150, "cache_read": 3, "cache_write": 37.5}
+                  ]
+                },
                 "modalities": {"input": ["text", "image"]},
                 "reasoning_options": [
                   {"type": "toggle"},
@@ -66,6 +73,13 @@ fun main() {
     check("cost is already per million", opus?.costInput, 15.0)
     check("cache read is already per million", opus?.costCacheRead, 1.5)
     check("reasoning is read", opus?.reasoning, true)
+    check("the display name is read", opus?.name, "Claude Opus 4.6")
+
+    // 长上下文档位价 → pi 的 cost.tiers（inputTokensAbove + 四项费率）。
+    val tier = opus?.costTiers?.firstOrNull() as? kotlinx.serialization.json.JsonObject
+    check("tier threshold is the context size", tier?.get("inputTokensAbove")?.toString(), "512000")
+    check("tier input rate is kept", tier?.get("input")?.toString(), "30.0")
+    check("tier cache write rate is kept", tier?.get("cacheWrite")?.toString(), "37.5")
 
     // 中转站：厂商名不在 models.dev 里，按裸模型 id 兜底找到。
     val relay = PiModelsDev.lookup(exact to bare, "my-relay", "gpt-5")

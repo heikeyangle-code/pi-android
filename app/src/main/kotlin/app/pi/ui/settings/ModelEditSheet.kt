@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.pi.packages.PiModelsFile
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -52,6 +53,8 @@ internal data class ModelFields(
      */
     val samplingParams: JsonObject? = null,
     val thinkingLevelMap: JsonObject? = null,
+    /** 长上下文档位价：同 samplingParams，不在表单里，只跟着值走。 */
+    val costTiers: JsonArray? = null,
 ) {
     /** 变成 `models.json` 里的一条定义。只带知道的字段，未知的留空。 */
     fun toModel(id: String): PiModelsFile.Model = PiModelsFile.Model(
@@ -69,6 +72,7 @@ internal data class ModelFields(
         costCacheWrite = costCacheWrite,
         samplingParams = samplingParams,
         thinkingLevelMap = thinkingLevelMap,
+        costTiers = costTiers,
     )
 
     companion object {
@@ -88,6 +92,7 @@ internal data class ModelFields(
             reasoning = model.reasoning,
             samplingParams = model.samplingParams,
             thinkingLevelMap = model.thinkingLevelMap,
+            costTiers = model.costTiers,
         )
     }
 }
@@ -140,6 +145,7 @@ internal fun ModelFieldsForm(
                 reasoning = if (reasoningTouched) reasoningNow else initial.reasoning,
                 samplingParams = initial.samplingParams,
                 thinkingLevelMap = initial.thinkingLevelMap,
+                costTiers = initial.costTiers,
             ),
         )
     }

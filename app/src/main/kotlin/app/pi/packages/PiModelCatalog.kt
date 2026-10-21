@@ -53,6 +53,7 @@ object PiModelCatalog {
         val costCacheWrite: Double? = null,
         val thinkingLevelMap: JsonObject? = null,
         val samplingParams: JsonObject? = null,
+        val costTiers: JsonArray? = null,
     )
 
     /**
@@ -89,6 +90,7 @@ object PiModelCatalog {
                 costCacheWrite = (cost?.get("cacheWrite") as? JsonPrimitive)?.content?.toDoubleOrNull(),
                 thinkingLevelMap = (obj["thinkingLevelMap"] as? JsonObject)?.takeIf { it.isNotEmpty() },
                 samplingParams = (obj["samplingParams"] as? JsonObject)?.takeIf { it.isNotEmpty() },
+                costTiers = (cost?.get("tiers") as? JsonArray)?.takeIf { it.isNotEmpty() },
             )
         }
     }

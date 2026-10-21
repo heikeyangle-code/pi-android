@@ -97,6 +97,8 @@ object PiOfficialCatalog {
          */
         val thinkingLevelMap: JsonObject? = null,
         val samplingParams: JsonObject? = null,
+        /** 长上下文档位价（pi 的 `cost.tiers`）。 */
+        val costTiers: JsonArray? = null,
     )
 
     /**
@@ -266,6 +268,7 @@ object PiOfficialCatalog {
             costCacheWritePerMillion = (cost?.get("cacheWrite") as? JsonPrimitive)?.content?.toDoubleOrNull(),
             thinkingLevelMap = (obj["thinkingLevelMap"] as? JsonObject)?.takeIf { it.isNotEmpty() },
             samplingParams = (obj["samplingParams"] as? JsonObject)?.takeIf { it.isNotEmpty() },
+            costTiers = (cost?.get("tiers") as? JsonArray)?.takeIf { it.isNotEmpty() },
         )
     }
 

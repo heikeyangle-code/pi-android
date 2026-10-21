@@ -324,6 +324,8 @@ class PiCredentialService(
         val samplingParams: JsonObject? = null,
         /** pi 的思考档位映射；models.dev 有 `reasoning_options` 时才有。 */
         val thinkingLevelMap: JsonObject? = null,
+        /** 长上下文档位价（pi 的 `cost.tiers`）。 */
+        val costTiers: JsonArray? = null,
     )
 
     data class SaveResult(
@@ -513,6 +515,7 @@ class PiCredentialService(
                     costCacheWrite = choice.costCacheWrite,
                     samplingParams = choice.samplingParams,
                     thinkingLevelMap = choice.thinkingLevelMap,
+                    costTiers = choice.costTiers,
                 )
             },
         )

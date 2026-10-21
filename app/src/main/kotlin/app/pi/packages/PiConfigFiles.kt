@@ -408,6 +408,8 @@ class PiModelsFile(
          * 不解释；没写这个键时 pi 用端点默认。
          */
         val samplingParams: JsonObject? = null,
+        /** pi 的 `cost.tiers`：长上下文档位价，原样带着。 */
+        val costTiers: JsonArray? = null,
         /**
          * pi 的 `thinkingLevelMap`：档位名 → 厂商的取值（`null` = 这一档不支持）。
          * App 不解释它，只在 models.dev 有 `reasoning_options` 时原样写进来。
@@ -432,6 +434,7 @@ class PiModelsFile(
                         put("output", JsonPrimitive(costOutput ?: 0.0))
                         put("cacheRead", JsonPrimitive(costCacheRead ?: 0.0))
                         put("cacheWrite", JsonPrimitive(costCacheWrite ?: 0.0))
+                        costTiers?.let { put("tiers", it) }
                     },
                 )
             }
@@ -465,6 +468,7 @@ class PiModelsFile(
                     costCacheRead = doubleOrNull(cost?.get("cacheRead")),
                     costCacheWrite = doubleOrNull(cost?.get("cacheWrite")),
                     samplingParams = (obj["samplingParams"] as? JsonObject)?.takeIf { it.isNotEmpty() },
+                    costTiers = (cost?.get("tiers") as? JsonArray)?.takeIf { it.isNotEmpty() },
                     thinkingLevelMap = (obj["thinkingLevelMap"] as? JsonObject)?.takeIf { it.isNotEmpty() },
                 )
             }

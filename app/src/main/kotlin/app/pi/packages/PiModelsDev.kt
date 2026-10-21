@@ -5,6 +5,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * **models.dev** 的一张索引：pi 自己的模型目录就是用它生成的
@@ -24,6 +26,8 @@ object PiModelsDev {
     data class Entry(
         val provider: String,
         val id: String,
+        /** models.dev 的显示名（`name`）：pi 目录里没有的新模型也能有个像样的名字。 */
+        val name: String? = null,
         val contextWindow: Long? = null,
         val maxTokens: Long? = null,
         val acceptsImages: Boolean? = null,
@@ -32,6 +36,8 @@ object PiModelsDev {
         val costOutput: Double? = null,
         val costCacheRead: Double? = null,
         val costCacheWrite: Double? = null,
+        /** 长上下文档位价（pi 的 `cost.tiers`）；models.dev 的 `cost.tiers` 换算过来。 */
+        val costTiers: JsonArray? = null,
         /** 由 `reasoning_options` 推出的 pi 档位表；没有 effort 选项时是 null。 */
         val thinkingLevelMap: JsonObject? = null,
     )
@@ -77,6 +83,7 @@ object PiModelsDev {
         return Entry(
             provider = providerId,
             id = id,
+            name = (model["name"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() },
             contextWindow = longOf(limit?.get("context")),
             maxTokens = longOf(limit?.get("output")),
             acceptsImages = modalities?.any {
@@ -87,6 +94,7 @@ object PiModelsDev {
             costOutput = doubleOf(cost?.get("output")),
             costCacheRead = doubleOf(cost?.get("cache_read")),
             costCacheWrite = doubleOf(cost?.get("cache_write")),
+            costTiers = costTiers(cost),
             thinkingLevelMap = thinkingLevelMap(model["reasoning_options"]),
         )
     }
@@ -118,6 +126,33 @@ object PiModelsDev {
             levels.forEach { level -> put(level, if (level in values) JsonPrimitive(level) else JsonNull) }
         }.let(::JsonObject)
     }
+
+
+/**
+ * models.dev 的 `cost.tiers` → pi 的 `cost.tiers`：
+ * `{tier:{type:"context",size:512000}, input, output, cache_read, cache_write}`
+ * → `{inputTokensAbove:512000, input, output, cacheRead, cacheWrite}`。
+ *
+ * 只认 `type:"context"` 的档（pi 的档就是"输入超过多少 token 之后换价"）；其它类型
+ * 没有对应语义，跳过。四项费率 pi 要求齐全 —— 缺的写 0，与 pi 自己的 schema 一致。
+ */
+private fun costTiers(cost: JsonObject?): JsonArray? {
+    val tiers = cost?.get("tiers") as? JsonArray ?: return null
+    val mapped = tiers.mapNotNull { element ->
+        val tier = element as? JsonObject ?: return@mapNotNull null
+        val meta = tier["tier"] as? JsonObject ?: return@mapNotNull null
+        if ((meta["type"] as? JsonPrimitive)?.content != "context") return@mapNotNull null
+        val above = doubleOf(meta["size"])?.toLong() ?: return@mapNotNull null
+        buildJsonObject {
+            put("inputTokensAbove", JsonPrimitive(above))
+            put("input", JsonPrimitive(doubleOf(tier["input"]) ?: 0.0))
+            put("output", JsonPrimitive(doubleOf(tier["output"]) ?: 0.0))
+            put("cacheRead", JsonPrimitive(doubleOf(tier["cache_read"]) ?: 0.0))
+            put("cacheWrite", JsonPrimitive(doubleOf(tier["cache_write"]) ?: 0.0))
+        }
+    }
+    return if (mapped.isEmpty()) null else JsonArray(mapped)
+}
 
     private fun longOf(element: JsonElement?): Long? =
         (element as? JsonPrimitive)?.content?.trim()?.toLongOrNull()

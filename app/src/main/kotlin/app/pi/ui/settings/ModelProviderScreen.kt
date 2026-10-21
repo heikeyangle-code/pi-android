@@ -965,7 +965,8 @@ private fun ImportSheet(
             val devExact = devIndex?.first?.get("$presetId/$id")
             val dev = devExact ?: devIndex?.second?.get(id)
             KnownModel(
-                name = entry?.name ?: engine?.name ?: scan?.displayName ?: cross?.name,
+                name = entry?.name ?: engine?.name ?: scan?.displayName ?: cross?.name
+                    ?: dev?.name,
                 // 思考能力：目录 → 引擎 → **这次扫描**（厂商自己说的）→ 跨厂商目录。
                 // 以前只认目录/引擎，所以「明明支持思考、目录里没有」的模型永远显示不出来。
                 reasoning = entry?.reasoning ?: engine?.reasoning ?: scan?.reasoning
@@ -992,6 +993,7 @@ private fun ImportSheet(
                 // `claude-*`/`gpt-*` 因此没网也能拿到档位。
                 thinkingLevelMap = entry?.thinkingLevelMap ?: cross?.thinkingLevelMap
                     ?: dev?.thinkingLevelMap,
+                costTiers = entry?.costTiers ?: devExact?.costTiers,
             )
         }
     }
@@ -1034,6 +1036,7 @@ private fun ImportSheet(
             costCacheWrite = override?.costCacheWrite ?: known?.costCacheWrite,
             samplingParams = known?.samplingParams,
             thinkingLevelMap = known?.thinkingLevelMap,
+            costTiers = known?.costTiers,
         )
     }
 
@@ -2199,6 +2202,7 @@ private fun PiOfficialCatalog.Model.toCatalogEntry(): PiModelCatalog.Entry = PiM
     costCacheWrite = costCacheWritePerMillion,
     thinkingLevelMap = thinkingLevelMap,
     samplingParams = samplingParams,
+    costTiers = costTiers,
 )
 
 /**
@@ -2219,6 +2223,7 @@ private data class KnownModel(
     val costCacheWrite: Double? = null,
     val samplingParams: JsonObject? = null,
     val thinkingLevelMap: JsonObject? = null,
+    val costTiers: JsonArray? = null,
 )
 
 /**
@@ -2296,6 +2301,7 @@ private suspend fun loadModelEditTarget(
             reasoning = catalog.reasoning,
             samplingParams = catalog.samplingParams,
             thinkingLevelMap = catalog.thinkingLevelMap,
+            costTiers = catalog.costTiers,
         )
         dev != null -> ModelFields(
             name = null,
@@ -2308,6 +2314,7 @@ private suspend fun loadModelEditTarget(
             costCacheWrite = devExact?.costCacheWrite,
             reasoning = dev.reasoning,
             thinkingLevelMap = dev.thinkingLevelMap,
+            costTiers = devExact?.costTiers,
         )
         else -> ModelFields()
     }
@@ -2333,6 +2340,7 @@ private fun fieldsFromKnown(known: KnownModel?): ModelFields = ModelFields(
     reasoning = known?.reasoning,
     samplingParams = known?.samplingParams,
     thinkingLevelMap = known?.thinkingLevelMap,
+    costTiers = known?.costTiers,
 )
 
 private fun candidateMeta(
