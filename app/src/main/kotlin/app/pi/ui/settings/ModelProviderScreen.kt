@@ -946,8 +946,8 @@ private fun ImportSheet(
                     ?: dev?.costInput,
                 costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion
                     ?: dev?.costOutput,
-                samplingParams = scan?.samplingParams,
-                thinkingLevelMap = dev?.thinkingLevelMap,
+                samplingParams = scan?.samplingParams ?: entry?.samplingParams,
+                thinkingLevelMap = entry?.thinkingLevelMap ?: dev?.thinkingLevelMap,
             )
         }
     }
@@ -1308,6 +1308,9 @@ private fun ImportSheet(
                         TextButton(
                             enabled = !scanning,
                             onClick = {
+                                // 6 MB 的 models.dev 索引在扫描**之后**单独取，不占
+                                // 「正在扫描…」这段等待。
+                                var needDev = false
                                 sheetScope.launch {
                                     scanning = true
                                     scanError = null
@@ -1322,13 +1325,10 @@ private fun ImportSheet(
                                                 scanned = result.models
                                                 scanEndpoint = result.endpoint
                                                 scanNote = result.note
-                                                // 厂商只回了 id 的模型：取一次 models.dev 索引
-                                                // （缓存 7 天、失败就算了），补上下文/价格/
-                                                // 思考档位。不阻塞保存，也不影响失败路径。
-                                                if (result.models.any { it.contextWindow == null }) {
-                                                    devIndex = withContext(Dispatchers.IO) {
-                                                        service.ensureModelsDevIndex()
-                                                    }
+                                                // 厂商只回了 id、或没说会不会思考的模型：补一次
+                                                // models.dev（缓存 7 天、失败就跳过）。
+                                                needDev = result.models.any {
+                                                    it.contextWindow == null || it.reasoning == null
                                                 }
                                                 // 扫描到的并入勾选、保留已做的勾选；默认模型一个都
                                                 // 不动（这张 sheet 本来也不写默认模型）。
@@ -1344,6 +1344,11 @@ private fun ImportSheet(
                                     } finally {
                                         // 按钮在扫描中禁用，但抛出的异常也必须把状态放回来。
                                         scanning = false
+                                    }
+                                    if (needDev) {
+                                        devIndex = withContext(Dispatchers.IO) {
+                                            service.ensureModelsDevIndex()
+                                        }
                                     }
                                 }
                             },
@@ -2117,6 +2122,8 @@ private fun PiOfficialCatalog.Model.toCatalogEntry(): PiModelCatalog.Entry = PiM
     costOutput = costOutputPerMillion,
     costCacheRead = costCacheReadPerMillion,
     costCacheWrite = costCacheWritePerMillion,
+    thinkingLevelMap = thinkingLevelMap,
+    samplingParams = samplingParams,
 )
 
 /**
@@ -2207,6 +2214,8 @@ private suspend fun loadModelEditTarget(
             costCacheRead = catalog.costCacheReadPerMillion,
             costCacheWrite = catalog.costCacheWritePerMillion,
             reasoning = catalog.reasoning,
+            samplingParams = catalog.samplingParams,
+            thinkingLevelMap = catalog.thinkingLevelMap,
         )
         dev != null -> ModelFields(
             name = null,
@@ -2218,6 +2227,7 @@ private suspend fun loadModelEditTarget(
             costCacheRead = dev.costCacheRead,
             costCacheWrite = dev.costCacheWrite,
             reasoning = dev.reasoning,
+            thinkingLevelMap = dev.thinkingLevelMap,
         )
         else -> ModelFields()
     }
@@ -2240,6 +2250,8 @@ private fun fieldsFromKnown(known: KnownModel?): ModelFields = ModelFields(
     costCacheRead = known?.costCacheRead,
     costCacheWrite = known?.costCacheWrite,
     reasoning = known?.reasoning,
+    samplingParams = known?.samplingParams,
+    thinkingLevelMap = known?.thinkingLevelMap,
 )
 
 private fun candidateMeta(

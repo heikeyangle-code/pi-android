@@ -87,6 +87,16 @@ object PiOfficialCatalog {
         /** 缓存读/写单价，同一单位；目录里有就带上，没有就是 null。 */
         val costCacheReadPerMillion: Double? = null,
         val costCacheWritePerMillion: Double? = null,
+        /**
+         * pi 目录里自带的思考档位映射与默认采样参数。
+         *
+         * 为什么 App 要读它们：编辑一个**官方目录里的**模型会把它整条复制进
+         * `models.json`（同 id 整条替换），此时没带上的字段会被 pi 的默认值补 —— 少了
+         * `thinkingLevelMap` 就等于把这个模型的思考档位抹平。原样带着，是为了"只改上下文"
+         * 不会顺手改掉别的。
+         */
+        val thinkingLevelMap: JsonObject? = null,
+        val samplingParams: JsonObject? = null,
     )
 
     /**
@@ -254,6 +264,8 @@ object PiOfficialCatalog {
             costOutputPerMillion = (cost?.get("output") as? JsonPrimitive)?.content?.toDoubleOrNull(),
             costCacheReadPerMillion = (cost?.get("cacheRead") as? JsonPrimitive)?.content?.toDoubleOrNull(),
             costCacheWritePerMillion = (cost?.get("cacheWrite") as? JsonPrimitive)?.content?.toDoubleOrNull(),
+            thinkingLevelMap = (obj["thinkingLevelMap"] as? JsonObject)?.takeIf { it.isNotEmpty() },
+            samplingParams = (obj["samplingParams"] as? JsonObject)?.takeIf { it.isNotEmpty() },
         )
     }
 

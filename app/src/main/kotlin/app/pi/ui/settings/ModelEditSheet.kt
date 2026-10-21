@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.pi.packages.PiModelsFile
+import kotlinx.serialization.json.JsonObject
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -45,6 +46,12 @@ internal data class ModelFields(
     val costCacheRead: Double? = null,
     val costCacheWrite: Double? = null,
     val reasoning: Boolean? = null,
+    /**
+     * 这两个**不在表单里**，只跟着值走：编辑一个官方目录里的模型会把它整条复制进
+     * `models.json`，复制时漏掉它们就等于把这个模型的思考档位/采样参数抹平。
+     */
+    val samplingParams: JsonObject? = null,
+    val thinkingLevelMap: JsonObject? = null,
 ) {
     /** 变成 `models.json` 里的一条定义。只带知道的字段，未知的留空。 */
     fun toModel(id: String): PiModelsFile.Model = PiModelsFile.Model(
@@ -60,6 +67,8 @@ internal data class ModelFields(
         costOutput = costOutput,
         costCacheRead = costCacheRead,
         costCacheWrite = costCacheWrite,
+        samplingParams = samplingParams,
+        thinkingLevelMap = thinkingLevelMap,
     )
 
     companion object {
@@ -77,6 +86,8 @@ internal data class ModelFields(
             costCacheRead = model.costCacheRead,
             costCacheWrite = model.costCacheWrite,
             reasoning = model.reasoning,
+            samplingParams = model.samplingParams,
+            thinkingLevelMap = model.thinkingLevelMap,
         )
     }
 }
@@ -127,6 +138,8 @@ internal fun ModelFieldsForm(
                 costCacheRead = cacheRead,
                 costCacheWrite = cacheWrite,
                 reasoning = if (reasoningTouched) reasoningNow else initial.reasoning,
+                samplingParams = initial.samplingParams,
+                thinkingLevelMap = initial.thinkingLevelMap,
             ),
         )
     }

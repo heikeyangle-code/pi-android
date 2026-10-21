@@ -157,8 +157,13 @@ class PiCredentialService(
      * 再落盘。**失败返回 null，绝不抛** —— 这个数据只是补全能力，断网/服务挂了不该
      * 让导入失败。
      */
+    /** 失败后的冷却：断网时别让每次导入都等一次超时。 */
+    private var modelsDevFailedAt = 0L
+
     fun ensureModelsDevIndex(): Pair<Map<String, PiModelsDev.Entry>, Map<String, PiModelsDev.Entry>>? {
         modelsDevIndex()?.let { return it }
+        val now = System.currentTimeMillis()
+        if (now - modelsDevFailedAt < MODELS_DEV_RETRY_MS) return null
         val text = runCatching {
             val connection = (URL("https://models.dev/api.json").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -174,11 +179,16 @@ class PiCredentialService(
             }
             connection.disconnect()
             body
-        }.getOrNull() ?: return null
-        // 太小 = 不是那份目录（错误页/半截响应）：宁可不用，也不要把一张空表缓存 7 天。
-        if (text.length < 100_000) return null
-        val index = runCatching { PiModelsDev.parse(text) }.getOrNull() ?: return null
-        if (index.second.isEmpty()) return null
+        }.getOrNull()
+        if (text == null || text.length < 100_000) {
+            modelsDevFailedAt = now
+            return null
+        }
+        val index = runCatching { PiModelsDev.parse(text) }.getOrNull()
+        if (index == null || index.second.isEmpty()) {
+            modelsDevFailedAt = now
+            return null
+        }
         runCatching {
             val temp = File(modelsDevCache.parentFile, "${modelsDevCache.name}.tmp")
             temp.writeText(text)
@@ -187,99 +197,14 @@ class PiCredentialService(
                 temp.delete()
             }
         }
+        modelsDevFailedAt = 0L
         return index
     }
 
-    // ------------------------------------------------------------- 已导入清单
-
-    /**
-     * 设置 → 模型 的那张清单：厂商、模型、来源、启用、现在能不能用。
-     *
-     * **直读，不进任何缓存。** 这是这个页面存在的理由之一：`PiSettingsFileStore` 会把文档
-     * 缓存到下一次 App 自己写入为止，而这里要回答的恰恰是「外部（pi、终端、AI）刚改完，
-     * 现在到底是什么」。读的是 pi 真正读的那一份（[mirrorAgentDir]，见 [AgentLayout]），
-     * `models.json`/`auth.json` 在没有的时候回落到 rootfs 那份，与写入端同一套规则
-     * （[PiConfigFiles.effectiveFile]）。
-     *
-     * @param engineModels 引擎的 `get_available_models`；null 表示读不到（引擎没跑），
-     *        这时清单里所有模型的状态是「无法判断」而不是「缺凭证」。
-     */
-    fun inventory(engineModels: List<PiModelInventory.EngineModel>?): PiModelInventory.Inventory {
-        val selection = PiModelInventory.selection(
-            globalSettings = readTextOrNull(File(mirrorAgentDir, "settings.json")),
-            projectSettings = readTextOrNull(PiProjectConfig.settingsFile(workspace)),
-        )
-        return PiModelInventory.assemble(
-            modelsJson = readEffective(
-                primary = PiConfigFiles.modelsFile(truthAgentDir),
-                mirror = PiConfigFiles.modelsFile(mirrorAgentDir),
-            ),
-            authJson = readEffective(
-                primary = PiConfigFiles.authFile(truthAgentDir),
-                mirror = PiConfigFiles.authFile(mirrorAgentDir),
-            ),
-            catalogJson = readTextOrNull(File(mirrorAgentDir, "models-store.json")),
-            selection = selection,
-            engineModels = engineModels,
-            pendingRestart = PendingModelRestart.isPending(),
-        )
+    private companion object {
+        /** 一次失败后 10 分钟内不再试：断网时 6 MB 的重试只会拖慢导入。 */
+        const val MODELS_DEV_RETRY_MS = 10L * 60 * 1000
     }
-
-    /**
-     * 交给 `PiDirectoryWatch` 的目录：引擎的 agent 目录，以及工作区的 `.pi`（项目级
-     * `settings.json` 在那里）。
-     *
-     * **目录，不是文件**：App 写这些文件是原子的（写临时文件再 `rename`），而 inotify 的
-     * 监视挂在 inode 上——监视文件会在自己写完之后失聪。理由写在 `PiFileWatch.kt`。
-     */
-    fun watchedDirectories(): List<File> = listOf(mirrorAgentDir, PiProjectConfig.root(workspace))
-
-    private fun readEffective(primary: File, mirror: File): String? =
-        PiConfigFiles.effectiveFile(primary, mirror)?.let { readTextOrNull(it) }
-
-    private fun readTextOrNull(file: File): String? =
-        if (file.isFile) runCatching { file.readText() }.getOrNull() else null
-
-    // -------------------------------------------------------------- prefill
-
-    /**
-     * What the editor opens with, so "新增" and "编辑已有" are one screen.
-     *
-     * A masked key is *presence*, not the secret: the app cannot display a key back
-     * to the user without turning a settings screen into a credential dump, and pi
-     * itself never renders one. Leaving the field untouched keeps the stored key;
-     * typing replaces it.
-     */
-    data class Existing(
-        val providerId: String?,
-        val modelId: String?,
-        val enabledModelIds: List<String>,
-        val maskedKey: String?,
-        /**
-         * 这个厂商在 `auth.json` 里有没有条目（**任何类型**，含 App 不编辑的 `oauth`）。
-         *
-         * 与 [maskedKey] 的区别是它要回答的那个问题：留空 Key 保存时，凭证会不会被动？有
-         * 条目 = 不动（见 [save] 的规则），所以界面说的是「留空会沿用已保存的凭证」，而不是
-         * 让用户为了改一个模型重新粘贴 Key。
-         */
-        val credentialPresent: Boolean,
-        val configuredProviderIds: List<String>,
-        val configuredModelIds: List<String>,
-        val baseUrl: String?,
-        val api: String?,
-        /** Non-null when the model config exists but pi would refuse to parse it. */
-        val modelsFileError: String?,
-        /**
-         * Non-null when the credential file exists but cannot be read.
-         *
-         * Reported rather than swallowed: pi **throws** on an unreadable credential
-         * file (`auth-storage.ts:216-227`), so "no providers are configured" would be
-         * the wrong sentence — the truth is that the file is broken and pi will not
-         * start until it is dealt with. The screen must show this; until it does, the
-         * field is the service's contract, not decoration.
-         */
-        val authFileError: String?,
-    )
 
     // ------------------------------------------------------- 单条模型（导入后也能改）
     //
@@ -352,7 +277,8 @@ class PiCredentialService(
         apiKey: String,
         baseUrl: String? = null,
     ): PiModelScanner.Result {
-        val key = apiKey.ifBlank {
+        // 粘贴来的 Key 常带换行/空格：不 trim 会原样写进 auth.json，pi 拿它去请求就是 401。
+        val key = apiKey.trim().ifBlank {
             (auth().read() as? PiAuthStorage.Read.Ok)?.entries?.get(preset.id)?.key.orEmpty()
         }
         return scanner.scan(preset, key, baseUrl)
@@ -466,8 +392,9 @@ class PiCredentialService(
         // 留空 = 不动凭证（见类头部）。只有在"本来就没有凭证"时才是一个错误——否则编辑一个
         // 已配好的厂商会被迫重新粘贴 Key，而这一步和"加一个模型"毫无关系。
         val storedCredential = auth().hasAnyEntry(preset.id)
+        val typedKey = apiKey.trim()
         val effectiveKey: String? = when {
-            apiKey.isNotBlank() -> apiKey
+            typedKey.isNotEmpty() -> typedKey
             storedCredential -> null
             preset.scanStyle == PiProviderPresets.ScanStyle.Keyless -> PiProviderPresets.KEYLESS_PLACEHOLDER
             else -> return SaveResult(false, steps + "这个厂商还没有保存过凭证，请填 API Key", null)
@@ -476,7 +403,7 @@ class PiCredentialService(
             auth().setApiKey(preset.id, effectiveKey)?.let { error ->
                 return SaveResult(false, steps + error, null)
             }
-            steps += if (apiKey.isNotBlank()) {
+            steps += if (typedKey.isNotEmpty()) {
                 "凭证已保存：${preset.id}"
             } else {
                 // pi 会隐藏没有凭证的厂商（`docs/models.md:34-36`），所以无鉴权端点也要写一个占位值。
