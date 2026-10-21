@@ -2122,8 +2122,11 @@ private class DefaultModelPairStore(
 private const val DEFAULT_MODEL_KEY = "defaultModel"
 private const val DEFAULT_PROVIDER_KEY = "defaultProvider"
 
-/** 导入 sheet 一次最多画多少个候选：几百行的非懒加载列表会卡。 */
-private const val MAX_RENDERED_CANDIDATES = 200
+/**
+ * 导入 sheet 一次最多画多少个候选：这不是懒加载列表（外层 Column 已经在滚），
+ * 上千行会卡。500 覆盖绝大多数端点（OpenRouter 约 470 个），超过的用搜索定位。
+ */
+private const val MAX_RENDERED_CANDIDATES = 500
 
 /**
  * 官方目录里的一档，在**没有手写预设**时构成一个可选厂商：连接信息取它第一个模型的
