@@ -688,6 +688,11 @@ private fun ImportSheet(
     var saveError by remember { mutableStateOf<String?>(null) }
     // 每条模型的能力覆盖：只记**用户真的改过**的那些 id，没改的走 knownById。
     var overrides by remember { mutableStateOf<Map<String, ModelFields>>(emptyMap()) }
+    // models.dev 的索引：只在扫描回来的模型缺能力时取一次（缓存 7 天）。它补的是
+    // 厂商不发布的那部分 —— 主要是思考档位（thinkingLevelMap）。
+    var devIndex by remember {
+        mutableStateOf<Pair<Map<String, PiModelsDev.Entry>, Map<String, PiModelsDev.Entry>>?>(null)
+    }
     // 正在展开编辑的那一条（一次只开一条，表单比列表行高得多）。
     var editId by remember { mutableStateOf<String?>(null) }
     var storeCatalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
@@ -907,7 +912,7 @@ private fun ImportSheet(
         exact to tail
     }
 
-    val knownById = remember(availableModels, catalog, officialAcross, presetId, scanned) {
+    val knownById = remember(availableModels, catalog, officialAcross, presetId, scanned, devIndex) {
         val fromCatalog = catalog.associateBy { it.id }
         val fromEngine = availableModels.filter { it.provider == presetId }.associateBy { it.id }
         (fromCatalog.keys + fromEngine.keys + scannedById.keys).associateWith { id ->
@@ -916,26 +921,33 @@ private fun ImportSheet(
             val scan = scannedById[id]
             // 别家厂商目录里的同 id 模型：`pi` 自己的数据，只是这一家没有。
             val cross = officialAcross.first[id] ?: officialAcross.second[id.substringAfterLast('/')]
+            // models.dev：pi 目录的上游，覆盖 232 家；同样先精确、再裸 id。它排最后，
+            // 只补前面几处都不知道的那几项（尤其是思考档位）。
+            val dev = devIndex?.let { PiModelsDev.lookup(it, presetId, id) }
             KnownModel(
                 name = entry?.name ?: engine?.name ?: scan?.displayName ?: cross?.name,
                 // 思考能力：目录 → 引擎 → **这次扫描**（厂商自己说的）→ 跨厂商目录。
                 // 以前只认目录/引擎，所以「明明支持思考、目录里没有」的模型永远显示不出来。
                 reasoning = entry?.reasoning ?: engine?.reasoning ?: scan?.reasoning
-                    ?: cross?.reasoning,
+                    ?: cross?.reasoning ?: dev?.reasoning,
                 acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages
-                    ?: scan?.acceptsImages ?: cross?.acceptsImages ?: false,
+                    ?: scan?.acceptsImages ?: cross?.acceptsImages ?: dev?.acceptsImages ?: false,
                 contextWindow = entry?.contextWindow ?: engine?.contextWindow
-                    ?: scan?.contextWindow ?: cross?.contextWindow,
+                    ?: scan?.contextWindow ?: cross?.contextWindow ?: dev?.contextWindow,
                 maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens
-                    ?: cross?.maxTokens,
-                // 价格只认这一家/这次扫描的：cross 是别家的价，不属于这台设备。
-                costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion,
-                costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion,
+                    ?: cross?.maxTokens ?: dev?.maxTokens,
+                // 价格只认这一家/这次扫描的（cross 是别家的价，不属于这台设备；
+                // models.dev 只在前面都没有时兜底，它是模型的原厂价）。
                 costCacheRead = entry?.costCacheRead ?: engine?.cacheReadCost
-                    ?: scan?.costCacheReadPerMillion,
+                    ?: scan?.costCacheReadPerMillion ?: dev?.costCacheRead,
                 costCacheWrite = entry?.costCacheWrite ?: engine?.cacheWriteCost
-                    ?: scan?.costCacheWritePerMillion,
+                    ?: scan?.costCacheWritePerMillion ?: dev?.costCacheWrite,
+                costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion
+                    ?: dev?.costInput,
+                costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion
+                    ?: dev?.costOutput,
                 samplingParams = scan?.samplingParams,
+                thinkingLevelMap = dev?.thinkingLevelMap,
             )
         }
     }
@@ -977,6 +989,7 @@ private fun ImportSheet(
             costCacheRead = override?.costCacheRead ?: known?.costCacheRead,
             costCacheWrite = override?.costCacheWrite ?: known?.costCacheWrite,
             samplingParams = known?.samplingParams,
+            thinkingLevelMap = known?.thinkingLevelMap,
         )
     }
 
@@ -1309,6 +1322,14 @@ private fun ImportSheet(
                                                 scanned = result.models
                                                 scanEndpoint = result.endpoint
                                                 scanNote = result.note
+                                                // 厂商只回了 id 的模型：取一次 models.dev 索引
+                                                // （缓存 7 天、失败就算了），补上下文/价格/
+                                                // 思考档位。不阻塞保存，也不影响失败路径。
+                                                if (result.models.any { it.contextWindow == null }) {
+                                                    devIndex = withContext(Dispatchers.IO) {
+                                                        service.ensureModelsDevIndex()
+                                                    }
+                                                }
                                                 // 扫描到的并入勾选、保留已做的勾选；默认模型一个都
                                                 // 不动（这张 sheet 本来也不写默认模型）。
                                                 selected = selected + result.models.map { it.id }
@@ -2115,6 +2136,7 @@ private data class KnownModel(
     val costCacheRead: Double? = null,
     val costCacheWrite: Double? = null,
     val samplingParams: JsonObject? = null,
+    val thinkingLevelMap: JsonObject? = null,
 )
 
 /**
@@ -2160,6 +2182,8 @@ private suspend fun loadModelEditTarget(
         .firstOrNull { it.id == providerId }
         ?.models
         ?.firstOrNull { it.id == modelId }
+    // 三处都没有时，models.dev 的缓存（有就用，不联网）是最后一份数据。
+    val dev = service.modelsDevIndex()?.let { PiModelsDev.lookup(it, providerId, modelId) }
     val fields = when {
         declared != null -> ModelFields.of(declared)
         engine != null -> ModelFields(
@@ -2183,6 +2207,17 @@ private suspend fun loadModelEditTarget(
             costCacheRead = catalog.costCacheReadPerMillion,
             costCacheWrite = catalog.costCacheWritePerMillion,
             reasoning = catalog.reasoning,
+        )
+        dev != null -> ModelFields(
+            name = null,
+            contextWindow = dev.contextWindow,
+            maxTokens = dev.maxTokens,
+            images = dev.acceptsImages,
+            costInput = dev.costInput,
+            costOutput = dev.costOutput,
+            costCacheRead = dev.costCacheRead,
+            costCacheWrite = dev.costCacheWrite,
+            reasoning = dev.reasoning,
         )
         else -> ModelFields()
     }

@@ -660,6 +660,16 @@ run_harness scan-vendor-meta \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiScanVendorMetaCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiScanVendorMeta.kt"
 
+# app.pi.packages: **models.dev 索引**（`PiModelsDev.kt`）—— 厂商 `/models` 从不发布的
+# 那部分能力的来源，尤其是思考档位（`thinkingLevelMap`）。为什么必须在这里：档位映射错了
+# 全是安静的（多给一个端点不认的档位 / 少给一个它能用的档位），而它正是 pi 从
+# `reasoning_options` 生成的那张表；这里用 models.dev 的真实形状（含只有中转站才有的裸 id）
+# 把 parse、精确/裸 id 两级查找、effort→档位映射钉住。纯逻辑 + kotlinx.serialization。
+run_harness models-dev \
+  app.pi.packages.PiModelsDevCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiModelsDevCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsDev.kt"
+
 # app.pi.packages: pi **官方随包发的模型目录**（`PiOfficialCatalog.kt`：41 份
 # `<provider>.json` + `.manifest.json` 的 SHA-256 校验）。为什么必须在这里：它取代了
 # App 手抄的提供商表 —— 读漏一份就是"提供商列表悄悄短一个"，正是用户要求"直读官方文件"

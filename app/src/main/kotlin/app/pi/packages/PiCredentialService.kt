@@ -2,6 +2,8 @@ package app.pi.packages
 
 import app.pi.runtime.PiProjectConfig
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * The whole "paste a key" flow, in one place: what is already configured, what a
@@ -127,6 +129,66 @@ class PiCredentialService(
      */
     fun officialCatalog(): PiOfficialCatalog.Catalog =
         PiOfficialCatalog.readFromRootfs(layout.paths.rootfs)
+
+    // ------------------------------------------------------------- models.dev 索引
+    //
+    // 厂商的 `/models` 没有一家回思考档位（`thinkingLevelMap` 是 pi 自己的档位建模）。
+    // models.dev 是 pi 目录的上游，有 `reasoning_options`，覆盖 232 家 —— 这就是"所有厂商
+    // 都能自动拿到档位"的数据源。缓存 7 天，只在厂商/目录都没数据时才查，失败就是 null，
+    // 不影响导入。
+
+    /** `<files>/models-dev.json`：整份 api.json（约 6 MB）的缓存。 */
+    private val modelsDevCache: File get() = File(layout.paths.filesDir, "models-dev.json")
+
+    /** 7 天当"够新"：模型目录是月级变化，过期就下次联网再取一份。 */
+    private val modelsDevMaxAgeMs = 7L * 24 * 60 * 60 * 1000
+
+    /** 缓存里的索引；没有、过期或读不动都是 null（调用方自己决定要不要联网）。 */
+    fun modelsDevIndex(): Pair<Map<String, PiModelsDev.Entry>, Map<String, PiModelsDev.Entry>>? {
+        val file = modelsDevCache
+        if (!file.isFile) return null
+        if (System.currentTimeMillis() - file.lastModified() > modelsDevMaxAgeMs) return null
+        val text = runCatching { file.readText() }.getOrNull() ?: return null
+        return runCatching { PiModelsDev.parse(text) }.getOrNull()
+    }
+
+    /**
+     * 取一份可用的 models.dev 索引：缓存新鲜就读缓存，否则联网下载整份 `api.json`
+     * 再落盘。**失败返回 null，绝不抛** —— 这个数据只是补全能力，断网/服务挂了不该
+     * 让导入失败。
+     */
+    fun ensureModelsDevIndex(): Pair<Map<String, PiModelsDev.Entry>, Map<String, PiModelsDev.Entry>>? {
+        modelsDevIndex()?.let { return it }
+        val text = runCatching {
+            val connection = (URL("https://models.dev/api.json").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+            }
+            val status = connection.responseCode
+            val body = if (status in 200..299) {
+                connection.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                null
+            }
+            connection.disconnect()
+            body
+        }.getOrNull() ?: return null
+        // 太小 = 不是那份目录（错误页/半截响应）：宁可不用，也不要把一张空表缓存 7 天。
+        if (text.length < 100_000) return null
+        val index = runCatching { PiModelsDev.parse(text) }.getOrNull() ?: return null
+        if (index.second.isEmpty()) return null
+        runCatching {
+            val temp = File(modelsDevCache.parentFile, "${modelsDevCache.name}.tmp")
+            temp.writeText(text)
+            if (!temp.renameTo(modelsDevCache)) {
+                modelsDevCache.writeText(text)
+                temp.delete()
+            }
+        }
+        return index
+    }
 
     // ------------------------------------------------------------- 已导入清单
 
@@ -324,6 +386,8 @@ class PiCredentialService(
         val costCacheWrite: Double? = null,
         /** 厂商公布的默认采样参数（pi 的 `samplingParams`）；没给就是 null。 */
         val samplingParams: JsonObject? = null,
+        /** pi 的思考档位映射；models.dev 有 `reasoning_options` 时才有。 */
+        val thinkingLevelMap: JsonObject? = null,
     )
 
     data class SaveResult(
@@ -511,6 +575,7 @@ class PiCredentialService(
                     costCacheRead = choice.costCacheRead,
                     costCacheWrite = choice.costCacheWrite,
                     samplingParams = choice.samplingParams,
+                    thinkingLevelMap = choice.thinkingLevelMap,
                 )
             },
         )

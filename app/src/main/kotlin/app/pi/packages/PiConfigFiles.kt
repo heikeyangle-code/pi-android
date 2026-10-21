@@ -408,6 +408,11 @@ class PiModelsFile(
          * 不解释；没写这个键时 pi 用端点默认。
          */
         val samplingParams: JsonObject? = null,
+        /**
+         * pi 的 `thinkingLevelMap`：档位名 → 厂商的取值（`null` = 这一档不支持）。
+         * App 不解释它，只在 models.dev 有 `reasoning_options` 时原样写进来。
+         */
+        val thinkingLevelMap: JsonObject? = null,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("id", JsonPrimitive(id))
@@ -418,6 +423,7 @@ class PiModelsFile(
             maxTokens?.let { put("maxTokens", JsonPrimitive(it)) }
             if (input.isNotEmpty()) put("input", JsonArray(input.map { JsonPrimitive(it) }))
             samplingParams?.let { put("samplingParams", it) }
+            thinkingLevelMap?.let { put("thinkingLevelMap", it) }
             if (costInput != null || costOutput != null) {
                 put(
                     "cost",
@@ -459,6 +465,7 @@ class PiModelsFile(
                     costCacheRead = doubleOrNull(cost?.get("cacheRead")),
                     costCacheWrite = doubleOrNull(cost?.get("cacheWrite")),
                     samplingParams = (obj["samplingParams"] as? JsonObject)?.takeIf { it.isNotEmpty() },
+                    thinkingLevelMap = (obj["thinkingLevelMap"] as? JsonObject)?.takeIf { it.isNotEmpty() },
                 )
             }
 
