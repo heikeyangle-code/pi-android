@@ -322,6 +322,8 @@ class PiCredentialService(
         val costOutput: Double? = null,
         val costCacheRead: Double? = null,
         val costCacheWrite: Double? = null,
+        /** 厂商公布的默认采样参数（pi 的 `samplingParams`）；没给就是 null。 */
+        val samplingParams: JsonObject? = null,
     )
 
     data class SaveResult(
@@ -508,6 +510,7 @@ class PiCredentialService(
                     costOutput = choice.costOutput,
                     costCacheRead = choice.costCacheRead,
                     costCacheWrite = choice.costCacheWrite,
+                    samplingParams = choice.samplingParams,
                 )
             },
         )

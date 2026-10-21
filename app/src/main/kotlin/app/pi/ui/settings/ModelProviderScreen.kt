@@ -57,6 +57,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -934,6 +935,7 @@ private fun ImportSheet(
                     ?: scan?.costCacheReadPerMillion,
                 costCacheWrite = entry?.costCacheWrite ?: engine?.cacheWriteCost
                     ?: scan?.costCacheWritePerMillion,
+                samplingParams = scan?.samplingParams,
             )
         }
     }
@@ -974,6 +976,7 @@ private fun ImportSheet(
             costOutput = override?.costOutput ?: known?.costOutput,
             costCacheRead = override?.costCacheRead ?: known?.costCacheRead,
             costCacheWrite = override?.costCacheWrite ?: known?.costCacheWrite,
+            samplingParams = known?.samplingParams,
         )
     }
 
@@ -2111,6 +2114,7 @@ private data class KnownModel(
     val costOutput: Double? = null,
     val costCacheRead: Double? = null,
     val costCacheWrite: Double? = null,
+    val samplingParams: JsonObject? = null,
 )
 
 /**

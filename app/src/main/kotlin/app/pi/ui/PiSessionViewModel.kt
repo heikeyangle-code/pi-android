@@ -4744,6 +4744,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * `cycle_model` —— 在循环列表（`enabledModels`）里切到下一个模型。
+     *
+     * 为什么这次把它接回界面：pi 的这条命令在手机上原来"点完没反应"——模型芯片与输入框
+     * 要等下一轮才变，所以被删了。现在切换成功后**说一句切到哪了**（通知 + 立即更新
+     * `meta.model`），点一下就有可见结果；没有可循环的模型（列表不足两个）也明说。
+     */
+    fun cycleModel() {
+        call("切换模型") { api ->
+            val result = api.cycleModel()
+            if (result == null) {
+                pushNotice("没有可循环的模型：循环列表里至少要有两个。", Notice.Tone.Warning)
+                return@call
+            }
+            val model = result.model
+            if (model != null) {
+                _state.value = _state.value.copy(meta = _state.value.meta.copy(model = model))
+                val name = model.name.takeIf { it.isNotBlank() } ?: model.id
+                pushNotice("已切到 $name（${model.provider ?: "?"}）")
+            }
+            // 思考等级随模型变（pi 的 `_getThinkingLevelForModelSwitch`），重新读一次。
+            refreshState()
+        }
+    }
+
     /** `set_model`. pi answers with the model it actually switched to. */
     fun setModel(model: PiResponses.ModelInfo) {
         val provider = model.provider

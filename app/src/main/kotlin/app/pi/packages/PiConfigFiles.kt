@@ -403,6 +403,11 @@ class PiModelsFile(
         val costOutput: Double? = null,
         val costCacheRead: Double? = null,
         val costCacheWrite: Double? = null,
+        /**
+         * pi 的 `samplingParams`：厂商公布的默认采样参数（温度、top_p…）。原样保留，
+         * 不解释；没写这个键时 pi 用端点默认。
+         */
+        val samplingParams: JsonObject? = null,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("id", JsonPrimitive(id))
@@ -412,6 +417,7 @@ class PiModelsFile(
             contextWindow?.let { put("contextWindow", JsonPrimitive(it)) }
             maxTokens?.let { put("maxTokens", JsonPrimitive(it)) }
             if (input.isNotEmpty()) put("input", JsonArray(input.map { JsonPrimitive(it) }))
+            samplingParams?.let { put("samplingParams", it) }
             if (costInput != null || costOutput != null) {
                 put(
                     "cost",
@@ -452,6 +458,7 @@ class PiModelsFile(
                     costOutput = doubleOrNull(cost?.get("output")),
                     costCacheRead = doubleOrNull(cost?.get("cacheRead")),
                     costCacheWrite = doubleOrNull(cost?.get("cacheWrite")),
+                    samplingParams = (obj["samplingParams"] as? JsonObject)?.takeIf { it.isNotEmpty() },
                 )
             }
 

@@ -163,6 +163,15 @@ fun main() {
         false,
     )
 
+    // OpenRouter 的默认采样参数 → pi 的 samplingParams：厂商说了才带，原样保留。
+    val sampled = meta("""{"id":"x","default_parameters":{"temperature":1,"top_p":0.95}}""")
+    check(
+        "default_parameters becomes samplingParams",
+        sampled.samplingParams?.get("top_p")?.toString(),
+        "0.95",
+    )
+    check("absent default_parameters stays null", silent.samplingParams, null)
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

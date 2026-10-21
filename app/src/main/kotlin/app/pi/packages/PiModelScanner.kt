@@ -77,6 +77,8 @@ class PiModelScanner(
         val costOutputPerMillion: Double? = null,
         val costCacheReadPerMillion: Double? = null,
         val costCacheWritePerMillion: Double? = null,
+        /** 厂商公布的默认采样参数（OpenRouter `default_parameters`）；没给就是 null。 */
+        val samplingParams: JsonObject? = null,
         /** True when the vendor's own payload said so; most do not. */
         val vendorSuppliedMetadata: Boolean = false,
     )
@@ -286,6 +288,7 @@ class PiModelScanner(
                     costOutputPerMillion = meta.costOutputPerMillion,
                     costCacheReadPerMillion = meta.costCacheReadPerMillion,
                     costCacheWritePerMillion = meta.costCacheWritePerMillion,
+                    samplingParams = meta.samplingParams,
                     vendorSuppliedMetadata = meta.any,
                 )
             }
@@ -310,6 +313,7 @@ class PiModelScanner(
                 costOutputPerMillion = meta.costOutputPerMillion,
                 costCacheReadPerMillion = meta.costCacheReadPerMillion,
                 costCacheWritePerMillion = meta.costCacheWritePerMillion,
+                samplingParams = meta.samplingParams,
                 vendorSuppliedMetadata = meta.any,
             )
         }

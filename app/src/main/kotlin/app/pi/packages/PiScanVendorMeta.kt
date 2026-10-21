@@ -38,12 +38,21 @@ internal data class ScanVendorMeta(
     /** 缓存读/写的单价，同一单位（USD / 每百万 token）；没给就是 null。 */
     val costCacheReadPerMillion: Double? = null,
     val costCacheWritePerMillion: Double? = null,
+    /**
+     * 厂商公布的默认采样参数（OpenRouter 的 `default_parameters`，例如
+     * `{"temperature":1,"top_p":0.95,"repetition_penalty":1.05}`）。
+     *
+     * 它对应 pi 模型定义里的 `samplingParams`。厂商给了才写：这是"这个模型在这家端点上的
+     * 默认值"，不是我们替它调的参数。
+     */
+    val samplingParams: JsonObject? = null,
 ) {
     /** 厂商到底说没说话：一处都没有，就是没说。 */
     val any: Boolean
         get() = contextWindow != null || maxTokens != null || acceptsImages != null ||
             reasoning != null || costInputPerMillion != null || costOutputPerMillion != null ||
-            costCacheReadPerMillion != null || costCacheWritePerMillion != null
+            costCacheReadPerMillion != null || costCacheWritePerMillion != null ||
+            samplingParams != null
 }
 
 /**
@@ -101,6 +110,8 @@ internal fun scanVendorMeta(obj: JsonObject): ScanVendorMeta {
         costCacheWritePerMillion = priceOf(obj["pricing"], "input_cache_write")
             ?: millionOf(obj["cost"], "cache_write")
             ?: perTokenOf(obj["cache_creation_input_token_cost"]),
+        samplingParams = (obj["default_parameters"] as? JsonObject)
+            ?.takeIf { it.isNotEmpty() },
     )
 }
 
