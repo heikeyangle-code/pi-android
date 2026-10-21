@@ -4982,13 +4982,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@call
             }
             afterSessionReplaced(brandNew = true)
-            // pi 的初始模型优先级里，「第一个 scoped 模型」排在 settings 的默认模型之前
-            // （`model-resolver.ts:660-676`：`isContinuing=false` 时先取 `scopedModels[0]`），
-            // 而导入流程会写 `enabledModels` —— 于是只要有过 scoped 列表，新会话就不再落在
-            // 用户选的默认模型上。用户报的「选了默认模型，导入别的厂商后新会话变了」就是这条。
-            // 这里用 pi 自己的 `set_model` 把它纠正回来；RPC 的 set_model 不带 persist，
-            // 不会反写 settings，默认值仍是用户选的那个。
-            applySavedDefaultModel(api)
             requestNav(NavRequest.Chat)
         }
     }
@@ -5818,28 +5811,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *   these three the file question is **skipped** and the engine answers instead — see
      *   [replayHistory]'s `brandNew` for the defect this closes.
      */
-    /**
-     * 把新会话的模型纠正成 `settings.json` 里的默认模型。
-     *
-     * 只在两个键都非空时动手；`set_model` 失败（厂商没凭证、模型被删）就静默保留 pi 的
-     * 选择 —— 这不是一次"设置写入"，没有可报的错，pi 的模型芯片本来就显示着它最后用的那个。
-     */
-    private suspend fun applySavedDefaultModel(api: PiEngineApi) {
-        val provider = (settingsStore.read("defaultProvider") as? JsonPrimitive)?.content
-            ?.takeIf { it.isNotBlank() } ?: return
-        val model = (settingsStore.read("defaultModel") as? JsonPrimitive)?.content
-            ?.takeIf { it.isNotBlank() } ?: return
-        // **不拿 `_state.meta.model` 去比。** `refreshState()` 是 fire-and-forget
-        // （`call` 里 `viewModelScope.launch`），新会话刚建好时 `meta.model` 还是**上一个
-        // 会话**的模型；拿它比较会得出"已经是默认模型"的结论并跳过 set_model，而引擎其实
-        // 起在 scoped[0] 上 —— 芯片显示另一个模型、引擎也确实是另一个模型（它自称是谁
-        // 并不作数）。这里无条件调一次：同一个模型再 set 一次是幂等的。
-        val applied = runCatching { api.setModel(provider, model) }.getOrNull() ?: return
-        // 芯片读的是 `meta.model`；`set_model` 成功没有对应的推送事件，不在这里写回，
-        // 它会一直停在新会话第一次 `get_state` 的那个模型上。
-        _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
-    }
-
     private suspend fun afterSessionReplaced(brandNew: Boolean = false) {
         val engine = session ?: return
         // `refreshState` **before** the replay, not after: on the file-backed paths
