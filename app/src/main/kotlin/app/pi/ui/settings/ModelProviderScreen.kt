@@ -987,7 +987,11 @@ private fun ImportSheet(
                 costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion
                     ?: devExact?.costOutput,
                 samplingParams = scan?.samplingParams ?: entry?.samplingParams,
-                thinkingLevelMap = entry?.thinkingLevelMap ?: dev?.thinkingLevelMap,
+                // 思考档位：这一家目录 → 别家目录里的同 id 模型（pi 的目录是 models.dev 的
+                // 快照，自带 thinkingLevelMap）→ models.dev（联网兜底）。中转站转的
+                // `claude-*`/`gpt-*` 因此没网也能拿到档位。
+                thinkingLevelMap = entry?.thinkingLevelMap ?: cross?.thinkingLevelMap
+                    ?: dev?.thinkingLevelMap,
             )
         }
     }
