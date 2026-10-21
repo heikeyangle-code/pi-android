@@ -1904,16 +1904,6 @@ private fun ChatBody(
                                     },
                                 )
                                 add(
-                                    PiMenuItem(
-                                        label = "切换到下一个模型",
-                                        // 右对齐那格写当前模型：循环是盲点，至少让人看见
-                                        // "现在是谁、切完会变"，这是它原来在手机上被判
-                                        // "点了没反应"的那一半原因。
-                                        note = state.meta.model?.id,
-                                        onSelect = { session.cycleModel() },
-                                    ),
-                                )
-                                add(
                                     PiMenuItem("选择模型…") {
                                         session.refreshModels()
                                         sheet = ChatSheet.Model
