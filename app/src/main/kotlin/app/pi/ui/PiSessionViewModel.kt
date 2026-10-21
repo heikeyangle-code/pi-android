@@ -5829,9 +5829,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             ?.takeIf { it.isNotBlank() } ?: return
         val model = (settingsStore.read("defaultModel") as? JsonPrimitive)?.content
             ?.takeIf { it.isNotBlank() } ?: return
-        val current = _state.value.meta.model
-        if (current != null && current.provider == provider && current.id == model) return
-        runCatching { api.setModel(provider, model) }
+        // **不拿 `_state.meta.model` 去比。** `refreshState()` 是 fire-and-forget
+        // （`call` 里 `viewModelScope.launch`），新会话刚建好时 `meta.model` 还是**上一个
+        // 会话**的模型；拿它比较会得出"已经是默认模型"的结论并跳过 set_model，而引擎其实
+        // 起在 scoped[0] 上 —— 芯片显示另一个模型、引擎也确实是另一个模型（它自称是谁
+        // 并不作数）。这里无条件调一次：同一个模型再 set 一次是幂等的。
+        val applied = runCatching { api.setModel(provider, model) }.getOrNull() ?: return
+        // 芯片读的是 `meta.model`；`set_model` 成功没有对应的推送事件，不在这里写回，
+        // 它会一直停在新会话第一次 `get_state` 的那个模型上。
+        _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
     }
 
     private suspend fun afterSessionReplaced(brandNew: Boolean = false) {
