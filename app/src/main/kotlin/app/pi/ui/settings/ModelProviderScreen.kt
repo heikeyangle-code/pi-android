@@ -506,7 +506,7 @@ fun ModelProviderScreen(
             title = "编辑模型能力",
             subtitle = editTarget.subtitle,
             initial = editTarget.fields,
-            canReset = editTarget.declared,
+            canReset = editTarget.canReset,
             onReset = {
                 scope.launch {
                     val error = withContext(Dispatchers.IO) {
@@ -2117,7 +2117,11 @@ private data class ModelEditTarget(
     val modelId: String,
     val subtitle: String,
     val fields: ModelFields,
-    val declared: Boolean,
+    /**
+     * 能不能"恢复 pi 默认"：只有**申报过、且 pi 目录里确实有它**才成立。
+     * 自建厂商的模型在目录里没有定义，删掉这条申报等于把它从列表里删掉 —— 不是"恢复默认"。
+     */
+    val canReset: Boolean,
 )
 
 /**
@@ -2166,7 +2170,7 @@ private suspend fun loadModelEditTarget(
         modelId = modelId,
         subtitle = "$providerId / $modelId",
         fields = fields,
-        declared = declared != null,
+        canReset = declared != null && catalog != null,
     )
 }
 
