@@ -741,6 +741,9 @@ private fun ImportSheet(
     // 没传 `initialPresetId` 时**不默认 openai** —— 下面的 2/3 两节直接不出现（用户裁定：
     // 先让用户点一个，而不是替他选一个官方厂商）。
     var presetId by remember(initialPresetId) { mutableStateOf(initialPresetId.orEmpty()) }
+    // 自建厂商的显示名（models.json 的 name）。留空时按端点地址推一个（api.foo.com），
+    // 不再让所有自建厂商都叫「自定义（OpenAI 兼容）」。
+    var providerName by remember(presetId) { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     var api by remember { mutableStateOf("") }
@@ -875,6 +878,7 @@ private fun ImportSheet(
         }
         baseUrl = existing.baseUrl ?: preset.baseUrl
         api = existing.api ?: preset.api
+        providerName = existing.displayName.orEmpty()
         maskedKey = existing.maskedKey
         credentialPresent = existing.credentialPresent
         configuredProviderIds = existing.configuredProviderIds
@@ -1112,6 +1116,7 @@ private fun ImportSheet(
                     // 会退回 128k）。官方不认识的（还没更新的新模型）必须申报
                     // —— 那是"增加"，否则模型永远不出现。
                     officiallyKnownIds = catalogIds,
+                    displayName = providerName.ifBlank { suggestedProviderName(baseUrl, preset) },
                     // 用户改过能力的模型必须**申报**，哪怕它是 pi 官方目录里的：
                     // 只有 `models[]` 里的一条才能承载这次修改（同 id 整条替换）。
                     forceDeclared = overrides.keys,
@@ -1305,6 +1310,21 @@ private fun ImportSheet(
 
                 // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
                 if (presetId.isNotEmpty()) {
+                    if (!preset.builtInPi) {
+                        PiEditorField(
+                            value = providerName,
+                            onValueChange = { providerName = it },
+                            label = "名称（厂商卡上显示）",
+                            placeholder = suggestedProviderName(baseUrl, preset),
+                            height = 44.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSpacing.small,
+                                ),
+                        )
+                    }
                     // ------------------------------------------------------ 2 粘 Key
                     // （节标题已删：下面的「API Key」输入框 / 已存凭证就是这一步。）
                     if (credentialPresent && !keyOpen) {
@@ -2406,6 +2426,17 @@ private suspend fun loadModelEditTarget(
         canReset = declared != null && catalog != null,
         canDelete = declared != null && catalog == null,
     )
+}
+
+/**
+ * 自建厂商的默认显示名：端点的主机名（`api.foo.com`），拿不到就退回预设名。
+ * 以前这里固定写「自定义（OpenAI 兼容）」，于是所有自建厂商在卡片上长得一模一样。
+ */
+private fun suggestedProviderName(baseUrl: String, preset: PiProviderPresets.Preset): String {
+    val host = runCatching { java.net.URI(baseUrl.trim()).host }.getOrNull()
+        ?.removePrefix("www.")
+        ?.takeIf { it.isNotBlank() }
+    return host ?: preset.displayName
 }
 
 private fun fieldsFromKnown(known: KnownModel?): ModelFields = ModelFields(

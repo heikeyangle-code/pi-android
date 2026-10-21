@@ -325,6 +325,8 @@ class PiCredentialService(
         val configuredModelIds: List<String>,
         val baseUrl: String?,
         val api: String?,
+        /** `models.json` 里这个厂商块自带的 `name`（自建厂商的显示名）。 */
+        val displayName: String?,
         /** Non-null when the model config exists but pi would refuse to parse it. */
         val modelsFileError: String?,
         /**
@@ -357,6 +359,7 @@ class PiCredentialService(
             configuredModelIds = id?.let { models().configuredModelIds(it) } ?: emptyList(),
             baseUrl = (block?.get("baseUrl") as? kotlinx.serialization.json.JsonPrimitive)?.content,
             api = (block?.get("api") as? kotlinx.serialization.json.JsonPrimitive)?.content,
+            displayName = (block?.get("name") as? kotlinx.serialization.json.JsonPrimitive)?.content,
             modelsFileError = snapshot.error,
             authFileError = authError,
         )
@@ -475,6 +478,11 @@ class PiCredentialService(
          */
         officialCatalogRead: Boolean = false,
         /**
+         * 自建厂商的显示名（用户填，或导入时按端点地址推出来的默认值）。
+         * pi 自带目录的厂商忽略它 —— 那些名字是 pi 的事实，写一份副本只会过期。
+         */
+        displayName: String? = null,
+        /**
          * 用户在**导入表单里改过能力**的模型 id：这些必须申报，即使它在官方目录里
          * （目录里的那条整条替换，只有 `models[]` 里的一条才承载得起这次修改）。
          * 传给它的选择项必须带全能力字段，否则缺的会被 pi 的默认值补上。
@@ -586,7 +594,11 @@ class PiCredentialService(
             // ("Google AI Studio" for pi's "Google") is a label for *this* list, not a
             // fact about the provider. Writing it would put the app's wording into
             // `models.json` and rename the provider inside pi.
-            name = if (preset.builtInPi) null else preset.displayName,
+            name = if (preset.builtInPi) {
+                null
+            } else {
+                displayName?.trim()?.takeIf { it.isNotEmpty() } ?: preset.displayName
+            },
             baseUrl = connection.baseUrl,
             api = connection.api,
             // 故意不跟 `baseUrl`/`api` 走同一条规矩：表单没有这个字段，它的值永远是预设推出来的
