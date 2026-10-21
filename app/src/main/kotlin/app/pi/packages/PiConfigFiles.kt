@@ -820,6 +820,29 @@ class PiEnginePreferences(
         return array.mapNotNull { entry -> (entry as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } }
     }
 
+    /**
+     * 删掉一个厂商后，把它留在 `settings.json` 里的引用一起清掉：
+     *
+     *  - `defaultProvider` 正是它 → 连 `defaultModel` 一起删（只剩模型名会让 pi 把模型
+     *    挂到一个已经不存在的厂商上；只剩厂商则会退回该厂商的默认模型）；
+     *  - `enabledModels` 里 `厂商/…` 的条目 → 删掉（它们永远不会再匹配任何模型）。
+     *
+     * 只删**能确定归属**的条目：裸 id 与通配符可能也匹配别的厂商，原样保留。
+     * 返回 null 表示成功，否则一句给人看的话。
+     */
+    fun clearModelReferences(providerId: String): String? {
+        if (providerId.isBlank()) return null
+        val defaultProvider = (store.read("defaultProvider") as? JsonPrimitive)?.content
+        if (defaultProvider == providerId) {
+            store.remove("defaultModel")
+            store.remove("defaultProvider")
+        }
+        val patterns = enabledModels()
+        val kept = patterns.filterNot { it.trim().startsWith("$providerId/") }
+        if (kept.size != patterns.size) return setEnabledModels(kept)
+        return null
+    }
+
     /** Currently selected provider/model, for prefilling the editor. */
     fun current(): Pair<String?, String?> {
         val provider = (store.read("defaultProvider") as? JsonPrimitive)?.content

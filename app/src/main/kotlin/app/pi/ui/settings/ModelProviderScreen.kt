@@ -201,6 +201,8 @@ fun ModelProviderScreen(
     // 导入后的单条模型编辑：点清单里的一行打开，值从"申报过的定义 → 引擎快照 →
     // pi 目录"依次取（见 `loadModelEditTarget`）。
     var modelEdit by remember { mutableStateOf<ModelEditTarget?>(null) }
+    /** 「删除这个模型」的确认框（删的是那份申报，不是目录）。 */
+    var deleteModel by remember { mutableStateOf<ModelEditTarget?>(null) }
 
     // 三个选择键的描述符仍在注册表里（分组屏不再渲染它们：编辑入口搬进了本屏，注册表
     // 保留是为了首页摘要、搜索与 `/scoped-models` 焦点还能按 key 找到它们）。编辑器是同一把
@@ -508,6 +510,11 @@ fun ModelProviderScreen(
             subtitle = editTarget.subtitle,
             initial = editTarget.fields,
             canReset = editTarget.canReset,
+            canDelete = editTarget.canDelete,
+            onDelete = {
+                modelEdit = null
+                deleteModel = editTarget
+            },
             onReset = {
                 scope.launch {
                     val error = withContext(Dispatchers.IO) {
@@ -542,13 +549,42 @@ fun ModelProviderScreen(
         )
     }
 
+    val deleting = deleteModel
+    if (deleting != null) {
+        PiSettingsDialog(
+            onDismissRequest = { deleteModel = null },
+            title = "删除模型",
+            body = "会从 models.json 里删掉「${deleting.modelId}」这条定义。这个厂商不是 pi 自带的，" +
+                "删掉后它就从模型列表里消失；需要时重新导入即可。",
+            confirmationLabel = "删除",
+            onConfirm = {
+                deleteModel = null
+                scope.launch {
+                    val error = withContext(Dispatchers.IO) {
+                        service.resetModel(deleting.providerId, deleting.modelId)
+                    }
+                    if (error == null) {
+                        reloadTick++
+                        onFilesWritten()
+                        note = "已删除模型：${deleting.modelId}（重启引擎后生效）"
+                    } else {
+                        note = error
+                    }
+                }
+            },
+            dismissalLabel = "取消",
+            onDismissButton = { deleteModel = null },
+        )
+    }
+
     val del = deleteTarget
     if (del != null) {
         PiSettingsDialog(
             onDismissRequest = { deleteTarget = null },
             title = "删除厂商",
             body = "会从凭证和模型配置里删掉「$del」（auth.json 的凭证条目 + models.json 的厂商块）。" +
-                "settings.json 里的默认厂商、循环列表不动：如果它正是当前默认，删完请在上面的「默认厂商」里换一个。",
+                "如果它正是当前默认模型，默认厂商/默认模型会一起清掉（否则新会话会指向一个不存在的厂商）；" +
+                "循环列表里「$del/…」的条目也会一并移除。",
             confirmationLabel = "删除",
             onConfirm = {
                 deleteTarget = null
@@ -2168,6 +2204,8 @@ private data class ModelEditTarget(
      * 自建厂商的模型在目录里没有定义，删掉这条申报等于把它从列表里删掉 —— 不是"恢复默认"。
      */
     val canReset: Boolean,
+    /** 申报过、且目录里没有 → 删这条申报 = 这个模型消失；需要确认，故与 canReset 分开。 */
+    val canDelete: Boolean,
 )
 
 /**
@@ -2237,6 +2275,7 @@ private suspend fun loadModelEditTarget(
         subtitle = "$providerId / $modelId",
         fields = fields,
         canReset = declared != null && catalog != null,
+        canDelete = declared != null && catalog == null,
     )
 }
 

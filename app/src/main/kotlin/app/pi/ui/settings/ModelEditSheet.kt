@@ -266,6 +266,9 @@ internal fun ModelEditSheet(
     initial: ModelFields,
     canReset: Boolean,
     onReset: (() -> Unit)?,
+    /** 申报过、且 pi 目录里没有它 = 删掉这条申报模型就真正消失（自建厂商的模型）。 */
+    canDelete: Boolean = false,
+    onDelete: (() -> Unit)? = null,
     onClose: () -> Unit,
     onSave: (ModelFields) -> Unit,
 ) {
@@ -301,6 +304,9 @@ internal fun ModelEditSheet(
                 TextButton(onClick = { onSave(current) }) { Text("保存") }
                 if (canReset && onReset != null) {
                     TextButton(onClick = onReset) { Text("恢复 pi 默认") }
+                }
+                if (canDelete && onDelete != null) {
+                    TextButton(onClick = onDelete) { Text("删除这个模型") }
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text("取消") }

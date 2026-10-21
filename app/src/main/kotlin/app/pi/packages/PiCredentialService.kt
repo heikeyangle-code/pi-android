@@ -581,6 +581,9 @@ class PiCredentialService(
     fun remove(providerId: String): String? {
         auth().remove(providerId)?.let { return it }
         models().remove(providerId)?.let { return it }
+        // 引用一起清：默认模型还指着它时，新会话会静默回落到别家；循环列表里
+        // `厂商/…` 的条目则永远不会再匹配。见 PiEnginePreferences.clearModelReferences。
+        preferences().clearModelReferences(providerId)?.let { return it }
         PendingModelRestart.mark()
         return null
     }
