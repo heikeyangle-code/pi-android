@@ -472,9 +472,9 @@ fun ModelProviderScreen(
                     item { SettingLinkRow("defaultThinkingLevel", store, editTick, reloadTick) { editingKey = it } }
                     item { SettingLinkRow("modelThinkingLevels", store, editTick, reloadTick) { editingKey = it } }
                     item { SettingLinkRow("thinkingBudgets", store, editTick, reloadTick) { editingKey = it } }
-                    item { SettingLinkRow("hideThinkingBlock", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingSwitchRow("hideThinkingBlock", store, editTick, reloadTick, onSettingWritten) }
                     item { SettingLinkRow("cacheWarming", store, editTick, reloadTick) { editingKey = it } }
-                    item { SettingLinkRow("showCacheMissNotices", store, editTick, reloadTick) { editingKey = it } }
+                    item { SettingSwitchRow("showCacheMissNotices", store, editTick, reloadTick, onSettingWritten) }
                 }
 
                 // ---- 页尾只留两句（用户裁定：说明不堆在页尾）。
@@ -959,7 +959,11 @@ private fun ImportSheet(
             val cross = officialAcross.first[id] ?: officialAcross.second[id.substringAfterLast('/')]
             // models.dev：pi 目录的上游，覆盖 232 家；同样先精确、再裸 id。它排最后，
             // 只补前面几处都不知道的那几项（尤其是思考档位）。
-            val dev = devIndex?.let { PiModelsDev.lookup(it, presetId, id) }
+            //
+            // **价格只认精确匹配**：裸 id 命中可能是别家厂商的同名模型（同一个 `gpt-5`
+            // 在十几家下面都有），把它的价写到这台设备上就是把账单写错。
+            val devExact = devIndex?.first?.get("$presetId/$id")
+            val dev = devExact ?: devIndex?.second?.get(id)
             KnownModel(
                 name = entry?.name ?: engine?.name ?: scan?.displayName ?: cross?.name,
                 // 思考能力：目录 → 引擎 → **这次扫描**（厂商自己说的）→ 跨厂商目录。
@@ -975,13 +979,13 @@ private fun ImportSheet(
                 // 价格只认这一家/这次扫描的（cross 是别家的价，不属于这台设备；
                 // models.dev 只在前面都没有时兜底，它是模型的原厂价）。
                 costCacheRead = entry?.costCacheRead ?: engine?.cacheReadCost
-                    ?: scan?.costCacheReadPerMillion ?: dev?.costCacheRead,
+                    ?: scan?.costCacheReadPerMillion ?: devExact?.costCacheRead,
                 costCacheWrite = entry?.costCacheWrite ?: engine?.cacheWriteCost
-                    ?: scan?.costCacheWritePerMillion ?: dev?.costCacheWrite,
+                    ?: scan?.costCacheWritePerMillion ?: devExact?.costCacheWrite,
                 costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion
-                    ?: dev?.costInput,
+                    ?: devExact?.costInput,
                 costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion
-                    ?: dev?.costOutput,
+                    ?: devExact?.costOutput,
                 samplingParams = scan?.samplingParams ?: entry?.samplingParams,
                 thinkingLevelMap = entry?.thinkingLevelMap ?: dev?.thinkingLevelMap,
             )
@@ -1673,6 +1677,37 @@ private fun RestartCard(
 }
 
 /** 注册表里的一行设置，就地编辑：标题取官方标题，读数与分组屏用同一个 `summaryText`。 */
+/**
+ * 开关类的设置行：**就地切换**，不打开编辑器。
+ *
+ * 为什么必须有这一支：`PiSettingEditorSheet` 对 `PiRowKind.Switch` 什么也不画
+ * （`PiSettingEditorHost.kt` 的 `Switch, Action -> Unit`）——它假设开关在行上。原来
+ * 「隐藏思考块」「缓存未命中提示」这两行走的是 [SettingLinkRow]，于是点一下什么也不发生；
+ * 用户报的「推理那些很多点不动」就是这两行。
+ */
+@Composable
+private fun SettingSwitchRow(
+    key: String,
+    store: PiSettingsStore,
+    editTick: Int,
+    reloadTick: Int,
+    onSettingWritten: (String) -> Unit,
+) {
+    val setting = PiSettingsCatalog.byKey[key] ?: return
+    val checked = remember(store, editTick, reloadTick, key) {
+        ((setting.current(store)) as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+    }
+    PiSettingsToggleRow(
+        title = setting.title,
+        supporting = setting.description,
+        checked = checked,
+        onCheckedChange = { next ->
+            store.write(key, JsonPrimitive(next))
+            onSettingWritten(key)
+        },
+    )
+}
+
 @Composable
 private fun SettingLinkRow(
     key: String,
@@ -2227,8 +2262,11 @@ private suspend fun loadModelEditTarget(
         .firstOrNull { it.id == providerId }
         ?.models
         ?.firstOrNull { it.id == modelId }
-    // 三处都没有时，models.dev 的缓存（有就用，不联网）是最后一份数据。
-    val dev = service.modelsDevIndex()?.let { PiModelsDev.lookup(it, providerId, modelId) }
+    // 三处都没有时，models.dev 的缓存（有就用，不联网）是最后一份数据。价格用精确匹配：
+    // 裸 id 可能是别家的同名模型，借它的价就是写错账单。
+    val devIndex = service.modelsDevIndex()
+    val devExact = devIndex?.first?.get("$providerId/$modelId")
+    val dev = devExact ?: devIndex?.second?.get(modelId)
     val fields = when {
         declared != null -> ModelFields.of(declared)
         engine != null -> ModelFields(
@@ -2260,10 +2298,10 @@ private suspend fun loadModelEditTarget(
             contextWindow = dev.contextWindow,
             maxTokens = dev.maxTokens,
             images = dev.acceptsImages,
-            costInput = dev.costInput,
-            costOutput = dev.costOutput,
-            costCacheRead = dev.costCacheRead,
-            costCacheWrite = dev.costCacheWrite,
+            costInput = devExact?.costInput,
+            costOutput = devExact?.costOutput,
+            costCacheRead = devExact?.costCacheRead,
+            costCacheWrite = devExact?.costCacheWrite,
             reasoning = dev.reasoning,
             thinkingLevelMap = dev.thinkingLevelMap,
         )
