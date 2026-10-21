@@ -1310,21 +1310,6 @@ private fun ImportSheet(
 
                 // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
                 if (presetId.isNotEmpty()) {
-                    if (!preset.builtInPi) {
-                        PiEditorField(
-                            value = providerName,
-                            onValueChange = { providerName = it },
-                            label = "名称（厂商卡上显示）",
-                            placeholder = suggestedProviderName(baseUrl, preset),
-                            height = 44.dp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    horizontal = PiSettingsMetrics.cardPadding,
-                                    vertical = PiSpacing.small,
-                                ),
-                        )
-                    }
                     // ------------------------------------------------------ 2 粘 Key
                     // （节标题已删：下面的「API Key」输入框 / 已存凭证就是这一步。）
                     if (credentialPresent && !keyOpen) {
