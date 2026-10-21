@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -208,6 +209,7 @@ private fun FieldProblem(text: String) {
  * @param canReset 这个模型现在是**申报过**的（`models.json` 里有它），所以能"恢复 pi 默认"；
  *        目录里本来就没有定义的模型（自建厂商）没有可恢复的东西。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ModelEditSheet(
     title: String,

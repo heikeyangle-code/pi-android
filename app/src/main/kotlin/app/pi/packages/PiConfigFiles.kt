@@ -598,6 +598,20 @@ class PiModelsFile(
         val current = declaredModels(providerId)
         if (current.none { it.id == modelId }) return null
         val block = snapshot.providers[providerId] as? JsonObject
+        val remaining = current.filterNot { it.id == modelId }
+        // 删掉最后一条后，pi 要求厂商块至少还带一个**连接类**键
+        // （baseUrl / headers / compat / modelOverrides / apiKey / oauth /
+        // authHeader —— `provider-composer.js:157-165`）。只剩 name/api/models 的块
+        // 在 models 被删空之后就是一个 `{}`，pi 会把整份 models.json 判成无效。
+        // 这时整个厂商块一起删掉，"回到 pi 目录"才是真的回到目录。
+        if (remaining.isEmpty()) {
+            val carriesConnection = block?.keys?.any {
+                it == "baseUrl" || it == "headers" || it == "compat" ||
+                    it == "modelOverrides" || it == "apiKey" || it == "oauth" ||
+                    it == "authHeader"
+            } == true
+            if (!carriesConnection) return remove(providerId)
+        }
         return upsert(
             Provider(
                 id = providerId,
@@ -605,7 +619,7 @@ class PiModelsFile(
                 baseUrl = (block?.get("baseUrl") as? JsonPrimitive)?.content,
                 api = (block?.get("api") as? JsonPrimitive)?.content,
                 authHeader = (block?.get("authHeader") as? JsonPrimitive)?.content?.toBooleanStrictOrNull(),
-                models = current.filterNot { it.id == modelId },
+                models = remaining,
             ),
         )
     }
