@@ -197,6 +197,9 @@ fun ModelProviderScreen(
     // 「推理」那段默认收起：六行都是低频旋钮，平铺会把三行选择和厂商卡挤到屏外。
     var reasoningOpen by rememberSaveable { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
+    // 导入后的单条模型编辑：点清单里的一行打开，值从"申报过的定义 → 引擎快照 →
+    // pi 目录"依次取（见 `loadModelEditTarget`）。
+    var modelEdit by remember { mutableStateOf<ModelEditTarget?>(null) }
 
     // 三个选择键的描述符仍在注册表里（分组屏不再渲染它们：编辑入口搬进了本屏，注册表
     // 保留是为了首页摘要、搜索与 `/scoped-models` 焦点还能按 key 找到它们）。编辑器是同一把
@@ -409,6 +412,13 @@ fun ModelProviderScreen(
                             sheetOpen = true
                         },
                         onDelete = { deleteTarget = provider.id },
+                        onEditModel = { model ->
+                            scope.launch {
+                                modelEdit = withContext(Dispatchers.IO) {
+                                    loadModelEditTarget(service, availableModels, model.providerId, model.id)
+                                }
+                            }
+                        },
                     )
                 }
 
@@ -486,6 +496,47 @@ fun ModelProviderScreen(
             onSaved = {
                 reloadTick++
                 onFilesWritten()
+            },
+        )
+    }
+
+    val editTarget = modelEdit
+    if (editTarget != null) {
+        ModelEditSheet(
+            title = "编辑模型能力",
+            subtitle = editTarget.subtitle,
+            initial = editTarget.fields,
+            canReset = editTarget.declared,
+            onReset = {
+                scope.launch {
+                    val error = withContext(Dispatchers.IO) {
+                        service.resetModel(editTarget.providerId, editTarget.modelId)
+                    }
+                    if (error == null) {
+                        reloadTick++
+                        onFilesWritten()
+                        note = "已恢复 pi 的目录定义：${editTarget.modelId}（重启引擎后生效）"
+                        modelEdit = null
+                    } else {
+                        note = error
+                    }
+                }
+            },
+            onClose = { modelEdit = null },
+            onSave = { fields ->
+                scope.launch {
+                    val error = withContext(Dispatchers.IO) {
+                        service.updateModel(editTarget.providerId, fields.toModel(editTarget.modelId))
+                    }
+                    if (error == null) {
+                        reloadTick++
+                        onFilesWritten()
+                        note = "已保存模型能力：${editTarget.modelId}（重启引擎后生效）"
+                        modelEdit = null
+                    } else {
+                        note = error
+                    }
+                }
             },
         )
     }
@@ -634,6 +685,10 @@ private fun ImportSheet(
     var saveSteps by remember { mutableStateOf<List<String>>(emptyList()) }
     var savedOk by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    // 每条模型的能力覆盖：只记**用户真的改过**的那些 id，没改的走 knownById。
+    var overrides by remember { mutableStateOf<Map<String, ModelFields>>(emptyMap()) }
+    // 正在展开编辑的那一条（一次只开一条，表单比列表行高得多）。
+    var editId by remember { mutableStateOf<String?>(null) }
     var storeCatalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
     // 官方目录（41 个厂商 + 全部模型元数据）与它的读取问题。
     var officialProviders by remember { mutableStateOf<List<PiOfficialCatalog.Provider>>(emptyList()) }
@@ -891,20 +946,25 @@ private fun ImportSheet(
 
     fun choicesFor(ids: List<String>): List<PiCredentialService.ModelChoice> = ids.map { id ->
         val known = knownById[id]
+        val override = overrides[id]
         PiCredentialService.ModelChoice(
             id = id,
             name = known?.name,
-            reasoning = known?.reasoning,
-            contextWindow = known?.contextWindow,
-            maxTokens = known?.maxTokens,
+            reasoning = override?.reasoning ?: known?.reasoning,
+            contextWindow = override?.contextWindow ?: known?.contextWindow,
+            maxTokens = override?.maxTokens ?: known?.maxTokens,
             // 只说知道的：官方目录或厂商自己说了"支持图片"才写 ["text","image"]，
             // 否则**不写这个键** —— 省略时 pi 自己按纯文本处理
             // （`provider-composer.ts:158`），那才是官方默认。以前无论知不知道都写
             // ["text"]，等于替厂商断言一次它没说过的话，界面也因此不得不问用户
             // "支持图片吗"（用户裁定：这个不让用户选）。
-            input = if (known?.acceptsImages == true) listOf("text", "image") else emptyList(),
-            costInput = known?.costInput,
-            costOutput = known?.costOutput,
+            input = if ((override?.images ?: known?.acceptsImages) == true) {
+                listOf("text", "image")
+            } else {
+                emptyList()
+            },
+            costInput = override?.costInput ?: known?.costInput,
+            costOutput = override?.costOutput ?: known?.costOutput,
         )
     }
 
@@ -920,7 +980,9 @@ private fun ImportSheet(
     // 保存：一次写凭证 + 厂商块 + 循环列表（`PiCredentialService.save`）。不写默认模型 ——
     // 默认那两把键在清单页的「默认模型」一行里写（`DefaultModelPairStore`）。
     val save: () -> Unit = {
-        val chosen = candidates.filter { it in selected }
+        // 改过能力的模型即使没勾选也要写：用户点开编辑器就是在配置它，保存时不该被
+        // 一个勾选框丢掉。
+        val chosen = candidates.filter { it in selected || it in overrides.keys }
         sheetScope.launch {
             saveError = null
             saveSteps = emptyList()
@@ -938,6 +1000,9 @@ private fun ImportSheet(
                     // 会退回 128k）。官方不认识的（还没更新的新模型）必须申报
                     // —— 那是"增加"，否则模型永远不出现。
                     officiallyKnownIds = catalogIds,
+                    // 用户改过能力的模型必须**申报**，哪怕它是 pi 官方目录里的：
+                    // 只有 `models[]` 里的一条才能承载这次修改（同 id 整条替换）。
+                    forceDeclared = overrides.keys,
                     // **这个厂商那份**目录读到了没有，不是"整份目录读到过没有"：
                     // `PiOfficialCatalog` 对单份坏掉的 `<provider>.json` 只记 problem 并继续，
                     // 于是整份 `officialProviders` 非空、这一家却是空。传错的话
@@ -1325,6 +1390,22 @@ private fun ImportSheet(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            TextButton(onClick = { editId = if (editId == id) null else id }) {
+                                Text(if (id in overrides) "已改" else "能力")
+                            }
+                        }
+                        if (editId == id) {
+                            ModelFieldsForm(
+                                initial = overrides[id] ?: fieldsFromKnown(known),
+                                onChanged = { fields -> overrides = overrides + (id to fields) },
+                            )
+                            if (id in overrides) {
+                                TextButton(
+                                    onClick = { overrides = overrides - id },
+                                    modifier = Modifier.padding(horizontal = PiSpacing.inline),
+                                ) { Text("恢复导入时的值") }
+                            }
+                            Spacer(Modifier.height(PiSpacing.small))
                         }
                     }
                     if (candidates.isEmpty()) {
@@ -1355,7 +1436,7 @@ private fun ImportSheet(
                     TextButton(
                         // `presetProblem` 非空 = 说不出这一档是谁：保存会写错厂商名下的块与凭证。
                         enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
-                            (selected.isNotEmpty() || preset.builtInPi),
+                            (selected.isNotEmpty() || preset.builtInPi || overrides.isNotEmpty()),
                         onClick = save,
                     ) { Text("保存") }
                     Spacer(Modifier.width(PiSpacing.inline))
@@ -1372,6 +1453,7 @@ private fun ImportSheet(
                             // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
                             // 被一个勾选门槛挡住（Bug②）。
                             preset.builtInPi -> "不勾也能保存（不改循环列表）"
+                            overrides.isNotEmpty() -> "会保存 ${overrides.size} 条模型的能力"
                             else -> "至少要勾选一个模型"
                         },
                         style = PiTheme.text.meta,
@@ -1545,6 +1627,7 @@ private fun ProviderCard(
     onToggle: () -> Unit,
     onOpenCredentials: () -> Unit,
     onDelete: () -> Unit,
+    onEditModel: (PiModelInventory.Model) -> Unit,
 ) {
     val shown = if (expanded) provider.models else provider.models.filter { it.noteworthy }
     PiSettingsCard {
@@ -1575,7 +1658,7 @@ private fun ProviderCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            shown.forEach { model -> ModelLine(model) }
+            shown.forEach { model -> ModelLine(model, onEdit = { onEditModel(model) }) }
             if (provider.models.size > shown.size) {
                 PiSettingsListExpander(
                     label = "还有 ${provider.models.size - shown.size} 个 pi 目录里的模型",
@@ -1616,10 +1699,11 @@ private fun ProviderCard(
 }
 
 @Composable
-private fun ModelLine(model: PiModelInventory.Model) {
+private fun ModelLine(model: PiModelInventory.Model, onEdit: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onEdit)
             .padding(vertical = PiSettingsMetrics.supportingGap),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
@@ -2020,6 +2104,82 @@ private data class KnownModel(
  * One line under a candidate model: where this row came from, then what pi knows.
  * (Transplanted from the old credential form; wording unchanged.)
  */
+/**
+ * 一条模型现在"以为"的能力 → 编辑表单的初始值。
+ *
+ * `acceptsImages` 在 [KnownModel] 里是非空布尔（目录/引擎/扫描任何一处说了就算），所以
+ * 这里只能取 true/false；表单不会因为用户没碰开关就写它（见 `ModelFieldsForm` 的
+ * `imagesTouched`），未知的模型因此仍然只写用户真改过的那几项。
+ */
+/** 导入后"点一条模型改能力"的目标：预填值与它是不是申报过的。 */
+private data class ModelEditTarget(
+    val providerId: String,
+    val modelId: String,
+    val subtitle: String,
+    val fields: ModelFields,
+    val declared: Boolean,
+)
+
+/**
+ * 预填的三源，优先级固定：**申报过的定义**（用户自己的当前值，最准）→ **引擎快照**
+ * （pi 组合后的视图，含目录与覆盖）→ **pi 目录**（还没被引擎加载的模型）。
+ *
+ * 三处都没有 = 一条谁也不知道的模型（手写 id）：表单全空，保存时只写用户真填的那几项。
+ * 顺序不能反：目录在申报之前会把用户上次改的值盖掉，一打开就"变回官方值"。
+ */
+private suspend fun loadModelEditTarget(
+    service: PiCredentialService,
+    engineModels: List<PiResponses.ModelInfo>,
+    providerId: String,
+    modelId: String,
+): ModelEditTarget {
+    val declared = service.declaredModel(providerId, modelId)
+    val engine = engineModels.firstOrNull { it.provider == providerId && it.id == modelId }
+    val catalog = service.officialCatalog().providers
+        .firstOrNull { it.id == providerId }
+        ?.models
+        ?.firstOrNull { it.id == modelId }
+    val fields = when {
+        declared != null -> ModelFields.of(declared)
+        engine != null -> ModelFields(
+            name = engine.name,
+            contextWindow = engine.contextWindow,
+            maxTokens = engine.maxTokens,
+            images = engine.acceptsImages,
+            costInput = engine.inputCost,
+            costOutput = engine.outputCost,
+            reasoning = engine.reasoning,
+        )
+        catalog != null -> ModelFields(
+            name = catalog.name,
+            contextWindow = catalog.contextWindow,
+            maxTokens = catalog.maxTokens,
+            images = catalog.acceptsImages,
+            costInput = catalog.costInputPerMillion,
+            costOutput = catalog.costOutputPerMillion,
+            reasoning = catalog.reasoning,
+        )
+        else -> ModelFields()
+    }
+    return ModelEditTarget(
+        providerId = providerId,
+        modelId = modelId,
+        subtitle = "$providerId / $modelId",
+        fields = fields,
+        declared = declared != null,
+    )
+}
+
+private fun fieldsFromKnown(known: KnownModel?): ModelFields = ModelFields(
+    name = known?.name,
+    contextWindow = known?.contextWindow,
+    maxTokens = known?.maxTokens,
+    images = known?.acceptsImages,
+    costInput = known?.costInput,
+    costOutput = known?.costOutput,
+    reasoning = known?.reasoning,
+)
+
 private fun candidateMeta(
     id: String,
     known: KnownModel?,

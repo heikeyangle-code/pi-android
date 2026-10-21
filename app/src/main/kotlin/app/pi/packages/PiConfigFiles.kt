@@ -422,6 +422,53 @@ class PiModelsFile(
                 )
             }
         }
+
+        companion object {
+            /**
+             * 读回一条已经写在 `models.json` 里的模型（[toJson] 的逆操作）。
+             *
+             * 只认得这个类建模的那几个字段：`thinkingLevelMap`、`samplingParams`、
+             * `headers`、`compat`、`cost.tiers` 这些是 pi 的，读的时候不出现在这里，
+             * 写回时由 [PiModelsMerge.models] 按 id 原样保留。id 为空的那条整条
+             * 跳过（pi 的 schema 也要求 id 非空，但坏文件不该让整屏读不出来）。
+             */
+            fun fromJson(obj: JsonObject): Model? {
+                val id = (obj["id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                    ?: return null
+                val cost = obj["cost"] as? JsonObject
+                return Model(
+                    id = id,
+                    name = stringOrNull(obj["name"]),
+                    api = stringOrNull(obj["api"]),
+                    reasoning = boolOrNull(obj["reasoning"]),
+                    contextWindow = longOrNull(obj["contextWindow"]),
+                    maxTokens = longOrNull(obj["maxTokens"]),
+                    input = (obj["input"] as? JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.content }
+                        ?: emptyList(),
+                    costInput = doubleOrNull(cost?.get("input")),
+                    costOutput = doubleOrNull(cost?.get("output")),
+                )
+            }
+
+            private fun stringOrNull(element: JsonElement?): String? =
+                (element as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+
+            private fun boolOrNull(element: JsonElement?): Boolean? =
+                (element as? JsonPrimitive)?.content?.trim()?.lowercase()?.let {
+                    when (it) {
+                        "true" -> true
+                        "false" -> false
+                        else -> null
+                    }
+                }
+
+            private fun longOrNull(element: JsonElement?): Long? =
+                (element as? JsonPrimitive)?.content?.trim()?.toLongOrNull()
+
+            private fun doubleOrNull(element: JsonElement?): Double? =
+                (element as? JsonPrimitive)?.content?.trim()?.toDoubleOrNull()
+        }
     }
 
     /**
@@ -497,6 +544,71 @@ class PiModelsFile(
 
     /** The file a read should use: primary, else mirror. */
     private fun effectiveFile(): File? = PiConfigFiles.effectiveFile(file, mirror)
+
+    /**
+     * 这个厂商**申报过的**模型（`models[]` 里那条定义），按文件顺序。
+     *
+     * 读的是 [Model.fromJson]：只取 App 建模的字段。写回不经过这里 ——
+     * [upsertModel] 会把这一条合进原文件，未知字段按 id 保留。
+     */
+    fun declaredModels(providerId: String): List<Model> {
+        val block = read().providers[providerId] as? JsonObject ?: return emptyList()
+        val models = block["models"] as? JsonArray ?: return emptyList()
+        return models.mapNotNull { entry -> (entry as? JsonObject)?.let { Model.fromJson(it) } }
+    }
+
+    /**
+     * 单条模型的写入：只改 `models[]` 里 **id 相同的那一条**（没有就追加），
+     * 其余模型、厂商块上的其它键、根上的键都不动。
+     *
+     * 与导入保存是同一条语义：写了 `models[]` 一条，pi 就把同 id 的目录定义整条替换成
+     * 这一份（`provider-composer.ts:203-206`）。所以调用方给的 [model] 必须**带全**它
+     * 知道的能力字段，不能只带用户改的那一项 —— 只带一项等于把其余能力清零。
+     *
+     * @return null 成功，否则一句给人看的话。
+     */
+    fun upsertModel(providerId: String, model: Model): String? {
+        if (providerId.isBlank()) return "厂商 id 不能为空"
+        val snapshot = read()
+        snapshot.error?.let { return "已拒绝写入：$it" }
+        val block = snapshot.providers[providerId] as? JsonObject
+        val next = declaredModels(providerId).filterNot { it.id == model.id } + model
+        return upsert(
+            Provider(
+                id = providerId,
+                name = (block?.get("name") as? JsonPrimitive)?.content,
+                baseUrl = (block?.get("baseUrl") as? JsonPrimitive)?.content,
+                api = (block?.get("api") as? JsonPrimitive)?.content,
+                authHeader = (block?.get("authHeader") as? JsonPrimitive)?.content?.toBooleanStrictOrNull(),
+                models = next,
+            ),
+        )
+    }
+
+    /**
+     * 删掉一条申报（"恢复 pi 的目录定义"）。同 id 不在 `models[]` 里时什么也不写。
+     *
+     * 注意：删掉最后一条会让 `models` 整个键消失，pi 于是回到"这家厂商的模型完全由
+     * 目录决定"（`docs/known-gaps.md` §M11）。
+     */
+    fun removeDeclaredModel(providerId: String, modelId: String): String? {
+        if (providerId.isBlank()) return "厂商 id 不能为空"
+        val snapshot = read()
+        snapshot.error?.let { return "已拒绝写入：$it" }
+        val current = declaredModels(providerId)
+        if (current.none { it.id == modelId }) return null
+        val block = snapshot.providers[providerId] as? JsonObject
+        return upsert(
+            Provider(
+                id = providerId,
+                name = (block?.get("name") as? JsonPrimitive)?.content,
+                baseUrl = (block?.get("baseUrl") as? JsonPrimitive)?.content,
+                api = (block?.get("api") as? JsonPrimitive)?.content,
+                authHeader = (block?.get("authHeader") as? JsonPrimitive)?.content?.toBooleanStrictOrNull(),
+                models = current.filterNot { it.id == modelId },
+            ),
+        )
+    }
 
     /** The model ids already configured for [providerId]. */
     fun configuredModelIds(providerId: String): List<String> {

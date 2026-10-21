@@ -219,6 +219,36 @@ class PiCredentialService(
         val authFileError: String?,
     )
 
+    // ------------------------------------------------------- 单条模型（导入后也能改）
+    //
+    // 模型清单一屏里点一条模型，改的就是 `models.json` 的 `models[]` 里那一条。这与导入
+    // 保存是同一条语义 —— 写一条同 id 的定义，pi 就把目录里那条整条换掉
+    // （`provider-composer.ts:203-206`），所以调用方必须把**知道的全套能力**都带上，
+    // 只带用户改的那一项等于把其余能力清零（§M11 那个事故）。写成功即记账"等待重启"：
+    // 引擎快照不会自己刷新。
+
+    /** 这个厂商申报过的模型定义（编辑 sheet 预填、判断"是不是官方目录里的"都用它）。 */
+    fun declaredModels(providerId: String): List<PiModelsFile.Model> =
+        models().declaredModels(providerId)
+
+    /** 一条模型现在申报的定义；没申报过 = pi 目录/默认值在管它。 */
+    fun declaredModel(providerId: String, modelId: String): PiModelsFile.Model? =
+        models().declaredModels(providerId).firstOrNull { it.id == modelId }
+
+    /** 写一条模型的能力。@return null 成功，否则一句给人看的话。 */
+    fun updateModel(providerId: String, model: PiModelsFile.Model): String? {
+        models().upsertModel(providerId, model)?.let { return it }
+        PendingModelRestart.mark()
+        return null
+    }
+
+    /** 去掉一条申报，回到 pi 目录里的定义（目录里也没有 = 回到 pi 的默认值）。 */
+    fun resetModel(providerId: String, modelId: String): String? {
+        models().removeDeclaredModel(providerId, modelId)?.let { return it }
+        PendingModelRestart.mark()
+        return null
+    }
+
     fun prefill(presetId: String?): Existing {
         val authRead = auth().read()
         val authError = (authRead as? PiAuthStorage.Read.Invalid)?.message
@@ -345,6 +375,12 @@ class PiCredentialService(
          * 没读到 + pi 自带厂商 → 退回什么都不申报（写一条就是把官方数据换成默认值）。
          */
         officialCatalogRead: Boolean = false,
+        /**
+         * 用户在**导入表单里改过能力**的模型 id：这些必须申报，即使它在官方目录里
+         * （目录里的那条整条替换，只有 `models[]` 里的一条才承载得起这次修改）。
+         * 传给它的选择项必须带全能力字段，否则缺的会被 pi 的默认值补上。
+         */
+        forceDeclared: Set<String> = emptySet(),
     ): SaveResult {
         val steps = mutableListOf<String>()
         // 保存前 `models.json` 里为这个厂商申报过哪些模型：`declared` 为空时下面的 upsert 会
@@ -422,10 +458,14 @@ class PiCredentialService(
         //    contextWindow 128000、maxTokens 16384、input ["text"]、reasoning false、cost 0）。
         //  - 目录这次没读到 + pi 自带厂商：退回什么都不申报（否则会把整份官方目录换成默认值）。
         //  - 自建厂商（pi 没有它的目录）：`models[]` 是唯一定义，照旧全写。
-        val declared = when {
+        val baseDeclared = when {
             officialCatalogRead -> choices.filterNot { it.id in officiallyKnownIds }
             preset.builtInPi -> emptyList()
             else -> choices
+        }
+        // 编辑过能力的 id 一律补进来（见 [forceDeclared]），其余规则不变。
+        val declared = baseDeclared + choices.filter { choice ->
+            choice.id in forceDeclared && baseDeclared.none { it.id == choice.id }
         }
 
         // 连接字段走与 `name` 同一条规矩：pi 自己有这个厂商时，只声明与它不同的值。
