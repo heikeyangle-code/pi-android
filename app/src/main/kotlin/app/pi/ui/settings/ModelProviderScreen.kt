@@ -1446,7 +1446,10 @@ private fun ImportSheet(
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                     )
-                    shownCandidates.forEach { id ->
+                    // 一个端点可能有几百个模型（OpenRouter 规模），这一列不是懒加载：
+                    // 全量组合会在低端机上明显卡顿。只画前 N 个，其余靠搜索定位 —— 勾选状态
+                    // 不受影响（「全选」仍然作用于全部候选）。
+                    shownCandidates.take(MAX_RENDERED_CANDIDATES).forEach { id ->
                         val known = knownById[id]
                         Row(
                             modifier = Modifier
@@ -1492,6 +1495,12 @@ private fun ImportSheet(
                             }
                             Spacer(Modifier.height(PiSpacing.small))
                         }
+                    }
+                    if (shownCandidates.size > MAX_RENDERED_CANDIDATES) {
+                        SheetNote(
+                            "共 ${shownCandidates.size} 个，先显示前 $MAX_RENDERED_CANDIDATES 个；" +
+                                "用上面的搜索找其余的。勾选与保存仍作用于全部候选。",
+                        )
                     }
                     if (candidates.isEmpty()) {
                         SheetNote("pi 目录里还没有这个厂商的模型：点上面的扫描，或手动填一个模型名。")
@@ -2112,6 +2121,9 @@ private class DefaultModelPairStore(
 
 private const val DEFAULT_MODEL_KEY = "defaultModel"
 private const val DEFAULT_PROVIDER_KEY = "defaultProvider"
+
+/** 导入 sheet 一次最多画多少个候选：几百行的非懒加载列表会卡。 */
+private const val MAX_RENDERED_CANDIDATES = 200
 
 /**
  * 官方目录里的一档，在**没有手写预设**时构成一个可选厂商：连接信息取它第一个模型的
