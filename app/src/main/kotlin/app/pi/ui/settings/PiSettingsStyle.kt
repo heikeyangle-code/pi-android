@@ -1,5 +1,7 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.BorderStroke
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -303,6 +305,8 @@ internal fun PiSettingsListExpander(
 @Composable
 internal fun PiSettingsCard(
     modifier: Modifier = Modifier,
+    /** 可选描边：需要让相邻的卡彼此分开时才传（默认无描边，设置面外观不变）。 */
+    border: BorderStroke? = null,
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -310,6 +314,7 @@ internal fun PiSettingsCard(
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
         shape = PiSettingsCardShape,
+        border = border,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column { content() }

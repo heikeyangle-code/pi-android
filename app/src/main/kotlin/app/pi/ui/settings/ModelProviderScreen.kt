@@ -1,5 +1,11 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -14,7 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
@@ -437,11 +442,8 @@ fun ModelProviderScreen(
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
                 }
 
-                itemsIndexed(data.providers, key = { _, provider -> provider.id }) { index, provider ->
+                items(data.providers, key = { it.id }) { provider ->
                     val isOpen = expanded[provider.id] ?: provider.defaultExpanded
-                    // 厂商之间留出卡距：统一成一张卡一片之后，多张卡贴在一起会读成一坨
-                    // （用户报「好几个厂商基本混在一起」）。第一张不加，页面顶距由上面的行负责。
-                    Box(Modifier.padding(top = if (index == 0) 0.dp else PiSettingsMetrics.groupGap)) {
                     ProviderCard(
                         provider = provider,
                         expanded = isOpen,
@@ -459,7 +461,6 @@ fun ModelProviderScreen(
                             }
                         },
                     )
-                    }
                 }
 
                 item {
@@ -1797,69 +1798,96 @@ private fun ProviderCard(
     onEditModel: (PiModelInventory.Model) -> Unit,
 ) {
     val shown = if (expanded) provider.models else provider.models.filter { it.noteworthy }
-    PiSettingsCard {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(PiSettingsMetrics.cardPaddingLoose),
-        ) {
-            Text(
-                PiProviderPresets.byId(provider.id)?.displayName ?: provider.name ?: provider.id,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                buildString {
-                    append(provider.id)
-                    provider.api?.let { append(" · ").append(it) }
-                    append(" · ").append(if (provider.hasCredential) "已配置凭证" else "还没有凭证")
-                },
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(PiSpacing.small))
-            if (provider.models.isEmpty()) {
-                Text(
-                    "pi 的目录里还没有这个厂商的模型；导入时会读到模型清单。",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    // 标题先认 `models.json` 里的 `name`（用户/导入时给这个厂商起的名字），再退到预设的
+    // 显示名，最后才是 id。反过来的话，自建厂商会一律显示成「自定义（OpenAI 兼容）」——
+    // 用户报的「为什么写的不是供应商本身的名字」。
+    val title = provider.name ?: PiProviderPresets.byId(provider.id)?.displayName ?: provider.id
+    PiSettingsCard(
+        // 相邻的厂商卡要有边界：同一个底色贴在一起会读成一整块（用户报「混在一起」）。
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            // 卡头：厂商名 + 模型数 + 展开箭头，整条可点。底色比卡身高一档，像一顶帽子。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable(onClick = onToggle)
+                    .padding(
+                        horizontal = PiSettingsMetrics.cardPaddingLoose,
+                        vertical = PiSettingsMetrics.cardPadding,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        "${provider.models.size} 个模型 · " +
+                            if (provider.hasCredential) "已配置凭证" else "还没有凭证",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    modifier = Modifier
+                        .size(PiSettingsMetrics.chevronSize)
+                        .then(if (expanded) Modifier.rotate(90f) else Modifier),
+                    tint = PiTheme.palette.muted,
                 )
             }
-            shown.forEach { model -> ModelLine(model, onEdit = { onEditModel(model) }) }
-            if (provider.models.size > shown.size) {
-                PiSettingsListExpander(
-                    label = "还有 ${provider.models.size - shown.size} 个 pi 目录里的模型",
-                    onClick = onToggle,
-                )
-            } else if (provider.models.size > PiSettingsCollapseAbove) {
-                PiSettingsListExpander(label = "收起", onClick = onToggle)
-            }
-            Row {
-                Text(
-                    if (provider.hasCredential) "换 Key 或改模型" else "填写凭证并导入模型",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .clickable(onClick = onOpenCredentials)
-                        .padding(vertical = PiSettingsMetrics.notePaddingVertical),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    "删除",
-                    modifier = Modifier
-                        .clickable(onClick = onDelete)
-                        // `start` 属四参重载、`vertical` 属两参重载，混用四个 padding
-                        // 候选全部对不上（CI 在 e888c4b 报的就是这一行）——上下用显式的
-                        // top/bottom 表达同一个值。
-                        .padding(
-                            start = PiSpacing.inline,
-                            top = PiSettingsMetrics.notePaddingVertical,
-                            bottom = PiSettingsMetrics.notePaddingVertical,
-                        ),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = PiTheme.palette.warning,
-                )
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(PiSettingsMetrics.cardPaddingLoose),
+            ) {
+                if (provider.models.isEmpty()) {
+                    Text(
+                        "pi 的目录里还没有这个厂商的模型；导入时会读到模型清单。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                shown.forEach { model -> ModelLine(model, onEdit = { onEditModel(model) }) }
+                if (provider.models.size > shown.size) {
+                    PiSettingsListExpander(
+                        label = "还有 ${provider.models.size - shown.size} 个 pi 目录里的模型",
+                        onClick = onToggle,
+                    )
+                } else if (provider.models.size > PiSettingsCollapseAbove) {
+                    PiSettingsListExpander(label = "收起", onClick = onToggle)
+                }
+                Row {
+                    Text(
+                        if (provider.hasCredential) "换 Key 或改模型" else "填写凭证并导入模型",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clickable(onClick = onOpenCredentials)
+                            .padding(vertical = PiSettingsMetrics.notePaddingVertical),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        "删除",
+                        modifier = Modifier
+                            .clickable(onClick = onDelete)
+                            .padding(
+                                start = PiSpacing.inline,
+                                top = PiSettingsMetrics.notePaddingVertical,
+                                bottom = PiSettingsMetrics.notePaddingVertical,
+                            ),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = PiTheme.palette.warning,
+                    )
+                }
             }
         }
     }
