@@ -5829,7 +5829,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             ?.takeIf { it.isNotBlank() } ?: return
         val model = (settingsStore.read("defaultModel") as? JsonPrimitive)?.content
             ?.takeIf { it.isNotBlank() } ?: return
-        val current = _state.value.model
+        val current = _state.value.meta.model
         if (current != null && current.provider == provider && current.id == model) return
         runCatching { api.setModel(provider, model) }
     }
