@@ -829,21 +829,47 @@ private fun ImportSheet(
     // 扫描数据只在 pi 一无所知时补位 —— 补的正是"模型官方的"那几个字段（上下文、
     // 最大输出、图片、价格），这也是价格以前永远不显示的原因：扫描器只读了 id。
     val scannedById = remember(scanned) { scanned.associateBy { it.id } }
-    val knownById = remember(availableModels, catalog, presetId, scanned) {
+
+    // 跨厂商的官方目录索引 —— 中转站几乎都在转**别家的模型**：`gpt-4o`、`claude-sonnet-4-5`、
+    // `deepseek-chat` 的真数据（上下文、最大输出、图片能力、reasoning）就在 pi 随包的目录里，
+    // 只是不在**这一家**的 `<provider>.json` 里。没有这一步，这些 id 全部落到 pi 的默认值
+    // （128k / 16k / 仅文本），用户看到的就是「导入来的模型数据是随便填的」。
+    //
+    // 两个键：**精确 id**，以及 OpenRouter 那种 `vendor/model` 的最后一段。价格**不跨厂商借**：
+    // 中转站的定价和模型原厂不是一回事，借来就是把账单写错。
+    val officialAcross = remember(officialProviders, presetId) {
+        val exact = HashMap<String, PiOfficialCatalog.Model>()
+        val tail = HashMap<String, PiOfficialCatalog.Model>()
+        officialProviders.forEach { provider ->
+            // 这一家自己的目录由 `catalog` 负责，不在这里重复占位。
+            if (provider.id == presetId) return@forEach
+            provider.models.forEach { model ->
+                exact.putIfAbsent(model.id, model)
+                tail.putIfAbsent(model.id.substringAfterLast('/'), model)
+            }
+        }
+        exact to tail
+    }
+
+    val knownById = remember(availableModels, catalog, officialAcross, presetId, scanned) {
         val fromCatalog = catalog.associateBy { it.id }
         val fromEngine = availableModels.filter { it.provider == presetId }.associateBy { it.id }
         (fromCatalog.keys + fromEngine.keys + scannedById.keys).associateWith { id ->
             val entry = fromCatalog[id]
             val engine = fromEngine[id]
             val scan = scannedById[id]
+            // 别家厂商目录里的同 id 模型：`pi` 自己的数据，只是这一家没有。
+            val cross = officialAcross.first[id] ?: officialAcross.second[id.substringAfterLast('/')]
             KnownModel(
-                name = entry?.name ?: engine?.name ?: scan?.displayName,
-                reasoning = entry?.reasoning ?: engine?.reasoning,
+                name = entry?.name ?: engine?.name ?: scan?.displayName ?: cross?.name,
+                reasoning = entry?.reasoning ?: engine?.reasoning ?: cross?.reasoning,
                 acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages
-                    ?: scan?.acceptsImages ?: false,
+                    ?: scan?.acceptsImages ?: cross?.acceptsImages ?: false,
                 contextWindow = entry?.contextWindow ?: engine?.contextWindow
-                    ?: scan?.contextWindow,
-                maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens,
+                    ?: scan?.contextWindow ?: cross?.contextWindow,
+                maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens
+                    ?: cross?.maxTokens,
+                // 价格只认这一家/这次扫描的：cross 是别家的价，不属于这台设备。
                 costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion,
                 costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion,
             )

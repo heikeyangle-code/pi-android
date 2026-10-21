@@ -288,7 +288,20 @@ class PiModelScanner(
             val object0 = entry as? JsonObject ?: return@mapNotNull null
             val raw = (object0["name"] as? JsonPrimitive)?.content ?: return@mapNotNull null
             val id = raw.removePrefix("models/").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            ScannedModel(id = id, displayName = (object0["displayName"] as? JsonPrimitive)?.content)
+            // Google 的 `models.list` 是少数**主动给出上限**的官方端点
+            // （`inputTokenLimit` / `outputTokenLimit`），与 OpenAI 兼容那批只回 id 的
+            // 端点不同 —— 这里同样"给了才带"，没给就是 null。
+            val meta = scanVendorMeta(object0)
+            ScannedModel(
+                id = id,
+                displayName = (object0["displayName"] as? JsonPrimitive)?.content,
+                contextWindow = meta.contextWindow,
+                maxTokens = meta.maxTokens,
+                acceptsImages = meta.acceptsImages,
+                costInputPerMillion = meta.costInputPerMillion,
+                costOutputPerMillion = meta.costOutputPerMillion,
+                vendorSuppliedMetadata = meta.any,
+            )
         }
     }
 

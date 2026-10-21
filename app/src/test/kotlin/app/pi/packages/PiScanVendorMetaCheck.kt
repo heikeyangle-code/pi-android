@@ -68,6 +68,58 @@ fun main() {
         listOf(null, null),
     )
 
+    // -- 其余几种真实形状：同一件事在别家的拼法 -------------------------------
+    //
+    // vLLM 的 `/v1/models`：`max_model_len` 是它唯一的上下文读数。
+    val vllm = meta("""{"id":"Qwen3-32B","max_model_len":32768,"max_output_tokens":8192}""")
+    check("vLLM max_model_len is the context", vllm.contextWindow, 32768L)
+    check("vLLM max_output_tokens is the max output", vllm.maxTokens, 8192L)
+
+    // LM Studio 的 `/api/v0/models`。
+    val lmStudio = meta(
+        """{"id":"qwen3-8b","type":"llm","max_context_length":16384,
+            "capabilities":["completion","vision","tools"]}""",
+    )
+    check("LM Studio max_context_length is the context", lmStudio.contextWindow, 16384L)
+    check("a vision capability means images", lmStudio.acceptsImages, true)
+
+    // Google 的 `models.list`：驼峰，两个上限。
+    val google = meta("""{"name":"models/gemini-2.0-flash","inputTokenLimit":1048576,"outputTokenLimit":8192}""")
+    check("Google inputTokenLimit is the context", google.contextWindow, 1048576L)
+    check("Google outputTokenLimit is the max output", google.maxTokens, 8192L)
+
+    // models.dev 的形状：limit + 每百万美元 cost + modalities。
+    val modelsDev = meta(
+        """{"id":"claude-sonnet-4-5","limit":{"context":200000,"output":64000},
+            "cost":{"input":3,"output":15},"modalities":{"input":["text","image"]},
+            "reasoning":true}""",
+    )
+    check("models.dev limit.context is the context", modelsDev.contextWindow, 200000L)
+    check("models.dev limit.output is the max output", modelsDev.maxTokens, 64000L)
+    check("models.dev cost is already per million", modelsDev.costInputPerMillion, 3.0)
+    check("models.dev cost output is already per million", modelsDev.costOutputPerMillion, 15.0)
+    check("models.dev modalities.input with image means images", modelsDev.acceptsImages, true)
+
+    // LiteLLM 的形状：per-token 价格 + supports_vision。
+    val liteLlm = meta(
+        """{"id":"gpt-4o","max_input_tokens":128000,"max_output_tokens":16384,
+            "input_cost_per_token":0.0000025,"output_cost_per_token":0.00001,
+            "supports_vision":true}""",
+    )
+    check("LiteLLM max_input_tokens is the context", liteLlm.contextWindow, 128000L)
+    check("LiteLLM per-token input price becomes per-million", liteLlm.costInputPerMillion, 2.5)
+    check("LiteLLM per-token output price becomes per-million", liteLlm.costOutputPerMillion, 10.0)
+    check("supports_vision is read", liteLlm.acceptsImages, true)
+
+    val textOnlyFlag = meta("""{"id":"x","supports_vision":false}""")
+    check("an explicit supports_vision=false is a no, not unknown", textOnlyFlag.acceptsImages, false)
+
+    // OpenRouter 的调用方式在别处已经钉过，这里只钉"两种价格不会互相污染"：
+    // `cost` 是每百万，`pricing` 是每 token，同一个数字不能既乘又不乘。
+    val both = meta("""{"pricing":{"prompt":"0.000003"},"cost":{"output":15}}""")
+    check("pricing wins for input", both.costInputPerMillion, 3.0)
+    check("cost fills output", both.costOutputPerMillion, 15.0)
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }
