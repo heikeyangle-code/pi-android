@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import app.pi.ui.components.PiSheet
 import app.pi.packages.PiModelsDev
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -1155,7 +1156,7 @@ private fun ImportSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onClose) {
+    PiSheet(onDismiss = onClose) {
         // 内容区自己滚，底部那行（保存 + 状态）固定 —— 用户不用滚过整张模型列表才能按保存。
         Column(Modifier.fillMaxWidth()) {
             Text(

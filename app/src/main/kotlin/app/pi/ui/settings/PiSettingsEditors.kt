@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.ui.components.EffectiveKind
+import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.components.PiMixedLine
 import app.pi.ui.theme.PiShapes
@@ -1262,36 +1263,7 @@ internal fun PiSettingsSheet(
     // 传一个 `() -> Unit` 是**不兼容**的（接收者算一个参数），编译期就会报错。
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        modifier = if (fullHeight) Modifier.fillMaxHeight() else Modifier,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = fullHeight),
-        shape = PiSettingsSheetShape,
-        // `06 §2` / `.b-sheet`：底色是 `--surf-high`（`surfaceContainerHigh`），不是
-        // `surf-low` —— 对话框与 sheet 在 v2 里是同一个表面阶，这也是本次对话框合并
-        // 一并收掉的那处不一致。
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        dragHandle = {
-            // 抓手：32×3，只画不响应（M3 默认的 4dp 抓手与 22dp 顶距都超出 v2 的规格）。
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = PiSettingsMetrics.badgeGap),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier
-                        .size(
-                            width = PiSettingsMetrics.sheetHandleWidth,
-                            height = PiSettingsMetrics.sheetHandleHeight,
-                        )
-                        .clip(PiShapes.badge)
-                        .background(MaterialTheme.colorScheme.outline),
-                )
-            }
-        },
-        content = content,
-    )
+    PiSheet(onDismiss = onDismiss, fullHeight = fullHeight, content = content)
 }
 
 

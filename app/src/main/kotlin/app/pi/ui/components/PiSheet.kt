@@ -3,6 +3,7 @@ package app.pi.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,7 +25,7 @@ import androidx.compose.ui.unit.dp
  * `ModalBottomSheet`，于是圆角、把手、遮罩、底色各随各的默认值——M3 默认的 28dp 圆角与
  * 带拖拽条的把手，和页面手绘的 8/10 圆角、无 M3 视觉并排放着，一打开弹层就像换了一个 App。
  *
- * 这一层把外壳固定成一套：顶部圆角 20、36×3 把手、遮罩 `0x8C000000`、底色
+ * 这一层把外壳固定成一套：顶部圆角 20、32×3 把手、遮罩 `0x8C000000`、底色
  * `surfaceContainerHigh`、一次展开到底（`skipPartiallyExpanded`）。内容由调用方给，
  * 外壳不再由每个 sheet 自己搭。
  */
@@ -33,12 +34,14 @@ import androidx.compose.ui.unit.dp
 fun PiSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 主题列表这类"一屏列完"的弹层要全高，并直接展开到顶。 */
+    fullHeight: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        modifier = modifier,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        modifier = if (fullHeight) modifier.fillMaxHeight() else modifier,
         shape = SheetShape,
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -48,7 +51,7 @@ fun PiSheet(
     )
 }
 
-/** 36×3 的把手，全 App 同一个。 */
+/** 32×3 的把手（`PiSettingsMetrics.sheetHandleWidth/Height` 的同一组数字），全 App 同一个。 */
 @Composable
 fun PiSheetHandle() {
     Box(
@@ -59,7 +62,7 @@ fun PiSheetHandle() {
     ) {
         Box(
             Modifier
-                .size(width = 36.dp, height = 3.dp)
+                .size(width = 32.dp, height = 3.dp)
                 .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)),
         )
     }

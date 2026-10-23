@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.pi.ui.components.PiSheet
 import app.pi.packages.PiModelsFile
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -279,7 +280,7 @@ internal fun ModelEditSheet(
     onSave: (ModelFields) -> Unit,
 ) {
     var current by remember { mutableStateOf(initial) }
-    ModalBottomSheet(onDismissRequest = onClose) {
+    PiSheet(onDismiss = onClose) {
         Column(Modifier.fillMaxWidth()) {
             Text(
                 title,
