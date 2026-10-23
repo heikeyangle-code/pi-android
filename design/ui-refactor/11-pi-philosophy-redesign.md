@@ -64,7 +64,7 @@ cwd 派生一切：会话按 cwd 分组、`.pi/` 资源按目录查找、`/add-d
 | 会话切换 | selector 覆盖层（列表 + 搜索），树是另一个 selector | 覆盖层已存在（列表/树） | 基本一致，需合成一个 overlay 的两个 tab |
 | 模型 | 分组 + 成本/窗口 + scoped models | 模型选择页 | 缺 scoped models、成本/窗口信息 |
 | 思考档 | 7 档 + 颜色 | 有档位 | 需核对 7 档与颜色映射 |
-| 主题 | dark/light JSON，可自定义 | 自家 PiTheme | **建议把 pi 的 JSON 令牌映射进来**（紫强调、蓝用户卡） |
+| 主题 | dark/light JSON，okhsl 令牌 | **已经照抄**：`PiPalette` 带全 56 个 token（`accent #A798D7`、`userMessageBg #213B49`），并能加载 `~/.pi/agent/themes` 与 `.pi/themes` 的用户主题 | **已对齐，不要重做**；只核对少数未走 token 的落点（如「被拒」的 `#9E9E9E`） |
 | 用户消息回跳 | user-message-selector | 无 | 缺 |
 | 会话树 | tree-selector（分支/重开） | 有 SessionTreeScreen | 功能在，入口与层级要对齐 |
 | 分享 | `session-share` / `/share` | 导出 | 缺“分享链接”（可后续） |
@@ -134,19 +134,19 @@ cwd 派生一切：会话按 cwd 分组、`.pi/` 资源按目录查找、`/add-d
 | 终端 | 保留一行入口（已裁决，零投入） |
 | 应用 | 语言、关于、许可、诊断日志 |
 
-### 3.6 视觉令牌：从 pi 的 JSON 抄
+### 3.6 视觉令牌：**已经就是 pi 的令牌，不动**
 
-| 令牌 | dark 值（okhsl） | 用途 |
-|---|---|---|
-| accent | `295 50% 67%` | 强调、选中、链接 |
-| userMessageBg | `233 41% 24%`（蓝） | 用户消息卡片底 |
-| customMessageBg | `295 42% 24%` | 扩展消息卡片 |
-| toolSuccessBg / toolErrorBg / toolPendingBg | `158 46% 25%` / `19 54% 25%` / `229 5% 24%` | 工具卡状态底 |
-| text / muted / dim | `234 3% 89%` / `229 6% 67%` / `229 8% 56%` | 三级文字 |
-| thinkingOff…Max | 紫→粉→橙 七档 | 思考档指示 |
-| mdHeading / mdLink / mdCode / mdCodeBlock | 黄 / 蓝 / 紫 / 绿 | Markdown 语义色 |
+核对结果（`app/src/main/kotlin/app/pi/ui/theme/PiPalette.kt`）：
 
-原生侧只取其中 ~24 个语义令牌（`PiColors` 已有类似结构，替换数值与映射即可），**不引入 okhsl 运行时**，在构建期算成 hex。
+- 全 56 个 token（51 必填 + 5 可选）都在，数值是 pi `dark.json` / `light.json` 的字面转写：
+  `accent = #A798D7`（pi 的 violet）、`userMessageBg = #213B49`（蓝卡）、三态工具底、思考七档、diff、syntax 全在；
+- 还能读用户主题：`PiThemeFiles.kt` 复刻了 pi 的发现路径（agent dir 的 `themes` + 项目 `.pi/themes` + `themes` 设置）与 schema 校验；
+- `system` 主题：pi 由终端调色板派生（`system-theme.ts:32`），原生没有终端调色板，App 的处理是"名字可达但不派生"——这是已知且合理的差异。
+
+所以这一块**不需要重做**，只做一次核对（P4 改名）：
+1. 有没有组件绕过 token 直接写死颜色（全仓仅 6 处 `Color(0x…)`，其中 5 处是 hex/ANSI 解析器，1 处是「被拒」的灰 `#9E9E9E` → 建议补成 token）；
+2. `thinkingMax` 这个可选 token 是否真的被思考档用上；
+3. 工具卡三态底是否都引用 `toolPendingBg/toolSuccessBg/toolErrorBg`（而不是 success/error 前景色当底）。
 
 ---
 
@@ -157,7 +157,7 @@ cwd 派生一切：会话按 cwd 分组、`.pi/` 资源按目录查找、`/add-d
 | **P1** | 页脚：两行会计师信息 + 点击进覆盖层 | 打开任意会话，数字与 pi 的语义一致；>70/90% 变色 |
 | **P2** | 会话 overlay 合并（列表 + 树 两个 tab、搜索、长按） | 一个入口两个视图，返回键先关覆盖层 |
 | **P3** | 模型/思考覆盖层补齐（分组、成本、窗口、scoped、7 档） | 与 pi 的 model/thinking-selector 逐项对齐 |
-| **P4** | 令牌对齐（紫强调、蓝用户卡、工具三态底、Markdown 语义色） | 换色后工具卡/转录不破相，截图对比 |
+| **P4** | 令牌**核对**（不是重做）：绕过 token 的落点、`thinkingMax`、工具三态底 | 三处核对完，改动应为个位数 |
 | **P5** | 设置分组重排（表 3.5） | 旧分组项全部有归属，无丢失 |
 
 不动的东西：三 tab 结构、工具卡（已多轮打磨）、终端（零投入）、会话树实现本身。
@@ -167,5 +167,5 @@ cwd 派生一切：会话按 cwd 分组、`.pi/` 资源按目录查找、`/add-d
 ## 5. 待用户拍板
 
 1. 页脚放手势/信息密度：两行（如上）还是压成一行（手机更省高度，但数字会挤）？
-2. 主题是否**完全**照 pi 的紫强调 + 蓝用户卡，还是保留现有强调色、只借 pi 的语义层级？
+2. （已作废：颜色本来就是 pi 的 token，不需要选。）剩下一个真问题：`system` 主题在原生要不要找个等价物（pi 是拿终端调色板派生，我们没有终端）？
 3. scoped models（限定可选模型集合）v1 要不要做？
