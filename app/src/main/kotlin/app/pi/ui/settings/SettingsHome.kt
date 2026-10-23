@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.PiPackagesEntryRow
 import app.pi.ui.PiTopBar
@@ -130,9 +132,17 @@ fun SettingsHome(
     // 顶边在这里补一次（见 `settingsPageTopInset`）。
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "设置")
+        // 卡与卡之间**必须有间距**：`PiSettingsCard` 自己不带上下留白（行自带 10 纵向），
+        // 所以首页把四张卡直接堆进 LazyColumn 时，它们会无缝贴在一起，看起来像一整块
+        // 没有分节的灰面 —— 这就是「简陋」的来源之一。这里用统一的分组间距
+        // (`PiSettingsMetrics.groupGap`) 分开，并给首卡留 8 的顶距。
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(
+                top = 8.dp,
+                bottom = contentPadding.calculateBottomPadding(),
+            ),
+            verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
             // 模型与供应商：首页最顶栏的第一扇门（用户拍板的位置）——取代原来那张
             // 「当前模型」卡（卡已按用户裁定删除：同一个东西两处显示，就是"乱"）。
