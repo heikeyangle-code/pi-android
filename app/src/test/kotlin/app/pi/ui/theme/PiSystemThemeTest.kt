@@ -1,19 +1,20 @@
 package app.pi.ui.theme
 
+import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
 import kotlin.system.exitProcess
 
 // Golden-sample tests for the `system` theme port (`PiSystemTheme.kt`) and the OKHSL
 // conversions under it (`PiOkhsl.kt`).
 //
-// **Where the numbers come from.** Every `/****/` constant in the GOLDEN block below is
-// the *output of pi's own implementation*, not of this port: `generateSystemThemeColors`
-// from `packages/coding-agent/src/modes/interactive/theme/system-theme.ts` was run
-// (under Node, on the unmodified TypeScript) for each input printed beside it, and its
-// 56 tokens were serialised in `PiSystemToken.entries` order as one hex triple per
-// token. The OKHSL probes in the PROBES block come from `packages/tui/src/oklab.ts` the
-// same way. That is what makes this a port test rather than a snapshot of whatever the
-// Kotlin happens to print: an expected value here can only have come from pi.
+// **Where the numbers come from.** Every constant in the GOLDEN block below is the
+// *output of pi's own implementation*, not of this port: `generateSystemThemeColors` from
+// `packages/coding-agent/src/modes/interactive/theme/system-theme.ts` was run (under
+// Node, on the unmodified TypeScript) for each input named beside it, and its 56 tokens
+// were serialised in `PiSystemToken.entries` order as one hex triple per token. The
+// probes in `okhslConversions()` come from `packages/tui/src/oklab.ts` the same way. That
+// is what makes this a port test rather than a snapshot of whatever the Kotlin happens
+// to print: an expected value here can only have come from pi.
 //
 // Upstream's `system-theme.test.ts` is **property**-based, not value-based (it asserts
 // WCAG floors, lightness ordering, hue agreement and the fallback tiers), so the
@@ -32,16 +33,21 @@ import kotlin.system.exitProcess
 // **Bare JVM, no test framework.** Like the other harnesses under `app/src/test/kotlin`
 // this is a `fun main()` with a hand-rolled counter: the app module has no JUnit
 // dependency, and `tools/run-app-pure-checks.sh` is what compiles and runs these files.
-// Registering this one needs `ui-graphics` and `runtime` on the classpath (the
-// `PiSystemTheme.kt` closure hands its result to `PiPalette`), or the test can be run
-// directly with the recipe in its header:
+// Registering this one needs two Compose classpath entries beyond the script's usual
+// libraries, because the file it tests hands its result to `PiPalette`:
+// `androidx.compose.ui:ui-graphics-android:1.8.3` and
+// `androidx.compose.runtime:runtime-android:1.8.3` (Google Maven; take `classes.jar` out
+// of the AAR). Those two alone, plus kotlin-stdlib, compile and run this closure:
 //
-//   kotlinc -cp <compose-ui-graphics.jar>:<compose-runtime.jar> \
-//     app/src/main/kotlin/app/pi/ui/theme/{PiOkhsl,PiSystemTheme,PiPalette,PiContrast}.kt \
-//     app/src/test/kotlin/app/pi/ui/theme/PiSystemThemeTest.kt -include-runtime -d /tmp/t.jar
-//   java -cp /tmp/t.jar:<compose jars> app.pi.ui.theme.PiSystemThemeTestKt
+//   java -cp <compiler jars> org.jetbrains.kotlin.cli.jvm.K2JVMCompiler -no-stdlib \
+//     -jvm-target 17 -classpath <ui-graphics classes.jar>:<runtime classes.jar>:<stdlib> \
+//     -d /tmp/out app/src/main/kotlin/app/pi/ui/theme/{PiOkhsl,PiSystemTheme,PiPalette,PiContrast}.kt \
+//     app/src/test/kotlin/app/pi/ui/theme/PiSystemThemeTest.kt
+//   java -cp /tmp/out:<same jars> app.pi.ui.theme.PiSystemThemeTestKt
 //
-// Nothing here touches Android or Compose: the assertions read the `0xRRGGBB` token map.
+// Nothing here touches Android. The assertions are written against `0xRRGGBB` ints; the
+// only Compose use is `paletteHandOff()`, which reads `Color`'s channels to check that the
+// 56 tokens really landed on the 56 fields of `PiPalette`.
 
 private var passed = 0
 private var failed = 0
@@ -317,10 +323,10 @@ private fun okhslConversions() {
     expectsOklab(0x282A36, 0.28822897999753894, 0.002888372501584857, -0.02191376892779609)
     expectsOklab(0xFDF6E3, 0.9735283377477288, -0.00004332357084307903, 0.02605259040531005)
     expectsOklab(0x657B83, 0.5681654696657004, -0.02121901966518569, -0.019037924846702248)
-    // OKHSL -> sRGB -> OKHSL -> sRGB is stable: the colour survives the 8-bit trip. (The
-    // *hue* does not survive it to 1e-6 — quantising a channel to 1/255 moves a hue by up
-    // to about a degree — so the invariant is stated on the colour, and the hue only has to
-    // come back within a degree.)
+    // OKHSL -> sRGB -> OKHSL -> sRGB is stable: the colour survives the 8-bit trip. The hue
+    // is a weaker invariant than the colour, because one 1/255 step of one channel moves it
+    // by up to a few degrees near black (and wraps 359.9 -> 0.1 on the red axis), so the
+    // check below is a *circular* distance and the colour is the exact assertion.
     for (hue in listOf(0.0, 20.0, 82.36, 158.68, 202.43, 231.49, 295.0, 337.5)) {
         for (lightness in listOf(0.1, 0.3, 0.5, 0.7, 0.9)) {
             val forward = okhslToRgb(hue, 0.6, lightness)
@@ -331,7 +337,8 @@ private fun okhslConversions() {
                 "${again.r},${again.g},${again.b}",
                 "${forward.r},${forward.g},${forward.b}",
             )
-            checkNear("round trip $hue/$lightness: hue", back.h, hue, 1.0)
+            val hueDelta = abs(back.h - hue).let { if (it > 180.0) 360.0 - it else it }
+            checkTrue("round trip $hue/$lightness: hue within 3 degrees ($hueDelta)", hueDelta < 3.0)
             checkTrue(
                 "round trip $hue/$lightness: in gamut",
                 forward.r in 0..255 && forward.g in 0..255 && forward.b in 0..255,
@@ -559,7 +566,110 @@ private fun propertyChecks() {
             rgbToOklch(Rgb.of(grey[token])).c < 0.005,
         )
     }
-    checkTrue("saturation 0: text still readable", true)
+    // Greyscale still has to obey the readability floor: the WCAG fix-up runs after the
+    // paint, not only when a palette supplied the saturation.
+    checkTrue(
+        "saturation 0: body text still meets 4.5:1",
+        wcagContrast(Rgb.of(grey[PiSystemToken.TEXT]), Rgb.of(DRACULA.background)) >= 4.5,
+    )
+}
+
+/**
+ * The last step — 56 tokens onto [PiPalette]'s 56 named fields — is a hand-written
+ * mapping, and the one place a typo would still produce a compiling, plausible-looking
+ * palette with two colours swapped. This walks every field and compares it back to the
+ * token map, so the hand-off is covered rather than trusted.
+ */
+private fun paletteHandOff() {
+    val derived = deriveSystemColors(DRACULA)
+    val palette = deriveSystemPalette(DRACULA)
+    fun argb(color: Color): Int =
+        (Math.round(color.red * 255f) shl 16) or
+            (Math.round(color.green * 255f) shl 8) or
+            Math.round(color.blue * 255f)
+
+    fun checkField(name: String, token: PiSystemToken, color: Color) {
+        check("deriveSystemPalette: $name is $token", argb(color), derived[token])
+    }
+    checkField("accent", PiSystemToken.ACCENT, palette.accent)
+    checkField("border", PiSystemToken.BORDER, palette.border)
+    checkField("borderAccent", PiSystemToken.BORDER_ACCENT, palette.borderAccent)
+    checkField("borderMuted", PiSystemToken.BORDER_MUTED, palette.borderMuted)
+    checkField("success", PiSystemToken.SUCCESS, palette.success)
+    checkField("error", PiSystemToken.ERROR, palette.error)
+    checkField("warning", PiSystemToken.WARNING, palette.warning)
+    checkField("muted", PiSystemToken.MUTED, palette.muted)
+    checkField("dim", PiSystemToken.DIM, palette.dim)
+    checkField("text", PiSystemToken.TEXT, palette.text)
+    checkField("thinkingText", PiSystemToken.THINKING_TEXT, palette.thinkingText)
+    checkField("selectedBg", PiSystemToken.SELECTED_BG, palette.selectedBg)
+    checkField("scrollbarTrack", PiSystemToken.SCROLLBAR_TRACK, palette.scrollbarTrack)
+    checkField("scrollbarThumb", PiSystemToken.SCROLLBAR_THUMB, palette.scrollbarThumb)
+    checkField("searchMatchBg", PiSystemToken.SEARCH_MATCH_BG, palette.searchMatchBg)
+    checkField("searchMatchText", PiSystemToken.SEARCH_MATCH_TEXT, palette.searchMatchText)
+    checkField("userMessageBg", PiSystemToken.USER_MESSAGE_BG, palette.userMessageBg)
+    checkField("userMessageText", PiSystemToken.USER_MESSAGE_TEXT, palette.userMessageText)
+    checkField("customMessageBg", PiSystemToken.CUSTOM_MESSAGE_BG, palette.customMessageBg)
+    checkField("customMessageText", PiSystemToken.CUSTOM_MESSAGE_TEXT, palette.customMessageText)
+    checkField("customMessageLabel", PiSystemToken.CUSTOM_MESSAGE_LABEL, palette.customMessageLabel)
+    checkField("toolPendingBg", PiSystemToken.TOOL_PENDING_BG, palette.toolPendingBg)
+    checkField("toolSuccessBg", PiSystemToken.TOOL_SUCCESS_BG, palette.toolSuccessBg)
+    checkField("toolErrorBg", PiSystemToken.TOOL_ERROR_BG, palette.toolErrorBg)
+    checkField("toolTitle", PiSystemToken.TOOL_TITLE, palette.toolTitle)
+    checkField("toolOutput", PiSystemToken.TOOL_OUTPUT, palette.toolOutput)
+    checkField("mdHeading", PiSystemToken.MD_HEADING, palette.mdHeading)
+    checkField("mdLink", PiSystemToken.MD_LINK, palette.mdLink)
+    checkField("mdLinkUrl", PiSystemToken.MD_LINK_URL, palette.mdLinkUrl)
+    checkField("mdCode", PiSystemToken.MD_CODE, palette.mdCode)
+    checkField("mdCodeBlock", PiSystemToken.MD_CODE_BLOCK, palette.mdCodeBlock)
+    checkField("mdCodeBlockBorder", PiSystemToken.MD_CODE_BLOCK_BORDER, palette.mdCodeBlockBorder)
+    checkField("mdQuote", PiSystemToken.MD_QUOTE, palette.mdQuote)
+    checkField("mdQuoteBorder", PiSystemToken.MD_QUOTE_BORDER, palette.mdQuoteBorder)
+    checkField("mdHr", PiSystemToken.MD_HR, palette.mdHr)
+    checkField("mdListBullet", PiSystemToken.MD_LIST_BULLET, palette.mdListBullet)
+    checkField("toolDiffAdded", PiSystemToken.TOOL_DIFF_ADDED, palette.toolDiffAdded)
+    checkField("toolDiffRemoved", PiSystemToken.TOOL_DIFF_REMOVED, palette.toolDiffRemoved)
+    checkField("toolDiffContext", PiSystemToken.TOOL_DIFF_CONTEXT, palette.toolDiffContext)
+    checkField("syntaxComment", PiSystemToken.SYNTAX_COMMENT, palette.syntaxComment)
+    checkField("syntaxKeyword", PiSystemToken.SYNTAX_KEYWORD, palette.syntaxKeyword)
+    checkField("syntaxFunction", PiSystemToken.SYNTAX_FUNCTION, palette.syntaxFunction)
+    checkField("syntaxVariable", PiSystemToken.SYNTAX_VARIABLE, palette.syntaxVariable)
+    checkField("syntaxString", PiSystemToken.SYNTAX_STRING, palette.syntaxString)
+    checkField("syntaxNumber", PiSystemToken.SYNTAX_NUMBER, palette.syntaxNumber)
+    checkField("syntaxType", PiSystemToken.SYNTAX_TYPE, palette.syntaxType)
+    checkField("syntaxOperator", PiSystemToken.SYNTAX_OPERATOR, palette.syntaxOperator)
+    checkField("syntaxPunctuation", PiSystemToken.SYNTAX_PUNCTUATION, palette.syntaxPunctuation)
+    checkField("thinkingOff", PiSystemToken.THINKING_OFF, palette.thinkingOff)
+    checkField("thinkingMinimal", PiSystemToken.THINKING_MINIMAL, palette.thinkingMinimal)
+    checkField("thinkingLow", PiSystemToken.THINKING_LOW, palette.thinkingLow)
+    checkField("thinkingMedium", PiSystemToken.THINKING_MEDIUM, palette.thinkingMedium)
+    checkField("thinkingHigh", PiSystemToken.THINKING_HIGH, palette.thinkingHigh)
+    checkField("thinkingXhigh", PiSystemToken.THINKING_XHIGH, palette.thinkingXhigh)
+    checkField("thinkingMax", PiSystemToken.THINKING_MAX, palette.thinkingMax)
+    checkField("bashMode", PiSystemToken.BASH_MODE, palette.bashMode)
+    checkTrue(
+        "deriveSystemPalette: every colour is opaque",
+        palette.run {
+            listOf(
+                accent, border, borderAccent, borderMuted, success, error, warning, muted, dim, text,
+                thinkingText, selectedBg, scrollbarTrack, scrollbarThumb, searchMatchBg, searchMatchText,
+                userMessageBg, userMessageText, customMessageBg, customMessageText, customMessageLabel,
+                toolPendingBg, toolSuccessBg, toolErrorBg, toolTitle, toolOutput, mdHeading, mdLink,
+                mdLinkUrl, mdCode, mdCodeBlock, mdCodeBlockBorder, mdQuote, mdQuoteBorder, mdHr,
+                mdListBullet, toolDiffAdded, toolDiffRemoved, toolDiffContext, syntaxComment,
+                syntaxKeyword, syntaxFunction, syntaxVariable, syntaxString, syntaxNumber, syntaxType,
+                syntaxOperator, syntaxPunctuation, thinkingOff, thinkingMinimal, thinkingLow,
+                thinkingMedium, thinkingHigh, thinkingXhigh, thinkingMax, bashMode, pageBg, cardBg,
+                infoBg,
+            ).all { it.alpha == 1f }
+        },
+    )
+    // The canvas tokens are pi's exporter rule, not derivation output: on a dark theme both
+    // are dimmed copies of the message surface, and the page always the dimmer one.
+    checkTrue(
+        "deriveSystemPalette: a dark theme dims the canvas",
+        palette.pageBg.red < palette.cardBg.red && palette.cardBg.red < palette.userMessageBg.red,
+    )
 }
 
 fun main() {
@@ -568,6 +678,7 @@ fun main() {
     goldenThemes()
     tiersAndDefaults()
     propertyChecks()
+    paletteHandOff()
 
     println(
         "Pi system theme: $passed checks passed, $failed failed; " +
