@@ -158,6 +158,7 @@ import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.render.LocalPiMarkdownImmediate
 import app.pi.ui.render.LocalPiMarkdownParsed
@@ -271,39 +272,11 @@ private val CHAT_TOP_BAR_HEIGHT = 48.dp
 /** v2's `TopBar` `gap:10` between the title block and the right cluster. */
 private val CHAT_TOP_BAR_GAP = 10.dp
 
-/** v2's `TopBar` press boxes: `border-radius:8`. */
-private val CHAT_TOP_BAR_PRESS_SHAPE = RoundedCornerShape(8.dp)
-
-/** v2's `TopBar` action box and glyph: `30x30` with a `17` icon. */
-private val CHAT_TOP_BAR_ACTION_BOX = 30.dp
-private val CHAT_TOP_BAR_ACTION_GLYPH = 17.dp
-
 /**
- * One top-bar icon action: the board's `30x30` radius-8 press box with a `17` glyph
- * (`direction-b-v2.html:504-511`).
- *
- * M3's `IconButton` is 48 dp with a 24 dp glyph, which is a visibly larger box than
- * the board's and is why the app's three icons used to read as a row of buttons
- * rather than as chrome.
+ * 顶栏图标动作统一用 `PiTopBarIcon`（`ui/PiRoot.kt`）：30×30 radius-8 按压框 + 17 图标。
+ * 这里原本有一份私有实现（`ChatTopBarIcon`），同一组数字写了两遍；删掉它之后，
+ * 对话页与设置页、视图页的顶栏动作是同一份代码。
  */
-@Composable
-private fun ChatTopBarIcon(onClick: () -> Unit, contentDescription: String, icon: ImageVector) {
-    Box(
-        modifier = Modifier
-            .size(CHAT_TOP_BAR_ACTION_BOX)
-            .clip(CHAT_TOP_BAR_PRESS_SHAPE)
-            .clickable(onClickLabel = contentDescription, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(CHAT_TOP_BAR_ACTION_GLYPH),
-            tint = MaterialTheme.colorScheme.onSurface,
-        )
-    }
-}
-
 /** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
 private val EARLIER_ROW_ICON = 24.dp
 
@@ -1665,7 +1638,7 @@ private fun ChatBody(
                     // 符号：v2 的顶栏用符号表示「这里能展开」。
                     Row(
                         modifier = Modifier
-                            .clip(CHAT_TOP_BAR_PRESS_SHAPE)
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1764,7 +1737,7 @@ private fun ChatBody(
                             sheet = ChatSheet.Model
                         }
                     }
-                    ChatTopBarIcon(
+                    PiTopBarIcon(
                         onClick = { searchOpen = !searchOpen },
                         contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
                         icon = Icons.Filled.Search,
@@ -1783,7 +1756,7 @@ private fun ChatBody(
                     // its 4 dp corner and its `primary` ripple are all three things
                     // `04 §2.3` and v2 refuse. See `PiMenu`'s KDoc.
                     Box {
-                        ChatTopBarIcon(
+                        PiTopBarIcon(
                             onClick = { overflow = true },
                             contentDescription = "更多",
                             icon = Icons.Filled.MoreVert,
