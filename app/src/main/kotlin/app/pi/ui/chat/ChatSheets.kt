@@ -56,6 +56,7 @@ import app.pi.ui.extension.chromeSpans
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.components.piFormatTokens
+import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiSwitchRow
 import app.pi.ui.components.PiValueRow
 import app.pi.ui.components.contextProgressColor
@@ -103,7 +104,7 @@ fun ModelPickerSheet(
             }
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
             Text("选择模型", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.unit))
@@ -240,7 +241,7 @@ fun ThinkingPickerSheet(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
             Text("思考等级", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
@@ -330,7 +331,7 @@ fun SessionToolsSheet(
     onCopyLast: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
         ) {
@@ -572,26 +573,14 @@ fun ContextSheet(
     onDismiss: () -> Unit,
 ) {
     val stats = state.stats
-    // 外壳按 `design-demos/context-gauge-options.html` 的 `.sheet` 一条条对齐：
-    // `--surf-high` 底 + 1px `borderMuted` 描边 + 圆角 14 + 最大宽 430dp、内容裁切；
-    // 标题栏 11/14 + 下边一条 1px 分隔线；内容区 12/14。
-    //
-    // 为什么用 `MaterialTheme.colorScheme.outline` 当那个描边：稿子的 `--border-muted`
-    // 就是本项目 `outline` 的那一档（`SessionsScreen` 的行内分隔线已经在用同一条对照，
-    // 那里写着「`.div` 是 borderMuted 不透明，所以这里是 outline」）。颜色一个 hex 都没写死。
-    val shape = RoundedCornerShape(14.dp)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-    ) {
+    // 外壳归 `PiSheet`（圆角 20、把手、遮罩）；这里只保留内容区自己的宽度上限与标题栏，
+    // 不再在 M3 的 sheet 里再画一层圆角+描边的"卡片壳"。
+    PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = PiSpacing.pageHorizontal)
-                .widthIn(max = 430.dp)
-                .clip(shape)
-                .border(PiSpacing.hairline, MaterialTheme.colorScheme.outline, shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                .widthIn(max = 430.dp),
         ) {
             Text(
                 "上下文与用量",
@@ -655,7 +644,7 @@ fun SessionStatsSheet(
     onDismiss: () -> Unit,
 ) {
     val stats = state.stats
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(
                 horizontal = PiSpacing.pageHorizontal,
@@ -1144,7 +1133,7 @@ fun ForkPickerSheet(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
             Text("从哪条消息分叉", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
