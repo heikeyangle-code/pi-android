@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>pi-android · 统一稿 v1</title>
+<style>
+/* ═══ tokens：全部来自 PiPalette.kt（pi dark/light 的字面转写）═══ */
+:root{
+  --page:#21252C; --card:#282C34; --text:#DEE0E1; --muted:#9DA5A9; --dim:#7E888E;
+  --accent:#A798D7; --accent-border:#A08ED5; --blue:#5FA8CC; --border:#768186;
+  --user-bg:#213B49; --selected:#213B49;
+  --ok:#68B78D; --err:#EA7F81; --warn:#CD9A22;
+  --md-heading:#CD9A22; --md-link:#69ADD0; --md-code:#A798D7; --md-code-block:#68B78D;
+  --tool-pending:#34383A; --tool-success:#254131; --tool-error:#5B282A;
+  --think-1:#6C767B; --think-3:#5489A4; --think-5:#9776E5;
+  --hair:rgba(255,255,255,.085); --hair-strong:rgba(255,255,255,.16);
+  --shadow:0 12px 32px rgba(0,0,0,.45);
+  --font-ui:"Inter","Noto Sans CJK SC",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Noto Sans Mono CJK SC",monospace;
+  --r-chip:999px; --r-control:10px; --r-card:12px; --r-sheet:20px;
+  --ease:cubic-bezier(.16,1,.3,1);
+  color-scheme:dark;
+}
+[data-theme="light"]{
+  --page:#EFEEEE; --card:#F7F6F6; --text:#3B3F41; --muted:#677176; --dim:#879095;
+  --accent:#7459B4; --accent-border:#8A72CB; --blue:#3D8EB3; --border:#9AA2A7;
+  --user-bg:#DFE7EC; --selected:#DFE7EC;
+  --ok:#337E58; --err:#C8253D; --warn:#8F6802;
+  --md-heading:#8F6802; --md-link:#2F7899; --md-code:#7459B4; --md-code-block:#337E58;
+  --tool-pending:#E4E5E6; --tool-success:#DEE9E1; --tool-error:#EEE2E1;
+  --hair:rgba(0,0,0,.10); --hair-strong:rgba(0,0,0,.18);
+  --shadow:0 12px 32px rgba(0,0,0,.12);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:#15181d;color:var(--text);font-family:var(--font-ui);-webkit-font-smoothing:antialiased}
+[data-theme="light"] body{background:#e6e5e5}
+
+/* 展示 chrome（非产品 UI） */
+.toolbar{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:14px;padding:14px 40px;
+  border-bottom:1px solid rgba(255,255,255,.07);background:rgba(21,24,29,.85);backdrop-filter:blur(14px)}
+[data-theme="light"] .toolbar{background:rgba(230,229,229,.88);border-bottom-color:rgba(0,0,0,.08)}
+.tb-name{font-family:var(--font-mono);font-size:11px;color:var(--muted);flex:1;letter-spacing:.02em}
+.seg{display:inline-flex;padding:3px;border:1px solid var(--hair);border-radius:10px;background:var(--card)}
+.seg button{border:0;background:none;color:var(--muted);font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;cursor:pointer}
+.seg button.on{background:var(--page);color:var(--text)}
+
+.stage{display:flex;flex-wrap:wrap;gap:44px;padding:44px 40px 110px}
+.fig{width:410px}
+.cap{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);margin:0 0 12px 2px;display:flex;gap:8px}
+.cap b{color:var(--muted);font-weight:500}
+.device{width:410px;padding:10px;border-radius:46px;background:#0f1115;position:relative;
+  box-shadow:0 0 0 1.5px #262a31,0 0 0 3.5px #090a0d,0 40px 90px -20px rgba(0,0,0,.85)}
+[data-theme="light"] .device{background:#1a1c20;box-shadow:0 0 0 1.5px #2b2f36,0 0 0 3.5px #d8d7d7,0 40px 90px -24px rgba(0,0,0,.3)}
+.screen{position:relative;width:390px;height:844px;border-radius:38px;overflow:hidden;background:var(--page);color:var(--text)}
+.hole{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:9px;height:9px;border-radius:50%;background:#000;z-index:9}
+.status{position:absolute;top:0;left:0;right:0;height:34px;z-index:8;display:flex;align-items:center;
+  justify-content:space-between;padding:0 22px;font-size:12px;font-weight:600;pointer-events:none}
+.status .rt{display:flex;align-items:center;gap:5px}
+.pillbar{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:104px;height:4px;border-radius:2px;
+  background:var(--text);opacity:.35;z-index:9}
+.app{position:absolute;inset:0;padding-top:34px;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── 唯一顶栏：56，标题 17/600 ── */
+.topbar{flex:none;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--hair)}
+.topbar .t{flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-.01em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar .sub{font-family:var(--font-mono);font-size:10px;color:var(--dim);margin-top:2px}
+.iconbtn{width:32px;height:32px;display:grid;place-items:center;border:0;background:none;color:var(--muted);
+  border-radius:8px;cursor:pointer}
+.iconbtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── 转录 ── */
+.body{flex:1;min-height:0;overflow:hidden;padding:8px 14px 0;display:flex;flex-direction:column;gap:10px}
+.msg{font-size:15px;line-height:1.62;text-wrap:pretty}
+.msg p{margin:0 0 8px}.msg p:last-child{margin:0}
+.msg code{font-family:var(--font-mono);font-size:12.5px;background:var(--tool-pending);border-radius:4px;padding:1px 4px;color:var(--text)}
+.user{align-self:stretch;background:var(--user-bg);border-radius:var(--r-card);padding:11px 13px;font-size:15px;line-height:1.6}
+.role{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--dim);margin:2px 0 -4px}
+/* 工具卡：按现有实现，不改设计 */
+.tool{border:1px solid var(--hair);border-radius:var(--r-card);overflow:hidden;background:var(--page)}
+.tool-h{display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--tool-pending)}
+.tool-n{font-family:var(--font-mono);font-size:11px;color:var(--text)}
+.tool-a{flex:1;min-width:0;font-family:var(--font-mono);font-size:10.5px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.tool-s{font-family:var(--font-mono);font-size:10px;color:var(--ok)}
+.tool-b{padding:9px 11px;font-family:var(--font-mono);font-size:10.5px;line-height:1.7;color:var(--muted);background:var(--card)}
+
+/* ── 输入区 ── */
+.composer{flex:none;padding:8px 12px 10px}
+.cmp{display:flex;align-items:flex-end;gap:8px;padding:8px;border:1px solid var(--hair-strong);
+  border-radius:var(--r-card);background:var(--card)}
+.cmp .ph{flex:1;font-size:15px;color:var(--dim);padding:4px 2px}
+.rnd{width:30px;height:30px;flex:none;border-radius:var(--r-control);border:1px solid var(--hair);background:none;
+  color:var(--muted);display:grid;place-items:center;cursor:pointer}
+.rnd.pri{background:var(--accent);border-color:transparent;color:#1b1a24}
+.rnd svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── 页脚（pi 的会计师行）── */
+.footer{flex:none;padding:6px 14px 8px;border-top:1px solid var(--hair);display:grid;gap:3px}
+.f1{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;color:var(--muted);
+  overflow:hidden;white-space:nowrap}
+.f1 .sep{opacity:.5}
+.f1 .name{color:var(--text)}
+.f2{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:10px;color:var(--dim);white-space:nowrap}
+.f2 .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.f2 .pct{color:var(--text)}
+.f2 .model{color:var(--muted)}
+.f2 .dot{width:5px;height:5px;border-radius:50%;background:var(--think-5);display:inline-block;margin-right:4px}
+
+/* ── 底栏 3 项 ── */
+.dock{flex:none;display:flex;padding:0 8px 20px;border-top:1px solid var(--hair);background:var(--page)}
+.dock button{flex:1;position:relative;height:52px;border:0;background:none;cursor:pointer;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--dim);font:inherit;font-size:10px}
+.dock button svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dock button.on{color:var(--text)}
+.dock button.on::before{content:"";position:absolute;top:-1px;width:16px;height:2px;border-radius:0 0 1px 1px;background:var(--accent)}
+
+/* ── Section / Row（唯一的一套）── */
+.page{flex:1;min-height:0;overflow:hidden;padding:6px 14px 0}
+.page .row{min-height:46px}
+.sec{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.02em;padding:12px 2px 6px;display:flex;align-items:center}
+.sec .r{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--dim)}
+.card{border:1px solid var(--hair);border-radius:var(--r-card);background:var(--card);overflow:hidden}
+.row{display:flex;align-items:center;gap:10px;min-height:56px;padding:0 12px;border-bottom:1px solid var(--hair);cursor:pointer}
+.row:last-child{border-bottom:0}
+.row .lbl{flex:1;min-width:0;font-size:15px;color:var(--text)}
+.row .val{font-family:var(--font-mono);font-size:12px;color:var(--dim);max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .val.fg{color:var(--text)}
+.chev{width:12px;height:12px;stroke:var(--dim);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.sw{width:38px;height:22px;border-radius:999px;background:var(--tool-pending);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform .2s var(--ease)}
+.sw.on{background:var(--accent)}
+.sw.on::after{transform:translateX(16px)}
+.segrow{display:inline-flex;padding:3px;border:1px solid var(--hair);border-radius:var(--r-control);background:var(--page)}
+.segrow button{border:0;background:none;color:var(--muted);font:inherit;font-size:11.5px;padding:4px 9px;border-radius:7px;cursor:pointer}
+.segrow button.on{background:var(--card);color:var(--text);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+
+/* ── 搜索行 ── */
+.field{display:flex;align-items:center;gap:8px;height:38px;padding:0 11px;border:1px solid var(--hair);
+  border-radius:var(--r-control);background:var(--card);color:var(--dim);font-size:13px}
+.field svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round}
+
+/* ── 会话覆层 ── */
+.dim{position:absolute;inset:-34px 0 0 0;z-index:20;background:rgba(0,0,0,.52);backdrop-filter:blur(2px)}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:21;max-height:86%;display:flex;flex-direction:column;
+  background:var(--card);border-radius:var(--r-sheet) var(--r-sheet) 0 0;border-top:1px solid var(--hair-strong);
+  box-shadow:var(--shadow);overflow:hidden;padding-bottom:18px}
+.handle{width:36px;height:3px;border-radius:2px;background:var(--hair-strong);margin:8px auto 0}
+.sh{display:flex;align-items:center;gap:10px;padding:10px 14px 8px}
+.sh .t{flex:1;font-size:17px;font-weight:600}
+.srow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--hair);cursor:pointer}
+.srow .st{font-size:15px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .sm{margin-top:3px;font-family:var(--font-mono);font-size:10.5px;color:var(--dim);display:flex;gap:6px}
+.srow .live{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:none}
+.srow .r{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--dim);flex:none}
+.tabs{display:flex;gap:2px;margin:4px 14px 8px;padding:3px;border:1px solid var(--hair);border-radius:var(--r-control);background:var(--page)}
+.tabs button{flex:1;border:0;background:none;color:var(--muted);font:inherit;font-size:12px;padding:6px 0;border-radius:7px;cursor:pointer}
+.tabs button.on{background:var(--card);color:var(--text)}
+
+/* ── 工作区 ── */
+.wshead{padding:6px 2px 10px;display:grid;gap:6px}
+.wspath{font-family:var(--font-mono);font-size:12px;color:var(--text)}
+.wsmeta{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--hair);
+  border-radius:var(--r-chip);background:var(--card);font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.chip .x{opacity:.55}
+.file{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--hair)}
+.file:last-child{border-bottom:0}
+.file .p{flex:1;min-width:0;font-family:var(--font-mono);font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.file .n{font-family:var(--font-mono);font-size:10px;color:var(--dim);flex:none}
+.job{display:flex;align-items:center;gap:8px;padding:10px 12px}
+.job .c{flex:1;min-width:0;font-family:var(--font-mono);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.job .t{font-family:var(--font-mono);font-size:10px;color:var(--dim)}
+.job .x{width:24px;height:24px;border:1px solid var(--hair);border-radius:6px;background:none;color:var(--dim);cursor:pointer}
+
+/* ── 模型 sheet ── */
+.m{padding:8px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;border-bottom:1px solid var(--hair)}
+.m .nm{font-family:var(--font-mono);font-size:13px;color:var(--text)}
+.m .meta{margin-top:3px;font-family:var(--font-mono);font-size:10.5px;color:var(--dim)}
+.m .ck{margin-left:auto;width:14px;height:14px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;flex:none}
+.glabel{font-family:var(--font-mono);font-size:10px;letter-spacing:.09em;color:var(--dim);text-transform:uppercase;padding:12px 14px 4px}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="tb-name">pi-android · 统一稿 v1 · 390×844</div>
+  <div class="seg" data-seg="theme">
+    <button data-act="theme:dark" class="on">深色</button>
+    <button data-act="theme:light">浅色</button>
+  </div>
+</div>
+
+<div class="stage" id="stage"></div>
+
+<script>
+const S = (d, w=1.7) => `<svg viewBox="0 0 24 24" stroke-width="${w}" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ic = {
+  dots: S('<circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>'),
+  plus: S('<path d="M12 5.5v13M5.5 12h13"/>'),
+  send: S('<path d="M5 12h13M12 5l7 7-7 7"/>', 2),
+  chat: S('<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H9.5L4 20V6.5Z"/>', 1.6),
+  folder: S('<path d="M3 8.2A2.2 2.2 0 0 1 5.2 6h3.4l1.9 2h8.3A2.2 2.2 0 0 1 21 10.2v7.6A2.2 2.2 0 0 1 18.8 20H5.2A2.2 2.2 0 0 1 3 17.8V8.2Z"/>', 1.6),
+  gear: S('<path d="M4 8h8M17 8h3M4 16h3M12 16h8"/><circle cx="14.5" cy="8" r="2.2"/><circle cx="9.5" cy="16" r="2.2"/>', 1.6),
+  search: S('<circle cx="11" cy="11" r="6.2"/><path d="M15.6 15.6L20 20"/>'),
+  chev: '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+  close: S('<path d="M6 6l12 12M18 6L6 18"/>'),
+  check: '<svg class="ck" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></svg>',
+};
+const sysbar = () => `<div class="status"><span>9:41</span><span class="rt">
+  <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7.5" width="2.2" height="3.5" rx="1"/><rect x="4.1" y="5" width="2.2" height="6" rx="1"/><rect x="8.2" y="2.5" width="2.2" height="8.5" rx="1"/><rect x="12.3" y="0" width="2.2" height="11" rx="1"/></svg>
+  <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 3.6a9 9 0 0 1 12 0"/><path d="M3.4 6.3a5.6 5.6 0 0 1 7.2 0"/><circle cx="7" cy="9.2" r=".9" fill="currentColor" stroke="none"/></svg>
+  <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x=".6" y="1.1" width="18" height="8.8" rx="2.6" stroke="currentColor" stroke-opacity=".45"/><rect x="2.3" y="2.8" width="13" height="5.4" rx="1.4" fill="currentColor"/></svg>
+</span></div>`;
+
+const dock = active => `<div class="dock">
+  ${[['chat','对话',ic.chat],['ws','工作区',ic.folder],['set','设置',ic.gear]]
+    .map(([k,label,icon]) => `<button class="${active===k?'on':''}">${icon}<span>${label}</span></button>`).join('')}
+</div>`;
+
+const footer = () => `<div class="footer">
+  <div class="f1"><span>~/work/pi</span><span>(main)</span><span class="sep">•</span><span class="name">修复 composer 键盘遮挡</span></div>
+  <div class="f2"><span class="l">↑12.4k ↓3.2k R8.1k $0.42&nbsp;&nbsp;<span class="pct">12.3%</span>/200k</span>
+    <span class="model"><span class="dot"></span>claude-opus-4-5 • 中</span></div>
+</div>`;
+
+/* 01 对话 */
+const chat = () => `<div class="topbar"><div class="t">修复 composer 键盘遮挡</div>
+  <button class="iconbtn">${ic.dots}</button></div>
+<div class="body">
+  <div class="role">你 · 14:31</div>
+  <div class="user">composer 在键盘弹出时会跳一下，是 <code>adjustResize</code> 的问题还是 <code>visualViewport</code> 的？</div>
+  <div class="role">pi</div>
+  <div class="msg"><p>问题不在 <code>adjustResize</code>，是 <code>.sh-composer</code> 只加了固定的 8px 下边距，键盘弹出后安全区变了，容器高度没跟上。</p></div>
+  <div class="tool">
+    <div class="tool-h"><span class="tool-n">read</span><span class="tool-a">src/components/shell/Composer.tsx</span><span class="tool-s">ok</span></div>
+    <div class="tool-b">.sh-composer { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }</div>
+  </div>
+  <div class="msg"><p>改两行就够了。</p></div>
+</div>
+<div class="composer"><div class="cmp"><button class="rnd">${ic.plus}</button><div class="ph">给 pi 发消息…</div><button class="rnd pri">${ic.send}</button></div></div>
+${footer()}
+${dock('chat')}`;
+
+/* 02 会话覆层 */
+const sessions = () => `<div class="topbar"><div class="t">修复 composer 键盘遮挡</div><button class="iconbtn">${ic.dots}</button></div>
+<div class="body">
+  <div class="role">你 · 14:31</div>
+  <div class="user">composer 在键盘弹出时会跳一下…</div>
+  <div class="role">pi</div>
+  <div class="msg"><p>问题不在 adjustResize…</p></div>
+</div>
+<div class="composer"><div class="cmp"><button class="rnd">${ic.plus}</button><div class="ph">给 pi 发消息…</div><button class="rnd pri">${ic.send}</button></div></div>
+${footer()}
+${dock('chat')}
+<div class="dim"></div>
+<div class="sheet">
+  <div class="handle"></div>
+  <div class="sh"><div class="t">会话</div><button class="iconbtn">${ic.close}</button></div>
+  <div style="padding:0 14px 8px"><div class="field">${ic.search}<span>搜索会话</span></div></div>
+  <div class="tabs"><button class="on">列表</button><button>树</button><button>用户消息</button></div>
+  <div style="overflow:hidden">
+    <div class="srow"><div><div class="st">修复 composer 键盘遮挡</div><div class="sm"><span class="live"></span>14:32 · 12 轮 · ~/work/pi</div></div><span class="r">当前</span></div>
+    <div class="srow"><div><div class="st">把 tool-render 抽成独立包</div><div class="sm">11:08 · 34 轮 · ~/work/pi</div></div></div>
+    <div class="srow"><div><div class="st">proot 里 glibc 版本不对</div><div class="sm">昨天 22:14 · 7 轮 · ~/work/api</div></div></div>
+    <div class="srow"><div><div class="st">select 帧的时序问题</div><div class="sm">昨天 18:02 · 21 轮 · ~/work/pi</div></div></div>
+  </div>
+</div>`;
+
+/* 03 设置 */
+const settings = () => `<div class="topbar"><div class="t">设置</div></div>
+<div class="page">
+  <div class="sec">模型</div>
+  <div class="card">
+    <div class="row"><span class="lbl">默认模型</span><span class="val fg">claude-opus-4-5</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">循环模型</span><span class="val">3 个</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">推理</span><span class="val">中</span>${ic.chev}</div>
+  </div>
+
+  <div class="sec">资源</div>
+  <div class="card">
+    <div class="row"><span class="lbl">扩展</span><span class="val">12 个 · 3 启用</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">技能</span><span class="val">8 个</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">主题</span><span class="val">2 个 · 跟随系统</span>${ic.chev}</div>
+  </div>
+
+  <div class="sec">外观</div>
+  <div class="card">
+    <div class="row"><span class="lbl">主题</span>
+      <div class="segrow"><button class="on">系统</button><button>浅</button><button>深</button></div>
+    </div>
+    <div class="row"><span class="lbl">代码高亮</span><div class="sw on"></div></div>
+  </div>
+
+  <div class="sec">对话</div>
+  <div class="card">
+    <div class="row"><span class="lbl">自动压缩</span><div class="sw on"></div></div>
+    <div class="row"><span class="lbl">显示思考</span><div class="sw on"></div></div>
+  </div>
+</div>
+${dock('set')}`;
+
+/* 04 工作区 */
+const workbench = () => `<div class="topbar"><div class="t">工作区</div></div>
+<div class="page">
+  <div class="wshead">
+    <div class="wspath">~/work/pi <span style="color:var(--dim)">(main)</span></div>
+    <div class="wsmeta"><span class="chip">本会话改过 3 个文件</span><span class="chip">git +12 −4</span><span class="chip">rootfs A</span></div>
+  </div>
+
+  <div class="sec">.pi 资源<span class="r">global · project</span></div>
+  <div class="card">
+    <div class="row"><span class="lbl">扩展</span><span class="val">2 project · 10 global</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">技能</span><span class="val">1 project · 7 global</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">提示词</span><span class="val">5 global</span>${ic.chev}</div>
+    <div class="row"><span class="lbl">主题</span><span class="val">2 global</span>${ic.chev}</div>
+  </div>
+
+  <div class="sec">本会话动过的文件<span class="r">3</span></div>
+  <div class="card">
+    <div class="file"><span class="p">src/components/shell/Composer.tsx</span><span class="n">×2</span></div>
+    <div class="file"><span class="p">src/styles/tokens.css</span><span class="n">×1</span></div>
+    <div class="file"><span class="p">README.md</span><span class="n">×1</span></div>
+  </div>
+
+  <div class="sec">正在运行</div>
+  <div class="card">
+    <div class="job"><span class="live" style="width:5px;height:5px;border-radius:50%;background:var(--ok)"></span><span class="c">bash · pnpm dev:web</span><span class="t">2m18s</span><button class="x">■</button></div>
+  </div>
+</div>
+${dock('ws')}`;
+
+/* 05 模型 sheet */
+const modelSheet = () => `<div class="topbar"><div class="t">修复 composer 键盘遮挡</div><button class="iconbtn">${ic.dots}</button></div>
+<div class="body">
+  <div class="role">你 · 14:31</div>
+  <div class="user">composer 在键盘弹出时会跳一下…</div>
+  <div class="role">pi</div>
+  <div class="msg"><p>问题不在 adjustResize…</p></div>
+</div>
+<div class="composer"><div class="cmp"><button class="rnd">${ic.plus}</button><div class="ph">给 pi 发消息…</div><button class="rnd pri">${ic.send}</button></div></div>
+${footer()}
+${dock('chat')}
+<div class="dim"></div>
+<div class="sheet">
+  <div class="handle"></div>
+  <div class="sh"><div class="t">模型</div><button class="iconbtn">${ic.close}</button></div>
+  <div style="padding:0 14px 6px"><div class="field">${ic.search}<span>搜索模型</span></div></div>
+  <div style="overflow:hidden">
+    <div class="glabel">anthropic</div>
+    <div class="m"><div><div class="nm">claude-opus-4-5</div><div class="meta">in $3 · out $15 · 200k</div></div>${ic.check}</div>
+    <div class="m"><div><div class="nm">claude-sonnet-4-5</div><div class="meta">in $0.8 · out $4 · 200k</div></div></div>
+    <div class="glabel">openai</div>
+    <div class="m"><div><div class="nm">gpt-5.1-codex</div><div class="meta">in $1.1 · out $9 · 400k</div></div></div>
+    <div class="row" style="border-top:1px solid var(--hair)"><span class="lbl">限定模型（循环用）</span><span class="val">3 个</span>${ic.chev}</div>
+  </div>
+</div>`;
+
+const FRAMES = [
+  {cap:'01', name:'对话 · 统一顶栏 + pi 页脚', html: chat()},
+  {cap:'02', name:'会话覆层 · 列表 / 树 / 用户消息', html: sessions()},
+  {cap:'03', name:'设置 · 一套 Section + Row', html: settings()},
+  {cap:'04', name:'工作区 · .pi 资源 × 作用域', html: workbench()},
+  {cap:'05', name:'模型 · 统一 Sheet', html: modelSheet()},
+];
+
+const stage = document.getElementById('stage');
+for (const f of FRAMES) {
+  const fig = document.createElement('div');
+  fig.className = 'fig';
+  fig.innerHTML = `<div class="cap"><b>${f.cap}</b><span>${f.name}</span></div>
+    <div class="device"><div class="screen"><div class="hole"></div>${sysbar()}<div class="app">${f.html}</div><div class="pillbar"></div></div></div>`;
+  stage.appendChild(fig);
+}
+
+document.querySelector('.toolbar').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  document.documentElement.dataset.theme = b.dataset.act.split(':')[1];
+  document.querySelectorAll('[data-seg="theme"] button').forEach(x => x.classList.toggle('on', x === b));
+});
+</script>
+</body>
+</html>
