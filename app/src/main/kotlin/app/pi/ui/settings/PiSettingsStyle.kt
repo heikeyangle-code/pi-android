@@ -295,8 +295,12 @@ internal fun PiSettingsListExpander(
 }
 
 /**
- * 设置面唯一的一种卡：圆角 10、`surfaceContainerLow` 底、无描边，左右各留 14px
- * 页边（v2 的 `Card` 是 `margin:0 14px`）。
+ * 设置面唯一的一种卡：圆角 10、`surfaceContainerLow` 底、1px `outlineVariant` 描边，
+ * 左右各留 14px 页边（v2 的 `Card` 是 `margin:0 14px`）。
+ *
+ * 描边原先默认关闭，只有"需要让相邻卡分开"的调用点才传。实际结果是：深色底上
+ * `surfaceContainerLow` 与页面底只差一档，卡与卡又贴在一起时整屏读作一整块灰面。
+ * 现在默认就是这条 1px 细线，需要无描边的调用点显式传 `BorderStroke(0.dp, Color.Transparent)`。
  *
  * **卡内不加任何 padding**：行自己带 `14 横向 / 10 纵向`，所以文本离屏边 28px，
  * 卡内第一行的上沿与最后一行下沿不需要卡再补一层。「设备能力」页的那张卡与
@@ -305,7 +309,7 @@ internal fun PiSettingsListExpander(
 @Composable
 internal fun PiSettingsCard(
     modifier: Modifier = Modifier,
-    /** 可选描边：需要让相邻的卡彼此分开时才传（默认无描边，设置面外观不变）。 */
+    /** 描边覆盖：默认是 `outlineVariant` 的 1px 细线（见上方 KDoc）。 */
     border: BorderStroke? = null,
     content: @Composable () -> Unit,
 ) {
@@ -314,7 +318,7 @@ internal fun PiSettingsCard(
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
         shape = PiSettingsCardShape,
-        border = border,
+        border = border ?: BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column { content() }

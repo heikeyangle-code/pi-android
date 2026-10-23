@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<title>设置页 · 现状 vs 优化</title>
+<style>
+:root{
+  --page:#21252C; --card:#282C34; --text:#DEE0E1; --muted:#9DA5A9; --dim:#7E888E;
+  --accent:#A798D7; --hair:rgba(255,255,255,.075); --border:rgba(255,255,255,.115);
+  --font-ui:"Inter","Noto Sans CJK SC",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Noto Sans Mono CJK SC",monospace;
+}
+*{box-sizing:border-box} html,body{margin:0}
+body{background:#15181d;color:var(--text);font-family:var(--font-ui)}
+.toolbar{display:flex;align-items:center;gap:12px;padding:14px 36px;border-bottom:1px solid rgba(255,255,255,.07)}
+.toolbar .n{font-family:var(--font-mono);font-size:11px;color:var(--muted);flex:1}
+.stage{display:flex;gap:40px;padding:36px;align-items:flex-start}
+.fig{width:410px}
+.cap{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);margin-bottom:10px;display:flex;gap:8px}
+.cap b{color:var(--muted);font-weight:500}
+.device{width:410px;padding:10px;border-radius:46px;background:#0f1115;
+  box-shadow:0 0 0 1.5px #262a31,0 0 0 3.5px #090a0d,0 34px 80px -20px rgba(0,0,0,.8)}
+.screen{position:relative;width:390px;height:844px;border-radius:38px;overflow:hidden;background:var(--page)}
+.hole{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:9px;height:9px;border-radius:50%;background:#000;z-index:9}
+.status{position:absolute;top:0;left:0;right:0;height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:12px;font-weight:600;z-index:8}
+.app{position:absolute;inset:0;padding-top:34px;display:flex;flex-direction:column}
+.topbar{flex:none;height:48px;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--hair);background:#1c2026}
+.topbar .t{font-size:17px;font-weight:600}
+.pillbar{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:104px;height:4px;border-radius:2px;background:var(--text);opacity:.3;z-index:9}
+.list{flex:1;min-height:0;overflow:hidden;padding:0 0 12px}
+/* 现状：卡无间距、无描边、无分节标题 */
+.card{border-radius:10px;background:var(--card);overflow:hidden}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--hair);min-height:0}
+.row:last-child{border-bottom:0}
+.row .ic{width:16px;height:16px;border-radius:4px;border:1px solid var(--dim);opacity:.7;flex:none}
+.row .tt{flex:1;min-width:0}
+.row .t{font-size:15px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .s{margin-top:2px;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chev{width:14px;height:14px;stroke:var(--dim);fill:none;stroke-width:1.7;stroke-linecap:round;flex:none}
+/* 优化：分节标题 + 卡间距 18 + 1px 描边 */
+.before .card{margin:0 14px}
+.before .card+.card{margin-top:0}
+.after .sec{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.02em;padding:14px 16px 6px}
+.after .card{margin:0 14px;border:1px solid var(--border);background:linear-gradient(180deg,#2A2E37,#272B33)}
+.after .card+.card{margin-top:18px}
+.after .row .ic{opacity:.9}
+.after .topbar{background:transparent}
+.dock{flex:none;display:flex;padding:0 8px 20px;border-top:1px solid var(--hair)}
+.dock button{flex:1;height:52px;border:0;background:none;color:var(--dim);font:inherit;font-size:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative}
+.dock button.on{color:var(--text)}
+.dock button.on::before{content:"";position:absolute;top:-1px;width:16px;height:2px;background:var(--accent);border-radius:0 0 1px 1px}
+.dock .g{width:20px;height:20px;border:1.5px solid currentColor;border-radius:5px;opacity:.85}
+</style>
+</head>
+<body>
+<div class="toolbar"><div class="n">pi-android · 设置首页 · 现状 vs 优化 · 所有尺寸取自 PiSettingsMetrics</div></div>
+<div class="stage" id="stage"></div>
+<script>
+const rows = [
+  ['模型与供应商','默认 claude-opus-4-5 · 3 个厂商',1],
+  ['终端','输入 pi 回车进入原版 TUI',1],
+  ['Pi 文件','看 pi 读的那些文件：设置、模型、提示词、主题、技能',1],
+];
+const groups = [
+  ['系统提示词','用 pi 自带的提示词'],
+  ['消息与网络','引导：稳定 · 后续：排队'],
+  ['上下文与压缩','开启 · 8k / 32k'],
+  ['重试','开启 · 2 次'],
+  ['工具','4 个已启用'],
+  ['会话','由本应用固定（与 pi 共用）· 续接：否'],
+  ['扩展与资源','3 个资源包 · 技能 8 · 扩展 2'],
+  ['外观','主题 system'],
+  ['安全与隐私','信任：询问 · 遥测：关'],
+  ['运行时与诊断','引擎 18.1.0 · 运行中'],
+  ['关于','开源许可 · 诊断报告'],
+];
+const rowHtml = (t,s,icon) => `<div class="row">${icon?'<span class="ic"></span>':''}<div class="tt"><div class="t">${t}</div>${s?`<div class="s">${s}</div>`:''}</div><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>`;
+const card = rows => `<div class="card">${rows.join('')}</div>`;
+const sysbar = `<div class="status"><span>9:41</span><span style="font-family:var(--font-mono);font-size:10px">▮▮▮ ⌁</span></div>`;
+const dock = `<div class="dock"><button><span class="g"></span>对话</button><button><span class="g"></span>工作区</button><button class="on"><span class="g"></span>设置</button></div>`;
+
+const before = `${sysbar}<div class="app before">
+  <div class="topbar"><div class="t">设置</div></div>
+  <div class="list">
+    ${card(rows.map(r=>rowHtml(r[0],r[1],r[2])))}
+    ${card([rowHtml('开源许可','本应用分发的全部开源组件'),rowHtml('诊断报告','引擎退出、运行时事实与最近的失败')])}
+    ${card(groups.map(g=>rowHtml(g[0],g[1],false)))}
+  </div>${dock}</div><div class="pillbar"></div>`;
+
+const after = `${sysbar}<div class="app after">
+  <div class="topbar"><div class="t">设置</div></div>
+  <div class="list">
+    ${card(rows.map(r=>rowHtml(r[0],r[1],r[2])))}
+    <div class="sec">安全与数据</div>
+    ${card([rowHtml('开源许可','本应用分发的全部开源组件'),rowHtml('诊断报告','引擎退出、运行时事实与最近的失败')])}
+    <div class="sec">全部设置</div>
+    ${card(groups.map(g=>rowHtml(g[0],g[1],false)))}
+  </div>${dock}</div><div class="pillbar"></div>`;
+
+const frames = [['01','现状：卡无间距、无描边、无分节',before],['02','优化：间距 18、1px 描边、分节标题',after]];
+document.getElementById('stage').innerHTML = frames.map(([n,c,h])=>`
+  <div class="fig"><div class="cap"><b>${n}</b><span>${c}</span></div>
+  <div class="device"><div class="screen"><div class="hole"></div>${h}</div></div></div>`).join('');
+</script>
+</body>
+</html>
