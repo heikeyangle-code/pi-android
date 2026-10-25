@@ -128,17 +128,22 @@ fun PiSettingRow(
                     effective = setting.effective,
                     onExplainEffect = onExplainEffect,
                 )
-                Text(
-                    valueText,
-                    // 值再长也只能吃 40%：不封顶时它是 Row 里第一个被测量的子项，
-                    // 长值会把标题挤成 0 宽（同 `display` 里那条多行摘要的另一半保险）。
-                    modifier = Modifier.weight(0.4f, fill = false),
-                    style = PiTheme.text.mono,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // 值的**槽**占最多 40%（长值挤不垮标题），但槽本身填满并用 `CenterEnd`
+                // 把文字顶到右缘：`fill = false` 时槽宽=文字宽，短值会停在槽的起点
+                // ——那正是用户报的「值在屏幕中间、没有右对齐」。
+                Box(
+                    modifier = Modifier.weight(0.4f),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Text(
+                        valueText,
+                        style = PiTheme.text.mono,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 // 只读行（运行时事实）没有可打开的东西，v2 也不给它 chevron。
                 if (!setting.readOnly) {
                     PiSettingsChevron()
@@ -201,11 +206,22 @@ internal fun PiSettingsValueRow(
                 modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
             )
         }
-        RowBody(
-            title = title,
-            supporting = value,
-            supportingMono = true,
-        )
+        RowBody(title = title, supporting = null)
+        // 值在**行尾右侧**，不是标题下面那行副文字：这一行的语义就是「标题 + 值 + chevron」。
+        // 宽度同样封顶 40%，再用 `CenterEnd` 顶到右缘。
+        Box(
+            modifier = Modifier.weight(0.4f),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Text(
+                value,
+                style = PiTheme.text.mono,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         if (onClick != null) PiSettingsChevron()
     }
 }
