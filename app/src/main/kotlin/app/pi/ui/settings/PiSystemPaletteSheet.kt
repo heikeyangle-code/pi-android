@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -90,10 +89,12 @@ internal fun PiSystemPaletteSheet(
         ) {
             Text("系统主题", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
+            // 这一页比其它编辑器高：预览 + 三条滑杆 + HEX + 强度 + 常用底色。
+            // 不套 `sheetBodyMax`（420）那层上限，让弹层按内容长高；真的超过一屏时
+            // 外层 ModalBottomSheet 仍会把它撑到全高，这张 Column 内部再滚动。
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = PiSettingsMetrics.sheetBodyMax)
                     .verticalScroll(rememberScrollState()),
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
