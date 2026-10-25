@@ -28,7 +28,9 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -186,7 +188,16 @@ internal fun SubscriptionLoginSheet(
     onSaved: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
-    val session = remember(provider.id) { host.login(provider.id) }
+    // 起进程是 IO，不是组合：`host.login` 要 `ProcessBuilder.start()`，在组合里做会把
+    // 主线程卡在 node 的 exec 上（冷启动几百毫秒起）。所以先交一个 null，LaunchedEffect
+    // 在 IO 上起来，失败也变成这一页里的一句话而不是崩溃。
+    var started by remember(provider.id) { mutableStateOf<Result<PiOAuthHost.Session>?>(null) }
+    LaunchedEffect(provider.id) {
+        started = withContext(Dispatchers.IO) { runCatching { host.login(provider.id) } }
+    }
+    val session = started?.getOrNull()
+    DisposableEffect(session) { onDispose { session?.close() } }
+
     var status by remember(provider.id) { mutableStateOf<Step>(Step.Running) }
     var device by remember(provider.id) { mutableStateOf<Device?>(null) }
     var prompt by remember(provider.id) { mutableStateOf<PiOAuthHost.Event.Prompt?>(null) }
@@ -194,10 +205,9 @@ internal fun SubscriptionLoginSheet(
     var pasted by remember(provider.id) { mutableStateOf("") }
     var askedPaste by remember(provider.id) { mutableStateOf(false) }
 
-    DisposableEffect(session) { onDispose { session.close() } }
-
     LaunchedEffect(session) {
-        session.events.collect { event ->
+        val active = session ?: return@LaunchedEffect
+        active.events.collect { event ->
             when (event) {
                 is PiOAuthHost.Event.Credential -> {
                     val problem = service.setOAuthCredential(provider.id, event.credential)
@@ -260,6 +270,23 @@ internal fun SubscriptionLoginSheet(
             )
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
 
+            if (session == null) {
+                Text(
+                    started?.exceptionOrNull()?.let { "登录起不来：${it.message ?: it::class.java.simpleName}" }
+                        ?: "正在启动登录…",
+                    style = PiTheme.text.meta,
+                    color = if (started?.exceptionOrNull() != null) {
+                        PiTheme.palette.warning
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                Spacer(Modifier.height(PiSpacing.small))
+                TextButton(onClick = onDismiss) { Text("关闭") }
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+                return@Column
+            }
+
             // 设备码：代码要大、要能被一眼抄下来。
             device?.let { code ->
                 Text("在浏览器里输入这个代码", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -302,7 +329,7 @@ internal fun SubscriptionLoginSheet(
                     asking.options.forEach { option ->
                         TextButton(
                             onClick = {
-                                session.answer(asking.promptId, option.id)
+                                active.answer(asking.promptId, option.id)
                                 prompt = null
                             },
                         ) {
@@ -320,7 +347,7 @@ internal fun SubscriptionLoginSheet(
                     TextButton(
                         enabled = pasted.isNotBlank(),
                         onClick = {
-                            session.answer(asking.promptId, pasted)
+                            active.answer(asking.promptId, pasted)
                             pasted = ""
                             prompt = null
                         },
@@ -353,7 +380,7 @@ internal fun SubscriptionLoginSheet(
                         // openai / openrouter 都是这么实现的）。
                         val asking = prompt
                         if (asking != null) {
-                            session.answer(asking.promptId, pasted)
+                            active.answer(asking.promptId, pasted)
                             prompt = null
                         }
                         pasted = ""
@@ -369,7 +396,7 @@ internal fun SubscriptionLoginSheet(
                     }
                     Spacer(Modifier.height(PiSpacing.small))
                     TextButton(onClick = {
-                        session.cancel()
+                        active.cancel()
                         onDismiss()
                     }) { Text("取消") }
                 }
@@ -388,7 +415,7 @@ internal fun SubscriptionLoginSheet(
                     Text("登录失败：${state.message}", style = PiTheme.text.meta, color = PiTheme.palette.warning)
                     Spacer(Modifier.height(PiSpacing.small))
                     TextButton(onClick = {
-                        session.cancel()
+                        active.cancel()
                         onDismiss()
                     }) { Text("关闭") }
                 }
