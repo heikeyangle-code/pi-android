@@ -705,11 +705,10 @@ fun PiRoot() {
                     // There used to be a `TERMINAL_ONLY_ACTIONS` map holding three
                     // signposts to pi's own TUI (`/login`, `/import`, `/changelog`).
                     // All three are gone now: a settings row whose only content is "go
-                    // somewhere else" is not a setting. The OAuth row stays, because no
-                    // other surface in this app can start it — and its answer now names
-                    // the one that can (工作区 → 终端), instead of saying "本应用没有入口",
-                    // which contradicted the terminal page's own header and was a claim
-                    // this app could not back up.
+                    // somewhere else" is not a setting. The OAuth row stays as the
+                    // registry's data descriptor, and its answer now names the surface that
+                    // can actually start the flow — the 「订阅账号」 card in 模型与供应商
+                    // (`ui/settings/SubscriptionLogin.kt`), not the terminal.
                     onRunAction = { setting ->
                         when (setting.key) {
                             // 订阅登录已内建：`PiOAuthHost` 在 guest 里跑 pi 自己的
