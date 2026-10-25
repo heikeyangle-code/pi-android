@@ -537,17 +537,26 @@ private sealed interface Step {
 private data class Device(val userCode: String, val verificationUri: String, val expiresInSeconds: Int?)
 
 /** pi 的 `select` 选项 id → 中文标签；未知 id 原样显示 pi 的文案。 */
-private fun optionLabel(option: PiOAuthHost.Event.Prompt.Option): String = when (option.label) {
-    "Browser", "browser" -> "在浏览器里完成"
-    "Copy code", "copy_code" -> "复制授权码"
-    "Device code", "device_code" -> "用设备码登录"
+private fun optionLabel(option: PiOAuthHost.Event.Prompt.Option): String = when {
+    // 先按 **id** 匹配（pi 的 id 是稳定的），label 只作兜底：文案是 pi 自己写的，会变。
+    option.id == "browser" || option.label.equals("Browser", ignoreCase = true) -> "在浏览器里完成"
+    option.id == "copy_code" || option.id == "manual_code" ||
+        option.label.equals("Copy code", ignoreCase = true) -> "复制授权码"
+    option.id == "device_code" || option.label.equals("Device code", ignoreCase = true) -> "用设备码登录"
     else -> option.label.ifEmpty { option.id }
 }
 
 /** 选项的一句解释；pi 没给 description 时用我们自己的。 */
-private fun optionHint(option: PiOAuthHost.Event.Prompt.Option): String? = when (option.label) {
-    "Browser", "browser" -> option.description ?: "打开浏览器授权，完成后会自动回到这里。"
-    "Copy code", "copy_code" -> option.description ?: "浏览器停住后，把授权码或整条地址粘回来。"
-    "Device code", "device_code" -> option.description ?: "显示一个代码，在另一台设备上输入。"
+private fun optionHint(option: PiOAuthHost.Event.Prompt.Option): String? = when {
+    option.id == "browser" || option.label.equals("Browser", ignoreCase = true) ->
+        option.description ?: "打开浏览器授权，完成后会自动回到这里。"
+
+    option.id == "copy_code" || option.id == "manual_code" ||
+        option.label.equals("Copy code", ignoreCase = true) ->
+        option.description ?: "浏览器停住后，把授权码或整条地址粘回来。"
+
+    option.id == "device_code" || option.label.equals("Device code", ignoreCase = true) ->
+        option.description ?: "显示一个代码，在另一台设备上输入。"
+
     else -> option.description
 }
