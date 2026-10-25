@@ -50,14 +50,13 @@ import app.pi.ui.theme.deriveSystemPalette
  * 那个色，卡片 = 同色向白混 6%（对齐 pi 的 `#21252C → #282C34` 差值）。
  *
  * 应用时机：**只按「应用」时才写盘并切到 `system` 主题**。拖动滑杆只在页内更新预览，
- * 不会顺手改掉用户原来的 dark/light 选择；页底另有「恢复官方主题」一键退出。
+ * 不会顺手改掉用户原来的 dark/light 选择。
  */
 @Composable
 internal fun PiSystemPaletteSheet(
     initialBackground: String,
     initialSaturation: String,
     onApply: (hex: String, saturationWire: String) -> Unit,
-    onResetToOfficial: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val initial = PiSystemPalettes.parseHex(initialBackground) ?: 0x1E1E1E
@@ -180,11 +179,6 @@ internal fun PiSystemPaletteSheet(
                     }
                 }
 
-                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
-                TextButton(onClick = {
-                    onResetToOfficial()
-                    onDismiss()
-                }) { Text("恢复官方主题（dark / light 跟随系统）") }
             }
         }
     }

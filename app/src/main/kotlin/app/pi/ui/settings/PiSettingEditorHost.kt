@@ -81,11 +81,6 @@ fun PiSettingEditorSheet(
                         store.write("theme", JsonPrimitive("system"))
                         onWritten(setting)
                     },
-                    onResetToOfficial = {
-                        // pi 的自动对写法（`light/dark`）：跟随手机深浅色，回到官方两套。
-                        store.write("theme", JsonPrimitive("light/dark"))
-                        onWritten(setting)
-                    },
                     onDismiss = onDismiss,
                 )
             } else if (setting.key == "theme") {
