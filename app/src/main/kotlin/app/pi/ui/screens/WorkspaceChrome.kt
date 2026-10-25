@@ -617,6 +617,8 @@ internal fun WsRow(
     title: String,
     modifier: Modifier = Modifier,
     lead: (@Composable () -> Unit)? = null,
+    /** 前置图标的**底**尺寸。文件行用 32dp 的圆角底，其余行用默认的 18。 */
+    leadSize: Dp = PiSettingsMetrics.cardIconSize,
     mono: Boolean = false,
     strong: Boolean = false,
     titleColor: Color? = null,
@@ -639,7 +641,7 @@ internal fun WsRow(
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
         if (lead != null) {
-            Box(Modifier.size(PiSettingsMetrics.cardIconSize), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(leadSize), contentAlignment = Alignment.Center) {
                 lead()
             }
         }
@@ -687,10 +689,13 @@ internal fun WsRow(
 
 /** 行之间的 inset hairline（与设置页那条同值、同一根线）。 */
 @Composable
-internal fun WsHairline(inset: Boolean = true) {
+internal fun WsHairline(
+    inset: Boolean = true,
+    startInset: Dp = PiSettingsMetrics.pageHorizontal + PiSettingsMetrics.dividerInset,
+) {
     HorizontalDivider(
         modifier = if (inset) {
-            Modifier.padding(start = PiSettingsMetrics.pageHorizontal + PiSettingsMetrics.dividerInset)
+            Modifier.padding(start = startInset)
         } else {
             Modifier
         },
@@ -829,6 +834,8 @@ internal fun WsCardSlice(
     index: Int,
     lastIndex: Int,
     modifier: Modifier = Modifier,
+    /** 行间线的左缩进：文件行缩到文字列（32dp 图标之后），其余行用默认值。 */
+    hairlineStart: Dp = PiSettingsMetrics.pageHorizontal + PiSettingsMetrics.dividerInset,
     content: @Composable () -> Unit,
 ) {
     val radius = PiSettingsMetrics.cardRadius
@@ -845,7 +852,7 @@ internal fun WsCardSlice(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column {
-            if (index > 0) WsHairline()
+            if (index > 0) WsHairline(startInset = hairlineStart)
             content()
         }
     }

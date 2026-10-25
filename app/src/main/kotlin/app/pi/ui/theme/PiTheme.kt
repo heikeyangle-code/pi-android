@@ -116,6 +116,21 @@ object PiSpacing {
     /** 3dp: the state stripe's width in the block chrome. */
     val stripe = 3.dp
 
+    /**
+     * 32dp：列表行左侧那颗**图标底**（工作区页的文件行、资源行）。
+     *
+     * 图标本身仍是 16/18 那一档（[PiSettingsMetrics.searchIconSize] / `cardIconSize`），
+     * 外面这层圆角方块负责把「图标列」对齐出来 —— 一行里图标大小不一，比图标本身长什么
+     * 样更显乱。
+     */
+    val glyphBox = 32.dp
+
+    /** 34dp：一个紧凑控件的高度（工作区芯片、分段之外的胶囊）。 */
+    val controlHeight = 34.dp
+
+    /** 16dp：紧凑控件里的小图标与箭头。 */
+    val controlGlyph = 16.dp
+
     /** 4dp: icon-to-text inside a chip, an error's inline spacer. */
     val small = 4.dp
 

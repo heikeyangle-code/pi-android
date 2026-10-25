@@ -144,9 +144,6 @@ internal data class WorkspaceResource(
 
     /** 给冲突文案用的整条来源短标签（`项目 .pi` / `包 · pi-skills`）。 */
     val sourceText: String get() = sourceLabel + (sourceMono ?: "")
-
-    /** `在对话里用` 插进输入框的那个词（pi 的 `/名字`）。 */
-    val slashCommand: String get() = "/" + name
 }
 
 internal object WorkspaceResourceScan {
@@ -491,13 +488,57 @@ internal object WorkspaceResourceScan {
         if (body.isEmpty()) return null
         var name: String? = null
         var description: String? = null
-        body.forEach { line ->
+        // **逐行走，不 `forEach`**：`description: |` 这种 YAML 块标量的正文在**下面几行**，
+        // 只看同一行会把标记符本身当成描述（用户看到的就是 `|` / `>-`）。
+        var index = 0
+        while (index < body.size) {
+            val line = body[index]
             val key = line.substringBefore(':', "").trim().lowercase(Locale.US)
-            val value = line.substringAfter(':', "").trim().trim('"', '\'')
+            val raw = line.substringAfter(':', "").trim()
+            var value = raw
+            var consumed = index
+            if (raw.startsWith("|") || raw.startsWith(">")) {
+                val folded = raw.startsWith(">")
+                val baseIndent = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+                val collected = mutableListOf<String>()
+                var next = index + 1
+                while (next < body.size) {
+                    val candidate = body[next]
+                    if (candidate.isBlank()) {
+                        collected.add("")
+                        next++
+                        continue
+                    }
+                    val indent = candidate.indexOfFirst { !it.isWhitespace() }
+                    if (indent <= baseIndent) break
+                    collected.add(candidate.trimStart())
+                    next++
+                }
+                val lines = collected.dropWhile { it.isBlank() }.dropLastWhile { it.isBlank() }
+                value = if (folded) {
+                    // `>` 是折行：行与行之间变空格，空行保留成段落分隔。
+                    val out = StringBuilder()
+                    lines.forEach { l ->
+                        if (l.isBlank()) {
+                            out.append("\n\n")
+                        } else {
+                            if (out.isNotEmpty() && !out.endsWith("\n")) out.append(' ')
+                            out.append(l)
+                        }
+                    }
+                    out.toString().trim()
+                } else {
+                    lines.joinToString("\n").trim()
+                }
+                consumed = next
+            } else {
+                value = raw.trim('"', '\'')
+            }
             when (key) {
                 "name" -> if (name == null) name = value
                 "description" -> if (description == null) description = value
             }
+            index = consumed + 1
         }
         FrontMatter(name, description)
     }.getOrNull()
