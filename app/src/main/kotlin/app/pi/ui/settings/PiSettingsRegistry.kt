@@ -731,7 +731,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "retry.maxRetries",
             title = "最大重试次数",
-            description = "整轮请求最多重试几次。",
+            description = "整轮请求的重试上限。",
             kind = PiRowKind.Number,
             group = G_RETRY,
             section = "重试",
@@ -786,7 +786,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "retry.provider.maxRetries",
             title = "Provider 重试次数",
-            description = "SDK 重试次数，默认 0；调高可能让限流先被吞掉。",
+            description = "SDK 层的重试上限，默认 0；调高可能让限流先被吞掉。",
             kind = PiRowKind.Number,
             group = G_RETRY,
             section = "Provider 重试（高级）",

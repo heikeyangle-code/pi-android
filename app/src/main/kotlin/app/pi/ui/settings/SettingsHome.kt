@@ -192,10 +192,9 @@ fun SettingsHome(
                 }
             }
 
-            // 「其他」：与 pi 的设置键无关的四扇门合成一张卡 —— 终端（原版 TUI）、
-            // Pi 文件（看 pi 读的文件）、设备能力（这台手机能做什么）、扩展包与项目信任
-            // （agent 能装什么、项目资源能不能信）。它们都是**屏幕**而不是设置项，
-            // 日常用不到，所以整卡排在分组之下、关于之上。
+            // 「其他」：与 pi 的设置键无关的几扇门合成一张卡 —— 终端（原版 TUI）、
+            // Pi 文件（看 pi 读的文件）、扩展包与项目信任（agent 能装什么、项目资源
+            // 能不能信）。它们都是**屏幕**而不是设置项，日常用不到，所以排在分组之下。
             item {
                 PiSettingsCard {
                     if (onOpenTerminal != null) {
@@ -203,44 +202,30 @@ fun SettingsHome(
                         PiSettingsHairline()
                     }
                     PiFilesEntryRow(onClick = openPiFiles)
-                    if (onOpenDeviceCapabilities != null || onOpenPackages != null) {
+                    if (onOpenPackages != null) {
                         PiSettingsHairline()
+                        PiPackagesEntryRow(onClick = onOpenPackages)
                     }
-                    if (onOpenDeviceCapabilities != null) {
+                }
+            }
+            // 设备能力单独一张卡（用户裁定：不跟「其他」那张混在一起）。它回答的是
+            // 「这台手机允许 agent 做什么」，与运行时的权限授权绑在一起，点进去就是一屏开关。
+            if (onOpenDeviceCapabilities != null) {
+                item {
+                    PiSettingsCard {
                         DeviceCapabilityEntryRow(
                             store = DeviceCapabilityStore.get(context),
                             onClick = onOpenDeviceCapabilities,
                         )
                     }
-                    if (onOpenDeviceCapabilities != null && onOpenPackages != null) {
-                        PiSettingsHairline()
-                    }
-                    if (onOpenPackages != null) {
-                        PiPackagesEntryRow(onClick = onOpenPackages)
-                    }
                 }
             }
-            // 关于：开源许可 + 诊断报告。许可不是 pi 的设置也不是 pi 的功能：这个 App
-            // 分发了一整套 Linux 用户态、Node、git、proot、一个 pi 引擎和许多库，所以
-            // 许可证原文与源码获取方式是**本应用**的义务。诊断报告则是运行时与诊断分组
-            // 里那一行的第二个入口（引擎已经退出时，用户先翻的往往是「关于」）。
-            if (onOpenLicenses != null || onOpenDiagnostics != null) {
+            // 关于：只剩开源许可。诊断报告不在这里重复 —— 它在「运行时与诊断」组里
+            // （同一个入口，engine 退出后从那里进），用户裁定只留一处。
+            if (onOpenLicenses != null) {
                 item {
                     PiSettingsCard {
-                        if (onOpenLicenses != null) {
-                            PiLicensesEntryRow(onClick = onOpenLicenses)
-                        }
-                        if (onOpenLicenses != null && onOpenDiagnostics != null) {
-                            PiSettingsHairline()
-                        }
-                        if (onOpenDiagnostics != null) {
-                            PiEntryRow(
-                                icon = Icons.Filled.Timeline,
-                                title = "诊断报告",
-                                supporting = "引擎最后一次退出、运行时事实与最近的失败",
-                                onClick = onOpenDiagnostics,
-                            )
-                        }
+                        PiLicensesEntryRow(onClick = onOpenLicenses)
                     }
                 }
             }
