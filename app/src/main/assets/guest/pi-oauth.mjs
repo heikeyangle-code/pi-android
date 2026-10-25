@@ -76,6 +76,25 @@ function fail(message) {
 	emit({ ev: "error", message: String(message ?? "unknown error") });
 }
 
+/**
+ * 把错误连同它的 `cause` 链一起说出来。
+ *
+ * `fetch failed` 是 Node 的招牌空话：真正的原因是它下面那层（`ENOTFOUND`、
+ * `ECONNREFUSED`、证书错误…）。只显示 `fetch failed`，用户和我们都只能猜。
+ */
+function describeError(error) {
+	if (!(error instanceof Error)) return String(error);
+	const parts = [error.message || String(error)];
+	let cause = error.cause;
+	for (let depth = 0; cause && depth < 3; depth += 1) {
+		const detail = cause instanceof Error ? cause.message : String(cause);
+		const code = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
+		parts.push(code && !detail.includes(code) ? `${code}: ${detail}` : detail);
+		cause = typeof cause === "object" && cause !== null ? cause.cause : undefined;
+	}
+	return parts.filter(Boolean).join(" ← ");
+}
+
 let providersPromise;
 function loadProviders() {
 	providersPromise ??= import(pathToFileURL(allJsPath).href).then((module) => {
@@ -177,7 +196,7 @@ async function login(providerId) {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (controller.signal.aborted) emit({ ev: "cancelled" });
-		else fail(message);
+		else fail(describeError(error));
 	} finally {
 		for (const pending of pendingPrompts.values()) pending.reject(new Error("Login cancelled"));
 		pendingPrompts.clear();
