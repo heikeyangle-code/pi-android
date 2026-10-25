@@ -4794,6 +4794,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // per-model default on a model switch
             // (`_getThinkingLevelForModelSwitch`), so re-read both.
             refreshState()
+            // 上下文窗口是模型自己的：换模型之后 `contextUsage.contextWindow` 必须重读，
+            // 否则环上的总量会停在旧模型上，直到下一轮结束。
+            refreshStats()
         }
     }
 

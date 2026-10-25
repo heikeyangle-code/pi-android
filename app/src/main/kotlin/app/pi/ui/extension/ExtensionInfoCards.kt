@@ -1,4 +1,6 @@
 package app.pi.ui.extension
+import app.pi.ui.theme.PiShapes
+import androidx.compose.animation.animateContentSize
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -71,7 +73,11 @@ private fun ExtensionStatusCard(statuses: List<ExtensionStatus>) {
                 val spans = remember(row.text) { chromeSpans(row.text) }
                 ExtensionSpans(
                     spans = spans,
-                    defaultColor = PiTheme.palette.muted,
+                    // pi's footer prints an uncoloured status in the **default text** colour
+                    // (`footer.ts:289-297` adds no `fg` wrapper), not dim. The key column
+                    // beside it stays muted — that column is the host's furniture, the text
+                    // is the extension's.
+                    defaultColor = PiTheme.palette.text,
                     style = PiTheme.text.monoSmall,
                     modifier = Modifier.weight(1f),
                 )
@@ -154,9 +160,14 @@ private fun InfoCard(
     val expanded = remember(label) { mutableStateOf(false) }
     BlockCard(
         color = PiTheme.palette.cardBg,
-        modifier = Modifier.toggleContent(expanded.value, { expanded.value = !expanded.value }),
+        // 和悬浮输入框、排队卡同一条视觉带：展开/收起时高度是动画的，下面的输入框
+        // 不会被一次突变顶一下；圆角从内容卡的 10dp 提到 PiShapes.card 的 16dp。
+        modifier = Modifier
+            .animateContentSize()
+            .toggleContent(expanded.value, { expanded.value = !expanded.value }),
         borderColor = PiTheme.palette.borderMuted.copy(alpha = 0.35f),
         padding = BlockCardRowPadding,
+        shape = PiShapes.card,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -194,7 +205,7 @@ fun ExtensionInfoCards(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
         // `06 §2`: 块间距 8.
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

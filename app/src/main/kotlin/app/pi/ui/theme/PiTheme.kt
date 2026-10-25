@@ -73,6 +73,67 @@ object PiSpacing {
     /** `06 §2`「顶栏：高 48」. */
     val topBarHeight = 48.dp
 
+    // ------------------------------------------------------ 悬浮输入框 (composer)
+    //
+    // 用户 2026-10-26 的裁决：输入框悬浮、圆角 26、左右 12、底 8、中性 6dp 阴影；
+    // 工具行 32dp 圆形热区 / 20dp 字形（放得下流式时才出现的两枚送达 chip）；发送 40dp；思考等级 28dp 高 / 16dp 字形；
+    // 上下文环 20dp / 2dp 描边。数字集中在这里，屏幕侧只引用 token —— 也让
+    // `tools/check-ui-consistency.sh` 的裸 dp 棘轮不必为这一次设计上调。
+
+    /** 悬浮输入框的圆角。 */
+    val composerRadius = 26.dp
+
+    /** 中性投影（不拿 accent 染色），浅色主题下承担"浮起来"的那一层。 */
+    val composerShadow = 6.dp
+
+    /** 输入框与屏幕底边（导航条 / 键盘之上）的距离。 */
+    val composerBottomGap = 8.dp
+
+    /** 悬浮输入框与它上方那些卡共用的左右边距。 */
+    val composerPageMargin = 12.dp
+
+    // ------------------------------------------------------ 对话页顶栏
+    //
+    // 用户 2026-10-26 的裁决：56 高（标准顶栏）、页面同色不透明、滚动后才出现
+    // 0.5dp 发丝线；右侧图标 24dp 字形 / 48dp 热区；模型 chip 28 高、最大 120 宽；
+    // 标题前状态点 7dp；顶栏下 12dp 页面底色渐隐。
+
+    val chatTopBarHeight = 56.dp
+    val chatTopBarAction = 48.dp
+    val chatTopBarGlyph = 24.dp
+    val chatTopBarStatusDot = 7.dp
+    val chatTopBarModelChipHeight = 28.dp
+    val chatTopBarModelChipMaxWidth = 120.dp
+    val chatTopBarFade = 12.dp
+
+    /** 列表最后一行与输入框之间的呼吸空间。 */
+    val composerListClearance = 24.dp
+
+    /** 输入框上方渐隐带的高度（透明 → 页面底色）。 */
+    val composerGradientFade = 40.dp
+
+    /** 工具行圆形热区；32 而不是 36，给流式时的「引导 / 后续」留出宽度。 */
+    val composerToolSize = 32.dp
+
+    /** 工具行（`/`、回形针、⋮）的字形尺寸。 */
+    val composerToolIcon = 20.dp
+
+    /** 发送 / 停止圆钮。 */
+    val composerSendSize = 40.dp
+    val composerSendIcon = 18.dp
+
+    /** 上下文环的直径与笔宽。 */
+    val composerRingDiameter = 20.dp
+    val composerRingStroke = 2.dp
+
+    /** 思考等级的整高与 `◐` 尺寸。 */
+    val composerThinkingHeight = 28.dp
+    val composerThinkingIcon = 16.dp
+
+    /** 外圈描边：平时 / 聚焦（宽度，颜色仍来自 thinking 等级）。 */
+    val composerBorderIdle = 1.5.dp
+    val composerBorderFocused = 2.dp
+
     // ------------------------------------------------- the block-interior scale
     //
     // F29 (`docs/rendering-review.md`): the blocks under `ui/blocks/**` carried 60

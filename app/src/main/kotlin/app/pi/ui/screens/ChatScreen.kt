@@ -1,5 +1,37 @@
 package app.pi.ui.screens
 
+import android.animation.ValueAnimator
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import app.pi.rpc.PiResponses
+import app.pi.engine.PiEngineSession
+import app.pi.ui.components.piFormatTokens
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import app.pi.settings.readBoolean
 import app.pi.ui.blocks.PiImageCache
@@ -156,7 +188,6 @@ import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
-import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.render.LocalPiMarkdownImmediate
 import app.pi.ui.render.LocalPiMarkdownParsed
@@ -171,11 +202,9 @@ import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.extension.ExtensionInfoCards
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
-import app.pi.ui.extension.windowTitleOf
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.engineStateGlyph
 import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 import kotlinx.coroutines.delay
@@ -266,7 +295,6 @@ fun ChatScreen(
     ChatBody(
         state = state,
         session = session,
-        bottomInset = bottomInset,
         onOpenSessions = onOpenSessions,
         onOpenWorkspace = onOpenWorkspace,
         onOpenSettings = onOpenSettings,
@@ -277,9 +305,9 @@ fun ChatScreen(
 private enum class ChatSheet { Model, Thinking, Tools, Stats, Context, Fork, Rename }
 
 /**
- * 顶栏图标动作统一用 `PiTopBarIcon`（`ui/PiRoot.kt`）：30×30 radius-8 按压框 + 17 图标。
- * 这里原本有一份私有实现（`ChatTopBarIcon`），同一组数字写了两遍；删掉它之后，
- * 对话页与设置页、视图页的顶栏动作是同一份代码。
+ * 对话页顶栏的图标动作是 [ChatTopBarAction]（48dp 热区 / 24dp 字形），不是别处用的
+ * `PiTopBarIcon`（30dp 框 / 17dp 字形）：56 高的对话页顶栏要同时放 28 高的模型 chip
+ * 和三枚图标，两套尺寸混在一起就是用户看到的「一大一小」。
  */
 /** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
 private val EARLIER_ROW_ICON = 24.dp
@@ -375,7 +403,6 @@ private fun earlierRowHeight(text: String): Dp {
 private fun ChatBody(
     state: PiSessionViewModel.UiState,
     session: PiSessionViewModel,
-    bottomInset: Dp,
     onOpenSessions: () -> Unit,
     /** 见 [ChatScreen] 的 `onOpenWorkspace`：底栏拆掉之后对话页「⋯」里的两扇门。 */
     onOpenWorkspace: () -> Unit,
@@ -413,6 +440,23 @@ private fun ChatBody(
     // revision that merely gets aligned (the startup reconcile) does not.
     var draft by session.composerDraft.text
     var attachments by session.composerDraft.attachments
+
+    // 悬浮输入框的几何。输入框量自己的高度（`onSizeChanged`），列表的底边留白用它 +
+    // 24；键盘/导航条只抬输入框那一层，列表照旧铺到屏幕底边。
+    //
+    // IME 与导航条用 `union` 合并成一个 inset 而不是各自加一次：两者都在底部，
+    // 相加会让输入框在键盘上方多出一条导航条的高度。
+    val dockInsets = WindowInsets.navigationBars.union(WindowInsets.ime)
+    val dockBottom = dockInsets.asPaddingValues().calculateBottomPadding()
+    var composerHeightPx by remember { mutableStateOf(0) }
+    var aboveComposerHeightPx by remember { mutableStateOf(0) }
+    val composerSlot = with(LocalDensity.current) { composerHeightPx.toDp() } + PiSpacing.composerBottomGap
+    val aboveComposerSlot = with(LocalDensity.current) { aboveComposerHeightPx.toDp() }
+    // 输入框上方那几张持久卡（排队 / 导出 / 扩展状态 / widget / bash）也占列表底边：
+    // 不算它们的高度，最后一条回复会被其中一张盖住 —— 恰好是最需要看的时候。
+    // 命令面板和附件条是瞬时的，没有算进来。
+    val listBottomClearance =
+        composerSlot + aboveComposerSlot + dockBottom + PiSpacing.composerListClearance
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
     // `remember` on purpose.
@@ -427,6 +471,9 @@ private fun ChatBody(
     // are preferences this screen actually obeys — before that they were rows
     // whose value nothing consulted (`PiSessionViewModel.UiPrefs`).
     val prefs = state.prefs
+    // 悬浮输入框上方的渐隐要用的底色。在组合里读一次，交给 `drawBehind` 用 ——
+    // `drawBehind` 的 lambda 不是 composable，不能在那里读 `MaterialTheme`。
+    val pageBackground = MaterialTheme.colorScheme.background
     // pi's `app.tools.expand` (Ctrl+O): one switch that expands or collapses every
     // expandable row. Extensions cannot drive it over RPC — `setToolsExpanded` is
     // a documented no-op there (`rpc-mode.ts:303-310`) and this app does not
@@ -436,6 +483,12 @@ private fun ChatBody(
         mutableStateOf(prefs.expandToolsByDefault)
     }
     val listState = rememberLazyListState()
+    // 顶栏的 0.5dp 发丝线只在**列表离开顶部之后**出现；顶栏本身是页面底色，不再常驻一条灰线。
+    val topBarScrolled by remember(listState) {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        }
+    }
     val context = LocalContext.current
 
     // 发出去之后把键盘收起来。
@@ -1124,7 +1177,9 @@ private fun ChatBody(
         atBottom,
         tailPoke,
         sessionKey,
-        bottomInset,
+        // 输入框一浮起来，"最新"的位置就由它和 inset 决定：高度动画、键盘弹出都要把
+        // 尾巴重新钉到新的可见底边，否则最后几行会停在输入框下面。
+        listBottomClearance,
         // The tail row's settled height, from the collector above: the one geometry
         // fact that can change with no other key moving (final parse / image size).
         tailSize,
@@ -1497,6 +1552,27 @@ private fun ChatBody(
         }
     }
 
+    // **`get_session_stats` 不能等用户点环才读。**
+    //
+    // 环与「已用 / 总量」的唯一数据源是 `get_session_stats().contextUsage`
+    // （pi `core/agent-session.ts:4297` 的 `getContextUsage()`；`get_state` 里没有这个
+    // 字段）。引擎进入 Ready 时 ViewModel 已经会读一次，但新会话/模型刚绑定的那一瞬它
+    // 可能还回答不了（`getContextUsage()` 在 `_limitsModel()` 为空或 `contextWindow <= 0`
+    // 时返回 undefined），于是环一直 `?`，直到用户点一次环触发第二次读。
+    //
+    // 这里按「Ready 且还没有 contextUsage」补一次，键是**模型 id**：模型一到位就重读，
+    // 读到之后键不再变，不会变成轮询；已有 stats 的普通会话不会多读。
+    //
+    // 先等 700 ms 再判断：正常的启动路径上 ViewModel 在进入 Ready 时已经读了一次，
+    // 不等它落地就补读会变成每次启动两次 `get_session_stats`（那个调用要遍历整份会话）。
+    // 700 ms 之后还没有 contextUsage，才说明那一次读在了模型绑定之前（或者根本没跑）。
+    val modelId = state.meta.model?.id
+    LaunchedEffect(state.engine, modelId) {
+        if (state.engine != PiEngineSession.EngineState.Ready) return@LaunchedEffect
+        delay(700)
+        if (state.stats?.contextUsage == null) session.refreshStats()
+    }
+
     // The `@` mention list. pi looks its candidates up on every keystroke of the
     // token, debounced by 20 ms (`packages/tui/src/components/editor.ts:251`); here
     // each lookup is a guest process (see `ui/chat/PiMentionSource.kt`), so the
@@ -1604,109 +1680,73 @@ private fun ChatBody(
     Column(Modifier.fillMaxSize()) {
         // ---------------------------------------------------------------- 顶栏
         //
-        // v2's `TopBar` (`design-demos/direction-b-v2.html:489-516`) value for value:
-        // 48 high on the dim surface with a 1px bottom rule, 14 horizontal, a 17/600
-        // title (`PiType.title`, the screen-title role: 17/24 SemiBold, shifted with
-        // 字号), a 12 meta line 1 dp under it, and 30x30 radius-8 press
-        // boxes with 17 glyphs on the right.
+        // 用户 2026-10-26 的裁决（截图里的五个问题）：56 高、页面同色不透明、默认没有
+        // 分隔线（滚动后才出现 0.5dp 发丝线）；左侧是「状态点 + 会话标题 + ▾」一行，
+        // 不再有第二行「✓ 就绪」；右侧统一成模型 chip + 搜索 + 工作区 + ⋮（24dp 字形、
+        // 48dp 热区）。标题拿不到名字时才退回 18sp 的「会话」。
         //
-        // Hand-drawn rather than `material3.TopAppBar` for the same three reasons the
-        // rest of the app's chrome is (`ui/PiRoot.kt`'s `PiTopBar`): M3's height is 64,
-        // its container is `surface` rather than the board's `surfaceDim`, and it draws
-        // no bottom rule. It is *not* `PiTopBar` itself only because the chat's title
-        // slot is not a string: the session name is the way into the session list
-        // (`03-navigation-decision.md`), so it is a tap target carrying a chevron, and
-        // the line under it is the engine state in its own three channels. Both are
-        // chat-specific; the numbers are not, and they are the same four.
+        // 仍然手画而不是 `material3.TopAppBar`：M3 的高度/容器色/自带行为都不是这里要的，
+        // 而这个标题槽不是普通字符串 —— 它是打开会话列表的入口（`03-navigation-decision.md`）。
         Column(
             Modifier
                 .fillMaxWidth()
-                // The edge-to-edge window reports the status bar as an inset instead of
-                // reserving space for it; M3's `TopAppBar` used to absorb it through its
-                // own default `windowInsets`, so a hand-drawn bar has to say so.
-                .statusBarsPadding()
-                // 同 `PiTopBar`：状态栏透明，顶栏必须用页面底色，否则浅色主题下
-                // 状态栏下面会出现一块对不上的灰。
-                .background(MaterialTheme.colorScheme.background),
+                // **不透明先于 inset**：背景画在状态栏后面，顶栏和页面同色，内容不会在
+                // 状态栏/标题下面透出半截。edge-to-edge 把状态栏报成 inset，所以顺序是
+                // background → statusBarsPadding。
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding(),
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    // `06 §2`「顶栏：高 48」: the same token `ui/PiRoot.kt`'s `PiTopBar`
-                    // draws, rather than a second local copy of the number.
-                    .height(PiSpacing.topBarHeight)
+                    // 56dp：标准顶栏高度。单行标题 + 7dp 状态点 + 28dp 模型 chip 都在里面。
+                    .height(PiSpacing.chatTopBarHeight)
                     .padding(horizontal = PiSpacing.pageHorizontal),
                 verticalAlignment = Alignment.CenterVertically,
                 // v2's `TopBar` `gap:10` between the title block and the right cluster.
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    // 会话名是这一屏上「换一个会话」的入口：点它打开会话列表覆盖层。
-                    // 它整体可点（不是只点文字），因为一个看起来像标题的东西如果不响应
-                    // 点击，用户就再也找不到列表——底栏已经不再有「会话」那一项了
-                    // （`03-navigation-decision.md`）。右侧那个 `∨` 是这个 affordance 的
-                    // 符号：v2 的顶栏用符号表示「这里能展开」。
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            // The session name is pi's own (`set_session_name` /
-                            // `session_info_changed`). `setTitle` is a *terminal window
-                            // title*, and reusing it as the app title is an
-                            // interpretation the audit grades DEGRADED — so it is only
-                            // the fallback.
-                            text = state.meta.sessionName
-                                ?: windowTitleOf(
-                                    state.windowTitle,
-                                    if (state.transcript.isEmpty()) "新会话" else "会话",
-                                ),
-                            style = PiType.title,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Icon(
-                            Icons.Filled.KeyboardArrowDown,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    // `06 §4` 的引擎状态行是三重编码（字 + 符号 + 颜色）与 AppBar 的
-                    // `Engine`（`direction-b-v2.html:461-472`）：pi 自己的 `engineLabel`
-                    // 词表配上它自己的符号，颜色只是第三层。
-                    Row(
-                        modifier = Modifier.padding(top = 1.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        val label = session.engineLabel(state)
-                        Text(
-                            text = engineStateGlyph(label),
-                            style = PiTheme.text.monoSmall,
-                            color = stateToneColor(engineStateTone(label), PiTheme.palette),
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = label,
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
+                // 左侧：状态点 + 会话标题 + ▾。整块可点，行为仍是打开会话列表；
+                // 引擎状态从一整行收成一个 7dp 的点，颜色沿用原来对勾的 tone。
+                val engineLabel = session.engineLabel(state)
+                val engineDotColor = stateToneColor(engineStateTone(engineLabel), PiTheme.palette)
+                val sessionTitle = state.meta.sessionName?.takeIf { it.isNotBlank() }
+                val showSearchAction = LocalConfiguration.current.screenWidthDp >= 360
                 Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(PiSpacing.chatTopBarAction)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(PiSpacing.chatTopBarStatusDot)
+                            .clip(CircleShape)
+                            .background(engineDotColor)
+                            .semantics { contentDescription = "引擎：$engineLabel" },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        // pi 自己的会话名（`set_session_name` / `session_info_changed`）。
+                        // 拿不到就只写「会话」；`setTitle` 是终端窗口标题，不再冒充 App 标题。
+                        text = sessionTitle ?: "会话",
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = if (sessionTitle != null) PiType.topBarTitle else PiType.topBarPlaceholder,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     // Hidden on the same three engine-empty screens v2 hides it on
                     // (`modelChip={false}`); with no transcript there is no model
                     // choice to report. See the status row's note below.
@@ -1750,10 +1790,18 @@ private fun ChatBody(
                             sheet = ChatSheet.Model
                         }
                     }
-                    PiTopBarIcon(
-                        onClick = { searchOpen = !searchOpen },
-                        contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
-                        icon = Icons.Filled.Search,
+                    if (showSearchAction) {
+                        ChatTopBarAction(
+                            onClick = { searchOpen = !searchOpen },
+                            contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
+                            icon = Icons.Filled.Search,
+                        )
+                    }
+                    // 工作区：和会话页顶栏同一个 `FolderOpen` 图标，不再只藏在 ⋮ 里。
+                    ChatTopBarAction(
+                        onClick = onOpenWorkspace,
+                        contentDescription = "工作区",
+                        icon = Icons.Filled.FolderOpen,
                     )
                     // There is **no reload icon** any more. pi's `/reload` has no RPC
                     // channel at all — it rebinds pi's runtime *inside* pi
@@ -1769,7 +1817,7 @@ private fun ChatBody(
                     // its 4 dp corner and its `primary` ripple are all three things
                     // `04 §2.3` and v2 refuse. See `PiMenu`'s KDoc.
                     Box {
-                        PiTopBarIcon(
+                        ChatTopBarAction(
                             onClick = { overflow = true },
                             contentDescription = "更多",
                             icon = Icons.Filled.MoreVert,
@@ -1789,6 +1837,17 @@ private fun ChatBody(
                             // image and opens upwards. Neither flips itself.
                             placement = PiMenuPlacement.Below,
                             items = buildList {
+                                // 窄屏把搜索图标收进这里；宽屏仍用顶栏那枚。
+                                if (!showSearchAction) {
+                                    add(
+                                        PiMenuItem(
+                                            if (searchOpen) "关闭对话内查找" else "在对话里查找",
+                                        ) {
+                                            searchOpen = !searchOpen
+                                            if (!searchOpen) searchQuery = ""
+                                        },
+                                    )
+                                }
                                 add(PiMenuItem("命令面板") { draft = "/" })
                                 add(
                                     PiMenuItem("会话与队列") {
@@ -1895,13 +1954,12 @@ private fun ChatBody(
                                         sheet = ChatSheet.Model
                                     },
                                 )
-                                // 工作区 / 设置：底栏拆掉之后这里就是对话页唯一的门
-                                // （另一条在会话页顶栏）。放在最末并带一条分隔线，因为
-                                // 它们是「离开这一屏」，与上面的会话/模型动作不是一类。
+                                // 设置：底栏拆掉之后，工作区在顶栏那枚文件夹图标里，
+                                // 设置仍留在这里。放在最末并带一条分隔线，因为它是
+                                // 「离开这一屏」，与上面的会话/模型动作不是一类。
                                 add(
-                                    PiMenuItem("工作区", dividerBefore = true) { onOpenWorkspace() },
+                                    PiMenuItem("设置", dividerBefore = true) { onOpenSettings() },
                                 )
-                                add(PiMenuItem("设置") { onOpenSettings() })
                                 // There is no terminal entry here any more: the user
                                 // retired the terminal outright, so the settings home's
                                 // row is the one door.
@@ -1910,10 +1968,13 @@ private fun ChatBody(
                     }
                 }
             }
-            HorizontalDivider(
-                thickness = 1.dp,
-                color = MaterialTheme.colorScheme.outline,
-            )
+            // 0.5dp 发丝线只在列表离开顶部之后出现；顶栏平时就是一块干净的页面底色。
+            if (topBarScrolled) {
+                HorizontalDivider(
+                    thickness = PiSpacing.hairlineThin,
+                    color = PiTheme.palette.borderMuted.copy(alpha = 0.55f),
+                )
+            }
         }
 
         // v2's `ChatShell` puts the search strip **between the TopBar and the status
@@ -1948,7 +2009,8 @@ private fun ChatBody(
         // The transcript's **status row is gone** (user ruling, decision D23): a
         // permanent 32 dp band of figures above the stream spends display area the
         // transcript wants, and the same numbers now live one tap away in the
-        // composer's context ring → 会话信息.
+        // composer's context ring (a small used / window bubble; the full sheet is
+        // still in the ⋮ menu as 「上下文与用量」).
         //
         // The row component went with it: `PiStatusLine` had no caller left, so it is
         // deleted; the detail sheet draws the same figures in its own layout.
@@ -1971,37 +2033,18 @@ private fun ChatBody(
         // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
         // D31.
 
-        // **The transcript's box is always there, even when the transcript is not.**
+        // **The transcript fills the page; the composer floats over it.**
         //
-        // This is the fix for 「打开软件之后，输入框跑到屏幕最上面，启动成功之后才落到正常
-        // 位置」, and the mechanism is the whole story: a `Column` measures its
-        // non-weighted children first and gives the weighted ones what is *left*. With
-        // an empty transcript the `weight(1f)` row did not exist at all (the `if` was
-        // around it), so nothing absorbed the free space and the composer — the next
-        // child — was laid out immediately under the top bar. It dropped into place
-        // only when the first rows arrived and the weighted box appeared with them.
-        // The trigger is therefore deterministic and is *not* a first-frame inset
-        // artefact: **any empty transcript** puts the composer at the top, and the 1–2 s
-        // of `Boot.Idle` (D31: the chat page is drawn immediately, the boot page no
-        // longer is) is simply when the user sees it. A brand-new conversation with
-        // nothing sent yet is the same state, which is why this is a layout bug and not
-        // a startup one.
+        // 这一层 Box 从顶栏/搜索条之下一直铺到屏幕底边（输入框、键盘都不再切它），
+        // 输入框和它的浮层作为同一块底栏 `align(BottomCenter)` 叠在上面。列表因此
+        // 满屏，滚动的文字可以从输入框底下穿过。
         //
-        // Keeping the box and moving the emptiness *inside* it makes the composer's
-        // position depend only on the screen's height and on the heights of the rows
-        // below it — never on what the transcript measured, whether it holds 0 rows or
-        // 5000. **Why not `Box(fillMaxSize)` with the composer `align(BottomCenter)`**
-        // (the other shape considered): the transcript then has to know how tall the
-        // composer is in order to pad its last rows out from under it, and the only way
-        // to learn that is to measure the composer and feed the result back into the
-        // transcript — a measure → pad → measure dependency, which is the coupling this
-        // file already went out of its way to avoid (`design/ui-refactor/08-hang-diagnosis.md`,
-        // and the follow effect's own argument above). One owner for the vertical order
-        // is what keeps this fixable.
-        //
-        // `bottomInset` is untouched by it: the trailing spacer and the boot page's
-        // padding keep exactly the semantics they had (see the `Spacer` below and
-        // `ChatScreen`'s boot branch).
+        // 代价就是这里必然有「量输入框 → 填列表底边留白」的一次反馈：`Composer`
+        // 高度由 `onSizeChanged` 量出来，列表的 `contentPadding.bottom` 取其值 +
+        // [PiSpacing.composerListClearance]。这不是历史里那个 `rememberSaveable` 的位置 bug，
+        // 而是悬浮输入框唯一能让最后一行停在输入框上方的办法；量到的值只影响
+        // `contentPadding`，不参与列表自身的测量，所以不会形成 measure → pad →
+        // measure 的循环。
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
         if (!emptyTranscript) {
             // `app.appearance.typography`: the transcript's block rhythm, one of the
@@ -2074,7 +2117,8 @@ private fun ChatBody(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
                     top = 10.dp + earlierBand,
-                    bottom = 12.dp,
+                    // 悬浮输入框 + 它下面的 inset + 一圈呼吸空间；见 [composerSlot] 的注释。
+                    bottom = listBottomClearance,
                 ),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
@@ -2312,7 +2356,16 @@ private fun ChatBody(
                         .align(Alignment.BottomEnd)
                         // v2's dense control step: the pair floats 12 dp in from the
                         // page edge, 8 dp apart. Both numbers were one-use constants.
-                        .padding(12.dp),
+                        //
+                        // 悬浮输入框之后，这一对不能停在屏幕底边：底边归输入框和它的
+                        // 渐隐层。`listBottomClearance` 把输入框与 inset 让开，再加
+                        // 32 dp 让开输入框上方那圈渐隐，箭头才不会被渐变盖住。
+                        .padding(
+                            start = 12.dp,
+                            top = 12.dp,
+                            end = 12.dp,
+                            bottom = listBottomClearance + 32.dp,
+                        ),
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -2352,8 +2405,70 @@ private fun ChatBody(
                 }
             }
             }
-        }
 
+            // 顶栏下方 12dp 的页面底色渐隐：只在列表已经滚离顶部时出现，让内容从
+            // 顶栏边缘"化"进去，而不是被一条硬边切掉。只画，不拦触摸。
+            if (topBarScrolled) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(PiSpacing.chatTopBarFade)
+                        .drawBehind {
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        pageBackground,
+                                        pageBackground.copy(alpha = 0f),
+                                    ),
+                                ),
+                            )
+                        },
+                )
+            }
+
+            // 输入框上方的渐隐：用页面底色，从透明过渡到不透明；只画，不拦触摸。
+            // 高度跟输入框走（输入框高度 + 一圈渐隐区），底边与输入框底边对齐。
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = dockBottom + PiSpacing.composerBottomGap)
+                    .height(composerSlot + PiSpacing.composerGradientFade)
+                    .drawBehind {
+                        val fade = PiSpacing.composerGradientFade.toPx()
+                        if (size.height > fade) {
+                            drawRect(
+                                color = pageBackground,
+                                topLeft = Offset(0f, fade),
+                                size = Size(size.width, size.height - fade),
+                            )
+                        }
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(pageBackground.copy(alpha = 0f), pageBackground),
+                                startY = 0f,
+                                endY = minOf(fade, size.height),
+                            ),
+                        )
+                    },
+            )
+
+            // 悬浮底栏：队列行 / 附件条 / 命令面板 / 输入框都叠在列表之上，整层被
+            // 键盘和导航条抬起。输入框自己只负责左右 12、底 8。
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .windowInsetsPadding(dockInsets),
+            ) {
+
+        // 输入框上方的持久卡组：整组量一次高度，交给列表的底边留白。
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onSizeChanged { aboveComposerHeightPx = it.height },
+        ) {
         if (state.queueSteering > 0 || state.queueFollowUp > 0) {
             QueueRow(
                 steering = state.queueSteering,
@@ -2427,8 +2542,9 @@ private fun ChatBody(
                 run = bashRun,
                 onAbort = { session.abortBash() },
                 onDismiss = { session.dismissBash() },
-                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
             )
+        }
         }
 
         // pi opens its autocomplete as soon as the line starts with `/` and closes
@@ -2508,7 +2624,7 @@ private fun ChatBody(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+                    .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 attachments.forEachIndexed { index, image ->
@@ -2545,18 +2661,25 @@ private fun ChatBody(
             }
         }
 
+        // 悬浮输入框本体：左右 12、底 8。`onSizeChanged` 量的是 Composer 自己的高度
+        // （不含左右/底部 padding），列表的底边留白用它换算。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.composerPageMargin)
+                .padding(bottom = PiSpacing.composerBottomGap)
+                .onSizeChanged { composerHeightPx = it.height },
+        ) {
         Composer(
             draft = draft,
             // One picker for everything: `*/*`, and the callback decides which of
             // pi's two channels the file goes down (see the attachment note above).
             onPickAttachment = { attachmentPicker.launch("*/*") },
-            // The reading the transcript's status row used to carry; pi's own percent,
-            // with no fallback invented for it (null draws the ring's `?` state).
-            contextPercent = state.stats?.contextUsage?.percent,
-            onOpenContext = {
-                session.refreshStats()
-                sheet = ChatSheet.Context
-            },
+            // The reading the transcript's status row used to carry. The ring is always
+            // drawn; the total falls back to the model's own window (pi's footer rule).
+            contextUsage = state.stats?.contextUsage,
+            modelContextWindow = state.meta.model?.contextWindow,
+            onRefreshContext = { session.refreshStats() },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
@@ -2688,6 +2811,7 @@ private fun ChatBody(
                 session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
             },
         )
+        }
 
         // `belowEditor` widgets sit after the composer's key-hint strip, which is
         // the app's footer; pi puts them between editor and footer, and the
@@ -2697,8 +2821,8 @@ private fun ChatBody(
                 state.extensionWidgets.filter { it.placement == WidgetPlacement.BelowEditor }
             },
         )
-
-        Spacer(Modifier.height(bottomInset + 8.dp))
+            }
+        }
     }
 
     when (sheet) {
@@ -3064,26 +3188,30 @@ private fun SearchBar(
 }
 
 /**
- * The context ring in the composer's key row (design decision D23/D27).
+ * 悬浮输入框的几何（用户 2026-10-26 的裁决）。
  *
- * The ring is [CONTEXT_RING_DIAMETER] across with a 2 dp pen, the touch target is
- * **32** rather than the usual 48, and its slot in the row is **30** — the same as the
- * send disc opposite it. The 32 is the designer's ruling and it is load-bearing: a 48 dp
- * box would grow this row by 18 dp, and the row exists to keep the transcript's display
- * area (the status band it replaces was 32 dp tall).
+ * 圆角 26、左右 12、底 8；描边平时 1.5、聚焦 2，150 ms 过渡；运行中只让**现有描边
+ * 颜色**的 alpha 在 1 → 0.45 之间呼吸（1.6 s，`FastOutSlowInEasing`，
+ * `RepeatMode.Reverse`），聚焦时暂停、进出各 150 ms，宽度不跟着动。系统关掉动画时
+ * 不呼吸。颜色来源一行没改。
  *
- * **22 dp, not D27's 24.** D27 fixed the visual at 24 dp; the user's later ruling on this
- * screen was 「这个圆环缩小一点点」, so the drawn arc is 2 dp smaller. The two numbers D27
- * also fixed are untouched: the touch box is still 32 dp (D27's floor), and the slot is
- * still 30 dp, so the row's height and the ring's position in it do not move. The arc is
- * drawn **centred inside** the caller's box (`PiContextRing` owns the visual, its caller
- * owns the target), which is what makes "32 dp you can hit, 22 dp you see" one statement
- * rather than two.
+ * 工具行：`/`、回形针、⋮ 是 32 dp 圆形热区 + 20 dp 字形；发送 40 dp；思考等级
+ * 28 dp 高、16 dp 字形；上下文环 20 dp、2 dp 描边。
+ *
+ * 尺寸 token 在 `PiSpacing`（`composer*`）里，屏幕侧只引用它们；这里剩下的是**时间与
+ * 行数**，不是 dp：150 ms 的描边/进出、1.6 s 的呼吸、6 行上限、20 sp 行高。
+ * 列表底边留白 = 输入框实测高度 + [PiSpacing.composerListClearance]；输入框上方的
+ * 渐隐 = [PiSpacing.composerGradientFade]。
  */
-private val CONTEXT_RING_DIAMETER = 22.dp
-private val CONTEXT_RING_STROKE = 2.dp
-private val CONTEXT_RING_TOUCH = 32.dp
-private val CONTEXT_RING_SLOT = 30.dp
+private const val COMPOSER_BORDER_MS = 150
+private const val COMPOSER_FADE_MS = 150
+private const val COMPOSER_PULSE_MS = 1600
+private const val COMPOSER_PULSE_MIN = 0.45f
+private const val COMPOSER_MAX_LINES = 6
+
+/** 流式时还显示思考等级名字所需的最小屏宽；低于它只留 ◐。 */
+private const val COMPOSER_STREAMING_LABEL_MIN_WIDTH_DP = 390
+private val COMPOSER_LINE_HEIGHT = 20.sp
 
 /**
  * The search input row's height: **40**, which is the number `06 §2` gives the search
@@ -3383,19 +3511,72 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
  * that is what `set_model` takes, and it is tappable because a chip that reports
  * state without offering the picker is a dead end.
  *
- * `06 §2` chip「高 26 圆角 999 `padding:0 9px`」 in v2's `mono t12` with a
- * `1px borderMuted` ring (`direction-b-v2.html:500-503`) — i.e. the default
- * [ChatChip], with no glyph and no state of its own. It carried a Material `Info`
- * glyph and a filled surface before; the board's chip has neither, and a model id is
- * machine language, so it takes the machine face.
+ * 用户 2026-10-26 的裁决：等宽 + 描边的胶囊像输入标签，是整条顶栏最重的东西。
+ * 现在是无衬线 13sp Medium、`surfaceContainerHigh` 填充底、无描边、高 28、末尾 `▾`；
+ * 最大 120dp，长 id 单行省略，点开在底部面板看全名。文字取色仍是 `palette.text`，
+ * 和它原来的逻辑一致。
  */
 @Composable
 private fun ModelChip(label: String?, onClick: () -> Unit) {
-    ChatChip(
-        text = label ?: "选择模型",
-        onClick = onClick,
-        onClickLabel = "选择模型",
-    )
+    // 窄屏上把 120 收到 96：右侧还有三枚 48 热区，标题必须留得下「会话 ▾」。
+    val maxWidth = if (LocalConfiguration.current.screenWidthDp < 400) {
+        PiSpacing.chatTopBarModelChipMaxWidth * 0.8f
+    } else {
+        PiSpacing.chatTopBarModelChipMaxWidth
+    }
+    Row(
+        modifier = Modifier
+            .height(PiSpacing.chatTopBarModelChipHeight)
+            .widthIn(max = maxWidth)
+            .clip(RoundedCornerShape(percent = 50))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClickLabel = "选择模型", onClick = onClick)
+            .padding(horizontal = PiSpacing.inner),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label ?: "选择模型",
+            modifier = Modifier.weight(1f, fill = false),
+            style = PiType.chipLabel,
+            color = PiTheme.palette.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(PiSpacing.tiny))
+        Text(
+            text = "▾",
+            style = PiType.chipLabel,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * 对话页顶栏的一枚图标动作：48dp 热区、24dp 字形、统一 `onSurface`。
+ *
+ * 原来的 `PiTopBarIcon` 是 30dp 框 + 17dp 字形；和 28 高的模型 chip 放在一条 56 高的
+ * 栏里会一大一小，所以对话页单独用这一套，别的屏仍用 `PiTopBarIcon`。
+ */
+@Composable
+private fun ChatTopBarAction(
+    onClick: () -> Unit,
+    contentDescription: String,
+    icon: ImageVector,
+) {
+    Box(
+        modifier = Modifier
+            .size(PiSpacing.chatTopBarAction)
+            .clip(CircleShape)
+            .clickable(onClickLabel = contentDescription, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(PiSpacing.chatTopBarGlyph),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
+    }
 }
 
 /**
@@ -3437,8 +3618,11 @@ private const val PENDING_MESSAGE_LINES = 2
  * `PiTheme.palette.dim` is the same token pi paints these lines with —
  * `theme.fg("dim", …)` at `:3879`/`:3883`/`:3887` — and it is resolved from the
  * user's own theme file (`PiThemeFiles.kt:1020`, the `dim` key), so a theme switch
- * moves both together. There is no background: pi draws these lines on the canvas.
- * At most [PENDING_MESSAGE_LINES] are drawn, unlike pi's uncapped list.
+ * moves both together. pi draws these lines on its canvas; this app now floats them on a
+ * `surfaceContainerLow` card at the same 12 dp edge as the composer, because the composer
+ * itself floats — bare lines over the transcript would read as debris rather than as a
+ * queue waiting above the input box. At most [PENDING_MESSAGE_LINES] are drawn, unlike
+ * pi's uncapped list.
  *
  * v2's `QueueRow` (`direction-b-v2.html:1381-1390`, phone11/phone12) is the shape of
  * the count row: a `⇢` chip for the steering count and a `⇣` chip for the follow-up
@@ -3477,8 +3661,21 @@ private fun QueueRow(
         steeringTexts.filter { it.isNotBlank() }.forEach { add("引导：$it") }
         followUpTexts.filter { it.isNotBlank() }.forEach { add("后续：$it") }
     }.take(PENDING_MESSAGE_LINES)
+    // 悬浮输入框的邻居：同一条 12 dp 边、同一族的圆角卡片，叠在输入框上方。
+    // 输入框浮起来之后，再把这几行裸文字直接画在聊天流上会像悬空的碎片 —— 给它一张
+    // 和输入框同色的底，队列才读成"在输入框上面等着"，而不是"聊天流里的几行字"。
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.composerPageMargin)
+            .padding(bottom = 6.dp),
+        shape = PiShapes.card,
+        // 比输入框（surfaceContainerLow）高一级：两张卡叠在一起时，队列是**浮在**
+        // 输入框上面的那一张，不该和它融成一块。
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -3519,6 +3716,7 @@ private fun QueueRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
     }
 }
 
@@ -3561,7 +3759,7 @@ private fun ExportDeliveryRow(
     onDismiss: () -> Unit,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
         shape = PiShapes.card,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
@@ -3627,10 +3825,19 @@ private fun Composer(
     onOpenMention: () -> Unit,
     /** The paperclip: an image goes on the wire, any other file in as its path. */
     onPickAttachment: () -> Unit,
-    /** pi's context occupancy, 0–100, or null when pi has not reported one. */
-    contextPercent: Double?,
-    /** The ring's tap: the detail sheet, where the same reading is spelled out. */
-    onOpenContext: () -> Unit,
+    /** pi's context occupancy as it reports it; null draws the ring's `?`. */
+    contextUsage: PiResponses.ContextUsage?,
+    /**
+     * 当前模型自己的上下文窗口。pi 的 footer 在 `contextUsage` 缺失时用
+     * `state.model.contextWindow` 兜底（`footer.ts:160`），这里照做：新会话第一次读到
+     * stats 之前，环里的总量也有数。
+     */
+    modelContextWindow: Long?,
+    /**
+     * 点环时补读一次 `get_session_stats`。总量本来就要点开才看，这一下顺手把环的
+     * percent 也刷新到最新 —— 也是旧版「点一次才工作」那条兜底路径。
+     */
+    onRefreshContext: () -> Unit,
     /** pi's `app.clear`: empty editor. True while there is something to clear. */
     canClear: Boolean,
     onClear: () -> Unit,
@@ -3649,21 +3856,57 @@ private fun Composer(
     } else {
         PiTheme.palette.thinking(thinkingLevel)
     }
-    val inputShape = RoundedCornerShape(14.dp)
-    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-        // v2 draws the editor and its key row as **one** bordered container
-        // (`direction-b-v2.html:1428-1440`: `border:1px solid <level>`,
-        // `border-radius:14`, `background:surf-low`, `padding:9px 10px`, the input
-        // and the chip row 8 dp apart inside it). The app used to draw an
-        // `OutlinedTextField` and then a *second*, separately-shaped strip below it,
-        // which read as two controls where v2 has one.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, borderColor, inputShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
-                .padding(horizontal = 10.dp, vertical = 9.dp),
-        ) {
+    // 外观：26dp 圆角、中性阴影（不拿 accent 的色去染）、1.5 → 2 的描边。描边颜色
+    // 仍完全来自上面的 `borderColor`，色相与取色逻辑一个字节都没改。
+    val inputShape = RoundedCornerShape(PiSpacing.composerRadius)
+    // 6 行是**按行高算**的，不是写死 120dp：系统字体放大后写死的 120 只能放 4 行半。
+    val lineHeightDp = with(LocalDensity.current) { COMPOSER_LINE_HEIGHT.toDp() }
+    val fieldMaxHeight = lineHeightDp * COMPOSER_MAX_LINES
+    var focused by remember { mutableStateOf(false) }
+    val borderWidth by animateDpAsState(
+        targetValue = if (focused) PiSpacing.composerBorderFocused else PiSpacing.composerBorderIdle,
+        animationSpec = tween(COMPOSER_BORDER_MS),
+        label = "composerBorderWidth",
+    )
+
+    // 运行中呼吸：只在 alpha 上往返，不改宽度、不改色相。聚焦（正在打字）时目标回到
+    // 1，进出各走一次 [COMPOSER_FADE_MS]；系统关掉动画时 `pulse` 根本不进目标。
+    val animationsEnabled = ValueAnimator.areAnimatorsEnabled()
+    val pulse by rememberInfiniteTransition(label = "composerPulse").animateFloat(
+        initialValue = 1f,
+        targetValue = COMPOSER_PULSE_MIN,
+        animationSpec = infiniteRepeatable(
+            animation = tween(COMPOSER_PULSE_MS, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "composerPulseAlpha",
+    )
+    val factor by animateFloatAsState(
+        targetValue = if (streaming && !focused && animationsEnabled) pulse else 1f,
+        animationSpec = tween(COMPOSER_FADE_MS),
+        label = "composerPulseFactor",
+    )
+    val shownBorder = borderColor.copy(alpha = borderColor.alpha * factor)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // 外观的几层在**外**、`animateContentSize` 在**内**：动画改变的是卡片自己的
+            // 高度，shadow / background / border 画在动画后的尺寸上，行数增长时不会出现
+            // "底已经跳到位、边框还在半路"的错位。
+            .shadow(
+                elevation = PiSpacing.composerShadow,
+                shape = inputShape,
+                clip = false,
+                ambientColor = Color.Black,
+                spotColor = Color.Black,
+            )
+            .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
+            .border(borderWidth, shownBorder, inputShape)
+            // 1–6 行的高度变化在这里补齐；超过 6 行由字段自己内部滚动。
+            .animateContentSize()
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+    ) {
             // 这个字段必须自己拿 `TextFieldValue`，不能用 `value: String` 那个重载。
             // 库的 String 重载把光标位置存在自己内部
             // （`androidx/compose/foundation/text/BasicTextField.kt:713-717`：
@@ -3707,20 +3950,26 @@ private fun Composer(
                     field.value = updated
                     if (textChanged) onDraftChange(updated.text)
                 },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp, max = 120.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = lineHeightDp, max = fieldMaxHeight)
+                    // 聚焦时描边加粗、呼吸暂停；两个都只读这一个布尔。
+                    .onFocusChanged { focused = it.isFocused },
                 // `06 §2` 输入区「输入 14/20」: the composer's own text is the 14 sp
                 // chat-text step with a 20 sp lead, not M3's larger field default.
                 textStyle = PiTheme.text.prose.copy(
-                    lineHeight = 20.sp,
+                    lineHeight = COMPOSER_LINE_HEIGHT,
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
+                // 1–6 行；第 7 行起由字段自己内部滚动，外面不再长高。
+                maxLines = COMPOSER_MAX_LINES,
                 cursorBrush = SolidColor(PiTheme.palette.accent),
                 decorationBox = { inner ->
                     Box {
                         if (draft.isEmpty()) {
                             Text(
                                 text = "输入消息，/ 选命令，! 直接跑命令，@ 提及文件",
-                                style = PiTheme.text.prose.copy(lineHeight = 20.sp),
+                                style = PiTheme.text.prose.copy(lineHeight = COMPOSER_LINE_HEIGHT),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -3732,11 +3981,25 @@ private fun Composer(
             )
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                KeyHint("/", onOpenPalette)
-                // The three trigger characters that used to be their own chips live
-                // here now (`@`, `!`, `!!`). The row could not hold everything on a
-                // 360 dp phone, and the user's ruling was to shorten the row rather
-                // than to add a fallback order for it.
+                // 左侧三枚：32dp 的圆形热区、20dp 字形，平时没有底，按下才起涟漪。
+                ComposerIconButton(onClickLabel = "命令面板", onClick = onOpenPalette) {
+                    Text(
+                        text = "/",
+                        style = PiTheme.text.mono.copy(
+                            fontSize = with(LocalDensity.current) { PiSpacing.composerToolIcon.toSp() },
+                        ),
+                        color = PiTheme.palette.text,
+                    )
+                }
+                ComposerIconButton(onClickLabel = "添加附件", onClick = onPickAttachment) {
+                    Icon(
+                        imageVector = Icons.Filled.AttachFile,
+                        contentDescription = null,
+                        modifier = Modifier.size(PiSpacing.composerToolIcon),
+                        tint = PiTheme.palette.text,
+                    )
+                }
+                // `@` / `!` / `!!` / 清空在这里；引导 / 后续不在菜单里，见下。
                 ComposerMenu(
                     onOpenMention = onOpenMention,
                     onOpenBash = onOpenBash,
@@ -3744,115 +4007,28 @@ private fun Composer(
                     canClear = canClear,
                     onClear = onClear,
                 )
-                // The paperclip: one picker, two channels (see the attachment note in
-                // `ChatBody`). It used to be a `图片` chip wired to an `image/*`
-                // picker, which is why nothing but an image could be attached, and
-                // then a paperclip **with** the word 附件 — the user asked for the
-                // icon alone ("附件本身图标就行，不要有汉字"). Its click label is not the
-                // visible label (there is none), so it is passed separately.
-                KeyChip(
-                    label = "",
-                    a11yLabel = "添加附件",
-                    enabled = true,
-                    onClick = onPickAttachment,
-                    icon = Icons.Filled.AttachFile,
-                )
-                // The two ways to hand pi something **while it is working**, which is
-                // the only time they differ — both are `prompt` with a
-                // `streamingBehavior`, and the names are picked so the pair cannot be
-                // read as synonyms:
-                //
-                //   引导 = `steeringMode` / steer — this turn is steered by the
-                //          message: pi delivers it after the turn's tool calls finish
-                //          and before the next model call
-                //          (`core/agent-session.js:1741-1742`). This is pi's own Enter
-                //          while streaming (`interactive-mode.js:2717-2723`, the call
-                //          at `:2720`).
-                //   后续 = `followUpMode` / followUp — delivered only once the agent
-                //          would otherwise stop (`core/agent-session.js:1753-1754`).
-                //          This is `app.message.followUp`, i.e. `alt+enter`
-                //          (`keybindings.md:166`), whose call is at
-                //          `interactive-mode.js:3674`.
-                //
-                // Both only *queue* the message while a turn runs, so neither draws a
-                // chat row at submit time: the pending row shows it and the transcript
-                // row appears when pi delivers it (`PiEngineSession.prompt`).
-                //
-                // Before this they were one chip (「后续」) and the steer half was
-                // reachable only through the send button — which, now that the engine
-                // flag means "a turn is running" rather than "a message is arriving",
-                // is a stop button for the whole turn. Both are drawn as key chips:
-                // that is the family they belong to.
+                // 引导 / 后续：只在流式时出现，不常驻，所以留在键行里而不是 ⋮。
                 if (streaming) {
-                    KeyChip(label = "引导", enabled = canSteer, onClick = onSteer)
-                    KeyChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
-                }
-                // The transcript's status row used to print this reading in its own
-                // 32 dp band above the stream; it is a ring in the key row now
-                // (decision D23). `06 §2` 输入区 gives the row no such member, so the
-                // geometry is the designer's ruling rather than the board's: a 24 dp
-                // ring with a 2 dp pen, a **32 dp** touch target and a **30 dp** slot
-                // — the slot matches the send disc opposite it so the row's height
-                // does not move, and the touch target is 32 rather than the usual 48
-                // because a 48 dp box would add 18 dp to a row whose whole point is
-                // not to take display area.
-                Box(
-                    modifier = Modifier.size(CONTEXT_RING_SLOT),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    PiContextRing(
-                        percent = contextPercent,
-                        diameter = CONTEXT_RING_DIAMETER,
-                        stroke = CONTEXT_RING_STROKE,
-                        placeholderStyle = PiTheme.text.meta,
-                        modifier = Modifier
-                            .size(CONTEXT_RING_TOUCH)
-                            .clip(RoundedCornerShape(percent = 50))
-                            // A ring has no words, so the label is the only thing a
-                            // screen reader has: it names the reading *and* the tap.
-                            .clickable(onClickLabel = "查看上下文与用量", onClick = onOpenContext),
-                    )
+                    ComposerDeliveryChip(label = "引导", enabled = canSteer, onClick = onSteer)
+                    Spacer(Modifier.width(PiSpacing.tiny))
+                    ComposerDeliveryChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
                 }
                 Spacer(Modifier.weight(1f))
-                // The terminal chip that used to sit here is gone: the composer's
-                // right-hand side belongs to the two things a person reaches for
-                // while typing, and the terminal is not one of them any more — the
-                // user retired it, and the settings home's row is the one door.
-                // The signature element: pi encodes the thinking level as a colour
-                // temperature, and this chip is that language carried into the GUI.
-                // A tap cycles it — pi's `app.thinking.cycle` binding, the action
-                // users reach for most — and the full supported set (which comes
-                // from the model) is one entry away in the overflow menu.
-                // v2 draws it as plain text rather than a pill: a `◐` in the level's
-                // own colour and the level's name in the text colour
-                // (`direction-b-v2.html:1432-1435`).
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClickLabel = "切换思考等级", onClick = onCycleThinking)
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "◐",
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.thinking(thinkingLevel),
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = thinkingLabelOf(thinkingLevel),
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
+                // 一直显示：拿不到 percent 时环里是 pi 自己的 `?`，不是把整枚藏掉。
+                // 总量在 pi 没给 contextWindow 时回退到当前模型自己的窗口（pi 的
+                // footer 也是这么取的：`contextUsage?.contextWindow ?? state.model?.contextWindow`）。
+                ContextRingButton(
+                    usage = contextUsage,
+                    modelContextWindow = modelContextWindow,
+                    onRefresh = onRefreshContext,
+                )
+                Spacer(Modifier.width(4.dp))
+                ThinkingLevelButton(level = thinkingLevel, streaming = streaming, onClick = onCycleThinking)
                 Spacer(Modifier.width(8.dp))
-                // `06 §2` 输入区「发送/停止 30×30 圆角 999 accent」: v2's send key is the
-                // accent disc with a page-coloured glyph (`direction-b-v2.html:1437`),
-                // not a Material icon button — it is the composer's one primary action.
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(percent = 50))
+                        .size(PiSpacing.composerSendSize)
+                        .clip(CircleShape)
                         .background(PiTheme.palette.accent)
                         .clickable(
                             onClickLabel = if (streaming) "停止" else "发送",
@@ -3863,13 +4039,12 @@ private fun Composer(
                     Icon(
                         imageVector = if (streaming) Icons.Filled.Stop else Icons.Filled.Send,
                         contentDescription = if (streaming) "停止" else "发送",
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(PiSpacing.composerSendIcon),
                         tint = PiTheme.palette.pageBg,
                     )
                 }
             }
         }
-    }
 }
 
 /** pi: `isBashMode = text.trimStart().startsWith("!")`. */
@@ -4020,32 +4195,14 @@ private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
 )
 
 /**
- * The composer's ⋮ chip: the trigger characters and 清空, which no longer fit in the
- * key row.
+ * The composer's ⋮ button: `@` / `!` / `!!` / 清空, plus 引导 / 后续 while a turn runs.
  *
- * ## Why the row is shorter
+ * 32 dp 圆形热区、20 dp 手绘三点，和 `/`、回形针同一套；平时没有底色，只有按下时
+ * 的涟漪。菜单仍然**向上**开（[PiMenuPlacement.Above]）：按钮在屏幕底部，向下会被
+ * 键盘挡住。
  *
- * The row could not hold a chip per trigger character on a 360 dp phone: with `@`,
- * `!` and `!!` in it the streaming state ran past the edge and pushed the **send disc
- * off screen**. The user's ruling was to stop budgeting for the overflow and shorten
- * the row instead: those three, plus 清空, moved in here, and the row now measures
- * **198 dp idle / 286 dp streaming** against the 312 dp a 360 dp phone gives the
- * composer's inner box (412 dp phones get 364 dp). Those figures are *computed* from
- * the design constants — chip = content + 2×7 dp padding + 6 dp gap, `/` a 7.2 dp
- * mono advance, the paperclip 16, the ⋮ 24, `◐ 中` 37, the ring 30, the send disc
- * 38 including its 8 dp lead — not measured on a device; there is no device here.
- *
- * ## The chip itself
- *
- * 24×24, radius 6, `surf-highest` — the same family as `/` and the paperclip — with a
- * **hand-drawn three-dot glyph** at 16 dp rather than M3's `MoreVert`: that glyph is a
- * 17–18 dp hairline drawn for the AppBar, and in a 24 dp chip it reads as a different
- * weight. The touch target is 32×32 (4 dp of bleed on each side, inside the row's
- * 30 dp), the pressed state is a flat `surf-high` rather than M3's ripple — the ripple
- * would tint the chip with `accent`, which this app reserves for real actions.
- *
- * The menu opens **upwards** ([PiMenuPlacement.Above]): the chip is in a row at the
- * bottom of the screen, so a downward menu would be under the keyboard.
+ * 引导 / 后续 **不在这里**：它们是流式时最急的两个动作，保留在键行里（见
+ * `ComposerDeliveryChip`）。这个菜单只放触发符和清空。
  */
 @Composable
 private fun ComposerMenu(
@@ -4057,50 +4214,19 @@ private fun ComposerMenu(
 ) {
     var open by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    // The menu is a `Popup` anchored to this box (the composer's container has a
-    // 14 dp radius and clips, so an overlaid `Box` would be cut off at the corner).
-    //
-    // The box is **24 dp** — the chip's own size, in the same family as `/` and the
-    // paperclip — while the node that takes the tap is 32 dp and simply overflows it
-    // by 4 dp on each side. Setting the *box* to 32 would have made the chip 32 wide
-    // and moved the row; Compose hit-tests the child's own bounds, so the larger
-    // target works without the larger slot.
     Box(
         modifier = Modifier
-            .padding(end = 6.dp)
-            .size(24.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(
-                if (pressed) {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHighest
-                },
-            ),
+            .size(PiSpacing.composerToolSize)
+            .clip(CircleShape)
+            .clickable(onClickLabel = "更多输入方式", onClick = { open = true }),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clickable(
-                    interactionSource = interaction,
-                    // No ripple: M3's would tint the chip with `accent`, and accent is
-                    // this app's colour for real actions.
-                    indication = null,
-                    onClickLabel = "更多输入方式",
-                    onClick = { open = true },
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = THREE_DOT_GLYPH,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-        }
+        Icon(
+            imageVector = THREE_DOT_GLYPH,
+            contentDescription = null,
+            modifier = Modifier.size(PiSpacing.composerToolIcon),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
         // The same rule as the top bar's menu: the item list is built at this call site,
         // so a closed menu must not build it. See that site's note.
         if (open) PiMenu(
@@ -4184,84 +4310,173 @@ private val THREE_DOT_GLYPH: ImageVector = ImageVector.Builder(
     fill = SolidColor(Color.Black),
 ).build()
 
+/**
+ * 悬浮输入框工具行里的一枚圆形图标按钮。
+ *
+ * 32 dp 热区、20 dp 字形，平时**没有底色**（旧版的灰方块被去掉了），只有
+ * `clickable` 自带的涟漪在按下时出现。`onClickLabel` 始终独立传入：图标按钮没有
+ * 可见文字，没有它读屏就什么都没有。
+ */
 @Composable
-private fun KeyHint(label: String, onClick: () -> Unit) {
-    KeyChip(label = label, enabled = true, onClick = onClick)
+private fun ComposerIconButton(
+    onClickLabel: String,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(PiSpacing.composerToolSize)
+            .clip(CircleShape)
+            .clickable(onClickLabel = onClickLabel, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
 }
 
 /**
- * One chip of the composer's key row; [KeyHint] is the always-enabled member.
+ * 流式时的「引导 / 后续」：26 dp 的文字 pill，只在 `streaming` 时出现。
  *
- * ## Why three of the key row's triggers are not in the key row
+ * 它和左侧的三枚图标按钮不是同一类：图标是**动作**（打开面板/附件/菜单），这两枚是
+ * **这一次消息怎么送达**，所以它们保留文字、用 `surfaceContainerHigh` 的软底，而不是
+ * 第三枚无底图标。禁用时去掉底、文字转 muted —— 两枚都还在，位置不跳。
  *
- * The row can run out of width on a 360 dp phone. It used to carry one chip per
- * trigger character — `/`, `!`, `!!`, `@`, the paperclip — and the user's ruling was
- * that the answer is not a priority ladder but a **shorter row**: `@`, `!` and `!!`
- * move into the ⋮ chip beside them ([ComposerMenu]), where they do exactly what the
- * chips did. What is left is what a person reaches for while typing (`/`, the
- * paperclip), the two delivery choices that exist only mid-turn (引导 / 后续), the
- * thinking level and the context ring.
- *
- * No width arithmetic, no fallback order, no budget constants — the row is short
- * enough that it does not need any.
- *
- * `06 §2` 输入区 names six key chips (`/` `!` `!!` `@` `图片` `编辑器`) at
- * `24×24` 圆角 6, and v2 draws each one as `height:24;min-width:24;padding:0 7px;
- * border-radius:6;background:surf-highest` with a **mono 12** label
- * (`direction-b-v2.html:1430-1431`). This row is five of them plus two conditional
- * ones: `图片` became the paperclip `附件` (one picker, two channels — see the
- * attachment note in `ChatBody`), and `编辑器` is **deleted** by decision **D19**,
- * because Android has no external editor to hand the draft to and the chip could
- * only report that. Before this batch the row was bare mono text with no chip at
- * all, so it read as stray characters rather than as keys.
- *
- * [enabled] is false for the conditional members whose action needs something to
- * deliver: pi's `alt+enter` 后续 and the 引导 chip both have nothing to hand over
- * while the composer is empty, and a disabled chip is drawn in the muted tokens and
- * takes no tap.
- *
- * ## An empty [label] is an icon-only chip, and it still has to be readable
- *
- * The paperclip draws **no text** (the user's ruling: 「附件本身图标就行，不要有汉字」),
- * so an empty label skips the `Text` **and** the 4 dp gap before it — a `Text("")`
- * would still claim the gap and quietly keep the chip wider than it looks. The
- * accessibility label is therefore a **separate parameter**: [onClickLabel] comes
- * from [a11yLabel], which defaults to [label] for the chips that do have words. An
- * icon-only chip whose click label were empty would announce nothing at all, which is
- * the one thing an icon-only control cannot afford.
- *
- * The icon is 16 dp, not the 14 dp used inside a labelled chip: with the same 7 dp of
- * horizontal padding it makes the icon-only chip exactly 30 dp wide, the designer's
- * number (16 + 7 + 7), and it matches the send disc's glyph weight opposite it.
- *
- * ## What is left here
- *
- * Only the key row's own semantics: `enabled` (a disabled key greys out, one step down
- * on the elevation ladder, and takes no tap), the optional [icon], the separate
- * accessibility label, and the 6 dp trailing gap. The geometry is
- * `app.pi.ui.chat.ChatChip(compact = true)` — see [app.pi.ui.chat.ChatChip] for why the
- * key row keeps v2's `24×24 / radius 6 / padding 0 7px / surf-highest` instead of the
- * `26 / 999 / 0 9px` chip shape.
+ * 宽度：两枚 pill 合计约 76 dp。360 dp 屏上流式时思考等级会先让掉名字（见
+ * [ThinkingLevelButton]），左边那三枚热区也从最初的 36 dp 收到 32 dp，才排得下。
  */
 @Composable
-private fun KeyChip(
+private fun ComposerDeliveryChip(
     label: String,
     enabled: Boolean,
     onClick: () -> Unit,
-    /** Drawn before [label]; the paperclip is the one chip whose glyph carries meaning. */
-    icon: ImageVector? = null,
-    /** What a screen reader hears; required in practice whenever [label] is empty. */
-    a11yLabel: String = label,
 ) {
-    ChatChip(
+    Text(
         text = label,
-        modifier = Modifier.padding(end = 6.dp),
-        icon = icon,
-        muted = !enabled,
-        onClick = if (enabled) onClick else null,
-        onClickLabel = a11yLabel,
-        compact = true,
+        modifier = Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(
+                if (enabled) {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                } else {
+                    Color.Transparent
+                },
+            )
+            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 4.dp),
+        style = PiTheme.text.monoSmall,
+        color = if (enabled) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
+        maxLines = 1,
     )
+}
+
+/**
+ * 上下文用量环 + 点按后的「已用 / 总量」。
+ *
+ * 一直显示：`usage` 为空或 `percent == null` 时，环里是 `PiContextRing` 自己的 `?`
+ * （pi 的 footer 在同一个窗口里也印 `?`），不是把整枚藏掉。
+ *
+ * 环 20 dp、2 dp 笔，进度弧的颜色仍由 `PiContextRing` 的 `contextProgressColor`
+ * 决定。点按弹一个贴环的小气泡，不打开整张 sheet —— 「上下文与用量」仍在 ⋮ 菜单里，
+ * 那里才是看明细的门。气泡向上开：这一行贴着键盘/屏幕底边。
+ *
+ * 总量优先用 pi 报的 `contextWindow`；没有就用当前模型的窗口兜底，和 pi 的 footer
+ * 同一条规则（`contextUsage?.contextWindow ?? state.model?.contextWindow`）。两个都没有
+ * 时显示 `—`，不编一个数。
+ */
+@Composable
+private fun ContextRingButton(
+    usage: PiResponses.ContextUsage?,
+    modelContextWindow: Long?,
+    onRefresh: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val popupLift = with(density) { (PiSpacing.composerToolSize + PiSpacing.composerBottomGap).roundToPx() }
+    val window = usage?.contextWindow?.takeIf { it > 0 }
+        ?: modelContextWindow?.takeIf { it > 0 }
+    Box(Modifier.size(PiSpacing.composerToolSize), contentAlignment = Alignment.Center) {
+        PiContextRing(
+            percent = usage?.percent,
+            diameter = PiSpacing.composerRingDiameter,
+            stroke = PiSpacing.composerRingStroke,
+            placeholderStyle = PiTheme.text.monoSmall,
+            modifier = Modifier
+                .size(PiSpacing.composerToolSize)
+                .clip(CircleShape)
+                .clickable(onClickLabel = "查看已用与总量") {
+                    // 打开气泡之前补读一次：数据本来就只在点开时被看到，这里顺手
+                    // 把 percent 刷新到最新；读不到就继续用已有的值。
+                    onRefresh()
+                    open = true
+                },
+        )
+        if (open) {
+            Popup(
+                alignment = Alignment.BottomCenter,
+                offset = IntOffset(0, -popupLift),
+                onDismissRequest = { open = false },
+                properties = PopupProperties(focusable = true),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 4.dp,
+                ) {
+                    Text(
+                        text = "已用 ${usage?.tokens?.let(::piFormatTokens) ?: "—"}" +
+                            " / 总量 ${window?.let(::piFormatTokens) ?: "—"}",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = PiTheme.text.monoSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 思考等级：28 dp 高、16 dp 的 `◐`、13 sp Medium 的名字；不加底色也不加描边。
+ *
+ * 颜色一行没改：`◐` 仍是 `PiTheme.palette.thinking(level)`，名字仍是 onSurface。
+ * 屏宽 < 360 dp 或字体放大 > 1.3 时只留图标 —— 名字是这行最后可以让掉的东西，
+ * 让掉之后右手边的环和发送钮不会被挤走。
+ */
+@Composable
+private fun ThinkingLevelButton(level: String, streaming: Boolean, onClick: () -> Unit) {
+    val configuration = LocalConfiguration.current
+    // 流式时键行还要塞下「引导 / 后续」两枚；窄屏上先把等级的名字让掉（◐ 的颜色仍
+    // 表示等级），否则整行会挤出屏幕。空闲时按原规则只在 < 360 或字体 > 1.3 时隐藏。
+    val narrowWhileStreaming =
+        streaming && configuration.screenWidthDp < COMPOSER_STREAMING_LABEL_MIN_WIDTH_DP
+    val showLabel = configuration.screenWidthDp >= 360 &&
+        configuration.fontScale <= 1.3f &&
+        !narrowWhileStreaming
+    val iconSize = with(LocalDensity.current) { PiSpacing.composerThinkingIcon.toSp() }
+    Row(
+        modifier = Modifier
+            .height(PiSpacing.composerThinkingHeight)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClickLabel = "切换思考等级：${thinkingLabelOf(level)}", onClick = onClick)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "◐",
+            style = PiTheme.text.meta.copy(fontSize = iconSize),
+            color = PiTheme.palette.thinking(level),
+        )
+        if (showLabel) {
+            Spacer(Modifier.width(5.dp))
+            Text(
+                text = thinkingLabelOf(level),
+                // 13 sp / Medium：`mono` 是 13 sp 的机器角色，名字也是机器给的等级名。
+                style = PiTheme.text.mono.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 

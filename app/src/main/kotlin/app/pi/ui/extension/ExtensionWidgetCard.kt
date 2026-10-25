@@ -1,4 +1,5 @@
 package app.pi.ui.extension
+import app.pi.ui.theme.PiShapes
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
@@ -88,7 +89,7 @@ fun ExtensionWidgetStack(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
         // `06 §2`: 块间距 8.
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -134,6 +135,8 @@ fun ExtensionWidgetStack(
                     .toggleContent(expanded.value, { expanded.value = !expanded.value }),
                 borderColor = (stateColor ?: palette.borderMuted).copy(alpha = 0.35f),
                 padding = BlockCardRowPadding,
+                // 输入框悬浮之后，这几张卡和排队卡、输入框组成同一摞浮层：圆角统一到 16dp。
+                shape = PiShapes.card,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // The stripe only for the two states a reader must not miss. `06 §2` draws

@@ -609,7 +609,11 @@ fun ContextSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    ContextBlock(stats = stats, autoCompaction = state.meta.autoCompaction)
+                    ContextBlock(
+                        stats = stats,
+                        autoCompaction = state.meta.autoCompaction,
+                        modelContextWindow = state.meta.model?.contextWindow,
+                    )
                     UsageBlock(
                         turn = state.turnUsage,
                         session = stats.tokens?.let { totals ->
@@ -736,44 +740,33 @@ private fun ExtensionStatusLine(status: ExtensionStatus) {
 }
 
 /**
- * The sheet's 上下文 block: the ring, the percentage, the window, and the two things
- * pi does *not* say.
+ * The sheet's 上下文 block: ring, percentage, used / window, and the auto-compaction state.
  *
- * The percentage is pi's own `getContextUsage().percent`
- * (`core/agent-session.ts:3446-3450`), one decimal — the same figure the composer's
- * ring draws, in words. The two notes under it exist because the number invites two
- * questions the data cannot answer:
+ * 数字全部是 pi 自己的：`percent` 与 `tokens` 来自 `getContextUsage()`
+ * (`core/agent-session.ts:4297`)，`contextWindow` 是模型自己的窗口；下面的用量对比列
+ * 来自 `get_session_stats()`。按用户要求，解释这些数怎么估的说明文字已删掉，只留读数。
  *
- *  - it is an **estimate**: the last real usage plus `ceil(chars / 4)` per message
- *    since (`core/compaction.ts:270-274`);
- *  - pi has **no breakdown** — system prompt, tool definitions and messages are not
- *    itemised anywhere in its protocol, only the total.
+ * `percent == null` 是 pi 自己的窗口（压缩后到下一次回复前，
+ * `agent-session.ts:4311-4335` 返回 `{tokens:null, contextWindow, percent:null}`）：
+ * 环里是 `?`，已用是 `—`，窗口照旧。
  *
- * `percent == null` is pi's own state after a compaction and before the next reply
- * (`footer.ts:110` prints `?` for exactly this window): the ring draws its empty
- * track with a `?`, the used count is `—`, and the window is still shown, because the
- * window did not change.
- *
- * ## The shape is the design file's, feature by feature
- *
- * `design-demos/context-gauge-options.html`（形态 1 的视觉语言）: 56dp 环（描边 4）、右列三行
- * —— 等宽 17sp 的百分比（阈值色）、等宽 13sp 的 `641k / 1.0M · 自动压缩开`（pi 自己的 k/M
- * 缩写）、12sp 的估算说明；`?` 的样式由调用方给（等宽 12sp，`PiContextRing` 负责 `bodyOnTool`）。
- * 颜色全部走 `PiTheme` 令牌，一个 hex 都没写死。
+ * 窗口行用 pi 自己的 k/M 缩写（[piFormatTokens]，`footer.ts:24-30`），与底栏、环同口径。
  */
 @Composable
-private fun ContextBlock(stats: PiResponses.SessionStats, autoCompaction: Boolean) {
+private fun ContextBlock(
+    stats: PiResponses.SessionStats,
+    autoCompaction: Boolean,
+    /** 当前模型自己的窗口；pi 没给 `contextUsage.contextWindow` 时用它兜底。 */
+    modelContextWindow: Long?,
+) {
     val palette = PiTheme.palette
     val usage = stats.contextUsage
     val percent = usage?.percent
-    // 稿子形态 1 的顶部那一块：左 56dp 环（半径 26、描边 4），右竖排三行 ——
-    // 等宽 17sp 的百分比（阈值色）、等宽 13sp 的窗口行、12sp 的估算说明。
     Row(verticalAlignment = Alignment.CenterVertically) {
         PiContextRing(
             percent = percent,
             diameter = SHEET_RING_DIAMETER,
             stroke = SHEET_RING_STROKE,
-            // 稿子 `.ringbtn .q{font-family:mono;font-size:12px}`：`?` 是等宽 12sp。
             placeholderStyle = PiTheme.text.monoSmall,
         )
         Spacer(Modifier.width(12.dp))
@@ -785,40 +778,32 @@ private fun ContextBlock(stats: PiResponses.SessionStats, autoCompaction: Boolea
                     ?: MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = contextWindowLine(usage, autoCompaction),
+                text = contextWindowLine(usage, autoCompaction, modelContextWindow),
                 modifier = Modifier.padding(top = 2.dp),
-                // 稿子：窗口行是等宽 13sp、正文色 —— 用的是 pi 自己的 k/M 缩写
-                // （`641k / 1.0M`），因为这一行要和底栏/环的口径一致；精确整数只出现在
-                // 下面的两列对比里（稿子 §5 写明这个分工）。
                 style = PiTheme.text.mono,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            NoteText("这是 pi 的估算：最后一次真实用量 + 之后每条消息按字符数 ÷ 4。")
         }
     }
-    // `percent == null` 是 pi 自己的一个窗口（压缩后到下次回复前），不是「还没读到」：
-    // 上面那句 `?` 的行与这一句都只在那个窗口里出现。
-    if (percent == null) {
-        NoteText("压缩后 pi 还没有报占用，等下一次回复。")
-    }
-    NoteText("分类明细 pi 不提供（系统提示词 / 工具定义 / 对话消息这类拆项它没有给，只有总数）。")
 }
 
 /**
- * The window line: `641k / 1.0M · 自动压缩开`, pi's own compact spelling
- * ([piFormatTokens], `footer.ts:24-30`), with `—` in place of the used count while pi
- * reports no percentage (the window itself is still known — `agent-session.ts:3441-3445`
- * nulls `tokens`/`percent` but keeps `contextWindow`).
+ * The window line: `641k / 1.0M · 自动压缩开`.
  *
- * A window pi does not report either leaves the same `—`, so the line never invents a
- * number: the shape is `used / window · auto-state` and any part of it that is unknown
- * says so.
+ * 窗口优先 `usage.contextWindow`，否则当前模型的 `contextWindow` —— pi 的 footer 也是
+ * `contextUsage?.contextWindow ?? state.model?.contextWindow`（`footer.ts:160`）。
+ * 两个都没有才写 `—`；已用只在 pi 报了 tokens 时出现。
  */
-private fun contextWindowLine(usage: PiResponses.ContextUsage?, autoCompaction: Boolean): String {
+private fun contextWindowLine(
+    usage: PiResponses.ContextUsage?,
+    autoCompaction: Boolean,
+    modelContextWindow: Long?,
+): String {
     val used = usage?.tokens?.let { piFormatTokens(it) } ?: "—"
-    val window = usage?.contextWindow?.takeIf { it > 0L }?.let { piFormatTokens(it) } ?: "—"
+    val window = usage?.contextWindow?.takeIf { it > 0L }
+        ?: modelContextWindow?.takeIf { it > 0L }
     val auto = if (autoCompaction) "自动压缩开" else "自动压缩关"
-    return "$used / $window · $auto"
+    return "$used / ${window?.let { piFormatTokens(it) } ?: "—"} · $auto"
 }
 
 /**
@@ -848,7 +833,7 @@ private fun contextWindowLine(usage: PiResponses.ContextUsage?, autoCompaction: 
 private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: TokenUsage?) {
     // 稿子的 `.cmp`：两列并排，中间一条 1px `borderMuted` 竖分隔线，两侧各 12dp。
     // `IntrinsicSize.Min` 是那条竖线能 `fillMaxHeight` 的前提（画到较高那一列的下沿）。
-    SectionTitle("用量对比", trailing = "（服务商回报的真值 · 千分位是精确整数）")
+    SectionTitle("用量对比")
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         UsageColumn("本轮", turn, Modifier.weight(1f), cumulative = false)
         Spacer(Modifier.width(12.dp))
@@ -861,10 +846,6 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
         Spacer(Modifier.width(12.dp))
         UsageColumn("本会话累计", session, Modifier.weight(1f), cumulative = true)
     }
-    NoteText(
-        "「本轮」＝ 从本回合开始、模型每一次回复的用量之和，正在流式的这一条要等它结束才计入；" +
-            "「本会话累计」＝ 整个会话，含压缩 / 摘要那次调用。",
-    )
     // Two hit rates, and the labels are long on purpose: the user has already read
     // one of these as the other. They are different kinds of number —
     //
@@ -1040,41 +1021,20 @@ private fun KvRow(key: String, value: String, note: String? = null, keyWidth: Dp
 }
 
 /**
- * A section title inside the sheet: 12sp/500 in the body colour, with an optional muted
- * parenthetical at 400 (稿子 `.sheet .sec` + 「（…）」那一半), 上距 12 下距 6.
+ * A section title inside the sheet: 12sp/500 in the body colour, 上距 12 下距 6.
+ *
+ * 原来还有一个可选的 muted 括号注（「（服务商回报的真值…）」），按用户「说明文字都删掉」
+ * 的要求去掉了；标题只留名字。
  */
 @Composable
-private fun SectionTitle(text: String, trailing: String? = null) {
+private fun SectionTitle(text: String) {
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp)) {
         Text(
             text = text,
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
         )
-        if (trailing != null) {
-            Text(
-                text = trailing,
-                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Normal),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
-}
-
-/**
- * The two honest sentences and the no-reading state share this style: 12sp / line-height 1.6
- * in the muted colour — the design file's `.note`（`font-size:12px;line-height:1.6`）。
- * `PiTheme.text.meta` is 12/18 (1.5); the 19.2sp below is that 1.6 written out, because these
- * are the sentences a reader has to get through, not a label.
- */
-@Composable
-private fun NoteText(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.padding(top = 2.dp),
-        style = PiTheme.text.meta.copy(lineHeight = 19.2.sp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
 /** `96,400` — an exact count, for a sheet someone quotes. */

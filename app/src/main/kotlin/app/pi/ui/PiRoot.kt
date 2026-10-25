@@ -589,6 +589,11 @@ fun PiRoot() {
     // 就是系统导航条 inset；首装解包那几分钟由 `ChatScreen` 自己决定画 `BootScreen`，
     // 与这里的目的地切换无关。
 
+    // 对话页的 IME 由输入框自己接管：输入框悬浮在键盘上方，列表要铺到键盘后面，
+    // 所以 Scaffold 不能再整体缩一次（缩了列表就跟着短，键盘前面就没有"满屏"了）。
+    // 其它目的地和覆盖层（会话列表 / 会话树 / 终端）仍按原来的方式在 Scaffold 上抬升，
+    // 它们没有悬浮输入框，也不该为了对话页的布局改自己的 inset。
+    val chatOwnsIme = current == PiDestination.Chat && overlayState == null
     Scaffold(
         // `imePadding()` is what makes the soft keyboard *displace* the UI instead of
         // covering it. The activity is `enableEdgeToEdge()` (`MainActivity.kt:19`) and
@@ -596,10 +601,12 @@ fun PiRoot() {
         // edge-to-edge the framework stops resizing the window for the IME and reports
         // it as an inset instead — so `adjustResize` alone lifts nothing, and the
         // composer, its toolbar and the bottom bar all ended up behind the keyboard
-        // (seen on device, docs/known-gaps.md §M2). Applied here, once, for every
-        // destination: the terminal used to carry its own `imePadding()` and would now
-        // pad twice, so that one was removed.
-        modifier = Modifier.imePadding(),
+        // (seen on device, docs/known-gaps.md §M2).
+        //
+        // 对话页不再走这里：`ChatScreen` 的 dock 自己有 `windowInsetsPadding(ime ∪
+        // navigationBars)`，Scaffold 再 pad 一次会把整块内容抬两次。其余目的地保持
+        // 原行为（终端也仍然靠这一层）。
+        modifier = if (chatOwnsIme) Modifier else Modifier.imePadding(),
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
             when (current) {

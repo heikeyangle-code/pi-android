@@ -8,7 +8,8 @@ import androidx.compose.ui.unit.sp
 import app.pi.ui.theme.PiTheme
 
 /**
- * 行标题与屏标题：`06 §2` 五档（12 / 13 / 14 / 15 / 17）里**上面那两级**的唯一入口。
+ * 行标题、屏标题与顶栏紧凑标签：`06 §2` 五档（12 / 13 / 14 / 15 / 17）里上面那两级，
+ * 加上对话页顶栏自己的 16 / 18 / 13 三个角色（见文件末尾 [topBarTitle] 等）。
  *
  * ## 为什么这是两个「角色」，不是随手开的第六档
  *
@@ -76,6 +77,59 @@ object PiType {
                 fontSize = (17 + shift).sp,
                 lineHeight = (24 + shift).sp,
                 fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+    /**
+     * 对话页顶栏的会话标题：`16 + 字号偏移` / `22 + 字号偏移` 的 SemiBold。
+     *
+     * 顶栏从两行（标题 + 引擎状态）收成一行 56dp 之后，标题比屏标题档小一档才留得下
+     * 呼吸；仍然随 `app.appearance.fontSize` 平移，不钉死。
+     */
+    val topBarTitle: TextStyle
+        @Composable
+        @ReadOnlyComposable
+        get() {
+            val shift = PiTheme.typography.fontSizeOffsetSp
+            return PiTheme.text.meta.copy(
+                fontSize = (16 + shift).sp,
+                lineHeight = (22 + shift).sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+    /**
+     * 没有会话标题时的「会话 ▾」：`18 + 字号偏移` / `24 + 字号偏移` SemiBold。
+     *
+     * 比 [topBarTitle] 大一档：它没有具体名字，要在同一位置撑起“这是会话入口”的重量。
+     */
+    val topBarPlaceholder: TextStyle
+        @Composable
+        @ReadOnlyComposable
+        get() {
+            val shift = PiTheme.typography.fontSizeOffsetSp
+            return PiTheme.text.meta.copy(
+                fontSize = (18 + shift).sp,
+                lineHeight = (24 + shift).sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+    /**
+     * 顶栏模型 chip 这类紧凑标签：`13 + 字号偏移` / `18 + 字号偏移` 的 Medium，无衬线。
+     *
+     * 它和 [app.pi.ui.theme.PiTextStyles.mono] 的 13sp 不是一回事：那是机器语言（路径、
+     * 命令），这是控件上的文字，所以走系统字面。
+     */
+    val chipLabel: TextStyle
+        @Composable
+        @ReadOnlyComposable
+        get() {
+            val shift = PiTheme.typography.fontSizeOffsetSp
+            return PiTheme.text.meta.copy(
+                fontSize = (13 + shift).sp,
+                lineHeight = (18 + shift).sp,
+                fontWeight = FontWeight.Medium,
             )
         }
 }
