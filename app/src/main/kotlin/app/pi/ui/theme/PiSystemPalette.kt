@@ -191,6 +191,20 @@ object PiSystemPalettes {
     /** 没写过设置时使用的一档：pi 自己的默认（与 [defaultAnsiPalette] 逐值相同）。 */
     const val DEFAULT_ID = "pi-default"
 
+    /**
+     * 配色页用的 16 色：GNOME/Tango 那一套，而不是 pi 的经典 16 色（`#0000FF` 纯蓝）。
+     *
+     * pi 的 `DEFAULT_ANSI` 是 DOS/经典调色板的原值，它的蓝槽是 `#0000FF`；而
+     * `userMessageBg` 这一族**就是从蓝槽取色相与饱和度的**（`FAMILIES`，`system-theme.ts:47-63`），
+     * 于是推导出来的用户气泡是一块刺眼的纯蓝。真实终端里用户的蓝几乎都是柔和过的
+     * （Tango 是 `#3465A4`），这才是 pi 在桌面上好看的原因；我们把它作为“终端时报了什么”
+     * 的默认值。pi 自己的 tier-3 兜底（没终端调色板时）仍然是 [DEFAULT_ANSI]，没有改。
+     */
+    private val SOFT_ANSI: IntArray = intArrayOf(
+        0x2E3436, 0xCC0000, 0x4E9A06, 0xC4A000, 0x3465A4, 0x75507B, 0x06989A, 0xD3D7CF,
+        0x555753, 0xEF2929, 0x8AE234, 0xFCE94F, 0x729FCF, 0xAD7FA8, 0x34E2E2, 0xEEEEEC,
+    )
+
     /** 档位顺序就是界面顺序，第一档是默认。 */
     val presets: List<PiSystemPalettePreset> = listOf(
         PiSystemPalettePreset(
@@ -259,10 +273,12 @@ object PiSystemPalettes {
     const val SATURATION_KEY = "app.appearance.systemPaletteSaturation"
 
     /** 饱和度三档：pi 的推导有一个倍率参数，这里把它变成可选的一维。 */
+    // pi 的 `generateSystemThemeColors` 把 saturation 夹在 0..1（`system-theme.ts:457`），
+    // 所以 1.4 那种“更鲜艳”其实会被夹回 1.0、跟标准档一模一样。三档都放在 0..1 内。
     val saturations: List<Pair<String, Double>> = listOf(
-        "soft" to 0.7,
-        "normal" to 1.0,
-        "vivid" to 1.4,
+        "soft" to 0.55,
+        "normal" to 0.8,
+        "vivid" to 1.0,
     )
 
     /** 设置值 → 饱和度倍率；未知值一律 1.0（pi 的原值）。 */
@@ -315,7 +331,7 @@ object PiSystemPalettes {
         val preset = presets.firstOrNull { it.id == id }
         return PiAnsiPalette(
             background = background,
-            ansi = DEFAULT_ANSI.copyOf(),
+            ansi = SOFT_ANSI.copyOf(),
             foreground = preset?.foreground ?: foregroundFor(background),
         )
     }
