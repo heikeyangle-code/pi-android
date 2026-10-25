@@ -349,10 +349,8 @@ data class PiTextStyles(
             ).piPrecise(),
             prose = TextStyle(
                 fontFamily = FontFamily.Default,
-                // 经典档的正文从 14/23 提到 15/24：它同时是 `PiTextStyles.Default`
-                // （`CLASSIC` 直接复用它），所以这一处就是经典档的正文字号。
-                fontSize = 15.sp,
-                lineHeight = 24.sp,
+                fontSize = 14.sp,
+                lineHeight = 23.sp,
                 fontWeight = FontWeight.Normal,
             ).piPrecise(),
             code = TextStyle(

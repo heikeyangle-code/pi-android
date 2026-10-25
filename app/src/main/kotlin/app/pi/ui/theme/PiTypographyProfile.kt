@@ -381,17 +381,14 @@ data class PiTypographyProfile(
         // the constants, then these tables, then `Default`.
         private val PRESETS: Map<String, Preset> = mapOf(
             CLASSIC to Preset(
-                // 2026-10：用户对照别的聊天软件后定的“经典也不该是最挤的一档”。
-                // 原来 14/23、块距 2、列表 2、消息间隙 8、行内代码 400 —— 小、紧、
-                // 又细，屏幕上就是“没质感”。数值对齐“舒适”一档的密度，字号仍比它小 1。
-                proseSize = 15, proseLine = 24,
-                block = 10, listItem = 6, indent = 18,
-                codeSize = 13, codeLine = 21,
-                blockSpacing = 6,
-                messageGap = 16,
-                inlineSize = 13f, inlineWeight = 600,
-                tableSize = 13f, tableLine = 20,
-                headings = intArrayOf(24, 21, 19, 17, 16, 15),
+                proseSize = 14, proseLine = 23,
+                block = 2, listItem = 2, indent = 12,
+                codeSize = 13, codeLine = 19,
+                blockSpacing = 8,
+                messageGap = 8,
+                inlineSize = 12.5f, inlineWeight = 400,
+                tableSize = 12.5f, tableLine = 18,
+                headings = intArrayOf(22, 20, 18, 16, 15, 14),
             ),
             COMPACT to Preset(
                 proseSize = 15, proseLine = 24,
