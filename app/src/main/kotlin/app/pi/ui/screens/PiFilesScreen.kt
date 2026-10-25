@@ -47,7 +47,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.pi.packages.PiConfigFiles
@@ -71,6 +70,7 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
+import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsBadge
 import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsChip
@@ -346,9 +346,9 @@ internal fun PiFilesScreen(
                     )
                     Text(
                         "上一级",
-                        // 行标题那一档：15 + Medium（与设置面 `PiSettingsEntryRow` 的 `RowBody`
-                        // 同一个表达式；这里原来漏了字重，落在 400 上）。
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        // 行标题那一档：`PiType.rowTitle`（15/23 Medium，随字号档平移），与设置面
+                        // 的 `RowBody`、工作区的 `WsRow` 同一个角色；这里原来漏了字重，落在 400 上。
+                        style = PiType.rowTitle,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
@@ -524,7 +524,7 @@ private fun PiFilesMessage(text: String, color: Color) {
             .fillMaxSize()
             .padding(PiSettingsMetrics.pageHorizontal),
     ) {
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = color)
+        Text(text, style = PiTheme.text.prose, color = color)
     }
 }
 
@@ -559,12 +559,11 @@ private fun PiFilesRow(
         Column(Modifier.weight(1f)) {
             Text(
                 entry.name,
-                // 文件名是**路径型**标题，所以走等宽，但字号取行标题那一档：
-                // `PiTheme.text.mono` 是 13 的机器正文，比同一张卡里的「上一级」(15/500)
-                // 小两档。这里用 `WorkspaceChrome.WsRow` 对等宽行标题的同一条规矩
-                // （稿子的 `mono t14`：14/500），工作区与 Pi 文件两处的文件行从此同值。
-                style = PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                fontWeight = FontWeight.Medium,
+                // 文件名是**路径型**标题，所以走等宽；字号、行高与字重仍归行标题那个角色管
+                // （`PiType.rowTitle`），这里只把字族换回等宽。`PiTheme.text.mono` 是 13 的
+                // 机器正文，比行标题小两档，不能拿来当文件行的标题。工作区 `WsRow` 的等宽分支
+                // 是同一个表达式，两条路上的文件行从此同值。
+                style = PiType.rowTitle.copy(fontFamily = PiTheme.text.mono.fontFamily),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -624,7 +623,7 @@ private fun PiFilesEditor(
                             .clip(RoundedCornerShape(8.dp))
                             .clickable(enabled = !saving, onClick = onDismiss)
                             .padding(horizontal = 9.dp, vertical = 5.dp),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Column(Modifier.weight(1f)) {
@@ -650,7 +649,7 @@ private fun PiFilesEditor(
                             .clip(RoundedCornerShape(8.dp))
                             .clickable(enabled = check.ok && !saving, onClick = onSave)
                             .padding(horizontal = 9.dp, vertical = 5.dp),
-                        style = MaterialTheme.typography.bodyMedium.copy(
+                        style = PiTheme.text.prose.copy(
                             fontWeight = if (check.ok && !saving) FontWeight.SemiBold else FontWeight.Normal,
                         ),
                         color = if (check.ok && !saving) PiTheme.palette.accent else PiTheme.palette.muted,
@@ -725,7 +724,7 @@ private fun PiFilesEditorNote(title: String, body: String, tone: Color) {
     Text(
         title,
         modifier = Modifier.padding(top = PiSettingsMetrics.notePaddingVertical),
-        style = MaterialTheme.typography.labelLarge,
+        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
         color = tone,
     )
     Text(

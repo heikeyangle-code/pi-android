@@ -72,6 +72,7 @@ import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.components.PiEmptyStateTopAnchored
+import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSheet
@@ -617,7 +618,7 @@ fun SessionsScreen(
             ) {
                 Text(
                     acting.displayName,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -699,8 +700,8 @@ fun SessionsScreen(
 }
 
 /**
- * 长按菜单里的一行（v2 `SessionsOverlay` 的 sheet 内容：`padding:12px 14px`、t14、
- * 色由调用方按语义给 —— 删除是 error）。
+ * 长按菜单里的一行（v2 `SessionsOverlay` 的 sheet 内容：`padding:12px 14px`、
+ * 行标题 `PiType.rowTitle`（t15/500）、色由调用方按语义给 —— 删除是 error）。
  */
 @Composable
 private fun SessionActionRow(label: String, tone: Color, onClick: () -> Unit) {
@@ -713,7 +714,7 @@ private fun SessionActionRow(label: String, tone: Color, onClick: () -> Unit) {
                 horizontal = PiSettingsMetrics.pageHorizontal,
                 vertical = SESSIONS_ACTION_ROW_PADDING,
             ),
-        style = MaterialTheme.typography.bodyMedium,
+        style = PiType.rowTitle,
         color = tone,
     )
 }
@@ -745,7 +746,7 @@ private fun NewSessionButton(onClick: () -> Unit) {
         )
         Text(
             "新建会话",
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onPrimary,
         )
     }
@@ -982,8 +983,8 @@ private fun SessionRow(
                 Text(
                     summary.displayName,
                     modifier = Modifier.weight(1f),
-                    // 15/500：v2 的 `t15 w5`。`bodyLarge` 是同一档字号但 400，所以只补字重。
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                    // 15/500：v2 的 `t15 w5`，行标题那一档 —— `PiType.rowTitle`。
+                    style = PiType.rowTitle,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

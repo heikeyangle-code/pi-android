@@ -25,10 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.ui.components.EffectiveKind
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -344,10 +344,10 @@ private fun RowScope.RowBody(
                 style = if (mono) {
                     PiTheme.text.mono
                 } else {
-                    // 行标题曾借 M3 的 `bodyLarge`（15/500）；五档角色里最近的是
-                    // `prose`（14/23），字重仍取 500，把标题与 12 的副行分开 ——
-                    // 设置面不再为行标题单开第六档。
-                    PiTheme.text.prose.copy(fontWeight = FontWeight.Medium)
+                    // 行标题就是 `PiType.rowTitle`（15/23 Medium）：设置面、工作区、文件列表
+                    // 与菜单动作共用这一个角色，不再借 M3 的 `bodyLarge`，也不再退回 `prose`
+                    // （14/23 Regular）—— 那会让同一个 App 的行标题差一档。
+                    PiType.rowTitle
                 },
                 color = titleColor,
                 maxLines = 1,

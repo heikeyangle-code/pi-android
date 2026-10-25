@@ -24,18 +24,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
@@ -171,77 +167,8 @@ internal object PiSettingsMetrics {
     val footerTop: Dp = 16.dp
 }
 
-/**
- * 设置面的**标题档**：17/24 SemiBold —— 也就是原来 M3 `titleMedium` 的那几个数。
- *
- * ## 为什么要有它
- *
- * 设置面此前有两条标题来源：`PiTheme.text` 的五档角色（12/13/14 …）与 M3 的
- * `MaterialTheme.typography.titleMedium|titleSmall`（17/24、15/22 SemiBold）。
- * 后者不在这五档里，sheet 标题、卡片头、预览小标题于是各是各的字号 —— 同一个
- * 设置面两种度量并存，正是本批要收掉的东西。收敛之后标题只剩这一个入口：
- * 调用点写 `PiTypography.title`，不再逐处 `copy(fontSize = …, lineHeight = …)`。
- *
- * ## 为什么保留 `字号` 档的平移
- *
- * M3 的槽会被 `piTypography(fontSizeOffsetSp)` 整体平移（`PiTheme.kt`），所以
- * `titleMedium` 在 `字号 = 更大` 时是 18/25、`= 最大` 时是 19/26。把标题钉死成
- * 17/24 的常量，会让设置面的标题在那些档位**不再跟着长**，而同一屏的正文（`prose`）
- * 照长 —— 这恰好制造了本批要消灭的第二种度量。所以这里按同一个偏移平移：
- * 每一档的数值都与替换前的 `titleMedium` 逐档相同（17/24、18/25、19/26…），
- * `经典` 档不变。
- *
- * 基线取 [PiTheme.text] 的 `meta` 而不是另起一个字族：`meta` 是系统字体、
- * `piPrecise()`（无字体自带内边距、行距居中、首末行裁掉）已经写进角色里，
- * `copy` 会把它带过来。
- */
-internal object PiTypography {
-
-    /** `17 + 字号偏移` / `24 + 字号偏移` 的 SemiBold；见对象 KDoc。 */
-    val title: TextStyle
-        @Composable
-        @ReadOnlyComposable
-        get() {
-            val shift = PiTheme.typography.fontSizeOffsetSp
-            return PiTheme.text.meta.copy(
-                fontSize = (17 + shift).sp,
-                lineHeight = (24 + shift).sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-}
-
 /** `06 §2`「分组容器 / 卡片：圆角 10，无描边无阴影」。 */
 internal val PiSettingsCardShape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
-
-/**
- * 卡片切片：列表要放进 `LazyColumn` 一项一行（上千项的目录不能一次性组合），
- * 但视觉上仍是一张卡 —— 第一项给上圆角、最后一项给下圆角，中间只有左右边。
- * 行间线由调用方画（`if (index > 0) PiSettingsHairline()`），与 `PiSettingsCard` 一致。
- */
-@Composable
-internal fun PiSettingsCardSlice(
-    first: Boolean,
-    last: Boolean,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val radius = PiSettingsMetrics.cardRadius
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-        shape = RoundedCornerShape(
-            topStart = if (first) radius else 0.dp,
-            topEnd = if (first) radius else 0.dp,
-            bottomStart = if (last) radius else 0.dp,
-            bottomEnd = if (last) radius else 0.dp,
-        ),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
-        Column { content() }
-    }
-}
 
 /**
  * `PiSettingsCard` 内部一次显示多少行之后开始收敛（多出来的折进一条「显示全部 N 个」）。

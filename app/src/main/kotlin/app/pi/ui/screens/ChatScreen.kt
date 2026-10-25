@@ -1,9 +1,11 @@
 package app.pi.ui.screens
 
+import androidx.compose.ui.text.font.FontWeight
 import app.pi.settings.readBoolean
 import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.blocks.decodePiImage
 import app.pi.ui.blocks.piImageDecodeGate
+import app.pi.ui.components.PiType
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.ui.layout.ContentScale
@@ -1591,8 +1593,8 @@ private fun ChatBody(
         //
         // v2's `TopBar` (`design-demos/direction-b-v2.html:489-516`) value for value:
         // 48 high on the dim surface with a 1px bottom rule, 14 horizontal, a 17/600
-        // title (M3's `titleMedium`, which this app's `piTypography` already sets to
-        // exactly 17/600), a 12 meta line 1 dp under it, and 30x30 radius-8 press
+        // title (`PiType.title`, the screen-title role: 17/24 SemiBold, shifted with
+        // 字号), a 12 meta line 1 dp under it, and 30x30 radius-8 press
         // boxes with 17 glyphs on the right.
         //
         // Hand-drawn rather than `material3.TopAppBar` for the same three reasons the
@@ -1650,7 +1652,7 @@ private fun ChatBody(
                                     state.windowTitle,
                                     if (state.transcript.isEmpty()) "新会话" else "会话",
                                 ),
-                            style = MaterialTheme.typography.titleMedium,
+                            style = PiType.title,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1926,9 +1928,8 @@ private fun ChatBody(
         // transcript wants, and the same numbers now live one tap away in the
         // composer's context ring → 会话信息.
         //
-        // `PiStatusLine` itself is kept (it is no longer called from this screen):
-        // the detail sheet draws the same figures in its own layout and is the reason
-        // the component still exists. Nothing else here reads it.
+        // The row component went with it: `PiStatusLine` had no caller left, so it is
+        // deleted; the detail sheet draws the same figures in its own layout.
         val emptyTranscript = state.transcript.isEmpty()
 
         // 扩展状态行（`ExtensionStatusRow`，即「📋 3/5」那一行）按用户裁决删除：
@@ -3545,7 +3546,7 @@ private fun ExportDeliveryRow(
         Column(Modifier.padding(horizontal = PiSpacing.cardPadding, vertical = 8.dp)) {
             Text(
                 "会话已导出",
-                style = MaterialTheme.typography.labelLarge,
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -3581,7 +3582,7 @@ private fun DeliveryAction(label: String, onClick: () -> Unit) {
         modifier = Modifier
             .clickable(onClick = onClick)
             .padding(vertical = 3.dp),
-        style = MaterialTheme.typography.labelLarge,
+        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
         color = MaterialTheme.colorScheme.primary,
     )
 }

@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.pi.ui.components.PiSheet
 import app.pi.packages.PiModelsFile
+import app.pi.ui.components.PiType
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import app.pi.ui.theme.PiSpacing
@@ -284,7 +285,7 @@ internal fun ModelEditSheet(
         Column(Modifier.fillMaxWidth()) {
             Text(
                 title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.cardPadding,

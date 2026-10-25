@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.ui.Boot
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -105,7 +106,7 @@ fun BootScreen(
                 Text(
                     text = boot.step.label,
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = palette.text,
                     textAlign = TextAlign.Center,
                 )
@@ -156,12 +157,12 @@ fun BootScreen(
 
 // ---------------------------------------------------------------- the three states
 
-/** `17/600` — `MaterialTheme.typography.titleMedium` is exactly that. */
+/** `17/600` — `PiType.title`, the screen-title role (it shifts with 字号). */
 @Composable
 private fun BootHeading(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.titleMedium,
+        style = PiType.title,
         color = PiTheme.palette.text,
     )
 }
@@ -179,7 +180,7 @@ private fun BootParagraph(text: String) {
     Text(
         text = text,
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.bodyMedium,
+        style = PiTheme.text.prose,
         color = PiTheme.palette.muted,
         textAlign = TextAlign.Center,
     )
@@ -232,7 +233,7 @@ private fun BootErrorCard(message: String, detail: String?) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = message,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = PiTheme.text.prose,
                         color = palette.text,
                     )
                     if (!detail.isNullOrBlank()) {
@@ -277,7 +278,7 @@ private fun BootButton(label: String, onClick: () -> Unit, destructive: Boolean 
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
             color = palette.pageBg,
         )
     }

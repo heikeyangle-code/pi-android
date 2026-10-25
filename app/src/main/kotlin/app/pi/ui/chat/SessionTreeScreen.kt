@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -964,7 +965,7 @@ private fun BranchRow(
                 Text(
                     entryLabel(entry),
                     modifier = Modifier.weight(1f, fill = false),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1012,7 +1013,7 @@ private fun BranchRow(
             // measured ~94dp (5×14sp + 2×12dp of `TextButton`'s default content padding),
             // a third of a 360dp row before the indent was even counted — this action was
             // the second-largest consumer of the width the row's own summary needed. The
-            // compact form is the branch glyph plus the verb at `labelMedium` with 6dp of
+            // compact form is the branch glyph plus the verb at the 12 sp label role with 6dp of
             // content padding: ~58dp, `ButtonDefaults.MinWidth` being the floor. 「新会话」
             // is the part that is dropped, and the header sentence above the list already
             // says a fork writes a new session file — the row does not have to say it five
@@ -1035,7 +1036,7 @@ private fun BranchRow(
                     // height up on a narrow row before.
                     maxLines = 1,
                     softWrap = false,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                 )
             }
         }
@@ -1073,7 +1074,7 @@ private fun EntryRow(entry: SessionEntry) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 entry.type,
-                style = MaterialTheme.typography.labelMedium,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.width(8.dp))

@@ -50,6 +50,7 @@ import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.TokenUsage
 import app.pi.ui.PiSessionViewModel
+import app.pi.ui.components.PiType
 import app.pi.ui.extension.ExtensionSpans
 import app.pi.ui.extension.ExtensionStatus
 import app.pi.ui.extension.chromeSpans
@@ -106,7 +107,7 @@ fun ModelPickerSheet(
     }
     PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("选择模型", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text("选择模型", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.unit))
             OutlinedTextField(
                 value = filter,
@@ -182,7 +183,7 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     model.name,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = PiType.rowTitle,
                     color = if (selected) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -243,7 +244,7 @@ fun ThinkingPickerSheet(
 ) {
     PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("思考等级", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text("思考等级", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
                 "可选等级由当前模型决定。",
@@ -286,7 +287,7 @@ fun ThinkingPickerSheet(
                         Text(
                             thinkingLabelOf(level),
                             modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = PiType.rowTitle,
                             color = if (selected) {
                                 MaterialTheme.colorScheme.primary
                             } else {
@@ -338,7 +339,7 @@ fun SessionToolsSheet(
             Text(
                 "会话与队列",
                 modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
-                style = MaterialTheme.typography.titleMedium,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.unit))
@@ -481,7 +482,7 @@ fun SessionToolsSheet(
                     Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp)) {
                         Text(
                             "${extension.name}（${extension.scope}）",
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = PiType.rowTitle,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
@@ -522,7 +523,7 @@ private fun QueueModeRow(
     onPick: (QueueMode) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp)) {
-        Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(title, style = PiType.rowTitle, color = MaterialTheme.colorScheme.onSurface)
         Text(
             supporting,
             style = PiTheme.text.prose,
@@ -587,7 +588,7 @@ fun ContextSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = PiSpacing.pageHorizontal, vertical = 11.dp),
-                style = MaterialTheme.typography.titleMedium,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             HorizontalDivider(
@@ -652,7 +653,7 @@ fun SessionStatsSheet(
         ) {
             Text(
                 "会话信息",
-                style = MaterialTheme.typography.titleMedium,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.unit))
@@ -1091,7 +1092,7 @@ private fun StatLine(label: String, value: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text(
             label,
-            style = MaterialTheme.typography.labelMedium,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
@@ -1135,7 +1136,7 @@ fun ForkPickerSheet(
 ) {
     PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("从哪条消息分叉", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text("从哪条消息分叉", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
                 "会在「这条消息之前」分出新的会话（这条消息本身不会带过去），" +

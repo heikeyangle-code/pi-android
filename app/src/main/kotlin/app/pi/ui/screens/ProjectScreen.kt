@@ -84,6 +84,7 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
+import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -1568,7 +1569,7 @@ private fun CurrentDirectoryCard(name: String, summary: String, onClick: () -> U
                 Column(Modifier.weight(1f)) {
                     Text(
                         name,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = PiType.title,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -2690,7 +2691,7 @@ private const val MENU_TITLE_MAX_CHARS = 22
  *
  * 稿子这一行写的是 `12px 14px` + 14 的正文（`workspace-final.html` 的菜单面板），本轮按
  * 「弹出层里的行与设置面同一套」收到 `10 / 14` 与 `15/500`：`10` 是 `rowPaddingVertical`、
- * `15` 是行标题那一档（`bodyLarge` + Medium，与 `PiSettingsRowShell` 的 `RowBody` 同表达式）。
+ * `15` 是行标题那一档（`PiType.rowTitle`，与设置面 `RowBody` 同一个角色）。
  */
 @Composable
 private fun MenuAction(
@@ -2710,7 +2711,7 @@ private fun MenuAction(
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+            style = PiType.rowTitle,
             color = tone ?: MaterialTheme.colorScheme.onSurface,
         )
     }
@@ -2772,8 +2773,8 @@ private fun NewChoice(
         Column(Modifier.weight(1f)) {
             Text(
                 title,
-                // 与 `MenuAction` / 设置面的行标题同一档：15 + Medium。
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                // 与 `MenuAction` / 设置面的行标题同一个角色：`PiType.rowTitle`（15/23 Medium）。
+                style = PiType.rowTitle,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -2933,7 +2934,7 @@ private data class WorkspaceSnackAction(val label: String, val onClick: () -> Un
  * Info 那一档原来用 `surfaceContainerHigh` 画底、`stateToneColor(Muted)` 画符号，两处各偏一
  * 格（`--card` 是 `cardBg`；`·` 的颜色在稿子里是 `--text`），这里收回来。符号与动作用
  * `ui/extension/ExtensionUiHost.kt` 的 `ExtensionSnack` 同一套角色（等宽 `mono`、动作
- * `bodyMedium` + 500）—— 那是全应用同一套「符号 + 颜色 + 一句话」的编码，只是那一支挂在
+ * 14 + 500）—— 那是全应用同一套「符号 + 颜色 + 一句话」的编码，只是那一支挂在
  * `PiRoot` 上管全局通知，这一支属于工作区一屏。
  *
  * @param action 右侧可选动作（稿子 `p.action`），可空。这一屏目前**一个调用点都没接**：
@@ -2995,7 +2996,7 @@ private fun WorkspaceSnackBar(
         Text(
             message.text,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
+            style = PiTheme.text.prose,
             color = palette.text,
         )
         if (action != null) {
@@ -3005,7 +3006,7 @@ private fun WorkspaceSnackBar(
                     .clip(RoundedCornerShape(SNACK_ACTION_RADIUS))
                     .clickable(role = Role.Button, onClick = action.onClick)
                     .padding(vertical = SNACK_ACTION_PADDING_VERTICAL),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                 color = palette.text,
             )
         }

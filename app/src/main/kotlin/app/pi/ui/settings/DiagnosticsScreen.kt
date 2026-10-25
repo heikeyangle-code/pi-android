@@ -26,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import app.pi.runtime.PiPaths
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
@@ -154,7 +155,7 @@ fun DiagnosticsScreen(
             Spacer(Modifier.height(PiSpacing.unit))
             Text(
                 if (working) "正在收集…" else "报告预览（与导出的文件内容一致）",
-                style = MaterialTheme.typography.labelLarge,
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
             )
             Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))
             // v2 的诊断报告预览：等宽正文装在一张圆角 10、1px `borderMuted` 描边的

@@ -70,6 +70,7 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
+import app.pi.ui.components.PiType
 import app.pi.ui.render.PiCodeLanguage
 import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.settings.PiSettingsMetrics
@@ -523,7 +524,7 @@ private fun ViewerTopBar(
                         .clip(RoundedCornerShape(8.dp))
                         .clickable(enabled = dirty, onClick = onSave)
                         .padding(horizontal = 9.dp, vertical = 5.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(
+                    style = PiTheme.text.prose.copy(
                         fontWeight = if (dirty) FontWeight.SemiBold else FontWeight.Normal,
                     ),
                     color = if (dirty) PiTheme.palette.accent else PiTheme.palette.muted,
@@ -538,7 +539,7 @@ private fun ViewerTopBar(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(onClick = onEdit)
                                 .padding(horizontal = 9.dp, vertical = 5.dp),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = PiTheme.text.prose,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                         )
@@ -625,7 +626,7 @@ private fun LoadingBody() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             "正在读取…",
-            style = MaterialTheme.typography.bodyMedium,
+            style = PiTheme.text.prose,
             color = PiTheme.palette.muted,
         )
     }
@@ -638,14 +639,14 @@ private fun EmptyFileBody(fileName: String) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 "这个文件是空的",
-                style = MaterialTheme.typography.titleSmall,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 "「$fileName」里还没有任何内容。点右上「编辑」可以写第一行；" +
                     "写什么由你，这一屏不会替你填。",
                 modifier = Modifier.padding(top = PiSpacing.inline),
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -838,7 +839,7 @@ private fun BinaryBody(
             Text(
                 "这是二进制文件",
                 modifier = Modifier.padding(top = PiSettingsMetrics.rowGap),
-                style = MaterialTheme.typography.titleSmall,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -846,7 +847,7 @@ private fun BinaryBody(
                     "「$fileName」是${opened.typeLabel}，${WorkspaceFiles.formatSize(opened.sizeBytes)}，" +
                     "可以交给系统里的应用打开。",
                 modifier = Modifier.padding(top = PiSpacing.inline),
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(

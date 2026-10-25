@@ -50,13 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.sp
-import app.pi.rpc.PiResponses
 import app.pi.rpc.TokenUsage
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.util.Locale
-import kotlin.math.roundToInt
 
 /**
  * pi's own token formatter, transcribed from
@@ -72,182 +70,6 @@ fun piFormatTokens(count: Long): String = when {
     count < 1_000_000L -> "${Math.round(count / 1_000.0)}k"
     count < 10_000_000L -> String.format(Locale.US, "%.1fM", count / 1_000_000.0)
     else -> "${Math.round(count / 1_000_000.0)}M"
-}
-
-/**
- * The transcript's status line — v2's `StateLine` (`06 §3` 构件 3, `04 §1.2`).
- *
- * One row, read left to right: the context percentage, an eight-segment progress bar,
- * the tokens in use against the window, the two readings direction A contributed
- * (`输出`, `缓存读`), and the session's cost pinned to the right:
- *
- * ```
- * 上下文 52.3% [▮▮▮▮▯▯▯▯] 104k / 200k (auto) 输出 8.2k 缓存读 61.4k $0.420
- * ```
- *
- * `52.3` and `$0.420` are **pi's own precision**, not this row's choice:
- * `contextPercentValue.toFixed(1)` and `usageTotals.cost.toFixed(3)`
- * (`components/footer.ts:111`, `:143`). v2's `StateLine` prints `{p.pct}%` — the
- * value it was *passed* — so its sample `52` says nothing about rounding, and the
- * numbers it was passed are pi's. The `%` is there in both: pi's footer is
- * `` `${contextPercent}%` `` (`footer.ts:150-156`) and v2's row is
- * `上下文 {p.pct}%` (`direction-b-v2.html:794`).
- *
- * **There are no `·` separators on this row.** v2's `StateLine` is one
- * `className="rw"` row with `gap:5` whose parts are separate spans — `输出` and
- * `缓存读` included (`direction-b-v2.html:798-803`) — and phone01 renders it with
- * the gaps only. The app used to join the readings with a literal `·`, which is a
- * character v2 draws nowhere on this row.
- *
- * ## Where each figure comes from (all of them pi's)
- *
- *  - `上下文 N%` — `stats.contextUsage.percent`, i.e. pi's own `getContextUsage()`,
- *    which is `estimate.tokens / contextWindow * 100`
- *    (`core/agent-session.ts:3446-3450`); `?` when pi reports none, never a
- *    substituted 0 (`footer.ts:108-110`).
- *  - the bar — the same percentage across eight segments of `3×8` with a 1px gap,
- *    filled in `accent` (`06 §2` 状态行). It is drawn only when pi reports a
- *    percentage: an empty bar would claim "0 %".
- *  - `used / window` — `contextUsage.tokens` / `contextUsage.contextWindow`; the
- *    window falls back to the model's own (`footer.ts:109`).
- *  - `输出` / `缓存读` — `stats.tokens.output` / `stats.tokens.cacheRead`, the two
- *    fields A moved in (`04 §1.2`: 两个读数字段与「会话信息」sheet 里的 Token 行同源),
- *    formatted by [piFormatTokens] — pi's rounding (`footer.ts:24-30`), **not**
- *    `ui/blocks/BlockChrome.kt`'s `formatTokens`, which prints `3k` where pi prints
- *    `3.2k`.
- *  - `$…` — `stats.cost` at pi's three decimals (`footer.ts:142-146`), only when
- *    non-zero, and it is the row's right-hand anchor.
- *
- * The ` (auto)` suffix belongs to the **window** reading, not to the percentage:
- * pi's line is `` `${percent}%/${window}${auto}` `` (`footer.ts:150-156`), so it
- * rides `used / window` here as `13k / 1.0M (auto)`. The app used to hang it off the
- * percentage, which reads as if the *percentage* were the automatic part.
- *
- * ## What is no longer on this row, and why nothing is lost
- *
- * pi's footer also prints `↑input ↓output RcacheRead WcacheWrite CH…%`
- * (`footer.ts:106-146`). v2's status line is a *reading*, not a copy of that footer:
- * `04 §1.2` adds the two A readings to B's line (`上下文 52% [分段进度] 104k / 200k
- * $0.42`) and stops there, so the input total, the cache-write total and the
- * cache-hit rate leave this row. None of them is dropped from the app: 会话信息
- * (`ui/chat/ChatSheets.kt`'s stats sheet) prints 输入 / 输出 / 缓存读 / 缓存写 / 合计
- * in full. B7 deleted the `latestUsage` parameter that used to carry them here: with
- * no reading on this row that took a `TokenUsage`, it had become a dead argument
- * whose only effect was to keep the caller importing `TokenUsage`.
- *
- * The percentage keeps pi's own colour thresholds (`>90` error, `>70` warning —
- * `footer.ts:154-156`); every other figure is muted or body text. No ring, no sweep
- * animation, no glow: pi's footer is static text and this row is too.
- *
- * @param stats `get_session_stats`; null before the first read, in which case the
- *   row renders nothing rather than zeros.
- * @param contextWindowFallback the model's window, pi's own fallback when
- *   `getContextUsage()` reports none (`footer.ts:109`).
- * @param autoCompaction pi's `autoCompactEnabled` → the ` (auto)` suffix.
- */
-@Composable
-fun PiStatusLine(
-    stats: PiResponses.SessionStats?,
-    contextWindowFallback: Long?,
-    autoCompaction: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    if (stats == null) return
-    val totals = stats.tokens
-    val usage = stats.contextUsage
-    val contextWindow = usage?.contextWindow ?: contextWindowFallback
-    val percent = usage?.percent
-    val used = usage?.tokens
-    // pi: `?` when the percentage is unknown, never a substituted 0. One decimal is
-    // pi's own `toFixed(1)` (`footer.ts:111`) — see this function's KDoc.
-    val percentText = percent?.let { String.format(Locale.US, "%.1f", it) } ?: "?"
-    val auto = if (autoCompaction) " (auto)" else ""
-    val contextColor = when {
-        percent != null && percent > 90.0 -> PiTheme.palette.error
-        percent != null && percent > 70.0 -> PiTheme.palette.warning
-        else -> PiTheme.palette.muted
-    }
-    // A reading appears only once it has a figure (pi's own rule for these parts,
-    // `footer.ts:130-133`): "输出 0" before the first reply would be a claim about a
-    // model that has not spoken yet.
-    val readings = buildList {
-        totals?.output?.takeIf { it > 0L }?.let { add("输出 ${piFormatTokens(it)}") }
-        totals?.cacheRead?.takeIf { it > 0L }?.let { add("缓存读 ${piFormatTokens(it)}") }
-    }
-    // Three decimals, pi's own `toFixed(3)` (`footer.ts:143`): this is what keeps a
-    // real `$0.006` from being rounded to `$0.01` and a `$0.004` from `$0.00`.
-    val cost = stats.cost?.takeIf { it != 0.0 }?.let { "$${String.format(Locale.US, "%.3f", it)}" }
-    val windowText = contextWindow?.takeIf { it > 0L }?.let { piFormatTokens(it) }
-    // "No data, no row": with no percentage, no window and no readings there is
-    // nothing to read, and an empty status line would still cost 32dp.
-    if (percent == null && windowText == null && readings.isEmpty() && cost == null) return
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(PiSpacing.statusRow)
-            .padding(horizontal = PiSpacing.pageHorizontal),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            // pi's footer and v2's row both print the unit; see the KDoc.
-            text = "上下文 $percentText%",
-            style = PiTheme.text.meta,
-            color = contextColor,
-            maxLines = 1,
-        )
-        if (percent != null) {
-            Spacer(Modifier.width(PiSpacing.small))
-            ContextSegments(percent)
-        }
-        if (windowText != null) {
-            Spacer(Modifier.width(PiSpacing.small))
-            Text(
-                // pi reports no token count after a compaction until the next
-                // response (`agent-session.ts:3450`), and `?` is the honest spelling
-                // it uses for exactly that window (`footer.ts:110`).
-                // ` (auto)` rides the window, as it does in pi's own concatenation.
-                text = "${used?.let { piFormatTokens(it) } ?: "?"} / $windowText$auto",
-                // `06 §2` 状态行 + `06 §2` 字号: every reading on this row is a machine
-                // reading at the 12 sp step (`mono t12 tab` in v2's `StateLine`), which
-                // is what keeps the figures aligned as they tick.
-                style = PiTheme.text.monoSmall,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
-            )
-        }
-        if (readings.isNotEmpty()) {
-            // One span per reading, separated by the row's own gap — v2's shape
-            // (`direction-b-v2.html:798-803`), with no `·` between them. The group
-            // absorbs the slack so the cost stays pinned to the right (`06 §2` leaves
-            // the row's tail to the cost).
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-            ) {
-                readings.forEach { reading ->
-                    Text(
-                        text = reading,
-                        style = PiTheme.text.monoSmall,
-                        color = PiTheme.palette.text,
-                        maxLines = 1,
-                    )
-                }
-            }
-        } else {
-            Spacer(Modifier.weight(1f))
-        }
-        if (cost != null) {
-            Spacer(Modifier.width(PiSpacing.small))
-            Text(
-                text = cost,
-                style = PiTheme.text.monoSmall,
-                color = PiTheme.palette.text,
-                maxLines = 1,
-            )
-        }
-    }
 }
 
 /**
@@ -358,11 +180,11 @@ private const val RING_START_ANGLE = -90f
  * 90 (`components/footer.ts:154-156`). Shared by the ring's fill and the detail
  * sheet's percentage, so the two cannot disagree.
  *
- * [PiStatusLine] keeps its own three-band expression rather than calling this one,
- * and deliberately: that row prints the percentage as a *label* in `muted` at rest,
- * where this function's at-rest colour is `accent` because it is painting a **fill**.
- * The two share the two thresholds, not the at-rest colour, and the thresholds are
- * spelled once here and once there — a reader changing one must change both.
+ * This is now the **only** place the two thresholds are spelled: the transcript's
+ * status row (the other reader) was deleted, so the ring's fill and the detail
+ * sheet's percentage cannot drift apart — there is nothing left to change twice.
+ * The at-rest colour here is `accent` because this function paints a **fill**, not a
+ * label.
  *
  * A null [percent] is not a colour: the caller draws no fill at all and says `?`.
  */
@@ -568,41 +390,6 @@ private val PI_MENU_ANCHOR_GAP = 8.dp
 
 /** See [PiMenu]'s KDoc: the long AppBar menu scrolls inside this. */
 private val PI_MENU_MAX_HEIGHT = 320.dp
-
-/** `06 §2` 状态行: the context bar's segment count. */
-private const val CONTEXT_SEGMENTS = 8
-
-/** `06 §2` 状态行: each segment is `3×8` with a 1px gap and a 1px corner. */
-private val CONTEXT_SEGMENT_WIDTH = 3.dp
-private val CONTEXT_SEGMENT_HEIGHT = 8.dp
-
-/**
- * The context bar: [CONTEXT_SEGMENTS] segments, `accent` up to the percentage and
- * `borderMuted` after it.
- *
- * The bar is a *reading* of the percentage printed beside it, never the only copy of
- * it (`06 §4`: 颜色不能是唯一信号), which is why the number and the bar are one
- * glance apart and the number carries the colour thresholds.
- */
-@Composable
-private fun ContextSegments(percent: Double, modifier: Modifier = Modifier) {
-    val palette = PiTheme.palette
-    val filled = (CONTEXT_SEGMENTS * percent / 100.0).roundToInt().coerceIn(0, CONTEXT_SEGMENTS)
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.hairline),
-    ) {
-        repeat(CONTEXT_SEGMENTS) { index ->
-            Box(
-                Modifier
-                    .width(CONTEXT_SEGMENT_WIDTH)
-                    .height(CONTEXT_SEGMENT_HEIGHT)
-                    .clip(RoundedCornerShape(PiSpacing.hairline))
-                    .background(if (index < filled) palette.accent else palette.borderMuted),
-            )
-        }
-    }
-}
 
 /**
  * The summarization billing line pi prints for a compaction or a branch summary.

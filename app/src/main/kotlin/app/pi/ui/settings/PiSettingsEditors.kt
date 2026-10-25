@@ -59,6 +59,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -67,6 +68,7 @@ import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.components.PiMixedLine
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -226,7 +228,7 @@ fun PiOptionPickerSheet(
         ) {
             Text(
                 title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -466,7 +468,7 @@ fun PiNumberEditorSheet(
         ) {
             Text(
                 setting.title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -661,7 +663,7 @@ fun PiTextEditorSheet(
         ) {
             Text(
                 setting.title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -792,7 +794,7 @@ fun PiListEditorSheet(
         ) {
             Text(
                 setting.title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -1048,7 +1050,7 @@ fun PiThemeEditorSheet(
                 null -> {
                     Text(
                         "主题",
-                        style = PiTypography.title,
+                        style = PiType.title,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Spacer(Modifier.height(PiSpacing.small))
@@ -1139,7 +1141,7 @@ fun PiThemeEditorSheet(
                         TextButton(onClick = { picking = null }) { Text("返回") }
                         Text(
                             if (target == ThemePick.Light) "浅色用哪个主题" else "深色用哪个主题",
-                            style = PiTypography.title,
+                            style = PiType.title,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
@@ -1526,7 +1528,7 @@ fun PiModelThinkingLevelsSheet(
         ) {
             Text(
                 title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -1618,7 +1620,7 @@ fun PiModelThinkingLevelsSheet(
                         }
                         Text(
                             if (expanded == option.wire) "−" else "+",
-                            style = MaterialTheme.typography.labelLarge,
+                            style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -1725,7 +1727,7 @@ fun PiThinkingBudgetsSheet(
         ) {
             Text(
                 title,
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))

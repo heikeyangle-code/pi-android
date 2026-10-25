@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import app.pi.packages.PiAuthStorage
 import app.pi.packages.PiCredentialService
 import app.pi.packages.PiOAuthHost
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.text.DateFormat
@@ -261,7 +262,7 @@ internal fun SubscriptionLoginSheet(
                     top = PiSettingsMetrics.sheetHeadTop,
                 ),
         ) {
-            Text(provider.oauthName, style = PiTypography.title, color = MaterialTheme.colorScheme.onSurface)
+            Text(provider.oauthName, style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.small))
             Text(
                 "登录由 pi 自己的流程完成；完成后凭证写进 auth.json，重启引擎后模型才出现。",
@@ -296,7 +297,7 @@ internal fun SubscriptionLoginSheet(
                 // 17sp 的等宽 SemiBold 下已经足够抄写。
                 Text(
                     code.userCode,
-                    style = PiTypography.title.copy(fontFamily = PiTheme.text.mono.fontFamily),
+                    style = PiType.title.copy(fontFamily = PiTheme.text.mono.fontFamily),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(PiSpacing.small))

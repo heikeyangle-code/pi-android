@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.font.FontWeight
 import app.pi.ui.components.PiSheet
 import app.pi.packages.PiModelsDev
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,7 @@ import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.PiTopBar
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
@@ -1227,7 +1229,7 @@ private fun ImportSheet(
         Column(Modifier.fillMaxWidth()) {
             Text(
                 "导入模型",
-                style = PiTypography.title,
+                style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.cardPadding,
@@ -1897,7 +1899,7 @@ private fun ProviderCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         title,
-                        style = PiTypography.title,
+                        style = PiType.title,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                     )
@@ -1947,7 +1949,7 @@ private fun ProviderCard(
                             .weight(1f)
                             .clickable(onClick = onOpenCredentials)
                             .padding(vertical = PiSettingsMetrics.notePaddingVertical),
-                        style = MaterialTheme.typography.labelLarge,
+                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
@@ -1959,7 +1961,7 @@ private fun ProviderCard(
                                 top = PiSettingsMetrics.notePaddingVertical,
                                 bottom = PiSettingsMetrics.notePaddingVertical,
                             ),
-                        style = MaterialTheme.typography.labelLarge,
+                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                         color = PiTheme.palette.warning,
                     )
                 }
