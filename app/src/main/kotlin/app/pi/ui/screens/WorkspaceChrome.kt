@@ -610,7 +610,8 @@ internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit
  * 四个槽从左到右：前置图标、标题（可等宽、可粗）+ 徽标、右值、尾部（⋮ 或读数）。
  * 副行在标题下面。整行可点（稿子的行都是可点的），没有 `onClick` 时不可点。
  *
- * @param mono 标题用等宽（**文件名与路径一律等宽**，稿子的规矩）。
+ * @param mono 标题用等宽。**等宽只留给路径**（以及命令这类代码）：文件名、工作区名、
+ *   资源名都是无衬线的 15/Medium。
  * @param value 右侧读数（`+N −M`、`12 项`），等宽。
  */
 @Composable
@@ -618,8 +619,14 @@ internal fun WsRow(
     title: String,
     modifier: Modifier = Modifier,
     lead: (@Composable () -> Unit)? = null,
-    /** 前置图标的**底**尺寸。文件行用 32dp 的圆角底，其余行用默认的 18。 */
-    leadSize: Dp = PiSettingsMetrics.cardIconSize,
+    /**
+     * 前置图标的**底**尺寸，默认 32dp。
+     *
+     * 图标列先对齐、再谈图标本身长什么样：一行里图标大小不一，比图标画得对不对更显乱。
+     * 底是 `surfaceContainerHigh` 的圆角方块 —— 在卡上只比卡底亮一点，是「对齐用的格子」，
+     * 不是装饰。
+     */
+    leadSize: Dp = PiSpacing.glyphBox,
     mono: Boolean = false,
     strong: Boolean = false,
     titleColor: Color? = null,
@@ -642,7 +649,13 @@ internal fun WsRow(
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
         if (lead != null) {
-            Box(Modifier.size(leadSize), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(leadSize)
+                    .clip(PiShapes.tag)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
                 lead()
             }
         }
@@ -689,12 +702,12 @@ internal fun WsRow(
 }
 
 /**
- * 带 18dp 图标那一类行的行间线起点：行内边距 + 图标 + 行间距。
+ * 有图标列那一类行的行间线起点：行内边距 + 32dp 图标底 + 行间距 = **56dp**。
  *
  * 线要落在**文字列**上；不带图标的行用 [PiSettingsMetrics.rowPaddingHorizontal]。
  */
-internal val WsGlyphHairlineStart: Dp =
-    PiSettingsMetrics.rowPaddingHorizontal + PiSettingsMetrics.cardIconSize + PiSettingsMetrics.rowGap
+internal val WsIconHairlineStart: Dp =
+    PiSettingsMetrics.rowPaddingHorizontal + PiSpacing.glyphBox + PiSettingsMetrics.rowGap
 
 /**
  * 行之间的 inset hairline（与设置页那条同值、同一根线）：**0.5dp、`outlineVariant`、

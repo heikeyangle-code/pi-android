@@ -893,7 +893,7 @@ fun ProjectScreen(
                                     sliceIndex = index,
                                     lastSliceIndex = runs.lastIndex,
                                     nowMs = nowMs,
-                                    hairlineStart = WsGlyphHairlineStart,
+                                    hairlineStart = WsIconHairlineStart,
                                 )
                             }
                         }
@@ -922,7 +922,7 @@ fun ProjectScreen(
                                 WsCardSlice(
                                     index = 0,
                                     lastIndex = totalSlices - 1,
-                                    hairlineStart = WsGlyphHairlineStart,
+                                    hairlineStart = WsIconHairlineStart,
                                 ) {
                                     PendingWriteRow(pending)
                                 }
@@ -934,7 +934,7 @@ fun ProjectScreen(
                                 WsCardSlice(
                                     index = slice,
                                     lastIndex = totalSlices - 1,
-                                    hairlineStart = WsGlyphHairlineStart,
+                                    hairlineStart = WsIconHairlineStart,
                                 ) {
                                     ChangedFileRow(
                                         file = file,
@@ -1090,7 +1090,7 @@ fun ProjectScreen(
                                 WsCardSlice(
                                     index = index,
                                     lastIndex = entries.lastIndex,
-                                    hairlineStart = FILE_HAIRLINE_START,
+                                    hairlineStart = WsIconHairlineStart,
                                 ) {
                                     WorkspaceEntryRow(
                                         entry = entry,
@@ -1614,14 +1614,6 @@ private val WS_SEGMENT_BOTTOM = 10.dp
 
 private const val WS_SEGMENT_FILES = "文件"
 private const val WS_SEGMENT_RESOURCES = "资源"
-
-/**
- * 文件行的行间线缩进：行内边距 + 32dp 图标底 + 行间距 —— 线从**文字列**开始，
- * 不是从卡片边缘开始。
- */
-private val FILE_HAIRLINE_START =
-    PiSettingsMetrics.rowPaddingHorizontal + PiSpacing.glyphBox + PiSettingsMetrics.rowGap
-
 
 /** 资源分组的标题：pi 的来源族（顺序即优先级）。 */
 private fun sourceGroupLabel(source: WorkspaceSource): String = when (source) {
@@ -2223,19 +2215,8 @@ private fun WorkspaceEntryRow(
             // 一屏看下来没有层级。
             mono = false,
             strong = false,
-            leadSize = PiSpacing.glyphBox,
-            lead = {
-                // 图标**放进 32dp 的圆角底**：图标列先对齐，图标本身长什么样才是第二件事。
-                Box(
-                    modifier = Modifier
-                        .size(PiSpacing.glyphBox)
-                        .clip(PiShapes.tag)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    EntryGlyph(entry.kind)
-                }
-            },
+            // 图标底由 `WsRow` 统一给（32dp 圆角方块），这里只画图标。
+            lead = { EntryGlyph(entry.kind) },
             badge = if (sessionChanged != null) {
                 {
                     WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
@@ -2480,7 +2461,7 @@ private fun WorkspaceRootSheet(
         )
         WsCard {
             entries.forEachIndexed { index, item ->
-                if (index > 0) WsHairline(startInset = WsGlyphHairlineStart)
+                if (index > 0) WsHairline(startInset = WsIconHairlineStart)
                 val renamed = item.label != item.name
                 WsRow(
                     // 显示名是 label；它就是 `switchWorkspace` 里那条 notice 印的名字。

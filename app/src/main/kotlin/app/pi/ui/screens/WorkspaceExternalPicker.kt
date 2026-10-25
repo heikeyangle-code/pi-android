@@ -282,10 +282,11 @@ private fun WorkspaceExternalBrowser(
             )
             WsCard {
                 children.forEachIndexed { index, child ->
-                    if (index > 0) WsHairline(startInset = WsGlyphHairlineStart)
+                    if (index > 0) WsHairline(startInset = WsIconHairlineStart)
                     WsRow(
                         title = child.file.name,
-                        mono = true,
+                        // 目录名是名字，不是路径：等宽只留给路径（与文件列表同一规矩）。
+                        mono = false,
                         lead = { PickerFolderGlyph() },
                         badge = if (child.count == null) {
                             { WsBadge(text = "读不到", tone = StateTone.Warning) }
