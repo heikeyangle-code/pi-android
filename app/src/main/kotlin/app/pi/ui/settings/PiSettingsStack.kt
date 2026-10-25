@@ -27,7 +27,6 @@ import app.pi.runtime.RuntimeSelection
 import app.pi.ui.PromptFileFacts
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.screens.PiFilesScreen
-import app.pi.ui.screens.WorkspaceResource
 import app.pi.ui.screens.WorkspaceResourceKind
 import app.pi.ui.screens.WorkspaceResourceScan
 import app.pi.ui.screens.WorkspaceSource

@@ -118,7 +118,7 @@ internal data class WorkspaceResource(
 ) {
     val openable: Boolean get() = file.isFile
 
-    /** 技能与提示词才有「在对话里用」。 */
+    /** 技能与提示词才有「复制名字」那一格（名字是它们的调用词）。 */
     val usableInChat: Boolean
         get() = kind == WorkspaceResourceKind.Skill || kind == WorkspaceResourceKind.Prompt
 

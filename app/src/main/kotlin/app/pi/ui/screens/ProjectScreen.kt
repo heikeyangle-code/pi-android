@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -34,7 +33,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -183,7 +181,7 @@ fun ProjectScreen(
 
     var refreshTick by remember { mutableIntStateOf(0) }
 
-    // 工作区清单 —— 切换面板里那份「现有工作区」，也是 ① 卡上那个名字的 label 来源。
+    // 工作区清单 —— 切换面板里那份「现有工作区」，也是工作区芯片上那个名字的 label 来源。
     // 取自引擎的真实入口（`session.workspaceEntries()` → `WorkspaceStore.list`），不是拿当前
     // 工作区的兄弟目录凑出来的 —— 名字、label、`isCurrent` 与切换时 `switchWorkspace` 用的是
     // 同一份判据。它是一次真实的磁盘读取，所以在 IO 线程上跑，不放在 composition 里。
@@ -199,7 +197,7 @@ fun ProjectScreen(
     //
     // 这里**原来**是从会话 cwd 推的（`state.meta.sessionFile` → 会话列表的 `cwd` →
     // `PiProject.workspaceName`）。那是第二份真相，而且是会过期的那一份：改过显示名之后
-    // ① 卡印目录名、切换面板印 label（同一个工作区两个名字）；刚切完的头一两秒还会印着
+    // 芯片印目录名、切换面板印 label（同一个工作区两个名字）；刚切完的头一两秒还会印着
     // **上一个**工作区的名字（新会话头要等 pi 起来才写，`state.meta.sessionFile` 在那之前
     // 还是旧值）。会话头里的 `cwd` 是「那一次会话在哪儿跑过」的记录，不是「现在在哪儿」——
     // pi 那边只有一个答案（`process.cwd()`，`main.ts:580`），本应用对这个答案的唯一权威是
@@ -213,7 +211,7 @@ fun ProjectScreen(
         label = workspaceEntries.firstOrNull { it.name == state.workspace.name }?.label,
     )
 
-    // 引擎没起来：②③ 没有数据，④⑤ 与全部文件操作照常。判据是引擎状态本身，不是转录的
+    // 引擎没起来：「正在跑」与「本次改动」没有数据，文件与资源照常。判据是引擎状态本身，不是转录的
     // 长度——转录为空既可能是引擎没起来，也可能是这个会话真的什么都没做。
     val engine = state.engine
     val engineDown = engine == null ||
@@ -1657,12 +1655,6 @@ private val WS_EMPTY_DIR_BOTTOM = 18.dp
 private val WS_EMPTY_DIR_INSET = 14.dp
 private val WS_EMPTY_DIR_BUTTON_GAP = 12.dp
 private val WS_EMPTY_DIR_HINT_GAP = 10.dp
-
-/** 稿子「来源按 pi 的优先级排」那一句的 `padding:'0 14px 10px'`。 */
-private val WS_SOURCE_NOTE_BOTTOM = 10.dp
-
-/** 稿子资源分段行的 `padding:'0 14px 8px'`。 */
-private val WS_SEG_BOTTOM = 8.dp
 
 // ================================================================ ② 正在跑
 

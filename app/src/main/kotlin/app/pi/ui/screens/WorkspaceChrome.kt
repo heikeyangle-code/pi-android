@@ -116,7 +116,6 @@ import kotlinx.coroutines.launch
  * | [WsBadge] | `function Badge` (`:474-483`) | **无条件**的 5×5 圆角 1 色块 + 可选 12 等宽符号 + 12 文字，`1px border-muted`、圆角 999、`padding:1px 7px 1px 6px` |
  * | [WsChip] | `function Chip` (`:485-497`) + 空目录那颗主按钮（`:1531-1537`） | 两档：胶囊 高 26、圆角 999、`padding:0 9px`、`1px` 描边（选中 `border-accent`）；`solid` 高 32、`padding:0 14px`、**accent 实底无描边**、字色 `var(--page)` |
  * | [WsSectionAction] | ④ 段头的「+ 新建」(`:1496-1499`) | accent 纯文本 + 13 的加号，**无描边无底** |
- * | [WsSeg] | `function Seg` (`:499-511`) | 外框 `surf-high` + `border-muted` + 圆角 8、内项高 24 圆角 6，选中 `selected-bg` |
  * | [WsNotice] | `function Notice` (`:615-625`) | 等宽前缀（`·` / `!` / `✗`）+ 13 文本（本 App 取 12 的 `meta`，见构件注释），三档 tone |
  * | [WsErrBlock] | `function ErrBlock` (`:1048-1072`) | 3px 竖条（`IntrinsicSize.Min` + `fillMaxHeight()`，撑满整块）+ `tool-error` 底 + `1px rgba(error,.45)` 边 + 圆角 10；标题 `t12` |
  * | `WorkspaceSnackBar`（`ProjectScreen.kt`） | `function Snack` (`:627-643`) | 底部一条：`mono t14` 符号 + 14 文本 + 可选动作，三档底/字 |
@@ -236,70 +235,6 @@ internal fun WsBadge(
         }
     }
 }
-
-// ------------------------------------------------------------------ 分段 ----
-
-/** 分段按钮的一项。 */
-internal data class WsSegment<T>(val value: T, val label: String)
-
-/**
- * v2 的 `Seg`：一个外框里并排几档，选中的那一档换底换字色。
- *
- * 全应用的资源段（技能 / 提示词 / 扩展 / 主题）与「会话列表 / 会话树」共用一个形状；
- * 这里不复用设置页的 `PiSettingsChip`，因为那是**筛选胶囊**（可以多选、可以都不选），
- * 而分段的语义是「有且只有一个当前项」。
- */
-@Composable
-internal fun <T> WsSeg(
-    items: List<WsSegment<T>>,
-    value: T,
-    onChange: (T) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val palette = PiTheme.palette
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(WsSegRadius))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(
-                PiSettingsMetrics.hairline,
-                palette.borderMuted,
-                RoundedCornerShape(WsSegRadius),
-            )
-            .padding(WsSegPadding),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        items.forEach { item ->
-            val active = item.value == value
-            Box(
-                modifier = Modifier
-                    .height(WsSegItemHeight)
-                    .clip(RoundedCornerShape(WsSegItemRadius))
-                    .background(
-                        if (active) palette.selectedBg else Color.Transparent,
-                    )
-                    .clickable { onChange(item.value) }
-                    .padding(horizontal = WsSegItemPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    item.label,
-                    style = PiTheme.text.meta.copy(
-                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
-                    ),
-                    color = if (active) palette.text else palette.muted,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-private val WsSegRadius = 8.dp
-private val WsSegPadding = 2.dp
-private val WsSegItemHeight = 24.dp
-private val WsSegItemRadius = 6.dp
-private val WsSegItemPadding = 10.dp
 
 // ------------------------------------------------------------------ 胶囊 ----
 
