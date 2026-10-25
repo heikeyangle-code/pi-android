@@ -1348,8 +1348,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 只在 IO 段里调用（见 [refreshTheme]）：首次读 `app-prefs.json` 会落盘。
      */
     private fun applySystemPalette() {
-        val stored = runCatching { settingsStore.readString(PiSystemPalettes.SETTING_KEY) }.getOrNull()
-        PiSystemPaletteSource.palette = PiSystemPalettes.paletteOf(stored)
+        val id = runCatching { settingsStore.readString(PiSystemPalettes.SETTING_KEY) }.getOrNull()
+        val background = runCatching { settingsStore.readString(PiSystemPalettes.BACKGROUND_KEY) }.getOrNull()
+        val saturation = runCatching { settingsStore.readString(PiSystemPalettes.SATURATION_KEY) }.getOrNull()
+        PiSystemPaletteSource.palette = PiSystemPalettes.paletteOf(id, background)
+        PiSystemPaletteSource.saturation = PiSystemPalettes.saturationOf(saturation)
     }
 
     /** The `themes` setting, verbatim; used for discovery and for name lookup. */

@@ -220,7 +220,14 @@ object PiThemeLoader {
     // ---------------------------------------------------------------- loading
 
     /** The resolution used when the setting is absent: pi's own default. */
-    fun defaultSetting(systemDark: Boolean): String = if (systemDark) "dark" else "light"
+    /**
+     * 没写过 `theme` 时用哪一个：`system`（用户裁定 A）。
+     *
+     * 以前按手机深浅色在 `dark`/`light` 里选，于是「配色方案」改了底色整个 App 也没反应；
+     * 现在默认走推导，底色一变整套跟着变。`systemDark` 保留在签名里是因为调用方还在传，
+     * 而且它仍是 `dark`/`light` 自动对（`light/dark`）的判据 —— 只是不再决定默认值。
+     */
+    fun defaultSetting(@Suppress("UNUSED_PARAMETER") systemDark: Boolean): String = SYSTEM_THEME_NAME
 
     /**
      * Resolve the `theme` setting into a palette.

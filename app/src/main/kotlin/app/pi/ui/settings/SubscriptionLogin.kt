@@ -62,6 +62,7 @@ internal fun SubscriptionCard(
     problem: String?,
     onLogin: (PiOAuthHost.Provider) -> Unit,
     onLogout: (PiOAuthHost.Provider) -> Unit,
+    onRetry: () -> Unit,
 ) {
     PiSettingsCard {
         Column(Modifier.padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSettingsMetrics.rowPaddingVertical)) {
@@ -74,11 +75,34 @@ internal fun SubscriptionCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        when {
-            loading -> SubscriptionHint("正在读取 pi 支持的订阅…")
-            problem != null -> SubscriptionHint(problem, warning = true)
-            providers.isEmpty() -> SubscriptionHint("运行时的 pi 里没有可用的订阅登录（先启动一次引擎）。")
-            else -> providers.forEach { provider ->
+        if (loading) {
+            SubscriptionHint("正在读取 pi 支持的订阅…")
+        } else {
+            if (problem != null) {
+                // 读不到也要给出能点的东西：下面是内置清单（可能比设备上的 pi 旧），
+                // 以及一个重试。空列表 + 永远"读取中"是上一版的故障。
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = PiSettingsMetrics.cardPadding,
+                            end = PiSettingsMetrics.cardPadding,
+                            bottom = PiSettingsMetrics.supportingGap,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+                ) {
+                    Text(
+                        "运行时没响应，先用内置清单：${problem.take(80)}",
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.warning,
+                        maxLines = 2,
+                    )
+                    PiSettingsChip(text = "重试", onClick = onRetry)
+                }
+            }
+            providers.forEach { provider ->
                 SubscriptionRow(
                     provider = provider,
                     status = statuses[provider.id],

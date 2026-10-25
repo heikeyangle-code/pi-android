@@ -14,6 +14,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -106,6 +107,8 @@ class PiOAuthHost(
         private val process: Process,
         val events: Flow<Event>,
         private val onClose: () -> Unit,
+        /** 这个进程最后几行 stderr：桥没响应时，错误只在这里看得到。 */
+        val diagnostics: () -> String = { "" },
     ) {
         fun answer(promptId: Int, value: String) {
             send(JsonObject(mapOf("cmd" to JsonPrimitive("answer"), "promptId" to JsonPrimitive(promptId), "value" to JsonPrimitive(value))))
@@ -157,6 +160,21 @@ class PiOAuthHost(
             .also { builder -> builder.environment().putAll(plan.environment) }
             .start()
         handle?.resolveLauncherPid()
+        // stderr 以前是直接丢掉的：node 起不来/`import` 失败时，那几十行是唯一的线索，
+        // 而界面只会停在"正在读取"。留下最后 40 行，失败时带出去。
+        val stderr = java.util.Collections.synchronizedList(mutableListOf<String>())
+        Thread {
+            runCatching {
+                process.errorStream.bufferedReader().forEachLine { line ->
+                    if (line.isNotBlank()) {
+                        synchronized(stderr) {
+                            stderr.add(line)
+                            if (stderr.size > 40) stderr.removeAt(0)
+                        }
+                    }
+                }
+            }
+        }.apply { isDaemon = true }.start()
         runCatching {
             commands.forEach { process.outputStream.write((it.toString() + "\n").toByteArray()) }
             process.outputStream.flush()
@@ -165,6 +183,9 @@ class PiOAuthHost(
         return Session(
             process = process,
             events = events,
+            diagnostics = {
+                synchronized(stderr) { stderr.joinToString(" / ") }
+            },
             onClose = {
                 // Capture **before** killing: once the launcher dies its children are
                 // reparented to init and the tree can no longer be told apart from any
@@ -198,7 +219,12 @@ class PiOAuthHost(
                 // `first` rather than `collect`: the bridge stays alive after answering
                 // (it is written as one process for list + login), so waiting for the flow
                 // to complete would wait for a process that is waiting for us.
-                val terminal = session.events.first { it is Event.Providers || it is Event.Error }
+                val terminal = withTimeoutOrNull(PROVIDER_LIST_TIMEOUT_MS) {
+                    session.events.first { it is Event.Providers || it is Event.Error }
+                } ?: throw IllegalStateException(
+                    "读取订阅列表超时。运行时回显：" +
+                        session.diagnostics().ifEmpty { "（没有输出，可能是 node 没起来或 pi-ai 路径不对）" },
+                )
                 val providers = when (terminal) {
                     is Event.Providers -> terminal.providers
                     is Event.Error -> throw IllegalStateException(terminal.message)
@@ -251,6 +277,25 @@ class PiOAuthHost(
             .putString(KEY_CACHE_PROVIDERS, array.toString())
             .apply()
     }
+
+    /**
+     * 运行时读不到时的兜底清单：pi 1.3.0 的九个 `auth.oauth` 提供商。
+     *
+     * 只在 [providers] 失败/超时时用，并且界面必须说明「这是内置清单」——它可能比设备上
+     * 的 pi 旧。它保证的是**这一页不空转**：登录仍然把 id 交给运行时，pi 不认识就会给出
+     * 自己的错误，而不是由这张表假装成功。
+     */
+    val fallbackProviders: List<Provider> = listOf(
+        Provider("anthropic", "Anthropic", "Anthropic (Claude Pro/Max)", null, true),
+        Provider("openai", "OpenAI", "OpenAI (ChatGPT subscription)", "Sign in with ChatGPT", true),
+        Provider("openai-codex", "OpenAI Codex (legacy)", "OpenAI (ChatGPT Plus/Pro)", null, true),
+        Provider("github-copilot", "GitHub Copilot", "GitHub Copilot", null, true),
+        Provider("openrouter", "OpenRouter", "OpenRouter OAuth", "Sign in with OpenRouter", false),
+        Provider("kimi-coding", "Kimi For Coding", "Kimi Code (subscription)", "Sign in with Kimi Code", true),
+        Provider("meta", "Meta", "Meta (Muse subscription)", "Sign in with Meta", true),
+        Provider("xai", "xAI", "xAI (Grok/X subscription)", "Sign in with SuperGrok or X Premium", true),
+        Provider("radius", "Radius", "Radius", null, false),
+    )
 
     /** 开始一次登录。调用方必须消费 [Session.events] 并最终 [Session.close]。 */
     fun login(providerId: String): Session = start(
@@ -391,6 +436,9 @@ class PiOAuthHost(
         const val KEY_DEVICE_ID = "deviceId"
         const val KEY_CACHE_VERSION = "providersVersion"
         const val KEY_CACHE_PROVIDERS = "providers"
+
+        /** 读一次清单的上限。node 在手机上冷启动约 1–3 s，20 s 足够把"卡死"和"慢"分开。 */
+        const val PROVIDER_LIST_TIMEOUT_MS = 20_000L
     }
 }
 

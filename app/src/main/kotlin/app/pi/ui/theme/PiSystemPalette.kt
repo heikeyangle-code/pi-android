@@ -51,6 +51,15 @@ object PiSystemPaletteSource {
     /** The colours the next `system` resolution derives from. */
     @Volatile
     var palette: PiAnsiPalette = defaultAnsiPalette()
+
+    /**
+     * 派生时用的饱和度倍率（pi 的 `deriveSystemPalette(base, saturation)`）。
+     *
+     * 1.0 = pi 的原值；低于它是「素」，高于它是「鲜艳」。提成单独一个输入而不是塞进
+     * [palette]，是因为它不改终端报的颜色、只改推导曲线的松紧 —— 和底色是两个维度。
+     */
+    @Volatile
+    var saturation: Double = 1.0
 }
 
 /** A resolved `system` theme: the app palette, plus the polarity it was derived for. */
@@ -68,7 +77,11 @@ internal data class PiDerivedSystemTheme(
  * palette's contents** — `PiAnsiPalette.equals` compares `ansi` element by element —
  * so injecting a new palette can never be served a stale palette.
  */
-private class PiSystemMemo(val input: PiAnsiPalette, val theme: PiDerivedSystemTheme)
+private class PiSystemMemo(
+    val input: PiAnsiPalette,
+    val saturation: Double,
+    val theme: PiDerivedSystemTheme,
+)
 
 private object PiSystemMemoSlot {
     @Volatile
@@ -92,13 +105,14 @@ private object PiSystemMemoSlot {
  */
 internal fun resolveSystemTheme(
     input: PiAnsiPalette = PiSystemPaletteSource.palette,
+    saturation: Double = PiSystemPaletteSource.saturation,
 ): PiDerivedSystemTheme {
     PiSystemMemoSlot.last?.let { memo ->
-        if (memo.input == input) return memo.theme
+        if (memo.input == input && memo.saturation == saturation) return memo.theme
     }
-    val colors = deriveSystemColors(input)
+    val colors = deriveSystemColors(input, saturation)
     val theme = PiDerivedSystemTheme(
-        palette = deriveSystemPalette(input),
+        palette = deriveSystemPalette(input, saturation),
         dark = colors.appearance == PiSystemAppearance.DARK,
     )
     PiSystemMemoSlot.last = PiSystemMemo(
@@ -106,6 +120,7 @@ internal fun resolveSystemTheme(
         // so a caller that edited that array in place instead of assigning a new palette
         // would otherwise compare equal to itself and be served the stale answer.
         input = input.copy(ansi = input.ansi.copyOf()),
+        saturation = saturation,
         theme = theme,
     )
     return theme
@@ -219,6 +234,74 @@ object PiSystemPalettes {
     fun presetOf(id: String?): PiSystemPalettePreset =
         presets.firstOrNull { it.id == id } ?: presets.first()
 
-    /** 设置值 → 推导输入。 */
-    fun paletteOf(id: String?): PiAnsiPalette = presetOf(id).palette()
+    /** 自定义底色那一档的 id：选了它，底色来自 [BACKGROUND_KEY]。 */
+    const val CUSTOM_ID = "custom"
+
+    /** 自定义底色的设置键（`#RRGGBB`）。只在 [CUSTOM_ID] 生效。 */
+    const val BACKGROUND_KEY = "app.appearance.systemPaletteBg"
+
+    /** 饱和度档的设置键（`soft` / `normal` / `vivid`）。 */
+    const val SATURATION_KEY = "app.appearance.systemPaletteSaturation"
+
+    /** 饱和度三档：pi 的推导有一个倍率参数，这里把它变成可选的一维。 */
+    val saturations: List<Pair<String, Double>> = listOf(
+        "soft" to 0.7,
+        "normal" to 1.0,
+        "vivid" to 1.4,
+    )
+
+    /** 设置值 → 饱和度倍率；未知值一律 1.0（pi 的原值）。 */
+    fun saturationOf(wire: String?): Double =
+        saturations.firstOrNull { it.first == wire }?.second ?: 1.0
+
+    /** 倍率 → 设置值，界面回显用。 */
+    fun saturationWire(value: Double): String =
+        (saturations.firstOrNull { it.second == value } ?: saturations[1]).first
+
+    /** 饱和度档的中文名。 */
+    fun saturationLabel(wire: String?): String = when (wire) {
+        "soft" -> "素"
+        "vivid" -> "鲜艳"
+        else -> "标准"
+    }
+
+    /** `#RRGGBB` / `RRGGBB` → `0xRRGGBB`；不合法返回 null。 */
+    fun parseHex(text: String?): Int? {
+        val raw = text?.trim()?.removePrefix("#") ?: return null
+        if (raw.length != 6 || raw.any { it !in "0123456789abcdefABCDEF" }) return null
+        return raw.toLongOrNull(16)?.toInt()
+    }
+
+    /** 底色 → 终端前景：亮底给深色前景，暗底让 pi 自己按对比度算（null）。 */
+    private fun foregroundFor(background: Int): Int? {
+        val r = (background shr 16) and 0xFF
+        val g = (background shr 8) and 0xFF
+        val b = background and 0xFF
+        // Rec. 709 的相对亮度，够用来判"这个底色算浅色吗"；不是色彩管理。
+        val luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+        return if (luminance > 0.5) DEFAULT_BACKGROUND else null
+    }
+
+    /** 一档的底色（自定义档读 [customHex]，不合法时回退到 pi 默认底色）。 */
+    fun backgroundOf(id: String?, customHex: String?): Int {
+        if (id == CUSTOM_ID) return parseHex(customHex) ?: DEFAULT_BACKGROUND
+        return presetOf(id).background
+    }
+
+    /**
+     * 设置值 → 推导输入。
+     *
+     * 自定义档的 ANSI 16 色仍然取 pi 的默认值：这一页改的是"终端报了什么底色"，
+     * 不是让用户重画 16 色（那需要另一套界面和校验）。底色一换，明暗与 56 个 token
+     * 由同一套推导重算。
+     */
+    fun paletteOf(id: String?, customHex: String? = null): PiAnsiPalette {
+        val background = backgroundOf(id, customHex)
+        val preset = presets.firstOrNull { it.id == id }
+        return PiAnsiPalette(
+            background = background,
+            ansi = DEFAULT_ANSI.copyOf(),
+            foreground = preset?.foreground ?: foregroundFor(background),
+        )
+    }
 }

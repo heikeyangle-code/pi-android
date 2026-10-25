@@ -183,6 +183,7 @@ fun ModelProviderScreen(
     var subscriptionLoading by remember { mutableStateOf(true) }
     var subscriptionProblem by remember { mutableStateOf<String?>(null) }
     var subscriptionLogin by remember { mutableStateOf<PiOAuthHost.Provider?>(null) }
+    var subscriptionTick by remember { mutableStateOf(0) }
 
     // 直读的原文 → 组装。整段都在 IO 线程上（pi 的模型目录可能有几百 KB），旧值一直留到
     // 新值算好，避免闪一下空白。
@@ -322,7 +323,7 @@ fun ModelProviderScreen(
     // 订阅清单与状态一起读：一个是 guest 里跑 node（list 命令），一个是本机文件。
     // 放在 IO 上，且 `reloadTick` 一变就重读 —— 登录成功、或 AI 在对话里改了 auth.json，
     // 这一节都跟着变。
-    LaunchedEffect(oauthHost, reloadTick) {
+    LaunchedEffect(oauthHost, reloadTick, subscriptionTick) {
         subscriptionLoading = true
         val (providers, statuses, problem) = withContext(Dispatchers.IO) {
             val statuses = service.subscriptionStatuses()
@@ -333,7 +334,9 @@ fun ModelProviderScreen(
                 loaded.exceptionOrNull()?.let { it.message ?: it::class.java.simpleName },
             )
         }
-        subscriptionProviders = providers
+        // 读不到时用内置清单把这一页撑起来（并明说它是内置的）：空列表 + 一直"读取中"
+        // 是上一版的真实故障，用户看到的是永远转不完。
+        subscriptionProviders = providers.ifEmpty { oauthHost.fallbackProviders }
         subscriptionStatuses = statuses
         subscriptionProblem = problem
         subscriptionLoading = false
@@ -442,6 +445,7 @@ fun ModelProviderScreen(
                         loading = subscriptionLoading,
                         problem = subscriptionProblem,
                         onLogin = { subscriptionLogin = it },
+                        onRetry = { subscriptionTick++ },
                         onLogout = { provider ->
                             scope.launch {
                                 val problem = withContext(Dispatchers.IO) { service.remove(provider.id) }
@@ -486,17 +490,12 @@ fun ModelProviderScreen(
                 selectionMismatch?.let { mismatch -> item { Note(mismatch, tone = PiTheme.palette.warning) } }
                 // 生效时机照 pi：三个键都在 settings.json，每个新会话重建 runtime 时重新读、
                 // 重新解析循环作用域（`main.ts:788-797` 的 resolveModelScope 在 createRuntime
-                // 闭包里，闭包每会话跑一次）——不是"改完要重启"。
-                item { Note("这三个键就是 settings.json 里的选择。改完开一个新会话生效。") }
+                // 闭包里，闭包每会话跑一次）——不是"改完要重启"。用户裁定这一页不放说明，
+                // 所以这句只留在注释里。
 
                 // ---- 厂商卡与两个导入入口（没有节标题，也没有「N 个厂商」：统一口径）。
                 // 下面每张卡的模型副行写的就是「pi 目录 / 手写申报 / 覆盖」这三个词，
                 // 解释跟着它们放在同一段（页尾不再堆说明）。
-                if (data.providers.isNotEmpty()) {
-                    item {
-                        Note("「pi 目录」是 pi 自带的模型定义；「手写申报」写在你的模型配置里（同名条目会被它替换）；「覆盖」只改目录里的字段。")
-                    }
-                }
                 if (data.providers.isEmpty()) {
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
                 }
@@ -574,10 +573,7 @@ fun ModelProviderScreen(
                     item { SettingSwitchRow("showCacheMissNotices", store, editTick, reloadTick, onSettingWritten) }
                 }
 
-                // ---- 页尾只留两句（用户裁定：说明不堆在页尾）。
-                item { Note("这一屏读写的都是 pi 的官方文件（models.json、auth.json、settings.json）；对话里让 AI 改这些文件，列表会自动跟上。") }
-                // 终端页是半成品：只说事实（订阅登录要它、它还不完善），不再把用户支使过去。
-                item { Note("API Key 与订阅登录都写进 auth.json、写进同一张模型清单；订阅登录跑的是 pi 自己的流程，不需要终端。") }
+                // 用户裁定：这一页不放说明文字（"这 3 个键"那句与底部那屏都删掉）。
                 item { Spacer(Modifier.height(PiSettingsMetrics.groupGap)) }
             }
         }
