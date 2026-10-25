@@ -158,35 +158,40 @@ fun SettingsHome(
                     }
                 }
             }
-            // The device capability bridge is the one settings surface that is
-            // not a pi setting: pi has no notion of the phone it runs on, so this
-            // is the only screen for it. The catalog used to carry a second,
-            // disconnected copy of these switches under `app.device.*`; those rows
-            // were removed from `PiSettingsRegistry.kt` so there is one authority,
-            // `DeviceCapabilityStore`.
-            if (onOpenDeviceCapabilities != null) {
-                item {
-                    PiSettingsCard {
-                        DeviceCapabilityEntryRow(
-                            store = DeviceCapabilityStore.get(context),
-                            onClick = onOpenDeviceCapabilities,
+            // v2 把当时的 12 个分组放进**一张**卡片，行间是 1px inset hairline；分组
+            // 行数不多（现在是 10 行：11 组减掉下面被过滤的「模型与推理」，见
+            // `PiSettingsCatalog.groups`），所以整块是一个
+            // LazyColumn item，不拆成一个个 item。
+            item {
+                PiSettingsCard {
+                    // 「模型与推理」这一组的入口**按用户裁定删除**：组里的行（选择与推理）
+                    // 全都搬进了顶栏的「模型与供应商」一屏，首页不再有任何一条路进那个分组屏。
+                    // 行仍留在注册表里 —— 搜索、`groupTitle` 与编辑器都还要按 key 找到它们。
+                    // 高频组排前面：外观、提示词、会话、消息与网络、工具；其余按
+                    // 「用得少」向下（压缩/重试/扩展/安全/运行时）。组 id 是注册表里的
+                    // private 常量，这里只能写字面量；漏掉的 id 排最后（`order.size`），
+                    // 所以以后新增的组不会消失。
+                    val order = listOf(
+                        "appearance", "prompts", "sessions", "messages", "tools",
+                        "compaction", "retry", "resources", "security", "runtime",
+                    )
+                    val listedGroups = PiSettingsCatalog.groups
+                        .filterNot { it.id == G_MODEL }
+                        .sortedBy {
+                            order.indexOf(it.id).let { index -> if (index < 0) order.size else index }
+                        }
+                    listedGroups.forEachIndexed { index, group ->
+                        if (index > 0) PiSettingsHairline()
+                        GroupEntry(
+                            group = group,
+                            store = store,
+                            freshness = freshness,
+                            onClick = { onOpenGroup(group.id) },
                         )
                     }
                 }
             }
-            // Extension packages, next to the capability row because they answer
-            // the same kind of question — "what can the agent use here?" — and
-            // neither is a pi setting. `pi install` is CLI-only in v0.86.1 (the RPC
-            // command union carries no install/packages command —
-            // `modes/rpc/rpc-types.ts:20-74`), so
-            // this screen is the app's own, not a transcription of pi's.
-            if (onOpenPackages != null) {
-                item {
-                    PiSettingsCard {
-                        PiPackagesEntryRow(onClick = onOpenPackages)
-                    }
-                }
-            }
+
             // 其他：终端 + Pi 文件。v2 曾把「模型」也放在这一节（`phone4` /
             // `phone33`），但那一行已按用户拍板挪到首页最顶栏（上面的「模型与供应商」）
             // —— 同一件事只有一个门，这正是这次重排要消灭的重复。
@@ -201,6 +206,27 @@ fun SettingsHome(
                         PiSettingsHairline()
                     }
                     PiFilesEntryRow(onClick = openPiFiles)
+                }
+            }
+            // 与 pi 无关的两扇门合成一张卡：设备能力（这台手机能做什么）与扩展包
+            // （agent 能用什么）。两者问的是同一类问题，又都不是 pi 的设置键，
+            // 所以放在一起、排在分组之下。
+            if (onOpenDeviceCapabilities != null || onOpenPackages != null) {
+                item {
+                    PiSettingsCard {
+                        if (onOpenDeviceCapabilities != null) {
+                            DeviceCapabilityEntryRow(
+                                store = DeviceCapabilityStore.get(context),
+                                onClick = onOpenDeviceCapabilities,
+                            )
+                        }
+                        if (onOpenDeviceCapabilities != null && onOpenPackages != null) {
+                            PiSettingsHairline()
+                        }
+                        if (onOpenPackages != null) {
+                            PiPackagesEntryRow(onClick = onOpenPackages)
+                        }
+                    }
                 }
             }
             // 关于：开源许可 + 诊断报告。许可不是 pi 的设置也不是 pi 的功能：这个 App
@@ -224,27 +250,6 @@ fun SettingsHome(
                                 onClick = onOpenDiagnostics,
                             )
                         }
-                    }
-                }
-            }
-            // v2 把当时的 12 个分组放进**一张**卡片，行间是 1px inset hairline；分组
-            // 行数不多（现在是 10 行：11 组减掉下面被过滤的「模型与推理」，见
-            // `PiSettingsCatalog.groups`），所以整块是一个
-            // LazyColumn item，不拆成一个个 item。
-            item {
-                PiSettingsCard {
-                    // 「模型与推理」这一组的入口**按用户裁定删除**：组里的行（选择与推理）
-                    // 全都搬进了顶栏的「模型与供应商」一屏，首页不再有任何一条路进那个分组屏。
-                    // 行仍留在注册表里 —— 搜索、`groupTitle` 与编辑器都还要按 key 找到它们。
-                    val listedGroups = PiSettingsCatalog.groups.filterNot { it.id == G_MODEL }
-                    listedGroups.forEachIndexed { index, group ->
-                        if (index > 0) PiSettingsHairline()
-                        GroupEntry(
-                            group = group,
-                            store = store,
-                            freshness = freshness,
-                            onClick = { onOpenGroup(group.id) },
-                        )
                     }
                 }
             }
