@@ -218,9 +218,11 @@ fun PiTopBar(
     Column(
         modifier
             .fillMaxWidth()
-            // `surfaceDim` is the design's `--surf-dim`, the same chrome tone the
-            // bottom bar uses: one step below the content's own background.
-            .background(MaterialTheme.colorScheme.surfaceDim),
+            // 和页面同底色：状态栏是透明的（`MainActivity` 只设 `TRANSPARENT`），
+            // 顶栏若用 `surfaceDim` 就会在浅色主题下变成状态栏下方一块对不上的灰条
+            // —— 用户报的就是这个。用 `background`（= pi 的 `pageBg`）让顶栏、状态栏、
+            // 页面三者是同一个面。
+            .background(MaterialTheme.colorScheme.background),
     ) {
         Row(
             modifier = Modifier
@@ -282,10 +284,8 @@ fun PiTopBar(
                 )
             }
         }
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        // 不再画 1px 分隔线：顶栏和页面同底色时，那条线会把 48 高的标题栏切成一条
+        // “工具栏”，观感廉价；滚动内容自己会从下面经过，边界靠内容留白。
     }
 }
 
@@ -916,10 +916,8 @@ private fun PiBottomBar(current: PiDestination, onSelect: (PiDestination) -> Uni
         // `outline` is pi's `borderMuted` — the design's `1px solid var(--border-muted)`.
         // Drawn as a real divider rather than a border modifier so it is exactly
         // one hairline and takes no sub-pixel rounding from the bar's edges.
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        // 不再画 1px 分隔线：顶栏和页面同底色时，那条线会把 48 高的标题栏切成一条
+        // “工具栏”，观感廉价；滚动内容自己会从下面经过，边界靠内容留白。
         Row(
             Modifier
                 .fillMaxWidth()
