@@ -223,6 +223,21 @@ object PiSystemPalettes {
             description = "同一组 ANSI 16 色，底色纯黑；对比度最高，推导会尽量拉开层次。",
             background = 0x000000,
         ),
+        // pi 官方两套主题的页面底色（`dark.json` 的 `pageBg` / `light.json` 的 `pageBg`）。
+        // 这不是“复制官方主题”：选的只是底色，56 个 token 仍由同一条推导算出来，
+        // 但结果是“官方那种深蓝灰/浅灰”，比纯中性灰更接近用户已经看惯的观感。
+        PiSystemPalettePreset(
+            id = "pi-dark",
+            label = "pi 深（#21252C）",
+            description = "pi 官方 dark 的页面底色，推导结果与官方观感最接近。",
+            background = 0x21252C,
+        ),
+        PiSystemPalettePreset(
+            id = "pi-light",
+            label = "pi 浅（#EFEEEE）",
+            description = "pi 官方 light 的页面底色。",
+            background = 0xEFEEEE,
+        ),
     )
 
     /**

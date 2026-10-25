@@ -1138,7 +1138,8 @@ object PiSettingsCatalog {
             defaultValue = str(PiSystemPalettes.DEFAULT_ID),
             // 标签与档位顺序只有一处来源（`PiSystemPalettes.presets`）：行上显示的
             // "当前值"就是 `PiSetting.display` 按这份 options 翻出来的中文名。
-            options = PiSystemPalettes.presets.map { PiOption(it.id, it.label) },
+            options = PiSystemPalettes.presets.map { PiOption(it.id, it.label) } +
+                PiOption(PiSystemPalettes.CUSTOM_ID, "自定义"),
         ),
         // `app.appearance.dynamicColor` was deleted here. Android dynamic colour
         // cannot coexist with the rule this app runs on — every colour comes from

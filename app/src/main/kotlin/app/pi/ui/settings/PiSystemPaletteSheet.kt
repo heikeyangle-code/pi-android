@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -97,12 +98,47 @@ internal fun PiSystemPaletteSheet(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
-                // 预览四块等宽铺满：固定 52dp 的方块在小屏上会挤成一团，用 weight 平分。
+                // 顺序按“主次”排：先给**可选**的常用底色（大色块、带选中环），
+                // 再给一条**只读**的预览条。之前反过来，四个预览块长得像按钮，
+                // 真正能点的预设却是几个小点。
+                Text("常用底色", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
-                    Swatch("页面", preview.pageBg, Modifier.weight(1f))
-                    Swatch("卡片", preview.cardBg, Modifier.weight(1f))
-                    Swatch("文字", preview.text, Modifier.weight(1f))
-                    Swatch("强调", preview.accent, Modifier.weight(1f))
+                    PiSystemPalettes.presets.forEach { preset ->
+                        val selected = hexOf(preset.background) == hexText
+                        val shape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
+                        Box(
+                            Modifier
+                                .size(PiSettingsMetrics.cardIconSize * 2)
+                                .clip(shape)
+                                .background(
+                                    Color(0xFF000000L or (preset.background.toLong() and 0xFFFFFFL)),
+                                )
+                                .border(
+                                    if (selected) PiSettingsMetrics.hairline * 2 else PiSettingsMetrics.hairline,
+                                    if (selected) PiTheme.palette.accent else MaterialTheme.colorScheme.outline,
+                                    shape,
+                                )
+                                .clickable { setColor(preset.background) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+
+                // 预览是一条**只读**的四段色带：页面 / 卡片 / 文字 / 强调。没有文字标签，
+                // 免得再被当成按钮；「应用后的颜色」这句说明它是结果而不是选项。
+                Text("应用后的颜色", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(PiSettingsMetrics.chipHeight)
+                        .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius)),
+                ) {
+                    PreviewSegment(preview.pageBg, Modifier.weight(1f))
+                    PreviewSegment(preview.cardBg, Modifier.weight(1f))
+                    PreviewSegment(preview.text, Modifier.weight(1f))
+                    PreviewSegment(preview.accent, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
 
@@ -187,20 +223,8 @@ internal fun PiSystemPaletteSheet(
 }
 
 @Composable
-private fun Swatch(label: String, color: Color, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
-    Column(modifier) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(PiSettingsMetrics.chipHeight * 2)
-                .clip(shape)
-                .background(color)
-                .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, shape),
-        )
-        Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
-        Text(label, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+private fun PreviewSegment(color: Color, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize().background(color))
 }
 
 /**
