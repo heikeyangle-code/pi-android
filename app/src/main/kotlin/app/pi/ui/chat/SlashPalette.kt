@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -63,8 +64,8 @@ fun SlashPalette(
         if (matches.isEmpty()) {
             Text(
                 text = if (query.isBlank()) "没有可用命令" else "没有匹配「$query」的命令",
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 12.dp),
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Surface
@@ -85,7 +86,7 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -113,7 +114,7 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
             if (subtitle.isNotEmpty()) {
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -156,7 +157,7 @@ private fun SourceBadge(command: PiSlashCommand) {
         Text(
             label,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
+            style = PiTheme.text.meta,
             color = color,
             maxLines = 1,
         )

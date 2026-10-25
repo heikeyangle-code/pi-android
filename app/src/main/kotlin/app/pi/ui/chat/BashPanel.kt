@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.ui.BashRun
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -95,7 +95,7 @@ fun BashPanel(
         color = palette.cardBg,
         shape = PiShapes.cardInner,
             ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(horizontal = PiSpacing.cardPadding, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "$ ${run.command}",
@@ -143,7 +143,7 @@ fun BashPanel(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = status,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.meta,
                     color = statusTone(run, palette),
                 )
             }

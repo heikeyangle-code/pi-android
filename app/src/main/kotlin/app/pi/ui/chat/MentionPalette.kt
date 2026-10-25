@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -68,7 +69,7 @@ private fun MentionPaletteRow(item: PiFileMentions.Item, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -82,7 +83,7 @@ private fun MentionPaletteRow(item: PiFileMentions.Item, onClick: () -> Unit) {
             item.description?.let { description ->
                 Text(
                     description,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

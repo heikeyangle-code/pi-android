@@ -443,7 +443,7 @@ private fun NavigateSummaryDialog(
             Text(
                 "pi 可以把你要离开的那段对话总结成一条分支摘要，留在新的位置上。" +
                     "摘要是一次模型调用，可能等一会儿。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
             )
         },
         confirmButton = {
@@ -979,7 +979,7 @@ private fun BranchRow(
                         Text(
                             label,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -990,7 +990,7 @@ private fun BranchRow(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         "当前",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = PiTheme.text.meta,
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }

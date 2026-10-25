@@ -27,7 +27,6 @@ import android.provider.DocumentsContract
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,7 +40,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -131,6 +129,7 @@ import app.pi.ui.blocks.LocalTranscriptRowAnchor
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.blocks.TranscriptRowAnchor
 import app.pi.ui.chat.BashPanel
+import app.pi.ui.chat.ChatChip
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ContextSheet
 import app.pi.ui.chat.ForkPickerSheet
@@ -265,12 +264,6 @@ fun ChatScreen(
 
 /** Which bottom sheet the chat screen has open, if any. */
 private enum class ChatSheet { Model, Thinking, Tools, Stats, Context, Fork, Rename }
-
-/** `06 §2`「顶栏：高 48」. The same number `ui/PiRoot.kt`'s `PiTopBar` uses. */
-private val CHAT_TOP_BAR_HEIGHT = 48.dp
-
-/** v2's `TopBar` `gap:10` between the title block and the right cluster. */
-private val CHAT_TOP_BAR_GAP = 10.dp
 
 /**
  * 顶栏图标动作统一用 `PiTopBarIcon`（`ui/PiRoot.kt`）：30×30 radius-8 按压框 + 17 图标。
@@ -1622,10 +1615,13 @@ private fun ChatBody(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .height(CHAT_TOP_BAR_HEIGHT)
+                    // `06 §2`「顶栏：高 48」: the same token `ui/PiRoot.kt`'s `PiTopBar`
+                    // draws, rather than a second local copy of the number.
+                    .height(PiSpacing.topBarHeight)
                     .padding(horizontal = PiSpacing.pageHorizontal),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(CHAT_TOP_BAR_GAP),
+                // v2's `TopBar` `gap:10` between the title block and the right cluster.
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
@@ -2291,9 +2287,11 @@ private fun ChatBody(
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(SCROLL_ARROWS_PADDING),
+                        // v2's dense control step: the pair floats 12 dp in from the
+                        // page edge, 8 dp apart. Both numbers were one-use constants.
+                        .padding(12.dp),
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(SCROLL_ARROWS_GAP),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (showUp) {
                         ScrollArrowButton(
@@ -2915,7 +2913,8 @@ private fun scanSearchHits(
  *
  * ```
  * 容器      padding:8px 14px, border-bottom:1px borderMuted, background:surf-dim
- * 输入条    height:36, border:1px borderAccent, radius:9, background:surf-low,
+ * 输入条    height:36（本页取 40，与设置页搜索框同高，见 SEARCH_BAR_HEIGHT）,
+ *           border:1px borderAccent, radius:9, background:surf-low,
  *           padding:0 10px, gap:8
  *   ·       search 字形 15 muted
  *   ·       查询文本 mono t13 text
@@ -3063,44 +3062,36 @@ private val CONTEXT_RING_STROKE = 2.dp
 private val CONTEXT_RING_TOUCH = 32.dp
 private val CONTEXT_RING_SLOT = 30.dp
 
-/** `direction-b-v2.html:2756`: the search input row's height is v2's `36`. */
-private val SEARCH_BAR_HEIGHT = 36.dp
+/**
+ * The search input row's height: **40**, which is the number `06 §2` gives the search
+ * field (`PiSettingsMetrics.searchFieldHeight` / 「搜索框 40 高」) and therefore the
+ * height the settings page's own search field draws.
+ *
+ * v2's in-transcript strip was `height:36` (`direction-b-v2.html:2756`). The board's
+ * prototype is the only place that 36 appears; every other search field in this app is
+ * 40, so the strip takes 40 and the two searches now type into the same-size target.
+ */
+private val SEARCH_BAR_HEIGHT = 40.dp
 
 /**
  * One search action chip — v2's `Chip` (`direction-b-v2.html:605-617`) as the two
  * match arrows use it (`:2763-2764`): `height:26`, `border-radius:999`, a
  * `1px borderMuted` ring on a transparent ground, a glyph in the muted tone and the
  * label in the text colour.
+ *
+ * Geometry, ring, label role and the glyph tone are [ChatChip]'s now; this wrapper only
+ * keeps the arrows' own semantics — a search with no match is a **disabled** chip, so it
+ * draws muted and takes no tap (`muted` plus a null `onClick`).
  */
 @Composable
 private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .height(26.dp)
-            .clip(RoundedCornerShape(percent = 50))
-            .border(1.dp, PiTheme.palette.borderMuted, RoundedCornerShape(percent = 50))
-            .then(if (enabled) Modifier.clickable(onClickLabel = label, onClick = onClick) else Modifier)
-            .padding(horizontal = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Text(
-            text = glyph,
-            style = PiTheme.text.monoSmall,
-            color = PiTheme.palette.muted,
-            maxLines = 1,
-        )
-        Text(
-            text = label,
-            style = PiTheme.text.meta,
-            color = if (enabled) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            maxLines = 1,
-        )
-    }
+    ChatChip(
+        text = label,
+        glyph = glyph,
+        muted = !enabled,
+        onClick = if (enabled) onClick else null,
+        onClickLabel = label,
+    )
 }
 
 /**
@@ -3368,36 +3359,20 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
  * only way to read it is `get_state` (audit §5.3). It shows `Model.id` because
  * that is what `set_model` takes, and it is tappable because a chip that reports
  * state without offering the picker is a dead end.
+ *
+ * `06 §2` chip「高 26 圆角 999 `padding:0 9px`」 in v2's `mono t12` with a
+ * `1px borderMuted` ring (`direction-b-v2.html:500-503`) — i.e. the default
+ * [ChatChip], with no glyph and no state of its own. It carried a Material `Info`
+ * glyph and a filled surface before; the board's chip has neither, and a model id is
+ * machine language, so it takes the machine face.
  */
 @Composable
 private fun ModelChip(label: String?, onClick: () -> Unit) {
-    // `06 §2` chip「高 26 圆角 999 `padding:0 9px`」, and v2 draws this one as
-    // `mono t12` in the text colour with a `1px borderMuted` ring
-    // (`direction-b-v2.html:500-503`). It carried a Material `Info` glyph and a
-    // filled surface before; the board's chip has neither, and a model id is machine
-    // language, so it takes the machine face.
-    Surface(
-        modifier = Modifier
-            .height(26.dp)
-            .clip(PiShapes.badge)
-            .clickable(onClickLabel = "选择模型", onClick = onClick),
-        shape = PiShapes.badge,
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, PiTheme.palette.borderMuted),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = label ?: "选择模型",
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
+    ChatChip(
+        text = label ?: "选择模型",
+        onClick = onClick,
+        onClickLabel = "选择模型",
+    )
 }
 
 /**
@@ -3528,24 +3503,20 @@ private fun QueueRow(
  * One count chip: `06 §2` 的 chip（高 26 圆角 999），加上队列自己的符号。
  *
  * Both halves are monospace — a queue count is a machine reading, and the symbol
- * belongs to the machine face in v2 too (`<Chip glyph="⇢" … mono>`).
+ * belongs to the machine face in v2 too (`<Chip glyph="⇢" … mono>`). The two counts
+ * are the family's one pair with a **per-glyph tone** (`⇢` warning, `⇣` muted), which
+ * is what [ChatChip]'s `glyphTone` carries; the words and the number stay in the text
+ * colour. Its `surfaceContainerHigh` fill is gone: the chip is the same `1px
+ * borderMuted` ring on the page ground as the model and search chips, which is what
+ * `06 §2` draws and what made this one's fill read as a nested card.
  */
 @Composable
 private fun QueueChip(glyph: String, tone: Color, text: String) {
-    Surface(
-        shape = PiShapes.badge,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, PiTheme.palette.borderMuted),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = glyph, style = PiTheme.text.monoSmall, color = tone, maxLines = 1)
-            Spacer(Modifier.width(5.dp))
-            Text(text = text, style = PiTheme.text.monoSmall, color = PiTheme.palette.text, maxLines = 1)
-        }
-    }
+    ChatChip(
+        text = text,
+        glyph = glyph,
+        glyphTone = tone,
+    )
 }
 
 /**
@@ -3571,7 +3542,7 @@ private fun ExportDeliveryRow(
         shape = PiShapes.card,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(horizontal = PiSpacing.cardPadding, vertical = 8.dp)) {
             Text(
                 "会话已导出",
                 style = MaterialTheme.typography.labelLarge,
@@ -3595,7 +3566,7 @@ private fun ExportDeliveryRow(
                     modifier = Modifier
                         .clickable(onClick = onDismiss)
                         .padding(horizontal = 6.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -3942,9 +3913,7 @@ private const val TRANSCRIPT_WINDOW_STEP = 50
  */
 private const val FRESH_ROW_KEYS_MAX = 200
 
-/** The two floating scroll arrows: v2's dense control step, and 8dp apart. */
-private val SCROLL_ARROWS_GAP = 8.dp
-private val SCROLL_ARROWS_PADDING = 12.dp
+/** The floating scroll arrow's diameter. Its gap and page inset are inline at the use. */
 private val SCROLL_ARROW_SIZE = 30.dp
 
 /**
@@ -4241,6 +4210,15 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
  * The icon is 16 dp, not the 14 dp used inside a labelled chip: with the same 7 dp of
  * horizontal padding it makes the icon-only chip exactly 30 dp wide, the designer's
  * number (16 + 7 + 7), and it matches the send disc's glyph weight opposite it.
+ *
+ * ## What is left here
+ *
+ * Only the key row's own semantics: `enabled` (a disabled key greys out, one step down
+ * on the elevation ladder, and takes no tap), the optional [icon], the separate
+ * accessibility label, and the 6 dp trailing gap. The geometry is
+ * `app.pi.ui.chat.ChatChip(compact = true)` — see [app.pi.ui.chat.ChatChip] for why the
+ * key row keeps v2's `24×24 / radius 6 / padding 0 7px / surf-highest` instead of the
+ * `26 / 999 / 0 9px` chip shape.
  */
 @Composable
 private fun KeyChip(
@@ -4252,54 +4230,15 @@ private fun KeyChip(
     /** What a screen reader hears; required in practice whenever [label] is empty. */
     a11yLabel: String = label,
 ) {
-    val content = if (enabled) {
-        MaterialTheme.colorScheme.onSurface
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Box(
-        modifier = Modifier
-            .padding(end = 6.dp)
-            .heightIn(min = 24.dp)
-            .defaultMinSize(minWidth = 24.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(
-                if (enabled) {
-                    MaterialTheme.colorScheme.surfaceContainerHighest
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                },
-            )
-            .then(
-                if (enabled) {
-                    Modifier.clickable(onClickLabel = a11yLabel, onClick = onClick)
-                } else {
-                    Modifier
-                },
-            )
-            .padding(horizontal = 7.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (icon != null) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(if (label.isEmpty()) 16.dp else 14.dp),
-                    tint = content,
-                )
-                if (label.isNotEmpty()) Spacer(Modifier.width(4.dp))
-            }
-            if (label.isNotEmpty()) {
-                Text(
-                    text = label,
-                    style = PiTheme.text.monoSmall,
-                    color = content,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
+    ChatChip(
+        text = label,
+        modifier = Modifier.padding(end = 6.dp),
+        icon = icon,
+        muted = !enabled,
+        onClick = if (enabled) onClick else null,
+        onClickLabel = a11yLabel,
+        compact = true,
+    )
 }
 
 

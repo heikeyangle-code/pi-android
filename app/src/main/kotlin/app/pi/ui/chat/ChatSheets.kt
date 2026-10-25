@@ -130,7 +130,7 @@ fun ModelPickerSheet(
                         "没有可用模型。刚配置好的厂商要重启引擎后才会出现在这里；" +
                             "已经保存的模型可以在 设置 → 模型 里看到它们的状态。"
                     },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(PiSpacing.unit))
@@ -195,7 +195,7 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
                     Spacer(Modifier.width(6.dp))
                     Text(
                         "当前",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = PiTheme.text.meta,
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -247,7 +247,7 @@ fun ThinkingPickerSheet(
             Spacer(Modifier.height(4.dp))
             Text(
                 "可选等级由当前模型决定。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.unit))
@@ -255,7 +255,7 @@ fun ThinkingPickerSheet(
                 if (levels.isEmpty()) {
                     Text(
                         "当前模型不支持思考等级。",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -278,7 +278,7 @@ fun ThinkingPickerSheet(
                             Text(
                                 "◐",
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
+                                style = PiTheme.text.meta,
                                 color = PiTheme.palette.thinking(level),
                             )
                         }
@@ -296,7 +296,7 @@ fun ThinkingPickerSheet(
                         if (selected) {
                             Text(
                                 "当前",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = PiTheme.text.meta,
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         }
@@ -474,7 +474,7 @@ fun SessionToolsSheet(
                 Text(
                     "下面这些扩展用到了本应用不支持的自绘界面，它们在对话页不会显示内容。",
                     modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 state.tuiOnlyExtensions.forEach { extension ->
@@ -502,7 +502,7 @@ fun SessionToolsSheet(
                 Text(
                     "扩展通过 setStatus 交给客户端的字符串，按扩展自己的颜色显示。",
                     modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 state.extensionStatuses.forEach { status ->
@@ -525,7 +525,7 @@ private fun QueueModeRow(
         Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         Text(
             supporting,
-            style = MaterialTheme.typography.bodyMedium,
+            style = PiTheme.text.prose,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(6.dp))
@@ -586,7 +586,7 @@ fun ContextSheet(
                 "上下文与用量",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                    .padding(horizontal = PiSpacing.pageHorizontal, vertical = 11.dp),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -599,12 +599,12 @@ fun ContextSheet(
                     .fillMaxWidth()
                     .heightIn(max = 560.dp)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(horizontal = PiSpacing.pageHorizontal, vertical = 12.dp),
             ) {
                 if (stats == null) {
                     Text(
                         "正在读取…",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -659,7 +659,7 @@ fun SessionStatsSheet(
             if (stats == null) {
                 Text(
                     "正在读取…",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
@@ -1141,7 +1141,7 @@ fun ForkPickerSheet(
                 "会在「这条消息之前」分出新的会话（这条消息本身不会带过去），" +
                     "并把它放回输入框，可以改完再发。编号就是 pi 给的可分叉消息顺序。" +
                     "原会话文件保持原样，在会话列表里还找得到它。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.unit))
@@ -1153,7 +1153,7 @@ fun ForkPickerSheet(
                     // as a broken feature rather than as an empty session.
                     "pi 说这个会话还没有可分叉的用户消息（No messages to fork from）。" +
                         "先发一条消息，等 pi 把它写进会话文件后再回来。",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
@@ -1181,7 +1181,7 @@ fun ForkPickerSheet(
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     message.text.ifBlank { "（空消息）" },
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = PiTheme.text.prose,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
@@ -1222,7 +1222,7 @@ fun RenameSessionDialog(
             Column {
                 Text(
                     "会话列表里显示的名称。",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(PiSpacing.unit))
