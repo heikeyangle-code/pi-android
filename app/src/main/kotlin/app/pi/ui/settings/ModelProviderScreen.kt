@@ -1419,7 +1419,7 @@ private fun ImportSheet(
                                 sheetScope.launch {
                                     val failure = withContext(Dispatchers.IO) { service.removeCredential(presetId) }
                                     if (failure != null) {
-                                        keyError = failure
+                                        saveError = failure
                                     } else {
                                         credentialPresent = false
                                         maskedKey = null
@@ -1947,6 +1947,7 @@ private fun ProviderCard(
                     val ready = counts[PiModelInventory.Status.READY] ?: 0
                     val missing = counts[PiModelInventory.Status.MISSING_CREDENTIAL] ?: 0
                     val pending = counts[PiModelInventory.Status.PENDING_RESTART] ?: 0
+                    val unknown = counts[PiModelInventory.Status.UNKNOWN] ?: 0
                     Text(
                         buildString {
                             append("${provider.models.size} 个模型")
@@ -1954,7 +1955,11 @@ private fun ProviderCard(
                             if (missing > 0) append(" · $missing 缺凭证")
                             if (pending > 0) append(" · $pending 等待重启")
                             if (provider.models.isEmpty()) append(" · 还没有模型")
-                            if (ready + missing + pending == 0 && provider.models.isNotEmpty()) {
+                            // 引擎没跑时全是 UNKNOWN：不能把它说成「pi 未列出」（那句话是
+                            // "pi 明确回答没有"，与"没法回答"是两件事）。
+                            if (unknown > 0) {
+                                append(" · 引擎未运行")
+                            } else if (ready + missing + pending == 0 && provider.models.isNotEmpty()) {
                                 append(" · pi 未列出")
                             }
                         },
