@@ -7,9 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
@@ -18,7 +16,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.ui.PiTopBar
@@ -225,63 +222,3 @@ private fun GroupEntry(
     )
 }
 
-/**
- * 首页上的一行入口：前置图标 + 标题 + 一行说明 + chevron。
- *
- * 形状就是 [PiSettingsEntryRow]（行内 `14 / 10`、图标 16 灰、标题 15/500、说明 12 灰
- * **一行**、chevron 14），与「设备能力」页的入口行逐像素相同；没有文字尾巴。
- *
- * 「其他」与「关于」两节里的四行形状完全一样，所以这里只写一次。
- */
-@Composable
-private fun PiEntryRow(
-    icon: ImageVector,
-    title: String,
-    supporting: String,
-    onClick: () -> Unit,
-) {
-    PiSettingsEntryRow(
-        title = title,
-        supporting = supporting,
-        onClick = onClick,
-        leadingIcon = icon,
-    )
-}
-
-/**
- * 终端入口行 —— 终端从底部目的地降下来的那一行（`03-navigation-decision.md:24`）。
- *
- * 副行的话是从原来的工作区页搬过来的**原话**（旧 `WorkbenchScreen.kt:72`），比 v2 首页
- * 上那句「需要终端的扩展在那边」长：它是应用里唯一说明「哪些能力只有原版 TUI 有」的地方
- * （订阅登录、会话导入、需要终端的扩展），而 v2 的 `06 §5` 只给了那半句。这处文案差异**故意
- * 保留**并已写进本批的偏差清单等裁决 —— 删掉它就等于把这些能力从界面上抹掉。
- * `docs/settings-review.md` §9 的教训是这句话不该在每个 TUI 相关的设置行上重复，而应该只
- * 说一次——这里就是那一次。
- */
-@Composable
-private fun PiTerminalEntryRow(onClick: () -> Unit) {
-    PiEntryRow(
-        icon = Icons.Filled.Terminal,
-        title = "终端",
-        supporting = "输入 pi 回车进入原版 TUI：会话导入、以及需要终端的扩展都在那边（订阅登录已内建，在「模型与供应商」里）。",
-        onClick = onClick,
-    )
-}
-
-/**
- * 「Pi 文件」入口行 —— `PiFilesScreen` 的门。
- *
- * 副行只讲**这一屏能做什么**，不讲它在哪：pi 的文件分两处（agent 目录与项目 `.pi`），
- * 把它们写成路径只会多一行用户不需要记的字，进去以后第一件看到的就是那两个根的名字。
- *
- * 与终端那行一样，这一段是应用里**唯一**说这句话的地方，不在别处重复。
- */
-@Composable
-private fun PiFilesEntryRow(onClick: () -> Unit) {
-    PiEntryRow(
-        icon = Icons.AutoMirrored.Filled.InsertDriveFile,
-        title = "Pi 文件",
-        supporting = "看 pi 读的那些文件：设置、模型、提示词、主题、技能。只给看的不给改。",
-        onClick = onClick,
-    )
-}

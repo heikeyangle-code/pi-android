@@ -717,25 +717,6 @@ private val WsMoreGlyph: ImageVector = ImageVector.Builder(
 ).build()
 
 /**
- * 稿子那两个方向图标里的右尖括号：`M7 4.4L11.6 9 7 13.6`、`strokeWidth:1.4`
- * （`workspace-final.html:291`，`p.w||1.4`）。① 的目录卡末端用它，而不是一个 `Text("›")`。
- */
-internal val WsChevronRightGlyph: ImageVector = ImageVector.Builder(
-    name = "WsChevronRight",
-    defaultWidth = 18.dp,
-    defaultHeight = 18.dp,
-    viewportWidth = 18f,
-    viewportHeight = 18f,
-).addPath(
-    pathData = PathParser().parsePathString("M7 4.4L11.6 9 7 13.6").toNodes(),
-    fill = null,
-    stroke = SolidColor(Color.Black),
-    strokeLineWidth = 1.4f,
-    strokeLineCap = StrokeCap.Round,
-    strokeLineJoin = StrokeJoin.Round,
-).build()
-
-/**
  * 稿子专门为**二进制**加的第三个文件态图标（`workspace-final.html:311`：文件轮廓 + 右下角
  * 一块实心矩形）。目录树、查看器与导入提示都用它，替掉原来那个字符 `▤`。
  */

@@ -39,9 +39,7 @@ import app.pi.R
 @Immutable
 object PiSpacing {
     val unit = 18.dp
-    val statusRow = 32.dp
 
-    val errorDot = 8.dp
 
     // ------------------------------------------------------- the v2 page scale
     //
@@ -52,28 +50,19 @@ object PiSpacing {
     //
     //   pageHorizontal     「屏水平 14px」
     //   cardPadding        「卡片内 12px」
-    //   cardPaddingLoose   「当前目录卡 / 设备桥卡 14px」
-    //   groupHeaderGap     「分组头 padding:0 14px; margin-bottom:7px」
-    //   groupGap           「分组块 marginTop:18px」
     //   scrollBottom       「滚动区底部留 14–18px」取上端
     //   blockGap           「块间距 8」
     //   topBarHeight       「顶栏：高 48」
-    //   bottomBarHeight    「底栏：高 56」
+    //
+    // 这里只剩**真的有人在用**的值：`cardPaddingLoose` / `groupHeaderGap` / `groupGap` /
+    // `bottomBarHeight` 都曾是第二批从 `PiSettingsMetrics` 抄过来的同一组数，两个对象
+    // 各说一遍；现在一律走 `PiSettingsMetrics`，底栏本身也已经拆掉。
 
     /** `06 §2`「屏水平 14px」: the page margin every v2 screen uses. */
     val pageHorizontal = 14.dp
 
     /** `06 §2`「卡片内 12px」: the interior padding of a default card. */
     val cardPadding = 12.dp
-
-    /** `06 §2`「当前目录卡 / 设备桥卡 14px」. */
-    val cardPaddingLoose = 14.dp
-
-    /** `06 §2`「分组头 padding:0 14px; margin-bottom:7px」. */
-    val groupHeaderGap = 7.dp
-
-    /** `06 §2`「分组块 marginTop:18px」. */
-    val groupGap = 18.dp
 
     /** `06 §2`「滚动区底部留 14–18px」. */
     val scrollBottom = 18.dp
@@ -83,9 +72,6 @@ object PiSpacing {
 
     /** `06 §2`「顶栏：高 48」. */
     val topBarHeight = 48.dp
-
-    /** `06 §2`「底栏：高 56」. */
-    val bottomBarHeight = 56.dp
 
     // ------------------------------------------------- the block-interior scale
     //
@@ -143,9 +129,6 @@ object PiSpacing {
     /** 10dp: the accent stripe to its first line of text. */
     val inner = 10.dp
 
-    /** 14dp: the user-message container's padding (§2.3's radius sibling). */
-    val bubble = 14.dp
-
     /** 16dp: a diff's symbol column (§7.4's own number). */
     val symbolColumn = 16.dp
 
@@ -159,10 +142,9 @@ object PiSpacing {
      * three of them already drew).
      *
      * F28 (`docs/rendering-review.md`): the error card passed 36dp for the same
-     * element and the thinking block passes 32dp. The 32dp one is **spec**, not a
-     * choice — §7.4's thinking-block row is "收起：一行 32dp" — so it uses
-     * [statusRow]; the 36dp matched nothing (pi draws no stripe at all, so there
-     * is no upstream value to copy) and is therefore unified onto this token.
+     * element and the thinking block passes its own 32dp (spec §7.4: 「收起：一行
+     * 32dp」). The 36dp matched nothing (pi draws no stripe at all, so there is no
+     * upstream value to copy) and was therefore unified onto this token.
      */
     val accentStripe = 20.dp
 }

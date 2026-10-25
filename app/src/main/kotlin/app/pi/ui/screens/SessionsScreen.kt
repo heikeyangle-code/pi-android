@@ -111,7 +111,7 @@ enum class SessionsView(val label: String) {
  *
  * ## 它为什么是覆盖层
  *
- * `03-navigation-decision.md` 的裁决：底栏是三个「地方」，而会话列表是一个**选择器**
+ * `03-navigation-decision.md` 的裁决：当时底栏是三个「地方」，而会话列表是一个**选择器**
  * （pi 自己就是把会话树覆盖在转录上）。这一屏由 `PiRoot` 的覆盖层状态承载，所以它
  * 自己**不注册** `BackHandler`：覆盖层、工作区、设置内部栈三条都在别处注册，且按条件
  * 互斥（那边的 KDoc 记着这条教训）。

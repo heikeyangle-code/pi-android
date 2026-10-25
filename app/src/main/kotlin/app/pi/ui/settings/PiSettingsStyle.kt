@@ -213,14 +213,6 @@ internal const val PiSettingsCollapseAbove = 8
 internal fun Modifier.settingsPageTopInset(contentPadding: PaddingValues): Modifier =
     padding(top = contentPadding.calculateTopPadding())
 
-/** `06 §2`「搜索框 / 输入框：圆角 9」。 */
-
-/** `06 §2`「sheet：顶部圆角 16」（只有上两个角，下沿贴屏底）。 */
-internal val PiSettingsSheetShape = RoundedCornerShape(
-    topStart = PiSettingsMetrics.sheetTopRadius,
-    topEnd = PiSettingsMetrics.sheetTopRadius,
-)
-
 /**
  * `06 §2`「组内 inset hairline（`borderMuted` 55%），无描边无阴影」，厚度取 0.5dp：
  * 卡内的线比页面级分栏更细（与工作区那一版同一条规矩）。

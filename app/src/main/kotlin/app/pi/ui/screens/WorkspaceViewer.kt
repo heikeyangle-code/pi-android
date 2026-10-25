@@ -89,7 +89,7 @@ import kotlinx.coroutines.withContext
  *
  * ## 为什么是一层全屏覆盖层，而不是新页面
  *
- * `03-navigation-decision.md` 的裁决：底栏是三个「地方」，别的一律是覆盖层。查看器属于
+ * `03-navigation-decision.md` 的裁决：当时底栏是三个「地方」，别的一律是覆盖层。查看器属于
  * 「我在看这个文件」，不是「我到了另一个地方」。实现上用 `Dialog` + 全屏窗口，于是
  * **返回键、点外部、下滑**三件事都由窗口本身处理，而全应用那一处 `BackHandler`
  * （`PiRoot` 的 KDoc 记着「两处会互相遮盖」）依然只有一处。

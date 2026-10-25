@@ -878,22 +878,12 @@ private val TREE_INDENT_TAIL_STEP = 4.dp
 private const val TREE_INDENT_TAIL_LEVELS = 6
 
 /**
- * The deepest indent the row will ever draw: 4×12 + 6×4 = **72dp**.
- *
- * `internal` alongside [treeRowIndent] so both the function's shape and the ceiling it
- * promises can be asserted in a unit test — the 192dp text column of the worst case on
- * a 360dp phone is `360 − 2×14 − 72 − 10 − 58`.
- */
-internal val TREE_INDENT_MAX =
-    TREE_INDENT_STEP * TREE_INDENT_FULL_LEVELS + TREE_INDENT_TAIL_STEP * TREE_INDENT_TAIL_LEVELS
-
-/**
  * The left inset a row at [depth] draws, in two stages (see the block above):
  * 0/12/24/36/48dp for depths 0–4, then +4dp per level up to a 72dp ceiling at depth 10.
  *
  * `internal` rather than `private` so the shape is testable without a device — the
- * stages and the ceiling are the whole fix, and a phone is not needed to see that
- * depth 40 draws the same 72dp as depth 10.
+ * stages are the whole fix, and a phone is not needed to see that depth 40 draws the
+ * same 72dp as depth 10 (the ceiling is [TREE_INDENT_TAIL_STEP] × its level cap).
  */
 internal fun treeRowIndent(depth: Int): Dp {
     if (depth <= 0) return 0.dp
