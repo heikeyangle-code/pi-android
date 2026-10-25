@@ -1130,8 +1130,8 @@ object PiSettingsCatalog {
         // 与 `PiSettingEditorHost` 都用那个常量）—— 两处必须一起改。
         PiSetting(
             key = "app.appearance.systemPalette",
-            title = "配色方案",
-            description = "选一个背景色，其余颜色按 pi 的规则推导（调色板）。",
+            title = "系统主题",
+            description = "自定义 system 主题的底色：其余颜色按 pi 的规则推导。dark / light 与第三方主题不受影响。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",

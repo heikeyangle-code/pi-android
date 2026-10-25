@@ -65,31 +65,25 @@ fun PiSettingEditorSheet(
             // 有 `✓/○ + 名字 + 说明`。这一支不加第二个机制 —— 写入仍然在这里
             // （`store.write` + `onWritten`），只是把排版交给 [PiSystemPaletteSheet]。
             if (setting.key == PiSystemPalettes.SETTING_KEY) {
-                // 底色/饱和度是同一页上的三个键：选档、自定义底色、饱和度各写各的，
-                // 但都经过这里，所以「写 → onWritten → refreshTheme」只有一条路。
-                // 关键的一步：顺手把 `theme` 切到 `system` —— 否则默认的 dark/light 不
-                // 经过这条推导，用户选完什么都不会变（这一页曾经就是这样坏掉的）。
+                // 三个键（主题 id、底色、饱和度）都在这一页里，但**只在按「应用」时**写，
+                // 由这里一次写完再 `onWritten` → `refreshTheme`；拖动滑杆不会碰设置。
                 PiSystemPaletteSheet(
-                    currentSaturation = (store.read(PiSystemPalettes.SATURATION_KEY) as? JsonPrimitive)
-                        ?.content ?: PiSystemPalettes.saturationWire(1.0),
-                    currentBackground = (store.read(PiSystemPalettes.BACKGROUND_KEY) as? JsonPrimitive)
+                    initialBackground = (store.read(PiSystemPalettes.BACKGROUND_KEY) as? JsonPrimitive)
                         ?.content.orEmpty(),
-                    onSetSaturation = { wire ->
-                        store.write(PiSystemPalettes.SATURATION_KEY, JsonPrimitive(wire))
-                        // 强度只在推导里生效：同样顺手切到 system，避免"拖了没反应"。
-                        store.write("theme", JsonPrimitive("system"))
-                        onWritten(setting)
-                    },
-                    onSetCustom = { hex ->
+                    initialSaturation = (store.read(PiSystemPalettes.SATURATION_KEY) as? JsonPrimitive)
+                        ?.content ?: PiSystemPalettes.saturationWire(1.0),
+                    onApply = { hex, saturationWire ->
+                        // 只有按「应用」才写盘并切主题：拖滑杆只改这一页的预览，
+                        // 不会顺手把用户原来的 dark/light 选择改掉。
                         store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(PiSystemPalettes.CUSTOM_ID))
                         store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive("#$hex"))
+                        store.write(PiSystemPalettes.SATURATION_KEY, JsonPrimitive(saturationWire))
                         store.write("theme", JsonPrimitive("system"))
                         onWritten(setting)
                     },
-                    onSetPreset = { id ->
-                        store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(id))
-                        store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive(""))
-                        store.write("theme", JsonPrimitive("system"))
+                    onResetToOfficial = {
+                        // pi 的自动对写法（`light/dark`）：跟随手机深浅色，回到官方两套。
+                        store.write("theme", JsonPrimitive("light/dark"))
                         onWritten(setting)
                     },
                     onDismiss = onDismiss,

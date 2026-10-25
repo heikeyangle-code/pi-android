@@ -37,32 +37,46 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import app.pi.ui.components.PiType
+import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.deriveSystemPalette
 
 /**
- * 「配色方案」：自由选一个背景色，其余 55 个 token 按 pi 的规则推导。
+ * 「系统主题」：选一个底色，其余 55 个 token 按 pi 的规则推导。
  *
- * 这一页只产出一个输入 —— **背景色**（外加 pi 推导函数的饱和度倍率）。明暗、正文、
- * 边框、强调色、工具卡、代码块全部由 `deriveSystemPalette` 用同一个背景推出来，
- * 与 pi 的 `system` 主题同一条规则。页面/卡片底色就是这个背景色本身（修掉了之前
- * "拿 userMessageBg 缩放把整页染蓝"的 bug）。
+ * 只产出一个输入 —— **底色**（外加推导函数的饱和度倍率），全部颜色由
+ * `deriveSystemPalette` 算出来，与 pi 的 `system` 主题同一条规则。页面底色就是选的
+ * 那个色，卡片 = 同色向白混 6%（对齐 pi 的 `#21252C → #282C34` 差值）。
+ *
+ * 应用时机：**只按「应用」时才写盘并切到 `system` 主题**。拖动滑杆只在页内更新预览，
+ * 不会顺手改掉用户原来的 dark/light 选择；页底另有「恢复官方主题」一键退出。
  */
 @Composable
 internal fun PiSystemPaletteSheet(
-    currentSaturation: String,
-    currentBackground: String,
-    onSetSaturation: (wire: String) -> Unit,
-    onSetCustom: (hex: String) -> Unit,
+    initialBackground: String,
+    initialSaturation: String,
+    onApply: (hex: String, saturationWire: String) -> Unit,
+    onResetToOfficial: () -> Unit,
     onDismiss: () -> Unit,
-    onSetPreset: (id: String) -> Unit,
 ) {
-    val initial = PiSystemPalettes.parseHex(currentBackground) ?: 0x1E1E1E
+    val initial = PiSystemPalettes.parseHex(initialBackground) ?: 0x1E1E1E
     var hsv by remember { mutableStateOf(rgbToHsv(initial)) }
     var hexText by remember { mutableStateOf(hexOf(hsvToRgb(hsv))) }
+    var saturationWire by remember { mutableStateOf(initialSaturation) }
     fun setColor(rgb: Int) {
         hexText = hexOf(rgb)
         hsv = rgbToHsv(rgb)
+    }
+
+    // 页内预览：真实推导一次（56 token），所以看到的就是应用后的样子。拖动时每帧
+    // 重算一次（本机约 2 ms），只影响这几个色块，不触发全 App 重组。
+    val preview: PiPalette = remember(hexText, saturationWire) {
+        val hex = PiSystemPalettes.parseHex(hexText) ?: hexOf(hsvToRgb(hsv))
+        deriveSystemPalette(
+            PiSystemPalettes.paletteOf(PiSystemPalettes.CUSTOM_ID, hex),
+            PiSystemPalettes.saturationOf(saturationWire),
+        )
     }
 
     PiSettingsSheet(onDismiss = onDismiss) {
@@ -75,7 +89,7 @@ internal fun PiSystemPaletteSheet(
                     top = PiSettingsMetrics.sheetHeadTop,
                 ),
         ) {
-            Text("配色方案", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+            Text("系统主题", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             Column(
                 Modifier
@@ -84,8 +98,10 @@ internal fun PiSystemPaletteSheet(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
-                    PreviewSwatch("页面", hsvToRgb(hsv), circle = false)
-                    PreviewSwatch("卡片", cardOf(hsvToRgb(hsv)), circle = false)
+                    Swatch("页面", preview.pageBg)
+                    Swatch("卡片", preview.cardBg)
+                    Swatch("文字", preview.text)
+                    Swatch("强调", preview.accent)
                 }
                 Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
 
@@ -123,7 +139,7 @@ internal fun PiSystemPaletteSheet(
                     TextButton(
                         enabled = PiSystemPalettes.parseHex(hexText) != null,
                         onClick = {
-                            onSetCustom(hexText.trim().removePrefix("#"))
+                            onApply(hexText.trim().removePrefix("#"), saturationWire)
                             onDismiss()
                         },
                     ) { Text("应用") }
@@ -136,8 +152,8 @@ internal fun PiSystemPaletteSheet(
                     PiSystemPalettes.saturations.forEach { (wire, _) ->
                         PiSettingsChip(
                             text = PiSystemPalettes.saturationLabel(wire),
-                            onClick = { onSetSaturation(wire) },
-                            active = wire == currentSaturation,
+                            onClick = { saturationWire = wire },
+                            active = wire == saturationWire,
                         )
                     }
                 }
@@ -147,39 +163,45 @@ internal fun PiSystemPaletteSheet(
                 Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
                     PiSystemPalettes.presets.forEach { preset ->
-                        val shape = RoundedCornerShape(percent = 50)
                         Box(
                             Modifier
                                 .size(PiSettingsMetrics.chipHeight)
-                                .clip(shape)
+                                .clip(RoundedCornerShape(percent = 50))
                                 .background(
                                     Color(0xFF000000L or (preset.background.toLong() and 0xFFFFFFL)),
                                 )
-                                .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, shape)
-                                .clickable {
-                                    onSetPreset(preset.id)
-                                    onDismiss()
-                                },
+                                .border(
+                                    PiSettingsMetrics.hairline,
+                                    MaterialTheme.colorScheme.outline,
+                                    RoundedCornerShape(percent = 50),
+                                )
+                                .clickable { setColor(preset.background) },
                         )
                     }
                 }
+
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+                TextButton(onClick = {
+                    onResetToOfficial()
+                    onDismiss()
+                }) { Text("恢复官方主题（dark / light 跟随系统）") }
             }
         }
     }
 }
 
 @Composable
-private fun PreviewSwatch(label: String, rgb: Int, circle: Boolean) {
-    val shape = if (circle) RoundedCornerShape(percent = 50) else RoundedCornerShape(PiSettingsMetrics.cardRadius)
+private fun Swatch(label: String, color: Color) {
+    val shape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
     Column {
         Box(
             Modifier
                 .size(
-                    width = PiSettingsMetrics.chipHeight * 3,
+                    width = PiSettingsMetrics.chipHeight * 2,
                     height = PiSettingsMetrics.chipHeight * 2,
                 )
                 .clip(shape)
-                .background(Color(0xFF000000L or (rgb.toLong() and 0xFFFFFFL)))
+                .background(color)
                 .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, shape),
         )
         Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
@@ -285,10 +307,4 @@ private fun hueColor(hue: Float): Color =
 private fun greyOf(rgb: Int): Color {
     val hsv = rgbToHsv(rgb)
     return Color(0xFF000000L or (hsvToRgb(Triple(hsv.first, 0f, hsv.third)).toLong() and 0xFFFFFFL))
-}
-
-/** 卡片底色：与推导里的 `canvasSurfaces` 同一条规则（向白混 6%）。 */
-private fun cardOf(rgb: Int): Int {
-    fun mix(channel: Int): Int = (channel + (255 - channel) * 0.06f).toInt().coerceIn(0, 255)
-    return (mix((rgb shr 16) and 0xFF) shl 16) or (mix((rgb shr 8) and 0xFF) shl 8) or mix(rgb and 0xFF)
 }
