@@ -206,22 +206,14 @@ internal fun PiSettingsValueRow(
                 modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
             )
         }
-        RowBody(title = title, supporting = null)
-        // 值在**行尾右侧**，不是标题下面那行副文字：这一行的语义就是「标题 + 值 + chevron」。
-        // 宽度同样封顶 40%，再用 `CenterEnd` 顶到右缘。
-        Box(
-            modifier = Modifier.weight(0.4f),
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            Text(
-                value,
-                style = PiTheme.text.mono,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.End,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        // 这一行的值**留在标题下面那一行**（等宽 13、左对齐）。用户裁定：这种行读起来
+        // 没问题，不要为了和分组页的值行统一而挪到行尾 —— 长值（循环模型是一串 pattern）
+        // 在行尾只能分到 40% 宽，会比这里更早被省略号截断。
+        RowBody(
+            title = title,
+            supporting = value,
+            supportingMono = true,
+        )
         if (onClick != null) PiSettingsChevron()
     }
 }
