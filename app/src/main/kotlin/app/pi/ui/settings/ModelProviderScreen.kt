@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -524,16 +525,22 @@ fun ModelProviderScreen(
                 }
 
                 item {
-                    TextButton(
+                    // 「导入模型」是这一屏最主要的动作：用真按钮（填充、整行宽），
+                    // 不再是一个和「本地模型」同级的文字链接。
+                    Button(
                         onClick = {
                             sheetPreset = null
                             sheetOpen = true
                         },
-                        modifier = Modifier.padding(
-                            horizontal = PiSettingsMetrics.pageHorizontal,
-                            vertical = PiSpacing.unit,
-                        ),
-                    ) { Text("导入模型") }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = PiSettingsMetrics.pageHorizontal,
+                                vertical = PiSpacing.unit,
+                            ),
+                    ) {
+                        Text("导入模型", style = PiType.title)
+                    }
                 }
                 item {
                     // 「本地模型（llama.cpp）」原来是分组屏里的一行 Action，入口随分组一起
