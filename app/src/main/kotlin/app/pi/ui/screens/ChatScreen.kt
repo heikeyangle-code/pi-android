@@ -4335,14 +4335,14 @@ private fun ComposerIconButton(
 }
 
 /**
- * 流式时的「引导 / 后续」：26 dp 的文字 pill，只在 `streaming` 时出现。
+ * 流式时的「引导 / 后续」：32 dp 的圆形文字按钮，只在 `streaming` 时出现。
  *
- * 它和左侧的三枚图标按钮不是同一类：图标是**动作**（打开面板/附件/菜单），这两枚是
- * **这一次消息怎么送达**，所以它们保留文字、用 `surfaceContainerHigh` 的软底，而不是
- * 第三枚无底图标。禁用时去掉底、文字转 muted —— 两枚都还在，位置不跳。
+ * **和左边三枚图标按钮同一套形状/背景**：32 dp 圆、没有底色、按下才起涟漪；
+ * 唯一的区别是内容 —— 这三个是图标，这两个是两字标签。禁用时文字转 muted，
+ * 仍是同一个圆、同一个位置，不跳。
  *
- * 宽度：两枚 pill 合计约 76 dp。360 dp 屏上流式时思考等级会先让掉名字（见
- * [ThinkingLevelButton]），左边那三枚热区也从最初的 36 dp 收到 32 dp，才排得下。
+ * 宽度：两枚圆合计 66 dp（原来 26 dp 的 pill 是 76 dp），360 dp 屏上流式时
+ * 思考等级会先让掉名字（见 [ThinkingLevelButton]），整行仍排得下。
  */
 @Composable
 private fun ComposerDeliveryChip(
@@ -4350,23 +4350,20 @@ private fun ComposerDeliveryChip(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    Text(
-        text = label,
+    Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(percent = 50))
-            .background(
-                if (enabled) {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                } else {
-                    Color.Transparent
-                },
-            )
-            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick)
-            .padding(horizontal = 7.dp, vertical = 4.dp),
-        style = PiTheme.text.monoSmall,
-        color = if (enabled) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
-        maxLines = 1,
-    )
+            .size(PiSpacing.composerToolSize)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = PiTheme.text.monoSmall,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
+            maxLines = 1,
+        )
+    }
 }
 
 /**
