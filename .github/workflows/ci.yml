@@ -383,3 +383,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Reject nested block comments
         run: python3 tools/check-nested-comments.py
+
+  # The UI is being unified onto one set of tokens and components (`PiSheet`,
+  # `PiTopBarIcon`, `PiSettingsCard` + `PiSettingsMetrics.groupGap`). None of that
+  # is type-checked: a new `ModalBottomSheet(` call, a fresh
+  # `MaterialTheme.typography.*`, or one more hard-coded `12.dp` all compile, and
+  # the drift only shows up on a phone. `tools/check-ui-consistency.sh` turns the
+  # invariants into a gate: rule 1 is a hard failure (only `PiSheet.kt` may call
+  # `ModalBottomSheet`), rules 2 and 3 are ratchets against baselines written down
+  # in the script itself. No JDK, no Android SDK, no Gradle — grep/sed/awk/find.
+  ui-consistency:
+    name: UI consistency (tokens & components)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check UI consistency
+        run: bash tools/check-ui-consistency.sh
