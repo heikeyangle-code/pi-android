@@ -178,9 +178,11 @@ fun ModelProviderScreen(
     // 清单来自 guest 里钉住的 pi（`builtinProviders()` 过滤 `auth.oauth`），不是 App 的表：
     // pi 升级新增订阅提供商时这一节自动多一行。状态来自 `auth.json`（只有类型与过期时间）。
     val oauthHost = remember(layout) { PiOAuthHost(context, layout) }
-    var subscriptionProviders by remember { mutableStateOf<List<PiOAuthHost.Provider>>(emptyList()) }
+    // 一开始就有九行内置清单：读运行时是**后台**的事，界面不等它。上一版"一直读取"
+    // 就是让 UI 依赖一个可能永远不回话的子进程。
+    var subscriptionProviders by remember { mutableStateOf(oauthHost.fallbackProviders) }
     var subscriptionStatuses by remember { mutableStateOf<Map<String, PiAuthStorage.SubscriptionStatus>>(emptyMap()) }
-    var subscriptionLoading by remember { mutableStateOf(true) }
+    var subscriptionLoading by remember { mutableStateOf(false) }
     var subscriptionProblem by remember { mutableStateOf<String?>(null) }
     var subscriptionLogin by remember { mutableStateOf<PiOAuthHost.Provider?>(null) }
     var subscriptionTick by remember { mutableStateOf(0) }
@@ -324,7 +326,6 @@ fun ModelProviderScreen(
     // 放在 IO 上，且 `reloadTick` 一变就重读 —— 登录成功、或 AI 在对话里改了 auth.json，
     // 这一节都跟着变。
     LaunchedEffect(oauthHost, reloadTick, subscriptionTick) {
-        subscriptionLoading = true
         val (providers, statuses, problem) = withContext(Dispatchers.IO) {
             val statuses = service.subscriptionStatuses()
             val loaded = oauthHost.providers()
@@ -339,7 +340,7 @@ fun ModelProviderScreen(
         subscriptionProviders = providers.ifEmpty { oauthHost.fallbackProviders }
         subscriptionStatuses = statuses
         subscriptionProblem = problem
-        subscriptionLoading = false
+
     }
 
     val editingDescriptor = editingKey?.let { PiSettingsCatalog.byKey[it] }
