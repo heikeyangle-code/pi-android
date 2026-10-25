@@ -694,6 +694,18 @@ class PiCredentialService(
         return null
     }
 
+    /**
+     * 只删凭证，保留厂商块与模型（「换 Key」的反操作）。
+     *
+     * 与 [remove] 的区别是被用户点名的那半个：删掉 Key 之后模型仍留在 `models.json`，
+     * 引擎下次启动会把它标成「缺凭证」，而不是整家厂商消失。
+     */
+    fun removeCredential(providerId: String): String? {
+        auth().remove(providerId)?.let { return it }
+        PendingModelRestart.mark()
+        return null
+    }
+
     /** For the UI's "which agent dir is this actually in" disclosure. */
     fun paths(): Pair<String, String> = truthAgentDir.absolutePath to mirrorAgentDir.absolutePath
 

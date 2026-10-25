@@ -411,12 +411,12 @@ fun ModelProviderScreen(
                 item { Summary(data) }
                 if (data.modelsJsonError != null) {
                     item {
-                        Note("模型配置现在读不出来（${data.modelsJsonError}）。修好之前，里面写的模型都不会生效。")
+                        Note("模型配置现在读不出来（${data.modelsJsonError}）。修好之前，里面写的模型都不会生效。", tone = PiTheme.palette.warning)
                     }
                 }
                 if (data.authJsonError != null) {
                     item {
-                        Note("凭证现在读不出来（${data.authJsonError}）。下面「还没有凭证」的判断可能不准，pi 也可能起不来。")
+                        Note("凭证现在读不出来（${data.authJsonError}）。下面「还没有凭证」的判断可能不准，pi 也可能起不来。", tone = PiTheme.palette.warning)
                     }
                 }
                 if (!data.engineKnown) {
@@ -479,10 +479,13 @@ fun ModelProviderScreen(
                         PiSettingsHairline()
                         LinkRow(
                             title = "循环模型",
-                            value = if (enabledModelsValue.isEmpty()) {
-                                "全部模型"
-                            } else {
-                                enabledModelsValue.joinToString("、")
+                            value = when {
+                                enabledModelsValue.isEmpty() -> "全部模型"
+                                // 一串 pattern 用「、」拼成一行只会被省略号截断，看不出有几条。
+                                enabledModelsValue.size > 3 ->
+                                    "${enabledModelsValue.size} 项 · ${enabledModelsValue.take(3).joinToString("、")}…"
+
+                                else -> enabledModelsValue.joinToString("、")
                             },
                             onClick = { editingKey = "enabledModels" },
                         )
@@ -501,7 +504,27 @@ fun ModelProviderScreen(
                 // 下面每张卡的模型副行写的就是「pi 目录 / 手写申报 / 覆盖」这三个词，
                 // 解释跟着它们放在同一段（页尾不再堆说明）。
                 if (data.providers.isEmpty()) {
-                    item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
+                    item { Note("还没有配置任何厂商。点「导入模型」选一个厂商、粘上 Key。") }
+                }
+
+                item {
+                    // 「导入模型」是这一屏最主要的动作：用真按钮（填充、整行宽）。
+                    // 「本地模型（llama.cpp）」那行已按用户裁定删除：它只是同一个导入
+                    // sheet 预选 llama.cpp 一档，重复入口；那一档仍留在 sheet 里。
+                    Button(
+                        onClick = {
+                            sheetPreset = null
+                            sheetOpen = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = PiSettingsMetrics.pageHorizontal,
+                                vertical = PiSpacing.unit,
+                            ),
+                    ) {
+                        Text("导入模型", style = PiType.title)
+                    }
                 }
 
                 items(data.providers, key = { it.id }) { provider ->
@@ -525,27 +548,6 @@ fun ModelProviderScreen(
                         oauth = provider.id in subscriptionStatuses.keys,
                     )
                 }
-
-                item {
-                    // 「导入模型」是这一屏最主要的动作：用真按钮（填充、整行宽）。
-                    // 「本地模型（llama.cpp）」那行已按用户裁定删除：它只是同一个导入
-                    // sheet 预选 llama.cpp 一档，重复入口；那一档仍留在 sheet 里。
-                    Button(
-                        onClick = {
-                            sheetPreset = null
-                            sheetOpen = true
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                horizontal = PiSettingsMetrics.pageHorizontal,
-                                vertical = PiSpacing.unit,
-                            ),
-                    ) {
-                        Text("导入模型", style = PiType.title)
-                    }
-                }
-
 
                 // ---- 推理：默认收起的一段，六行一个都不删，点开就是原来的编辑器。
                 // 折叠头从节标题换成统一的行：标题 + 一行说明 + chevron（展开时转 90°），
@@ -1279,7 +1281,11 @@ private fun ImportSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    TextButton(onClick = { pickerOpen = !pickerOpen }) {
+                    TextButton(
+                        // 编辑已有厂商时锁住：换一家保存会把块与凭证写到别人名下。
+                        enabled = !(presetId.isNotEmpty() && credentialPresent),
+                        onClick = { pickerOpen = !pickerOpen },
+                    ) {
                         Text(if (pickerOpen) "收起" else "更换")
                     }
                 }
@@ -1409,6 +1415,20 @@ private fun ImportSheet(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             TextButton(onClick = { keyOpen = true }) { Text("更换") }
+                            TextButton(onClick = {
+                                sheetScope.launch {
+                                    val failure = withContext(Dispatchers.IO) { service.removeCredential(presetId) }
+                                    if (failure != null) {
+                                        keyError = failure
+                                    } else {
+                                        credentialPresent = false
+                                        maskedKey = null
+                                        onSaved()
+                                    }
+                                }
+                            }) {
+                                Text("移除", color = PiTheme.palette.warning)
+                            }
                         }
                     } else {
                         PiEditorField(
@@ -1669,7 +1689,7 @@ private fun ImportSheet(
                         enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
                             (selected.isNotEmpty() || preset.builtInPi || overrides.isNotEmpty()),
                         onClick = save,
-                    ) { Text("保存") }
+                    ) { Text(if (presetId.isNotEmpty() && credentialPresent) "保存修改" else "保存并导入") }
                     Spacer(Modifier.width(PiSpacing.inline))
                     Text(
                         // 一行状态：没选厂商说下一步，有错报错，否则报勾选数与保存门槛。
@@ -1922,11 +1942,28 @@ private fun ProviderCard(
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                     )
+                    // 卡头直接给"能用的有几个、卡在哪"，不用展开一层层看。
+                    val counts = provider.models.groupingBy { it.status }.eachCount()
+                    val ready = counts[PiModelInventory.Status.READY] ?: 0
+                    val missing = counts[PiModelInventory.Status.MISSING_CREDENTIAL] ?: 0
+                    val pending = counts[PiModelInventory.Status.PENDING_RESTART] ?: 0
                     Text(
-                        "${provider.models.size} 个模型 · " +
-                            if (provider.hasCredential) "已配置凭证" else "还没有凭证",
+                        buildString {
+                            append("${provider.models.size} 个模型")
+                            if (ready > 0) append(" · $ready 可用")
+                            if (missing > 0) append(" · $missing 缺凭证")
+                            if (pending > 0) append(" · $pending 等待重启")
+                            if (provider.models.isEmpty()) append(" · 还没有模型")
+                            if (ready + missing + pending == 0 && provider.models.isNotEmpty()) {
+                                append(" · pi 未列出")
+                            }
+                        },
                         style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (missing > 0 || pending > 0) {
+                            PiTheme.palette.warning
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         maxLines = 1,
                     )
                 }
