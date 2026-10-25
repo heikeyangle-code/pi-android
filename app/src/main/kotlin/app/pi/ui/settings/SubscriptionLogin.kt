@@ -1,5 +1,7 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -20,7 +23,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import app.pi.packages.PiAuthStorage
 import app.pi.packages.PiCredentialService
@@ -226,6 +233,7 @@ internal fun SubscriptionLoginSheet(
     onSaved: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
+    val clipboard = LocalClipboardManager.current
     // 起进程是 IO，不是组合：`host.login` 要 `ProcessBuilder.start()`，在组合里做会把
     // 主线程卡在 node 的 exec 上（冷启动几百毫秒起）。所以先交一个 null，LaunchedEffect
     // 在 IO 上起来，失败也变成这一页里的一句话而不是崩溃。
@@ -325,18 +333,34 @@ internal fun SubscriptionLoginSheet(
                 return@Column
             }
 
-            // 设备码：代码要大、要能被一眼抄下来。
+            // 设备码：一块可复制的代码卡 —— 大号等宽、居中、带复制。
             device?.let { code ->
                 Text("在浏览器里输入这个代码", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(PiSpacing.small))
-                // 代码要显眼，但**不新开字号**：用设置面的标题档（17/24 SemiBold）套等宽字族。
-                // 单体字号只在这一处出现的话，门禁的 `.sp` 棘轮会为它松一格，而代码块在
-                // 17sp 的等宽 SemiBold 下已经足够抄写。
-                Text(
-                    code.userCode,
-                    style = PiType.title.copy(fontFamily = PiTheme.text.mono.fontFamily),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .border(
+                            PiSettingsMetrics.hairline,
+                            MaterialTheme.colorScheme.outlineVariant,
+                            RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                        )
+                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSettingsMetrics.cardPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        code.userCode,
+                        modifier = Modifier.weight(1f),
+                        // 代码要显眼，但**不新开字号**：设置面的标题档（17/24 SemiBold）套等宽字族。
+                        style = PiType.title.copy(fontFamily = PiTheme.text.mono.fontFamily),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    TextButton(onClick = { clipboard.setText(AnnotatedString(code.userCode)) }) {
+                        Text("复制")
+                    }
+                }
                 Spacer(Modifier.height(PiSpacing.small))
                 Text(
                     if (code.expiresInSeconds != null) {
@@ -350,12 +374,13 @@ internal fun SubscriptionLoginSheet(
                 Spacer(Modifier.height(PiSpacing.gutter))
             }
 
-            // 浏览器入口：auth_url 或设备码的验证地址。
+            // 浏览器入口：主按钮，整行宽 —— 这是用户接下来必做的一步。
             val target = link
             if (target != null) {
-                TextButton(onClick = { runCatching { uriHandler.openUri(target) } }) {
-                    Text("在浏览器中打开")
-                }
+                Button(
+                    onClick = { runCatching { uriHandler.openUri(target) } },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (device != null) "打开验证页面" else "在浏览器中打开") }
                 Spacer(Modifier.height(PiSpacing.small))
             }
 
@@ -365,14 +390,33 @@ internal fun SubscriptionLoginSheet(
                 Text(asking.message, style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(PiSpacing.small))
                 if (asking.type == "select") {
+                    // 选项是一张列表：整行可点，标签在上、说明在下，右侧 ›。
                     asking.options.forEach { option ->
-                        TextButton(
-                            onClick = {
-                                session.answer(asking.promptId, option.id)
-                                prompt = null
-                            },
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                                .clickable {
+                                    session.answer(asking.promptId, option.id)
+                                    prompt = null
+                                }
+                                .padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(if (option.description != null) "${option.label} · ${option.description}" else option.label)
+                            Column(Modifier.weight(1f)) {
+                                Text(option.label, style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
+                                if (option.description != null) {
+                                    Text(
+                                        option.description,
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Text("›", style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         }
                     }
                 } else {
@@ -405,7 +449,7 @@ internal fun SubscriptionLoginSheet(
             // 一直可见的退路：整条回调地址粘回来。
             if (status !is Step.Done && !askedPaste) {
                 Text(
-                    "浏览器最后停在一个打不开的 localhost 页面？把地址栏整条粘到这里也算完成。",
+                    "或者：把浏览器最后停住的那一页的整条地址粘进来。",
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
