@@ -851,6 +851,8 @@ private fun ImportSheet(
     // 已配置厂商的 Key 与「高级」（Base URL / api）都默认收起；换厂商即回到收起。
     var keyOpen by remember(presetId) { mutableStateOf(false) }
     var advancedOpen by remember(presetId) { mutableStateOf(false) }
+    // 「手动模型名」默认收起（大多数人从目录/扫描里勾）。
+    var manualOpen by remember(presetId) { mutableStateOf(false) }
     var modelQuery by remember(presetId) { mutableStateOf("") }
     val sheetScope = rememberCoroutineScope()
 
@@ -1374,6 +1376,9 @@ private fun ImportSheet(
                     }
                 }
 
+                // 分节线（厂商 | 连接）：不加节标题，只用细线 + 留白分开三段。
+                PiSettingsHairline()
+                Spacer(Modifier.height(PiSpacing.small))
                 // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
                 if (presetId.isNotEmpty()) {
                     // ------------------------------------------------------ 2 粘 Key
@@ -1521,6 +1526,9 @@ private fun ImportSheet(
                     if (scanNote != null) SheetNote(scanNote.orEmpty())
                     if (scanError != null) SheetNote(scanError.orEmpty())
 
+                    // 分节线（连接 | 模型）。
+                    PiSettingsHairline()
+                    Spacer(Modifier.height(PiSpacing.small))
                     // ------------------------------------------------------ 3 勾选模型
                     // （节标题已删，动作词并进下面这一行的标题。）
                     Row(
@@ -1548,15 +1556,24 @@ private fun ImportSheet(
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                     )
-                    PiEditorField(
-                        value = manualIds,
-                        onValueChange = { manualIds = it },
-                        label = "手动模型名（逗号、空格或换行分隔）",
-                        height = 44.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                    )
+                    // 手动模型名收在「手动添加」后面：大多数人只从目录/扫描里勾，
+                    // 两个输入框挨着会互相干扰。
+                    TextButton(
+                        onClick = { manualOpen = !manualOpen },
+                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding),
+                    ) { Text(if (manualOpen) "收起手动模型名" else "手动添加模型名") }
+                    if (manualOpen) {
+                        PiEditorField(
+                            value = manualIds,
+                            onValueChange = { manualIds = it },
+                            label = "模型名（逗号、空格或换行分隔）",
+                            height = 44.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                        )
+                    }
+                    SheetNote("没有元数据的模型用 pi 的默认值：上下文 128k、最大输出 16k、仅文本、价格 0。")
                     // 一个端点可能有几百个模型（OpenRouter 规模）。候选列表放在一个**有界高度**
                     // 的 LazyColumn 里：只组合屏幕内那几行，滚多少画多少，不再按上限截断。
                     // 高度必须有界 —— 外层 Column 已经在纵向滚动，无界的 LazyColumn 会被
@@ -1596,9 +1613,11 @@ private fun ImportSheet(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            TextButton(onClick = { editId = if (editId == id) null else id }) {
-                                Text(if (id in overrides) "已改" else "能力")
-                            }
+                            PiSettingsChip(
+                                text = if (id in overrides) "已改" else "能力",
+                                onClick = { editId = if (editId == id) null else id },
+                                active = editId == id,
+                            )
                         }
                         if (editId == id) {
                             ModelFieldsForm(
@@ -1655,7 +1674,7 @@ private fun ImportSheet(
                             saveError != null ->
                                 saveError.orEmpty().lineSequence().firstOrNull().orEmpty()
 
-                            savedOk -> "已保存；新厂商若标「等待重启」就回清单页重启引擎"
+                            savedOk -> "已保存 · 回上一屏重启引擎生效"
                             selected.isNotEmpty() -> "已勾选 ${selected.size} 个"
                             // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
                             // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
@@ -2550,8 +2569,9 @@ private fun candidateMeta(
     }
     // 官方目录与厂商 API 都没给元数据的模型：说清 pi 会补什么默认值，别让人以为那些数字
     // 是厂商数据（`provider-composer.ts` 的 `modelFromJson`）。
+    // 没有元数据只标一个词；整句说明放在列表上方一次（原来每行重复一整句，几十行噪音）。
     if (known == null || (known.contextWindow == null && known.costInput == null)) {
-        append(" · 没有元数据：pi 用默认值（上下文 128k、最大输出 16k、仅文本、价格 0）")
+        append(" · 默认值")
     }
 }
 
