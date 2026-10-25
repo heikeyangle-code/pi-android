@@ -942,7 +942,7 @@ fun deriveSystemPalette(base: PiAnsiPalette?, saturation: Double = 1.0): PiPalet
     // pageBg/cardBg 不是 token：TUI 直接画在终端底色上，`export` 段那两个面是可选的
     // 手写值（`theme.ts:920-944`）。之前这里拿 userMessageBg（蓝族的推导结果）缩放，
     // 于是整页底色被染蓝 —— 用户看到的"背景成蓝的"就是这个，不是推导本身的错。
-    val canvas = canvasSurfaces(composeColor(input.background))
+    val canvas = canvasSurfaces(composeColor(base?.background ?: DEFAULT_BACKGROUND))
     return PiPalette(
         accent = token(PiSystemToken.ACCENT),
         border = token(PiSystemToken.BORDER),

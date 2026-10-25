@@ -70,7 +70,7 @@ internal fun PiSystemPaletteSheet(
     // 页内预览：真实推导一次（56 token），所以看到的就是应用后的样子。拖动时每帧
     // 重算一次（本机约 2 ms），只影响这几个色块，不触发全 App 重组。
     val preview: PiPalette = remember(hexText, saturationWire) {
-        val hex = PiSystemPalettes.parseHex(hexText) ?: hexOf(hsvToRgb(hsv))
+        val hex = hexOf(PiSystemPalettes.parseHex(hexText) ?: hsvToRgb(hsv))
         deriveSystemPalette(
             PiSystemPalettes.paletteOf(PiSystemPalettes.CUSTOM_ID, hex),
             PiSystemPalettes.saturationOf(saturationWire),
