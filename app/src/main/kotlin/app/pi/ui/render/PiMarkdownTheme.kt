@@ -288,7 +288,7 @@ internal fun piMarkdownTypography(
     val body = textColor ?: palette.text
 
     return DefaultMarkdownTypography(
-        h1 = heading.headingSlot(profile.h1, underline = true),
+        h1 = heading.headingSlot(profile.h1),
         h2 = heading.headingSlot(profile.h2),
         h3 = heading.headingSlot(profile.h3),
         h4 = heading.headingSlot(profile.h4),
