@@ -462,30 +462,31 @@ fun ModelProviderScreen(
 
                 // ---- 默认模型 / 默认厂商 / 循环模型：三行都是点开在清单里点选，不再手打。
                 // 原来这里的「当前与循环」节标题已删：设置面不再有节标题（统一口径）。
+                // 三个选择键收在一张卡里（原来三行各自独立，看着散）。
                 item {
-                    LinkRow(
-                        title = "默认模型",
-                        value = defaultModelValue ?: "未设置（启动时再选）",
-                        onClick = { editingKey = "defaultModel" },
-                    )
-                }
-                item {
-                    LinkRow(
-                        title = "默认厂商",
-                        value = defaultProviderValue ?: "未设置（跟随 pi 的默认）",
-                        onClick = { editingKey = "defaultProvider" },
-                    )
-                }
-                item {
-                    LinkRow(
-                        title = "循环模型",
-                        value = if (enabledModelsValue.isEmpty()) {
-                            "全部模型"
-                        } else {
-                            enabledModelsValue.joinToString("、")
-                        },
-                        onClick = { editingKey = "enabledModels" },
-                    )
+                    PiSettingsCard {
+                        LinkRow(
+                            title = "默认模型",
+                            value = defaultModelValue ?: "未设置（启动时再选）",
+                            onClick = { editingKey = "defaultModel" },
+                        )
+                        PiSettingsHairline()
+                        LinkRow(
+                            title = "默认厂商",
+                            value = defaultProviderValue ?: "未设置（跟随 pi 的默认）",
+                            onClick = { editingKey = "defaultProvider" },
+                        )
+                        PiSettingsHairline()
+                        LinkRow(
+                            title = "循环模型",
+                            value = if (enabledModelsValue.isEmpty()) {
+                                "全部模型"
+                            } else {
+                                enabledModelsValue.joinToString("、")
+                            },
+                            onClick = { editingKey = "enabledModels" },
+                        )
+                    }
                 }
                 // 两键对不上时先在这里说一句：选模型时两个键一起写，所以这种不一致只可能
                 // 来自手输（点过「仍然使用」）、外部改 settings.json，或者只换了厂商。
