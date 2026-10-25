@@ -1,6 +1,7 @@
 package app.pi.ui.settings
 
 import androidx.compose.runtime.Composable
+import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -60,7 +61,19 @@ fun PiSettingEditorSheet(
         PiRowKind.Switch, PiRowKind.Action -> Unit
 
         PiRowKind.Value -> {
-            if (setting.key == "theme") {
+            // 「配色方案」有自己的一层：它是唯一需要**画色块**的选择行，而通用选择器只
+            // 有 `✓/○ + 名字 + 说明`。这一支不加第二个机制 —— 写入仍然在这里
+            // （`store.write` + `onWritten`），只是把排版交给 [PiSystemPaletteSheet]。
+            if (setting.key == PiSystemPalettes.SETTING_KEY) {
+                PiSystemPaletteSheet(
+                    currentWire = setting.textIn(store, PiSystemPalettes.DEFAULT_ID),
+                    onSet = { value ->
+                        store.write(setting.key, setting.wireElement(value))
+                        onWritten(setting)
+                    },
+                    onDismiss = onDismiss,
+                )
+            } else if (setting.key == "theme") {
                 PiThemeEditorSheet(
                     currentRaw = setting.textIn(store, "dark"),
                     knownThemes = knownThemes,

@@ -90,6 +90,8 @@ import app.pi.ui.settings.PiSettingsStore
 import app.pi.ui.settings.RuntimeSwitchAction
 import app.pi.ui.settings.boolIn
 import app.pi.ui.theme.PiResolvedTheme
+import app.pi.ui.theme.PiSystemPaletteSource
+import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
 import app.pi.ui.theme.PiTypographyProfile
@@ -1302,6 +1304,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val configured = configuredThemePaths()
             val setting = runCatching { settingsStore.readString("theme") }.getOrNull()
             val resolved = withContext(Dispatchers.IO) {
+                // 「配色方案」必须**先**灌进注入点，再让 loader 读它：`system` 分支的颜色
+                // （`resolveSystemTheme`）就是从那个值推导的，写晚一步就会拿上一档的调色板
+                // 渲染一次。放进同一个 IO 段里也是必须的 —— 首次读 `app-prefs.json` 会落盘，
+                // 而 [refreshTheme] 的调用方都在主线程（启动的 `startUiPreferences` 与写完
+                // 设置后的 `onSettingWritten`）。
+                applySystemPalette()
                 PiThemeLoader.load(
                     agentDir = host.paths().agentDir,
                     workspace = defaultWorkspace(),
@@ -1318,6 +1326,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             _theme.value = resolved
             _themeEntries.value = entries
         }
+    }
+
+    /**
+     * 把「配色方案」（`app.appearance.systemPalette`）写进 `system` 主题的注入点。
+     *
+     * ## 为什么就在这里
+     *
+     * [refreshTheme] 是全树**唯一**会重新 `PiThemeLoader.load` 的入口：启动时的
+     * [startUiPreferences]、写完设置后的 [onSettingWritten]（`app.appearance.` 前缀本来就会
+     * 走到它）、以及系统深浅变化那一路，最后都落到这里。所以「先灌输入、再读 loader」只需要
+     * 一个顺序点。放在 Application/Activity 里会多一条和它赛跑的路径，而且系统深浅变化那一刻
+     * 不会重读；起协程轮询更不行 —— 这是个每次主题刷新读一次就够的值。
+     *
+     * ## 读不到 / 读坏了怎么办
+     *
+     * 权限、文件损坏、写到一半：一律回默认档（`PiSystemPalettes.presetOf(null)` =
+     * pi 自己的默认）。设置值是一个字符串档位 id，一个拼错的 id 不该把界面变成“没有主题”；
+     * `presetOf` 把所有未知 id 都归到同一档，所以行为是可预期的。
+     *
+     * 只在 IO 段里调用（见 [refreshTheme]）：首次读 `app-prefs.json` 会落盘。
+     */
+    private fun applySystemPalette() {
+        val stored = runCatching { settingsStore.readString(PiSystemPalettes.SETTING_KEY) }.getOrNull()
+        PiSystemPaletteSource.palette = PiSystemPalettes.paletteOf(stored)
     }
 
     /** The `themes` setting, verbatim; used for discovery and for name lookup. */

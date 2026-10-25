@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import app.pi.ui.components.EffectiveKind
+import app.pi.ui.theme.PiSystemPalettes
 import app.pi.ui.theme.PiThinkingLevel
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -320,56 +321,11 @@ object PiSettingsCatalog {
         // ------------------------------------------------------------------
         // 1 模型与推理
         // ------------------------------------------------------------------
-        PiSetting(
-            key = "app.models.inventory",
-            title = "已导入的模型",
-            description = "这台设备可用哪些厂商与模型。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "本机模型",
-        ),
-        // The half of pi's `/llama` this row can actually do is the endpoint:
-        // `models.json` plus a placeholder credential, which is what the form
-        // behind this row writes. Loading/unloading models and downloading GGUF
-        // is the other half, and the extension refuses to run it outside the TUI
-        // (`extensions/llama/index.ts:186-189` returns unless `ctx.mode === "tui"`;
-        // `ctx.ui.custom()` is a documented no-op in RPC mode). The description
-        // states what this form does and stops there: "there is more in the
-        // terminal" is said once, on the settings home's 终端 row
-        // (`SettingsHome.kt` 的 `PiTerminalEntryRow`)，不在每个与 TUI 有关的行上重复。
-        // 那条注释以前写的是 `WorkbenchScreen.kt` —— 那个屏已经随终端一起退役了。
-        PiSetting(
-            key = "app.localModels.manage",
-            title = "本地模型（llama.cpp）",
-            description = "配置 llama.cpp 端点地址。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "本机模型",
-        ),
-        PiSetting(
-            key = "app.credentials.apiKey",
-            title = "API Key",
-            // The old text named the credential file and settings.json on screen. The
-            // rule for this pass is that the UI shows what a user can do, not where
-            // the bytes go, so it now describes the flow instead.
-            description = "填写厂商 API Key；改完要重启引擎才生效。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "凭证",
-        ),
-        PiSetting(
-            key = "app.credentials.oauth",
-            // 订阅登录现在是**原生**的：`ui/settings/SubscriptionLogin.kt` 在 guest 里
-            // 跑 pi 自己的 `auth.oauth.login()`（`PiOAuthHost`），凭证写进同一份
-            // `auth.json`。清单也不再是写死的九家 —— 它是运行时从钉住版本的 pi 读出来的
-            // （`builtinProviders()` 过滤 `auth.oauth`），所以 pi 新增订阅提供商时界面自动
-            // 多一行。入口在「模型与供应商」屏顶部的「订阅账号」卡（设置首页顶栏）。
-            title = "订阅登录",
-            description = "在「模型与供应商」的「订阅账号」里登录；跑的是 pi 自己的流程。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "凭证",
-        ),
+        // 这四行 Action（已导入的模型 / 本地模型 / API Key / 订阅登录）曾经只是
+        // 「去别处」的指针，而 G_MODEL 分组页早被删除、没有任何界面渲染它们：
+        // 按用户裁定「注册表里没露出来的，就删掉」。四个目的地都仍然在——
+        // 「模型与供应商」一屏（设置首页最顶栏）就是它们的归宿，而且那一屏本身
+        // 就有导入、API Key、订阅账号三个入口，不需要注册表再转一道手。
         PiSetting(
             key = "defaultProvider",
             title = "默认厂商",
@@ -1151,6 +1107,37 @@ object PiSettingsCatalog {
             // 承诺的对象，也不是"重载"能解决的 —— 那条路要重开终端。alias 里的 `reload` 留着：
             // 它是 pi 自己的词（pi 的 TUI 用 `/reload` 应用主题），是搜索用的，不是时间承诺。
             allowCustom = true,
+        ),
+        // 「配色方案」：`system` 主题的**输入**，不是第二份主题。
+        //
+        // 用户裁定过 B 方案（`system` 要能选 ANSI 调色板），而在这一行之前全树只有注入点
+        // `PiSystemPaletteSource`（`ui/theme/PiSystemPalette.kt`），没有任何界面能写它 ——
+        // 一个没人能改的设置就是一个死开关，所以这一行补的是"谁写"。
+        //
+        // 它只换输入（终端 ANSI 16 色 + 底色）：56 个 token 仍由 `deriveSystemPalette`
+        // 解出（`system-theme.ts:400` 的移植），明暗也仍由 `terminalAppearance`
+        // （`:271-290`）按底色判 —— 所以 `dark` / `light` 与自定义主题文件**不受影响**，
+        // 这句话写在选择层的正文里。写入后由 `PiSessionViewModel.refreshTheme` 在
+        // loader 之前灌进注入点再重算（`app.appearance.` 前缀本来就会触发那次刷新）。
+        //
+        // 值落在 `app-prefs.json`（`app.*` 由 `PiSettingsFileStore` 转进侧车文件），
+        // 不进 pi 的 `settings.json`：pi 没有这个键，它只影响本 App 的渲染。
+        // 键名必须写成**字面量**：`settings-audit`（`PiSettingsAuditCheck.kt` 的
+        // `keyPattern`）按 `key = "…",` 这一行认行，写成常量会让这一行从清单里消失，
+        // 架构规则与"每个键都有读者"于是根本看不到它。同一个字符串在
+        // `PiSystemPalettes.SETTING_KEY`（读者一侧：`PiSessionViewModel.applySystemPalette`
+        // 与 `PiSettingEditorHost` 都用那个常量）—— 两处必须一起改。
+        PiSetting(
+            key = "app.appearance.systemPalette",
+            title = "配色方案",
+            description = "只换 system 主题的终端调色板：ANSI 16 色 + 底色，明暗由底色决定。",
+            kind = PiRowKind.Value,
+            group = G_APPEARANCE,
+            section = "外观",
+            defaultValue = str(PiSystemPalettes.DEFAULT_ID),
+            // 标签与档位顺序只有一处来源（`PiSystemPalettes.presets`）：行上显示的
+            // "当前值"就是 `PiSetting.display` 按这份 options 翻出来的中文名。
+            options = PiSystemPalettes.presets.map { PiOption(it.id, it.label) },
         ),
         // `app.appearance.dynamicColor` was deleted here. Android dynamic colour
         // cannot coexist with the rule this app runs on — every colour comes from
