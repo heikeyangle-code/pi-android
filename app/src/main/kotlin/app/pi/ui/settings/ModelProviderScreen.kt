@@ -31,6 +31,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1462,7 +1463,7 @@ private fun ImportSheet(
                         ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(
+                        OutlinedButton(
                             enabled = !scanning,
                             onClick = {
                                 // 6 MB 的 models.dev 索引在扫描**之后**单独取，不占
@@ -1640,7 +1641,7 @@ private fun ImportSheet(
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(
+                    Button(
                         // `presetProblem` 非空 = 说不出这一档是谁：保存会写错厂商名下的块与凭证。
                         enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
                             (selected.isNotEmpty() || preset.builtInPi || overrides.isNotEmpty()),
@@ -2522,15 +2523,17 @@ private fun candidateMeta(
     alreadySaved: Boolean,
     builtInPi: Boolean,
 ): String = buildString {
+    // 「pi 目录里有」只在它和别的来源并列时才写：扫描之前，候选**全部**来自 pi 目录，
+    // 每一行都挂一句「pi 目录里有」等于没说（用户原话：脱了裤子放屁）。
     val sources = buildList {
         if (fromScan) add("扫描到")
         if (fromCatalog) add("pi 目录里有")
         if (alreadySaved) add("已保存")
         if (isEmpty()) add("手动填写")
-    }
-    append(sources.joinToString(" · "))
+    }.filterNot { it == "pi 目录里有" && (fromScan || alreadySaved) == false }
+    if (sources.isNotEmpty()) append(sources.joinToString(" · "))
     if (known != null) {
-        append(" · ").append(known.name?.takeIf { it != id } ?: "pi 认识它")
+        known.name?.takeIf { it != id }?.let { append(" · ").append(it) }
         known.contextWindow?.let { append(" · 上下文 ").append(it) }
         if (known.acceptsImages) append(" · 支持图片")
         if (known.reasoning == true) append(" · 会思考")
