@@ -525,8 +525,9 @@ fun ModelProviderScreen(
                 }
 
                 item {
-                    // 「导入模型」是这一屏最主要的动作：用真按钮（填充、整行宽），
-                    // 不再是一个和「本地模型」同级的文字链接。
+                    // 「导入模型」是这一屏最主要的动作：用真按钮（填充、整行宽）。
+                    // 「本地模型（llama.cpp）」那行已按用户裁定删除：它只是同一个导入
+                    // sheet 预选 llama.cpp 一档，重复入口；那一档仍留在 sheet 里。
                     Button(
                         onClick = {
                             sheetPreset = null
@@ -542,20 +543,7 @@ fun ModelProviderScreen(
                         Text("导入模型", style = PiType.title)
                     }
                 }
-                item {
-                    // 「本地模型（llama.cpp）」原来是分组屏里的一行 Action，入口随分组一起
-                    // 删除后搬到这里：同一个导入 sheet，只是预选到本地端点那一档。
-                    TextButton(
-                        onClick = {
-                            sheetPreset = "llama.cpp"
-                            sheetOpen = true
-                        },
-                        modifier = Modifier.padding(
-                            horizontal = PiSettingsMetrics.pageHorizontal,
-                            vertical = PiSpacing.unit,
-                        ),
-                    ) { Text("本地模型（llama.cpp / LM Studio）") }
-                }
+
 
                 // ---- 推理：默认收起的一段，六行一个都不删，点开就是原来的编辑器。
                 // 折叠头从节标题换成统一的行：标题 + 一行说明 + chevron（展开时转 90°），
