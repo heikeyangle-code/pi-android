@@ -172,8 +172,8 @@ fun SettingsHome(
                     // private 常量，这里只能写字面量；漏掉的 id 排最后（`order.size`），
                     // 所以以后新增的组不会消失。
                     val order = listOf(
-                        "appearance", "prompts", "sessions", "messages", "tools",
-                        "compaction", "retry", "resources", "security", "runtime",
+                        "appearance", "sessions", "messages", "prompts", "tools",
+                        "compaction", "retry", "security", "runtime", "resources",
                     )
                     val listedGroups = PiSettingsCatalog.groups
                         .filterNot { it.id == G_MODEL }
@@ -192,13 +192,10 @@ fun SettingsHome(
                 }
             }
 
-            // 其他：终端 + Pi 文件。v2 曾把「模型」也放在这一节（`phone4` /
-            // `phone33`），但那一行已按用户拍板挪到首页最顶栏（上面的「模型与供应商」）
-            // —— 同一件事只有一个门，这正是这次重排要消灭的重复。
-            //
-            // 「Pi 文件」是第三行，按同一条件成立：它既不是 pi 的设置键，也不是 pi 的功能，
-            // 而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3 说它为什么在这里）。
-            // 这一节现在**没有条件**：Pi 文件那一行永远可用，所以整节永远该在。
+            // 「其他」：与 pi 的设置键无关的四扇门合成一张卡 —— 终端（原版 TUI）、
+            // Pi 文件（看 pi 读的文件）、设备能力（这台手机能做什么）、扩展包与项目信任
+            // （agent 能装什么、项目资源能不能信）。它们都是**屏幕**而不是设置项，
+            // 日常用不到，所以整卡排在分组之下、关于之上。
             item {
                 PiSettingsCard {
                     if (onOpenTerminal != null) {
@@ -206,26 +203,20 @@ fun SettingsHome(
                         PiSettingsHairline()
                     }
                     PiFilesEntryRow(onClick = openPiFiles)
-                }
-            }
-            // 与 pi 无关的两扇门合成一张卡：设备能力（这台手机能做什么）与扩展包
-            // （agent 能用什么）。两者问的是同一类问题，又都不是 pi 的设置键，
-            // 所以放在一起、排在分组之下。
-            if (onOpenDeviceCapabilities != null || onOpenPackages != null) {
-                item {
-                    PiSettingsCard {
-                        if (onOpenDeviceCapabilities != null) {
-                            DeviceCapabilityEntryRow(
-                                store = DeviceCapabilityStore.get(context),
-                                onClick = onOpenDeviceCapabilities,
-                            )
-                        }
-                        if (onOpenDeviceCapabilities != null && onOpenPackages != null) {
-                            PiSettingsHairline()
-                        }
-                        if (onOpenPackages != null) {
-                            PiPackagesEntryRow(onClick = onOpenPackages)
-                        }
+                    if (onOpenDeviceCapabilities != null || onOpenPackages != null) {
+                        PiSettingsHairline()
+                    }
+                    if (onOpenDeviceCapabilities != null) {
+                        DeviceCapabilityEntryRow(
+                            store = DeviceCapabilityStore.get(context),
+                            onClick = onOpenDeviceCapabilities,
+                        )
+                    }
+                    if (onOpenDeviceCapabilities != null && onOpenPackages != null) {
+                        PiSettingsHairline()
+                    }
+                    if (onOpenPackages != null) {
+                        PiPackagesEntryRow(onClick = onOpenPackages)
                     }
                 }
             }
