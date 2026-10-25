@@ -220,7 +220,10 @@ fun PiTopBar(
             .fillMaxWidth()
             // `surfaceDim` is the design's `--surf-dim`, the same chrome tone the
             // bottom bar uses: one step below the content's own background.
-            .background(MaterialTheme.colorScheme.surfaceDim),
+            // 状态栏是透明的（`MainActivity` 只设 TRANSPARENT），顶栏若用 `surfaceDim`
+            // 就会在状态栏下方露出对不上色的一块（浅色主题下最明显）。用页面同底色，
+            // 让状态栏、顶栏、页面是同一个面 —— 这是修 bug，不是风格改动。
+            .background(MaterialTheme.colorScheme.background),
     ) {
         Row(
             modifier = Modifier
@@ -911,7 +914,10 @@ private fun PiBottomBar(current: PiDestination, onSelect: (PiDestination) -> Uni
             // `surfaceDim` is the design's `--surf-dim`: the chrome tone, one step
             // below the destinations' own background, which is what makes the bar
             // read as chrome rather than as content.
-            .background(MaterialTheme.colorScheme.surfaceDim),
+            // 状态栏是透明的（`MainActivity` 只设 TRANSPARENT），顶栏若用 `surfaceDim`
+            // 就会在状态栏下方露出对不上色的一块（浅色主题下最明显）。用页面同底色，
+            // 让状态栏、顶栏、页面是同一个面 —— 这是修 bug，不是风格改动。
+            .background(MaterialTheme.colorScheme.background),
     ) {
         // `outline` is pi's `borderMuted` — the design's `1px solid var(--border-muted)`.
         // Drawn as a real divider rather than a border modifier so it is exactly

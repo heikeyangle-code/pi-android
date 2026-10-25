@@ -1612,7 +1612,9 @@ private fun ChatBody(
                 // reserving space for it; M3's `TopAppBar` used to absorb it through its
                 // own default `windowInsets`, so a hand-drawn bar has to say so.
                 .statusBarsPadding()
-                .background(MaterialTheme.colorScheme.surfaceDim),
+                // 同 `PiTopBar`：状态栏透明，顶栏必须用页面底色，否则浅色主题下
+                // 状态栏下面会出现一块对不上的灰。
+                .background(MaterialTheme.colorScheme.background),
         ) {
             Row(
                 Modifier
