@@ -99,6 +99,12 @@ internal fun resolveSystemTheme(
         palette = deriveSystemPalette(input),
         dark = colors.appearance == PiSystemAppearance.DARK,
     )
-    PiSystemMemoSlot.last = PiSystemMemo(input, theme)
+    PiSystemMemoSlot.last = PiSystemMemo(
+        // A defensive copy: `PiAnsiPalette` is a value, but its `ansi` is an `IntArray`,
+        // so a caller that edited that array in place instead of assigning a new palette
+        // would otherwise compare equal to itself and be served the stale answer.
+        input = input.copy(ansi = input.ansi.copyOf()),
+        theme = theme,
+    )
     return theme
 }

@@ -311,7 +311,7 @@ private fun PiTerminalEntryRow(onClick: () -> Unit) {
     PiEntryRow(
         icon = Icons.Filled.Terminal,
         title = "终端",
-        supporting = "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+        supporting = "输入 pi 回车进入原版 TUI：会话导入、以及需要终端的扩展都在那边（订阅登录已内建，在「模型与供应商」里）。",
         onClick = onClick,
     )
 }

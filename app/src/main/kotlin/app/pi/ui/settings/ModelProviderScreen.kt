@@ -54,6 +54,8 @@ import app.pi.packages.PiCredentialService
 import app.pi.packages.PiModelCatalog
 import app.pi.packages.PiModelInventory
 import app.pi.packages.PiModelScanner
+import app.pi.packages.PiOAuthHost
+import app.pi.packages.PiAuthStorage
 import app.pi.packages.PiOfficialCatalog
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
@@ -168,6 +170,17 @@ fun ModelProviderScreen(
     }
     val service = remember(layout) { PiCredentialService(layout, layout.hostWorkspace) }
     val scope = rememberCoroutineScope()
+
+    // ---- 订阅账号：pi 支持哪些订阅、哪些已经登录。
+    //
+    // 清单来自 guest 里钉住的 pi（`builtinProviders()` 过滤 `auth.oauth`），不是 App 的表：
+    // pi 升级新增订阅提供商时这一节自动多一行。状态来自 `auth.json`（只有类型与过期时间）。
+    val oauthHost = remember(layout) { PiOAuthHost(context, layout) }
+    var subscriptionProviders by remember { mutableStateOf<List<PiOAuthHost.Provider>>(emptyList()) }
+    var subscriptionStatuses by remember { mutableStateOf<Map<String, PiAuthStorage.SubscriptionStatus>>(emptyMap()) }
+    var subscriptionLoading by remember { mutableStateOf(true) }
+    var subscriptionProblem by remember { mutableStateOf<String?>(null) }
+    var subscriptionLogin by remember { mutableStateOf<PiOAuthHost.Provider?>(null) }
 
     // 直读的原文 → 组装。整段都在 IO 线程上（pi 的模型目录可能有几百 KB），旧值一直留到
     // 新值算好，避免闪一下空白。
@@ -304,6 +317,26 @@ fun ModelProviderScreen(
         editTick++
     }
 
+    // 订阅清单与状态一起读：一个是 guest 里跑 node（list 命令），一个是本机文件。
+    // 放在 IO 上，且 `reloadTick` 一变就重读 —— 登录成功、或 AI 在对话里改了 auth.json，
+    // 这一节都跟着变。
+    LaunchedEffect(oauthHost, reloadTick) {
+        subscriptionLoading = true
+        val (providers, statuses, problem) = withContext(Dispatchers.IO) {
+            val statuses = service.subscriptionStatuses()
+            val loaded = oauthHost.providers()
+            Triple(
+                loaded.getOrNull().orEmpty(),
+                statuses,
+                loaded.exceptionOrNull()?.let { it.message ?: it::class.java.simpleName },
+            )
+        }
+        subscriptionProviders = providers
+        subscriptionStatuses = statuses
+        subscriptionProblem = problem
+        subscriptionLoading = false
+    }
+
     val editingDescriptor = editingKey?.let { PiSettingsCatalog.byKey[it] }
     if (editingDescriptor != null) {
         val edited = editingDescriptor.key
@@ -397,6 +430,26 @@ fun ModelProviderScreen(
                     }
                 }
                 note?.let { msg -> item { Note(msg) } }
+
+                // ---- 订阅账号：订阅登录写的是 auth.json 同一个键空间，登录完的模型就在
+                // 下面这张清单里，所以放在这一屏而不是另开一页。
+                item {
+                    SubscriptionCard(
+                        providers = subscriptionProviders,
+                        statuses = subscriptionStatuses,
+                        loading = subscriptionLoading,
+                        problem = subscriptionProblem,
+                        onLogin = { subscriptionLogin = it },
+                        onLogout = { provider ->
+                            scope.launch {
+                                val problem = withContext(Dispatchers.IO) { service.remove(provider.id) }
+                                note = problem ?: "已退出 ${provider.oauthName}。重启引擎后它的模型会从列表里消失。"
+                                reloadTick++
+                                onFilesWritten()
+                            }
+                        },
+                    )
+                }
 
                 // ---- 默认模型 / 默认厂商 / 循环模型：三行都是点开在清单里点选，不再手打。
                 // 原来这里的「当前与循环」节标题已删：设置面不再有节标题（统一口径）。
@@ -522,7 +575,7 @@ fun ModelProviderScreen(
                 // ---- 页尾只留两句（用户裁定：说明不堆在页尾）。
                 item { Note("这一屏读写的都是 pi 的官方文件（models.json、auth.json、settings.json）；对话里让 AI 改这些文件，列表会自动跟上。") }
                 // 终端页是半成品：只说事实（订阅登录要它、它还不完善），不再把用户支使过去。
-                item { Note("订阅登录（OAuth）要走终端，终端页还不完善；这一屏写的是 API Key。") }
+                item { Note("API Key 与订阅登录都写进 auth.json、写进同一张模型清单；订阅登录跑的是 pi 自己的流程，不需要终端。") }
                 item { Spacer(Modifier.height(PiSettingsMetrics.groupGap)) }
             }
         }
@@ -538,6 +591,19 @@ fun ModelProviderScreen(
             knownProviders = data?.providers.orEmpty(),
             enabledPatterns = enabledModelsValue,
             onClose = { sheetOpen = false },
+            onSaved = {
+                reloadTick++
+                onFilesWritten()
+            },
+        )
+    }
+
+    subscriptionLogin?.let { provider ->
+        SubscriptionLoginSheet(
+            provider = provider,
+            host = oauthHost,
+            service = service,
+            onDismiss = { subscriptionLogin = null },
             onSaved = {
                 reloadTick++
                 onFilesWritten()

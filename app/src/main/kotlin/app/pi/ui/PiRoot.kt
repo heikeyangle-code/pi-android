@@ -712,22 +712,13 @@ fun PiRoot() {
                     // this app could not back up.
                     onRunAction = { setting ->
                         when (setting.key) {
-                            // pi keeps OAuth in its own interactive shell
-                            // (`interactive-mode.ts:3052-3055` → `handleLoginCommand`
-                            // `:5485`) and the `RpcCommand` union has no login command
-                            // (`modes/rpc/rpc-types.ts:20-74`), so no screen in this app
-                            // can start it. The terminal page can: `PtyLauncher` hands the
-                            // guest shell the same `PI_CODING_AGENT_DIR` the engine uses
-                            // (`runtime/PtyLauncher.kt:396-404`), so `/login` there writes
-                            // the same `auth.json` the credential page reads. Say where,
-                            // and say what this app supports natively (an API key, on the
-                            // row above). Protocol detail stays in the KDoc, not on screen.
+                            // 订阅登录已内建：`PiOAuthHost` 在 guest 里跑 pi 自己的
+                            // OAuth 流程（`PiOAuthHost` 的 KDoc 说了为什么不在 Kotlin 里
+                            // 重写九套），入口在「模型与供应商」屏的「订阅账号」卡。这一行
+                            // 只是注册表里的数据描述，仍然没有分组页渲染它。
                             "app.credentials.oauth" -> {
                                 session.notifyUser(
-                                    "本应用没有内建登录表单。订阅登录要走 pi 的原版 TUI：" +
-                                        "到 工作区 → 终端 里输入 pi 回车，再运行 /login。" +
-                                        "用 API Key 的厂商可以在上面的「API Key」里配置。",
-                                    warning = true,
+                                    "订阅登录在「模型与供应商」屏的「订阅账号」卡里：设置首页顶栏 → 模型与供应商。",
                                 )
                             }
                             // pi's `/compact` — the RPC command is `compact`

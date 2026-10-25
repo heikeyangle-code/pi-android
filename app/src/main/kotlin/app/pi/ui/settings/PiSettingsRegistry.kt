@@ -359,28 +359,13 @@ object PiSettingsCatalog {
         ),
         PiSetting(
             key = "app.credentials.oauth",
-            title = "订阅登录（在终端页里运行 pi）",
-            // This row used to say "本应用暂无入口" while the terminal page's own header
-            // said the opposite ("输入 pi 回车进入原版 TUI：订阅登录…都在那边"), and the
-            // terminal page is right: `PtyLauncher` starts the guest shell with the same
-            // `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` the engine uses
-            // (`runtime/PtyLauncher.kt:396-404`), so a `/login` run there writes the same
-            // `auth.json` this app's credential page reads. Two surfaces disagreeing about
-            // whether an action exists is the defect class this repository keeps fixing,
-            // so the app's half now names where the action lives.
-            //
-            // What is still true, and why there is no *native* entry: pi's OAuth flow is
-            // implemented inside its interactive UI (`interactive-mode.ts:5485`
-            // `handleLoginCommand`, reached from `/login` at `:3052-3060`), and the RPC
-            // command union (`modes/rpc/rpc-types.ts:20-74`) has no login command at all.
-            // The terminal page is the only surface that can run it; saying so is the
-            // honest form of "not built in".
-            //
-            // 用户裁定（2026-02）：「终端页是半成品」，所以这句话不再把用户支使过去 ——
-            // 只留事实（订阅登录要终端、它还不完善）与这一行旁边就能做的事（API Key）。
-            // 原句是「…订阅账号登录请到 工作区 → 终端 里运行 /login；只想填厂商 API Key
-            // 用上面那行。」
-            description = "订阅登录要在终端页跑 pi。",
+            // 订阅登录现在是**原生**的：`ui/settings/SubscriptionLogin.kt` 在 guest 里
+            // 跑 pi 自己的 `auth.oauth.login()`（`PiOAuthHost`），凭证写进同一份
+            // `auth.json`。清单也不再是写死的九家 —— 它是运行时从钉住版本的 pi 读出来的
+            // （`builtinProviders()` 过滤 `auth.oauth`），所以 pi 新增订阅提供商时界面自动
+            // 多一行。入口在「模型与供应商」屏顶部的「订阅账号」卡（设置首页顶栏）。
+            title = "订阅登录",
+            description = "在「模型与供应商」的「订阅账号」里登录；跑的是 pi 自己的流程。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",

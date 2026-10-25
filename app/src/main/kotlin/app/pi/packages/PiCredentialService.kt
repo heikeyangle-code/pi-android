@@ -697,6 +697,23 @@ class PiCredentialService(
     /** For the UI's "which agent dir is this actually in" disclosure. */
     fun paths(): Pair<String, String> = truthAgentDir.absolutePath to mirrorAgentDir.absolutePath
 
+    /**
+     * 订阅登录成功后的落盘：把 pi 返回的 `OAuthCredential` 写进 `auth.json`。
+     *
+     * 只写凭证，**不写 `models.json`、不改选择键** —— 订阅厂商的模型清单是 pi 自带的
+     * 目录（`pi-ai/dist/providers/*.models`），不需要用户申报；默认模型仍然由用户自己在
+     * 「默认模型」那一行选。写完之后与 API Key 同一条路：置「等重启」标记，因为引擎的
+     * 可用模型快照是启动期建的（`rpc-types` 没有任何命令触发 refresh）。
+     */
+    fun setOAuthCredential(providerId: String, credential: JsonObject): String? {
+        auth().setOAuth(providerId, credential)?.let { return it }
+        PendingModelRestart.mark()
+        return null
+    }
+
+    /** 已登录的订阅凭证（只含类型层面的状态，不含 token）。 */
+    fun subscriptionStatuses(): Map<String, PiAuthStorage.SubscriptionStatus> = auth().readSubscriptionStatuses()
+
     companion object {
         /**
          * 模型这一块的界面要盯着的外部改动：这四份文件一变，"已导入的模型"这张清单就可能不同。

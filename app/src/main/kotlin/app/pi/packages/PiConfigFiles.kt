@@ -322,6 +322,78 @@ class PiAuthStorage(
     }
 
     /**
+     * 写入**订阅登录**拿到的 `oauth` 凭证 —— 一个已经成形的 pi `OAuthCredential`
+     * （`{type:"oauth", access, refresh, expires, …}`），原样落盘。
+     *
+     * 为什么不是 App 自己拼字段：`openai` 有 `accountId`、`github-copilot` 有
+     * `enterpriseUrl`、`radius` 有 `scope`，pi 读回时用的正是这些键
+     * （`auth/oauth/*.ts` 的返回对象）。App 只校验 pi 加载器会拒绝的那几条
+     * （`access`/`refresh` 字符串、`expires` 有限数字，`auth-storage.ts:228-255`），
+     * 其余原样保留 —— 这就是「支持 pi 支持的所有订阅」在写盘这一侧的全部要求。
+     *
+     * 读取方（[readSubscriptionStatuses]）只认类型与过期时间，不碰 token。
+     */
+    fun setOAuth(providerId: String, credential: JsonObject): String? {
+        if (providerId.isBlank()) return "厂商 id 不能为空"
+        val access = (credential["access"] as? JsonPrimitive)?.content
+        val refresh = (credential["refresh"] as? JsonPrimitive)?.content
+        val expires = (credential["expires"] as? JsonPrimitive)?.content?.toDoubleOrNull()
+        if (access.isNullOrEmpty()) return "登录结果里没有 access token，已拒绝写入"
+        if (refresh == null) return "登录结果里没有 refresh token，已拒绝写入"
+        if (expires == null || !expires.isFinite()) return "登录结果里的 expires 不是数字，已拒绝写入"
+        return runCatching {
+            PiConfigFiles.withLock(file) {
+                val raw = if (file.isFile) file.readText() else "{}"
+                val document = PiConfigFiles.parseObject(raw)
+                    ?: return@withLock "凭证文件无法解析，已拒绝写入以免破坏它"
+                val next = LinkedHashMap<String, JsonElement>(document)
+                next[providerId] = buildJsonObject {
+                    put("type", JsonPrimitive("oauth"))
+                    for ((key, value) in credential) {
+                        if (key == "type") continue
+                        put(key, value)
+                    }
+                }
+                val text = JsonObject(next).toString()
+                if (!PiConfigFiles.write(file, text, mode600 = true)) {
+                    return@withLock "写入凭证文件失败（${file.absolutePath}）"
+                }
+                writeMirror(text)
+                null
+            }
+        }.getOrElse { error -> "写入凭证文件失败：${error.message ?: error::class.java.simpleName}" }
+    }
+
+    /**
+     * 每个已有 `oauth` 条目的供应商 → 过期时间与是否带 refresh token。
+     *
+     * 登录状态只能从**文件**读：pi 自己的 `AuthStorage` 在引擎里，RPC 没有查询凭证的
+     * 命令（`rpc-types.ts` 无 auth/login 条目）。过期不等于失效 —— pi 在下次请求时用
+     * refresh token 自动续（`auth/resolve.ts:129-147`），所以界面只说「已登录（已过期，
+     * 下次使用会自动续）」而不把过期画成未登录。
+     */
+    fun readSubscriptionStatuses(): Map<String, SubscriptionStatus> {
+        val effective = effectiveFile() ?: return emptyMap()
+        val text = runCatching { effective.readText() }.getOrNull() ?: return emptyMap()
+        val document = PiConfigFiles.parseObject(text) ?: return emptyMap()
+        val result = LinkedHashMap<String, SubscriptionStatus>()
+        for ((providerId, value) in document) {
+            val credential = value as? JsonObject ?: continue
+            if ((credential["type"] as? JsonPrimitive)?.content != "oauth") continue
+            val expires = (credential["expires"] as? JsonPrimitive)?.content?.toLongOrNull()
+            val refresh = (credential["refresh"] as? JsonPrimitive)?.content
+            result[providerId] = SubscriptionStatus(
+                expires = expires,
+                hasRefresh = !refresh.isNullOrEmpty(),
+            )
+        }
+        return result
+    }
+
+    /** 一条已登录的订阅凭证里 App 会看的两件事。token 本身从不进界面。 */
+    data class SubscriptionStatus(val expires: Long?, val hasRefresh: Boolean)
+
+    /**
      * Remove a provider's credential. Returns null on success.
      *
      * `delete` is a real removal rather than a null key, because pi's loader rejects
