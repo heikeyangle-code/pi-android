@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.pi.packages.PiConfigFiles
@@ -345,7 +346,9 @@ internal fun PiFilesScreen(
                     )
                     Text(
                         "上一级",
-                        style = MaterialTheme.typography.bodyLarge,
+                        // 行标题那一档：15 + Medium（与设置面 `PiSettingsEntryRow` 的 `RowBody`
+                        // 同一个表达式；这里原来漏了字重，落在 400 上）。
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
@@ -556,7 +559,12 @@ private fun PiFilesRow(
         Column(Modifier.weight(1f)) {
             Text(
                 entry.name,
-                style = PiTheme.text.mono,
+                // 文件名是**路径型**标题，所以走等宽，但字号取行标题那一档：
+                // `PiTheme.text.mono` 是 13 的机器正文，比同一张卡里的「上一级」(15/500)
+                // 小两档。这里用 `WorkspaceChrome.WsRow` 对等宽行标题的同一条规矩
+                // （稿子的 `mono t14`：14/500），工作区与 Pi 文件两处的文件行从此同值。
+                style = PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -1052,7 +1052,7 @@ internal fun WsSheet(
                         WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
                     ),
                 ) {
-                    // 抓手：32×3、圆角 999、`padding:8px 0 0`、水平居中。
+                    // 抓手：32×3、圆角 2、`padding:8px 0 0`、水平居中。
                     Box(
                         Modifier
                             .fillMaxWidth()
@@ -1065,8 +1065,12 @@ internal fun WsSheet(
                                     width = PiSettingsMetrics.sheetHandleWidth,
                                     height = PiSettingsMetrics.sheetHandleHeight,
                                 )
-                                .clip(CircleShape)
-                                .background(palette.borderMuted),
+                                // 与 `ui/components/PiSheet.kt` 的 `PiSheetHandle` 逐项同值：
+                                // 圆角 2（不是胶囊）与 `outlineVariant`（= `borderMuted` 的 55%）。
+                                // 原来这里是 `CircleShape` + 不透明的 `borderMuted` —— 数字相同、
+                                // 色与形不同，两个壳并排时把手深浅不一样。
+                                .clip(RoundedCornerShape(WsSheetHandleRadius))
+                                .background(MaterialTheme.colorScheme.outlineVariant),
                         )
                     }
 
@@ -1185,6 +1189,9 @@ private fun ClearSheetPlatformDim() {
 
 /** `Sheet` 里没有对应 token 的几个数：`8px 0 0` / `gap:8` / ✕ 的 28 与 -6 / `mt 4` / 底部 8。 */
 private val WsSheetHandleTop = 8.dp
+
+/** 把手圆角，与 `PiSheet.kt` 的 `PiSheetHandle` 同值（32×3 上 2 与胶囊肉眼看不出差别，值要一致）。 */
+private val WsSheetHandleRadius = 2.dp
 private val WsSheetHeadGap = 8.dp
 private val WsSheetCloseSize = 28.dp
 private val WsSheetCloseRadius = 8.dp
@@ -1217,8 +1224,14 @@ private val WsSheetDismiss = 64.dp
 /** 或者甩得比这个快（px/s）也关。 */
 private const val WsSheetFlingVelocity = 900f
 
-/** `.b-scrim{background:rgba(0,0,0,.32)}`：与 M3 的 scrim 同值，也是稿子那句。 */
-private val WsSheetScrim = Color.Black.copy(alpha = 0.32f)
+/**
+ * `.b-scrim{background:rgba(0,0,0,.32)}`：与稿子那句同值，也写成 `PiSheet.kt` 里
+ * `SheetScrim` 的**同一个字面量**（`0x52` = 82/255 ≈ 0.32）。
+ *
+ * 原来写的是 `Color.Black.copy(alpha = 0.32f)` —— 颜色相同、常量不同（浮点 0.32 与
+ * 82/255 = 0.3216），两处各写一遍就会各漂各的；改成同一个数之后，改遮罩只需要改一处。
+ */
+private val WsSheetScrim = Color(0x52000000)
 
 /**
  * `.b-sheet` 的 `border-top:1px solid var(--border-muted)`：**只画上沿**，并且贴着

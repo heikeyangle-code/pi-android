@@ -2633,8 +2633,8 @@ private fun menuTargetFor(path: String, file: File, fromSession: Boolean): Works
  * 「用其他应用打开」在没人能接时说的那句「先导出到 Download」，指的就是同一张菜单里的这一条。
  *
  * 壳是 [WsSheet]：标题是 `mid(文件名, 22)`（稿子 `:1613`），副标题是**等宽**的完整路径
- * （稿子那儿是一个 `span.mono`），动作行自己带 `12px 14px` 的内边距，所以头下面不再垫
- * 一个空档 —— 头的 8 加上行的 12 就是稿子的那道缝。
+ * （稿子那儿是一个 `span.mono`），动作行自己带 `10px 14px` 的内边距（见 [MenuAction]），
+ * 所以头下面不再垫一个空档 —— 头的 8 加上行的 10 就是面板头到第一条动作的那道缝。
  */
 @Composable
 private fun WorkspaceMenuSheet(
@@ -2684,6 +2684,14 @@ private fun WorkspaceMenuSheet(
 /** 稿子给这个标题的 `mid(…, 22)`。 */
 private const val MENU_TITLE_MAX_CHARS = 22
 
+/**
+ * 菜单里的一条动作：`14 / 10` 的行内边距 + `15/500` 的标题 —— 与设置面的 `PiSettingsEntryRow`
+ * 同一组数。
+ *
+ * 稿子这一行写的是 `12px 14px` + 14 的正文（`workspace-final.html` 的菜单面板），本轮按
+ * 「弹出层里的行与设置面同一套」收到 `10 / 14` 与 `15/500`：`10` 是 `rowPaddingVertical`、
+ * `15` 是行标题那一档（`bodyLarge` + Medium，与 `PiSettingsRowShell` 的 `RowBody` 同表达式）。
+ */
 @Composable
 private fun MenuAction(
     label: String,
@@ -2695,14 +2703,14 @@ private fun MenuAction(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(
-                horizontal = PiSettingsMetrics.pageHorizontal,
-                vertical = PiSettingsMetrics.cardPadding,
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
             color = tone ?: MaterialTheme.colorScheme.onSurface,
         )
     }
@@ -2712,7 +2720,7 @@ private fun MenuAction(
 
 /**
  * 「新建」先问文件还是文件夹（稿子的 `dlg.kind === 'new'`，`:1623`）：同一支 [WsSheet]，
- * 标题「新建」、副标题「建在「…」里」、两条选择各自带 `12px 14px` 内边距。
+ * 标题「新建」、副标题「建在「…」里」、两条选择各自带 `10px 14px` 内边距（见 [NewChoice]）。
  */
 @Composable
 private fun WorkspaceNewSheet(
@@ -2754,8 +2762,8 @@ private fun NewChoice(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(
-                horizontal = PiSettingsMetrics.pageHorizontal,
-                vertical = PiSettingsMetrics.cardPadding,
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.searchIconGap),
@@ -2764,7 +2772,8 @@ private fun NewChoice(
         Column(Modifier.weight(1f)) {
             Text(
                 title,
-                style = MaterialTheme.typography.bodyLarge,
+                // 与 `MenuAction` / 设置面的行标题同一档：15 + Medium。
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
