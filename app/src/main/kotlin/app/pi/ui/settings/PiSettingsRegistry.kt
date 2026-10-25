@@ -1131,7 +1131,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.systemPalette",
             title = "配色方案",
-            description = "只换 system 主题的终端调色板：ANSI 16 色 + 底色，明暗由底色决定。",
+            description = "选一个背景色，其余颜色按 pi 的规则推导（调色板）。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "外观",

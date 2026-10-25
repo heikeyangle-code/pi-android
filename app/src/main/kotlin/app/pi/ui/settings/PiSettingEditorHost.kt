@@ -69,30 +69,27 @@ fun PiSettingEditorSheet(
                 // 但都经过这里，所以「写 → onWritten → refreshTheme」只有一条路。
                 // 关键的一步：顺手把 `theme` 切到 `system` —— 否则默认的 dark/light 不
                 // 经过这条推导，用户选完什么都不会变（这一页曾经就是这样坏掉的）。
-                fun writeAll(values: Map<String, String>) {
-                    values.forEach { (key, value) -> store.write(key, JsonPrimitive(value)) }
-                    store.write("theme", JsonPrimitive("system"))
-                    onWritten(setting)
-                }
                 PiSystemPaletteSheet(
-                    currentWire = setting.textIn(store, PiSystemPalettes.DEFAULT_ID),
-                    currentBackground = (store.read(PiSystemPalettes.BACKGROUND_KEY) as? JsonPrimitive)
-                        ?.content.orEmpty(),
                     currentSaturation = (store.read(PiSystemPalettes.SATURATION_KEY) as? JsonPrimitive)
                         ?.content ?: PiSystemPalettes.saturationWire(1.0),
-                    onSetPreset = { id ->
-                        writeAll(mapOf(PiSystemPalettes.SETTING_KEY to id))
-                    },
-                    onSetCustom = { hex ->
-                        writeAll(
-                            mapOf(
-                                PiSystemPalettes.SETTING_KEY to PiSystemPalettes.CUSTOM_ID,
-                                PiSystemPalettes.BACKGROUND_KEY to "#$hex",
-                            ),
-                        )
-                    },
+                    currentBackground = (store.read(PiSystemPalettes.BACKGROUND_KEY) as? JsonPrimitive)
+                        ?.content.orEmpty(),
                     onSetSaturation = { wire ->
                         store.write(PiSystemPalettes.SATURATION_KEY, JsonPrimitive(wire))
+                        // 强度只在推导里生效：同样顺手切到 system，避免"拖了没反应"。
+                        store.write("theme", JsonPrimitive("system"))
+                        onWritten(setting)
+                    },
+                    onSetCustom = { hex ->
+                        store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(PiSystemPalettes.CUSTOM_ID))
+                        store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive("#$hex"))
+                        store.write("theme", JsonPrimitive("system"))
+                        onWritten(setting)
+                    },
+                    onSetPreset = { id ->
+                        store.write(PiSystemPalettes.SETTING_KEY, JsonPrimitive(id))
+                        store.write(PiSystemPalettes.BACKGROUND_KEY, JsonPrimitive(""))
+                        store.write("theme", JsonPrimitive("system"))
                         onWritten(setting)
                     },
                     onDismiss = onDismiss,

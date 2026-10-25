@@ -938,7 +938,11 @@ fun deriveSystemPalette(base: PiAnsiPalette?, saturation: Double = 1.0): PiPalet
     val tokens = derived.colors
     fun token(value: PiSystemToken): Color = composeColor(tokens.getValue(value))
     val userMessageBg = token(PiSystemToken.USER_MESSAGE_BG)
-    val canvas = canvasSurfaces(userMessageBg)
+    // 画布用**输入底色本身**，不从任何推导出来的 token 反推。pi 的 system 主题里
+    // pageBg/cardBg 不是 token：TUI 直接画在终端底色上，`export` 段那两个面是可选的
+    // 手写值（`theme.ts:920-944`）。之前这里拿 userMessageBg（蓝族的推导结果）缩放，
+    // 于是整页底色被染蓝 —— 用户看到的"背景成蓝的"就是这个，不是推导本身的错。
+    val canvas = canvasSurfaces(composeColor(input.background))
     return PiPalette(
         accent = token(PiSystemToken.ACCENT),
         border = token(PiSystemToken.BORDER),
@@ -1006,36 +1010,32 @@ private class PiCanvasSurfaces(val pageBg: Color, val cardBg: Color, val infoBg:
 
 /**
  * The three tokens pi's HTML exporter derives from `userMessageBg`
- * (`deriveExportColors`, `core/export-html/index.ts:81-105`): light themes keep the
- * message surface as the card and dim it for the page, dark themes dim it for both and
- * nudge the info surface toward yellow.
+ * (`deriveExportColors`, `core/export-html/index.ts:81-105`)，但输入是**终端底色本身**：
+ * 页面就是底色，卡片向白混一点点（亮/暗两档的比例对齐 pi 的 `#EFEEEE/#F7F6F6` 与
+ * `#21252C/#282C34` 的差值），信息面按深浅偏向 pi 的暖色。之前这里用
+ * `userMessageBg`（蓝族推导结果）缩放 —— 那会把整页染蓝，是这轮修掉的 bug。
  */
-private fun canvasSurfaces(userMessageBg: Color): PiCanvasSurfaces {
-    fun scale(factor: Float): Color = Color(
-        red = (userMessageBg.red * factor).coerceIn(0f, 1f),
-        green = (userMessageBg.green * factor).coerceIn(0f, 1f),
-        blue = (userMessageBg.blue * factor).coerceIn(0f, 1f),
+private fun canvasSurfaces(background: Color): PiCanvasSurfaces {
+    /** `background` 向 [toward] 混 [amount]（0..1）。只用于"卡片比页面亮一点点"这种面差。 */
+    fun blend(toward: Color, amount: Float): Color = Color(
+        red = background.red + (toward.red - background.red) * amount,
+        green = background.green + (toward.green - background.green) * amount,
+        blue = background.blue + (toward.blue - background.blue) * amount,
     )
-    val light = !isDarkSurface(userMessageBg)
+    val light = !isDarkSurface(background)
     return if (light) {
+        // 对应 pi light 的 `pageBg #EFEEEE` / `cardBg #F7F6F6`：卡片比页面更白一点。
         PiCanvasSurfaces(
-            pageBg = scale(0.96f),
-            cardBg = userMessageBg,
-            infoBg = Color(
-                red = ((userMessageBg.red * 255f) + 10f).coerceAtMost(255f) / 255f,
-                green = ((userMessageBg.green * 255f) + 5f).coerceAtMost(255f) / 255f,
-                blue = ((userMessageBg.blue * 255f) - 20f).coerceAtLeast(0f) / 255f,
-            ),
+            pageBg = background,
+            cardBg = blend(Color.White, 0.35f),
+            infoBg = blend(Color(0xFFEDE3DD), 0.6f),
         )
     } else {
+        // 对应 pi dark 的 `#21252C` / `#282C34`：卡片比页面亮约 6%，与 pi 的差值同级。
         PiCanvasSurfaces(
-            pageBg = scale(0.70f),
-            cardBg = scale(0.85f),
-            infoBg = Color(
-                red = ((userMessageBg.red * 255f) + 20f).coerceAtMost(255f) / 255f,
-                green = ((userMessageBg.green * 255f) + 15f).coerceAtMost(255f) / 255f,
-                blue = userMessageBg.blue,
-            ),
+            pageBg = background,
+            cardBg = blend(Color.White, 0.06f),
+            infoBg = blend(Color(0xFF4E2F1B), 0.75f),
         )
     }
 }
