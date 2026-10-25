@@ -711,8 +711,21 @@ class PiCredentialService(
         return null
     }
 
-    /** 已登录的订阅凭证（只含类型层面的状态，不含 token）。 */
-    fun subscriptionStatuses(): Map<String, PiAuthStorage.SubscriptionStatus> = auth().readSubscriptionStatuses()
+    /**
+     * 已登录的订阅凭证（只含类型层面的状态，不含 token）。
+     *
+     * **两份 auth.json 都要看**：引擎把 agent dir 绑到持久那份（[mirrorAgentDir]），
+     * 所以 pi 的 `/login`（或我们的订阅登录）写进去的是**镜像**；而 rootfs 里那份
+     * （[truthAgentDir]）可能因为早先写 API Key 而存在。只读「优先 primary」那一份时，
+     * 镜像里的 `oauth` 条目就看不见 —— 表现正是「订阅登录成功了，但厂商卡还显示
+     * 换 Key / 改模型」。合并时镜像优先：它是 pi 实际在写的那份。
+     */
+    fun subscriptionStatuses(): Map<String, PiAuthStorage.SubscriptionStatus> {
+        val mirrorStatuses = PiAuthStorage(file = PiConfigFiles.authFile(mirrorAgentDir))
+            .readSubscriptionStatuses()
+        val truthStatuses = auth().readSubscriptionStatuses()
+        return truthStatuses + mirrorStatuses
+    }
 
     companion object {
         /**
