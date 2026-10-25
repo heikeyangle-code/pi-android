@@ -361,7 +361,8 @@ internal fun SubscriptionLoginSheet(
 
             // pi 的提问：select 就是他给的选项，其余是输入框。
             prompt?.let { asking ->
-                Text(asking.message, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+                Text(asking.message, style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(PiSpacing.small))
                 if (asking.type == "select") {
                     asking.options.forEach { option ->
@@ -375,11 +376,18 @@ internal fun SubscriptionLoginSheet(
                         }
                     }
                 } else {
+                    // 输入框要有正常高度：默认尺寸在这里只有一行高，看着像被压扁了。
                     PiEditorField(
                         value = pasted,
                         onValueChange = { pasted = it },
                         label = asking.placeholder ?: "粘贴到这里",
                         singleLine = asking.type != "manual_code",
+                        height = if (asking.type == "manual_code") null else PiSettingsMetrics.searchFieldHeight,
+                        minHeight = if (asking.type == "manual_code") {
+                            PiSettingsMetrics.chipHeight * 3
+                        } else {
+                            null
+                        },
                     )
                     Spacer(Modifier.height(PiSpacing.small))
                     TextButton(
@@ -407,6 +415,7 @@ internal fun SubscriptionLoginSheet(
                     onValueChange = { pasted = it },
                     label = "回调地址或授权码",
                     singleLine = false,
+                    minHeight = PiSettingsMetrics.chipHeight * 3,
                 )
                 Spacer(Modifier.height(PiSpacing.small))
                 TextButton(
