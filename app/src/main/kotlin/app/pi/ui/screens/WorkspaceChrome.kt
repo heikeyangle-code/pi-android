@@ -61,15 +61,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -89,6 +85,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import app.pi.ui.components.PiSheetChromeFrame
+import app.pi.ui.components.PiSheetChromeMetrics
+import app.pi.ui.components.PiSheetHandle
+import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
@@ -119,7 +119,7 @@ import kotlinx.coroutines.launch
  * | [WsNotice] | `function Notice` (`:615-625`) | 等宽前缀（`·` / `!` / `✗`）+ 13 文本（本 App 取 12 的 `meta`，见构件注释），三档 tone |
  * | [WsErrBlock] | `function ErrBlock` (`:1048-1072`) | 3px 竖条（`IntrinsicSize.Min` + `fillMaxHeight()`，撑满整块）+ `tool-error` 底 + `1px rgba(error,.45)` 边 + 圆角 10；标题 `t12` |
  * | `WorkspaceSnackBar`（`ProjectScreen.kt`） | `function Snack` (`:627-643`) | 底部一条：`mono t14` 符号 + 14 文本 + 可选动作，三档底/字 |
- * | [WsSheet] | `function Sheet` (`:514-532`) | scrim `.32` + `surf-high` + 上圆角 16 + 1px 上边；抓手 `32×3`、头 `12px 14px 8px`、标题 15/600 + ✕ `28×28` 圆角 8、副标题 12 muted `mt 4`、正文 `maxHeight 420` / 底部 8、页脚 `10px 14px 14px` |
+ * | [WsSheet] | `function Sheet` (`:514-532`) | scrim `.32` + `surf-high` + 上圆角 16（**没有**稿子那条 1px 上沿，理由见 [WsSheet] 的 KDoc）；抓手 `32×3`、头 `12px 14px 8px`、标题 17/24（`PiType.title`）+ ✕ `28×28` 圆角 8、副标题 12 muted `mt 4`、正文 `maxHeight 420` / 底部 8、页脚 `10px 14px 14px` |
  * | [WsSectionHeader] | `function Section` (`:424-435`) | `padding:0 14px`、`margin-bottom:7px`、12 标签（`.02em`）+ 12 计数 + 右侧 aside |
  * | [WsRow] | `function Row` (`:452-471`) | `padding:10px 12px`、`gap:10`、标题 15（字重 **500**，strong 时 600；等宽行 `mono` 14）+ 副行 12 + 右值 13 |
  * | [WsCard] / [WsCardSlice] | `function Card` (`:421-423`) + `Rows` (`:437-449`) | 卡壳：`surf-low` 底、圆角 10、左右 14 页边；列表里由**每一片**自带卡壳（首片圆上角、末片圆下角、行间线在卡内），这样 `LazyColumn` 的懒加载不被 `Rows` 的整列写法牺牲 |
@@ -225,7 +225,7 @@ internal fun WsBadge(
         if (text.isNotEmpty()) {
             Text(
                 text,
-                style = MaterialTheme.typography.labelSmall,
+                style = PiTheme.text.meta,
                 color = palette.text,
                 maxLines = 1,
             )
@@ -318,9 +318,10 @@ private val WsSegItemPadding = 10.dp
  * 不留没有调用方的形态（`07` D38.2 如无必要勿增实体）；将来真要"选中的胶囊"，照
  * `06 §2` 补回来即可，几何数值仍在上面这份 KDoc 里。
  *
- * 字号取 `bodyMedium`（14/SemiBold）而不是稿子的 `t13 w6`：本 App 的系统字角色里没有 13sp
- * 这一档（`PiTextStyles` 是 12/14，5 档是 12/13/14/15/17 但 13 只给了等宽），而**按钮标签**
- * 在本项目里的既有角色就是 `bodyMedium` + 字重（`ui/components/PiDialog.PiDialogAction`）。
+ * 字号取 14 + SemiBold（`PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold)`）而不是
+ * 稿子的 `t13 w6`：本 App 的系统字角色里没有 13sp 这一档（`PiTextStyles` 是 12/14，5 档是
+ * 12/13/14/15/17 但 13 只给了等宽），而**按钮标签**在本项目里的既有角色就是 14 + 字重
+ * （`ui/components/PiDialog.PiDialogAction`）。
  */
 @Composable
 internal fun WsChip(
@@ -383,7 +384,7 @@ internal fun WsChip(
         Text(
             text,
             style = if (solid) {
-                MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold)
             } else {
                 PiTheme.text.meta
             },
@@ -466,7 +467,7 @@ internal fun WsNotice(
             // 稿子的 `Notice` 正文是 `t13`（`workspace-final.html:615-625`）。本 App 的系统字
             // 角色里没有 13sp，取 12 的 `meta` —— 这也正是**同一个构件在对话页的取值**：
             // `ui/blocks/NoticeBlock.kt:76` 把稿子同样写 `t13` 的提示正文画成 `meta`。
-            // `bodyMedium`(14) 比稿子大 1px，是这一屏「小字号走形」里的一员。
+            // 14 的正文比稿子大 1px，是这一屏「小字号走形」里的一员。
             style = PiTheme.text.meta,
             color = color,
         )
@@ -533,8 +534,8 @@ internal fun WsErrBlock(
                 Text(
                     title,
                     // 稿子的标题是 `t12`（`workspace-final.html:1058`）：`✗` + 一句短标题，
-                    // 两半同色同档。`labelLarge`(14/Medium) 比稿子大一档、还带了 M3 的字重，
-                    // 与旁边 12 的符号不齐。
+                    // 两半同色同档。14 的标签（`labelLarge` 那一档）比稿子大一档、还带了
+                    // 500 的字重，与旁边 12 的符号不齐。
                     style = PiTheme.text.meta,
                     color = palette.error,
                 )
@@ -543,7 +544,7 @@ internal fun WsErrBlock(
                 Text(
                     message,
                     modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -594,7 +595,7 @@ internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit
             .padding(horizontal = 2.dp, vertical = 2.dp),
         // 稿子的动作是 `t13 c-accent`（`workspace-final.html:1063-1068`）。同 `WsNotice`
         // 正文：13 在本 App 的系统字角色里没有，取 12 的 `meta`（对话页的同类提示同一取值），
-        // `bodyMedium`(14) 是它原来偏大的那一档。
+        // 14 的正文是它原来偏大的那一档。
         style = PiTheme.text.meta,
         color = tone ?: PiTheme.palette.accent,
     )
@@ -652,17 +653,14 @@ internal fun WsRow(
                     modifier = Modifier.weight(1f, fill = false),
                     // 稿子的标题是 `t15 w5`，等宽行是 `mono t14`
                     // （`workspace-final.html:461`：`className={"t15 ell "+(p.mono?'mono t14':'')}`
-                    // + `fontWeight:p.strong?600:500`）。所以两档字重都要显式给：非 strong 是
-                    // **500**（`bodyLarge` 自己是 15/Normal=400，比稿子轻一档），strong 是 600；
-                    // 等宽标题按稿子的 14 而不是 `PiTheme.text.mono` 的 13（那一档是机器正文，
-                    // 不是行标题）—— 字号就地定，`PiTextStyles` 不动。
+                    // + `fontWeight:p.strong?600:500`）。行标题那一档现在是 `PiType.rowTitle`
+                    // （15/23 Medium，随字号档平移），两档字重仍由下面的 `fontWeight` 显式给：
+                    // 非 strong 是 **500**，strong 是 600。等宽标题不另开字号 —— 同一个角色换
+                    // 字族；`PiTheme.text.mono` 是 13 的机器正文，不能当行标题。
                     style = if (mono) {
-                        // 稿子的等宽行标题是 14（`mono t14`），而 `PiTheme.text.mono` 是 13
-                        // 的机器正文档；就地定尺寸，`PiTextStyles` 与 `piTypography` 都不动 ——
-                        // 同一手法在 `PiSettingsEditors` 的数字框(17) 上也用过。
-                        PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp)
+                        PiType.rowTitle.copy(fontFamily = PiTheme.text.mono.fontFamily)
                     } else {
-                        MaterialTheme.typography.bodyLarge
+                        PiType.rowTitle
                     },
                     color = titleColor ?: MaterialTheme.colorScheme.onSurface,
                     fontWeight = if (strong) FontWeight.SemiBold else FontWeight.Medium,
@@ -863,8 +861,8 @@ internal fun WsCardSlice(
  * 本屏原来三处底部面板都是 `ModalBottomSheet`。它白送三件事（下滑关闭、点 scrim
  * 关闭、返回键关闭），但也自带一副改不掉的壳：它自己的抓手与顶距、28 的圆角、
  * 正文槽的留白，而且**标题行里没有那个 ✕** —— 稿子的 sheet 有。这一屏要的是
- * `.b-sheet` 的那套几何（上圆角 16、`surf-high`、1px 上边、抓手 `32×3`、头
- * `12px 14px 8px`），所以壳改自绘；白送的三件事在这里补回来：
+ * `.b-sheet` 的那套几何（上圆角 16、`surf-high`、抓手 `32×3`、头 `12px 14px 8px`，
+ * 以及 ✕ 与页脚槽），所以壳改自绘；白送的三件事在这里补回来：
  *
  *  - **下滑关闭**：抓手与标题行那一带由 [draggable] 拖（内容区自己滚动时不会被抢），
  *    内容区拉到顶以后的余量由 [nestedScroll] 交给 sheet —— 松手过 [WsSheetDismiss]
@@ -874,11 +872,28 @@ internal fun WsCardSlice(
  *    `onDismissRequest`（见下面那段注释）—— 与旧的 `ModalBottomSheet` 同一条路径，
  *    所以这一屏**仍然没有**自己的 `BackHandler`。
  *
+ * ## 外观来自共用件，行为仍在这一屏
+ *
+ * 底色、顶部圆角、遮罩、把手、头部与页脚的间距都来自 `ui/components/PiSheetChrome.kt`
+ * （`PiSheetChromeMetrics` / `PiSheetHandle` / `PiSheetChromeFrame`），与 M3 那套弹层
+ * （`PiSheet`）读同一份常量 —— 这样两个壳并排打开时「看起来是同一个东西」不靠人记。
+ * 留在本文件的只有行为：`Dialog` 这一层、80% 的高度上限、fade/rise 入场、拖拽与
+ * nestedScroll，一行都没动。把它们也搬进共用件，等于把两套壳本来**应当**不同的部分
+ * 耦合起来。
+ *
+ * **稿子那条 1px 上沿描边这一版去掉了。** 理由：M3 那套弹层（聊天六个、设置三处）
+ * 从来没有这条线，弹层的底是 `surfaceContainerHigh`，与页面的分界已经由遮罩压暗 +
+ * 两个上圆角给出，多一条亮线只会让自绘面板比别的弹层多一个框，并排打开时最扎眼。
+ * 「一致」只能一起加或一起不加，而一起加等于改掉九个已经稳定的 M3 弹层 —— 不成比例，
+ * 所以统一为都没有。完整理由与仍保留的 `topEdge` 逃生口写在 `PiSheetChromeFrame` 的
+ * KDoc 里。
+ *
  * @param subtitle 副标题：12 muted，`margin-top:4`（稿子 `Sheet` 的 `p.sub`）。
  * @param subtitleMono 副标题是路径这类机器输出时用等宽（稿子菜单面板的 `p.sub`
  *   就是一个 `span.mono`）。
  * @param trailing 标题右侧的可选槽位（稿子 `p.right`）；这一屏目前没有面板用它。
- * @param footer 可选页脚：`10px 14px 14px` + 1px 上边（稿子 `p.footer`）。
+ * @param footer 可选页脚：`10px 14px 14px`（稿子 `p.footer`），上方那条 1px 分隔线仍在
+ *   —— 它是正文与页脚之间的线，不是面板的上沿，两套壳里只有这一套有页脚槽。
  * @param maxBodyHeight 内容区上限，稿子默认 420（切换工作区那一处传 520）。
  */
 @Composable
@@ -894,10 +909,8 @@ internal fun WsSheet(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(
-        topStart = PiSettingsMetrics.sheetTopRadius,
-        topEnd = PiSettingsMetrics.sheetTopRadius,
-    )
+    // 形状、底色、遮罩都不在这里定义：它们在 `ui/components/PiSheetChrome.kt` 里，与 M3
+    // 那套弹层（`PiSheet`）读同一份常量。这一层只留行为。
     // 关闭回调每次重组都是新的一份 lambda，而下面两个 `remember` 只建一次 —— 用
     // `rememberUpdatedState` 收住它，免得手势一直拿着第一次那一份。
     val close = rememberUpdatedState(onClose)
@@ -994,14 +1007,14 @@ internal fun WsSheet(
         BoxWithConstraints(modifier.fillMaxSize()) {
             val panelCap = maxHeight * WsSheetMaxHeight
 
-            // scrim：整屏、0.32 的黑、点它关闭（不给自己加 ripple）。
+            // scrim：整屏、共用件里那层 `0x52`（≈ 0.32）的黑、点它关闭（不给自己加 ripple）。
             Box(
                 Modifier
                     .fillMaxSize()
                     // 整层淡入 .13s（`.b-sheetwrap` 的 `bFade`）——缩放在图层上，命中区
                     // 不受影响：scrim 从第一帧起就能点。
                     .graphicsLayer { alpha = fade.value }
-                    .background(WsSheetScrim)
+                    .background(PiSheetChromeMetrics.scrim)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -1039,133 +1052,119 @@ internal fun WsSheet(
                                 if (dragging && event.changes.none { it.pressed }) release(0f)
                             }
                         }
-                    }
-                    .clip(shape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .wsSheetTopEdge(palette.borderMuted),
+                    },
             ) {
-                // 系统栏那一条内边距放在面板**里面**：内容抬到导航栏之上，面板底色照样
-                // 铺到屏底 —— 旧的 `ModalBottomSheet` 用 `contentWindowInsets` 做的也正是
-                // 这件事（内容让开，表面不让）。
-                Column(
-                    Modifier.windowInsetsPadding(
-                        WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
-                    ),
-                ) {
-                    // 抓手：32×3、圆角 2、`padding:8px 0 0`、水平居中。
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = WsSheetHandleTop),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            Modifier
-                                .size(
-                                    width = PiSettingsMetrics.sheetHandleWidth,
-                                    height = PiSettingsMetrics.sheetHandleHeight,
-                                )
-                                // 与 `ui/components/PiSheet.kt` 的 `PiSheetHandle` 逐项同值：
-                                // 圆角 2（不是胶囊）与 `outlineVariant`（= `borderMuted` 的 55%）。
-                                // 原来这里是 `CircleShape` + 不透明的 `borderMuted` —— 数字相同、
-                                // 色与形不同，两个壳并排时把手深浅不一样。
-                                .clip(RoundedCornerShape(WsSheetHandleRadius))
-                                .background(MaterialTheme.colorScheme.outlineVariant),
-                        )
-                    }
-
-                    // 头：`padding:12px 14px 8px`，一行标题（15/600 + 可选槽位 + ✕），
-                    // 下面可选一行副标题（12 muted，`margin-top:4`）。
+                // 面板的视觉壳（底色 + 顶部圆角 + 上沿）交给共用件，这一层只留行为：
+                // 它自己是 Dialog、面板封顶 80% 高、fade/rise 与拖拽都还挂在外层 Column 上。
+                // frame 不接手势、动画、高度，所以外层 Column 的约束与内容结构都没有变。
+                PiSheetChromeFrame(modifier = Modifier.fillMaxWidth()) {
+                    // 系统栏那一条内边距放在面板**里面**：内容抬到导航栏之上，面板底色照样
+                    // 铺到屏底 —— 旧的 `ModalBottomSheet` 用 `contentWindowInsets` 做的也正是
+                    // 这件事（内容让开，表面不让）。
                     Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                start = PiSettingsMetrics.pageHorizontal,
-                                end = PiSettingsMetrics.pageHorizontal,
-                                top = PiSettingsMetrics.sheetHeadTop,
-                                bottom = PiSettingsMetrics.sheetHeadBottom,
-                            ),
+                        Modifier.windowInsetsPadding(
+                            WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
+                        ),
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(WsSheetHeadGap),
-                        ) {
-                            Text(
-                                title,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            trailing?.invoke()
-                            Box(
-                                Modifier
-                                    // `margin-right:-6`：✕ 往右探出头的右边距 6px。
-                                    .offset(x = WsSheetCloseOverhang)
-                                    .size(WsSheetCloseSize)
-                                    .clip(RoundedCornerShape(WsSheetCloseRadius))
-                                    .clickable(onClick = { close.value() }),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = "关闭",
-                                    modifier = Modifier.size(WsSheetCloseIconSize),
-                                    tint = palette.muted,
-                                )
-                            }
-                        }
-                        if (subtitle != null) {
-                            Text(
-                                subtitle,
-                                modifier = Modifier.padding(top = WsSheetSubtitleGap),
-                                style = if (subtitleMono) {
-                                    PiTheme.text.monoSmall
-                                } else {
-                                    PiTheme.text.meta
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
+                        // 抓手：共用件，32×3、圆角 2、`outlineVariant`、上方 8 下方 6。
+                        // 原来这一段在本文件里手画了一份（圆角与颜色各写一遍），两个壳的把手于是
+                        // 各自漂移；现在只画一次，M3 那套弹层读的是同一个组件。
+                        PiSheetHandle()
 
-                    // 内容区：稿子 `.b-scroll` 的 `maxHeight:420` / `padding-bottom:8`。
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = maxBodyHeight)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
+                        // 头：`padding:12px 14px 8px`，一行标题（`PiType.title`，17/24 SemiBold
+                        // + 可选槽位 + ✕），
+                        // 下面可选一行副标题（12 muted，`margin-top:4`）。
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = WsSheetBodyBottom),
-                            content = content,
-                        )
-                    }
-
-                    if (footer != null) {
-                        HorizontalDivider(
-                            thickness = PiSettingsMetrics.hairline,
-                            color = palette.borderMuted,
-                        )
-                        Text(
-                            footer,
-                            modifier = Modifier
-                                .fillMaxWidth()
                                 .padding(
-                                    start = PiSettingsMetrics.pageHorizontal,
-                                    end = PiSettingsMetrics.pageHorizontal,
-                                    top = PiSettingsMetrics.sheetFooterTop,
-                                    bottom = PiSettingsMetrics.sheetFooterBottom,
+                                    start = PiSheetChromeMetrics.headHorizontal,
+                                    end = PiSheetChromeMetrics.headHorizontal,
+                                    top = PiSheetChromeMetrics.headTop,
+                                    bottom = PiSheetChromeMetrics.headBottom,
                                 ),
-                            style = PiTheme.text.meta,
-                            color = palette.muted,
-                        )
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(WsSheetHeadGap),
+                            ) {
+                                Text(
+                                    title,
+                                    modifier = Modifier.weight(1f),
+                                    style = PiType.title,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                trailing?.invoke()
+                                Box(
+                                    Modifier
+                                        // `margin-right:-6`：✕ 往右探出头的右边距 6px。
+                                        .offset(x = WsSheetCloseOverhang)
+                                        .size(WsSheetCloseSize)
+                                        .clip(RoundedCornerShape(WsSheetCloseRadius))
+                                        .clickable(onClick = { close.value() }),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "关闭",
+                                        modifier = Modifier.size(WsSheetCloseIconSize),
+                                        tint = palette.muted,
+                                    )
+                                }
+                            }
+                            if (subtitle != null) {
+                                Text(
+                                    subtitle,
+                                    modifier = Modifier.padding(top = WsSheetSubtitleGap),
+                                    style = if (subtitleMono) {
+                                        PiTheme.text.monoSmall
+                                    } else {
+                                        PiTheme.text.meta
+                                    },
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+
+                        // 内容区：稿子 `.b-scroll` 的 `maxHeight:420` / `padding-bottom:8`。
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = maxBodyHeight)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = WsSheetBodyBottom),
+                                content = content,
+                            )
+                        }
+
+                        if (footer != null) {
+                            HorizontalDivider(
+                                thickness = PiSettingsMetrics.hairline,
+                                color = palette.borderMuted,
+                            )
+                            Text(
+                                footer,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = PiSheetChromeMetrics.footerHorizontal,
+                                        end = PiSheetChromeMetrics.footerHorizontal,
+                                        top = PiSheetChromeMetrics.footerTop,
+                                        bottom = PiSheetChromeMetrics.footerBottom,
+                                    ),
+                                style = PiTheme.text.meta,
+                                color = palette.muted,
+                            )
+                        }
                     }
                 }
             }
@@ -1177,7 +1176,7 @@ internal fun WsSheet(
  * 清掉平台给 dialog 窗口加的那层 dim：[WsSheet] 自己画 0.32 的 scrim，不清就会叠成比稿子
  * 任何一处都深的一层。与 `ui/components/PiDialog.kt` 的 `ClearPlatformDim`、
  * `ui/blocks/PiImageViewer.kt` 的 `ClearViewerPlatformDim` 是同一手法 —— 那个 helper 是
- * 文件私有的，而 `ui/components` 不在本批可改的文件里，所以照那两处的先例在这里再来一份。
+ * 文件私有的，`ui/components/PiDialog.kt` 里那份也一样，所以照那两处的先例在这里再来一份。
  */
 @Composable
 private fun ClearSheetPlatformDim() {
@@ -1187,11 +1186,12 @@ private fun ClearSheetPlatformDim() {
     }
 }
 
-/** `Sheet` 里没有对应 token 的几个数：`8px 0 0` / `gap:8` / ✕ 的 28 与 -6 / `mt 4` / 底部 8。 */
-private val WsSheetHandleTop = 8.dp
-
-/** 把手圆角，与 `PiSheet.kt` 的 `PiSheetHandle` 同值（32×3 上 2 与胶囊肉眼看不出差别，值要一致）。 */
-private val WsSheetHandleRadius = 2.dp
+/**
+ * `Sheet` 里没有对应 token、也不属于弹层公共外观的几个数：`gap:8` / ✕ 的 28 与 -6 /
+ * `mt 4` / 正文底部 8。尺寸与颜色里凡是两套弹层共用的（圆角、把手、遮罩、头部与页脚的
+ * 间距），都在 `ui/components/PiSheetChrome.kt`；这里留下的只服务这一套自绘外壳的 ✕ 行
+ * 与正文，M3 那套弹层没有对应物。
+ */
 private val WsSheetHeadGap = 8.dp
 private val WsSheetCloseSize = 28.dp
 private val WsSheetCloseRadius = 8.dp
@@ -1223,46 +1223,3 @@ private val WsSheetDismiss = 64.dp
 
 /** 或者甩得比这个快（px/s）也关。 */
 private const val WsSheetFlingVelocity = 900f
-
-/**
- * `.b-scrim{background:rgba(0,0,0,.32)}`：与稿子那句同值，也写成 `PiSheet.kt` 里
- * `SheetScrim` 的**同一个字面量**（`0x52` = 82/255 ≈ 0.32）。
- *
- * 原来写的是 `Color.Black.copy(alpha = 0.32f)` —— 颜色相同、常量不同（浮点 0.32 与
- * 82/255 = 0.3216），两处各写一遍就会各漂各的；改成同一个数之后，改遮罩只需要改一处。
- */
-private val WsSheetScrim = Color(0x52000000)
-
-/**
- * `.b-sheet` 的 `border-top:1px solid var(--border-muted)`：**只画上沿**，并且贴着
- * 两个上圆角走 —— `Modifier.border()` 是四面一起画的，这里要的是一条。
- *
- * 中心线往里让半个线宽：`.clip()` 会把描边的外半边切掉，不让的话 1px 只剩 0.5px。
- */
-private fun Modifier.wsSheetTopEdge(color: Color): Modifier = drawWithCache {
-    val half = PiSettingsMetrics.hairline.toPx() / 2f
-    val radius = (PiSettingsMetrics.sheetTopRadius.toPx() - half)
-        .coerceAtLeast(0f)
-        .coerceAtMost(size.height / 2f)
-    val top = Path().apply {
-        moveTo(half, half + radius)
-        arcTo(Rect(half, half, half + 2f * radius, half + 2f * radius), 180f, 90f, false)
-        lineTo(size.width - half - radius, half)
-        arcTo(
-            Rect(
-                size.width - half - 2f * radius,
-                half,
-                size.width - half,
-                half + 2f * radius,
-            ),
-            270f,
-            90f,
-            false,
-        )
-    }
-    val stroke = Stroke(width = PiSettingsMetrics.hairline.toPx())
-    onDrawWithContent {
-        drawContent()
-        drawPath(top, color, style = stroke)
-    }
-}
