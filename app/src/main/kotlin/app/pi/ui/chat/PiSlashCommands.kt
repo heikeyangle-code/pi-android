@@ -163,7 +163,7 @@ data class PiSlashCommand(
  * gone because each was a second door to something the screen behind the palette
  * already offers, and duplicate doors are what made the panel unreadable:
  *
- *  - `settings` → the bottom bar's 「设置」 destination (`PiRoot.kt`, `PiDestination.Settings`);
+ *  - `settings` → 对话页「⋯」菜单的「设置」(`PiRoot.kt`, `PiDestination.Settings`);
  *  - `model` → the top bar's model chip, which opens the same selector
  *    (`ChatScreen.kt`, `ModelChip` → `ChatSheet.Model`);
  *  - `thinking` → the composer's `◐` chip, which cycles the level and opens the
@@ -298,7 +298,7 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
 val PI_UNLISTED_BUILTIN_COMMANDS: Map<String, String> = mapOf(
     // Group B in [PI_BUILTIN_SLASH_COMMANDS]: the ability has a direct surface on
     // this screen, so the sentence names it instead of denying it.
-    "settings" to "pi 有 /settings；本应用用底栏的「设置」进入，命令面板不再单列。",
+    "settings" to "pi 有 /settings；本应用用「⋯」菜单的「设置」进入，命令面板不再单列。",
     "model" to "pi 有 /model；本应用用顶栏的模型按钮打开选择器，命令面板不再单列。",
     "thinking" to "pi 有 /thinking；本应用用输入框的 ◐ 切换思考等级，命令面板不再单列。",
     // Group D: same ruling as Group B, four more rows whose surface is on this page.

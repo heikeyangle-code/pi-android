@@ -9,17 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -43,15 +38,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.pi.ui.chat.SessionTreeScreen
-import app.pi.ui.components.PiNavGlyph
-import app.pi.ui.components.PiNavGlyphs
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.ProjectScreen
@@ -65,24 +56,19 @@ import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 
 /**
- * The three top-level destinations, in bottom-bar order.
+ * The three top-level destinations.
  *
  * There were four until the v2 refactor (`design/ui-refactor/03-navigation-decision.md`):
  * `会话` was dropped because a session *list* is a selector, not a place — pi
  * itself draws its session tree over the transcript, and the desktop habit is a
- * sheet or a drawer. Two tabs for "the session I am in" and "which session"
- * gave the same thing two homes, and the user could not tell which one they were
- * in. `终端` was dropped for the opposite reason: the terminal is a fallback
- * entry point the user has declared unusable, and the bottom bar is the most
- * visible real estate in the app — it moves to one row on the settings home in a
- * later batch.
+ * sheet or a drawer. `终端` was dropped for the opposite reason: the terminal is a
+ * fallback entry point the user has declared unusable.
  *
- * `ordinal` is the bottom-bar order, as before, so reordering this enum reorders
- * the bar. The start destination stays [Chat]: cold start is a new conversation.
+ * **底栏在「会话主页」那一批里拆掉了**（用户裁决）：所有页面都不再有 `bottomBar`，
+ * 工作区/设置改成顶栏入口 —— 会话页顶栏两个图标，对话页「⋯」菜单两项。这个枚举
+ * 留着，因为目的地仍然只有三个，切目的地走的还是 `destinationName`。
  *
- * The icon is resolved through [icon] rather than carried as a constructor
- * property, so the enum keeps naming pi's vocabulary and the drawing stays in the
- * one place that draws: [PiNavGlyphs].
+ * The start destination stays [Chat]: cold start is a new conversation.
  */
 enum class PiDestination(val label: String) {
     Chat("对话"),
@@ -98,14 +84,6 @@ enum class PiDestination(val label: String) {
     Workbench("工作区"),
 
     Settings("设置");
-
-    /** The bar's glyph for this destination — see [PiNavGlyphs]. */
-    val icon: ImageVector
-        get() = when (this) {
-            Chat -> PiNavGlyphs.Chat
-            Workbench -> PiNavGlyphs.Workbench
-            Settings -> PiNavGlyphs.Settings
-        }
 }
 
 
@@ -130,14 +108,12 @@ enum class PiDestination(val label: String) {
  * The bottom inset assumed while an overlay covers the screen, when the
  * `Scaffold` reports none.
  *
- * [BOTTOM_BAR_HEIGHT] is 56dp, so the scaffold's bottom padding is 56dp whenever
- * the bar is drawn — which it always is, because the overlay draws *inside* the
- * scaffold's content box rather than replacing it. The fallback is only for the
- * case where that stops being true: a snackbar with a zero inset sits under the
- * system navigation bar, unseen. 56 + 8 is the same 8dp the snackbar host below
- * has always asked for.
+ * 底栏拆掉之后 `Scaffold` 的底距是系统导航条 inset（手势条约 24、三键约 48），
+ * 覆盖层画在 scaffold 的内容盒里、不替换它，所以那个数永远不为零。这个常数只是
+ * 「再也报告不出来」时的兜底：那一下 snackbar 会落到系统导航条下面，看不见。
+ * 取 32 是手势条 inset 加同一处 8dp 的呼吸 —— 三键导航下略高一点，但看得见。
  */
-private val OVERLAY_SNACKBAR_INSET = 64.dp
+private val OVERLAY_SNACKBAR_INSET = 32.dp
 
 // ------------------------------------------------------------------ the top bar
 //
@@ -218,8 +194,8 @@ fun PiTopBar(
     Column(
         modifier
             .fillMaxWidth()
-            // `surfaceDim` is the design's `--surf-dim`, the same chrome tone the
-            // bottom bar uses: one step below the content's own background.
+            // `surfaceDim` is the design's `--surf-dim`: the chrome tone v2 gave its
+            // bars, one step below the content's own background.
             // 状态栏是透明的（`MainActivity` 只设 TRANSPARENT），顶栏若用 `surfaceDim`
             // 就会在状态栏下方露出对不上色的一块（浅色主题下最明显）。用页面同底色，
             // 让状态栏、顶栏、页面是同一个面 —— 这是修 bug，不是风格改动。
@@ -455,32 +431,6 @@ private val SEG_ITEM_GAP = 2.dp
 private val SEG_ITEM_HEIGHT = 24.dp
 private val SEG_ITEM_PADDING = 10.dp
 
-// ------------------------------------------------------------------ the bottom bar
-//
-// v2's `TabBar` (`design-demos/direction-b-v2.html`), value for value: 56 high on
-// the dim surface, a 1px top rule, a 20 icon over a 12 label with 3 between them,
-// accent for the selected entry, and an 18x1 accent rule under it. These are
-// literals rather than members of `ui/theme/PiTheme.kt`'s spacing object because
-// that file is being edited by another agent in this same round; a later batch
-// folds them in.
-
-/** The bar's height, and (with [OVERLAY_SNACKBAR_INSET]) the scaffold's bottom inset. */
-private val BOTTOM_BAR_HEIGHT = 56.dp
-
-/** Gap between an entry's glyph and its label. */
-private val BOTTOM_BAR_ITEM_GAP = 3.dp
-
-/** The glyph's box, which is also the design's 20px icon size. */
-private val BOTTOM_BAR_ICON = 20.dp
-
-/** The label's size — the design's smallest type step. */
-private val BOTTOM_BAR_LABEL_SIZE = 12.sp
-
-/** The selected entry's underline: width, height, and distance from the bar's bottom. */
-private val BOTTOM_BAR_UNDERLINE_WIDTH = 18.dp
-private val BOTTOM_BAR_UNDERLINE_HEIGHT = 1.dp
-private val BOTTOM_BAR_UNDERLINE_INSET = 6.dp
-
 @Composable
 fun PiRoot() {
     // The destination is saved by **name**, not by ordinal. The ordinal was safe
@@ -493,13 +443,27 @@ fun PiRoot() {
     val current = PiDestination.entries.firstOrNull { it.name == destinationName }
         ?: PiDestination.Chat
 
+    // 目的地之间的跳转 lambda，`remember` 一次定死 identity。
+    //
+    // 底栏拆掉之后，工作区/设置只剩两条门：会话页顶栏的图标，和对话页「⋯」菜单。
+    // 两条门都要能跳，所以这两个 lambda 在这里定义、往里传，而不是在各个屏里现写 ——
+    // 这些屏的参数按 `===` 比较（strong skipping），而这个组合每收到一次 `UiState`
+    // 发布就重组一次（流式期间约 200ms），字面量 lambda 会让整屏跟着重算。
+    val openChat: () -> Unit = remember { { destinationName = PiDestination.Chat.name } }
+    val openWorkspace: () -> Unit = remember {
+        { destinationName = PiDestination.Workbench.name }
+    }
+    val openSettings: () -> Unit = remember {
+        { destinationName = PiDestination.Settings.name }
+    }
+
     // The one overlay (the session list — with pi's `/tree` as its second view — and
-    // the terminal) is **not** a destination: the bottom bar has three places, and an
-    // overlay belongs to whatever session is on screen. It is owned by the ViewModel
+    // the terminal) is **not** a destination: it belongs to whatever session is on
+    // screen. It is owned by the ViewModel
     // (`PiSessionViewModel.overlay`), not by a value remembered here: `closeOverlay()`
     // must be final — "点叉就必须退出，不管你打断还是怎么的" — and a request that lands
-    // a frame late must not be able to raise it again. See the single `BackHandler`
-    // below for why the back press lives here and nowhere else.
+    // a frame late must not be able to raise it again. 返回键也在这里处理：下面两条
+    // handler（覆盖层 / 工作区）加上设置栈自己那条，三条**按条件互斥**，不靠组合顺序抢。
 
 
     // The per-destination state that has to survive a destination switch.
@@ -620,14 +584,10 @@ fun PiRoot() {
         }
     }
 
-    // **The bottom bar is always there.** v2's Boot screens (`phone59`–`phone61`) are a
-    // full-screen takeover with no bar (HTML:3242 draws `.b-boot` with no `TabBar`
-    // outside it), and this app used to hide its bar to match while the chat page was
-    // taken over. It does not any more: a first install unpacks the whole runtime and
-    // that takes minutes, and a bar the user cannot use to leave the waiting screen is
-    // worse than a bar v2 did not draw. The only thing the takeover still changes is
-    // *inside* the chat destination (`screens/ChatScreen.kt`), which decides for itself
-    // whether to draw `BootScreen` in place of the transcript.
+    // 底栏已经拆掉，所以这里不再有「开机页也留着底栏」那条取舍。覆盖层（会话列表 /
+    // 会话树 / 终端）仍然画在 Scaffold 的内容盒里、不替换目的地，因此 `padding` 的底边
+    // 就是系统导航条 inset；首装解包那几分钟由 `ChatScreen` 自己决定画 `BootScreen`，
+    // 与这里的目的地切换无关。
 
     Scaffold(
         // `imePadding()` is what makes the soft keyboard *displace* the UI instead of
@@ -640,12 +600,6 @@ fun PiRoot() {
         // destination: the terminal used to carry its own `imePadding()` and would now
         // pad twice, so that one was removed.
         modifier = Modifier.imePadding(),
-        bottomBar = {
-            PiBottomBar(
-                current = current,
-                onSelect = { destinationName = it.name },
-            )
-        },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
             when (current) {
@@ -667,6 +621,10 @@ fun PiRoot() {
                         onOpenSessions = {
                             session.raiseOverlay(OverlaySlot.SessionList, OverlayView.List)
                         },
+                        // 底栏拆掉之后，工作区/设置只在会话页顶栏；从对话页过去要先开会话
+                        // 覆盖层再点，多一层。这两条把入口直接放进对话页的「⋯」菜单。
+                        onOpenWorkspace = openWorkspace,
+                        onOpenSettings = openSettings,
                     )
                 }
 
@@ -677,12 +635,14 @@ fun PiRoot() {
                     ProjectScreen(
                         contentPadding = padding,
                         session = session,
+                        onBack = openChat,
                     )
                 }
 
                 PiDestination.Settings -> saveableStateHolder.SaveableStateProvider(current.name) {
                     PiSettingsStack(
                         contentPadding = padding,
+                        onBack = openChat,
                     // The real store: pi's own settings.json files, merged the way
                     // pi merges them. Without it the stack would read and write an
                     // in-memory map and the app would appear to accept changes
@@ -825,7 +785,9 @@ fun PiRoot() {
                                 // overlay closes because otherwise the user stays on
                                 // the list they just answered.
                                 onOpenChat = onOpenChat,
-                                onClose = onCloseSessionList,
+                                onBack = onCloseSessionList,
+                                onOpenWorkspace = openWorkspace,
+                                onOpenSettings = openSettings,
                                 // Which view to open on: `/tree` and the branch-summary
                                 // row ask for the tree, everything else for the list.
                                 initialView = if (overlayState?.view == OverlayView.Tree) {
@@ -867,6 +829,17 @@ fun PiRoot() {
             // *navigation* back (search → group → out), not an overlay back, and
             // it is enabled only while an inner level is open, which the overlay
             // covers anyway.
+            // 目的地级返回：没有覆盖层时，工作区退回对话（工作区没有内部层级）。
+            //
+            // **优先级靠条件互斥，不靠组合顺序。** 这一条要求 `overlayState == null`，
+            // 而下面那条覆盖层 handler 要求 `!= null`，两者永远不会同时启用；设置页
+            // 内部那一栈由 `PiSettingsStack` 自己的 handler 管（内层 → 上一级 → 首页 →
+            // 对话），它在 `when (current)` 分支里组合得更早，覆盖层开着时也会被下面
+            // 这条先接到（组合顺序在后 → `OnBackPressedDispatcher` 的 LIFO）。
+            BackHandler(enabled = overlayState == null && current == PiDestination.Workbench) {
+                openChat()
+            }
+
             BackHandler(enabled = overlayState != null) { closeOverlay() }
 
             // Mounted once, above the destination switch, because an extension
@@ -879,10 +852,9 @@ fun PiRoot() {
             // two dialogs for one request, and two snackbar hosts would race for
             // the same notice queue; the screens' KDocs say so for that reason.
             //
-            // The padding has to survive `calculateBottomPadding()` returning 0.
-            // The scaffold knows the bottom bar's height and reports it, so the
-            // normal `+ 8.dp` is the bar plus a margin; a `maxOf` with a constant
-            // keeps the snackbar above the bar even if that stops being reported.
+            // 底距必须活过 `calculateBottomPadding()` 返回 0 的情况：正常时它等于
+            // 系统导航条 inset（底栏拆掉之后不再有 56dp），再加 8dp 的呼吸；
+            // `maxOf` 兜住「再也报告不出来」那一下，否则 snackbar 落到手势条下面。
             ExtensionUiHost(
                 session = session,
                 snackbarBottomPadding = maxOf(
@@ -891,128 +863,5 @@ fun PiRoot() {
                 ),
             )
         }
-    }
-}
-
-/**
- * The bottom bar: the app's three destinations, drawn to v2's `TabBar`.
- *
- * Hand-drawn rather than `material3.NavigationBar` because the Material component
- * cannot be talked out of two of its parts: the selection **indicator** pill
- * behind the icon (v2 has none) and its own icon/label tinting rules. All three
- * entries are siblings in one `selectableGroup`, so they are announced as one
- * choice of three and the selected state is `Role.Tab`; the entries are ~137dp
- * wide and the full [BOTTOM_BAR_HEIGHT] tall, which is the design's layout and
- * also comfortably past the 48dp touch minimum at any font scale.
- */
-@Composable
-private fun PiBottomBar(current: PiDestination, onSelect: (PiDestination) -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .height(BOTTOM_BAR_HEIGHT)
-            // `surfaceDim` is the design's `--surf-dim`: the chrome tone, one step
-            // below the destinations' own background, which is what makes the bar
-            // read as chrome rather than as content.
-            // 状态栏是透明的（`MainActivity` 只设 TRANSPARENT），顶栏若用 `surfaceDim`
-            // 就会在状态栏下方露出对不上色的一块（浅色主题下最明显）。用页面同底色，
-            // 让状态栏、顶栏、页面是同一个面 —— 这是修 bug，不是风格改动。
-            .background(MaterialTheme.colorScheme.background),
-    ) {
-        // `outline` is pi's `borderMuted` — the design's `1px solid var(--border-muted)`.
-        // Drawn as a real divider rather than a border modifier so it is exactly
-        // one hairline and takes no sub-pixel rounding from the bar's edges.
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outline,
-        )
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                // One tab stop and one "selected" announcement per entry, instead
-                // of three unrelated buttons.
-                .selectableGroup(),
-        ) {
-            PiDestination.entries.forEach { item ->
-                PiBottomBarItem(
-                    item = item,
-                    selected = item == current,
-                    onClick = { onSelect(item) },
-                )
-            }
-        }
-    }
-}
-
-/**
- * One entry: glyph over label, both accent when selected, with the design's 18x1
- * accent rule under the selected one.
- *
- * The rule is a zero-height placeholder that grows to a hairline when selected,
- * not an absolutely positioned overlay (which Compose has no modifier for): v2
- * places it at the bar's bottom without taking layout space, and a zero-height
- * sibling does the same, so selecting an entry cannot push its label up.
- */
-@Composable
-private fun RowScope.PiBottomBarItem(
-    item: PiDestination,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    // The design's one accent use on this bar: the entry you are on. The glyph is
-    // accent, the label is accent and one weight heavier; an unselected glyph is
-    // muted while its label keeps the body colour, so the label stays readable.
-    val glyphColor = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val labelColor = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-    val labelWeight = if (selected) FontWeight.Medium else FontWeight.Normal
-
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            // Selection, not a plain click: a tab strip that does not announce
-            // which tab is current is the accessibility half of the same fact the
-            // accent colour states visually.
-            .selectable(
-                selected = selected,
-                role = Role.Tab,
-                onClick = onClick,
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.weight(1f))
-        PiNavGlyph(
-            vector = item.icon,
-            color = glyphColor,
-            modifier = Modifier.size(BOTTOM_BAR_ICON),
-        )
-        Spacer(Modifier.height(BOTTOM_BAR_ITEM_GAP))
-        Text(
-            text = item.label,
-            color = labelColor,
-            fontSize = BOTTOM_BAR_LABEL_SIZE,
-            fontWeight = labelWeight,
-            maxLines = 1,
-        )
-        Spacer(Modifier.weight(1f))
-        // Zero height when unselected, so the hairline costs nothing until it is
-        // drawn; the label above it does not move either way, because the box
-        // stays in the layout at both heights.
-        Box(
-            Modifier
-                .height(if (selected) BOTTOM_BAR_UNDERLINE_HEIGHT else 0.dp)
-                .width(BOTTOM_BAR_UNDERLINE_WIDTH)
-                .background(MaterialTheme.colorScheme.primary),
-        )
-        Spacer(Modifier.height(BOTTOM_BAR_UNDERLINE_INSET))
     }
 }

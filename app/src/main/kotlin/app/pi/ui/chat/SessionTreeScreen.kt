@@ -596,11 +596,9 @@ private fun BranchTab(
             // proof, not a guess.** `SessionsScreen`'s overlay is one
             // `Column(Modifier.fillMaxSize().padding(contentPadding))` fed by `PiRoot`'s
             // `Scaffold`, and the embedded tree is a weighted child of it — so the tree
-            // never reaches the window's bottom edge. Material3 makes that padding's
-            // *bottom* the bottom bar's height whenever the `bottomBar` slot is
-            // non-empty, and `PiRoot`'s slot is always composed: `PiBottomBar`, a
-            // `height(BOTTOM_BAR_HEIGHT = 56.dp)` column. The list's viewport therefore
-            // already ends at the bar's top edge, clear of the gesture area.
+            // never reaches the window's bottom edge. 底栏拆掉之后，那个 padding 的
+            // *底* 是系统导航条 inset（手势条约 24、三键约 48）——`Scaffold` 的
+            // `contentWindowInsets` 报的就是它，覆盖层画在内容盒里、不替换它。
             //
             // So this value is the list's *own* breathing room, not the inset: the
             // design's 「滚动区底部留 14–18px」 (`06 §2`, `PiSpacing.scrollBottom`).
@@ -847,8 +845,8 @@ private fun treeRowText(row: TreeRow): String =
 // height and draws its rule, so it renders as a **blank band**. The deepest nodes are
 // at the end of the depth-first flatten, i.e. exactly what the user scrolls to — which
 // is what "往下滑…下面就空了" actually is. It is not a missing bottom inset: the
-// overlay's `Column` has already reserved the bottom bar (see the note on
-// `BranchTab`'s `LazyColumn`).
+// overlay's `Column` has already reserved the system navigation bar inset (see the
+// note on `BranchTab`'s `LazyColumn`).
 //
 // So the step is capped, in two stages rather than with a hard clamp:
 //
@@ -1160,9 +1158,8 @@ private fun entryDetail(entry: SessionEntry): String = when (entry) {
  * It replaces the Material `Close` glyph the three empty states used to show, which
  * was the wrong drawing language *and* the wrong meaning (nothing is being closed
  * here). The two `<circle>` elements become the two half-arc pairs that are the same
- * circles, because a Compose `ImageVector` path builder has no `circle()` helper —
- * the same one-notation difference `ui/components/PiNavGlyph.kt` documents for the
- * settings glyph, and the centre and radius are unchanged.
+ * circles, because a Compose `ImageVector` path builder has no `circle()` helper.
+ * The centre and radius are unchanged.
  *
  * The stroke colour below is an unreachable placeholder: `PiEmptyState` draws this
  * through `material3.Icon` with a `tint`, and this vector is left exactly the shape

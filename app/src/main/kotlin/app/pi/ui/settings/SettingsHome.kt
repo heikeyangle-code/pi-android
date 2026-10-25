@@ -47,6 +47,8 @@ import app.pi.ui.screens.PiFilesScreen
 fun SettingsHome(
     store: PiSettingsStore,
     contentPadding: PaddingValues,
+    /** 顶栏左侧的返回箭头 —— 底栏拆掉之后，设置首页只能回到对话。 */
+    onBack: () -> Unit,
     onOpenGroup: (String) -> Unit,
     /** `null` hides the row, which is what a preview or a test wants. */
     onOpenDeviceCapabilities: (() -> Unit)? = null,
@@ -134,7 +136,7 @@ fun SettingsHome(
     // 手绘 `PiTopBar` 不吃状态栏 inset，而这一屏只消费 `contentPadding` 的底边 ——
     // 顶边在这里补一次（见 `settingsPageTopInset`）。
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "设置")
+        PiTopBar(title = "设置", onBack = onBack)
         // 卡与卡之间**必须有间距**：`PiSettingsCard` 自己不带上下留白（行自带 10 纵向），
         // 所以首页把四张卡直接堆进 LazyColumn 时，它们会无缝贴在一起，看起来像一整块
         // 没有分节的灰面 —— 这就是「简陋」的来源之一。这里用统一的分组间距

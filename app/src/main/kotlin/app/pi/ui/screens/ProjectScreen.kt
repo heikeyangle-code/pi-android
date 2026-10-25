@@ -146,6 +146,8 @@ import kotlinx.serialization.json.JsonPrimitive
 fun ProjectScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
+    /** 顶栏左侧的返回箭头：底栏拆掉之后，这一屏只能回到对话。 */
+    onBack: () -> Unit,
 ) {
     val state by session.state.collectAsState()
     val context = LocalContext.current
@@ -627,6 +629,7 @@ fun ProjectScreen(
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
             PiTopBar(
+                onBack = onBack,
                 title = "工作区",
                 // 稿子的顶栏副行是**引擎状态**（`statusMeta` + `Engine`），不是一句解释：
                 // 「文件走宿主 File I/O」那句话挪到了顶栏下面那一行 Notice 里，两处不重复。

@@ -62,6 +62,13 @@ import java.io.File
 @Composable
 fun PiSettingsStack(
     contentPadding: PaddingValues,
+    /**
+     * 顶栏左侧的返回箭头：底栏拆掉之后，设置首页只能回到对话。
+     *
+     * 它与内部层级共用下面那一个 `BackHandler`（内层 → 上一级，首页 → 这里），
+     * 所以全应用仍然只有一处「导航返回」的注册，不会和覆盖层的返回抢按键。
+     */
+    onBack: () -> Unit,
     store: PiSettingsStore? = null,
     /** Every theme the app can load, so the picker is not limited to `themes`. */
     knownThemes: List<PiThemeEntry> = emptyList(),
@@ -512,9 +519,11 @@ fun PiSettingsStack(
         "app.resources.openFiles" to { piFiles = true },
     )
 
-    BackHandler(
-        enabled = groupId != null || other || deviceCapabilities || packages || modelFlow || licenses || diagnostics || piFiles,
-    ) {
+    // **一直启用**：底栏没了以后，设置首页的返回键必须回到对话，否则按一下直接退出
+    // 应用。内部层级仍然先退（同一段 `if` 链，从深到浅），首页落在最后一个 `else`。
+    // 与覆盖层那条的关系：它们在 `PiRoot` 里，覆盖层 handler 组合顺序在后 ⇒ LIFO 先
+    // 接到按键，所以覆盖层开着时按返回关的是覆盖层，不是这一屏。
+    BackHandler(enabled = true) {
         // `piFiles` 排在最前：它是这一栈里最深的一层，返回键先关它（回到设置首页），
         // 而不是继续往外退。正常情况下 `PiFilesScreen` 自己那个 `BackHandler` 会先拿到
         // 按键（组合顺序在后 → `OnBackPressedDispatcher` 的 LIFO），在那里"返回"是**退到
@@ -537,9 +546,12 @@ fun PiSettingsStack(
             deviceCapabilities = false
         } else if (other) {
             other = false
-        } else {
+        } else if (groupId != null || highlightKey != null) {
             groupId = null
             highlightKey = null
+        } else {
+            // 首页：底栏没了，这一下退到对话。
+            onBack()
         }
     }
 
@@ -686,6 +698,7 @@ fun PiSettingsStack(
             else -> SettingsHome(
                 store = effectiveStore,
                 contentPadding = contentPadding,
+                onBack = onBack,
                 // 首页的每条分组摘要也是从 store 读出来的（`GroupEntry` 的 `group.summary`），
                 // 所以同一个 epoch 必须传下来：没有它，首页会被 strong skipping 跳过，
                 // 「外观 → 主题 dark」那类摘要会停在旧值上。

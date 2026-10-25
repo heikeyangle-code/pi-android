@@ -225,6 +225,16 @@ fun ChatScreen(
      * callback 而不是这里直接发导航请求，是因为覆盖层归 `PiRoot` 管，而这一屏不知道它。
      */
     onOpenSessions: () -> Unit,
+    /**
+     * 工作区（`PiDestination.Workbench`）。
+     *
+     * 底栏拆掉之后，工作区和设置的门只在会话页顶栏；从对话页过去要先开会话覆盖层再点
+     * 一次，多一层。这一条把入口直接放进对话页的「⋯」菜单（用户裁决）。两条都由
+     * `PiRoot` 给 —— 目的地归它管，这一屏不知道有哪些目的地。
+     */
+    onOpenWorkspace: () -> Unit,
+    /** 设置（`PiDestination.Settings`），同上。 */
+    onOpenSettings: () -> Unit,
 ) {
     val state by session.state.collectAsState()
     val bottomInset = contentPadding.calculateBottomPadding()
@@ -1572,9 +1582,10 @@ private fun ChatBody(
             // was a notice naming a Settings row) are deleted — each row was a second
             // door onto a surface the user already has one gesture away — and the
             // `when` is exhaustive over [PiCommandAction], so the arms went with them.
-            // The surfaces themselves are untouched: 设置 is the bottom bar's third
-            // destination, the model is the AppBar chip, and the thinking level is the
-            // composer's `◐`. Typing one of those names is answered by
+            // The surfaces themselves are untouched: 设置 is a 「⋯」 menu row on this
+            // screen (底栏拆掉之后它从这里进), the model is the AppBar chip, and the
+            // thinking level is the composer's `◐`. Typing one of those names is
+            // answered by
             // `unlistedBuiltinHint` rather than by a lie.
             //
             // The same treatment took `OpenTree`, `SessionStats`, `NewSession` and
@@ -1882,6 +1893,13 @@ private fun ChatBody(
                                         sheet = ChatSheet.Model
                                     },
                                 )
+                                // 工作区 / 设置：底栏拆掉之后这里就是对话页唯一的门
+                                // （另一条在会话页顶栏）。放在最末并带一条分隔线，因为
+                                // 它们是「离开这一屏」，与上面的会话/模型动作不是一类。
+                                add(
+                                    PiMenuItem("工作区", dividerBefore = true) { onOpenWorkspace() },
+                                )
+                                add(PiMenuItem("设置") { onOpenSettings() })
                                 // There is no terminal entry here any more: the user
                                 // retired the terminal outright, so the settings home's
                                 // row is the one door.
@@ -1942,7 +1960,7 @@ private fun ChatBody(
         // **An empty session shows nothing.** The two states that used to be drawn
         // here — 「引擎正在启动」 and 「引擎已就绪」 with their two paragraphs — are
         // deleted by the user's ruling (「引擎启动什么玩意，那些文字」: a brand-new
-        // conversation is a blank page with the bottom bar and the composer, and the
+        // conversation is a blank page with the top bar and the composer, and the
         // AppBar's one-word engine state above it says everything the paragraphs did).
         // v2's `EmptyState` component is not used here any more, but it is not dead:
         // the session list, the settings search and the session tree still draw it.
@@ -2954,8 +2972,8 @@ private fun SearchBar(
     Column(
         Modifier
             .fillMaxWidth()
-            // `surf-dim` is the chrome tone the AppBar and the bottom bar use; the
-            // strip is chrome, not content.
+            // `surf-dim` is the chrome tone the AppBar uses; the strip is chrome,
+            // not content.
             .background(MaterialTheme.colorScheme.surfaceDim)
             .padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp),
     ) {
@@ -4145,7 +4163,7 @@ private fun ComposerMenu(
  * The viewport is 24 (M3's glyph is drawn for 18 and scaled), the dots are solid
  * circles of `r = 2` centred at `y = 6 / 12 / 18`, and the path is the six half-arcs
  * that are those three circles — an `ImageVector` path builder has no `circle()`
- * helper (`ui/components/PiNavGlyph.kt` documents the same substitution). The fill is
+ * helper. The fill is
  * the same unreachable placeholder every vector here uses: `Icon`'s `tint` is what
  * colours it, because this vector carries no `tintColor` of its own.
  */

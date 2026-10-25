@@ -25,10 +25,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -62,7 +64,6 @@ import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
-import app.pi.ui.PiTopBarTextAction
 import app.pi.ui.chat.SessionFileRow
 import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.chat.forkParentNameOf
@@ -72,6 +73,9 @@ import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.components.PiEmptyStateTopAnchored
+import app.pi.ui.components.PiMenu
+import app.pi.ui.components.PiMenuItem
+import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
@@ -93,8 +97,8 @@ enum class SessionsView(val label: String) {
  *
  * `03-navigation-decision.md` 的裁决：底栏是三个「地方」，而会话列表是一个**选择器**
  * （pi 自己就是把会话树覆盖在转录上）。这一屏由 `PiRoot` 的覆盖层状态承载，所以它
- * 自己**不注册** `BackHandler`：全应用只有那一处，两处会互相遮盖（那边的 KDoc 记着
- * 这条教训）。
+ * 自己**不注册** `BackHandler`：覆盖层、工作区、设置内部栈三条都在别处注册，且按条件
+ * 互斥（那边的 KDoc 记着这条教训）。
  *
  * ## 列表 ↔ 会话树在同一层
  *
@@ -157,7 +161,9 @@ enum class SessionsView(val label: String) {
  * 分开给，两条同时成立 —— 见那段 KDoc 里两个加数各自管什么。
  *
  * @param onOpenChat 选中一行之后：关掉覆盖层，并落在对话页。
- * @param onClose 顶栏的关闭键。系统返回键走 `PiRoot` 那一处 `BackHandler`，同一个动作。
+ * @param onBack 顶栏左侧的返回箭头。系统返回键走 `PiRoot` 那一处 `BackHandler`，同一个动作。
+ *   返回键从右边挪到左边是用户裁决：右侧要腾给搜索/工作区/设置/「⋯」四个图标，
+ *   而且它和各屏顶栏的返回箭头统一成一个位置。
  * @param initialView 打开时停在哪个视图。`/tree` 与「分支摘要」行要求直接落在树上——
  *   一个写着「树」的命令不该让用户再点一次分段控件。宿主把这个偏好提到覆盖层之外，
  *   因为它在这一屏存在之前就已经被设定了。
@@ -167,7 +173,13 @@ fun SessionsScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
     onOpenChat: () -> Unit,
-    onClose: () -> Unit,
+    onBack: () -> Unit,
+    /**
+     * 工作区 / 设置。底栏拆掉之后这两屏只剩两条门：这一屏顶栏的图标，和对话页的「⋯」
+     * 菜单。目的地归 `PiRoot` 管，这一屏只负责把点击交出去。
+     */
+    onOpenWorkspace: () -> Unit,
+    onOpenSettings: () -> Unit,
     initialView: SessionsView = SessionsView.List,
 ) {
     val sessions by session.sessions.collectAsState()
@@ -188,6 +200,9 @@ fun SessionsScreen(
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
     var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
     var viewIndex by rememberSaveable { mutableIntStateOf(initialView.ordinal) }
+    // 顶栏「⋯」。它是屏内状态，不是覆盖层：菜单开着时按返回应该先关菜单（`Popup`
+    // 自己吃掉那一下），而不是把整层会话列表关掉。
+    var menuOpen by remember { mutableStateOf(false) }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
     // The host can ask for a different view *after* this screen is already composed
     // (a second `/tree` while the overlay is open): the overlay stays mounted across
@@ -279,30 +294,62 @@ fun SessionsScreen(
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
         PiTopBar(
+            // 返回键在**左**边（用户裁决）：右侧留给搜索/工作区/设置/「⋯」。
+            // 它仍然是覆盖层，行为不变——只是位置从右边挪到左边，和各屏顶栏的返回箭头
+            // 统一成一个位置。
+            onBack = onBack,
             title = view.label,
             // 顶栏的副行就是引擎状态（v2 的 `Engine`，`06 §4` 的三重编码：符号 + 词 +
             // 色）。会话列表是「看引擎在哪」的地方，所以这一行跟着它。
             engineMeta = session.engineLabel(state),
             actions = {
-                // v2 的顶栏在列表视图给「导入」+ 刷新图标，在树视图给「刷新」
-                // （`SessionsOverlay` 的 `right`），所以两个视图的右侧不完全相同。
-                if (view == SessionsView.List) {
-                    // The list can only show sessions that are already in pi's
-                    // directory; a session that arrived as a file needs this.
-                    PiTopBarTextAction("导入") { importPicker.launch("*/*") }
-                    PiTopBarIcon(
-                        onClick = { session.refreshSessions() },
-                        contentDescription = "刷新会话列表",
-                        icon = Icons.Filled.Refresh,
-                    )
-                } else {
-                    PiTopBarTextAction("刷新") { session.refreshTree() }
-                }
+                // 右侧固定四个位置：工作区 / 设置 / 「⋯」（第 2 批再加搜索）。
+                // 「导入」和「刷新」原来各占一个位置、还带一个文字按钮，现在都收进
+                // 「⋯」——顶栏放进五个控件就挤了，而这两件事不是每屏都用。
                 PiTopBarIcon(
-                    onClick = onClose,
-                    contentDescription = "关闭会话列表",
-                    icon = Icons.Filled.Close,
+                    onClick = onOpenWorkspace,
+                    contentDescription = "工作区",
+                    icon = Icons.Filled.FolderOpen,
                 )
+                PiTopBarIcon(
+                    onClick = onOpenSettings,
+                    contentDescription = "设置",
+                    icon = Icons.Filled.Settings,
+                )
+                Box {
+                    PiTopBarIcon(
+                        onClick = { menuOpen = true },
+                        contentDescription = "更多",
+                        icon = Icons.Filled.MoreVert,
+                    )
+                    if (menuOpen) PiMenu(
+                        expanded = true,
+                        onDismiss = { menuOpen = false },
+                        placement = PiMenuPlacement.Below,
+                        items = buildList {
+                            // The list can only show sessions that are already in pi's
+                            // directory; a session that arrived as a file needs this.
+                            add(
+                                PiMenuItem("导入会话") {
+                                    menuOpen = false
+                                    importPicker.launch("*/*")
+                                },
+                            )
+                            add(
+                                PiMenuItem(
+                                    if (view == SessionsView.List) "刷新会话列表" else "刷新会话树",
+                                ) {
+                                    menuOpen = false
+                                    if (view == SessionsView.List) {
+                                        session.refreshSessions()
+                                    } else {
+                                        session.refreshTree()
+                                    }
+                                },
+                            )
+                        },
+                    )
+                }
             },
         )
         // 一条分段控件服务两个视图，所以它在两者之上（v2 的 `Seg`）；同行右侧是**筛过
@@ -347,7 +394,7 @@ fun SessionsScreen(
                 state = state,
                 onFork = { entryId ->
                     session.forkFrom(entryId)
-                    onClose()
+                    onBack()
                 },
                 // 跳转 = pi's `navigateTree`: same session file, leaf moved. The overlay
                 // stays open on purpose — unlike a fork, which replaces the conversation
@@ -361,7 +408,7 @@ fun SessionsScreen(
                 },
                 skipSummaryPrompt = { session.branchSummarySkipPrompt() },
                 onRefresh = { session.refreshTree() },
-                onClose = onClose,
+                onClose = onBack,
                 embedded = true,
                 onLoadEntries = { session.refreshEntries() },
                 modifier = Modifier.weight(1f),
@@ -806,12 +853,12 @@ private val SESSIONS_NEW_SESSION_BOTTOM = 14.dp
  *    滚到底时最后一条会话与按钮之间还有那 14 的呼吸。两件事因此是两个加数，不是二选一。
  *
  * **底部 inset 不在这里加，也不该在这里加。** 这一屏的根 `Column` 已经
- * `.padding(contentPadding)`，而这个 `contentPadding` 的底边**就是** Scaffold 的底部导航栏
- * （56dp）加系统导航条 inset —— 浮层画在 scaffold 的内容盒里、不替换它，所以那条栏永远在
- * （`PiRoot.kt` 的 `OVERLAY_SNACKBAR_INSET` 那段 KDoc 记着这件事）。列表与按钮都活在那个
- * **已经缩进过**的盒子里，inset 再加一次就是双份，会凭空多出约 56dp 的空白。同一个理由在
- * 会话树上已经量过一次（`07-construction-decisions.md` D36：「被框住」不是缺底部 inset，
- * 再加一次会变成最后一行下面的**死带**），这里不重复走那条错路。
+ * `.padding(contentPadding)`，而这个 `contentPadding` 的底边**就是**系统导航条 inset
+ * （手势条约 24、三键约 48；底栏拆掉之前还要再加 56 的底栏）—— 浮层画在 scaffold 的
+ * 内容盒里、不替换它。列表与按钮都活在那个**已经缩进过**的盒子里，inset 再加一次就是
+ * 双份，会凭空多出一条空白。同一个理由在会话树上已经量过一次
+ * （`07-construction-decisions.md` D36：「被框住」不是缺底部 inset，再加一次会变成最后
+ * 一行下面的**死带**），这里不重复走那条错路。
  *
  * 声明位置必须在三个被加数**之后**：Kotlin 的顶层属性按文件里的声明顺序初始化，写在前面会
  * 读到 `Dp` 的零值。

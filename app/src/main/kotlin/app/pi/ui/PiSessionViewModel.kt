@@ -238,14 +238,15 @@ sealed interface WorkspaceSwitch {
  * has no navigation API at all, so this vocabulary is the app's own and belongs
  * to the layer that knows the answer arrived.
  *
- * Only [Chat] and [Settings] name a top-level destination, and they are two of the
- * three the bottom bar draws — the vocabulary and `PiDestination` are kept in step
- * on purpose, so a request can never ask for a destination the bar does not have.
- * Everything else here raises an overlay or focuses a screen.
+ * Only [Chat] and [Settings] name a top-level destination — the vocabulary and
+ * `PiDestination` are kept in step on purpose, so a request can never ask for a
+ * destination the app does not have. Everything else here raises an overlay or
+ * focuses a screen.
  *
  * 工作区 is deliberately absent for that reason: nothing in the app asks to *go*
- * there (the bar is the only way), so there is no request for it. It used to be
- * named by a `Workbench` member whose one consumer was the chat composer's
+ * there (the sessions page and the chat 「⋯」 menu are the two doors), so there is
+ * no request for it. It used to be named by a `Workbench` member whose one
+ * consumer was the chat composer's
  * terminal chip — removed with the chip when the terminal became a settings row.
  */
 sealed interface NavRequest {

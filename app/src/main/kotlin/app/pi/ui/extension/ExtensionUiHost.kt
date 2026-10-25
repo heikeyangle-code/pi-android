@@ -94,9 +94,10 @@ fun ExtensionUiHost(
                 .padding(
                     start = SnackbarSideInset,
                     end = SnackbarSideInset,
-                    // PiRoot's inset is the bottom bar (56) plus an 8 dp margin;
-                    // the board puts the snackbar 14 above the bar, so the missing
-                    // 6 is added here rather than by editing that shared constant.
+                    // PiRoot's inset is the system navigation bar plus an 8 dp
+                    // margin (底栏拆掉之前是 56); the board puts the snackbar 14
+                    // above that edge, so the missing 6 is added here rather than by
+                    // editing that shared constant.
                     bottom = snackbarBottomPadding + SnackbarBarGap,
                 ),
         ) { data ->
