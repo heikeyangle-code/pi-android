@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -29,6 +30,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -3649,7 +3652,15 @@ private fun Composer(
     } else {
         PiTheme.palette.thinking(thinkingLevel)
     }
-    val inputShape = RoundedCornerShape(14.dp)
+    // 形状取 `PiShapes.input`（24dp）—— 说好的「排版不动、颜色不动」里，这一项只是**外形**。
+    val inputShape = PiShapes.input
+    // 聚焦时只改**粗细**：颜色仍是 pi 的思考等级 / bash 模式色，一个字节都不动。
+    var inputFocused by remember { mutableStateOf(false) }
+    val inputBorderWidth by animateDpAsState(
+        targetValue = if (inputFocused) 1.5.dp else 1.dp,
+        animationSpec = tween(150),
+        label = "composerBorderWidth",
+    )
     Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
         // v2 draws the editor and its key row as **one** bordered container
         // (`direction-b-v2.html:1428-1440`: `border:1px solid <level>`,
@@ -3660,7 +3671,7 @@ private fun Composer(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, borderColor, inputShape)
+                .border(inputBorderWidth, borderColor, inputShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
                 .padding(horizontal = 10.dp, vertical = 9.dp),
         ) {
@@ -3707,7 +3718,10 @@ private fun Composer(
                     field.value = updated
                     if (textChanged) onDraftChange(updated.text)
                 },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp, max = 120.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 20.dp, max = 120.dp)
+                    .onFocusChanged { inputFocused = it.isFocused },
                 // `06 §2` 输入区「输入 14/20」: the composer's own text is the 14 sp
                 // chat-text step with a 20 sp lead, not M3's larger field default.
                 textStyle = PiTheme.text.prose.copy(
@@ -3719,7 +3733,7 @@ private fun Composer(
                     Box {
                         if (draft.isEmpty()) {
                             Text(
-                                text = "输入消息，/ 选命令，! 直接跑命令，@ 提及文件",
+                                text = "发消息…",
                                 style = PiTheme.text.prose.copy(lineHeight = 20.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
