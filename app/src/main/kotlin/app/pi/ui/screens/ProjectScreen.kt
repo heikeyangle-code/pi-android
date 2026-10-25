@@ -643,6 +643,18 @@ fun ProjectScreen(
         }
     }
 
+    // **派生值必须算在 `LazyColumn` 外面。** `LazyColumn` 的 content 是
+    // `LazyListScope.() -> Unit`，**不是** `@Composable` 作用域 —— 在那里写
+    // `remember { }` 编译不过（`@Composable invocations can only happen from the
+    // context of a @Composable function`）。这两个只取决于 `resources` / `resourceKind`。
+    val groupedResources = remember(resources, resourceKind) {
+        resources
+            .filter { it.kind == resourceKind }
+            .groupBy { it.source }
+            .toList()
+            .sortedBy { (source, _) -> source.rank }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
             PiTopBar(
@@ -749,7 +761,7 @@ fun ProjectScreen(
                                 Text(
                                     "来源按优先级排 ⓘ",
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(PiShapes.tag))
+                                        .clip(PiShapes.tag)
                                         .clickable { sourceNoteOpen = !sourceNoteOpen }
                                         .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                                     style = PiTheme.text.meta,
@@ -770,16 +782,7 @@ fun ProjectScreen(
                             }
                         }
                     }
-                    val shownResources = remember(resources, resourceKind) {
-                        resources.filter { it.kind == resourceKind }
-                    }
-                    val groups = remember(shownResources) {
-                        shownResources
-                            .groupBy { it.source }
-                            .toList()
-                            .sortedBy { (source, _) -> source.rank }
-                    }
-                    if (groups.isEmpty()) {
+                    if (groupedResources.isEmpty()) {
                         item {
                             WsCardSlice(index = 0, lastIndex = 0) {
                                 WsRow(
@@ -791,7 +794,7 @@ fun ProjectScreen(
                             }
                         }
                     }
-                    groups.forEach { (source, rows) ->
+                    groupedResources.forEach { (source, rows) ->
                         item(key = "rg:${source.name}") {
                             WsSectionHeader(
                                 label = sourceGroupLabel(source),
@@ -2355,7 +2358,7 @@ private fun ResourceRow(
                 Text(
                     "复制名字",
                     modifier = Modifier
-                        .clip(RoundedCornerShape(PiShapes.tag))
+                        .clip(PiShapes.tag)
                         .clickable(onClick = onUse)
                         .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                     style = PiTheme.text.meta,
