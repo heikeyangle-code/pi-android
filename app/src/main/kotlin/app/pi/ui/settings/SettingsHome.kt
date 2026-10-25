@@ -116,6 +116,8 @@ fun SettingsHome(
      * 默认 0 让预览/测试维持原样。
      */
     freshness: Int = 0,
+    /** 「其他」这一屏的入口；`null` 时整张卡不画（预览与测试用）。 */
+    onOpenOther: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 退路用的自托管状态。放在早退之前，所以两个分支都走同一份 remember。
@@ -149,8 +151,7 @@ fun SettingsHome(
             if (onOpenModels != null) {
                 item {
                     PiSettingsCard {
-                        PiEntryRow(
-                            icon = Icons.Filled.Timeline,
+                        PiSettingsEntryRow(
                             title = "模型与供应商",
                             supporting = "厂商、模型、凭证与导入——官方配置文件的编辑器",
                             onClick = onOpenModels,
@@ -193,48 +194,16 @@ fun SettingsHome(
                 }
             }
 
-            // 「其他」：与 pi 的设置键无关的东西都收在这一张卡里 —— 终端（原版 TUI）、
-            // Pi 文件（看 pi 读的文件）、扩展包与项目信任、安全与隐私（信任策略 +
-            // 安装遥测）、开源许可。都是低频或本 App 自己的义务，只剩「设备能力」
-            // 单独一张卡（用户裁定它要独立）。
-            item {
-                PiSettingsCard {
-                    if (onOpenTerminal != null) {
-                        PiTerminalEntryRow(onClick = onOpenTerminal)
-                        PiSettingsHairline()
-                    }
-                    PiFilesEntryRow(onClick = openPiFiles)
-                    if (onOpenPackages != null) {
-                        PiSettingsHairline()
-                        PiPackagesEntryRow(onClick = onOpenPackages)
-                    }
-                    // 「安全与隐私」也在这张卡里（用户裁定）：信任策略与安装遥测都是
-                    // 低频、且都只在这个 App 里生效的开关，跟上面几扇门放一起。
-                    PiSettingsCatalog.groups.firstOrNull { it.id == "security" }?.let { security ->
-                        PiSettingsHairline()
-                        GroupEntry(
-                            group = security,
-                            store = store,
-                            freshness = freshness,
-                            onClick = { onOpenGroup(security.id) },
-                        )
-                    }
-                    // 开源许可也在这张卡里（用户裁定）：它是本 App 作为分发者的义务，
-                    // 不是 pi 的设置项，放到「其他」比单独一张卡更省空间。
-                    if (onOpenLicenses != null) {
-                        PiSettingsHairline()
-                        PiLicensesEntryRow(onClick = onOpenLicenses)
-                    }
-                }
-            }
-            // 设备能力单独一张卡（用户裁定：不跟「其他」那张混在一起）。它回答的是
-            // 「这台手机允许 agent 做什么」，与运行时的权限授权绑在一起，点进去就是一屏开关。
-            if (onOpenDeviceCapabilities != null) {
+            // 「其他」：一张卡、一行。里面那些与 pi 设置无关的门（终端 / Pi 文件 /
+            // 设备能力 / 扩展包与信任 / 安全与隐私 / 开源许可）收进这一屏，点进去再看 ——
+            // 用户裁定：首页只留「模型」「分组」「其他」三张卡。
+            if (onOpenOther != null) {
                 item {
                     PiSettingsCard {
-                        DeviceCapabilityEntryRow(
-                            store = DeviceCapabilityStore.get(context),
-                            onClick = onOpenDeviceCapabilities,
+                        PiSettingsEntryRow(
+                            title = "其他",
+                            supporting = "终端、Pi 文件、设备能力、扩展包与信任、安全与隐私、开源许可",
+                            onClick = onOpenOther,
                         )
                     }
                 }

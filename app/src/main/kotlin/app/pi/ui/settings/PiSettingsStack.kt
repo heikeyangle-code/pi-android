@@ -162,6 +162,8 @@ fun PiSettingsStack(
     // The device capability screen is the one branch of this stack that is not a
     // group in pi's settings catalog — the switches grant the *phone's* abilities
     // to the agent, and pi has no such settings (docs/pi-android-app-design.md §21).
+    // 设置首页的「其他」一屏：终端 / Pi 文件 / 设备能力 / 扩展包 / 安全与隐私 / 开源许可。
+    var other by rememberSaveable { mutableStateOf(false) }
     var deviceCapabilities by rememberSaveable { mutableStateOf(false) }
     // pi installs resources with `pi install`, which has no RPC command, so the
     // app owns this UI; the screen is `app.pi.packages.PiPackagesHost`.
@@ -511,7 +513,7 @@ fun PiSettingsStack(
     )
 
     BackHandler(
-        enabled = groupId != null || deviceCapabilities || packages || modelFlow || licenses || diagnostics || piFiles,
+        enabled = groupId != null || other || deviceCapabilities || packages || modelFlow || licenses || diagnostics || piFiles,
     ) {
         // `piFiles` 排在最前：它是这一栈里最深的一层，返回键先关它（回到设置首页），
         // 而不是继续往外退。正常情况下 `PiFilesScreen` 自己那个 `BackHandler` 会先拿到
@@ -533,6 +535,8 @@ fun PiSettingsStack(
             packages = false
         } else if (deviceCapabilities) {
             deviceCapabilities = false
+        } else if (other) {
+            other = false
         } else {
             groupId = null
             highlightKey = null
@@ -608,6 +612,38 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
             )
 
+            other -> OtherSettingsScreen(
+                contentPadding = contentPadding,
+                onBack = { other = false },
+                onOpenTerminal = onOpenTerminal?.let { open ->
+                    {
+                        other = false
+                        open()
+                    }
+                },
+                onOpenPiFiles = {
+                    other = false
+                    piFiles = true
+                },
+                onOpenDeviceCapabilities = {
+                    other = false
+                    deviceCapabilities = true
+                },
+                onOpenPackages = {
+                    other = false
+                    packages = true
+                },
+                onOpenSecurity = {
+                    other = false
+                    groupId = "security"
+                    highlightKey = null
+                },
+                onOpenLicenses = {
+                    other = false
+                    licenses = true
+                },
+            )
+
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
                 store = effectiveStore,
@@ -669,6 +705,7 @@ fun PiSettingsStack(
                 // 首页「其他」里的第三行。走这个栈自己的层级（`piFiles`），所以它的返回
                 // 语义与状态恢复与上面几页完全一致；`SettingsHome` 只是把点击转上来。
                 onOpenPiFiles = { piFiles = true },
+                onOpenOther = { other = true },
             )
         }
     }
