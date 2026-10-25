@@ -282,7 +282,7 @@ private fun WorkspaceExternalBrowser(
             )
             WsCard {
                 children.forEachIndexed { index, child ->
-                    if (index > 0) WsHairline()
+                    if (index > 0) WsHairline(startInset = WsGlyphHairlineStart)
                     WsRow(
                         title = child.file.name,
                         mono = true,

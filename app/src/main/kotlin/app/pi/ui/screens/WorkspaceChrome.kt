@@ -689,6 +689,14 @@ internal fun WsRow(
 }
 
 /**
+ * 带 18dp 图标那一类行的行间线起点：行内边距 + 图标 + 行间距。
+ *
+ * 线要落在**文字列**上；不带图标的行用 [PiSettingsMetrics.rowPaddingHorizontal]。
+ */
+internal val WsGlyphHairlineStart: Dp =
+    PiSettingsMetrics.rowPaddingHorizontal + PiSettingsMetrics.cardIconSize + PiSettingsMetrics.rowGap
+
+/**
  * 行之间的 inset hairline（与设置页那条同值、同一根线）：**0.5dp、`outlineVariant`、
  * 左端缩到文字列**（不带图标的行是行内边距 14；带图标的行由调用方传
  * `rowPaddingHorizontal + 图标 + rowGap`）。

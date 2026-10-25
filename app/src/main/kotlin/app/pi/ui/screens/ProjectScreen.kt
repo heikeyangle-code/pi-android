@@ -893,7 +893,7 @@ fun ProjectScreen(
                                     sliceIndex = index,
                                     lastSliceIndex = runs.lastIndex,
                                     nowMs = nowMs,
-                                    hairlineStart = GLYPH_HAIRLINE_START,
+                                    hairlineStart = WsGlyphHairlineStart,
                                 )
                             }
                         }
@@ -922,7 +922,7 @@ fun ProjectScreen(
                                 WsCardSlice(
                                     index = 0,
                                     lastIndex = totalSlices - 1,
-                                    hairlineStart = GLYPH_HAIRLINE_START,
+                                    hairlineStart = WsGlyphHairlineStart,
                                 ) {
                                     PendingWriteRow(pending)
                                 }
@@ -934,7 +934,7 @@ fun ProjectScreen(
                                 WsCardSlice(
                                     index = slice,
                                     lastIndex = totalSlices - 1,
-                                    hairlineStart = GLYPH_HAIRLINE_START,
+                                    hairlineStart = WsGlyphHairlineStart,
                                 ) {
                                     ChangedFileRow(
                                         file = file,
@@ -1622,9 +1622,6 @@ private const val WS_SEGMENT_RESOURCES = "资源"
 private val FILE_HAIRLINE_START =
     PiSettingsMetrics.rowPaddingHorizontal + PiSpacing.glyphBox + PiSettingsMetrics.rowGap
 
-/** 带 18dp 图标（「本次会话改过」「正在跑」那两种行）的行间线起点。 */
-private val GLYPH_HAIRLINE_START =
-    PiSettingsMetrics.rowPaddingHorizontal + PiSettingsMetrics.cardIconSize + PiSettingsMetrics.rowGap
 
 /** 资源分组的标题：pi 的来源族（顺序即优先级）。 */
 private fun sourceGroupLabel(source: WorkspaceSource): String = when (source) {
@@ -2483,7 +2480,7 @@ private fun WorkspaceRootSheet(
         )
         WsCard {
             entries.forEachIndexed { index, item ->
-                if (index > 0) WsHairline()
+                if (index > 0) WsHairline(startInset = WsGlyphHairlineStart)
                 val renamed = item.label != item.name
                 WsRow(
                     // 显示名是 label；它就是 `switchWorkspace` 里那条 notice 印的名字。
