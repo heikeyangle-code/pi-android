@@ -1224,8 +1224,11 @@ private fun ImportSheet(
     PiSheet(onDismiss = onClose) {
         // 内容区自己滚，底部那行（保存 + 状态）固定 —— 用户不用滚过整张模型列表才能按保存。
         Column(Modifier.fillMaxWidth()) {
+            // 同一个 sheet 两种身份：新导入 vs 改已有厂商。标题跟着变，别让人以为
+            // 点「换 Key」是在重新导入一遍。
+            val editingExisting = presetId.isNotEmpty() && credentialPresent
             Text(
-                "导入模型",
+                if (editingExisting) "${preset.displayName} · 凭证与模型" else "导入模型",
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(
