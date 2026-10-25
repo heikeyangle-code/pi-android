@@ -39,6 +39,7 @@ import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -221,7 +222,8 @@ internal val PiSettingsSheetShape = RoundedCornerShape(
 )
 
 /**
- * `06 §2`「组内 inset hairline（`borderMuted` 55%），无描边无阴影」的 1px 线。
+ * `06 §2`「组内 inset hairline（`borderMuted` 55%），无描边无阴影」，厚度取 0.5dp：
+ * 卡内的线比页面级分栏更细（与工作区那一版同一条规矩）。
  *
  * `outlineVariant` 就是 `borderMuted.copy(alpha = 0.55f)`（`PiPalette.colorScheme()`），
  * 所以这里直接用它，不再自造一个透明度。
@@ -229,7 +231,9 @@ internal val PiSettingsSheetShape = RoundedCornerShape(
 internal fun PiSettingsHairline(inset: Dp = PiSettingsMetrics.dividerInset) {
     HorizontalDivider(
         modifier = Modifier.padding(start = inset),
-        thickness = PiSettingsMetrics.hairline,
+        // 0.5dp：卡内的线比页面级的分栏更细（与工作区那一版同一条规矩）。
+        // 1dp 的不透明线在一块只比页面亮 6% 的卡上，深色主题里会读成一条压过卡片的黑线。
+        thickness = PiSpacing.hairlineThin,
         color = MaterialTheme.colorScheme.outlineVariant,
     )
 }
@@ -347,7 +351,8 @@ internal fun PiSettingsChip(
         }
         Text(
             text,
-            style = PiTheme.text.monoSmall,
+            // 文字无衬线，符号（`↕` / `○` / `✓`）仍是等宽 —— 等宽只留给路径与符号。
+            style = PiTheme.text.meta,
             color = if (active) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
         )
     }

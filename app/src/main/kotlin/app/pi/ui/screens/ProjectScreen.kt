@@ -893,6 +893,7 @@ fun ProjectScreen(
                                     sliceIndex = index,
                                     lastSliceIndex = runs.lastIndex,
                                     nowMs = nowMs,
+                                    hairlineStart = GLYPH_HAIRLINE_START,
                                 )
                             }
                         }
@@ -918,7 +919,11 @@ fun ProjectScreen(
                         val totalSlices = (if (pending != null) 1 else 0) + visibleChanged.size
                         if (pending != null) {
                             item(key = "pending:${pending.path}") {
-                                WsCardSlice(index = 0, lastIndex = totalSlices - 1) {
+                                WsCardSlice(
+                                    index = 0,
+                                    lastIndex = totalSlices - 1,
+                                    hairlineStart = GLYPH_HAIRLINE_START,
+                                ) {
                                     PendingWriteRow(pending)
                                 }
                             }
@@ -926,7 +931,11 @@ fun ProjectScreen(
                         visibleChanged.forEachIndexed { index, file ->
                             val slice = (if (pending != null) 1 else 0) + index
                             item(key = "changed:${file.path}") {
-                                WsCardSlice(index = slice, lastIndex = totalSlices - 1) {
+                                WsCardSlice(
+                                    index = slice,
+                                    lastIndex = totalSlices - 1,
+                                    hairlineStart = GLYPH_HAIRLINE_START,
+                                ) {
                                     ChangedFileRow(
                                         file = file,
                                         diff = remember(state.transcript, file.path) {
@@ -1613,6 +1622,10 @@ private const val WS_SEGMENT_RESOURCES = "资源"
 private val FILE_HAIRLINE_START =
     PiSettingsMetrics.rowPaddingHorizontal + PiSpacing.glyphBox + PiSettingsMetrics.rowGap
 
+/** 带 18dp 图标（「本次会话改过」「正在跑」那两种行）的行间线起点。 */
+private val GLYPH_HAIRLINE_START =
+    PiSettingsMetrics.rowPaddingHorizontal + PiSettingsMetrics.cardIconSize + PiSettingsMetrics.rowGap
+
 /** 资源分组的标题：pi 的来源族（顺序即优先级）。 */
 private fun sourceGroupLabel(source: WorkspaceSource): String = when (source) {
     WorkspaceSource.ProjectPi -> "项目 .pi"
@@ -1791,10 +1804,11 @@ private fun RunningCommandRow(
     sliceIndex: Int,
     lastSliceIndex: Int,
     nowMs: Long? = null,
+    hairlineStart: Dp = PiSettingsMetrics.rowPaddingHorizontal,
 ) {
     val elapsed = run.elapsedMs(nowMs ?: System.currentTimeMillis())
     Column(Modifier.fillMaxWidth()) {
-        WsCardSlice(index = sliceIndex, lastIndex = lastSliceIndex) {
+        WsCardSlice(index = sliceIndex, lastIndex = lastSliceIndex, hairlineStart = hairlineStart) {
             WsRow(
                 title = run.command,
                 mono = true,
@@ -1925,9 +1939,6 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
             mono = true,
             strong = true,
             lead = { FileGlyph() },
-            badge = {
-                WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
-            },
             meta = null,
             trail = {
                 if (pending.receivedLines > 0) {
@@ -2010,13 +2021,13 @@ private fun ChangedFileRow(
     var expanded by rememberSaveable(file.path) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         WsRow(
+            // 文件名无衬线 15/Medium；等宽只留给路径（第二行那段目录）。
             title = changedTitle(file.path),
-            mono = true,
-            strong = true,
+            mono = false,
+            strong = false,
             lead = { FileGlyph() },
-            badge = {
-                WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
-            },
+            // **没有「本次会话」徽标**：整段就叫「本次会话改过」，每行再说一遍是同一个词
+            // 印 N 次 —— 与资源页去掉重复来源徽标同一条规矩。
             meta = buildString {
                 // 目录前缀（稿子的 `c.p.split('/').slice(0,-1).join('/') + ' · '`）。pi 的
                 // path 可能是 guest 拼法（`ProjectResources.kt:165-166`），所以这里只按分隔符
@@ -2477,8 +2488,9 @@ private fun WorkspaceRootSheet(
                 WsRow(
                     // 显示名是 label；它就是 `switchWorkspace` 里那条 notice 印的名字。
                     title = item.displayName,
-                    // 稿子的规矩：路径型的东西等宽。目录名是路径段，label 是人取的名字。
-                    mono = !renamed,
+                    // 名字无衬线、等宽只留给路径：切换面板里这一行是**工作区的显示名**，
+                    // 目录名（身份）由下面那颗徽标用等宽给出。
+                    mono = false,
                     strong = true,
                     lead = { FolderGlyph() },
                     badge = if (renamed || item.isCurrent || item.external || !item.available) {

@@ -90,6 +90,7 @@ import app.pi.ui.components.PiSheetChromeMetrics
 import app.pi.ui.components.PiSheetHandle
 import app.pi.ui.components.PiType
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.stateToneColor
@@ -687,11 +688,15 @@ internal fun WsRow(
     }
 }
 
-/** 行之间的 inset hairline（与设置页那条同值、同一根线）。 */
+/**
+ * 行之间的 inset hairline（与设置页那条同值、同一根线）：**0.5dp、`outlineVariant`、
+ * 左端缩到文字列**（不带图标的行是行内边距 14；带图标的行由调用方传
+ * `rowPaddingHorizontal + 图标 + rowGap`）。
+ */
 @Composable
 internal fun WsHairline(
     inset: Boolean = true,
-    startInset: Dp = PiSettingsMetrics.pageHorizontal + PiSettingsMetrics.dividerInset,
+    startInset: Dp = PiSettingsMetrics.rowPaddingHorizontal,
 ) {
     HorizontalDivider(
         modifier = if (inset) {
@@ -699,7 +704,7 @@ internal fun WsHairline(
         } else {
             Modifier
         },
-        thickness = PiSettingsMetrics.hairline,
+        thickness = PiSpacing.hairlineThin,
         // **55% 的 `borderMuted`，这是与稿子的一处已定偏离。** 稿子的行间线是
         // `.div{background:var(--border-muted)}` —— 不透明（`workspace-final.html:177`），
         // 而稿子另一处的 `.hair` 才是 `opacity:.55`（`:178`）；本项目自己的
@@ -835,7 +840,7 @@ internal fun WsCardSlice(
     lastIndex: Int,
     modifier: Modifier = Modifier,
     /** 行间线的左缩进：文件行缩到文字列（32dp 图标之后），其余行用默认值。 */
-    hairlineStart: Dp = PiSettingsMetrics.pageHorizontal + PiSettingsMetrics.dividerInset,
+    hairlineStart: Dp = PiSettingsMetrics.rowPaddingHorizontal,
     content: @Composable () -> Unit,
 ) {
     val radius = PiSettingsMetrics.cardRadius
