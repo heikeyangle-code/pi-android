@@ -68,8 +68,11 @@ fun PiSheetHandle() {
     }
 }
 
-/** 顶部圆角 20：与 `PiShapes` 的卡片/输入不同，弹层是另一档。 */
-private val SheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+/**
+ * 顶部圆角 16：与 `PiSettingsMetrics.sheetTopRadius` 同一个数字。
+ * （弹层是独立一档，不跟卡片/输入的 8/10 走。）
+ */
+private val SheetShape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 
-/** 比 M3 默认更沉一点：弹层后面的转录仍然可读。 */
-private val SheetScrim = Color(0x8C000000)
+/** 遮罩 32% 黑：与设置面 `wsSheet` 的 `rgba(0,0,0,.32)` 同一档。 */
+private val SheetScrim = Color(0x52000000)
