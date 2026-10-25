@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,12 +12,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -64,17 +65,29 @@ internal fun SubscriptionCard(
     onLogout: (PiOAuthHost.Provider) -> Unit,
     onRetry: () -> Unit,
 ) {
+    // 默认折叠（用户裁定：不该一进这一屏就摊开九行）。展开后才画行与说明。
+    var expanded by remember { mutableStateOf(false) }
     PiSettingsCard {
-        Column(Modifier.padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSettingsMetrics.rowPaddingVertical)) {
-            Text("订阅账号", style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSettingsMetrics.rowPaddingVertical),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                "用 Claude、ChatGPT、Copilot、Kimi、Grok 这些账号里的订阅额度。登录跑的是 pi 自己的流程，" +
-                    "凭证写进 auth.json；登录完重启引擎，模型就会出现在下面的列表里。",
+                "订阅账号",
+                modifier = Modifier.weight(1f),
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                if (expanded) "收起" else "${providers.size} 个可登录 · 展开",
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (!expanded) return@PiSettingsCard
         if (loading) {
             SubscriptionHint("正在读取 pi 支持的订阅…")
         } else {

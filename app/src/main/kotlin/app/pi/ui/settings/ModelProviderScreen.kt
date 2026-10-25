@@ -519,6 +519,7 @@ fun ModelProviderScreen(
                                 }
                             }
                         },
+                        oauth = provider.id in subscriptionStatuses.keys,
                     )
                 }
 
@@ -1870,6 +1871,8 @@ private fun ProviderCard(
     onOpenCredentials: () -> Unit,
     onDelete: () -> Unit,
     onEditModel: (PiModelInventory.Model) -> Unit,
+    /** 这家厂商是订阅登录来的：没有 Key 可换，模型也不能在这里选。 */
+    oauth: Boolean = false,
 ) {
     val shown = if (expanded) provider.models else provider.models.filter { it.noteworthy }
     // 标题先认 `models.json` 里的 `name`（用户/导入时给这个厂商起的名字），再退到预设的
@@ -1929,7 +1932,9 @@ private fun ProviderCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                shown.forEach { model -> ModelLine(model, onEdit = { onEditModel(model) }) }
+                shown.forEach { model ->
+                    ModelLine(model, onEdit = if (oauth) null else ({ onEditModel(model) }))
+                }
                 if (provider.models.size > shown.size) {
                     PiSettingsListExpander(
                         label = "还有 ${provider.models.size - shown.size} 个 pi 目录里的模型",
@@ -1939,16 +1944,22 @@ private fun ProviderCard(
                     PiSettingsListExpander(label = "收起", onClick = onToggle)
                 }
                 Row {
-                    Text(
-                        if (provider.hasCredential) "换 Key 或改模型" else "填写凭证并导入模型",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .clickable(onClick = onOpenCredentials)
-                            .padding(vertical = PiSettingsMetrics.notePaddingVertical),
-                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    // 订阅登录来的厂商没有 "Key" 可换、模型清单也是 pi 目录给的：
+                    // 这一行只留「删除」。
+                    if (!oauth) {
+                        Text(
+                            if (provider.hasCredential) "换 Key 或改模型" else "填写凭证并导入模型",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clickable(onClick = onOpenCredentials)
+                                .padding(vertical = PiSettingsMetrics.notePaddingVertical),
+                            style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
                     Text(
                         "删除",
                         modifier = Modifier
@@ -1968,11 +1979,11 @@ private fun ProviderCard(
 }
 
 @Composable
-private fun ModelLine(model: PiModelInventory.Model, onEdit: () -> Unit) {
+private fun ModelLine(model: PiModelInventory.Model, onEdit: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onEdit)
+            .then(if (onEdit != null) Modifier.clickable(onClick = onEdit) else Modifier)
             .padding(vertical = PiSettingsMetrics.supportingGap),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
