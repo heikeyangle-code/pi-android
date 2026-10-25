@@ -344,7 +344,10 @@ private fun RowScope.RowBody(
                 style = if (mono) {
                     PiTheme.text.mono
                 } else {
-                    MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium)
+                    // 行标题曾借 M3 的 `bodyLarge`（15/500）；五档角色里最近的是
+                    // `prose`（14/23），字重仍取 500，把标题与 12 的副行分开 ——
+                    // 设置面不再为行标题单开第六档。
+                    PiTheme.text.prose.copy(fontWeight = FontWeight.Medium)
                 },
                 color = titleColor,
                 maxLines = 1,
@@ -411,7 +414,7 @@ fun PiInfoNote(
                 top = PiSettingsMetrics.rowPaddingVertical,
                 bottom = PiSettingsMetrics.rowPaddingVertical,
             ),
-            style = MaterialTheme.typography.bodyMedium,
+            style = PiTheme.text.prose,
             color = tone ?: MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

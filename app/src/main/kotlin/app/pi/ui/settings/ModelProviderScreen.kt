@@ -1161,7 +1161,7 @@ private fun ImportSheet(
         Column(Modifier.fillMaxWidth()) {
             Text(
                 "导入模型",
-                style = MaterialTheme.typography.titleMedium,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.cardPadding,
@@ -1189,7 +1189,7 @@ private fun ImportSheet(
                         Text(
                             // 「1 选厂商」这个节标题已删，动作词并进这一行的标题。
                             if (presetId.isEmpty()) "选厂商" else preset.displayName,
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = PiTheme.text.prose,
                             color = if (presetId.isEmpty()) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             } else {
@@ -1281,7 +1281,7 @@ private fun ImportSheet(
                                 Column(Modifier.weight(1f)) {
                                     Text(
                                         option.displayName,
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = PiTheme.text.prose,
                                         color = MaterialTheme.colorScheme.onSurface,
                                     )
                                     Text(
@@ -1471,7 +1471,7 @@ private fun ImportSheet(
                         Text(
                             "勾选模型 · 已勾选 ${selected.size} / 共 ${candidates.size}",
                             modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = PiTheme.text.prose,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         TextButton(onClick = { selected = selected + candidates }) { Text("全选") }
@@ -1677,7 +1677,7 @@ private fun Summary(data: PiModelInventory.Inventory) {
             horizontal = PiSettingsMetrics.pageHorizontal,
             vertical = PiSpacing.unit,
         ),
-        style = MaterialTheme.typography.bodyMedium,
+        style = PiTheme.text.prose,
         color = MaterialTheme.colorScheme.onSurface,
     )
 }
@@ -1699,7 +1699,7 @@ private fun RestartCard(
         ) {
             Text(
                 "刚改过模型或凭证的配置，pi 只在引擎启动时读它们 —— 重启一次才生效。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = PiTheme.palette.warning,
             )
             Spacer(Modifier.height(PiSpacing.gutter))
@@ -1831,7 +1831,7 @@ private fun ProviderCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         title,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = PiTypography.title,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                     )
@@ -1915,7 +1915,7 @@ private fun ModelLine(model: PiModelInventory.Model, onEdit: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(
                 model.name ?: model.id,
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -1943,7 +1943,7 @@ private fun StatusTag(status: PiModelInventory.Status) {
         PiModelInventory.Status.MISSING_CREDENTIAL -> MaterialTheme.colorScheme.onSurfaceVariant
         PiModelInventory.Status.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(statusText(status), style = MaterialTheme.typography.labelMedium, color = color)
+    Text(statusText(status), style = PiTheme.text.meta, color = color)
 }
 
 /**

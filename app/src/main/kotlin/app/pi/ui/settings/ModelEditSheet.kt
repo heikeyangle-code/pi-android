@@ -284,7 +284,7 @@ internal fun ModelEditSheet(
         Column(Modifier.fillMaxWidth()) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.cardPadding,

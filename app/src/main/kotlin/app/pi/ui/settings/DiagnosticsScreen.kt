@@ -105,7 +105,7 @@ fun DiagnosticsScreen(
         ) {
             Text(
                 "报告不会进入对话上下文；敏感值已做脱敏。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.unit))
@@ -146,7 +146,7 @@ fun DiagnosticsScreen(
                 Spacer(Modifier.height(PiSpacing.unit))
                 Text(
                     note,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }

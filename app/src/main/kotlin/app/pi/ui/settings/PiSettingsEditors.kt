@@ -226,7 +226,7 @@ fun PiOptionPickerSheet(
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleSmall,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -296,7 +296,7 @@ fun PiOptionPickerSheet(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 option.label,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = PiTheme.text.prose,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             if (option.description != null) {
@@ -466,7 +466,7 @@ fun PiNumberEditorSheet(
         ) {
             Text(
                 setting.title,
-                style = MaterialTheme.typography.titleSmall,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -661,7 +661,7 @@ fun PiTextEditorSheet(
         ) {
             Text(
                 setting.title,
-                style = MaterialTheme.typography.titleSmall,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -792,7 +792,7 @@ fun PiListEditorSheet(
         ) {
             Text(
                 setting.title,
-                style = MaterialTheme.typography.titleSmall,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -810,7 +810,7 @@ fun PiListEditorSheet(
             if (setting.presets.isNotEmpty()) {
                 Text(
                     "快捷添加",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(PiSpacing.gutter))
@@ -1048,7 +1048,7 @@ fun PiThemeEditorSheet(
                 null -> {
                     Text(
                         "主题",
-                        style = MaterialTheme.typography.titleSmall,
+                        style = PiTypography.title,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Spacer(Modifier.height(PiSpacing.small))
@@ -1065,7 +1065,7 @@ fun PiThemeEditorSheet(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 "跟随系统",
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = PiTheme.text.prose,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
@@ -1103,7 +1103,7 @@ fun PiThemeEditorSheet(
                     Spacer(Modifier.height(PiSpacing.unit))
                     Text(
                         "固定主题",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = PiTheme.text.meta,
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Spacer(Modifier.height(PiSpacing.gutter))
@@ -1139,7 +1139,7 @@ fun PiThemeEditorSheet(
                         TextButton(onClick = { picking = null }) { Text("返回") }
                         Text(
                             if (target == ThemePick.Light) "浅色用哪个主题" else "深色用哪个主题",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = PiTypography.title,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
@@ -1189,7 +1189,7 @@ private fun ThemeSlotRow(label: String, value: String, onClick: () -> Unit) {
         Text(
             label,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
+            style = PiTheme.text.prose,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
@@ -1526,7 +1526,7 @@ fun PiModelThinkingLevelsSheet(
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleSmall,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
@@ -1583,7 +1583,7 @@ fun PiModelThinkingLevelsSheet(
                 Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
                 Text(
                     "选一个模型，再点等级",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(PiSpacing.gutter))
@@ -1607,7 +1607,7 @@ fun PiModelThinkingLevelsSheet(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 option.label,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = PiTheme.text.prose,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
@@ -1725,7 +1725,7 @@ fun PiThinkingBudgetsSheet(
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleSmall,
+                style = PiTypography.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(PiSpacing.small))
