@@ -27,9 +27,9 @@ package app.pi.packages
  * **Two 0.86.1 providers are deliberately not rows here, and both are reachable
  * anyway.** `meta` (Meta Muse subscription, `providers/meta.ts:8-24`) and `radius`
  * (offline Radius catalog, `providers/radius.ts`) are OAuth/subscription providers;
- * their login flow is `/login meta` / `/login radius`, which pi only offers in its
- * own TUI — the terminal page is where this app already sends the user for
- * subscription logins (`PiSettingsRegistry`'s `app.credentials.oauth` row). A
+ * their login flow lives in the app now (`ui/settings/SubscriptionLogin.kt` runs pi's
+ * own `auth.oauth.login()` inside the guest), so they do not need an API-key row
+ * here — the 「订阅账号」 card lists them straight from pi. A
  * `meta` row for the **API-key** half (`META_API_KEY`) is a real, separate decision
  * and needs one fact this file does not have: which [ScanStyle] `api.meta.ai/v1`
  * answers, because pi's `openai-responses` says nothing about a `GET /models`

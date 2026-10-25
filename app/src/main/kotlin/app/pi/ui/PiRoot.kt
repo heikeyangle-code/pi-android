@@ -704,22 +704,13 @@ fun PiRoot() {
                     //
                     // There used to be a `TERMINAL_ONLY_ACTIONS` map holding three
                     // signposts to pi's own TUI (`/login`, `/import`, `/changelog`).
-                    // All three are gone now: a settings row whose only content is "go
-                    // somewhere else" is not a setting. The OAuth row stays as the
-                    // registry's data descriptor, and its answer now names the surface that
-                    // can actually start the flow — the 「订阅账号」 card in 模型与供应商
-                    // (`ui/settings/SubscriptionLogin.kt`), not the terminal.
+                    // All of them are gone: a settings row whose only content is "go
+                    // somewhere else" is not a setting, and the OAuth one is now a real
+                    // feature (「订阅账号」 card, `ui/settings/SubscriptionLogin.kt`).
+                    // The registry rows those signposts answered for were deleted with
+                    // them — G_MODEL has no group page, so nothing rendered them.
                     onRunAction = { setting ->
                         when (setting.key) {
-                            // 订阅登录已内建：`PiOAuthHost` 在 guest 里跑 pi 自己的
-                            // OAuth 流程（`PiOAuthHost` 的 KDoc 说了为什么不在 Kotlin 里
-                            // 重写九套），入口在「模型与供应商」屏的「订阅账号」卡。这一行
-                            // 只是注册表里的数据描述，仍然没有分组页渲染它。
-                            "app.credentials.oauth" -> {
-                                session.notifyUser(
-                                    "订阅登录在「模型与供应商」屏的「订阅账号」卡里：设置首页顶栏 → 模型与供应商。",
-                                )
-                            }
                             // pi's `/compact` — the RPC command is `compact`
                             // (`modes/rpc/rpc-types.ts:44`). The custom-instruction
                             // form of `/compact` needs a text field and lives in the

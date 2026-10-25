@@ -273,9 +273,9 @@ object PiThemeLoader {
                 dark = derived.dark,
                 source = PiThemeEntry(name, null, PiThemeScope.Builtin),
                 notes = listOf(
-                    "「system」主题由 pi 从终端调色板推导；App 没有终端可用，" +
-                        "已用 pi 的默认 ANSI 16 色与默认背景推导，" +
-                        "因此当前固定为深色主题，不跟随系统的深浅色设置。",
+                    "「system」主题由 pi 从终端调色板推导；App 没有终端，改用「外观 → 配色方案」" +
+                        "选定的调色板（ANSI 16 色 + 底色）推导。深浅由那个底色决定，" +
+                        "不跟随系统的深浅色设置；换调色板后颜色与深浅都会跟着变。",
                 ),
             )
         }

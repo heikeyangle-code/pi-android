@@ -170,8 +170,8 @@ fun PiSettingsStack(
     // （`PiCredentialScreen` / `PiModelsScreen`），拍板合成一屏（导入是屏内 sheet、
     // 三个选择键就地编辑），所以只剩一个层级加三个开屏参数：
     //  - `modelFlowPreset`：从哪张厂商卡/哪条 Action 行进来的（null = 不预选）；
-    //  - `modelFlowImport`：进来直接拉起导入 sheet（`app.credentials.apiKey`、
-    //    `app.localModels.manage` 两行的语义——点它们的人就是来填东西的）；
+    //  - `modelFlowImport`：进来直接拉起导入 sheet（之前注册表里 API Key / 本地模型
+    //    那两行就是"点进去填东西"的语义；两行已按用户裁定删除，入口留在这一屏自己身上）；
     //  - `modelFlowEditor`：进来直接打开三个选择键之一的编辑器（搜索与
     //    `/scoped-models` 的 `NavRequest.SettingsFocus`）。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
@@ -472,9 +472,12 @@ fun PiSettingsStack(
     // [onRunAction]; when the caller supplies nothing, the row keeps its honest
     // "not wired" dialog — which is why this is a per-key map and not a lambda
     // that would have to pretend every key is handled.
-    // 三行 Action 全部汇进「模型与供应商」一屏，只差开屏参数（见状态块的注释）。
-    // `app.localModels.manage` promises llama.cpp router management, which pi's
-    // own `/llama` cannot do over RPC at all: its handler returns early unless
+    // 注册表里那三行（已导入的模型 / API Key / 本地模型）已按用户裁定删除：G_MODEL
+    // 分组页不存在，它们没有渲染面。目的地不变，仍由 `openModelFlow` 打开
+    // 「模型与供应商」一屏 —— 现在它由这一屏自己的三个入口（导入、API Key、订阅账号）
+    // 提供，注册表不再转一道手。
+    // 本地模型那一段（llama.cpp 端点）也走这一屏：那行已删除，但语义没变 —— pi 的
+    //  `/llama` 在 RPC 下根本跑不了：它的处理器除非
     // `ctx.mode === "tui"` (`extensions/llama/index.ts:186-189`), and
     // `ctx.ui.custom()` is a documented no-op in RPC mode. What *is* reachable is
     // configuring the endpoint pi reads: `models.json` plus a placeholder
@@ -487,9 +490,6 @@ fun PiSettingsStack(
             modelFlow = true
         }
     val hostActions: Map<String, () -> Unit> = mapOf(
-        "app.models.inventory" to { openModelFlow(null, false, null) },
-        "app.credentials.apiKey" to { openModelFlow(null, true, null) },
-        "app.localModels.manage" to { openModelFlow("llama.cpp", true, null) },
         // The `packages` row is a read-only *view* of what `pi install` wrote
         // (`PiSettingsRegistry.kt` says so on the row). Editing the array by hand
         // bypasses the download/resolve step and can leave a spec that looks
