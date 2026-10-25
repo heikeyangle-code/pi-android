@@ -97,22 +97,14 @@ done
 # 基线（棘轮）。规则 2 是按文件的计数，键为相对 ui/ 的路径。
 # 增加基线不是修复：那是把回归写成预期。只有迁移让计数下降时才允许下调。
 # ---------------------------------------------------------------------------
-R2_BASELINE='chat/ChatSheets.kt 11
-chat/SessionTreeScreen.kt 3
-screens/BootScreen.kt 5
-screens/ChatScreen.kt 3
-screens/PiFilesScreen.kt 5
-screens/ProjectScreen.kt 5
-screens/SessionsScreen.kt 4
-screens/WorkspaceChrome.kt 5
-screens/WorkspaceViewer.kt 7
-settings/DiagnosticsScreen.kt 1
-settings/ModelProviderScreen.kt 2
-settings/PiSettingsEditors.kt 1'
+# 2026-10-25：`screens|chat|settings` 里的 Material 字号已全部迁移到 `PiTheme.text` /
+# `PiType`，所以这里**归零**——规则 2 从此是硬失败：任何一处在三个目录里重新出现，
+# 都会打印文件名与行号并 exit 1。这才是这条规则想要的终态（脚本头 TODO 的触发条件）。
+R2_BASELINE=''
 
-# 规则 3 的总数基线（三个目录合计，纯注释行不计）。
-DP_BASELINE=398
-SP_BASELINE=18
+# 规则 3 的总数基线（三个目录合计，纯注释行不计）。迁移后的实测值，只许降。
+DP_BASELINE=392
+SP_BASELINE=14
 
 R2_BASELINE_TOTAL="$(printf '%s\n' "$R2_BASELINE" | awk '{ s += $2 } END { printf "%d\n", s }')"
 
