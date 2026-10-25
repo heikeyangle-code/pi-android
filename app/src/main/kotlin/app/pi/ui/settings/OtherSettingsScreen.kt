@@ -4,6 +4,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.pi.ui.PiTopBar
@@ -41,6 +48,7 @@ internal fun OtherSettingsScreen(
                                 title = "终端",
                                 supporting = "输入 pi 回车进入原版 TUI：会话导入、需要终端的扩展。",
                                 onClick = onOpenTerminal,
+                                leadingIcon = Icons.Filled.Terminal,
                             )
                             PiSettingsHairline()
                         }
@@ -48,6 +56,7 @@ internal fun OtherSettingsScreen(
                             title = "Pi 文件",
                             supporting = "看 pi 读的那些文件：设置、模型、提示词、主题、技能。",
                             onClick = onOpenPiFiles,
+                            leadingIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
                         )
                         if (onOpenDeviceCapabilities != null) {
                             PiSettingsHairline()
@@ -55,6 +64,7 @@ internal fun OtherSettingsScreen(
                                 title = "设备能力",
                                 supporting = "这台手机允许 agent 做什么：root / Shizuku / ADB、截图、点击。",
                                 onClick = onOpenDeviceCapabilities,
+                                leadingIcon = Icons.Filled.PhoneAndroid,
                             )
                         }
                         if (onOpenPackages != null) {
@@ -63,6 +73,7 @@ internal fun OtherSettingsScreen(
                                 title = "扩展包与项目信任",
                                 supporting = "agent 能装什么、项目资源能不能信。",
                                 onClick = onOpenPackages,
+                                leadingIcon = Icons.Filled.Extension,
                             )
                         }
                         PiSettingsHairline()
@@ -70,6 +81,7 @@ internal fun OtherSettingsScreen(
                             title = "安全与隐私",
                             supporting = "项目信任策略与安装遥测。",
                             onClick = onOpenSecurity,
+                            leadingIcon = Icons.Filled.Lock,
                         )
                         if (onOpenLicenses != null) {
                             PiSettingsHairline()
@@ -77,6 +89,7 @@ internal fun OtherSettingsScreen(
                                 title = "开源许可",
                                 supporting = "随包分发的 Linux 用户态、Node、git、proot 与库的许可证。",
                                 onClick = onOpenLicenses,
+                                leadingIcon = Icons.Filled.Info,
                             )
                         }
                     }

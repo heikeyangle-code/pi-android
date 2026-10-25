@@ -97,11 +97,12 @@ internal fun PiSystemPaletteSheet(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
+                // 预览四块等宽铺满：固定 52dp 的方块在小屏上会挤成一团，用 weight 平分。
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
-                    Swatch("页面", preview.pageBg)
-                    Swatch("卡片", preview.cardBg)
-                    Swatch("文字", preview.text)
-                    Swatch("强调", preview.accent)
+                    Swatch("页面", preview.pageBg, Modifier.weight(1f))
+                    Swatch("卡片", preview.cardBg, Modifier.weight(1f))
+                    Swatch("文字", preview.text, Modifier.weight(1f))
+                    Swatch("强调", preview.accent, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
 
@@ -186,15 +187,13 @@ internal fun PiSystemPaletteSheet(
 }
 
 @Composable
-private fun Swatch(label: String, color: Color) {
+private fun Swatch(label: String, color: Color, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
-    Column {
+    Column(modifier) {
         Box(
             Modifier
-                .size(
-                    width = PiSettingsMetrics.chipHeight * 2,
-                    height = PiSettingsMetrics.chipHeight * 2,
-                )
+                .fillMaxWidth()
+                .height(PiSettingsMetrics.chipHeight * 2)
                 .clip(shape)
                 .background(color)
                 .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, shape),
@@ -242,7 +241,9 @@ private fun ColourSlider(
                 val thumb = PiSettingsMetrics.cardIconSize
                 Box(
                     Modifier
-                        .offset(x = width * fraction.coerceIn(0f, 1f) - thumb / 2)
+                        // 游标要在轨道内：`width * f - 半径` 在 f=1 时会把一半推出屏幕外，
+                        // 改成「可移动距离 × f」，两端都贴边不越界。
+                        .offset(x = (width - thumb) * fraction.coerceIn(0f, 1f))
                         .size(thumb)
                         .clip(RoundedCornerShape(percent = 50))
                         .background(Color.White)

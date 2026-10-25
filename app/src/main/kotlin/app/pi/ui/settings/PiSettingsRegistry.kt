@@ -1650,7 +1650,9 @@ object PiSettingsCatalog {
         },
         PiSettingsGroup(G_RETRY, "重试", Icons.Filled.Refresh) { store ->
             val retries = summaryText(store, "retry.maxRetries")
-            "${summaryText(store, "retry.enabled")} · $retries 次"
+            // `retries` 已经不是裸数字：`summaryText` 对 Number 行带单位，再补一个「次」
+            // 就成了「开 · 3 次 次」。
+            "${summaryText(store, "retry.enabled")} · $retries"
         },
         PiSettingsGroup(G_TOOLS, "工具", Icons.Filled.Build) { store ->
             val raw = store.read("defaultTools")

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -155,6 +156,7 @@ fun SettingsHome(
                             title = "模型与供应商",
                             supporting = "厂商、模型、凭证与导入——官方配置文件的编辑器",
                             onClick = onOpenModels,
+                            leadingIcon = Icons.Filled.Timeline,
                         )
                     }
                 }
@@ -204,6 +206,7 @@ fun SettingsHome(
                             title = "其他",
                             supporting = "终端、Pi 文件、设备能力、扩展包与信任、安全与隐私、开源许可",
                             onClick = onOpenOther,
+                            leadingIcon = Icons.Filled.MoreVert,
                         )
                     }
                 }
@@ -230,6 +233,7 @@ private fun GroupEntry(
         title = group.title,
         supporting = summary,
         onClick = onClick,
+        leadingIcon = group.icon,
     )
 }
 
