@@ -271,6 +271,8 @@ fun ChatScreen(
         session = session,
         bottomInset = bottomInset,
         onOpenSessions = onOpenSessions,
+        onOpenWorkspace = onOpenWorkspace,
+        onOpenSettings = onOpenSettings,
     )
 }
 
@@ -378,6 +380,9 @@ private fun ChatBody(
     session: PiSessionViewModel,
     bottomInset: Dp,
     onOpenSessions: () -> Unit,
+    /** 见 [ChatScreen] 的 `onOpenWorkspace`：底栏拆掉之后对话页「⋯」里的两扇门。 */
+    onOpenWorkspace: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     // `draft` and `attachments` are the **ViewModel's** state, not this composable's:
     // `session.composerDraft` ([ComposerDraft]). Nothing about them reaches the Bundle.
