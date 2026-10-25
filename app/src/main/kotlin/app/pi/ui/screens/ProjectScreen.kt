@@ -3024,7 +3024,7 @@ private val SNACK_ACTION_PADDING_VERTICAL = 4.dp
 
 /**
  * 粗粒度相对时间，与会话列表**同一套措辞**（`SessionsScreen.kt:391-402`：`刚刚` /
- * `N 分钟前` / `N 小时前` / `N 天前` / `N 周前`）。规则重复一次而不是复用，因为那个函数
+ * `N分钟前` / `N小时前` / `N天前` / `N周前`）。规则重复一次而不是复用，因为那个函数
  * 是私有的、而且那个文件属于 B4（本轮不许碰）。
  */
 private fun relativeTime(epochMillis: Long): String {
@@ -3033,10 +3033,10 @@ private fun relativeTime(epochMillis: Long): String {
     val minutes = TimeUnit.MILLISECONDS.toMinutes(delta)
     return when {
         minutes < 1 -> "刚刚"
-        minutes < 60 -> "$minutes 分钟前"
-        minutes < 60 * 24 -> "${minutes / 60} 小时前"
-        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)} 天前"
-        else -> "${minutes / (60 * 24 * 7)} 周前"
+        minutes < 60 -> "${minutes}分钟前"
+        minutes < 60 * 24 -> "${minutes / 60}小时前"
+        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}天前"
+        else -> "${minutes / (60 * 24 * 7)}周前"
     }
 }
 

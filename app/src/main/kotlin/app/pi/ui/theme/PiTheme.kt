@@ -101,6 +101,15 @@ object PiSpacing {
     /** 1dp: hairlines (`HorizontalDivider`, a 1dp border stroke). */
     val hairline = 1.dp
 
+    /**
+     * 0.5dp: 卡内行与行之间的那条线（设计稿 §6「0.5dp、`outlineVariant`、40% 透明」）。
+     *
+     * 它比 [hairline] 细一半，因为在**卡片内部**：1dp 的不透明线在一块只比页面亮 6% 的
+     * 卡上，深色主题里会读成一条压过卡片的黑线。1dp 留给页面级的分栏（顶栏、snackbar
+     * 之外的整屏分隔）。
+     */
+    val hairlineThin = 0.5.dp
+
     /** 2dp: the tightest gap — a label to its glyph, a caption to its body. */
     val tiny = 2.dp
 
@@ -186,6 +195,9 @@ object PiShapes {
 
     /** §7.2 Snackbar (`:753`): 12dp. */
     val snackbar = RoundedCornerShape(12.dp)
+
+    /** 行内小标签（「已命名」「来自 X」）：设计稿 §6 的 6dp。 */
+    val tag = RoundedCornerShape(6.dp)
 }
 
 /**

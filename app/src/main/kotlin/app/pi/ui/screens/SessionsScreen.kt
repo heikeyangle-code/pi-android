@@ -1,19 +1,28 @@
+// `fontFeatureSettings = "tnum"`：等宽数字让「11分钟前」那一列不抖。这个属性在
+// Compose 的文本 API 里仍带实验标记，`PiTheme.kt` 也是同一个理由在文件级 opt-in。
+@file:OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+
 package app.pi.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,6 +58,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -81,6 +96,7 @@ import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.util.concurrent.TimeUnit
 
@@ -107,33 +123,26 @@ enum class SessionsView(val label: String) {
  * （`SessionTreeScreen(embedded = true)`），它自己的顶栏与不透明底由这里提供——两个
  * 覆盖层叠在一起时只有最上面那个能被返回键关掉。
  *
- * ## 一行的两行形态（有父会话时多一行）
+ * ## 一行的两行形态
  *
- * 三段真实字段（`02-real-content.md` §1.2 的公式）折成 v2 的两行
- * (`direction-b-v2.html:1814-1822`)：
+ * 三段真实字段（`02-real-content.md` §1.2 的公式）折成两行：
  *
  * ```
- * 第 1 行   会话名（可省略）… [当前]                相对时间
- * 第 2 行   工作区 · 模型（可省略）…                18 条 · 已命名
- * 第 3 行   来自〈会话名〉                          （只有 parentSession 存在时才有）
+ * 第 1 行   会话名（可省略）…                      相对时间
+ * 第 2 行   模型 · N条（可省略）…                  [已命名] [来自 X]
  * ```
  *
- * 第二行的属性段右对齐、第一段让位给省略号：一屏要读的是「哪条、多久以前、多少条」。
- * 这几段文案是 pi 的字段，不是排版——本轮唯一动过的字是原来那个「· 分支」，理由见下。
- *
- * 第三行是本次补的那一件：有父会话的会话，pi 在它的**文件头**里记着 `parentSession`
- * （`docs/session-format.md:72-76`），而这一屏从前只用第二行末尾那两个字「· 分支」说它有
- * 父会话，**不说父是谁**。用户的原话是「如果是分叉，能不能让它显示的更明显一点」—— 现在它
- * 单独一行，父会话的名字（取不到就不写名字）连同「原来那条会话还在列表里」这个事实一起看得见。
- * 上游的对应物是它会话选择器里的缩进（`session-selector.ts:206-231`、`:531-537`），呈现不同、
- * 事实同源，登记在 `docs/known-gaps.md` §B2。
+ * 第二行右端是只在存在时出现的两个小标签；父会话的名字从前是**第三行**，现在收进
+ * 标签里，行高因此固定成两行。事实没有变：`parentSession` 是 pi 记在**文件头**里的
+ * （`docs/session-format.md:72-76`），名字取不到时不猜 —— 父被删掉或落在 `list(limit)`
+ * 之外时写「分支」，不拿文件名冒充会话名。
  *
  * **为什么是「来自」而不是「分叉自」**：`parentSession` 是 `/fork`、`/clone`、
  * `newSession({ parentSession })` **三种**来源共用的同一个头字段
  * （`docs/session-format.md:72`），文件里没有第二个标记能区分它们——`/clone` 在上游就是
  * `fork(leafId, { position: "at" })`（`rpc-mode.ts:619-628`），走的是同一个
  * `SessionManager.createBranchedSession`。所以这一行只许说**这条从哪儿来**，不许说**它是被
- * 分叉还是被复制**：那两个字文件里没有。用户要的「更明显」由**单独一行**给，不由动词给。
+ * 分叉还是被复制**：那两个字文件里没有。
  *
  * **而且第三种来源在本应用里是一条真按钮**：会话行的长按菜单有「新建子会话」
  * （`PiSessionViewModel.newChildSession` → `newSession(parentSession)`），它写同一个字段，
@@ -152,7 +161,7 @@ enum class SessionsView(val label: String) {
  * ## 底部的「＋ 新建会话」是浮动的（D58）
  *
  * 它 `align(BottomEnd)` 压在列表内容之上，**不占列表的布局高度** —— 所以列表视口一直铺到
- * 底部导航栏的上沿，按钮那一层下面不会露出页面底色。v2 把这一件画成列表**下面**属于自己的
+ * 系统导航条的上沿，按钮那一层下面不会露出页面底色。v2 把这一件画成列表**下面**属于自己的
  * 一行（`flex:'none'`，`padding:'0 16px 14px'`），本应用曾经照做，代价就是按钮高度那一条
  * 全是裸页面底色（深色主题下是一条近黑带）；用户裁决回到浮动。
  *
@@ -203,6 +212,8 @@ fun SessionsScreen(
     // 顶栏「⋯」。它是屏内状态，不是覆盖层：菜单开着时按返回应该先关菜单（`Popup`
     // 自己吃掉那一下），而不是把整层会话列表关掉。
     var menuOpen by remember { mutableStateOf(false) }
+    // 搜索框默认收起。收起时清掉查询 —— 否则列表会被一个看不见的过滤条件筛着。
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
     // The host can ask for a different view *after* this screen is already composed
     // (a second `/tree` while the overlay is open): the overlay stays mounted across
@@ -303,7 +314,17 @@ fun SessionsScreen(
             // 色）。会话列表是「看引擎在哪」的地方，所以这一行跟着它。
             engineMeta = session.engineLabel(state),
             actions = {
-                // 右侧固定四个位置：工作区 / 设置 / 「⋯」（第 2 批再加搜索）。
+                // 右侧四个位置：搜索 / 工作区 / 设置 / 「⋯」。
+                if (view == SessionsView.List) {
+                    PiTopBarIcon(
+                        onClick = {
+                            searchOpen = !searchOpen
+                            if (!searchOpen) query = ""
+                        },
+                        contentDescription = if (searchOpen) "收起搜索" else "搜索会话",
+                        icon = Icons.Filled.Search,
+                    )
+                }
                 // 「导入」和「刷新」原来各占一个位置、还带一个文字按钮，现在都收进
                 // 「⋯」——顶栏放进五个控件就挤了，而这两件事不是每屏都用。
                 PiTopBarIcon(
@@ -356,6 +377,13 @@ fun SessionsScreen(
         // 之后**的会话条数。它在两个视图里都在：v2 的 `SessionsOverlay` 把那一句写在
         // 列表/树的 `if` **之外**，`phone20`（搜 diff → 「1 条」）与 `phone27`/`phone28`
         // （树 → 「12 条」）两张图都画着它，所以树视图里也保留。
+        // 一条分段控件服务两个视图，所以它在两者之上（v2 的 `Seg`）；同行右侧是**筛过
+        // 之后**的会话条数，左侧跟着列表视图的两个筛选 chip。
+        //
+        // **合成一行**（会话主页方案 §4）：原来是「分段 + 条数」一行、搜索框一块、筛选
+        // chip 再一行，三行界面吃掉一百多 dp；现在筛选 chip 跟分段同行、搜索默认收起，
+        // 列表一屏因此能多出三四条。左边那一组**会横向滚动**——1.3 倍字号下它一定放不下，
+        // 滚动比截断诚实；条数钉在右端，不跟着滚。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -366,23 +394,48 @@ fun SessionsScreen(
                     bottom = SESSIONS_VIEW_ROW_BOTTOM,
                 ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(SESSIONS_VIEW_ROW_GAP),
         ) {
-            PiSeg(
-                options = SessionsView.entries.map { it.label },
-                selectedIndex = view.ordinal,
-                onSelect = { index ->
-                    val item = SessionsView.entries[index]
-                    viewIndex = item.ordinal
-                    // 树的叶子只有 `get_tree` 说了算，切过去时读一次；列表的刷新由
-                    // `refreshSessions` 在进入这一屏时做过。
-                    if (item == SessionsView.Tree) session.refreshTree()
-                },
-            )
-            Spacer(Modifier.weight(1f))
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SESSIONS_VIEW_ROW_GAP),
+            ) {
+                PiSeg(
+                    options = SessionsView.entries.map { it.label },
+                    selectedIndex = view.ordinal,
+                    onSelect = { index ->
+                        val item = SessionsView.entries[index]
+                        viewIndex = item.ordinal
+                        // 树的叶子只有 `get_tree` 说了算，切过去时读一次；列表的刷新由
+                        // `refreshSessions` 在进入这一屏时做过。
+                        if (item == SessionsView.Tree) session.refreshTree()
+                    },
+                )
+                if (view == SessionsView.List) {
+                    // 排序 chip 的**选中态跟着 byTime 走**，不是永远选中：v2 的
+                    // `active={byTime}`，`phone26`（`byTime=false`）画的就是一个未选中的
+                    // 「↕ 按名称」加一个选中的「✓ 仅命名」。E3 台的描述（冻结稿自己的 dev
+                    // 目录项：`direction-b-v2.html` 的 `05` 组 `:3398`）说两个都选中，按截图。
+                    PiSettingsChip(
+                        text = if (byName) "按名称" else "按时间",
+                        glyph = "↕",
+                        active = !byName,
+                        onClick = { byName = !byName },
+                    )
+                    PiSettingsChip(
+                        text = if (namedOnly) "仅命名" else "全部",
+                        glyph = if (namedOnly) "✓" else "○",
+                        active = namedOnly,
+                        onClick = { namedOnly = !namedOnly },
+                    )
+                }
+            }
             Text(
                 "${visible.size} 条",
-                style = PiTheme.text.meta,
+                modifier = Modifier.padding(start = SESSIONS_VIEW_ROW_GAP),
+                style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
                 color = PiTheme.palette.muted,
             )
         }
@@ -414,95 +467,79 @@ fun SessionsScreen(
                 modifier = Modifier.weight(1f),
             )
         } else {
-            // 搜索块：v2 把「方框 + 筛选行」包在**一个** `padding:'4px 14px 8px'` 的块里，
-            // 而筛选行自己在块内 `marginTop:8`。所以 4 / 8 不是两次留白，是那一个块的上沿
-            // 与它两半之间；块的 8 下沿落在筛选行**下面**（见 `SESSIONS_CHIP_TOP`）。
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        start = PiSettingsMetrics.pageHorizontal,
-                        end = PiSettingsMetrics.pageHorizontal,
-                        top = SESSIONS_SEARCH_TOP,
-                        bottom = SESSIONS_SEARCH_BOTTOM,
-                    ),
+            // **搜索框默认收起**，顶栏的放大镜展开它。它原来常驻 36 高的一块，
+            // 加外边距占掉约 48dp；收起之后这一屏的界面只剩上面那一行。
+            //
+            // 样式也换了：填充底 `surfaceContainerHigh`、**无描边**、整圆的胶囊
+            // （`PiShapes.chip`）—— 描边是「可见轮廓」，这一屏现在只留卡片和发丝线。
+            AnimatedVisibility(
+                visible = searchOpen,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
             ) {
-                // 搜索框：v2 在会话覆盖层里是 36 高的方框（`SessionsOverlay` 的
-                // `height:36`；设置首页那个才是 40），圆角 9、`surf-low` 底、
-                // 1px `borderMuted`、内 `padding:0 10px`、图标 15、文本 12 等宽，
-                // 有输入时右侧出现「清除」。
-                Surface(
+                val focus = remember { FocusRequester() }
+                // 请求焦点放在**内容里**：`AnimatedVisibility` 决定这一层是否在组合里，
+                // 只有和输入框同一次组合时 `FocusRequester` 才一定已经挂上节点。
+                LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(SESSIONS_SEARCH_HEIGHT),
-                    shape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(SESSIONS_HAIRLINE, MaterialTheme.colorScheme.outline),
+                        .padding(
+                            start = PiSettingsMetrics.pageHorizontal,
+                            end = PiSettingsMetrics.pageHorizontal,
+                            top = SESSIONS_SEARCH_TOP,
+                            bottom = SESSIONS_SEARCH_BOTTOM,
+                        ),
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = SESSIONS_SEARCH_PADDING),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(SESSIONS_SEARCH_GAP),
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(SESSIONS_SEARCH_HEIGHT),
+                        shape = PiShapes.chip,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     ) {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(SESSIONS_SEARCH_ICON),
-                            tint = PiTheme.palette.muted,
-                        )
-                        Box(Modifier.weight(1f)) {
-                            if (query.isEmpty()) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = SESSIONS_SEARCH_PADDING),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(SESSIONS_SEARCH_GAP),
+                        ) {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(SESSIONS_SEARCH_ICON),
+                                tint = PiTheme.palette.muted,
+                            )
+                            Box(Modifier.weight(1f)) {
+                                if (query.isEmpty()) {
+                                    Text(
+                                        "搜索会话、目录、文件",
+                                        style = PiTheme.text.monoSmall,
+                                        color = PiTheme.palette.muted,
+                                    )
+                                }
+                                BasicTextField(
+                                    value = query,
+                                    onValueChange = { query = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(focus),
+                                    singleLine = true,
+                                    textStyle = PiTheme.text.monoSmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    ),
+                                    cursorBrush = SolidColor(PiTheme.palette.accent),
+                                )
+                            }
+                            if (query.isNotEmpty()) {
                                 Text(
-                                    "搜索名称 / 目录 / 文件名",
-                                    style = PiTheme.text.monoSmall,
+                                    "清除",
+                                    modifier = Modifier.clickable { query = "" },
+                                    style = PiTheme.text.meta,
                                     color = PiTheme.palette.muted,
                                 )
                             }
-                            BasicTextField(
-                                value = query,
-                                onValueChange = { query = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                textStyle = PiTheme.text.monoSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                ),
-                                cursorBrush = SolidColor(PiTheme.palette.accent),
-                            )
-                        }
-                        if (query.isNotEmpty()) {
-                            Text(
-                                "清除",
-                                modifier = Modifier.clickable { query = "" },
-                                style = PiTheme.text.meta,
-                                color = PiTheme.palette.muted,
-                            )
                         }
                     }
-                }
-                // 两个筛选 chip 与右侧那句提示同一行（v2 的 `rw`：`gap:7; marginTop:8`）。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = SESSIONS_CHIP_TOP),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(SESSIONS_CHIP_GAP),
-                ) {
-                    // 排序 chip 的**选中态跟着 byTime 走**，不是永远选中：v2 的
-                    // `active={byTime}`，`phone26`（`byTime=false`）画的就是一个未选中的
-                    // 「↕ 按名称」加一个选中的「✓ 仅命名」。E3 台的描述（冻结稿自己的 dev
-                    // 目录项：`direction-b-v2.html` 的 `05` 组 `:3398`）说两个都选中，按截图。
-                    PiSettingsChip(
-                        text = if (byName) "按名称" else "按时间",
-                        glyph = "↕",
-                        active = !byName,
-                        onClick = { byName = !byName },
-                    )
-                    PiSettingsChip(
-                        text = if (namedOnly) "仅命名" else "全部",
-                        glyph = if (namedOnly) "✓" else "○",
-                        active = namedOnly,
-                        onClick = { namedOnly = !namedOnly },
-                    )
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -569,10 +606,8 @@ fun SessionsScreen(
                                     active = activeFile != null && summary.file.name == activeFile,
                                     first = index == 0,
                                     last = index == rows.lastIndex,
-                                    // 第二行的第一个字段是这一组的工作区名，与标题同一个算法
-                                    // （同一个 cwd，所以必须印同一个名字）。
-                                    workspaceLabel = groupLabel(cwd, workspacesRoot, workspaceLabels),
                                     // 父会话的显示名，取不到就是 null（父不在列表里）。
+                                    // 工作区名不在行里了 —— 上面的分组头已经说过这一组是哪个目录。
                                     forkedFrom = forkParentNames[summary.file.absolutePath],
                                     onOpen = {
                                         session.switchSession(summary)
@@ -610,7 +645,7 @@ fun SessionsScreen(
                 // 照做，代价是那一行吃掉了列表底部约 70dp 的布局高度 —— 列表在它之上就结束
                 // （`Box(weight(1f))` 的下沿），按钮那一条只剩**页面底色**，深色主题下就是
                 // 一条近黑的空带（用户：「原来按钮浮动到屏幕上，现在那一排全黑了」）。
-                // 回到浮动之后，列表视口一直铺到这一层的下沿（也就是底部导航栏的上沿），
+                // 回到浮动之后，列表视口一直铺到这一层的下沿（也就是系统导航条的上沿），
                 // 内容还有更多时卡片会一直画到底，不存在那条带子。
                 //
                 // **可达性不是靠"盖住"解决的。** 当年那个真 bug 不在 `align(BottomEnd)`
@@ -767,11 +802,12 @@ private fun SessionActionRow(label: String, tone: Color, onClick: () -> Unit) {
 }
 
 /**
- * 「+ 新建会话」：v2 的胶囊（`height:42; padding:0 16px; border-radius:999;
- * background:var(--accent); color:var(--page); gap:7`，图标 16 + 14/600 文字）。
+ * 「+ 新建会话」：胶囊（`height:42; padding:0 16px; border-radius:999; gap:7`，
+ * 图标 16 + 14/600 文字）。
  *
- * 用 accent 而不是 M3 FAB 的 `primaryContainer`，是因为 v2 把它画成这一屏上最显眼
- * 的那一件动作，而且明确没有阴影（`06 §5`：没有阴影）。
+ * 底色是**主题容器色** `primaryContainer`（= pi 的 `selectedBg`，用户裁决）：原来的
+ * 实心 accent 比主题色更深更重，压过了列表；容器色仍然是这一屏最显眼的一件动作，
+ * 但安静一档。文字与图标用它的 `on*` 对色。仍然**没有阴影**（`06 §5`）。
  */
 @Composable
 private fun NewSessionButton(onClick: () -> Unit) {
@@ -779,7 +815,10 @@ private fun NewSessionButton(onClick: () -> Unit) {
         modifier = Modifier
             .height(SESSIONS_NEW_SESSION_HEIGHT)
             .clip(PiShapes.badge)
-            .background(MaterialTheme.colorScheme.primary)
+            // **主题容器色**（用户裁决）：`primaryContainer` = pi 的 `selectedBg`，
+            // 也就是 accent 的低饱和底，比原来的实心 accent 安静一档，而仍然读成
+            // 「这一屏最显眼的那一件动作」。文字与图标用它的 `on*` 对色。
+            .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable(onClick = onClick)
             .padding(horizontal = SESSIONS_NEW_SESSION_PADDING),
         verticalAlignment = Alignment.CenterVertically,
@@ -789,12 +828,12 @@ private fun NewSessionButton(onClick: () -> Unit) {
             Icons.Filled.Add,
             contentDescription = null,
             modifier = Modifier.size(SESSIONS_NEW_SESSION_ICON),
-            tint = MaterialTheme.colorScheme.onPrimary,
+            tint = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         Text(
             "新建会话",
             style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onPrimary,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }
 }
@@ -816,9 +855,6 @@ private val SESSIONS_SEARCH_PADDING = 10.dp
 private val SESSIONS_SEARCH_GAP = 8.dp
 private val SESSIONS_SEARCH_ICON = 15.dp
 
-/** `SessionsOverlay` 筛选行：块内 `marginTop:8`、`gap:7`。 */
-private val SESSIONS_CHIP_TOP = 8.dp
-private val SESSIONS_CHIP_GAP = 7.dp
 
 /**
  * `SessionsOverlay` 列表底：`paddingBottom:14` —— 列表**内容**与底边之间的最小间距。
@@ -874,6 +910,14 @@ private val SESSIONS_GROUP_HEADING_TOP = 14.dp
 private val SESSIONS_GROUP_HEADING_BOTTOM = 6.dp
 private val SESSIONS_GROUP_HEADING_GAP = 8.dp
 
+/**
+ * 「来自〈会话名〉」标签里名字的字数上限。超过就只写「分支」。
+ *
+ * 8 是这一行还能放得下两个标签（「已命名」+「来自 X」）的经验值：再长就会把左边的
+ * 「模型 · N 条」压成省略号，而那个字段比父会话名更常读。
+ */
+private const val SESSIONS_TAG_NAME_MAX = 8
+
 /** `.02em` 在 12sp 上是 0.24sp；`letterSpacing` 只吃绝对值。 */
 private val SESSIONS_GROUP_TRACKING = 0.24.sp
 
@@ -881,22 +925,8 @@ private val SESSIONS_GROUP_TRACKING = 0.24.sp
 private val SESSIONS_ROW_LINE_GAP = 7.dp
 private val SESSIONS_ROW_PROP_GAP = 8.dp
 
-/**
- * 「当前」徽标（v2 的 `Badge`：`direction-b-v2.html:594`）——透明底、1px
- * `borderMuted` 圆环、`padding:1px 7px 1px 6px`、`gap:5`，里面是「accent 色块（5×5
- * 圆角 1）+ accent 的 `●` + 正文色的文字」。`phone19` 的徽标就是这三个元素。
- *
- * 它替掉的是原来的 `primaryContainer` 实底胶囊：那是一个 M3 容器色（`selectedBg`），
- * 而 v2 的徽标是描边 + 色块，两者在深色下完全不同。文字也不再借 `labelSmall`——那个
- * 角色是 11.5sp，低于 v2 的 12 档下限（`PiTheme.kt` 的 `PiTextStyles` KDoc）。
- */
-private val SESSIONS_BADGE_GLYPH = "●"
 
-/** v2 的 `Badge` 把字与符号的行高钉在 16（`lineHeight:'16px'`），不是默认的 18。 */
-private val SESSIONS_BADGE_LINE_HEIGHT = 16.sp
 
-/** `06 §2`「线宽：全篇只有 1px」。 */
-private val SESSIONS_HAIRLINE = 1.dp
 
 /**
  * 分组头：组名 + 本组条数。
@@ -940,33 +970,31 @@ private fun GroupHeading(label: String, count: Int) {
 }
 
 /**
- * 一行会话，v2 的**两行**形态（`direction-b-v2.html:1814-1822`；`board` 的 D1 台写作
- * 「三行字段压成两行」）：
+ * 一行会话，**两行**（设计稿 §6）：
  *
  * ```
- * 第 1 行  会话名（15/500，可省略）…  [当前]        相对时间（12 等宽）
- * 第 2 行  工作区 · 模型（12 muted，可省略）…       18 条 · 已命名（12 muted）
- * 第 3 行  来自〈会话名〉（12 muted，可省略）        ← 只有 `parentSession` 存在时才有
+ * 第 1 行  会话名（15/500，当前会话 SemiBold，可省略）…   11分钟前（12，等宽数字）
+ * 第 2 行  模型 · 9条（12 muted，可省略）…                [已命名] [来自 X]
  * ```
+ *
+ * 与上一版的差别，三件：
+ *
+ *  1. **工作区名不在行里了。** 分组头已经说过这一组是哪个目录，每行再印一遍只是把
+ *     同一个词印 N 次。第二行的第一段因此从「工作区 · 模型」变成「模型」。
+ *  2. **「条数」从右端挪到左段**，右端让给只在存在时出现的小标签（[SessionTag]）：
+ *     「18 条 · 已命名 · 分支」那种靠间隔点串起来的尾巴，读起来是一串字段而不是
+ *     一条信息。父会话的「来自 X」也从**第三行**收进标签，行高因此固定成两行。
+ *  3. **当前会话不再用描边胶囊**（`CurrentBadge` 已删）：整行 accent 12% 底 +
+ *     行左缘一条 3dp 竖条 + 标题 SemiBold，见下面 `drawBehind` 那段。
  *
  * 行内边距 `10px 12px`、两行间距 3、第一行 `gap:7`、第二行 `gap:8`。
- *
- * 第三行是本轮的唯一形态改动，理由写在 [SessionRow] 的 `forkedFrom` 参数与
- * `SessionsScreen` 的 `## 一行的两行形态` 那一段里：有父会话的会话在**第二行末尾**从前
- * 只写两个字「· 分支」，看不出父是谁；`18 条 · 分支 · 已命名` 因此变成 `18 条 · 已命名`
- * 加上这独立的一行。**两行形态本身没有变**，没有父会话的行一个像素都不动。
  *
  * **行的底与分隔线是那张卡的**（v2 的 `Card`：`surf-low`、圆角 10、`margin:0 14px`，
  * 线只画在行与行之间、再向内缩 14）：所以这里按 [first]/[last] 只圆该圆的两个角，线画在
  * 下一行的顶上而不是每一行的下沿——一组的最后一行下面没有线，下一组的头才接得上。
  *
- * 相对时间用 `monoSmall`（12 等宽）：v2 是 `mono t12 c-muted`，等宽保证滚动时那一列
- * 数字不抖；原来的 `numeric` 是 13 档。
- *
- * 会话名不因「当前」而变色：v2 的标题是 `t15 w5`（正文色），当前是靠**徽标**说的
- * （`phone19`）。pi 自己会把当前会话那一行染成 accent（`session-selector.ts` 的
- * `isCurrent → accent`），但那一档的呈现是外观，按 `11-designer-adjudication.md`
- * 的规则（外观与版式以 v2 为准）交给徽标。
+ * 相对时间用 `meta` + `tnum`（12 档 + 等宽数字）：v2 是 `mono t12 c-muted`，等宽保证
+ * 滚动时那一列数字不抖；单位与数字之间**不留空格**（`11分钟前`）。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -975,17 +1003,12 @@ private fun SessionRow(
     active: Boolean,
     first: Boolean,
     last: Boolean,
-    workspaceLabel: String,
     /**
-     * 这一行**来自**的那个会话的显示名，取不到父行时是 null。
+     * 父会话的显示名，取不到就是 null（父不在列表里）。
      *
-     * 只有 [PiSessionStore.Summary.parentSession] 存在时才有意义 —— 那个字段是 pi 写在子会话
-     * 文件头里的原会话路径（`docs/session-format.md:72-76`），`ui/chat/SessionForkLabel.kt` 的
-     * [forkParentNameOf] 把它翻成名字（那个文件是纯的，本机有 harness 跑它）。
-     *
-     * 名字叫 `forkedFrom` 只是因为 pi 把写这个字段的机制叫 `fork`（`/clone` 走的也是它，
-     * `rpc-mode.ts:619-628`）；**界面上的字不许跟着叫「分叉自」**，理由见 `SessionsScreen`
-     * 的 `## 一行的两行形态` 那一段。
+     * 它现在画在**第二行右端的小标签**里（「来自 X」），不再是单独一行：设计稿把
+     * 「已命名 / 来自」都收成 12sp 的小标签，行高因此固定成两行，而分组头已经说过
+     * 工作区，行里不必再说一遍。
      */
     forkedFrom: String?,
     onOpen: () -> Unit,
@@ -1006,17 +1029,43 @@ private fun SessionRow(
             .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         if (!first) {
-            // `.div` 是 `borderMuted` **不透明**（`.hair` 才是 55% 那根），所以这里是
-            // `outline` 而不是 `outlineVariant`：卡内的行间线在稿子里比页面上的 hair 更实。
+            // 卡内行间线：**0.5dp 的 `outlineVariant`（`borderMuted` 的 55%）**，左侧
+            // 缩进到文字列。它属于这一张卡，不是页面上的分栏线 —— 之前用 1dp 的不透明
+            // `outline`，在深色主题下读起来是一条压过卡片的黑线（用户：「顶满全宽的深色
+            // 分隔线」）。线只画在下一行的顶上：一组最后一行下面没有线。
             HorizontalDivider(
                 modifier = Modifier.padding(start = PiSettingsMetrics.dividerInset),
-                thickness = PiSettingsMetrics.hairline,
-                color = MaterialTheme.colorScheme.outline,
+                thickness = PiSpacing.hairlineThin,
+                color = MaterialTheme.colorScheme.outlineVariant,
             )
         }
+        // 当前会话：**行底色 + 左侧 3dp 主色竖条**，不再是描边胶囊。竖条用
+        // `drawBehind` 画在行自己的左缘、上下各内缩 12（设计稿 §6），这样它
+        // 不会把行撑高，也不会被 `combinedClickable` 的 ripple 盖住。
+        val accent = MaterialTheme.colorScheme.primary
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // 底色先画、竖条后画：modifier 链上**外层先画**，所以 `background` 写在
+                // `drawBehind` 前面，竖条才不会被那层 tint 盖住。
+                .then(
+                    if (active) {
+                        Modifier.background(PiTheme.palette.selectedBg.copy(alpha = 0.35f))
+                    } else {
+                        Modifier
+                    },
+                )
+                .drawBehind {
+                    if (!active) return@drawBehind
+                    val inset = PiSpacing.cardPadding.toPx()
+                    val width = PiSpacing.stripe.toPx()
+                    drawRoundRect(
+                        color = accent,
+                        topLeft = Offset(0f, inset),
+                        size = Size(width, (size.height - inset * 2).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius(width / 2f),
+                    )
+                }
                 .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
                 .padding(
                     horizontal = PiSettingsMetrics.rowPaddingHorizontal,
@@ -1031,15 +1080,20 @@ private fun SessionRow(
                     summary.displayName,
                     modifier = Modifier.weight(1f),
                     // 15/500：v2 的 `t15 w5`，行标题那一档 —— `PiType.rowTitle`。
-                    style = PiType.rowTitle,
+                    // 当前会话升到 SemiBold（设计稿 §6），除了竖条之外的第二层标记。
+                    style = if (active) {
+                        PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold)
+                    } else {
+                        PiType.rowTitle
+                    },
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (active) CurrentBadge()
                 Text(
                     relativeTime(summary.lastActivityAt),
-                    style = PiTheme.text.monoSmall,
+                    // 数字等宽：滚动时那一列不抖（`tnum`）。
+                    style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
                     color = PiTheme.palette.muted,
                 )
             }
@@ -1048,95 +1102,53 @@ private fun SessionRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(SESSIONS_ROW_PROP_GAP),
             ) {
+                // 第二行左：**模型 · 条数**。工作区名不再重复 —— 分组头已经说过是哪一组，
+                // 每行再印一遍只是把同一个词印 N 次（设计稿 §6）。
                 Text(
                     buildString {
-                        append(workspaceLabel)
-                        summary.model?.let { append(" · ").append(it) }
+                        summary.model?.takeIf { it.isNotBlank() }?.let {
+                            append(it).append(" · ")
+                        }
+                        append(summary.messageCount).append(" 条")
                     },
                     modifier = Modifier.weight(1f),
-                    style = PiTheme.text.meta,
+                    style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    buildString {
-                        append(summary.messageCount).append(" 条")
-                        if (hasName(summary)) append(" · 已命名")
-                    },
-                    style = PiTheme.text.meta,
-                    color = PiTheme.palette.muted,
-                )
-            }
-            // 「这条是从哪儿来的」——**单独一行**，不挤进上面那一行。
-            //
-            // 上面那一行右端是不带权重的 `Text`（它先量、拿到自己全部的字宽），所以把父会话
-            // 的名字接在「N 条」后面，一个长会话名就会把左边的工作区名挤成省略号；单独一行没有
-            // 这个问题，而且「更明显」正是用户要的那件事（原话：「如果是分叉，能不能让它显示的
-            // 更明显一点」）。
-            //
-            // 事实全部来自 pi 自己记的字段，一个字都不是推出来的：`parentSession` 是 `/fork`、
-            // `/clone`、`newSession({ parentSession })` 三种来源共用的同一个头字段
-            // （`docs/session-format.md:72-76`；写它的是 `session-manager.ts:1681`、`:1854`），
-            // 所以这里只说「来自谁」——**不写「分叉自」**，因为文件里没有区分分叉与复制的东西
-            // （`/clone` 就是 `fork(leafId, { position: "at" })`，`rpc-mode.ts:619-628`），
-            // 用户会看到的差别只是头两个字。pi 自己用缩进画这条关系（`session-selector.ts:206-231`、
-            // `:531-537`，且只在 Threaded 排序且没搜索时，`:380-386`），本应用用一行小字表达同一
-            // 件事实（见 `docs/known-gaps.md` §B2）。名字取不到时**不猜**：父被删掉或落在
-            // `list(limit)` 之外时只印「来自其他会话」+ 一句说明，绝不拿文件名冒充会话名。
-            if (summary.parentSession != null) {
-                Text(
-                    if (forkedFrom != null) "来自 $forkedFrom" else "来自其他会话（原会话不在列表里）",
-                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                    style = PiTheme.text.meta,
-                    color = PiTheme.palette.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // 第二行右：只在存在时出现的小标签。两者都显示 12sp（App 的最小字号档），
+                // 不再借 11sp —— 那一档低于 v2 的 12 下限。
+                if (hasName(summary)) SessionTag("已命名")
+                if (forkedFrom != null) {
+                    // 父会话名太长时只写「分支」：标签是 12sp、没有省略号的余地，而
+                    // 「来自一个被截断的名字」比「分支」更难读。
+                    SessionTag(if (forkedFrom.length > SESSIONS_TAG_NAME_MAX) "分支" else "来自 $forkedFrom")
+                }
             }
         }
     }
 }
 
-/** v2 的 `Badge`，`tone="var(--accent)"`, `glyph="●"`, `text="当前"`（见上面那句 KDoc）。 */
+/**
+ * 行内的小标签（设计稿 §6：「已命名」「来自 X」）：`surfaceContainerHighest` 底、
+ * 6dp 圆角、12sp。
+ *
+ * 内边距用 `PiSpacing` 的两个既有档（6 / 2），不再新造数值 —— `screens/` 下的裸 dp
+ * 字面量是受守卫脚本冻结的。
+ */
 @Composable
-private fun CurrentBadge() {
-    Row(
+private fun SessionTag(text: String) {
+    Text(
+        text = text,
         modifier = Modifier
-            .clip(PiShapes.badge)
-            .border(
-                PiSettingsMetrics.hairline,
-                MaterialTheme.colorScheme.outline,
-                PiShapes.badge,
-            )
-            .padding(
-                start = PiSettingsMetrics.badgePaddingStart,
-                end = PiSettingsMetrics.badgePaddingEnd,
-                top = PiSettingsMetrics.badgePaddingVertical,
-                bottom = PiSettingsMetrics.badgePaddingVertical,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
-    ) {
-        Box(
-            Modifier
-                .size(PiSettingsMetrics.badgeDot)
-                .clip(RoundedCornerShape(PiSettingsMetrics.badgeDotRadius))
-                .background(MaterialTheme.colorScheme.primary),
-        )
-        Text(
-            SESSIONS_BADGE_GLYPH,
-            style = PiTheme.text.monoSmall.copy(lineHeight = SESSIONS_BADGE_LINE_HEIGHT),
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-        )
-        Text(
-            "当前",
-            style = PiTheme.text.meta.copy(lineHeight = SESSIONS_BADGE_LINE_HEIGHT),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
-    }
+            .clip(PiShapes.tag)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = PiSpacing.gutter, vertical = PiSpacing.tiny),
+        style = PiTheme.text.meta,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+    )
 }
 
 /**
@@ -1168,10 +1180,10 @@ private fun relativeTime(epochMillis: Long): String {
     val minutes = TimeUnit.MILLISECONDS.toMinutes(delta)
     return when {
         minutes < 1 -> "刚刚"
-        minutes < 60 -> "$minutes 分钟前"
-        minutes < 60 * 24 -> "${minutes / 60} 小时前"
-        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)} 天前"
-        else -> "${minutes / (60 * 24 * 7)} 周前"
+        minutes < 60 -> "${minutes}分钟前"
+        minutes < 60 * 24 -> "${minutes / 60}小时前"
+        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}天前"
+        else -> "${minutes / (60 * 24 * 7)}周前"
     }
 }
 

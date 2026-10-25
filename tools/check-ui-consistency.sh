@@ -103,8 +103,8 @@ done
 R2_BASELINE=''
 
 # 规则 3 的总数基线（三个目录合计，纯注释行不计）。迁移后的实测值，只许降。
-DP_BASELINE=392
-SP_BASELINE=14
+DP_BASELINE=389
+SP_BASELINE=13
 
 R2_BASELINE_TOTAL="$(printf '%s\n' "$R2_BASELINE" | awk '{ s += $2 } END { printf "%d\n", s }')"
 

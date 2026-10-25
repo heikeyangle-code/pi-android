@@ -2,7 +2,6 @@ package app.pi.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -388,8 +387,9 @@ fun PiSeg(
     Row(
         modifier = modifier
             .clip(SEG_SHAPE)
+            // 去描边（与 chip 同一批）：填充底 + 选中段 `selectedBg` 就够分层了，
+            // 一圈 `borderMuted` 只会让这一行比内容更响。
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(1.dp, MaterialTheme.colorScheme.outline, SEG_SHAPE)
             .padding(SEG_PADDING),
         horizontalArrangement = Arrangement.spacedBy(SEG_ITEM_GAP),
     ) {

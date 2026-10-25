@@ -297,13 +297,16 @@ internal fun PiSettingsCard(
 }
 
 /**
- * v2 的 `Chip`（`design-demos/direction-b-v2.html:605`）：高 26、圆角 999、
- * `padding:0 9px`、`gap:5`；描边「选中 `borderAccent` / 否则 `borderMuted`」，底
- * 「选中 `surf-high` / 否则透明」，字 12（选中正文色、否则 muted），可选前置符号用
- * 等宽、muted。
+ * Chip：高 26、圆角 999、`padding:0 9px`、`gap:5`，字 12（选中正文色、否则 muted），
+ * 可选前置符号用等宽、muted。
+ *
+ * **无描边、填充底**（用户裁决，会话主页方案 §4）：选中 `primaryContainer`
+ * （= pi 的 `selectedBg`）、未选中 `surfaceContainerHigh`。原来两档都画 1px 描边
+ * （选中 `borderAccent`、否则 `borderMuted`）—— 一屏里每一颗 chip 都带一圈轮廓，
+ * 正是「可见描边」过多那种乱。文字与底色的对色关系不变：选中仍是正文色。
  *
  * 搜索快捷词与**会话列表的两个筛选**共用它：`phone19` 的「↕ 按时间 / ○ 全部」就是
- * `active` 那两档，所以它必须能画选中态，不能只是一个描边胶囊。
+ * `active` 那两档，所以它必须能画选中态，不能只是半个胶囊。
  *
  * @param active 这一档是不是当前选中的那一档（不是「开/关」）。
  * @param glyph 前置符号（`↕` / `✓` / `○`），可选。
@@ -323,11 +326,12 @@ internal fun PiSettingsChip(
             .alpha(if (enabled) 1f else 0.45f)
             .height(PiSettingsMetrics.chipHeight)
             .clip(PiShapes.badge)
-            .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
-            .border(
-                PiSettingsMetrics.hairline,
-                if (active) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline,
-                PiShapes.badge,
+            .background(
+                if (active) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
             )
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
