@@ -390,6 +390,14 @@ internal fun SubscriptionLoginSheet(
                 Text(asking.message, style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(PiSpacing.small))
                 if (asking.type == "select") {
+                    // pi 的选项 id 是它自己的（`browser` / `copy_code` / `device_code`），
+                    // 文案也常常是英文。这里只做**翻译**、不改变流程：选哪个仍然原样回给 pi。
+                    Text(
+                        "选择登录方式",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(PiSpacing.small))
                     // 选项是一张列表：整行可点，标签在上、说明在下，右侧 ›。
                     asking.options.forEach { option ->
                         Row(
@@ -407,10 +415,14 @@ internal fun SubscriptionLoginSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(option.label, style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
-                                if (option.description != null) {
+                                Text(
+                                    optionLabel(option),
+                                    style = PiTheme.text.prose,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                optionHint(option)?.let { hint ->
                                     Text(
-                                        option.description,
+                                        hint,
                                         style = PiTheme.text.meta,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -523,3 +535,19 @@ private sealed interface Step {
 }
 
 private data class Device(val userCode: String, val verificationUri: String, val expiresInSeconds: Int?)
+
+/** pi 的 `select` 选项 id → 中文标签；未知 id 原样显示 pi 的文案。 */
+private fun optionLabel(option: PiOAuthHost.Event.Prompt.Option): String = when (option.label) {
+    "Browser", "browser" -> "在浏览器里完成"
+    "Copy code", "copy_code" -> "复制授权码"
+    "Device code", "device_code" -> "用设备码登录"
+    else -> option.label.ifEmpty { option.id }
+}
+
+/** 选项的一句解释；pi 没给 description 时用我们自己的。 */
+private fun optionHint(option: PiOAuthHost.Event.Prompt.Option): String? = when (option.label) {
+    "Browser", "browser" -> option.description ?: "打开浏览器授权，完成后会自动回到这里。"
+    "Copy code", "copy_code" -> option.description ?: "浏览器停住后，把授权码或整条地址粘回来。"
+    "Device code", "device_code" -> option.description ?: "显示一个代码，在另一台设备上输入。"
+    else -> option.description
+}
