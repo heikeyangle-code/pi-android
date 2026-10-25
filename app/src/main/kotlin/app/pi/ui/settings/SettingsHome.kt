@@ -161,31 +161,22 @@ fun SettingsHome(
                     }
                 }
             }
-            // v2 把当时的 12 个分组放进**一张**卡片，行间是 1px inset hairline；分组
-            // 行数不多（现在是 10 行：11 组减掉下面被过滤的「模型与推理」，见
-            // `PiSettingsCatalog.groups`），所以整块是一个
-            // LazyColumn item，不拆成一个个 item。
-            item {
-                PiSettingsCard {
-                    // 「模型与推理」这一组的入口**按用户裁定删除**：组里的行（选择与推理）
-                    // 全都搬进了顶栏的「模型与供应商」一屏，首页不再有任何一条路进那个分组屏。
-                    // 行仍留在注册表里 —— 搜索、`groupTitle` 与编辑器都还要按 key 找到它们。
-                    // 高频组排前面：外观、提示词、会话、消息与网络、工具；其余按
-                    // 「用得少」向下（压缩/重试/扩展/安全/运行时）。组 id 是注册表里的
-                    // private 常量，这里只能写字面量；漏掉的 id 排最后（`order.size`），
-                    // 所以以后新增的组不会消失。
-                    val order = listOf(
-                        "appearance", "sessions", "messages", "prompts", "tools",
-                        "compaction", "retry", "runtime", "resources",
-                    )
-                    // 「安全与隐私」不在这张卡里：它被挪进下面的「其他」（用户裁定）。
-                    val listedGroups = PiSettingsCatalog.groups
-                        .filterNot { it.id == G_MODEL || it.id == "security" }
-                        .sortedBy {
-                            order.indexOf(it.id).let { index -> if (index < 0) order.size else index }
-                        }
-                    listedGroups.forEachIndexed { index, group ->
-                        if (index > 0) PiSettingsHairline()
+            // 分组一张卡一行（用户裁定：不要全塞进一张大卡，像「模型与供应商」那样一卡一扇门）。
+            // 顺序见下面的 `order`：高频在上，扩展与资源垫底。
+            //
+            // 「模型与推理」的入口仍删掉（组里的行都在「模型与供应商」屏里）。
+            val order = listOf(
+                "appearance", "sessions", "messages", "prompts", "tools",
+                "compaction", "retry", "runtime", "resources",
+            )
+            val listedGroups = PiSettingsCatalog.groups
+                .filterNot { it.id == G_MODEL || it.id == "security" }
+                .sortedBy {
+                    order.indexOf(it.id).let { index -> if (index < 0) order.size else index }
+                }
+            listedGroups.forEach { group ->
+                item {
+                    PiSettingsCard {
                         GroupEntry(
                             group = group,
                             store = store,
@@ -195,7 +186,6 @@ fun SettingsHome(
                     }
                 }
             }
-
             // 「其他」：一张卡、一行。里面那些与 pi 设置无关的门（终端 / Pi 文件 /
             // 设备能力 / 扩展包与信任 / 安全与隐私 / 开源许可）收进这一屏，点进去再看 ——
             // 用户裁定：首页只留「模型」「分组」「其他」三张卡。

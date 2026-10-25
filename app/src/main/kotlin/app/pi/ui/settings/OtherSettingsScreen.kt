@@ -40,58 +40,37 @@ internal fun OtherSettingsScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
-            item {
-                Column(Modifier.padding(top = PiSettingsMetrics.groupGap)) {
-                    PiSettingsCard {
-                        if (onOpenTerminal != null) {
-                            PiSettingsEntryRow(
-                                title = "终端",
-                                supporting = "输入 pi 回车进入原版 TUI：会话导入、需要终端的扩展。",
-                                onClick = onOpenTerminal,
-                                leadingIcon = Icons.Filled.Terminal,
-                            )
-                            PiSettingsHairline()
-                        }
+            val rows = buildList {
+                if (onOpenTerminal != null) add(
+                    Triple(Icons.Filled.Terminal, "终端", { onOpenTerminal() }),
+                )
+                add(Triple(Icons.AutoMirrored.Filled.InsertDriveFile, "Pi 文件", onOpenPiFiles))
+                if (onOpenDeviceCapabilities != null) add(
+                    Triple(Icons.Filled.PhoneAndroid, "设备能力", { onOpenDeviceCapabilities() }),
+                )
+                if (onOpenPackages != null) add(
+                    Triple(Icons.Filled.Extension, "扩展包与项目信任", { onOpenPackages() }),
+                )
+                add(Triple(Icons.Filled.Lock, "安全与隐私", onOpenSecurity))
+                if (onOpenLicenses != null) add(
+                    Triple(Icons.Filled.Info, "开源许可", { onOpenLicenses() }),
+                )
+            }
+            rows.forEachIndexed { index, (icon, title, action) ->
+                item(key = title) {
+                    PiSettingsCard(
+                        modifier = if (index == 0) {
+                            Modifier.padding(top = PiSettingsMetrics.groupGap)
+                        } else {
+                            Modifier
+                        },
+                    ) {
                         PiSettingsEntryRow(
-                            title = "Pi 文件",
-                            supporting = "看 pi 读的那些文件：设置、模型、提示词、主题、技能。",
-                            onClick = onOpenPiFiles,
-                            leadingIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+                            title = title,
+                            supporting = null,
+                            onClick = action,
+                            leadingIcon = icon,
                         )
-                        if (onOpenDeviceCapabilities != null) {
-                            PiSettingsHairline()
-                            PiSettingsEntryRow(
-                                title = "设备能力",
-                                supporting = "这台手机允许 agent 做什么：root / Shizuku / ADB、截图、点击。",
-                                onClick = onOpenDeviceCapabilities,
-                                leadingIcon = Icons.Filled.PhoneAndroid,
-                            )
-                        }
-                        if (onOpenPackages != null) {
-                            PiSettingsHairline()
-                            PiSettingsEntryRow(
-                                title = "扩展包与项目信任",
-                                supporting = "agent 能装什么、项目资源能不能信。",
-                                onClick = onOpenPackages,
-                                leadingIcon = Icons.Filled.Extension,
-                            )
-                        }
-                        PiSettingsHairline()
-                        PiSettingsEntryRow(
-                            title = "安全与隐私",
-                            supporting = "项目信任策略与安装遥测。",
-                            onClick = onOpenSecurity,
-                            leadingIcon = Icons.Filled.Lock,
-                        )
-                        if (onOpenLicenses != null) {
-                            PiSettingsHairline()
-                            PiSettingsEntryRow(
-                                title = "开源许可",
-                                supporting = "随包分发的 Linux 用户态、Node、git、proot 与库的许可证。",
-                                onClick = onOpenLicenses,
-                                leadingIcon = Icons.Filled.Info,
-                            )
-                        }
                     }
                 }
             }
