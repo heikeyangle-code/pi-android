@@ -1123,8 +1123,9 @@ object PiSettingsCatalog {
         // 值落在 `app-prefs.json`（`app.*` 由 `PiSettingsFileStore` 转进侧车文件），
         // 不进 pi 的 `settings.json`：pi 没有这个键，它只影响本 App 的渲染。
         // 键名必须写成**字面量**：`settings-audit`（`PiSettingsAuditCheck.kt` 的
-        // `keyPattern`）按 `key = "…",` 这一行认行，写成常量会让这一行从清单里消失，
-        // 架构规则与"每个键都有读者"于是根本看不到它。同一个字符串在
+        // `keyPattern`）以及 `tools/pi-contract.mjs` 的 `appKeys` 都是按注册表里
+        // `key = ` 后面跟一个引号字符串这一行认行的（**它们不剥注释**），写成常量会让
+        // 这一行从清单里消失，架构规则与"每个键都有读者"于是根本看不到它。同一个字符串在
         // `PiSystemPalettes.SETTING_KEY`（读者一侧：`PiSessionViewModel.applySystemPalette`
         // 与 `PiSettingEditorHost` 都用那个常量）—— 两处必须一起改。
         PiSetting(
