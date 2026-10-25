@@ -345,7 +345,10 @@ class PiOAuthHost(
         )
     }
 
-    private fun parse(json: JsonObject): Event? = when (json["ev"]?.jsonPrimitive?.contentOrNullSafe()) {
+    private fun parse(json: JsonObject): Event? {
+        // Block body, not `= when`: the prompt branch uses `?: return null`, and a `return`
+        // is not allowed in a function with an expression body.
+        return when (json["ev"]?.jsonPrimitive?.contentOrNullSafe()) {
         "providers" -> Event.Providers(
             (json["providers"] as? JsonArray).orEmpty().mapNotNull { element ->
                 (element as? JsonObject)?.let { providerOf(it) }
@@ -377,6 +380,7 @@ class PiOAuthHost(
         "cancelled" -> Event.Cancelled
         "error" -> Event.Error(json["message"]?.jsonPrimitive?.contentOrNullSafe() ?: "登录失败")
         else -> null
+        }
     }
 
     private fun JsonPrimitive.contentOrNullSafe(): String? = if (this is kotlinx.serialization.json.JsonNull) null else content

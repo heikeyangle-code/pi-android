@@ -327,7 +327,7 @@ class PiAuthStorage(
      *
      * 为什么不是 App 自己拼字段：`openai` 有 `accountId`、`github-copilot` 有
      * `enterpriseUrl`、`radius` 有 `scope`，pi 读回时用的正是这些键
-     * （`auth/oauth/*.ts` 的返回对象）。App 只校验 pi 加载器会拒绝的那几条
+     * （`auth/oauth/…ts` 的返回对象）。App 只校验 pi 加载器会拒绝的那几条
      * （`access`/`refresh` 字符串、`expires` 有限数字，`auth-storage.ts:228-255`），
      * 其余原样保留 —— 这就是「支持 pi 支持的所有订阅」在写盘这一侧的全部要求。
      *

@@ -329,7 +329,7 @@ internal fun SubscriptionLoginSheet(
                     asking.options.forEach { option ->
                         TextButton(
                             onClick = {
-                                active.answer(asking.promptId, option.id)
+                                session.answer(asking.promptId, option.id)
                                 prompt = null
                             },
                         ) {
@@ -347,7 +347,7 @@ internal fun SubscriptionLoginSheet(
                     TextButton(
                         enabled = pasted.isNotBlank(),
                         onClick = {
-                            active.answer(asking.promptId, pasted)
+                            session.answer(asking.promptId, pasted)
                             pasted = ""
                             prompt = null
                         },
@@ -380,7 +380,7 @@ internal fun SubscriptionLoginSheet(
                         // openai / openrouter 都是这么实现的）。
                         val asking = prompt
                         if (asking != null) {
-                            active.answer(asking.promptId, pasted)
+                            session.answer(asking.promptId, pasted)
                             prompt = null
                         }
                         pasted = ""
@@ -396,7 +396,7 @@ internal fun SubscriptionLoginSheet(
                     }
                     Spacer(Modifier.height(PiSpacing.small))
                     TextButton(onClick = {
-                        active.cancel()
+                        session.cancel()
                         onDismiss()
                     }) { Text("取消") }
                 }
@@ -415,7 +415,7 @@ internal fun SubscriptionLoginSheet(
                     Text("登录失败：${state.message}", style = PiTheme.text.meta, color = PiTheme.palette.warning)
                     Spacer(Modifier.height(PiSpacing.small))
                     TextButton(onClick = {
-                        active.cancel()
+                        session.cancel()
                         onDismiss()
                     }) { Text("关闭") }
                 }
