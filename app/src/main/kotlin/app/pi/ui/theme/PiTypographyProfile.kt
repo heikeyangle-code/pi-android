@@ -85,14 +85,19 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * |--------------------|---------|---------|-------------|-------|
  * | prose size/leading |  14/23  |  15/24  |   16/25     | 17/26 |
  * | markdown `block`   |    2    |    8    |     12      |  20   |
- * | list item top/bot  |   2/2   |   4/4   |     8/8     |  8/8  |
+ * | list item top/bot  |   2/2   |   3/3   |     4/4     |  5/5  |
  * | list indent        |   12    |   16    |     20      |  24   |
- * | inline code size/w | 12.5/400|  13/600 |    14/600   | 15/600|
+ * | inline code size/w | 12.5/400|  13/500 |    14/500   | 15/500|
  * | code size/leading  |  13/19  |  13/20  |    14/22    | 15/23 |
  * | table size/leading | 12.5/18 |  13/20  |    14/22    | 15/23 |
  * | headings h1…h6     | 22/20/18/16/15/14 | 24/22/20/18/17/16 | 25/23/21/19/18/17 | 26/24/22/20/19/18 |
  * | transcript gap     |    8    |    4    |      8      |  12   |
  * | 换人：消息之前       |    8    |   16    |     20      |  32   |
+ *
+ * 2026-10-26 修订（经典档不动）：列表项上下 padding 改为 **3 / 4 / 5**
+ * （项间实际 6 / 8 / 10；库的 `list` 是整组上下 padding，非经典收到 0），
+ * 行内代码字重 600 → 500（与正文一致，等宽本来就显重）。下面的段落里
+ * 「列表项 4 / 8 / 8」和「600」是修订前的历史数字。
  *
  * The body leading ratios are **1.643 / 1.600 / 1.563 / 1.529** — flat to within
  * 7 %, and monotonically **falling** as the size rises (the leading itself still
@@ -392,31 +397,35 @@ data class PiTypographyProfile(
             ),
             COMPACT to Preset(
                 proseSize = 15, proseLine = 24,
-                block = 8, listItem = 4, indent = 16,
+                // 2026-10-26: 列表项 padding 4 → 3。库的 listItemTop/Bottom 是
+                // 每项上下 padding，不是「项间 4 + 两倍 padding」；2×3 = 6 才是
+                // 目标项间距（舒适 2×4=8、宽松 2×5=10）。
+                block = 8, listItem = 3, indent = 16,
                 codeSize = 13, codeLine = 20,
                 blockSpacing = 4,
                 messageGap = 16,
-                inlineSize = 13f, inlineWeight = 600,
+                // 行内代码不再比正文重一档：等宽本来就显重，500 = 正文。
+                inlineSize = 13f, inlineWeight = 500,
                 tableSize = 13f, tableLine = 20,
                 headings = intArrayOf(24, 22, 20, 18, 17, 16),
             ),
             COMFORTABLE to Preset(
                 proseSize = 16, proseLine = 25,
-                block = 12, listItem = 8, indent = 20,
+                block = 12, listItem = 4, indent = 20,
                 codeSize = 14, codeLine = 22,
                 blockSpacing = 8,
                 messageGap = 20,
-                inlineSize = 14f, inlineWeight = 600,
+                inlineSize = 14f, inlineWeight = 500,
                 tableSize = 14f, tableLine = 22,
                 headings = intArrayOf(25, 23, 21, 19, 18, 17),
             ),
             LOOSE to Preset(
                 proseSize = 17, proseLine = 26,
-                block = 20, listItem = 8, indent = 24,
+                block = 20, listItem = 5, indent = 24,
                 codeSize = 15, codeLine = 23,
                 blockSpacing = 12,
                 messageGap = 32,
-                inlineSize = 15f, inlineWeight = 600,
+                inlineSize = 15f, inlineWeight = 500,
                 tableSize = 15f, tableLine = 23,
                 headings = intArrayOf(26, 24, 22, 20, 19, 18),
             ),
@@ -530,7 +539,11 @@ data class PiTypographyProfile(
                 inlineCodeSizeSp = numbers.inlineSize + offset,
                 inlineCodeLineHeightSp =
                     (if (numbers.inlineSize >= 14f) 19f else 18f) + offset,
-                inlineCodeWeight = if (numbers.inlineWeight >= 600) FontWeight.SemiBold else FontWeight.Normal,
+                inlineCodeWeight = when {
+                    numbers.inlineWeight >= 600 -> FontWeight.SemiBold
+                    numbers.inlineWeight >= 500 -> FontWeight.Medium
+                    else -> FontWeight.Normal
+                },
                 // 表格与别的角色同待遇：两个乘子都吃。列宽是渲染器写死的 160 dp，
                 // 所以行高只决定单元格多高、不改变它要挤进几列 —— 但「唯一的例外」
                 // 本身就是系统里的一个洞：`字号 = 更大` 时正文 18 而表格停在 14，

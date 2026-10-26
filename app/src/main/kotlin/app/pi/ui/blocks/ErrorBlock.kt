@@ -48,7 +48,6 @@ fun ErrorBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.toolErrorBg,
-            borderColor = palette.error.copy(alpha = 0.45f),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // F28: unified onto the titled-card stripe height. The 36dp this

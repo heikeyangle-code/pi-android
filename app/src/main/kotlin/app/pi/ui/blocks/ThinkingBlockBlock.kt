@@ -102,7 +102,6 @@ fun ThinkingBlockBlock(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                ExpandLabel(expanded)
             }
             if (expanded) {
                 // One scope around the body: the thinking text is model prose like any

@@ -318,7 +318,17 @@ internal fun piMarkdownTypography(
         quote = base.copy(color = palette.mdQuote, fontStyle = FontStyle.Italic),
         paragraph = if (monoParagraph) mono.copy(color = body) else base.copy(color = body),
         ordered = base.copy(color = body),
-        bullet = base.copy(color = palette.mdListBullet),
+        // 2026-10-26: 圆点只放大字形（1.4×），行高保持正文档，不把列表项撑高；
+        // 经典档冻结，仍是正文 14。
+        bullet = if (profile.isClassic) {
+            base.copy(color = palette.mdListBullet)
+        } else {
+            base.copy(
+                color = palette.mdListBullet,
+                fontSize = (base.fontSize.value * 1.4f).sp,
+                lineHeight = base.lineHeight,
+            )
+        },
         list = base.copy(color = body),
         textLink = TextLinkStyles(
             style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
@@ -386,8 +396,10 @@ private data class PiMarkdownPadding(
 /** The one [PiMarkdownPadding] per preset; see its KDoc for which fields move. */
 internal fun piMarkdownPadding(profile: PiTypographyProfile): MarkdownPadding = PiMarkdownPadding(
     block = profile.markdownBlock,
-    // Not one of the preset's rows; today's number, at every preset.
-    list = 4.dp,
+    // 库的 `list` 是整组列表的上下 padding，不是项间；项间距由
+    // listItemTop + listItemBottom 决定（舒适 2×4 = 8）。非经典把整组 padding
+    // 收成 0，列表上/下沿只由 item padding 给，block 之后不再叠 4。
+    list = if (profile.isClassic) 4.dp else 0.dp,
     listItemTop = profile.markdownListItemTop,
     listItemBottom = profile.markdownListItemBottom,
     listIndent = profile.markdownListIndent,

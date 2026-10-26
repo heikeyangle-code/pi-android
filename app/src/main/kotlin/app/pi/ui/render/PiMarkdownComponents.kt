@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.times
 import app.pi.bridge.rememberPiGuestImageTransformer
@@ -58,6 +59,7 @@ import app.pi.ui.theme.PiTheme
 import java.io.File
 import com.mikepenz.markdown.compose.LocalImageTransformer
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
+import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
@@ -65,12 +67,15 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownDivider
+import com.mikepenz.markdown.compose.elements.MarkdownHeader
 import com.mikepenz.markdown.compose.elements.MarkdownImage
 import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.model.ImageTransformer
+import com.mikepenz.markdown.model.MarkdownDimens
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.utils.resolveImageAlt
@@ -79,6 +84,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
@@ -196,11 +203,103 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
 internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     codeFence = { model -> PiCodeFence(model) },
     codeBlock = { model -> PiCodeBlock(model) },
+    // 2026-10-26: 标题额外上边距。库的 MarkdownElement 在每个块前插一个 block
+    // Spacer；这里在标题组件内部再叠 16/12/8/4（经典 0，首块/前一块也是标题时不叠）。
+    heading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 16.dp) },
+    heading2 = { model -> PiMarkdownHeading(model, level = 2, extraTop = 12.dp) },
+    heading3 = { model -> PiMarkdownHeading(model, level = 3, extraTop = 8.dp) },
+    heading4 = { model -> PiMarkdownHeading(model, level = 4, extraTop = 4.dp) },
+    heading5 = { model -> PiMarkdownHeading(model, level = 5, extraTop = 4.dp) },
+    heading6 = { model -> PiMarkdownHeading(model, level = 6, extraTop = 4.dp) },
+    setextHeading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 16.dp, setext = true) },
+    setextHeading2 = { model -> PiMarkdownHeading(model, level = 2, extraTop = 12.dp, setext = true) },
+    // 分割线：非经典 0.75dp 厚、上下各加 4dp（block 8/12/20 → 12/16/24）；
+    // 经典冻结 1dp、0 额外。
+    horizontalRule = { model -> PiMarkdownDivider(model) },
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
     table = { model -> PiTable(model) },
     custom = { type, model -> piCustomComponent(type, model) },
 )
+
+/**
+ * 一个 Markdown 标题：库的 [MarkdownHeader] + **额外上边距**。
+ *
+ * 库在每个块前插一个 `block` Spacer，标题自己没有上下边距；这里只在标题
+ * 组件内部再加 16/12/8/4dp（h1/h2/h3/h4–h6），所以总数是 `block + extra`：
+ * 紧凑 24/20/16/12、舒适 28/24/20/16、宽松 36/32/28/24。
+ *
+ * 不加的两种情况：消息的第一块（`startOffset == 0` 或前面只有 EOL），以及
+ * 前一块也是标题（连续标题不叠）。经典档全部 0，冻结。
+ */
+@Composable
+private fun PiMarkdownHeading(
+    model: MarkdownComponentModel,
+    level: Int,
+    extraTop: Dp,
+    setext: Boolean = false,
+) {
+    val typography = LocalMarkdownTypography.current
+    val style = when (level) {
+        1 -> typography.h1
+        2 -> typography.h2
+        3 -> typography.h3
+        4 -> typography.h4
+        5 -> typography.h5
+        else -> typography.h6
+    }
+    val extra = if (PiTheme.typography.isClassic || headingSkipsExtra(model.node)) 0.dp else extraTop
+    Box(Modifier.padding(top = extra)) {
+        MarkdownHeader(
+            content = model.content,
+            node = model.node,
+            style = style,
+            contentChildType = if (setext) {
+                MarkdownTokenTypes.SETEXT_CONTENT
+            } else {
+                MarkdownTokenTypes.ATX_CONTENT
+            },
+        )
+    }
+}
+
+/** 首块 / 前一块是标题 → 不叠额外上边距。 */
+private fun headingSkipsExtra(node: ASTNode): Boolean {
+    if (node.startOffset == 0) return true
+    val siblings = node.parent?.children ?: return false
+    val index = siblings.indexOfFirst { it === node }
+    if (index <= 0) return true
+    for (i in index - 1 downTo 0) {
+        val type = siblings[i].type
+        if (type == MarkdownTokenTypes.EOL) continue
+        return type in HEADING_TYPES
+    }
+    return true
+}
+
+private val HEADING_TYPES = setOf(
+    MarkdownElementTypes.ATX_1,
+    MarkdownElementTypes.ATX_2,
+    MarkdownElementTypes.ATX_3,
+    MarkdownElementTypes.ATX_4,
+    MarkdownElementTypes.ATX_5,
+    MarkdownElementTypes.ATX_6,
+    MarkdownElementTypes.SETEXT_1,
+    MarkdownElementTypes.SETEXT_2,
+)
+
+/**
+ * 分割线：非经典 0.75dp 厚、上下各多 4dp；经典保持 1dp、无额外间距。
+ * `block` 仍然由库的 Spacer 提供，所以非经典的实际间距是 8/12/20 + 4 =
+ * 12/16/24。
+ */
+@Composable
+private fun PiMarkdownDivider(model: MarkdownComponentModel) {
+    val classic = PiTheme.typography.isClassic
+    Box(Modifier.padding(vertical = if (classic) 0.dp else 4.dp)) {
+        MarkdownDivider(thickness = if (classic) 1.dp else 0.75.dp)
+    }
+}
 
 /**
  * The two things the renderer's dispatch would otherwise drop: pi's math nodes, and
@@ -544,6 +643,10 @@ private fun PiImageFallback(
  * 而 `tableCellWidth` 仍是 `piMarkdownDimens` 的 160 dp。右缘渐隐的触发条件就是库那条判据的
  * 补集，所以「有没有渐隐」与「库会不会滚」不可能对不上。
  *
+ * **2026-10-26 修订：** 列宽不再固定 160dp。下面所有提到 160 的段落是历史；
+ * 现在按可用宽均分（1 列全宽、2 列一半），只有均分后低于 120dp 才保持最小列宽
+ * 并横滑。表头底色也裁成表格的上圆角，不再用方角盖住 8dp 圆角。
+ *
  * ## 理由一：每格只画一行（覆盖这个槽的起因）
  *
  * 库的 `MarkdownComponents.table` 默认是
@@ -667,50 +770,47 @@ private fun PiTable(model: MarkdownComponentModel) {
     val palette = PiTheme.palette
     val dimens = LocalMarkdownDimens.current
     val density = LocalDensity.current
-    // 单元格**内容**宽 = 列宽 − 两侧内边距。这个数与横向滚动状态无关：
-    // `MarkdownTableHeader`/`MarkdownTableRow` 的行是 `Modifier.widthIn(tableWidth)`，
-    // 每格是 `Modifier.padding(tableCellPadding).weight(1f)`（库 0.45.0
-    // `compose/elements/MarkdownTable.kt:136`、`:141`、`:178`、`:182`），所以格子宽度
-    // 恒等于 `tableCellWidth/列数 × 列数` —— 也就是 `tableCellWidth`。正文那份
-    // `LocalMarkdownDimens` 只在这里读一次，`tableCellPadding` 是本 App 覆盖过的值
-    // （8 dp，v2 的 `padding:6px 8px`，见 `PiMarkdownTheme.kt`）。
-    val cellWidthPx = with(density) {
-        (dimens.tableCellWidth - dimens.tableCellPadding * 2).roundToPx()
-    }.coerceAtLeast(1)
-    // 列数只用于右缘渐隐那一个判断（列宽本身不是这里算的），算法与库 `MarkdownTable.kt:86`
-    // 一样：表头行里的 CELL 个数。
+    // 列数只用于「拟合列宽」和右缘渐隐两个判断，算法与库 MarkdownTable.kt:86 一样。
     val columns = remember(model.node) { piTableColumnCount(model.node) }
-    // 表格宽 = 列数 × 列宽，与库 `MarkdownTable.kt:88` 同一个算式；它只作为下面那次 px 比较的
-    // 一个乘数，不进任何布局约束。
-    val tableWidthDp = columns * dimens.tableCellWidth
-    // 表格里换一个**同一个类**的 transformer 实例：它把"画多宽"钉成上面这个数，
-    // 于是 (a) 缩略图按单元格宽解码（不是窗口的 1080 px），(b) 占位框只由宽度决定
-    // （不再是"容器高度 = 这一格自己"那个反馈环）。两个理由都在
-    // `bridge/PiGuestImageTransformer.kt` 的类注释里，连同代价。
-    val transformer = rememberPiGuestImageTransformer(cellWidthPx)
-
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // `constraints.maxWidth` 是整型 px，不用 `maxWidth` 那个已经按 density 取整过的 Dp。
-        val availablePx = constraints.maxWidth
-        // 库自己的判据是 `scrollable = maxWidth <= tableWidth`（`MarkdownTable.kt:99`），
-        // `tableWidth = columnsCount * tableCellWidth`。渐隐取它的**补集**，并且要求内容真的
-        // 超出：等号那一侧库会挂上滚动修饰符，但内容并没有超出，画渐隐只会凭空盖住内容一条。
-        val scrolls = columns > 0 && with(density) { tableWidthDp.toPx() } > availablePx
-
+        val available = maxWidth
+        // 2026-10-26：160dp 固定列宽在手机上很怪 —— 两列留一大块空、三列就横滑。
+        // 现在先按可用宽度均分（1 列 = 全宽、2 列 = 一半），只有均分后低于
+        // MIN_TABLE_CELL_WIDTH 才保持最小列宽并横滑。这样 3 列在 393dp 上也能
+        // 直接铺满，4 列以上才滚动。
+        val fitted = if (columns > 0) available / columns else dimens.tableCellWidth
+        val cell = fitted.coerceAtLeast(MIN_TABLE_CELL_WIDTH)
+        val tableDimens = object : MarkdownDimens by dimens {
+            override val tableCellWidth: Dp get() = cell
+        }
+        // 单元格内容宽 = 列宽 − 两侧内边距；图片 transformer 用它解码缩略图。
+        val cellWidthPx = with(density) {
+            (cell - dimens.tableCellPadding * 2).roundToPx()
+        }.coerceAtLeast(1)
+        val tableWidth = cell * columns
+        // 只有最小列宽真的把表撑出可用宽时才横滑/画渐隐；均分成功时不画。
+        val scrolls = columns > 0 && cell > fitted
+        val transformer = rememberPiGuestImageTransformer(cellWidthPx)
+        // 表头底色裁成表格的上圆角，否则一层方角底色会盖掉 8dp 圆角的右上/左上。
+        val headerShape = RoundedCornerShape(
+            topStart = dimens.tableCornerSize,
+            topEnd = dimens.tableCornerSize,
+        )
         CompositionLocalProvider(
-            // 库的 `MarkdownTableBasicText` 直接读库自己的 `LocalImageTransformer`
-            // （`MarkdownTable.kt:232`），单元格里的 `![]()` 因此按上面那个框画；
-            // 我们自己的 `LocalPiImageTransformer` 也一起换，两个读它的槽
-            // （`PiImagePlaceholder` / `PiInlineImage`）才不会与库看到两份答案。
             LocalImageTransformer provides transformer,
             LocalPiImageTransformer provides transformer,
+            LocalMarkdownDimens provides tableDimens,
         ) {
             MarkdownTable(
                 content = model.content,
                 node = model.node,
                 style = model.typography.table,
                 headerBlock = { content, header, tableWidth, tableStyle ->
-                    Box(modifier = Modifier.background(palette.mdHr.copy(alpha = 0.10f))) {
+                    Box(
+                        modifier = Modifier
+                            .clip(headerShape)
+                            .background(palette.mdHr.copy(alpha = 0.10f)),
+                    ) {
                         MarkdownTableHeader(
                             content, header, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES,
                         )
@@ -723,16 +823,12 @@ private fun PiTable(model: MarkdownComponentModel) {
         }
 
         if (scrolls) {
-            // 两层 Box：外层 `matchParentSize()` 才是"表格测完之后的大小"。表格在
-            // `LazyColumn` 里的高度约束是无界的，直接 `fillMaxHeight()` 会退化成 0。
             Box(modifier = Modifier.matchParentSize()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .width(TABLE_FADE_WIDTH)
                         .fillMaxHeight()
-                        // 与表格底同一个圆角（`tableCornerSize`，今天 8 dp），否则渐隐层会把
-                        // 右上/右下两个圆角填成直角。
                         .clip(RoundedCornerShape(dimens.tableCornerSize))
                         .background(
                             Brush.horizontalGradient(listOf(Color.Transparent, palette.cardBg)),
@@ -743,6 +839,11 @@ private fun PiTable(model: MarkdownComponentModel) {
     }
 }
 
+/**
+ * 拟合列宽的下限：低于它就横滑，而不是把每格压成一条细缝。
+ * 120dp 在正文 14sp 下约 7 个汉字/行；三列在 393dp 屏上正好放得下。
+ */
+private val MIN_TABLE_CELL_WIDTH = 120.dp
 /** 表头行里的 CELL 个数；与库 `MarkdownTable.kt:86` 是同一个算法。 */
 private fun piTableColumnCount(node: ASTNode): Int =
     node.findChildOfType(GFMElementTypes.HEADER)?.children?.count { it.type == GFMTokenTypes.CELL }

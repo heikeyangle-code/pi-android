@@ -118,6 +118,10 @@ object PiSpacing {
     /** 列表最后一行与输入框之间的呼吸空间。 */
     val composerListClearance = 24.dp
 
+    /** 转录回到底部按钮：视觉圆 36，点击框 48。 */
+    val scrollArrowVisual = 36.dp
+    val scrollArrowTap = 48.dp
+
     /** 输入框上方 / 下方渐隐带的长度（透明 → 页面底色 → 透明）。 */
     val composerGradientFade = 24.dp
 

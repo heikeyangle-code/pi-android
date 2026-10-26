@@ -1,6 +1,5 @@
 package app.pi.ui.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -206,7 +205,6 @@ private fun BootErrorCard(message: String, detail: String?) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(BootCardRadius),
         color = MaterialTheme.colorScheme.errorContainer,
-        border = BorderStroke(PiSpacing.hairline, palette.error.copy(alpha = 0.45f)),
     ) {
         Row(
             Modifier

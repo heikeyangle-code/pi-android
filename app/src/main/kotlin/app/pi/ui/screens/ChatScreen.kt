@@ -2320,34 +2320,41 @@ private fun ChatBody(
             // inventing any: `surfaceContainerHigh` ground, a `borderMuted` hairline,
             // no elevation (`direction-b-v2.html:1510`, and `04 §2.3`: 层级不用阴影).
             //
-            // **When each is shown.** Up: only when there is something above, i.e. the
-            // viewport is not on the first item. Down: when there is something below
-            // **or** the follow is paused — the second half matters, because a
-            // navigation that lands on the last row deliberately keeps the follow off
-            // (`TailFollow.pause`, pi's `disableFollow`), and hiding the button there
-            // would leave no way to re-arm it. A viewport that is at the bottom *and*
-            // following shows neither, which is the state the transcript is in most of
-            // the time and the reason the old pill was the only thing on screen.
-            val showUp = !atTop
+            // **When each is shown.** Up: once the reader is roughly two screens
+            // away from the first row — approximated by 2× the number of rows the
+            // viewport currently shows, so a small nudge does not summon it. Down:
+            // when there is something below **or** the follow is paused — the second
+            // half matters, because a navigation that lands on the last row
+            // deliberately keeps the follow off (`TailFollow.pause`, pi's
+            // `disableFollow`), and hiding the button there would leave no way to
+            // re-arm it. A viewport that is at the bottom *and* following shows
+            // neither, which is the state the transcript is in most of the time.
+            val showUp by remember(listState) {
+                derivedStateOf {
+                    val visible = listState.layoutInfo.visibleItemsInfo.size
+                    visible > 0 && listState.firstVisibleItemIndex >= visible * 2
+                }
+            }
+
             val showDown = !atBottom || !following
             if (showUp || showDown) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        // v2's dense control step: the pair floats 12 dp in from the
-                        // page edge, 8 dp apart. Both numbers were one-use constants.
+                        // 视觉 36、点击 48；两枚用 0 间距让 48 的点击框相接，
+                        // 圆与圆之间仍是 12dp 的视觉缝（48 − 36）。
                         //
-                        // 悬浮输入框之后，这一对不能停在屏幕底边：底边归输入框和它的
-                        // 渐隐层。`listBottomClearance` 把输入框与 inset 让开，再加
-                        // 32 dp 让开输入框上方那圈渐隐，箭头才不会被渐变盖住。
+                        // 位置：外框底边 = clearance − 18；48 的点击框里 36 的
+                        // 圆再上收 6，视觉底边正好落在「输入框（含持久卡）顶边 + 12」。
                         .padding(
                             start = 12.dp,
                             top = 12.dp,
-                            end = 12.dp,
-                            bottom = listBottomClearance + 32.dp,
+                            // 点击框 48、圆 36：end 6 + 内圈 6 = 视觉右缘 12。
+                            end = 6.dp,
+                            bottom = listBottomClearance - 18.dp,
                         ),
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
                     if (showUp) {
                         ScrollArrowButton(
@@ -2452,6 +2459,7 @@ private fun ChatBody(
                         )
                     },
             )
+
 
             // 悬浮底栏：队列行 / 附件条 / 命令面板 / 输入框都叠在列表之上，整层被
             // 键盘和导航条抬起。输入框自己只负责左右 12、底 8。
@@ -4176,8 +4184,9 @@ private const val TRANSCRIPT_WINDOW_STEP = 50
  */
 private const val FRESH_ROW_KEYS_MAX = 200
 
-/** The floating scroll arrow's diameter. Its gap and page inset are inline at the use. */
-private val SCROLL_ARROW_SIZE = 30.dp
+/** The floating scroll arrow's visual diameter; the tap target is [SCROLL_ARROW_TAP]. */
+private val SCROLL_ARROW_SIZE = PiSpacing.scrollArrowVisual
+private val SCROLL_ARROW_TAP = PiSpacing.scrollArrowTap
 
 /**
  * Idle opacity of a scroll arrow. The buttons sit over the transcript, so at rest
@@ -4212,11 +4221,7 @@ private fun ScrollArrowButton(
     val pressed by interaction.collectIsPressedAsState()
     Box(
         modifier = Modifier
-            .size(SCROLL_ARROW_SIZE)
-            .alpha(if (pressed) 1f else SCROLL_ARROW_IDLE_ALPHA)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(1.dp, PiTheme.palette.borderMuted, CircleShape)
+            .size(SCROLL_ARROW_TAP)
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -4225,21 +4230,31 @@ private fun ScrollArrowButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            modifier = Modifier.size(18.dp),
-            tint = MaterialTheme.colorScheme.onSurface,
-        )
-        if (unread) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .size(5.dp)
-                    .clip(RoundedCornerShape(1.dp))
-                    .background(PiTheme.palette.accent),
+        Box(
+            modifier = Modifier
+                .size(SCROLL_ARROW_SIZE)
+                .alpha(if (pressed) 1f else SCROLL_ARROW_IDLE_ALPHA)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .border(1.dp, PiTheme.palette.borderMuted, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurface,
             )
+            if (unread) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(5.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(PiTheme.palette.accent),
+                )
+            }
         }
     }
 }
