@@ -8,16 +8,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import app.pi.ui.components.PiType
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -130,15 +135,15 @@ private val OVERLAY_SNACKBAR_INSET = 32.dp
 // 30/17 boxes. Every screen in this half goes through this one function instead, so
 // the chrome cannot drift screen by screen.
 
-/** `06 §2`「顶栏：高 48」. */
-private val TOP_BAR_HEIGHT = 48.dp
+/** 所有屏共用的顶栏高度：56（对话页顶栏同值）。 */
+private val TOP_BAR_HEIGHT = 56.dp
 
 /** `06 §2`「水平 14」. */
 private val TOP_BAR_INSET = 14.dp
 
-/** The back chevron's press box and glyph (`TopBar`: 32x32 radius 8, icon 18). */
-private val TOP_BAR_BACK_BOX = 32.dp
-private val TOP_BAR_BACK_GLYPH = 18.dp
+/** The back chevron's press box and glyph: 48 热区 / 24 字形，与右侧图标同一套。 */
+private val TOP_BAR_BACK_BOX = 48.dp
+private val TOP_BAR_BACK_GLYPH = 24.dp
 
 /**
  * `TopBar`'s `margin-left:-6` on the back box: the chevron sits 8 from the edge
@@ -151,53 +156,47 @@ private val TOP_BAR_BACK_NUDGE = 6.dp
 /** The row's own gap between the back box, the title block and the actions. */
 private val TOP_BAR_GAP = 10.dp
 
-/** `TopBar` right cluster: `gap:4`. */
-private val TOP_BAR_ACTION_GAP = 4.dp
+/** 右侧图标的间隔：0，48dp 热区本身已经给出 24dp 的视觉间隔。 */
+private val TOP_BAR_ACTION_GAP = 0.dp
 
-/** One action's press box and glyph (`TopBar` right icons: 30x30, icon 17). */
-private val TOP_BAR_ACTION_BOX = 30.dp
-private val TOP_BAR_ACTION_GLYPH = 17.dp
+/** One action's press box and glyph: 48 热区 / 24 字形。 */
+private val TOP_BAR_ACTION_BOX = 48.dp
+private val TOP_BAR_ACTION_GLYPH = 24.dp
 
 /** The text action's own padding (`TopBar`: `5px 9px`). */
 private val TOP_BAR_TEXT_ACTION_PADDING = 9.dp
 private val TOP_BAR_TEXT_ACTION_PADDING_VERTICAL = 5.dp
 
-/** The radius both press boxes use. */
+/** 文字按钮的按压缩形状（图标按钮用圆形，见 [TOP_BAR_ICON_SHAPE]）。 */
 private val TOP_BAR_PRESS_SHAPE = RoundedCornerShape(8.dp)
 
+/** 图标按钮/返回键的圆形热区，与对话页顶栏一致。 */
+private val TOP_BAR_ICON_SHAPE = CircleShape
+
 /**
- * The app bar every screen in this half draws.
+ * The app bar every screen in this half draws — now the same geometry as the chat top
+ * bar: 56 high, page-coloured and opaque, 16 SemiBold title, 48/24 icon actions.
  *
- * @param meta the second line: v2's 12 muted text, one `margin-top:1` under the
- *   title.
- * @param engineMeta the second line for a screen whose second line *is* the engine
- *   state — the session overlay (`phone19`) does this. It wins over [meta] when both
- *   are given, and it is the triple-encoded spelling (`✓ 就绪`), not a bare word:
- *   see [PiTopBarEngineMeta].
- * @param onBack null on the three top-level destinations; when it is set the
- *   chevron is the *first* child and the title block starts 50 from the left edge,
- *   which is where the board puts it.
- * @param actions the right cluster. The caller supplies its own press boxes so a
- *   text action (v2's 导入 / 刷新 / 保存到 Download) and an icon action can sit
- *   side by side as the board draws them.
+ * 顶栏不再画常驻分隔线；对话页的 0.5dp 发丝线由它自己的滚动状态控制。
+ *
+ * @param statusLabel when set, a 7dp engine-state dot is drawn before the title
+ *    (colour from [stateToneColor]); the session overlay uses it.
+ * @param onBack null on the top-level destinations; when set the circular back box
+ *    is the first child.
+ * @param actions the right cluster; callers pass [PiTopBarIcon] or a text action.
  */
 @Composable
 fun PiTopBar(
     title: String,
     modifier: Modifier = Modifier,
-    meta: String? = null,
-    engineMeta: String? = null,
+    statusLabel: String? = null,
     onBack: (() -> Unit)? = null,
     actions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     Column(
         modifier
             .fillMaxWidth()
-            // `surfaceDim` is the design's `--surf-dim`: the chrome tone v2 gave its
-            // bars, one step below the content's own background.
-            // 状态栏是透明的（`MainActivity` 只设 TRANSPARENT），顶栏若用 `surfaceDim`
-            // 就会在状态栏下方露出对不上色的一块（浅色主题下最明显）。用页面同底色，
-            // 让状态栏、顶栏、页面是同一个面 —— 这是修 bug，不是风格改动。
+            // 不透明：状态栏、顶栏、页面同色，内容不会从下面透出半截。
             .background(MaterialTheme.colorScheme.background),
     ) {
         Row(
@@ -215,8 +214,8 @@ fun PiTopBar(
                 Box(
                     modifier = Modifier
                         .size(TOP_BAR_BACK_BOX)
-                        .clip(TOP_BAR_PRESS_SHAPE)
-                        .clickable(onClick = onBack),
+                        .clip(TOP_BAR_ICON_SHAPE)
+                        .clickable(onClickLabel = "返回", onClick = onBack),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -227,30 +226,29 @@ fun PiTopBar(
                     )
                 }
             }
-            Column(
+            Row(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (statusLabel != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(
+                                stateToneColor(engineStateTone(statusLabel), PiTheme.palette),
+                            )
+                            .semantics { contentDescription = "引擎：$statusLabel" },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = PiType.topBarTitle,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (engineMeta != null) {
-                    PiTopBarEngineMeta(engineMeta)
-                } else if (meta != null) {
-                    Text(
-                        meta,
-                        // `TopBar`: `marginTop:1`.
-                        modifier = Modifier.padding(top = 1.dp),
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
             if (actions != null) {
                 Row(
@@ -260,24 +258,20 @@ fun PiTopBar(
                 )
             }
         }
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outline,
-        )
     }
 }
 
 /**
- * One icon action's press box for [PiTopBar]: the board's 30x30 radius-8 box with a
- * 17 glyph, so a top bar does not have to carry its own copy of those numbers.
+ * One icon action's press box for [PiTopBar]: 48dp 圆形热区 / 24dp 字形，和对话页
+ * 顶栏的 [app.pi.ui.screens.ChatTopBarAction] 同一套尺寸。
  */
 @Composable
 fun PiTopBarIcon(onClick: () -> Unit, contentDescription: String, icon: ImageVector) {
     Box(
         modifier = Modifier
             .size(TOP_BAR_ACTION_BOX)
-            .clip(TOP_BAR_PRESS_SHAPE)
-            .clickable(onClick = onClick),
+            .clip(TOP_BAR_ICON_SHAPE)
+            .clickable(onClickLabel = contentDescription, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

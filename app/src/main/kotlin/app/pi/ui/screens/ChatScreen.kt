@@ -480,11 +480,10 @@ private fun ChatBody(
         mutableStateOf(prefs.expandToolsByDefault)
     }
     val listState = rememberLazyListState()
-    // 顶栏的 0.5dp 发丝线只在**列表离开顶部之后**出现；顶栏本身是页面底色，不再常驻一条灰线。
+    // 顶栏的 0.5dp 发丝线只在**手指滚动/惯性滑动期间**出现；一停就收回，
+    // 不是“离开顶部就永久留在那里”。顶栏本身是页面底色，没有常驻灰线。
     val topBarScrolled by remember(listState) {
-        derivedStateOf {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-        }
+        derivedStateOf { listState.isScrollInProgress }
     }
     val context = LocalContext.current
 
@@ -1965,7 +1964,7 @@ private fun ChatBody(
                     }
                 }
             }
-            // 0.5dp 发丝线只在列表离开顶部之后出现；顶栏平时就是一块干净的页面底色。
+            // 0.5dp 发丝线只在滚动/惯性期间出现；一停就收回。
             if (topBarScrolled) {
                 HorizontalDivider(
                     thickness = PiSpacing.hairlineThin,
@@ -2403,8 +2402,8 @@ private fun ChatBody(
             }
             }
 
-            // 顶栏下方 12dp 的页面底色渐隐：只在列表已经滚离顶部时出现，让内容从
-            // 顶栏边缘"化"进去，而不是被一条硬边切掉。只画，不拦触摸。
+            // 顶栏下方 12dp 的页面底色渐隐：只在滚动/惯性期间出现，让移动中的内容
+            // 从顶栏边缘"化"进去。只画，不拦触摸。
             if (topBarScrolled) {
                 Box(
                     modifier = Modifier

@@ -312,7 +312,7 @@ fun SessionsScreen(
             title = view.label,
             // 顶栏的副行就是引擎状态（v2 的 `Engine`，`06 §4` 的三重编码：符号 + 词 +
             // 色）。会话列表是「看引擎在哪」的地方，所以这一行跟着它。
-            engineMeta = session.engineLabel(state),
+            statusLabel = session.engineLabel(state),
             actions = {
                 // 右侧四个位置：搜索 / 工作区 / 设置 / 「⋯」。
                 if (view == SessionsView.List) {
