@@ -2414,39 +2414,6 @@ private fun ChatBody(
                 )
             }
 
-            // 输入框上方的渐隐：用页面底色，从透明过渡到不透明；只画，不拦触摸。
-            // 底边铺到**屏幕底**（不是输入框底）：这样输入框下方 8dp 间距和导航条
-            // 区域也是页面底色，导航条透明后与页面同色；滚到下面的行不会从缝里
-            // 露出来，也正好接住被去掉的输入框投影。
-            //
-            // 顶边 = 输入框顶 − fade：渐变正好在输入框顶边结束，实心从顶边开始。
-            // 不能再用 `composerSlot`（它含 8dp 底距）当高度，否则实心会从输入框
-            // 顶边往上 8dp 就开始，形成一条"文字被提前盖住"的隐形遮罩。
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(
-                        composerHeight + PiSpacing.composerGradientFade +
-                            dockBottom + PiSpacing.composerBottomGap,
-                    )
-                    .drawBehind {
-                        val fade = PiSpacing.composerGradientFade.toPx()
-                        drawRect(
-                            color = pageBackground,
-                            topLeft = Offset(0f, fade),
-                            size = Size(size.width, size.height - fade),
-                        )
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(pageBackground.copy(alpha = 0f), pageBackground),
-                                startY = 0f,
-                                endY = minOf(fade, size.height),
-                            ),
-                        )
-                    },
-            )
-
             // 悬浮底栏：队列行 / 附件条 / 命令面板 / 输入框都叠在列表之上，整层被
             // 键盘和导航条抬起。输入框自己只负责左右 12、底 8。
             Column(
@@ -3908,8 +3875,14 @@ private fun Composer(
             .border(borderWidth, shownBorder, inputShape)
             // 1–6 行的高度变化在这里补齐；超过 6 行由字段自己内部滚动。
             .animateContentSize()
-            // 输入框改前原值：左右 10、上下 9；下面键行间距也是 8。
-            .padding(horizontal = PiSpacing.inner, vertical = 9.dp),
+            .padding(
+                start = PiSpacing.inner,
+                end = PiSpacing.inner,
+                top = 9.dp,
+                // 底面从 9 收到 4、键行前间距从 8 加到 14：键行（含发送）再往下
+                // 让一点，和输入框拉开距离，减少误触；行内仍是中心对齐。
+                bottom = PiSpacing.small,
+            ),
     ) {
             // 这个字段必须自己拿 `TextFieldValue`，不能用 `value: String` 那个重载。
             // 库的 String 重载把光标位置存在自己内部
@@ -3983,7 +3956,7 @@ private fun Composer(
                     }
                 },
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(13.dp))
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val configuration = LocalConfiguration.current
                 // 思考等级的文字：流式时键行还要多出「引导 / 后续」两枚，所以只有
