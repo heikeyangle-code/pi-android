@@ -122,8 +122,17 @@ object PiSpacing {
     val scrollArrowVisual = 36.dp
     val scrollArrowTap = 48.dp
 
-    /** 输入框上方 / 下方渐隐带的长度（透明 → 页面底色 → 透明）。 */
-    val composerGradientFade = 24.dp
+    /** 输入框上方渐隐带的长度（透明 → 页面底色）。 */
+    val composerGradientFade = 12.dp
+
+    /**
+     * 输入框下方渐隐带的长度（页面底色 → 透明）。
+     *
+     * 取 8dp，正好是输入框到导航条的那条缝：渐隐到导航条顶边已经透明，
+     * 导航条区域完全露出内容。24dp 的旧值会盖住整段 8 + 13dp 的可见区域，
+     * 那就是 2026-10-26 用户报的「底部啥也看不到」。
+     */
+    val composerBottomFade = 8.dp
 
     /** 工具行圆形热区；30 统一 `/`、回形针、⋮、引导 / 后续和环。 */
     val composerToolSize = 30.dp

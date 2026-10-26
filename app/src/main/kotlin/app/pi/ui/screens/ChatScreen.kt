@@ -2415,12 +2415,12 @@ private fun ChatBody(
             }
 
             // 输入框上/下各一段渐隐，和卡片同色；只画，不拦触摸。
-            // 上：透明 → 页面底色（卡片上方 [PiSpacing.composerGradientFade]）；
-            // 下：页面底色 → 透明（同样长度）。卡片背后这一段是实心，盖住圆角外
-            // 滚过的内容；再往下就完全透出列表 —— 8dp 缝和导航条区域自然露出来，
-            // 不再是一块不透明的死白。
+            // 上：透明 → 页面底色，12dp；下：页面底色 → 透明，**8dp**。
+            // 下面这段正好等于「输入框到导航条」的缝，渐隐到导航条顶边已经透明，
+            // 导航条区域完全露出内容；24dp 的旧值会盖住整段 8 + 13dp 的可见区域
+            //（2026-10-26 的实际回归）。卡片背后是实心，盖住圆角外滚过的内容。
             //
-            // 顶边 = 输入框顶 − fade：渐变正好在输入框顶边结束，实心从顶边开始。
+            // 顶边 = 输入框顶 − 上渐隐：渐变正好在输入框顶边结束，实心从顶边开始。
             // 不能再用 `composerSlot`（它含 8dp 底距）当高度，否则实心会从输入框
             // 顶边往上 8dp 就开始，形成一条"文字被提前盖住"的隐形遮罩。
             Box(
@@ -2428,13 +2428,15 @@ private fun ChatBody(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(
-                        composerHeight + PiSpacing.composerGradientFade * 2f +
+                        composerHeight + PiSpacing.composerGradientFade +
+                            PiSpacing.composerBottomFade +
                             dockBottom + PiSpacing.composerBottomGap,
                     )
                     .drawBehind {
-                        val fade = PiSpacing.composerGradientFade.toPx()
-                        val cardTop = fade
-                        val cardBottom = fade + composerHeight.toPx()
+                        val topFade = PiSpacing.composerGradientFade.toPx()
+                        val bottomFade = PiSpacing.composerBottomFade.toPx()
+                        val cardTop = topFade
+                        val cardBottom = topFade + composerHeight.toPx()
                         // 卡片背后：实心页面底色，盖住圆角外滚过的内容。
                         drawRect(
                             color = pageBackground,
@@ -2446,15 +2448,15 @@ private fun ChatBody(
                             brush = Brush.verticalGradient(
                                 colors = listOf(pageBackground.copy(alpha = 0f), pageBackground),
                                 startY = 0f,
-                                endY = fade,
+                                endY = topFade,
                             ),
                         )
-                        // 下边缘：页面底色 → 透明，和上边缘同长；再往下不画。
+                        // 下边缘：页面底色 → 透明；只占 8dp，导航条区域完整露出。
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(pageBackground, pageBackground.copy(alpha = 0f)),
                                 startY = cardBottom,
-                                endY = cardBottom + fade,
+                                endY = cardBottom + bottomFade,
                             ),
                         )
                     },
