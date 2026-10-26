@@ -444,22 +444,6 @@ fun PiRoot() {
     // 这些屏的参数按 `===` 比较（strong skipping），而这个组合每收到一次 `UiState`
     // 发布就重组一次（流式期间约 200ms），字面量 lambda 会让整屏跟着重算。
     val openChat: () -> Unit = remember { { destinationName = PiDestination.Chat.name } }
-    // 会话列表是覆盖层，不是目的地：从它的顶栏点工作区/设置时，只换目的地会把新屏
-    // 盖在覆盖层下面，用户得先返回一次才看得到（「点设置划两下返回才进去」）。
-    // 所以这两个门先关掉覆盖层，再换目的地 —— `closeOverlay` 对没有覆盖层的调用是
-    // 幂等的，对话页顶栏那两枚图标也走同一个 lambda。
-    val openWorkspace: () -> Unit = remember {
-        {
-            session.closeOverlay()
-            destinationName = PiDestination.Workbench.name
-        }
-    }
-    val openSettings: () -> Unit = remember {
-        {
-            session.closeOverlay()
-            destinationName = PiDestination.Settings.name
-        }
-    }
 
     // The one overlay (the session list — with pi's `/tree` as its second view — and
     // the terminal) is **not** a destination: it belongs to whatever session is on
@@ -512,6 +496,23 @@ fun PiRoot() {
      * 被拉回来"）。之后只有**新的**手势能再把它举起来。
      */
     val closeOverlay: () -> Unit = remember { { session.closeOverlay() } }
+
+    // 会话列表是覆盖层，不是目的地：从它的顶栏点工作区/设置时，只换目的地会把新屏
+    // 盖在覆盖层下面，用户得先返回一次才看得到（「点设置划两下返回才进去」）。
+    // 所以这两个门先关覆盖层，再换目的地 —— `closeOverlay` 对没有覆盖层的调用是
+    // 幂等的，对话页顶栏那两枚图标也走同一个 lambda。
+    val openWorkspace: () -> Unit = remember {
+        {
+            closeOverlay()
+            destinationName = PiDestination.Workbench.name
+        }
+    }
+    val openSettings: () -> Unit = remember {
+        {
+            closeOverlay()
+            destinationName = PiDestination.Settings.name
+        }
+    }
 
     // The theme picker lists what pi would load, not only what the `themes`
     // setting names, and the active theme's caveats are shown with it. Both come
