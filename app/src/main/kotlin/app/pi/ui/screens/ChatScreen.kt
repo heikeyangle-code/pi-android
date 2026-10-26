@@ -2414,56 +2414,38 @@ private fun ChatBody(
                 )
             }
 
-            // 输入框上/下各一段渐隐，和卡片同色；只画，不拦触摸。
-            // 上：透明 → 页面底色，**24dp（保持之前没问题的值）**；下：页面底色 → 透明，**8dp**。
-            // 下面这段正好等于「输入框到导航条」的缝，渐隐到导航条顶边已经透明，
-            // 导航条区域完全露出内容；24dp 的旧值会盖住整段 8 + 13dp 的可见区域
-            //（2026-10-26 的实际回归）。卡片背后是实心，盖住圆角外滚过的内容。
+            // 输入框上方的渐隐：用页面底色，从透明过渡到不透明；只画，不拦触摸。
+            // 底边铺到**屏幕底**（不是输入框底）：这样输入框下方 8dp 间距和导航条
+            // 区域也是页面底色，导航条透明后与页面同色；滚到下面的行不会从缝里
+            // 露出来，也正好接住被去掉的输入框投影。
             //
-            // 顶边 = 输入框顶 − 上渐隐：渐变正好在输入框顶边结束，实心从顶边开始。
+            // 顶边 = 输入框顶 − fade：渐变正好在输入框顶边结束，实心从顶边开始。
             // 不能再用 `composerSlot`（它含 8dp 底距）当高度，否则实心会从输入框
             // 顶边往上 8dp 就开始，形成一条"文字被提前盖住"的隐形遮罩。
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    // 高度只加**上**渐隐：下渐隐落在「底距 + 导航条」那段里，
-                    // 不再重复加一份 —— 之前 +2×fade 会让实心整体上移一份渐变，
-                    // 输入框上方凭空多出一条与 fade 等高的实心遮罩。
                     .height(
                         composerHeight + PiSpacing.composerGradientFade +
                             dockBottom + PiSpacing.composerBottomGap,
                     )
                     .drawBehind {
-                        val topFade = PiSpacing.composerGradientFade.toPx()
-                        val bottomFade = PiSpacing.composerBottomFade.toPx()
-                        val cardTop = topFade
-                        val cardBottom = topFade + composerHeight.toPx()
-                        // 卡片背后：实心页面底色，盖住圆角外滚过的内容。
+                        val fade = PiSpacing.composerGradientFade.toPx()
                         drawRect(
                             color = pageBackground,
-                            topLeft = Offset(0f, cardTop),
-                            size = Size(size.width, cardBottom - cardTop),
+                            topLeft = Offset(0f, fade),
+                            size = Size(size.width, size.height - fade),
                         )
-                        // 上边缘：透明 → 页面底色。
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(pageBackground.copy(alpha = 0f), pageBackground),
                                 startY = 0f,
-                                endY = topFade,
-                            ),
-                        )
-                        // 下边缘：页面底色 → 透明；只占 8dp，导航条区域完整露出。
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(pageBackground, pageBackground.copy(alpha = 0f)),
-                                startY = cardBottom,
-                                endY = cardBottom + bottomFade,
+                                endY = minOf(fade, size.height),
                             ),
                         )
                     },
             )
-
 
             // 悬浮底栏：队列行 / 附件条 / 命令面板 / 输入框都叠在列表之上，整层被
             // 键盘和导航条抬起。输入框自己只负责左右 12、底 8。
@@ -3926,15 +3908,8 @@ private fun Composer(
             .border(borderWidth, shownBorder, inputShape)
             // 1–6 行的高度变化在这里补齐；超过 6 行由字段自己内部滚动。
             .animateContentSize()
-            .padding(
-                start = PiSpacing.inner,
-                end = PiSpacing.inner,
-                top = 9.dp,
-                // 底面 9 → 4（-5）、键行前间距 8 → 13（+5）：键行整体下移 5dp，
-                // 输入框和按钮多出 5dp；卡片总高与改前完全一致（9+13+40+4 = 66），
-                // 不会再"感觉输入框变高"。
-                bottom = PiSpacing.small,
-            ),
+            // 输入框改前原值：左右 10、上下 9；下面键行间距也是 8。
+            .padding(horizontal = PiSpacing.inner, vertical = 9.dp),
     ) {
             // 这个字段必须自己拿 `TextFieldValue`，不能用 `value: String` 那个重载。
             // 库的 String 重载把光标位置存在自己内部
@@ -4008,7 +3983,7 @@ private fun Composer(
                     }
                 },
             )
-            Spacer(Modifier.height(13.dp))
+            Spacer(Modifier.height(8.dp))
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val configuration = LocalConfiguration.current
                 // 思考等级的文字：流式时键行还要多出「引导 / 后续」两枚，所以只有

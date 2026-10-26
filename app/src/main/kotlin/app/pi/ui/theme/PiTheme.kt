@@ -125,17 +125,8 @@ object PiSpacing {
     /** 输入框上方渐隐带的长度（透明 → 页面底色）。 */
     val composerGradientFade = 24.dp
 
-    /**
-     * 输入框下方渐隐带的长度（页面底色 → 透明）。
-     *
-     * 取 8dp，正好是输入框到导航条的那条缝：渐隐到导航条顶边已经透明，
-     * 导航条区域完全露出内容。24dp 的旧值会盖住整段 8 + 13dp 的可见区域，
-     * 那就是 2026-10-26 用户报的「底部啥也看不到」。
-     */
-    val composerBottomFade = 8.dp
-
-    /** 工具行圆形热区；30 统一 `/`、回形针、⋮、引导 / 后续和环。 */
-    val composerToolSize = 30.dp
+    /** 工具行圆形热区；32（输入框改前原值）。 */
+    val composerToolSize = 32.dp
 
     /** 工具行（`/`、回形针、⋮）的字形尺寸。 */
     val composerToolIcon = 20.dp
@@ -144,10 +135,10 @@ object PiSpacing {
     val composerSendSize = 40.dp
     val composerSendIcon = 18.dp
 
-    /** 上下文环的直径与笔宽；热区略大一圈，视觉仍是 20dp 的环。 */
+    /** 上下文环的直径与笔宽；热区与工具行同为 32，视觉仍是 20dp 的环。 */
     val composerRingDiameter = 20.dp
     val composerRingStroke = 2.dp
-    val composerRingTouch = 30.dp
+    val composerRingTouch = 32.dp
 
     /** 思考等级的文字按钮：只留 13sp 名字，高度 28。 */
     val composerThinkingHeight = 28.dp
