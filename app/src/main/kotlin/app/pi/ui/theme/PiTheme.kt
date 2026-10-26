@@ -136,6 +136,9 @@ object PiSpacing {
     val composerRingStroke = 2.dp
     val composerRingTouch = 30.dp
 
+    /** 思考等级的文字按钮：只留 13sp 名字，高度 28。 */
+    val composerThinkingHeight = 28.dp
+
     /** 外圈描边：平时 / 聚焦（宽度，颜色仍来自 thinking 等级）。 */
     val composerBorderIdle = 1.5.dp
     val composerBorderFocused = 2.dp

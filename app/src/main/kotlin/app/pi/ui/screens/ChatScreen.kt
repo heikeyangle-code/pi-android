@@ -175,6 +175,7 @@ import app.pi.ui.chat.TailFollow
 import app.pi.ui.chat.TailSnapshot
 import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.ThinkingPickerSheet
+import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.mayLoadEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
@@ -2680,6 +2681,7 @@ private fun ChatBody(
             // either — the same rule the send button's own "an image with no caption
             // is still a message" branch uses.
             canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
+            onCycleThinking = { session.cycleThinkingLevel() },
             onOpenPalette = { if (draft.isBlank()) draft = "/" },
             onOpenBash = { if (draft.isBlank()) draft = "!" },
             // `!!` types both characters: it is a different pi mode, not a double
@@ -3188,7 +3190,7 @@ private fun SearchBar(
  *
  * 工具行从左到右：`/`、回形针、⋮、流式时「引导 / 后续」、弹性空白、上下文环 20 dp
  * （2 dp 笔、30 dp 热区）、模型 chip（28 高、72–132 宽、13 sp Medium、中间省略）、
- * 发送 40 dp。
+ * 思考等级文字（宽度够时）、发送 40 dp。
  *
  * 尺寸 token 在 `PiSpacing`（`composer*`）里，屏幕侧只引用它们；这里剩下的是**时间与
  * 行数**，不是 dp：150 ms 的描边/进出、1.6 s 的呼吸、6 行上限、20 sp 行高。
@@ -3812,6 +3814,8 @@ private fun Composer(
     modelLabel: String?,
     /** 点模型 chip：拉模型列表，再开模型面板。 */
     onOpenModel: () -> Unit,
+    /** 点思考等级的文字：循环切到下一档。 */
+    onCycleThinking: () -> Unit,
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
     /** pi's `!!`: run the command without putting it in the model's context. */
@@ -3964,15 +3968,36 @@ private fun Composer(
             )
             Spacer(Modifier.height(8.dp))
             BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val configuration = LocalConfiguration.current
+                // 思考等级的文字：流式时键行还要多出「引导 / 后续」两枚，所以只有
+                // 当模型 chip 仍能保住最小宽度时才占位；否则先收起（顶栏 ⋮ 仍可改，
+                // 输入框描边也仍然跟着等级）。字体放大到 1.3 以上时同理。
+                val measurableThinking = configuration.fontScale <= 1.3f
+                val thinkingText = thinkingLabelOf(thinkingLevel)
+                val thinkingStyle = PiType.chipLabel
+                val textMeasurer = rememberTextMeasurer()
+                val density = LocalDensity.current
+                val thinkingWidth = if (measurableThinking) {
+                    with(density) {
+                        textMeasurer.measure(thinkingText, style = thinkingStyle).size.width.toDp()
+                    } + PiSpacing.small * 2f
+                } else {
+                    0.dp
+                }
                 // 右侧固定项：三枚工具 + 流式时两枚 + 环 + 两段间距 + 发送。
-                val fixed = PiSpacing.composerToolSize * 3f +
+                val base = PiSpacing.composerToolSize * 3f +
                     (if (streaming) PiSpacing.composerToolSize * 2f + PiSpacing.tiny else 0.dp) +
                     PiSpacing.composerRingTouch +
                     PiSpacing.composerChipGap +
                     PiSpacing.composerChipSendGap +
                     PiSpacing.composerSendSize
+                // 只有给 chip 留得下最小宽度时，思考等级文字才真的画出来。
+                val showThinking = measurableThinking &&
+                    (maxWidth - base - thinkingWidth - PiSpacing.small) >=
+                    PiSpacing.composerModelChipMinWidth
+                val fixed = base +
+                    (if (showThinking) thinkingWidth + PiSpacing.composerChipGap else 0.dp)
                 // chip 吃掉剩下的宽度（至少 72、至多 132），再给弹性空白留 4dp。
-                // 360dp 屏流式时正好落在 72，整行不会溢出；393dp 上约 101。
                 val chipMax = (maxWidth - fixed - PiSpacing.small)
                     .coerceIn(
                         PiSpacing.composerModelChipMinWidth,
@@ -4029,6 +4054,11 @@ private fun Composer(
                         maxWidth = chipMax,
                         onClick = onOpenModel,
                     )
+                    // 思考等级：**只删了 ◐ 图标**，文字按钮本身还在；宽度够就显示。
+                    if (showThinking) {
+                        Spacer(Modifier.width(PiSpacing.composerChipGap))
+                        ThinkingLevelButton(level = thinkingLevel, onClick = onCycleThinking)
+                    }
                     Spacer(Modifier.width(PiSpacing.composerChipSendGap))
                     Box(
                         modifier = Modifier
@@ -4397,6 +4427,32 @@ private fun ContextRingButton(
                     onClickLabel = "查看上下文与用量",
                     onClick = onOpenContext,
                 ),
+        )
+    }
+}
+
+/**
+ * 思考等级：**只剩文字**。2026-10-26 用户把 `◐` 图标删掉（「没什么用」），
+ * 文字按钮本身保留：13sp Medium 无衬线、28 高、点一下循环到下一档。
+ *
+ * 流式时键行多出「引导 / 后续」两枚，这里由 [BoxWithConstraints] 统一决定是否
+ * 显示（见 `Composer` 里的 `showThinking`），不是这枚按钮自己判断宽度。
+ */
+@Composable
+private fun ThinkingLevelButton(level: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(PiSpacing.composerThinkingHeight)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClickLabel = "切换思考等级：${thinkingLabelOf(level)}", onClick = onClick)
+            .padding(horizontal = PiSpacing.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = thinkingLabelOf(level),
+            style = PiType.chipLabel,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
         )
     }
 }
