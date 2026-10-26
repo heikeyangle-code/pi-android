@@ -75,16 +75,17 @@ object PiSpacing {
 
     // ------------------------------------------------------ 悬浮输入框 (composer)
     //
-    // 用户 2026-10-26 的裁决：输入框悬浮、圆角 26、左右 12、底 8、中性 6dp 阴影；
-    // 工具行 32dp 圆形热区 / 20dp 字形（放得下流式时才出现的两枚送达 chip）；发送 40dp；思考等级 28dp 高 / 16dp 字形；
-    // 上下文环 20dp / 2dp 描边。数字集中在这里，屏幕侧只引用 token —— 也让
-    // `tools/check-ui-consistency.sh` 的裸 dp 棘轮不必为这一次设计上调。
+    // 用户 2026-10-26 的裁决：输入框悬浮、圆角 26、左右 12、底 8；工具行 32dp
+    // 圆形热区 / 20dp 字形（放得下流式时才出现的两枚送达 chip）；发送 40dp；思考等级
+    // 28dp 高 / 16dp 字形；上下文环 20dp / 2dp 描边。数字集中在这里，屏幕侧只引用
+    // token —— 也让 `tools/check-ui-consistency.sh` 的裸 dp 棘轮不必为这一次设计上调。
+    //
+    // 没有投影 token：6dp 的 elevation 投影会落在输入框下面那行卡片上，浅色主题里
+    // 就是输入框与导航条之间的一条灰带（用户当天晚些时候要求去掉）；悬浮感由
+    // `surfaceContainerLow` 的卡片底色和 1.5 / 2dp 描边承担。
 
     /** 悬浮输入框的圆角。 */
     val composerRadius = 26.dp
-
-    /** 中性投影（不拿 accent 染色），浅色主题下承担"浮起来"的那一层。 */
-    val composerShadow = 6.dp
 
     /** 输入框与屏幕底边（导航条 / 键盘之上）的距离。 */
     val composerBottomGap = 8.dp
@@ -110,7 +111,7 @@ object PiSpacing {
     val composerListClearance = 24.dp
 
     /** 输入框上方渐隐带的高度（透明 → 页面底色）。 */
-    val composerGradientFade = 40.dp
+    val composerGradientFade = 24.dp
 
     /** 工具行圆形热区；32 而不是 36，给流式时的「引导 / 后续」留出宽度。 */
     val composerToolSize = 32.dp

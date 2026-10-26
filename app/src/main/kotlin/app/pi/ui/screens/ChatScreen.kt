@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -447,7 +446,8 @@ private fun ChatBody(
     val dockBottom = dockInsets.asPaddingValues().calculateBottomPadding()
     var composerHeightPx by remember { mutableStateOf(0) }
     var aboveComposerHeightPx by remember { mutableStateOf(0) }
-    val composerSlot = with(LocalDensity.current) { composerHeightPx.toDp() } + PiSpacing.composerBottomGap
+    val composerHeight = with(LocalDensity.current) { composerHeightPx.toDp() }
+    val composerSlot = composerHeight + PiSpacing.composerBottomGap
     val aboveComposerSlot = with(LocalDensity.current) { aboveComposerHeightPx.toDp() }
     // 输入框上方那几张持久卡（排队 / 导出 / 扩展状态 / widget / bash）也占列表底边：
     // 不算它们的高度，最后一条回复会被其中一张盖住 —— 恰好是最需要看的时候。
@@ -2424,22 +2424,28 @@ private fun ChatBody(
             }
 
             // 输入框上方的渐隐：用页面底色，从透明过渡到不透明；只画，不拦触摸。
-            // 高度跟输入框走（输入框高度 + 一圈渐隐区），底边与输入框底边对齐。
+            // 底边铺到**屏幕底**（不是输入框底）：这样输入框下方 8dp 间距和导航条
+            // 区域也是页面底色，导航条透明后与页面同色；滚到下面的行不会从缝里
+            // 露出来，也正好接住被去掉的输入框投影。
+            //
+            // 顶边 = 输入框顶 − fade：渐变正好在输入框顶边结束，实心从顶边开始。
+            // 不能再用 `composerSlot`（它含 8dp 底距）当高度，否则实心会从输入框
+            // 顶边往上 8dp 就开始，形成一条"文字被提前盖住"的隐形遮罩。
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(bottom = dockBottom + PiSpacing.composerBottomGap)
-                    .height(composerSlot + PiSpacing.composerGradientFade)
+                    .height(
+                        composerHeight + PiSpacing.composerGradientFade +
+                            dockBottom + PiSpacing.composerBottomGap,
+                    )
                     .drawBehind {
                         val fade = PiSpacing.composerGradientFade.toPx()
-                        if (size.height > fade) {
-                            drawRect(
-                                color = pageBackground,
-                                topLeft = Offset(0f, fade),
-                                size = Size(size.width, size.height - fade),
-                            )
-                        }
+                        drawRect(
+                            color = pageBackground,
+                            topLeft = Offset(0f, fade),
+                            size = Size(size.width, size.height - fade),
+                        )
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(pageBackground.copy(alpha = 0f), pageBackground),
@@ -3880,16 +3886,13 @@ private fun Composer(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            // 外观的几层在**外**、`animateContentSize` 在**内**：动画改变的是卡片自己的
-            // 高度，shadow / background / border 画在动画后的尺寸上，行数增长时不会出现
+            // 外观的两层在**外**、`animateContentSize` 在**内**：动画改变的是卡片自己的
+            // 高度，background / border 画在动画后的尺寸上，行数增长时不会出现
             // "底已经跳到位、边框还在半路"的错位。
-            .shadow(
-                elevation = PiSpacing.composerShadow,
-                shape = inputShape,
-                clip = false,
-                ambientColor = Color.Black,
-                spotColor = Color.Black,
-            )
+            //
+            // 不再用 elevation 投影：6dp 的投影落在输入框下面那行卡片上，浅色主题里
+            // 就是输入框与导航条之间的一条灰带（用户 2026-10-26 要求去掉）。卡片靠
+            // `surfaceContainerLow` 与 1.5dp 描边浮起来，页面底色一直铺到屏底。
             .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
             .border(borderWidth, shownBorder, inputShape)
             // 1–6 行的高度变化在这里补齐；超过 6 行由字段自己内部滚动。
