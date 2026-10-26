@@ -126,8 +126,13 @@ jobs:
       - name: Assemble arm64 release APK
         run: |
           set -o pipefail
+          # 手机上的 `gradle.properties` 把 Kotlin daemon 压在 768m（本机只有约 1.5G
+          # 可用），但 CI runner 有足够内存；这条大 Compose 文件在 codegen 阶段
+          # 会 GC overhead，sideload28 就这样红过一次，而 modern36 只是侥幸过。
+          # 只在 CI 提高 Kotlin daemon 堆，手机上的默认值不动。
           ./gradlew :app:assembleRelease \
             -Ppi.targetSdk=${{ matrix.targetSdk }} \
+            -Pkotlin.daemon.jvmargs=-Xmx2g \
             --console=plain 2>&1 | tee /tmp/assemble.log
       # A red build has to be *readable* by whoever has to fix it. The job log needs
       # admin rights on the repository; `::error::` annotations do not — they are

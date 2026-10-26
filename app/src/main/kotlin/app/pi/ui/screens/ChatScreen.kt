@@ -23,11 +23,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import app.pi.rpc.PiResponses
 import app.pi.engine.PiEngineSession
-import app.pi.ui.components.piFormatTokens
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.semantics.contentDescription
@@ -2678,8 +2675,10 @@ private fun ChatBody(
             // The reading the transcript's status row used to carry. The ring is always
             // drawn; the total falls back to the model's own window (pi's footer rule).
             contextUsage = state.stats?.contextUsage,
-            modelContextWindow = state.meta.model?.contextWindow,
-            onRefreshContext = { session.refreshStats() },
+            onOpenContext = {
+                session.refreshStats()
+                sheet = ChatSheet.Context
+            },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
@@ -3827,17 +3826,8 @@ private fun Composer(
     onPickAttachment: () -> Unit,
     /** pi's context occupancy as it reports it; null draws the ring's `?`. */
     contextUsage: PiResponses.ContextUsage?,
-    /**
-     * 当前模型自己的上下文窗口。pi 的 footer 在 `contextUsage` 缺失时用
-     * `state.model.contextWindow` 兜底（`footer.ts:160`），这里照做：新会话第一次读到
-     * stats 之前，环里的总量也有数。
-     */
-    modelContextWindow: Long?,
-    /**
-     * 点环时补读一次 `get_session_stats`。总量本来就要点开才看，这一下顺手把环的
-     * percent 也刷新到最新 —— 也是旧版「点一次才工作」那条兜底路径。
-     */
-    onRefreshContext: () -> Unit,
+    /** 点环：先补读 stats，再打开**原来那张**「上下文与用量」sheet。 */
+    onOpenContext: () -> Unit,
     /** pi's `app.clear`: empty editor. True while there is something to clear. */
     canClear: Boolean,
     onClear: () -> Unit,
@@ -4019,8 +4009,7 @@ private fun Composer(
                 // footer 也是这么取的：`contextUsage?.contextWindow ?? state.model?.contextWindow`）。
                 ContextRingButton(
                     usage = contextUsage,
-                    modelContextWindow = modelContextWindow,
-                    onRefresh = onRefreshContext,
+                    onOpenContext = onOpenContext,
                 )
                 Spacer(Modifier.width(4.dp))
                 ThinkingLevelButton(level = thinkingLevel, streaming = streaming, onClick = onCycleThinking)
@@ -4367,30 +4356,17 @@ private fun ComposerDeliveryChip(
 }
 
 /**
- * 上下文用量环 + 点按后的「已用 / 总量」。
+ * 上下文用量环。**点按仍然是原来那个「上下文与用量」sheet**，不是另造的气泡。
  *
  * 一直显示：`usage` 为空或 `percent == null` 时，环里是 `PiContextRing` 自己的 `?`
- * （pi 的 footer 在同一个窗口里也印 `?`），不是把整枚藏掉。
- *
- * 环 20 dp、2 dp 笔，进度弧的颜色仍由 `PiContextRing` 的 `contextProgressColor`
- * 决定。点按弹一个贴环的小气泡，不打开整张 sheet —— 「上下文与用量」仍在 ⋮ 菜单里，
- * 那里才是看明细的门。气泡向上开：这一行贴着键盘/屏幕底边。
- *
- * 总量优先用 pi 报的 `contextWindow`；没有就用当前模型的窗口兜底，和 pi 的 footer
- * 同一条规则（`contextUsage?.contextWindow ?? state.model?.contextWindow`）。两个都没有
- * 时显示 `—`，不编一个数。
+ * （pi 在压缩后到下一次回复前也是同一个窗口）。环 20 dp、2 dp 笔，进度弧颜色仍由
+ * `PiContextRing` 的 `contextProgressColor` 决定。
  */
 @Composable
 private fun ContextRingButton(
     usage: PiResponses.ContextUsage?,
-    modelContextWindow: Long?,
-    onRefresh: () -> Unit,
+    onOpenContext: () -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    val density = LocalDensity.current
-    val popupLift = with(density) { (PiSpacing.composerToolSize + PiSpacing.composerBottomGap).roundToPx() }
-    val window = usage?.contextWindow?.takeIf { it > 0 }
-        ?: modelContextWindow?.takeIf { it > 0 }
     Box(Modifier.size(PiSpacing.composerToolSize), contentAlignment = Alignment.Center) {
         PiContextRing(
             percent = usage?.percent,
@@ -4400,35 +4376,11 @@ private fun ContextRingButton(
             modifier = Modifier
                 .size(PiSpacing.composerToolSize)
                 .clip(CircleShape)
-                .clickable(onClickLabel = "查看已用与总量") {
-                    // 打开气泡之前补读一次：数据本来就只在点开时被看到，这里顺手
-                    // 把 percent 刷新到最新；读不到就继续用已有的值。
-                    onRefresh()
-                    open = true
-                },
+                .clickable(
+                    onClickLabel = "查看上下文与用量",
+                    onClick = onOpenContext,
+                ),
         )
-        if (open) {
-            Popup(
-                alignment = Alignment.BottomCenter,
-                offset = IntOffset(0, -popupLift),
-                onDismissRequest = { open = false },
-                properties = PopupProperties(focusable = true),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shadowElevation = 4.dp,
-                ) {
-                    Text(
-                        text = "已用 ${usage?.tokens?.let(::piFormatTokens) ?: "—"}" +
-                            " / 总量 ${window?.let(::piFormatTokens) ?: "—"}",
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = PiTheme.text.monoSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
-        }
     }
 }
 
