@@ -3930,8 +3930,9 @@ private fun Composer(
                 start = PiSpacing.inner,
                 end = PiSpacing.inner,
                 top = 9.dp,
-                // 底面从 9 收到 4、键行前间距从 8 加到 14：键行（含发送）再往下
-                // 让一点，和输入框拉开距离，减少误触；行内仍是中心对齐。
+                // 底面 9 → 4（-5）、键行前间距 8 → 13（+5）：键行整体下移 5dp，
+                // 输入框和按钮多出 5dp；卡片总高与改前完全一致（9+13+40+4 = 66），
+                // 不会再"感觉输入框变高"。
                 bottom = PiSpacing.small,
             ),
     ) {
@@ -4007,7 +4008,7 @@ private fun Composer(
                     }
                 },
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(13.dp))
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val configuration = LocalConfiguration.current
                 // 思考等级的文字：流式时键行还要多出「引导 / 后续」两枚，所以只有
