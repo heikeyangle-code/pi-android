@@ -2415,7 +2415,7 @@ private fun ChatBody(
             }
 
             // 输入框上/下各一段渐隐，和卡片同色；只画，不拦触摸。
-            // 上：透明 → 页面底色，12dp；下：页面底色 → 透明，**8dp**。
+            // 上：透明 → 页面底色，**24dp（保持之前没问题的值）**；下：页面底色 → 透明，**8dp**。
             // 下面这段正好等于「输入框到导航条」的缝，渐隐到导航条顶边已经透明，
             // 导航条区域完全露出内容；24dp 的旧值会盖住整段 8 + 13dp 的可见区域
             //（2026-10-26 的实际回归）。卡片背后是实心，盖住圆角外滚过的内容。
@@ -2427,9 +2427,11 @@ private fun ChatBody(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    // 高度只加**上**渐隐：下渐隐落在「底距 + 导航条」那段里，
+                    // 不再重复加一份 —— 之前 +2×fade 会让实心整体上移一份渐变，
+                    // 输入框上方凭空多出一条与 fade 等高的实心遮罩。
                     .height(
                         composerHeight + PiSpacing.composerGradientFade +
-                            PiSpacing.composerBottomFade +
                             dockBottom + PiSpacing.composerBottomGap,
                     )
                     .drawBehind {

@@ -123,7 +123,7 @@ object PiSpacing {
     val scrollArrowTap = 48.dp
 
     /** 输入框上方渐隐带的长度（透明 → 页面底色）。 */
-    val composerGradientFade = 12.dp
+    val composerGradientFade = 24.dp
 
     /**
      * 输入框下方渐隐带的长度（页面底色 → 透明）。
