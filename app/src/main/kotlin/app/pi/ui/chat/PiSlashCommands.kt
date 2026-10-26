@@ -164,10 +164,10 @@ data class PiSlashCommand(
  * already offers, and duplicate doors are what made the panel unreadable:
  *
  *  - `settings` → 对话页「⋯」菜单的「设置」(`PiRoot.kt`, `PiDestination.Settings`);
- *  - `model` → the top bar's model chip, which opens the same selector
- *    (`ChatScreen.kt`, `ModelChip` → `ChatSheet.Model`);
- *  - `thinking` → the composer's `◐` chip, which cycles the level and opens the
- *    same picker through the overflow menu.
+ *  - `model` → the composer tool row's model chip, which opens the same selector
+ *    (`ChatScreen.kt`, `ComposerModelChip` → `ChatSheet.Model`);
+ *  - `thinking` → the top bar「⋯」菜单的「思考等级…」/「循环切换思考等级」, which opens
+ *    the same picker (the composer's `◐` was removed on 2026-10-26).
  *
  * ### C. Five whose destination is a Settings row
  *

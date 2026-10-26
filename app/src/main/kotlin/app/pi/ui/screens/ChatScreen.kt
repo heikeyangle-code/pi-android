@@ -63,6 +63,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -182,7 +183,6 @@ import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
 import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
-import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.render.LocalPiMarkdownImmediate
@@ -302,8 +302,8 @@ private enum class ChatSheet { Model, Thinking, Tools, Stats, Context, Fork, Ren
 
 /**
  * 对话页顶栏的图标动作是 [ChatTopBarAction]（48dp 热区 / 24dp 字形），不是别处用的
- * `PiTopBarIcon`（30dp 框 / 17dp 字形）：56 高的对话页顶栏要同时放 28 高的模型 chip
- * 和三枚图标，两套尺寸混在一起就是用户看到的「一大一小」。
+ * `PiTopBarIcon`（30dp 框 / 17dp 字形）：56 高的对话页顶栏只放三枚 24dp 字形，
+ * 48dp 热区才和 56 高匹配；两套尺寸混在一起就是用户看到的「一大一小」。
  */
 /** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
 private val EARLIER_ROW_ICON = 24.dp
@@ -468,6 +468,26 @@ private fun ChatBody(
     // are preferences this screen actually obeys — before that they were rows
     // whose value nothing consulted (`PiSessionViewModel.UiPrefs`).
     val prefs = state.prefs
+    // 模型 chip 的文字：先读 `get_state` 的 `meta.model`，再用 transcript 里最后一条
+    // `model_change` 补洞。顶栏那颗 chip 挪到输入框工具行之后，这段读法原样搬到这里
+    // —— 两个来源与之前完全一致，只是不再占顶栏宽度，而是喂给下面那颗 chip。
+    //
+    // `remember` 无条件调用、键带 `meta.model`：有 live 值时 lambda 立刻返回，不做
+    // 反向扫描；没值时才走一次，且键在 transcript 上，行被原地改写时也不会读到旧值。
+    val lastModelChange = remember(
+        state.meta.model?.id,
+        state.meta.model?.name,
+        state.transcript,
+    ) {
+        if (state.meta.model?.id != null || state.meta.model?.name != null) {
+            null
+        } else {
+            state.transcript.asReversed().firstNotNullOfOrNull { item ->
+                (item as? ModelChange)?.modelId?.takeIf { it.isNotBlank() }
+            }
+        }
+    }
+    val modelLabel = state.meta.model?.id ?: state.meta.model?.name ?: lastModelChange
     // 悬浮输入框上方的渐隐要用的底色。在组合里读一次，交给 `drawBehind` 用 ——
     // `drawBehind` 的 lambda 不是 composable，不能在那里读 `MaterialTheme`。
     val pageBackground = MaterialTheme.colorScheme.background
@@ -1678,8 +1698,9 @@ private fun ChatBody(
         //
         // 用户 2026-10-26 的裁决（截图里的五个问题）：56 高、页面同色不透明、默认没有
         // 分隔线（滚动后才出现 0.5dp 发丝线）；左侧是「状态点 + 会话标题 + ▾」一行，
-        // 不再有第二行「✓ 就绪」；右侧统一成模型 chip + 搜索 + 工作区 + ⋮（24dp 字形、
-        // 48dp 热区）。标题拿不到名字时才退回 18sp 的「会话」。
+        // 不再有第二行「✓ 就绪」；右侧是搜索 + 工作区 + ⋮（24dp 字形、48dp 热区）。
+        // 模型 chip 已经移到输入框工具行，标题因此拿得到完整会话名的宽度；标题拿不到
+        // 名字时才退回 18sp 的「会话」。
         //
         // 仍然手画而不是 `material3.TopAppBar`：M3 的高度/容器色/自带行为都不是这里要的，
         // 而这个标题槽不是普通字符串 —— 它是打开会话列表的入口（`03-navigation-decision.md`）。
@@ -1743,49 +1764,10 @@ private fun ChatBody(
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Hidden on the same three engine-empty screens v2 hides it on
-                    // (`modelChip={false}`); with no transcript there is no model
-                    // choice to report. See the status row's note below.
-                    //
-                    // The label has a **second source**, because `meta.model` is only
-                    // whatever the last `get_state` said (`PiSessionViewModel
-                    // .refreshState`), and a session that already has a transcript can
-                    // legitimately have no answer there — which is how the chip came
-                    // to read its own fallback 「选择模型」 on a session whose model the
-                    // transcript was printing one row below it. pi's own record of
-                    // that switch is the `model_change` entry, which the reducer keeps
-                    // as `ModelChange.modelId` (`rpc/.../Transcript.kt`): the same
-                    // field pi's tree selector labels (`components/tree-selector.ts:600`
-                    // `parts.push("model", entry.modelId)`). Taking it from there is a
-                    // **read of pi's data**, not a second guess at the live model.
-                    // `meta.model` keeps its meaning ("what pi reports now") and stays
-                    // the first choice; this only fills a hole.
-                    if (!state.transcript.isEmpty()) {
-                        // The scan is the fallback, so it is only run when it can be the
-                        // answer: `meta.model` is the chip's first choice, and while it is
-                        // present this walked the whole transcript backwards on every
-                        // publication — once per streamed token — to compute a value that
-                        // was then discarded. Keyed on the transcript (not on its size) so
-                        // the fallback cannot go stale when rows are rewritten in place.
-                        val lastModelChange =
-                            if (state.meta.model?.id == null && state.meta.model?.name == null) {
-                                remember(state.transcript) {
-                                    state.transcript.asReversed().firstNotNullOfOrNull { item ->
-                                        (item as? ModelChange)?.modelId?.takeIf { it.isNotBlank() }
-                                    }
-                                }
-                            } else {
-                                null
-                            }
-                        ModelChip(
-                            state.meta.model?.id
-                                ?: state.meta.model?.name
-                                ?: lastModelChange,
-                        ) {
-                            session.refreshModels()
-                            sheet = ChatSheet.Model
-                        }
-                    }
+                    // 模型 chip 已经挪到输入框工具行（2026-10-26）：顶栏把这段宽度
+                    // 还给会话标题，模型名和环 / 发送放在同一条能看见输入状态的行里。
+                    // 读模型名的两个来源（`meta.model` 与 transcript 最后一条
+                    // `model_change`）原样搬到 `ChatBody`，喂给下面那颗 chip。
                     if (showSearchAction) {
                         ChatTopBarAction(
                             onClick = { searchOpen = !searchOpen },
@@ -2684,6 +2666,12 @@ private fun ChatBody(
                 session.refreshStats()
                 sheet = ChatSheet.Context
             },
+            // 顶栏那颗 chip 挪到工具行之后，模型名和「打开模型面板」的动作从这里进。
+            modelLabel = modelLabel,
+            onOpenModel = {
+                session.refreshModels()
+                sheet = ChatSheet.Model
+            },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
@@ -2692,7 +2680,6 @@ private fun ChatBody(
             // either — the same rule the send button's own "an image with no caption
             // is still a message" branch uses.
             canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
-            onCycleThinking = { session.cycleThinkingLevel() },
             onOpenPalette = { if (draft.isBlank()) draft = "/" },
             onOpenBash = { if (draft.isBlank()) draft = "!" },
             // `!!` types both characters: it is a different pi mode, not a double
@@ -3199,8 +3186,9 @@ private fun SearchBar(
  * `RepeatMode.Reverse`），聚焦时暂停、进出各 150 ms，宽度不跟着动。系统关掉动画时
  * 不呼吸。颜色来源一行没改。
  *
- * 工具行：`/`、回形针、⋮ 是 32 dp 圆形热区 + 20 dp 字形；发送 40 dp；思考等级
- * 28 dp 高、16 dp 字形；上下文环 20 dp、2 dp 描边。
+ * 工具行从左到右：`/`、回形针、⋮、流式时「引导 / 后续」、弹性空白、上下文环 20 dp
+ * （2 dp 笔、30 dp 热区）、模型 chip（28 高、72–132 宽、13 sp Medium、中间省略）、
+ * 发送 40 dp。
  *
  * 尺寸 token 在 `PiSpacing`（`composer*`）里，屏幕侧只引用它们；这里剩下的是**时间与
  * 行数**，不是 dp：150 ms 的描边/进出、1.6 s 的呼吸、6 行上限、20 sp 行高。
@@ -3213,8 +3201,6 @@ private const val COMPOSER_PULSE_MS = 1600
 private const val COMPOSER_PULSE_MIN = 0.45f
 private const val COMPOSER_MAX_LINES = 6
 
-/** 流式时还显示思考等级名字所需的最小屏宽；低于它只留 ◐。 */
-private const val COMPOSER_STREAMING_LABEL_MIN_WIDTH_DP = 390
 private val COMPOSER_LINE_HEIGHT = 20.sp
 
 /**
@@ -3507,48 +3493,49 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
 }
 
 /**
- * The AppBar's model chip.
+ * 输入框工具行里的模型 chip（2026-10-26：从顶栏挪下来）。
  *
- * pi has no always-visible model indicator either — its footer carries one — but
- * on a phone the model is the most consequential piece of hidden state, and the
- * only way to read it is `get_state` (audit §5.3). It shows `Model.id` because
- * that is what `set_model` takes, and it is tappable because a chip that reports
- * state without offering the picker is a dead end.
+ * 顶栏把宽度还给会话标题；模型名现在和环 / 发送放在同一条能看见输入状态的行里。
+ * 形状沿用顶栏那颗：高 28、`surfaceContainerHigh` 填充、无描边、无图标，13sp
+ * Medium 无衬线字；最小 72，最大由 `BoxWithConstraints` 按剩余宽度算（上限 132）。
  *
- * 用户 2026-10-26 的裁决：等宽 + 描边的胶囊像输入标签，是整条顶栏最重的东西。
- * 现在是无衬线 13sp Medium、`surfaceContainerHigh` 填充底、无描边、高 28、末尾 `▾`；
- * 最大 120dp，长 id 单行省略，点开在底部面板看全名。文字取色仍是 `palette.text`，
- * 和它原来的逻辑一致。
+ * 长 id **从中间省略**：`deepseek-v4.1-flash-1017` 的区别在尾巴，从末尾省略只剩
+ * 一串 `deepseek-v4…`，分不出是哪一个。Compose 1.8 的
+ * `TextOverflow.MiddleEllipsis` 对单行可用（多行会退回 Clip），这里 maxLines = 1。
  */
 @Composable
-private fun ModelChip(label: String?, onClick: () -> Unit) {
-    // 窄屏上把 120 收到 96：右侧还有三枚 48 热区，标题必须留得下「会话 ▾」。
-    val maxWidth = if (LocalConfiguration.current.screenWidthDp < 400) {
-        PiSpacing.chatTopBarModelChipMaxWidth * 0.8f
-    } else {
-        PiSpacing.chatTopBarModelChipMaxWidth
-    }
-    Row(
+private fun ComposerModelChip(
+    label: String?,
+    maxWidth: Dp,
+    onClick: () -> Unit,
+) {
+    Box(
         modifier = Modifier
-            .height(PiSpacing.chatTopBarModelChipHeight)
-            .widthIn(max = maxWidth)
+            .height(PiSpacing.composerModelChipHeight)
+            .widthIn(
+                min = PiSpacing.composerModelChipMinWidth,
+                max = maxWidth,
+            )
             .clip(RoundedCornerShape(percent = 50))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .clickable(onClickLabel = "选择模型", onClick = onClick)
             .padding(horizontal = PiSpacing.inner),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = label ?: "选择模型",
-            modifier = Modifier.weight(1f, fill = false),
+            // 右边给 `▾` 留出位置；文字自己的 max 由 Box 的 maxWidth 约束，超长时
+            // MiddleEllipsis 在**中间**断开，尾巴（版本/日期）仍然可见。
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(end = PiSpacing.cardPadding + PiSpacing.tiny),
             style = PiType.chipLabel,
             color = PiTheme.palette.text,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            overflow = TextOverflow.MiddleEllipsis,
         )
-        Spacer(Modifier.width(PiSpacing.tiny))
         Text(
             text = "▾",
+            modifier = Modifier.align(Alignment.CenterEnd),
             style = PiType.chipLabel,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -3558,8 +3545,8 @@ private fun ModelChip(label: String?, onClick: () -> Unit) {
 /**
  * 对话页顶栏的一枚图标动作：48dp 热区、24dp 字形、统一 `onSurface`。
  *
- * 原来的 `PiTopBarIcon` 是 30dp 框 + 17dp 字形；和 28 高的模型 chip 放在一条 56 高的
- * 栏里会一大一小，所以对话页单独用这一套，别的屏仍用 `PiTopBarIcon`。
+ * 原来的 `PiTopBarIcon` 是 30dp 框 + 17dp 字形；对话页顶栏现在只放三枚 24dp 字形，
+ * 统一到 48dp 热区后比别处更松快，所以单独留这一套，别的屏仍用 `PiTopBarIcon`。
  */
 @Composable
 private fun ChatTopBarAction(
@@ -3821,7 +3808,10 @@ private fun Composer(
     canFollowUp: Boolean,
     /** True while a `steer` could actually be delivered: streaming, and something to send. */
     canSteer: Boolean,
-    onCycleThinking: () -> Unit,
+    /** 工具行那颗模型 chip 的文字；null 时显示「选择模型」。 */
+    modelLabel: String?,
+    /** 点模型 chip：拉模型列表，再开模型面板。 */
+    onOpenModel: () -> Unit,
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
     /** pi's `!!`: run the command without putting it in the model's context. */
@@ -3851,8 +3841,9 @@ private fun Composer(
     } else {
         PiTheme.palette.thinking(thinkingLevel)
     }
-    // 外观：26dp 圆角、中性阴影（不拿 accent 的色去染）、1.5 → 2 的描边。描边颜色
-    // 仍完全来自上面的 `borderColor`，色相与取色逻辑一个字节都没改。
+    // 外观：26dp 圆角、1.5 → 2 的描边；不画 elevation 投影（6dp 投影落在输入框
+    // 下面那行上，浅色下就是输入框与导航条之间的一条灰带）。描边颜色仍完全来自
+    // 上面的 `borderColor`，色相与取色逻辑一个字节没改。
     val inputShape = RoundedCornerShape(PiSpacing.composerRadius)
     // 6 行是**按行高算**的，不是写死 120dp：系统字体放大后写死的 120 只能放 4 行半。
     val lineHeightDp = with(LocalDensity.current) { COMPOSER_LINE_HEIGHT.toDp() }
@@ -3972,67 +3963,91 @@ private fun Composer(
                 },
             )
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // 左侧三枚：32dp 的圆形热区、20dp 字形，平时没有底，按下才起涟漪。
-                ComposerIconButton(onClickLabel = "命令面板", onClick = onOpenPalette) {
-                    Text(
-                        text = "/",
-                        style = PiTheme.text.mono.copy(
-                            fontSize = with(LocalDensity.current) { PiSpacing.composerToolIcon.toSp() },
-                        ),
-                        color = PiTheme.palette.text,
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                // 右侧固定项：三枚工具 + 流式时两枚 + 环 + 两段间距 + 发送。
+                val fixed = PiSpacing.composerToolSize * 3f +
+                    (if (streaming) PiSpacing.composerToolSize * 2f + PiSpacing.tiny else 0.dp) +
+                    PiSpacing.composerRingTouch +
+                    PiSpacing.composerChipGap +
+                    PiSpacing.composerChipSendGap +
+                    PiSpacing.composerSendSize
+                // chip 吃掉剩下的宽度（至少 72、至多 132），再给弹性空白留 4dp。
+                // 360dp 屏流式时正好落在 72，整行不会溢出；393dp 上约 101。
+                val chipMax = (maxWidth - fixed - PiSpacing.small)
+                    .coerceIn(
+                        PiSpacing.composerModelChipMinWidth,
+                        PiSpacing.composerModelChipMaxWidth,
                     )
-                }
-                ComposerIconButton(onClickLabel = "添加附件", onClick = onPickAttachment) {
-                    Icon(
-                        imageVector = Icons.Filled.AttachFile,
-                        contentDescription = null,
-                        modifier = Modifier.size(PiSpacing.composerToolIcon),
-                        tint = PiTheme.palette.text,
-                    )
-                }
-                // `@` / `!` / `!!` / 清空在这里；引导 / 后续不在菜单里，见下。
-                ComposerMenu(
-                    onOpenMention = onOpenMention,
-                    onOpenBash = onOpenBash,
-                    onOpenBashExcluded = onOpenBashExcluded,
-                    canClear = canClear,
-                    onClear = onClear,
-                )
-                // 引导 / 后续：只在流式时出现，不常驻，所以留在键行里而不是 ⋮。
-                if (streaming) {
-                    ComposerDeliveryChip(label = "引导", enabled = canSteer, onClick = onSteer)
-                    Spacer(Modifier.width(PiSpacing.tiny))
-                    ComposerDeliveryChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
-                }
-                Spacer(Modifier.weight(1f))
-                // 一直显示：拿不到 percent 时环里是 pi 自己的 `?`，不是把整枚藏掉。
-                // 总量在 pi 没给 contextWindow 时回退到当前模型自己的窗口（pi 的
-                // footer 也是这么取的：`contextUsage?.contextWindow ?? state.model?.contextWindow`）。
-                ContextRingButton(
-                    usage = contextUsage,
-                    onOpenContext = onOpenContext,
-                )
-                Spacer(Modifier.width(4.dp))
-                ThinkingLevelButton(level = thinkingLevel, streaming = streaming, onClick = onCycleThinking)
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(PiSpacing.composerSendSize)
-                        .clip(CircleShape)
-                        .background(PiTheme.palette.accent)
-                        .clickable(
-                            onClickLabel = if (streaming) "停止" else "发送",
-                            onClick = { if (streaming) onStop() else onSend() },
-                        ),
-                    contentAlignment = Alignment.Center,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = if (streaming) Icons.Filled.Stop else Icons.Filled.Send,
-                        contentDescription = if (streaming) "停止" else "发送",
-                        modifier = Modifier.size(PiSpacing.composerSendIcon),
-                        tint = PiTheme.palette.pageBg,
+                    // 左侧三枚：32dp 的圆形热区、20dp 字形，平时没有底，按下才起涟漪。
+                    ComposerIconButton(onClickLabel = "命令面板", onClick = onOpenPalette) {
+                        Text(
+                            text = "/",
+                            style = PiTheme.text.mono.copy(
+                                fontSize = with(LocalDensity.current) { PiSpacing.composerToolIcon.toSp() },
+                            ),
+                            color = PiTheme.palette.text,
+                        )
+                    }
+                    ComposerIconButton(onClickLabel = "添加附件", onClick = onPickAttachment) {
+                        Icon(
+                            imageVector = Icons.Filled.AttachFile,
+                            contentDescription = null,
+                            modifier = Modifier.size(PiSpacing.composerToolIcon),
+                            tint = PiTheme.palette.text,
+                        )
+                    }
+                    // `@` / `!` / `!!` / 清空在这里；引导 / 后续不在菜单里，见下。
+                    ComposerMenu(
+                        onOpenMention = onOpenMention,
+                        onOpenBash = onOpenBash,
+                        onOpenBashExcluded = onOpenBashExcluded,
+                        canClear = canClear,
+                        onClear = onClear,
                     )
+                    // 引导 / 后续：只在流式时出现，不常驻，所以留在键行里而不是 ⋮。
+                    if (streaming) {
+                        ComposerDeliveryChip(label = "引导", enabled = canSteer, onClick = onSteer)
+                        Spacer(Modifier.width(PiSpacing.tiny))
+                        ComposerDeliveryChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    // 一直显示：拿不到 percent 时环里是 pi 自己的 `?`，不是把整枚藏掉。
+                    // 总量在 pi 没给 contextWindow 时回退到当前模型自己的窗口（pi 的
+                    // footer 也是这么取的：`contextUsage?.contextWindow ?? state.model?.contextWindow`）。
+                    ContextRingButton(
+                        usage = contextUsage,
+                        onOpenContext = onOpenContext,
+                    )
+                    Spacer(Modifier.width(PiSpacing.composerChipGap))
+                    // 模型 chip：从顶栏挪下来，排在环和发送之间。
+                    ComposerModelChip(
+                        label = modelLabel,
+                        maxWidth = chipMax,
+                        onClick = onOpenModel,
+                    )
+                    Spacer(Modifier.width(PiSpacing.composerChipSendGap))
+                    Box(
+                        modifier = Modifier
+                            .size(PiSpacing.composerSendSize)
+                            .clip(CircleShape)
+                            .background(PiTheme.palette.accent)
+                            .clickable(
+                                onClickLabel = if (streaming) "停止" else "发送",
+                                onClick = { if (streaming) onStop() else onSend() },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (streaming) Icons.Filled.Stop else Icons.Filled.Send,
+                            contentDescription = if (streaming) "停止" else "发送",
+                            modifier = Modifier.size(PiSpacing.composerSendIcon),
+                            tint = PiTheme.palette.pageBg,
+                        )
+                    }
                 }
             }
         }
@@ -4332,8 +4347,8 @@ private fun ComposerIconButton(
  * 唯一的区别是内容 —— 这三个是图标，这两个是两字标签。禁用时文字转 muted，
  * 仍是同一个圆、同一个位置，不跳。
  *
- * 宽度：两枚圆合计 66 dp（原来 26 dp 的 pill 是 76 dp），360 dp 屏上流式时
- * 思考等级会先让掉名字（见 [ThinkingLevelButton]），整行仍排得下。
+ * 宽度：两枚圆合计 66 dp（原来 26 dp 的 pill 是 76 dp）。360 dp 屏流式时模型 chip
+ * 收到 72、环 30、发送 40，整行正好排得下；更宽的屏上 chip 会自动长到 132 为止。
  */
 @Composable
 private fun ComposerDeliveryChip(
@@ -4369,14 +4384,14 @@ private fun ContextRingButton(
     usage: PiResponses.ContextUsage?,
     onOpenContext: () -> Unit,
 ) {
-    Box(Modifier.size(PiSpacing.composerToolSize), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(PiSpacing.composerRingTouch), contentAlignment = Alignment.Center) {
         PiContextRing(
             percent = usage?.percent,
             diameter = PiSpacing.composerRingDiameter,
             stroke = PiSpacing.composerRingStroke,
             placeholderStyle = PiTheme.text.monoSmall,
             modifier = Modifier
-                .size(PiSpacing.composerToolSize)
+                .size(PiSpacing.composerRingTouch)
                 .clip(CircleShape)
                 .clickable(
                     onClickLabel = "查看上下文与用量",
@@ -4385,51 +4400,6 @@ private fun ContextRingButton(
         )
     }
 }
-
-/**
- * 思考等级：28 dp 高、16 dp 的 `◐`、13 sp Medium 的名字；不加底色也不加描边。
- *
- * 颜色一行没改：`◐` 仍是 `PiTheme.palette.thinking(level)`，名字仍是 onSurface。
- * 屏宽 < 360 dp 或字体放大 > 1.3 时只留图标 —— 名字是这行最后可以让掉的东西，
- * 让掉之后右手边的环和发送钮不会被挤走。
- */
-@Composable
-private fun ThinkingLevelButton(level: String, streaming: Boolean, onClick: () -> Unit) {
-    val configuration = LocalConfiguration.current
-    // 流式时键行还要塞下「引导 / 后续」两枚；窄屏上先把等级的名字让掉（◐ 的颜色仍
-    // 表示等级），否则整行会挤出屏幕。空闲时按原规则只在 < 360 或字体 > 1.3 时隐藏。
-    val narrowWhileStreaming =
-        streaming && configuration.screenWidthDp < COMPOSER_STREAMING_LABEL_MIN_WIDTH_DP
-    val showLabel = configuration.screenWidthDp >= 360 &&
-        configuration.fontScale <= 1.3f &&
-        !narrowWhileStreaming
-    val iconSize = with(LocalDensity.current) { PiSpacing.composerThinkingIcon.toSp() }
-    Row(
-        modifier = Modifier
-            .height(PiSpacing.composerThinkingHeight)
-            .clip(RoundedCornerShape(6.dp))
-            .clickable(onClickLabel = "切换思考等级：${thinkingLabelOf(level)}", onClick = onClick)
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "◐",
-            style = PiTheme.text.meta.copy(fontSize = iconSize),
-            color = PiTheme.palette.thinking(level),
-        )
-        if (showLabel) {
-            Spacer(Modifier.width(5.dp))
-            Text(
-                text = thinkingLabelOf(level),
-                // 13 sp / Medium：`mono` 是 13 sp 的机器角色，名字也是机器给的等级名。
-                style = PiTheme.text.mono.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
 
 /**
  * One pending attachment: a real thumbnail, not a file name.

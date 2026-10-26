@@ -76,9 +76,10 @@ object PiSpacing {
     // ------------------------------------------------------ 悬浮输入框 (composer)
     //
     // 用户 2026-10-26 的裁决：输入框悬浮、圆角 26、左右 12、底 8；工具行 32dp
-    // 圆形热区 / 20dp 字形（放得下流式时才出现的两枚送达 chip）；发送 40dp；思考等级
-    // 28dp 高 / 16dp 字形；上下文环 20dp / 2dp 描边。数字集中在这里，屏幕侧只引用
-    // token —— 也让 `tools/check-ui-consistency.sh` 的裸 dp 棘轮不必为这一次设计上调。
+    // 圆形热区 / 20dp 字形（放得下流式时才出现的两枚送达 chip）；发送 40dp；
+    // 上下文环 20dp / 2dp 描边、30dp 热区；模型 chip 28 高、72–132 宽。数字集中在
+    // 这里，屏幕侧只引用 token —— 也让 `tools/check-ui-consistency.sh` 的裸 dp 棘轮
+    // 不必为这一次设计上调。
     //
     // 没有投影 token：6dp 的 elevation 投影会落在输入框下面那行卡片上，浅色主题里
     // 就是输入框与导航条之间的一条灰带（用户当天晚些时候要求去掉）；悬浮感由
@@ -93,18 +94,25 @@ object PiSpacing {
     /** 悬浮输入框与它上方那些卡共用的左右边距。 */
     val composerPageMargin = 12.dp
 
+    /** 工具行里的模型 chip：高 28、宽 72–132（上限还会被剩余宽度压小）。 */
+    val composerModelChipHeight = 28.dp
+    val composerModelChipMinWidth = 72.dp
+    val composerModelChipMaxWidth = 132.dp
+
+    /** 环 ↔ 模型 chip ↔ 发送之间的间距。 */
+    val composerChipGap = 4.dp
+    val composerChipSendGap = 8.dp
+
     // ------------------------------------------------------ 对话页顶栏
     //
     // 用户 2026-10-26 的裁决：56 高（标准顶栏）、页面同色不透明、滚动后才出现
-    // 0.5dp 发丝线；右侧图标 24dp 字形 / 48dp 热区；模型 chip 28 高、最大 120 宽；
-    // 标题前状态点 7dp；顶栏下 12dp 页面底色渐隐。
+    // 0.5dp 发丝线；右侧图标 24dp 字形 / 48dp 热区；标题前状态点 7dp；顶栏下 12dp
+    // 页面底色渐隐。模型 chip 已移到输入框工具行，顶栏不再有它。
 
     val chatTopBarHeight = 56.dp
     val chatTopBarAction = 48.dp
     val chatTopBarGlyph = 24.dp
     val chatTopBarStatusDot = 7.dp
-    val chatTopBarModelChipHeight = 28.dp
-    val chatTopBarModelChipMaxWidth = 120.dp
     val chatTopBarFade = 12.dp
 
     /** 列表最后一行与输入框之间的呼吸空间。 */
@@ -123,13 +131,10 @@ object PiSpacing {
     val composerSendSize = 40.dp
     val composerSendIcon = 18.dp
 
-    /** 上下文环的直径与笔宽。 */
+    /** 上下文环的直径与笔宽；热区略大一圈，视觉仍是 20dp 的环。 */
     val composerRingDiameter = 20.dp
     val composerRingStroke = 2.dp
-
-    /** 思考等级的整高与 `◐` 尺寸。 */
-    val composerThinkingHeight = 28.dp
-    val composerThinkingIcon = 16.dp
+    val composerRingTouch = 30.dp
 
     /** 外圈描边：平时 / 聚焦（宽度，颜色仍来自 thinking 等级）。 */
     val composerBorderIdle = 1.5.dp
