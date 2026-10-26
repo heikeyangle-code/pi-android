@@ -75,11 +75,11 @@ object PiSpacing {
 
     // ------------------------------------------------------ 悬浮输入框 (composer)
     //
-    // 用户 2026-10-26 的裁决：输入框悬浮、圆角 26、左右 12、底 8；工具行 32dp
+    // 用户 2026-10-26 的裁决：输入框悬浮、圆角 26、左右 12、底 8；工具行 30dp
     // 圆形热区 / 20dp 字形（放得下流式时才出现的两枚送达 chip）；发送 40dp；
-    // 上下文环 20dp / 2dp 描边、30dp 热区；模型 chip 28 高、72–132 宽。数字集中在
-    // 这里，屏幕侧只引用 token —— 也让 `tools/check-ui-consistency.sh` 的裸 dp 棘轮
-    // 不必为这一次设计上调。
+    // 上下文环 20dp / 2dp 描边、30dp 热区；模型 chip 28 高、72–140 宽、纯文字无底色。
+    // 数字集中在这里，屏幕侧只引用 token —— 也让
+    // `tools/check-ui-consistency.sh` 的裸 dp 棘轮不必为这一次设计上调。
     //
     // 没有投影 token：6dp 的 elevation 投影会落在输入框下面那行卡片上，浅色主题里
     // 就是输入框与导航条之间的一条灰带（用户当天晚些时候要求去掉）；悬浮感由
@@ -94,10 +94,10 @@ object PiSpacing {
     /** 悬浮输入框与它上方那些卡共用的左右边距。 */
     val composerPageMargin = 12.dp
 
-    /** 工具行里的模型 chip：高 28、宽 72–132（上限还会被剩余宽度压小）。 */
+    /** 工具行里的模型 chip：高 28、宽 72–140（上限还会被剩余宽度压小）。 */
     val composerModelChipHeight = 28.dp
     val composerModelChipMinWidth = 72.dp
-    val composerModelChipMaxWidth = 132.dp
+    val composerModelChipMaxWidth = 140.dp
 
     /** 环 ↔ 模型 chip ↔ 发送之间的间距。 */
     val composerChipGap = 4.dp
@@ -118,11 +118,11 @@ object PiSpacing {
     /** 列表最后一行与输入框之间的呼吸空间。 */
     val composerListClearance = 24.dp
 
-    /** 输入框上方渐隐带的高度（透明 → 页面底色）。 */
+    /** 输入框上方 / 下方渐隐带的长度（透明 → 页面底色 → 透明）。 */
     val composerGradientFade = 24.dp
 
-    /** 工具行圆形热区；32 而不是 36，给流式时的「引导 / 后续」留出宽度。 */
-    val composerToolSize = 32.dp
+    /** 工具行圆形热区；30 统一 `/`、回形针、⋮、引导 / 后续和环。 */
+    val composerToolSize = 30.dp
 
     /** 工具行（`/`、回形针、⋮）的字形尺寸。 */
     val composerToolIcon = 20.dp

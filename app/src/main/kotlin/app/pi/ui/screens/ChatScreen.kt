@@ -96,6 +96,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -2406,10 +2407,11 @@ private fun ChatBody(
                 )
             }
 
-            // 输入框上方的渐隐：用页面底色，从透明过渡到不透明；只画，不拦触摸。
-            // 底边铺到**屏幕底**（不是输入框底）：这样输入框下方 8dp 间距和导航条
-            // 区域也是页面底色，导航条透明后与页面同色；滚到下面的行不会从缝里
-            // 露出来，也正好接住被去掉的输入框投影。
+            // 输入框上/下各一段渐隐，和卡片同色；只画，不拦触摸。
+            // 上：透明 → 页面底色（卡片上方 [PiSpacing.composerGradientFade]）；
+            // 下：页面底色 → 透明（同样长度）。卡片背后这一段是实心，盖住圆角外
+            // 滚过的内容；再往下就完全透出列表 —— 8dp 缝和导航条区域自然露出来，
+            // 不再是一块不透明的死白。
             //
             // 顶边 = 输入框顶 − fade：渐变正好在输入框顶边结束，实心从顶边开始。
             // 不能再用 `composerSlot`（它含 8dp 底距）当高度，否则实心会从输入框
@@ -2419,21 +2421,33 @@ private fun ChatBody(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(
-                        composerHeight + PiSpacing.composerGradientFade +
+                        composerHeight + PiSpacing.composerGradientFade * 2f +
                             dockBottom + PiSpacing.composerBottomGap,
                     )
                     .drawBehind {
                         val fade = PiSpacing.composerGradientFade.toPx()
+                        val cardTop = fade
+                        val cardBottom = fade + composerHeight.toPx()
+                        // 卡片背后：实心页面底色，盖住圆角外滚过的内容。
                         drawRect(
                             color = pageBackground,
-                            topLeft = Offset(0f, fade),
-                            size = Size(size.width, size.height - fade),
+                            topLeft = Offset(0f, cardTop),
+                            size = Size(size.width, cardBottom - cardTop),
                         )
+                        // 上边缘：透明 → 页面底色。
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(pageBackground.copy(alpha = 0f), pageBackground),
                                 startY = 0f,
-                                endY = minOf(fade, size.height),
+                                endY = fade,
+                            ),
+                        )
+                        // 下边缘：页面底色 → 透明，和上边缘同长；再往下不画。
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(pageBackground, pageBackground.copy(alpha = 0f)),
+                                startY = cardBottom,
+                                endY = cardBottom + fade,
                             ),
                         )
                     },
@@ -3189,7 +3203,7 @@ private fun SearchBar(
  * 不呼吸。颜色来源一行没改。
  *
  * 工具行从左到右：`/`、回形针、⋮、流式时「引导 / 后续」、弹性空白、上下文环 20 dp
- * （2 dp 笔、30 dp 热区）、模型 chip（28 高、72–132 宽、13 sp Medium、中间省略）、
+ * （2 dp 笔、30 dp 热区）、模型 chip（28 高、72–140 宽、13 sp Medium、无底色、中间省略）、
  * 思考等级文字（宽度够时）、发送 40 dp。
  *
  * 尺寸 token 在 `PiSpacing`（`composer*`）里，屏幕侧只引用它们；这里剩下的是**时间与
@@ -3498,8 +3512,10 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
  * 输入框工具行里的模型 chip（2026-10-26：从顶栏挪下来）。
  *
  * 顶栏把宽度还给会话标题；模型名现在和环 / 发送放在同一条能看见输入状态的行里。
- * 形状沿用顶栏那颗：高 28、`surfaceContainerHigh` 填充、无描边、无图标，13sp
- * Medium 无衬线字；最小 72，最大由 `BoxWithConstraints` 按剩余宽度算（上限 132）。
+ * **没有底色**：纯文字 + `▾`，13sp Medium 无衬线，视觉高 28；只有按下时才有
+ * 圆角 pill 的涟漪（`onSurface` 的 12%，M3 ripple 的 pressed alpha）。文字取色
+ * 逻辑原样不动（`palette.text`），未选中态也没有边框。最小 72，最大由
+ * `BoxWithConstraints` 按剩余宽度算（上限 140）。
  *
  * 长 id **从中间省略**：`deepseek-v4.1-flash-1017` 的区别在尾巴，从末尾省略只剩
  * 一串 `deepseek-v4…`，分不出是哪一个。Compose 1.8 的
@@ -3519,8 +3535,14 @@ private fun ComposerModelChip(
                 max = maxWidth,
             )
             .clip(RoundedCornerShape(percent = 50))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(onClickLabel = "选择模型", onClick = onClick)
+            // 无底色：只有按下时的 pill 形涟漪，颜色 onSurface（M3 ripple 按
+            // pressed alpha 12% 画），不再有 surfaceContainerHigh 的灰块。
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(color = MaterialTheme.colorScheme.onSurface),
+                onClickLabel = "选择模型",
+                onClick = onClick,
+            )
             .padding(horizontal = PiSpacing.inner),
     ) {
         Text(
@@ -3892,7 +3914,14 @@ private fun Composer(
             .border(borderWidth, shownBorder, inputShape)
             // 1–6 行的高度变化在这里补齐；超过 6 行由字段自己内部滚动。
             .animateContentSize()
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .padding(
+                start = PiSpacing.inner,
+                end = PiSpacing.inner,
+                top = 9.dp,
+                // 底面从 9 收到 4、键行前间距从 8 加到 14：键行（含发送）再往下
+                // 让一点，和输入框拉开距离，减少误触；行内仍是中心对齐。
+                bottom = PiSpacing.small,
+            ),
     ) {
             // 这个字段必须自己拿 `TextFieldValue`，不能用 `value: String` 那个重载。
             // 库的 String 重载把光标位置存在自己内部
@@ -3966,7 +3995,7 @@ private fun Composer(
                     }
                 },
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(14.dp))
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val configuration = LocalConfiguration.current
                 // 思考等级的文字：流式时键行还要多出「引导 / 后续」两枚，所以只有
@@ -4007,7 +4036,7 @@ private fun Composer(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // 左侧三枚：32dp 的圆形热区、20dp 字形，平时没有底，按下才起涟漪。
+                    // 左侧三枚：30dp 的圆形热区、20dp 字形，平时没有底，按下才起涟漪。
                     ComposerIconButton(onClickLabel = "命令面板", onClick = onOpenPalette) {
                         Text(
                             text = "/",
@@ -4233,7 +4262,7 @@ private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
 /**
  * The composer's ⋮ button: `@` / `!` / `!!` / 清空, plus 引导 / 后续 while a turn runs.
  *
- * 32 dp 圆形热区、20 dp 手绘三点，和 `/`、回形针同一套；平时没有底色，只有按下时
+ * 30 dp 圆形热区、20 dp 手绘三点，和 `/`、回形针同一套；平时没有底色，只有按下时
  * 的涟漪。菜单仍然**向上**开（[PiMenuPlacement.Above]）：按钮在屏幕底部，向下会被
  * 键盘挡住。
  *
@@ -4349,7 +4378,7 @@ private val THREE_DOT_GLYPH: ImageVector = ImageVector.Builder(
 /**
  * 悬浮输入框工具行里的一枚圆形图标按钮。
  *
- * 32 dp 热区、20 dp 字形，平时**没有底色**（旧版的灰方块被去掉了），只有
+ * 30 dp 热区、20 dp 字形，平时**没有底色**（旧版的灰方块被去掉了），只有
  * `clickable` 自带的涟漪在按下时出现。`onClickLabel` 始终独立传入：图标按钮没有
  * 可见文字，没有它读屏就什么都没有。
  */
@@ -4371,14 +4400,15 @@ private fun ComposerIconButton(
 }
 
 /**
- * 流式时的「引导 / 后续」：32 dp 的圆形文字按钮，只在 `streaming` 时出现。
+ * 流式时的「引导 / 后续」：30 dp 的圆形文字按钮，只在 `streaming` 时出现。
  *
- * **和左边三枚图标按钮同一套形状/背景**：32 dp 圆、没有底色、按下才起涟漪；
+ * **和左边三枚图标按钮同一套形状/背景**：30 dp 圆、没有底色、按下才起涟漪；
  * 唯一的区别是内容 —— 这三个是图标，这两个是两字标签。禁用时文字转 muted，
  * 仍是同一个圆、同一个位置，不跳。
  *
- * 宽度：两枚圆合计 66 dp（原来 26 dp 的 pill 是 76 dp）。360 dp 屏流式时模型 chip
- * 收到 72、环 30、发送 40，整行正好排得下；更宽的屏上 chip 会自动长到 132 为止。
+ * 宽度：两枚圆合计 62 dp（原来 26 dp 的 pill 是 76 dp）。360 dp 屏流式时
+ * 思考文字收起，模型 chip 仍有 78；393 dp 上思考文字与 chip(75) 能同时排下，
+ * 更宽的屏上 chip 会自动长到 140 为止。
  */
 @Composable
 private fun ComposerDeliveryChip(
