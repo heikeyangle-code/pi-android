@@ -348,13 +348,23 @@ internal data class TailAnchor(val itemIndex: Int, val itemOffsetPx: Int) {
  *   than the session. The machine's indices are therefore in the list's own space,
  *   which is what `requestScrollToItem` takes; the old code's `headerRows`
  *   arithmetic disappears with it.
- * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset` — item offsets are
- *   relative to the viewport start, and this is the line the last row's bottom has to
- *   reach for the list to be at its end (Compose: "the size of the lazy list layout
- *   minus beforeContentPadding"). The transcript's two ends are **not** symmetric —
- *   top is `10.dp + earlierBand`, bottom `12.dp` (the LazyColumn's `contentPadding`)
- *   — so this pin does not assume they agree: an overshoot is clamped by the measure
- *   pass, and "am I at the end" is answered by [atBottom], never by this arithmetic.
+ * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset` — the **screen's**
+ *   bottom edge, expressed in the list's item coordinates (Compose: "the size of the
+ *   lazy list layout minus beforeContentPadding"). Item offsets ([firstVisibleOffsetPx],
+ *   [lastVisibleOffsetPx]) are measured from the content's start, which sits below
+ *   `contentPadding.top` — the paddings are applied at placement
+ *   (`LazyListMeasuredItem.visualOffset`), not baked into the offsets — so this line is
+ *   the bottom of the box and **not** where the last row has to stop. At the maximum
+ *   scroll the content's end is [bottomContentPaddingPx] above it: Compose measures
+ *   with `maxOffset = mainAxisAvailableSize = size - top - bottom` and reports
+ *   `viewportEndOffset = maxOffset + afterContentPadding` (`LazyListMeasure.kt`).
+ *   `pinToTail` therefore targets the subtraction, never this line itself.
+ * @param bottomContentPaddingPx the list's `contentPadding.bottom` for this frame, in
+ *   pixels — `LazyListLayoutInfo.afterContentPadding` for this top-to-bottom list, and
+ *   on `ChatScreen` the floating composer's measured height plus the cards above it,
+ *   the navigation/IME inset and the 24 dp breathing space (`listBottomClearance`).
+ *   **The live, measured value, never a constant**: the composer's height animates,
+ *   the keyboard changes the inset, and both are keys of the follow effect. Non-negative.
  * @param isScrollInProgress `LazyListState.isScrollInProgress`.
  * @param atBottom `!LazyListState.canScrollForward`.
  */
@@ -366,6 +376,7 @@ internal data class TailViewport(
     val lastVisibleOffsetPx: Int,
     val lastVisibleSizePx: Int,
     val viewportEndOffsetPx: Int,
+    val bottomContentPaddingPx: Int,
     val isScrollInProgress: Boolean,
     val atBottom: Boolean,
 ) {
@@ -385,11 +396,27 @@ internal data class TailViewport(
      * scrolled to a place where the tail is invisible. Two cases:
      *
      *  - the tail row is visible: move the viewport down by exactly the number of
-     *    pixels of it that are below the fold, keeping the first visible row. The
+     *    pixels of it that are below the **fold**, keeping the first visible row. The
      *    measure pass clamps an overshoot at the content end by scrolling back
-     *    (`LazyListMeasure.kt:246-269`), so this lands at the end, never past it;
+     *    (`LazyListMeasure.kt`: the `currentMainAxisOffset < maxOffset` branch), so
+     *    this lands at the end, never past it;
      *  - the tail row is not visible at all (its whole body is below the fold): ask
      *    for its **end**, [PIN_TO_END_PX], not its top.
+     *
+     * **The fold is the list's end, not the screen's bottom.** It is
+     * `viewportEndOffsetPx - bottomContentPaddingPx` — the item offset the content's
+     * end reaches at the maximum scroll (Compose's `mainAxisAvailableSize`). Measuring
+     * against `viewportEndOffsetPx` itself leaves a band exactly as tall as the bottom
+     * content padding in which the tail is **under the floating composer** while
+     * `canScrollForward` is still true: `hidden = lastBottom - viewportEndOffset ≤ 0`,
+     * so the follow issues no pin and lets the newest lines slide behind the composer
+     * for a full bottom-padding's worth of growth. When it finally does pin, it aims at
+     * the screen's bottom — so it keeps the tail hidden behind the composer instead of
+     * above it, which is the reported "does not follow the bottom while streaming".
+     * On this screen that band is the composer's own height, so the effect is not a few
+     * pixels but the newest one or two lines of the answer. The padding is the
+     * caller's live measurement of that band (composer + the cards above it + the
+     * IME/navigation inset + 24 dp), never a constant here.
      *
      * **Why the second case no longer asks for the tail's top.** It used to return
      * `offsetPx = 0` — put the tail row's top at the viewport's top — and rely on the
@@ -412,7 +439,11 @@ internal data class TailViewport(
         val tail = tailIndex
         if (lastVisibleIndex < tail) return TailPin(index = tail, offsetPx = PIN_TO_END_PX)
         if (lastVisibleIndex > tail) return null
-        val hidden = lastVisibleOffsetPx + lastVisibleSizePx - viewportEndOffsetPx
+        // The list's own end, not the screen's bottom edge: the measure pass stops at
+        // `mainAxisAvailableSize`, which is `viewportEndOffset` minus the bottom content
+        // padding. See the KDoc above for the stall the difference used to cause.
+        val contentEndPx = viewportEndOffsetPx - bottomContentPaddingPx
+        val hidden = lastVisibleOffsetPx + lastVisibleSizePx - contentEndPx
         if (hidden <= 0) return null
         return TailPin(index = firstVisibleIndex, offsetPx = firstVisibleOffsetPx + hidden)
     }

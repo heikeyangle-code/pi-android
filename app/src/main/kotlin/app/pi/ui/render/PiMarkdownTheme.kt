@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -14,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.ui.theme.PiHeading
 import app.pi.ui.theme.PiPalette
+import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTypographyProfile
 import com.mikepenz.markdown.model.DefaultMarkdownColors
@@ -49,9 +51,9 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  *
  * The fix is to keep the *reads* composable and the *construction* pure:
  * `PiMarkdown.kt` reads `PiTheme.palette`, `isSystemInDarkTheme()` and the
- * resolved 排版 profile (`PiTheme.typography`, which carries the reading role) at
- * the composition point and passes them here, so every function in this file is
- * an ordinary function and `remember(inputs) { ... }` is legal.
+ * resolved 排版 profile (`PiTheme.typography`) at the composition point and
+ * passes them here, so every function in this file is an ordinary function and
+ * `remember(inputs) { ... }` is legal.
  *
  * Two of the five then need a detail of their own, because the library keeps the
  * implementation it returns private:
@@ -249,18 +251,24 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  *
  * @param palette pi's resolved token set.
  * @param profile the resolved 排版 preset: every size and leading here is the
- *   preset's, and the **body role is its [PiTypographyProfile.styles]`reading`** —
- *   the reading face (思源宋体 400) at the preset's prose size/leading (14/23 in
- *   经典, 16/25 in the default 舒适). Every prose slot below — `h1`…`h6`,
- *   `alertTitle`, `text`, `paragraph`, `ordered`, `list`, `quote`, `bullet`,
- *   `textLink` and `table` — is derived from that one role, so the whole reading
- *   hierarchy shares one family. `mono` and `code` stay the machine roles
- *   (`PiMonoFamily`): inline code, fences, diffs, shell, commands and paths.
+ *   preset's, and the **body role is the preset's [PiTypographyProfile.styles]`prose`
+ *   metrics with the bundled reading face substituted** —
+ *   `prose.copy(fontFamily = PiProseFamily, fontWeight = Normal)` — i.e. 思源宋体
+ *   400 at 14/23 in 经典 and 16/25 in the default 舒适. `prose` itself stays the
+ *   UI's system Sans (settings/boot/file/diagnostics pages share it), so only the
+ *   Markdown body gets the serif. Every prose slot below — `h1`…`h6`,
+ *   `alertTitle`, `text`, `paragraph`, `ordered`, `list`, `quote`, `textLink` and
+ *   `table` — is derived from that one style, so the whole reading hierarchy
+ *   shares one family. `mono` and `code` stay the machine roles
+ *   (`PiMonoFamily`): inline code, fences, diffs, shell, commands and paths. The
+ *   one exception is the `bullet` **marker glyph**: only its colour and size come
+ *   from the reading style; its face is the system UI one, because Source Han
+ *   Serif's U+2022 is a full-width (1 em) glyph with a 0.10 em dot (see the slot).
  *
  *   Bold is real, not synthesised: the library's annotator always emits
- *   `SpanStyle(fontWeight = FontWeight.Bold)`, and the reading family registers its
- *   600 face under **both** `SemiBold` and `Bold`, so `**strong**` selects the real
- *   600 file and the headings' explicit `SemiBold` lands on the same one.
+ *   `SpanStyle(fontWeight = FontWeight.Bold)`, and `PiProseFamily` registers its
+ *   600 face under **both** `SemiBold` and `Bold`, so `**strong**` selects the
+ *   real 600 file and the headings' explicit `SemiBold` lands on the same one.
  *
  *   The table's **type** is the preset's too — [PiTypographyProfile.tableSizeSp] /
  *   `tableLineHeightSp`, 12.5/18 in 经典 (which is exactly the pair this file used
@@ -293,9 +301,14 @@ internal fun piMarkdownTypography(
      */
     monoParagraph: Boolean = false,
 ): MarkdownTypography {
-    // 阅读正文：思源宋体 400，字号/行高由排版档给（经典 14/23）。Markdown 的
-    // 正文类角色全部由它派生；`mono`/`code` 只留给机器输出（代码、命令行、路径）。
-    val base = profile.styles.reading
+    // Markdown 正文字体：字号/行高/字距等一律取排版档的 `prose` 度量，只把字族换成
+    // 随包的思源宋体、字重固定 400（非经典档的 `prose` 是给 UI 用的 500，不搬进来）。
+    // `prose` 本身仍是系统 Sans —— 设置页/Boot/文件页/诊断页共用它，只有 Markdown
+    // 正文换成宋体。`mono`/`code` 只留给机器输出（代码、命令行、路径）。
+    val base = profile.styles.prose.copy(
+        fontFamily = PiProseFamily,
+        fontWeight = FontWeight.Normal,
+    )
     val mono = profile.styles.mono
     val code = profile.styles.code
     // 标题/强调都落在真实 600：`PiProseFamily` 把 600 同时注册为 `SemiBold` 与
@@ -332,16 +345,30 @@ internal fun piMarkdownTypography(
         // copy is `dist/bundle/chunks/chunk-JVUZSMYM.js:584`, which is where this was verified).
         // The colour was here and the italic was not, so a quote read as body text in a slightly
         // different hue instead of as a quote.
+        //
+        // 审计备注（2026-10-31）：库 0.45.0 的 `MarkdownBlockQuote` 只把这份 style 用在
+        // **竖条颜色**与**空行高度**上 —— 块内文字是经 `MarkdownElement` 派发到
+        // `paragraph` 槽渲染的（`MarkdownBlockQuote.kt:90-96`），所以这里的 mdQuote/斜体
+        // 目前落在竖条上，引文正文仍是 paragraph 的颜色与字形。这是库的实现，不是本文件
+        // 的笔误；要不要把引文真正染成 mdQuote+斜体，需要另立一项（会改变引用的观感）。
         quote = base.copy(color = palette.mdQuote, fontStyle = FontStyle.Italic),
         paragraph = if (monoParagraph) mono.copy(color = body) else base.copy(color = body),
         ordered = base.copy(color = body),
         // 2026-10-26: 圆点只放大字形（1.4×），行高保持正文档，不把列表项撑高；
         // 经典档冻结，仍是正文 14。
+        //
+        // 2026-10-31（宋体）：圆点**只**是标记符号，标记字回到系统 UI 字。思源宋体的
+        // U+2022 是 CJK 全宽字形（advance 1.000 em，墨迹只有 0.10 em），`"• "` 在
+        // 1.4× 下要占 1.76 em：圆点缩成 2 dp 左右、列表正文比改前右移 ~15 dp，多一层
+        // 嵌套再叠一次。标记不是正文，列表**文字**仍是宋体；换成系统 UI 字的比例宽度
+        // 就能保住 10-26 定下的 1.4× 几何。（若要彻底与字体无关，下一步可以把圆点
+        // 画成板上那个 4 dp 圆点，见 v2 `width:4,height:4,borderRadius:999`。）
         bullet = if (profile.isClassic) {
-            base.copy(color = palette.mdListBullet)
+            base.copy(color = palette.mdListBullet, fontFamily = FontFamily.Default)
         } else {
             base.copy(
                 color = palette.mdListBullet,
+                fontFamily = FontFamily.Default,
                 fontSize = (base.fontSize.value * 1.4f).sp,
                 lineHeight = base.lineHeight,
             )

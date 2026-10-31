@@ -60,17 +60,15 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * and its sources: Tailwind Typography for the prose scale and Android M3's 16 sp
  * body for the comfortable step.
  *
- * ## 两个正文字体角色（2026-10-31 字体升级）
+ * ## 阅读字体（2026-10-31 字体升级）
  *
- * 聊天 Markdown 的**阅读正文**改用随包的思源宋体（`PiProseFamily`，Source Han
- * Serif SC 2.003R，OFL-1.1），由 `PiTextStyles.reading` 承载。`prose` 的字族**不动**：
- * 它仍是系统 Sans，被设置页、Boot、文件页、诊断页等整个 UI 共用，把 `prose` 改成
- * 宋体会让全 App 变宋体。四档的 `reading` **共用同一字族**，字号/行高跟随本档的
- * `proseSize`/`proseLine`（经典 14/23、紧凑 15/24、舒适 16/25、宽松 17/26），
- * 字重固定 400（`prose` 在非经典档仍是 UI 角色的 500，不受影响）；粗体由 Markdown
- * 的 `**strong**` 落到 `PiProseFamily` 里注册为 `Bold` 的那个真实 SemiBold 文件上，
- * 不出现合成粗体。两个角色尺寸相同、含义不同 —— `prose` 是界面文字，`reading` 是
- * 内容 —— 不要互相替换，`reading` 只由 `render/PiMarkdownTheme.kt` 消费。
+ * 聊天 Markdown 的阅读正文用随包的思源宋体（`PiProseFamily`，Source Han Serif CN
+ * 2.003R 可变字体，OFL-1.1），但**不新增排版角色**：`render/PiMarkdownTheme.kt`
+ * 在自己的消费点把本档 `styles.prose` 的字族覆盖成 `PiProseFamily`、字重 400。
+ * 四档的字号/行高仍就是下表的 `proseSize`/`proseLine`（经典 14/23、紧凑 15/24、
+ * 舒适 16/25、宽松 17/26）；`prose` 本身仍是系统 Sans，设置页、Boot、文件页、
+ * 诊断页不受影响。粗体由 Markdown 的 `**strong**` 落到 `PiProseFamily` 里注册为
+ * `Bold` 的真实 SemiBold 实例上，不出现合成粗体。
  *
  * **The sheet's 1.75–1.8 leading for 舒适 was not kept, and that is the one place
  * this file now contradicts the direction sheet.** The number came from Latin
@@ -102,7 +100,7 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * | inline code size/w | 12.5/400|  13/500 |    14/500   | 15/500|
  * | code size/leading  |  13/19  |  13/20  |    14/22    | 15/23 |
  * | table size/leading | 12.5/18 |  13/20  |    14/22    | 15/23 |
- * | headings h1…h6     | 22/20/18/16/15/14 | 24/22/20/18/17/16 | 25/23/21/19/18/17 | 26/24/22/20/19/18 |
+ * | headings size/leading | 22/30 20/28 18/26 16/24 15/22 14/21 | 24/29 22/27 20/25 18/23 17/22 16/21 | 25/30 23/28 21/26 19/24 18/23 17/22 | 26/31 24/29 22/27 20/25 19/24 18/23 |
  * | transcript gap     |    8    |    4    |      8      |  12   |
  * | 换人：消息之前       |    8    |   16    |     20      |  32   |
  *
@@ -150,6 +148,14 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * paragraph. 经典 keeps its own 22/20/18/16/15/14 (its h6 == body — the one place
  * the frozen档 is below this file's own rule, and it is left alone rather than
  * re-cut: see below).
+ *
+ * **标题行高按任务书重排（2026-10-31）**：舒适档 h1…h6 为 25/30、23/28、21/26、
+ * 19/24、18/23、17/22；紧凑/宽松用**同一组比例**（30/25、28/23、26/21、24/19、
+ * 23/18、22/17）乘各自字号四舍五入，得紧凑 24/29…16/21、宽松 26/31…18/23。
+ * 经典保持它自己的 30/28/26/24/22/21 不变 —— 那是它「保留改前密度」的承诺。
+ * 这组比例是 1.20–1.29，**低于正文的 CJK 行距地板 1.40**，所以「行距」档的
+ * ×0.92/×1.08 落在带外被丢弃：标题行高只按本表，不随「行距」移动；正文、行内
+ * 代码、代码块与表格仍照旧随「行距」移动（见下节）。
  *
  * 换人那一行 takes the single number above, and 同一条消息内部 keeps the transcript
  * gap. **One** 换人 number, not one per speaker: that is what every chat UI does
@@ -212,8 +218,8 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  *
  * ## The two multipliers
  *
- * `app.appearance.lineHeight` multiplies every **leading** (never a size) by
- * 0.92 / 1.0 / 1.08, and the result must stay inside
+ * `app.appearance.lineHeight` multiplies every **body, code and table leading**
+ * (never a size) by 0.92 / 1.0 / 1.08, and the result must stay inside
  * [MIN_LEADING_RATIO]…[MAX_LEADING_RATIO] (1.40–1.85): a step that would leave
  * that band is **dropped entirely** and the base leading stands. 1.40 is the floor
  * below which CJK glyphs start to collide (a CJK glyph fills ~0.87 em of its box,
@@ -263,7 +269,7 @@ data class PiTypographyProfile(
     val lineHeight: String,
     /** One of `small` / `normal` / `large` / `xlarge`. */
     val fontSize: String,
-    /** The six text roles, with the leading multiplier and the size offset applied. */
+    /** The five text roles, with the leading multiplier and the size offset applied. */
     val styles: PiTextStyles,
     val h1: PiHeading,
     val h2: PiHeading,
@@ -444,30 +450,39 @@ data class PiTypographyProfile(
         )
 
         /**
-         * Today's per-slot heading leading, as a ratio of the slot's size.
-         *
-         * They are not one number: `PiMarkdownTheme.kt` pairs 22/30, 20/28, 18/26,
-         * 16/24, 15/22, 14/21, i.e. 1.36 → 1.5 as the size falls. Re-using each
-         * slot's own ratio reproduces all six classic leadings exactly (22 × 30/22
-         * = 30, …) and gives the other presets a leading that follows their size
-         * instead of a second hand-written table.
+         * 经典档每个标题槽的行高比例：与 `PiMarkdownTheme.kt` 改造前写死的
+         * 22/30、20/28、18/26、16/24、15/22、14/21 逐值相同（1.36 → 1.50）。
+         * 经典档的 factor 恒为 1.0，所以这组比例原样落地，密度不动。
          */
-        private val HEADING_LEADING_RATIO = doubleArrayOf(
+        private val CLASSIC_HEADING_LEADING_RATIO = doubleArrayOf(
             30.0 / 22.0, 28.0 / 20.0, 26.0 / 18.0, 24.0 / 16.0, 22.0 / 15.0, 21.0 / 14.0,
         )
 
-        private fun heading(numbers: Preset, slot: Int, leading: Double, offsetSp: Int = 0): PiHeading {
+        /**
+         * 非经典档每个标题槽的行高比例，取自任务书舒适档的
+         * 25/30、23/28、21/26、19/24、18/23、17/22（即 30/25 … 22/17）。
+         * 紧凑/宽松用**同一组比例**乘各自字号四舍五入，不再各自手写一张行高表 ——
+         * 四档的标题节奏因此是同一个形状（比例落 1.20–1.29）。
+         */
+        private val HEADING_LEADING_RATIO = doubleArrayOf(
+            30.0 / 25.0, 28.0 / 23.0, 26.0 / 21.0, 24.0 / 19.0, 23.0 / 18.0, 22.0 / 17.0,
+        )
+
+        private fun heading(
+            numbers: Preset,
+            slot: Int,
+            leading: Double,
+            offsetSp: Int = 0,
+            classic: Boolean = false,
+        ): PiHeading {
             val size = numbers.headings[slot]
-            val ratio = HEADING_LEADING_RATIO[slot]
+            val ratio = (if (classic) CLASSIC_HEADING_LEADING_RATIO else HEADING_LEADING_RATIO)[slot]
             val stepped = ratio * leading
-            // Same band as the body roles. Every heading slot's own leading is
-            // tighter than the band's floor (h1 1.36 … h4/h6 1.50), so 行距 = 紧
-            // (×0.92 → 1.25…1.38) is dropped for all six and leaves the ladder
-            // alone, while 行距 = 松 (×1.08 → 1.47…1.62) clears the floor for all
-            // six and moves all six. Uniform in both directions — before the floor
-            // was 1.5, 松 moved h2…h6 and left h1 behind, so a stepped h1 sat at
-            // the same leading as its own h2. The rule is still one rule, not a
-            // special case for the body.
+            // 行距乘子只在结果落回 1.40–1.85 时才生效。经典档 factor 恒为 1.0（不乘）；
+            // 非经典档的标题比例是任务书的 1.20–1.29，×0.92/×1.08 后为 1.10–1.40，
+            // 仍落在正文的 CJK 行距地板之外 —— 紧/松两档都被丢弃，标题行高固定按本表。
+            // 这是把标题表落成任务书数字的直接结果：比例低于 1.40 的标题本来就不该再
+            // 被「行距」压低；正文/代码/表格仍照旧随「行距」移动。
             val effective = if (stepped < MIN_LEADING_RATIO || stepped > MAX_LEADING_RATIO) ratio else stepped
             val base = PiHeading(size, (size * effective).roundToInt())
             // `字号` 的平移与 [PiTextStyles.shifted] 同一口径：字号与行高各 +offsetSp。
@@ -524,14 +539,6 @@ data class PiTypographyProfile(
                             lineHeight = numbers.proseLine.sp,
                             fontWeight = FontWeight.Medium,
                         ).piPrecise(),
-                        // 阅读正文：同一档的字号/行高，思源宋体 400。字族是四档共用的
-                        // `PiProseFamily`；`prose` 的 500 是 UI 角色的规则，不搬到这里。
-                        reading = TextStyle(
-                            fontFamily = PiProseFamily,
-                            fontSize = numbers.proseSize.sp,
-                            lineHeight = numbers.proseLine.sp,
-                            fontWeight = FontWeight.Normal,
-                        ).piPrecise(),
                         code = TextStyle(
                             fontFamily = PiMonoFamily,
                             fontSize = numbers.codeSize.sp,
@@ -545,12 +552,12 @@ data class PiTypographyProfile(
                 // 各平移 offset）。不这样做的话，`字号 = 更大` 时正文（18）会超过 h6（17）
                 // —— 「标题严格大于正文」这条系统不变量必须对四个 `字号` 档都成立，
                 // 而 h6 = 正文 + 1 是在**同一个偏移下**成立的（两个数各加同一个 offset）。
-                h1 = heading(numbers, 0, leading, offset),
-                h2 = heading(numbers, 1, leading, offset),
-                h3 = heading(numbers, 2, leading, offset),
-                h4 = heading(numbers, 3, leading, offset),
-                h5 = heading(numbers, 4, leading, offset),
-                h6 = heading(numbers, 5, leading, offset),
+                h1 = heading(numbers, 0, leading, offset, classic = resolved == CLASSIC),
+                h2 = heading(numbers, 1, leading, offset, classic = resolved == CLASSIC),
+                h3 = heading(numbers, 2, leading, offset, classic = resolved == CLASSIC),
+                h4 = heading(numbers, 3, leading, offset, classic = resolved == CLASSIC),
+                h5 = heading(numbers, 4, leading, offset, classic = resolved == CLASSIC),
+                h6 = heading(numbers, 5, leading, offset, classic = resolved == CLASSIC),
                 // 行内代码的字号跟着走，行高跟着平移（它与标题槽同一处理）。
                 // 注意：这一对行高**进不了渲染** —— Compose 的 `SpanStyle` 没有
                 // `lineHeight`（库把 `inlineCode` 当 span 压进 AnnotatedString，
@@ -678,7 +685,6 @@ private fun PiTextStyles.leadingScaled(factor: Double): PiTextStyles {
         mono = mono.lead(),
         monoSmall = monoSmall.lead(),
         prose = prose.lead(),
-        reading = reading.lead(),
         code = code.lead(),
     )
 }

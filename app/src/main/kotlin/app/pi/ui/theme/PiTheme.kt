@@ -22,6 +22,7 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
@@ -295,52 +296,87 @@ val PiMonoFamily: FontFamily = FontFamily(
 )
 
 /**
- * The bundled reading face: **Source Han Serif SC（思源宋体）2.003R**, static
- * `Regular` + `SemiBold` OTFs extracted from Adobe's official
- * `09_SourceHanSerifSC.zip` release (`app/src/main/res/font/`), licensed
- * OFL-1.1 — the licence text ships in the in-app licence list as
- * `SourceHanSerif-OFL-1.1.txt` (OFL 1.1 + Adobe's copyright line).
+ * The bundled reading face: **Source Han Serif CN（思源宋体 CN）2.003R**, the
+ * official Simplified-Chinese **subset variable font** extracted from Adobe's
+ * `02_SourceHanSerif-VF.zip` (`Variable/TTF/Subset/SourceHanSerifCN-VF.ttf`),
+ * shipped as `app/src/main/res/font/source_han_serif_cn_vf.ttf` and licensed
+ * OFL-1.1 — the licence text is in the in-app licence list as
+ * `SourceHanSerif-OFL-1.1.txt` (OFL 1.1 + Adobe's copyright line; the file is
+ * byte-identical across the SC, CN and VF packages of this release).
  *
- * ## Why a serif, and why only here
+ * ## Why the CN subset, and why one variable file
  *
- * The transcript's Markdown body is *reading* content: a long answer is read for
- * minutes, and a serif face separates that from the UI chrome without touching
- * the UI itself. This family is therefore consumed by the [PiTextStyles]
- * `reading` role **only** — UI text keeps the system Sans through `prose`, the
- * M3 slots and everything else. Loading these two files here (one place) is what
- * keeps the licence, the resource names and the weight mapping auditable.
+ * A serif separates the transcript's Markdown *content* from the UI chrome: the
+ * body role keeps the system Sans, and the Markdown renderer overrides only the
+ * family with this one (`render/PiMarkdownTheme.kt`). The faces are therefore
+ * only ever this family's body/heading text.
  *
- * ## Why the Bold slot points at the SemiBold file
+ * The full `Source Han Serif SC` cut is 24.5 MB **per static weight** — 49.2 MB
+ * for the 400/600 pair, ~40 MB in the APK, which is not acceptable for one
+ * reading font. The CN subset is Adobe's official regional Simplified-Chinese
+ * cut: 31,058 glyphs / 30,930 mapped code points. Measured against the full SC
+ * cut (44,779 mapped code points) it keeps **all** 20,992 BMP Han, all 6,592
+ * CJK Ext A, all 189 kana and all 336 Latin code points; what it drops is
+ * Hangul (11,172 syllables), 2,676 other symbols/compatibility code points and
+ * one punctuation mark. Neither cut maps CJK Ext B. Characters outside the
+ * subset fall back per character to the platform font, which is Compose's
+ * normal fallback for a missing glyph.
+ *
+ * The **variable** TTF folds all seven weights into one 25.1 MB file that
+ * deflates to ~15.5 MB: smaller in the APK than the two static CN OTFs
+ * (~19.9 MB deflated), and well clear of this feature's 20 MB budget. The CFF2
+ * variable OTF from the same release is ~1.4 MB smaller but is not used: CFF2
+ * variable rendering on the app's API 26 floor cannot be verified here, and
+ * Adobe's own release notes warn about CFF2 variable fonts on some platforms.
+ * The TTF uses `glyf` outlines, the format Android 8's variable-font support
+ * (`FontVariationAxis` / `Paint.fontVariationSettings`, both API 26) targets.
+ *
+ * ## Why every entry pins the `wght` axis
+ *
+ * This VF's default instance is **ExtraLight (250)**, not Regular: a 400 request
+ * with no variation settings would render the thinnest cut. Each [Font] below
+ * therefore passes `variationSettings = FontVariation.Settings(
+ * FontVariation.weight(...))`. Compose applies these through
+ * `Paint.fontVariationSettings` in `PlatformTypefaces.setFontVariationSettings`,
+ * gated on `SDK_INT >= 26`; minSdk is 26, so every supported device takes that
+ * path (Compose ui-text 1.8.3).
+ *
+ * ## Why the Bold slot points at weight 600
  *
  * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer
- * library, while this family ships 400 and 600 — there is no 700 face. Asking
- * for 700 with only a 400 entry registered would make Android **synthesise**
- * a faux-bold from the Regular outlines: wrong advance widths, smeared
- * strokes, and two weights of the same family colliding on one screen. So the
- * 600 file is registered a second time as `Bold`; a `Bold` request lands on the
- * real SemiBold outlines instead of a synthesis.
+ * library, while the face's design weights top out at 600 here. Asking for 700
+ * with only a 400 instance would make Android **synthesise** a faux-bold from
+ * the Regular outlines: wrong advance widths, smeared strokes. So `Bold` is
+ * declared as a third entry pinned to `wght` 600; a 700 request lands on the
+ * real SemiBold instance instead of a synthesis.
  *
  * ## Why there is no italic file
  *
- * Source Han Serif SC publishes no italic (CJK type is not oblique by
- * convention), and this app does not bundle an algorithmic slanted copy: a
- * fake oblique would be a second, unlicensed-looking face. Markdown's block
- * quote stays `fontStyle = FontStyle.Italic` in `render/PiMarkdownTheme.kt`, so
+ * Source Han Serif publishes no italic (CJK type is not oblique by convention),
+ * and this app does not bundle an algorithmic slanted copy. Markdown's block
+ * quote keeps `fontStyle = FontStyle.Italic` in `render/PiMarkdownTheme.kt`, so
  * Compose synthesises the oblique at draw time — the italic is a *semantic*
- * emphasis, not a fourth font file, and it stays that way until a real italic
- * is vendored.
- *
- * Static OTFs rather than a variable font: the app asks for exactly 400 / 600,
- * and these are the two weights this app bundles for Simplified Chinese (a
- * variable OTF would add a variation-axis resolution step at runtime for no
- * weight the app can ask for).
+ * emphasis, not another font file, and it stays that way until a real italic is
+ * vendored.
  */
 val PiProseFamily: FontFamily = FontFamily(
-    Font(R.font.source_han_serif_sc_regular, FontWeight.Normal),
-    Font(R.font.source_han_serif_sc_semibold, FontWeight.SemiBold),
-    // Markdown 的 **strong** 由库固定成 FontWeight.Bold(700)。把 600 文件也注册成
+    Font(
+        R.font.source_han_serif_cn_vf,
+        FontWeight.Normal,
+        variationSettings = FontVariation.Settings(FontVariation.weight(400)),
+    ),
+    Font(
+        R.font.source_han_serif_cn_vf,
+        FontWeight.SemiBold,
+        variationSettings = FontVariation.Settings(FontVariation.weight(600)),
+    ),
+    // Markdown 的 **strong** 由库固定成 FontWeight.Bold(700)。把 600 这个实例再声明成
     // Bold，粗体才会用真实 SemiBold，而不是合成粗体。
-    Font(R.font.source_han_serif_sc_semibold, FontWeight.Bold),
+    Font(
+        R.font.source_han_serif_cn_vf,
+        FontWeight.Bold,
+        variationSettings = FontVariation.Settings(FontVariation.weight(600)),
+    ),
 )
 
 /**
@@ -391,7 +427,7 @@ internal val piLineHeightStyle: LineHeightStyle = LineHeightStyle(
 /**
  * [TextStyle] with [piLineHeightStyle] and `includeFontPadding = false` applied.
  *
- * Every role in this app goes through this: [PiTextStyles]'s six slots,
+ * Every role in this app goes through this: [PiTextStyles]'s five slots,
  * `piTypography`'s M3 slots, and the markdown profile's own styles. `copy` (which
  * `shifted` / `leadingScaled` / `PiMarkdownTheme`'s `base.copy(...)` all use)
  * preserves both fields, so a scaled or recoloured role keeps them.
@@ -402,12 +438,12 @@ internal fun TextStyle.piPrecise(): TextStyle = copy(
 )
 
 /**
- * Text styles that Material 3's [Typography] has no slot for: the two human-body
- * roles (UI [prose] and content [reading]), pi's footer/meta line and the
- * machine roles. Everything a *human* wrote uses the system font — except the
- * transcript's Markdown body, which is set in the bundled serif (see `reading`) —
- * and everything a *machine* emitted uses monospace; that split is the app's
- * rule #7 (docs/pi-android-ui-spec.md §1).
+ * Text styles that Material 3's [Typography] has no slot for: the transcript's
+ * prose role, pi's footer/meta line and the machine roles. Everything a *human*
+ * wrote uses the system font — except the transcript's Markdown body, whose
+ * family the renderer overrides with the bundled serif at the consumption site
+ * (`render/PiMarkdownTheme.kt`) — and everything a *machine* emitted uses
+ * monospace; that split is the app's rule #7 (docs/pi-android-ui-spec.md §1).
  *
  * ## The five sizes, and why they are these five (`06 §2` 字号 5 档)
  *
@@ -415,22 +451,13 @@ internal fun TextStyle.piPrecise(): TextStyle = copy(
  * `01-design-spec.md` §2 makes the bottom two a floor (「正文 ≥14px、标签/注释
  * ≥12px」). The roles below cover the transcript's share of that scale; the two
  * larger steps (15 row titles, 17 screen titles) come from M3's
- * `titleSmall`/`titleMedium` (`piTypography`). There are **six roles but still
- * five size steps**: [prose] and [reading] deliberately share one size/leading
- * and differ only in typeface, so adding the reading role adds no sixth size.
+ * `titleSmall`/`titleMedium` (`piTypography`).
  *
  *   meta       12/18  labels, meta lines, machine readings (v2 `t12`)
  *   monoSmall  12/18  the same size in the machine face (v2 `mono t12`)
  *   mono       13/20  machine body: commands, tool output, paths (v2 `t13`)
  *   code       13/19  fences and diffs — v2 overrides those two to a fixed 19
- *   prose      14/23  **UI** human body: settings copy, error sentences (v2 `t14`, 1.62)
- *   reading    14/23  **chat Markdown** body, in the bundled serif (same `t14` metrics)
- *
- * The [prose] / [reading] split is the whole point of the sixth slot: `prose` is
- * read by the settings screen, boot, file and diagnostics pages (and was the
- * markdown body before this split), so giving *it* the serif would set the entire
- * app in a serif face. Only the Markdown renderer (`render/PiMarkdownTheme.kt`)
- * consumes [reading]; nothing else should.
+ *   prose      14/23  human body: chat text, error sentences (v2 `t14`, 1.62)
  *
  * B7 (`numeric` / 字号档位收敛): [meta] and [monoSmall] used to be 11.5sp, which
  * is **under** the spec's own 12px label floor and is a sixth step v2 never
@@ -442,22 +469,8 @@ data class PiTextStyles(
     val meta: TextStyle,
     val mono: TextStyle,
     val monoSmall: TextStyle,
-    /** v2 `t14`: the UI's human body (settings copy, an error's sentence); system Sans. */
+    /** v2 `t14`: the transcript's human body (chat prose, an error's sentence). */
     val prose: TextStyle,
-    /**
-     * v2 `t14` 的聊天 Markdown 阅读正文：字号/行高与 [prose] 相同，字族是
-     * [PiProseFamily]（思源宋体），400。
-     *
-     * 单独一个角色，而不是把 [prose] 的字族换掉：`PiTheme.text.prose` 被设置页、
-     * Boot、文件页、诊断页等大量 UI 复用，换字族会把整个 App 变成宋体。宋体只负责
-     * **内容**（聊天里的 Markdown 正文），不负责整个 UI。本角色只由
-     * `render/PiMarkdownTheme.kt` 消费（Markdown 正文从它取），别处不得使用。
-     *
-     * 用 400 而不是 [prose] 非经典档的 500：正文是长文，Regular 才是宋体的阅读字重；
-     * 粗体由 Markdown 的 `**strong**`（库固定 `FontWeight.Bold`）落到
-     * [PiProseFamily] 里注册为 Bold 的那个真实 SemiBold 文件上。
-     */
-    val reading: TextStyle,
     /** v2's code/diff override: `mono` at a fixed 13/19. */
     val code: TextStyle,
 ) {
@@ -476,13 +489,12 @@ data class PiTextStyles(
         mono = mono.shifted(deltaSp),
         monoSmall = monoSmall.shifted(deltaSp),
         prose = prose.shifted(deltaSp),
-        reading = reading.shifted(deltaSp),
         code = code.shifted(deltaSp),
     )
 
     companion object {
         /**
-         * 经典档的字面值，也是全 App 六个角色的基线。
+         * 经典档的字面值，也是全 App 五个角色的基线。
          *
          * 每一行都以 [piPrecise] 收尾 —— 这是**唯一**一处把「没有字体自带内边距 + 行距居中
          * + 首末行裁掉」写进角色定义的地方，别的角色（`PiTypographyProfile` 造的非经典档、
@@ -507,12 +519,6 @@ data class PiTextStyles(
             ).piPrecise(),
             prose = TextStyle(
                 fontFamily = FontFamily.Default,
-                fontSize = 14.sp,
-                lineHeight = 23.sp,
-                fontWeight = FontWeight.Normal,
-            ).piPrecise(),
-            reading = TextStyle(
-                fontFamily = PiProseFamily,
                 fontSize = 14.sp,
                 lineHeight = 23.sp,
                 fontWeight = FontWeight.Normal,

@@ -456,6 +456,12 @@ private fun ChatBody(
     // 命令面板和附件条是瞬时的，没有算进来。
     val listBottomClearance =
         composerSlot + aboveComposerSlot + dockBottom + PiSpacing.composerListClearance
+    // The same clearance in the list's own unit. `TailViewport.pinToTail` targets
+    // `viewportEndOffset - contentPadding.bottom` — the item offset the content's end
+    // reaches at maximum scroll, i.e. the composer's top minus 24 dp — not the screen's
+    // bottom. Compose rounds this very `Dp` for `afterContentPadding`, with the same
+    // density, so the two agree to the pixel.
+    val listBottomClearancePx = with(LocalDensity.current) { listBottomClearance.roundToPx() }
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
     // `remember` on purpose.
@@ -1196,7 +1202,9 @@ private fun ChatBody(
         tailPoke,
         sessionKey,
         // 输入框一浮起来，"最新"的位置就由它和 inset 决定：高度动画、键盘弹出都要把
-        // 尾巴重新钉到新的可见底边，否则最后几行会停在输入框下面。
+        // 尾巴重新钉到新的可见底边，否则最后几行会停在输入框下面。它同时是 pin 的
+        // `bottomContentPaddingPx`（按 px 传下去）：列表真正的末尾是 `viewportEndOffset`
+        // 减掉这段留白，而不是屏幕底边。
         listBottomClearance,
         // The tail row's settled height, from the collector above: the one geometry
         // fact that can change with no other key moving (final parse / image size).
@@ -1232,6 +1240,11 @@ private fun ChatBody(
                     lastVisibleOffsetPx = last?.offset ?: 0,
                     lastVisibleSizePx = last?.size ?: 0,
                     viewportEndOffsetPx = info.viewportEndOffset,
+                    // The list's true end is `viewportEndOffset` minus this padding: at
+                    // maximum scroll the content's end sits above the floating composer,
+                    // not at the screen's bottom edge. It is the same value the
+                    // `LazyColumn` below passes as `contentPadding.bottom`, in pixels.
+                    bottomContentPaddingPx = listBottomClearancePx,
                     isScrollInProgress = listState.isScrollInProgress,
                     atBottom = !listState.canScrollForward,
                 ),

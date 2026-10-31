@@ -37,8 +37,13 @@ fun check(name: String, actual: Any?, expected: Any?) {
 
 /**
  * One observation of a 1000 px viewport whose rows are 200 px unless a check says
- * otherwise. The defaults describe "the transcript is scrolled to its end": the last
- * visible row is the tail, its bottom is on the viewport's end line.
+ * otherwise. The defaults describe "the transcript is scrolled to the end": the last
+ * visible row is the tail, its bottom is on the list's end line.
+ *
+ * `bottomContentPaddingPx` defaults to 0 — the model the harness was built on, where
+ * the list's end line and the screen's bottom edge coincide. The composer checks
+ * (F7-F10, G16-G18) pass the real floating-composer clearance, which is what puts the
+ * two lines apart.
  */
 private fun viewport(
     totalItems: Int,
@@ -49,6 +54,7 @@ private fun viewport(
     lastVisibleOffsetPx: Int = 800,
     lastVisibleSizePx: Int = 200,
     viewportEndOffsetPx: Int = 1000,
+    bottomContentPaddingPx: Int = 0,
     isScrollInProgress: Boolean = false,
 ) = TailViewport(
     totalItems = totalItems,
@@ -58,6 +64,7 @@ private fun viewport(
     lastVisibleOffsetPx = lastVisibleOffsetPx,
     lastVisibleSizePx = lastVisibleSizePx,
     viewportEndOffsetPx = viewportEndOffsetPx,
+    bottomContentPaddingPx = bottomContentPaddingPx,
     isScrollInProgress = isScrollInProgress,
     atBottom = atBottom,
 )
@@ -382,6 +389,88 @@ fun main() {
             lastVisibleSizePx = 2000,
         )
         check("F6 the header row does not shift the pin", withHeader.pinToTail(), TailPin(47, 1000))
+
+        // ------------------------------------------------ F7-F10: the floating composer
+        //
+        // `viewportEndOffset` is the **screen's** bottom edge, not the list's end: the
+        // measure pass stops at `mainAxisAvailableSize` = `viewportEndOffset` minus the
+        // bottom content padding, and on this screen that padding is the floating
+        // composer's clearance (composer + cards above it + inset + 24 dp). Geometry:
+        // a 1000 px viewport, a 200 px clearance, and the tail row's bottom at 800 when
+        // the list is at its end — i.e. 24 dp above the composer.
+
+        // At the end: the tail's bottom is on the list's end line (800), which is 200 px
+        // above the screen's bottom edge. Nothing to pin.
+        val composerEnd = viewport(
+            totalItems = 20,
+            atBottom = true,
+            firstVisibleIndex = 17,
+            firstVisibleOffsetPx = 140,
+            lastVisibleIndex = 19,
+            lastVisibleOffsetPx = 600,
+            lastVisibleSizePx = 200,
+            viewportEndOffsetPx = 1000,
+            bottomContentPaddingPx = 200,
+        )
+        check("F7 a tail above the floating composer is not pinned", composerEnd.pinToTail(), null)
+
+        // 10 px of streaming growth. The list can still scroll 10 px (its end line is at
+        // 800 and the row's bottom is at 810), and 810 is still above the screen's bottom
+        // (1000). The *old* target — the screen's bottom — saw 810 - 1000 = -190 and
+        // called this settled: the follow then stood still until the newest line had
+        // been hidden behind the composer for a full 200 px. The target is the list's
+        // end (800), so the pin is 10 px. This is the reported bug, in one assertion.
+        val grewTen = viewport(
+            totalItems = 20,
+            atBottom = false,
+            firstVisibleIndex = 17,
+            firstVisibleOffsetPx = 140,
+            lastVisibleIndex = 19,
+            lastVisibleOffsetPx = 600,
+            lastVisibleSizePx = 210,
+            viewportEndOffsetPx = 1000,
+            bottomContentPaddingPx = 200,
+        )
+        check("F8 a 10 px growth above the composer is pinned by 10 px", grewTen.pinToTail(), TailPin(17, 150))
+        check(
+            "F8b the old screen-bottom target would have called F8 settled",
+            grewTen.lastVisibleOffsetPx + grewTen.lastVisibleSizePx - grewTen.viewportEndOffsetPx <= 0,
+            true,
+        )
+
+        // Applying F8 the way the measure pass does — forward by the pin, so every item's
+        // offset decreases by those 10 px — puts the row's top at 590 and its bottom at
+        // 800 again, and the next observation asks for nothing. The 200 px is not
+        // "missing": it is the composer's band, and the list's end is above it.
+        val composerSettled = viewport(
+            totalItems = 20,
+            atBottom = true,
+            firstVisibleIndex = 17,
+            firstVisibleOffsetPx = 150,
+            lastVisibleIndex = 19,
+            lastVisibleOffsetPx = 590,
+            lastVisibleSizePx = 210,
+            viewportEndOffsetPx = 1000,
+            bottomContentPaddingPx = 200,
+        )
+        check("F9 the position that pin asked for is the list's end", composerSettled.pinToTail(), null)
+
+        // A growth larger than the clearance, already below the screen's bottom (1050):
+        // the old formula would pin by 50 px and then report "settled" at a position 200 px
+        // short of the list's end — permanently, because nothing would move the rest. The
+        // pin must be measured from the list's end: 1050 - 800 = 250.
+        val overshot = viewport(
+            totalItems = 20,
+            atBottom = false,
+            firstVisibleIndex = 17,
+            firstVisibleOffsetPx = 140,
+            lastVisibleIndex = 19,
+            lastVisibleOffsetPx = 600,
+            lastVisibleSizePx = 450,
+            viewportEndOffsetPx = 1000,
+            bottomContentPaddingPx = 200,
+        )
+        check("F10 the pin is measured from the list's end, not the screen's bottom", overshot.pinToTail(), TailPin(17, 390))
     }
 
     // ====================================== G. same-frame sequences and persistence
@@ -479,6 +568,67 @@ fun main() {
             ),
         )
         check("G15 the position that pin asked for asks for nothing", tallSettled.pin, null)
+
+        // ---------------------------------------- G16-G18: streaming over the composer's
+        // band. Every token grows the tail row by 10 px, and each observation is fed the
+        // geometry the previous pin asked for (all item offsets move up by the pin, and
+        // the first row's scroll offset grows by the same amount). The follow has to move
+        // 10 px on every token. Measured against the screen's bottom — 200 px below the
+        // list's end — every one of these frames was "settled", which is the stall.
+        val clearance = 200
+        val streaming = TailFollow()
+        var scrollOffset = 140
+        var tailTop = 600
+        var tailSize = 200
+        streaming.onSnapshot(
+            TailSnapshot(
+                20,
+                viewport(
+                    20,
+                    atBottom = true,
+                    firstVisibleIndex = 17,
+                    firstVisibleOffsetPx = scrollOffset,
+                    lastVisibleOffsetPx = tailTop,
+                    lastVisibleSizePx = tailSize,
+                    bottomContentPaddingPx = clearance,
+                ),
+            ),
+        )
+        val tokenPins = mutableListOf<TailPin?>()
+        val tokenLandsAtEnd = mutableListOf<Boolean>()
+        for (token in 1..3) {
+            tailSize += 10
+            val decision = streaming.onSnapshot(
+                TailSnapshot(
+                    20,
+                    viewport(
+                        20,
+                        atBottom = false,
+                        firstVisibleIndex = 17,
+                        firstVisibleOffsetPx = scrollOffset,
+                        lastVisibleOffsetPx = tailTop,
+                        lastVisibleSizePx = tailSize,
+                        bottomContentPaddingPx = clearance,
+                    ),
+                ),
+            )
+            check("G16 token $token keeps the follow armed", decision.following, true)
+            tokenPins += decision.pin
+            // The measure pass applies `requestScrollToItem(index, offsetPx)` as "the item
+            // at that offset", i.e. a forward move of `offsetPx - firstVisibleItemScrollOffset`.
+            decision.pin?.let { pin ->
+                val forward = pin.offsetPx - scrollOffset
+                scrollOffset += forward
+                tailTop -= forward
+            }
+            tokenLandsAtEnd += (tailTop + tailSize) == (1000 - clearance)
+        }
+        check(
+            "G17 every token is pinned by its own 10 px",
+            tokenPins,
+            listOf(TailPin(17, 150), TailPin(17, 160), TailPin(17, 170)),
+        )
+        check("G18 and every pin lands on the list's end", tokenLandsAtEnd, listOf(true, true, true))
 
         // And the guard must not survive an explicit re-arm: the affordance means
         // "go to the newest now", so the remembered pin cannot suppress it.

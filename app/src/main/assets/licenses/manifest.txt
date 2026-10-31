@@ -131,7 +131,7 @@ Unlicense.txt	Unlicense	许可证全文
 0BSD.txt	0BSD	许可证全文
 BlueOak-1.0.0.txt	BlueOak-1.0.0	许可证全文
 JetBrainsMono-OFL-1.1.txt	JetBrains Mono 2.304（OFL-1.1）	许可证全文
-SourceHanSerif-OFL-1.1.txt	Source Han Serif SC 2.003R（OFL-1.1）	许可证全文
+SourceHanSerif-OFL-1.1.txt	Source Han Serif CN 2.003R（OFL-1.1）	许可证全文
 pi-license.txt	pi 引擎 1.3.0（MIT）	许可证全文
 proroot-license.txt	proroot v1.2.8（Proprietary）	许可证全文
 proprietary-third-party.txt	随包分发的专有组件（proroot）	专有组件
