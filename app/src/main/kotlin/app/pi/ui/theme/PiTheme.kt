@@ -295,6 +295,55 @@ val PiMonoFamily: FontFamily = FontFamily(
 )
 
 /**
+ * The bundled reading face: **Source Han Serif SC（思源宋体）2.003R**, static
+ * `Regular` + `SemiBold` OTFs extracted from Adobe's official
+ * `09_SourceHanSerifSC.zip` release (`app/src/main/res/font/`), licensed
+ * OFL-1.1 — the licence text ships in the in-app licence list as
+ * `SourceHanSerif-OFL-1.1.txt` (OFL 1.1 + Adobe's copyright line).
+ *
+ * ## Why a serif, and why only here
+ *
+ * The transcript's Markdown body is *reading* content: a long answer is read for
+ * minutes, and a serif face separates that from the UI chrome without touching
+ * the UI itself. This family is therefore consumed by the [PiTextStyles]
+ * `reading` role **only** — UI text keeps the system Sans through `prose`, the
+ * M3 slots and everything else. Loading these two files here (one place) is what
+ * keeps the licence, the resource names and the weight mapping auditable.
+ *
+ * ## Why the Bold slot points at the SemiBold file
+ *
+ * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer
+ * library, while this family ships 400 and 600 — there is no 700 face. Asking
+ * for 700 with only a 400 entry registered would make Android **synthesise**
+ * a faux-bold from the Regular outlines: wrong advance widths, smeared
+ * strokes, and two weights of the same family colliding on one screen. So the
+ * 600 file is registered a second time as `Bold`; a `Bold` request lands on the
+ * real SemiBold outlines instead of a synthesis.
+ *
+ * ## Why there is no italic file
+ *
+ * Source Han Serif SC publishes no italic (CJK type is not oblique by
+ * convention), and this app does not bundle an algorithmic slanted copy: a
+ * fake oblique would be a second, unlicensed-looking face. Markdown's block
+ * quote stays `fontStyle = FontStyle.Italic` in `render/PiMarkdownTheme.kt`, so
+ * Compose synthesises the oblique at draw time — the italic is a *semantic*
+ * emphasis, not a fourth font file, and it stays that way until a real italic
+ * is vendored.
+ *
+ * Static OTFs rather than a variable font: the app asks for exactly 400 / 600,
+ * and these are the two weights this app bundles for Simplified Chinese (a
+ * variable OTF would add a variation-axis resolution step at runtime for no
+ * weight the app can ask for).
+ */
+val PiProseFamily: FontFamily = FontFamily(
+    Font(R.font.source_han_serif_sc_regular, FontWeight.Normal),
+    Font(R.font.source_han_serif_sc_semibold, FontWeight.SemiBold),
+    // Markdown 的 **strong** 由库固定成 FontWeight.Bold(700)。把 600 文件也注册成
+    // Bold，粗体才会用真实 SemiBold，而不是合成粗体。
+    Font(R.font.source_han_serif_sc_semibold, FontWeight.Bold),
+)
+
+/**
  * The text metrics every role in this app is built on: **no font padding, leading
  * centred in the line box, first-line-top / last-line-bottom trimmed**.
  *
@@ -342,7 +391,7 @@ internal val piLineHeightStyle: LineHeightStyle = LineHeightStyle(
 /**
  * [TextStyle] with [piLineHeightStyle] and `includeFontPadding = false` applied.
  *
- * Every role in this app goes through this: [PiTextStyles]'s five slots,
+ * Every role in this app goes through this: [PiTextStyles]'s six slots,
  * `piTypography`'s M3 slots, and the markdown profile's own styles. `copy` (which
  * `shifted` / `leadingScaled` / `PiMarkdownTheme`'s `base.copy(...)` all use)
  * preserves both fields, so a scaled or recoloured role keeps them.
@@ -353,10 +402,12 @@ internal fun TextStyle.piPrecise(): TextStyle = copy(
 )
 
 /**
- * Text styles that Material 3's [Typography] has no slot for: the transcript's
- * prose role, pi's footer/meta line and the machine roles. Everything a *human*
- * wrote uses the system font; everything a *machine* emitted uses monospace —
- * that split is the app's rule #7 (docs/pi-android-ui-spec.md §1).
+ * Text styles that Material 3's [Typography] has no slot for: the two human-body
+ * roles (UI [prose] and content [reading]), pi's footer/meta line and the
+ * machine roles. Everything a *human* wrote uses the system font — except the
+ * transcript's Markdown body, which is set in the bundled serif (see `reading`) —
+ * and everything a *machine* emitted uses monospace; that split is the app's
+ * rule #7 (docs/pi-android-ui-spec.md §1).
  *
  * ## The five sizes, and why they are these five (`06 §2` 字号 5 档)
  *
@@ -364,13 +415,22 @@ internal fun TextStyle.piPrecise(): TextStyle = copy(
  * `01-design-spec.md` §2 makes the bottom two a floor (「正文 ≥14px、标签/注释
  * ≥12px」). The roles below cover the transcript's share of that scale; the two
  * larger steps (15 row titles, 17 screen titles) come from M3's
- * `titleSmall`/`titleMedium` (`piTypography`).
+ * `titleSmall`/`titleMedium` (`piTypography`). There are **six roles but still
+ * five size steps**: [prose] and [reading] deliberately share one size/leading
+ * and differ only in typeface, so adding the reading role adds no sixth size.
  *
  *   meta       12/18  labels, meta lines, machine readings (v2 `t12`)
  *   monoSmall  12/18  the same size in the machine face (v2 `mono t12`)
  *   mono       13/20  machine body: commands, tool output, paths (v2 `t13`)
  *   code       13/19  fences and diffs — v2 overrides those two to a fixed 19
- *   prose      14/23  human body: chat text, error sentences (v2 `t14`, 1.62)
+ *   prose      14/23  **UI** human body: settings copy, error sentences (v2 `t14`, 1.62)
+ *   reading    14/23  **chat Markdown** body, in the bundled serif (same `t14` metrics)
+ *
+ * The [prose] / [reading] split is the whole point of the sixth slot: `prose` is
+ * read by the settings screen, boot, file and diagnostics pages (and was the
+ * markdown body before this split), so giving *it* the serif would set the entire
+ * app in a serif face. Only the Markdown renderer (`render/PiMarkdownTheme.kt`)
+ * consumes [reading]; nothing else should.
  *
  * B7 (`numeric` / 字号档位收敛): [meta] and [monoSmall] used to be 11.5sp, which
  * is **under** the spec's own 12px label floor and is a sixth step v2 never
@@ -382,8 +442,22 @@ data class PiTextStyles(
     val meta: TextStyle,
     val mono: TextStyle,
     val monoSmall: TextStyle,
-    /** v2 `t14`: the transcript's human body (chat prose, an error's sentence). */
+    /** v2 `t14`: the UI's human body (settings copy, an error's sentence); system Sans. */
     val prose: TextStyle,
+    /**
+     * v2 `t14` 的聊天 Markdown 阅读正文：字号/行高与 [prose] 相同，字族是
+     * [PiProseFamily]（思源宋体），400。
+     *
+     * 单独一个角色，而不是把 [prose] 的字族换掉：`PiTheme.text.prose` 被设置页、
+     * Boot、文件页、诊断页等大量 UI 复用，换字族会把整个 App 变成宋体。宋体只负责
+     * **内容**（聊天里的 Markdown 正文），不负责整个 UI。本角色只由
+     * `render/PiMarkdownTheme.kt` 消费（Markdown 正文从它取），别处不得使用。
+     *
+     * 用 400 而不是 [prose] 非经典档的 500：正文是长文，Regular 才是宋体的阅读字重；
+     * 粗体由 Markdown 的 `**strong**`（库固定 `FontWeight.Bold`）落到
+     * [PiProseFamily] 里注册为 Bold 的那个真实 SemiBold 文件上。
+     */
+    val reading: TextStyle,
     /** v2's code/diff override: `mono` at a fixed 13/19. */
     val code: TextStyle,
 ) {
@@ -402,12 +476,13 @@ data class PiTextStyles(
         mono = mono.shifted(deltaSp),
         monoSmall = monoSmall.shifted(deltaSp),
         prose = prose.shifted(deltaSp),
+        reading = reading.shifted(deltaSp),
         code = code.shifted(deltaSp),
     )
 
     companion object {
         /**
-         * 经典档的字面值，也是全 App 五个角色的基线。
+         * 经典档的字面值，也是全 App 六个角色的基线。
          *
          * 每一行都以 [piPrecise] 收尾 —— 这是**唯一**一处把「没有字体自带内边距 + 行距居中
          * + 首末行裁掉」写进角色定义的地方，别的角色（`PiTypographyProfile` 造的非经典档、
@@ -432,6 +507,12 @@ data class PiTextStyles(
             ).piPrecise(),
             prose = TextStyle(
                 fontFamily = FontFamily.Default,
+                fontSize = 14.sp,
+                lineHeight = 23.sp,
+                fontWeight = FontWeight.Normal,
+            ).piPrecise(),
+            reading = TextStyle(
+                fontFamily = PiProseFamily,
                 fontSize = 14.sp,
                 lineHeight = 23.sp,
                 fontWeight = FontWeight.Normal,

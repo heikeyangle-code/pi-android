@@ -998,14 +998,11 @@ private fun PiCodeHeader(language: String?, code: String, palette: PiPalette) {
         Text(
             text = language.orEmpty(),
             modifier = Modifier.weight(1f, fill = false),
-            // The fence's info string is the machine's own identifier (`kotlin`, `bash`,
-            // `json`) and it labels a body that is entirely monospace — `06 §3` 构件 13
-            // gives CodeBlock「card 底 + 1px mdCodeBlockBorder + 圆角 12 + 语法令牌着色」
-            // over a mono body. Rule #7 (`docs/pi-android-ui-spec.md` §1) puts the
-            // identifier on the machine face; `labelMedium` was the UI face, so the
-            // label disagreed with the block it labels. 「复制」, the affordance beside
-            // it, stays in the UI face on purpose: it is our word, not the machine's.
-            style = PiTheme.text.monoSmall,
+            // 2026-10-31 字体升级：任务书 §7.9 明确「代码块标题、语言标签等 UI 仍使用
+            // Sans」。这里从 monoSmall 改回 `labelMedium`（系统 UI 字，12/16），与旁边
+            // 的「复制」同一档；代码体本身仍是 `typography.code`（JetBrains Mono），
+            // 规则 #7 的「机器输出用等宽」由代码体承担，不在块标题这一行 chrome 上。
+            style = MaterialTheme.typography.labelMedium,
             color = palette.mdCodeBlockBorder,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

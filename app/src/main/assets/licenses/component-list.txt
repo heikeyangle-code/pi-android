@@ -191,6 +191,13 @@
       许可证    OFL-1.1
       上游      https://github.com/JetBrains/JetBrainsMono
 
+■ 编译进 App 代码（随包打包的阅读字体，Regular + SemiBold）
+------------------------------------------
+  Source Han Serif SC（思源宋体）
+      版本      2.003R
+      许可证    OFL-1.1
+      上游      https://github.com/adobe-fonts/source-han-serif
+
 ■ 不随包分发
 -------
   JUnit（仅测试用，不随 App 分发）

@@ -60,6 +60,18 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * and its sources: Tailwind Typography for the prose scale and Android M3's 16 sp
  * body for the comfortable step.
  *
+ * ## 两个正文字体角色（2026-10-31 字体升级）
+ *
+ * 聊天 Markdown 的**阅读正文**改用随包的思源宋体（`PiProseFamily`，Source Han
+ * Serif SC 2.003R，OFL-1.1），由 `PiTextStyles.reading` 承载。`prose` 的字族**不动**：
+ * 它仍是系统 Sans，被设置页、Boot、文件页、诊断页等整个 UI 共用，把 `prose` 改成
+ * 宋体会让全 App 变宋体。四档的 `reading` **共用同一字族**，字号/行高跟随本档的
+ * `proseSize`/`proseLine`（经典 14/23、紧凑 15/24、舒适 16/25、宽松 17/26），
+ * 字重固定 400（`prose` 在非经典档仍是 UI 角色的 500，不受影响）；粗体由 Markdown
+ * 的 `**strong**` 落到 `PiProseFamily` 里注册为 `Bold` 的那个真实 SemiBold 文件上，
+ * 不出现合成粗体。两个角色尺寸相同、含义不同 —— `prose` 是界面文字，`reading` 是
+ * 内容 —— 不要互相替换，`reading` 只由 `render/PiMarkdownTheme.kt` 消费。
+ *
  * **The sheet's 1.75–1.8 leading for 舒适 was not kept, and that is the one place
  * this file now contradicts the direction sheet.** The number came from Latin
  * reading practice (and from Tailwind's `prose` scale, which is a web-Latin scale),
@@ -251,7 +263,7 @@ data class PiTypographyProfile(
     val lineHeight: String,
     /** One of `small` / `normal` / `large` / `xlarge`. */
     val fontSize: String,
-    /** The five text roles, with the leading multiplier and the size offset applied. */
+    /** The six text roles, with the leading multiplier and the size offset applied. */
     val styles: PiTextStyles,
     val h1: PiHeading,
     val h2: PiHeading,
@@ -264,15 +276,15 @@ data class PiTypographyProfile(
     val inlineCodeLineHeightSp: Float,
     val inlineCodeWeight: FontWeight,
     /**
-     * 表格单元格的字号/行高，`sp`。`mono` 字族与 `body` 配色由
+     * 表格单元格的字号/行高，`sp`。阅读字族（思源宋体）与 `body` 配色由
      * `render/PiMarkdownTheme.kt` 给，这里只有两个数。
      *
      * 这两个数与别的角色同待遇：`app.appearance.lineHeight` 按 [steppedLeading] 乘行高、
      * `app.appearance.fontSize` 平移两者（见 `forPreset`）。理由写在类注释那句
      * 「A table follows the preset's type」里。
      *
-     * 表格的其余一切（列宽 160 dp、横滑、圆角 8 dp、内边距 8 dp、`cardBg` 底色）不随预设动；
-     * 这一笔没有碰它们。
+     * 表格的其余一切（列宽按可用宽拟合、120 dp 下限、横滑、圆角 8 dp、内边距 8 dp、
+     * `cardBg` 底色）不随预设动；这一笔没有碰它们。
      */
     val tableSizeSp: Float,
     val tableLineHeightSp: Float,
@@ -512,6 +524,14 @@ data class PiTypographyProfile(
                             lineHeight = numbers.proseLine.sp,
                             fontWeight = FontWeight.Medium,
                         ).piPrecise(),
+                        // 阅读正文：同一档的字号/行高，思源宋体 400。字族是四档共用的
+                        // `PiProseFamily`；`prose` 的 500 是 UI 角色的规则，不搬到这里。
+                        reading = TextStyle(
+                            fontFamily = PiProseFamily,
+                            fontSize = numbers.proseSize.sp,
+                            lineHeight = numbers.proseLine.sp,
+                            fontWeight = FontWeight.Normal,
+                        ).piPrecise(),
                         code = TextStyle(
                             fontFamily = PiMonoFamily,
                             fontSize = numbers.codeSize.sp,
@@ -658,6 +678,7 @@ private fun PiTextStyles.leadingScaled(factor: Double): PiTextStyles {
         mono = mono.lead(),
         monoSmall = monoSmall.lead(),
         prose = prose.lead(),
+        reading = reading.lead(),
         code = code.lead(),
     )
 }

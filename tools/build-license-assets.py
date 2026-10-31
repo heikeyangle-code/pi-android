@@ -18,10 +18,11 @@ The texts must not be typed from memory. Every file this script writes is either
   * a small number of npm package licence files, fetched at a pinned version
     (see NPM_LICENCE_FILES) because they belong to the pi engine's dependency
     closure and appear in no other downloaded artifact, or
-  * the OFL-1.1 text of the JetBrains Mono font compiled into the APK, fetched at a
-    pinned release tag (see JETBRAINS_MONO_LICENCE_URL) because the canonical OFL is
-    in no artifact this app ships — `/usr/share/common-licenses/` carries 17 texts
-    and the OFL is not one of them.
+  * the OFL-1.1 texts of the fonts compiled into the APK — JetBrains Mono and
+    Source Han Serif SC — fetched at pinned release tags (see
+    JETBRAINS_MONO_LICENCE_URL and SOURCE_HAN_SERIF_LICENCE_URL) because the
+    canonical OFL is in no artifact this app ships — `/usr/share/common-licenses/`
+    carries 17 texts and the OFL is not one of them.
 
 `runtime.lock.json` is the pin list; `tools/fetch-runtime.mjs` populates
 `build/downloads/`. Run that first, then this script. Nothing is compiled and
@@ -197,6 +198,24 @@ JETBRAINS_MONO_LICENCE_SHA256 = "30f0c136e3c88e422d0791acd97238870f9054a9729bc34
 # `OFL-1.1.txt` that a second OFL font could not reuse without becoming a lie.
 JETBRAINS_MONO_LICENCE_OUT = "JetBrainsMono-OFL-1.1.txt"
 JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1.1）"
+
+# Source Han Serif SC (思源宋体) 2.003R (OFL-1.1) — the **reading** face, compiled
+# into the APK as `app/src/main/res/font/source_han_serif_sc_{regular,semibold}.otf`
+# and consumed only by `PiTextStyles.reading` (the chat Markdown body). Same
+# obligation and same shape as the JetBrains Mono pin below: the two OTFs are
+# extracted from Adobe's official `09_SourceHanSerifSC.zip` for this release, and
+# the OFL requires the licence text to travel with the font. The tag-pinned
+# `LICENSE.txt` is byte-identical to the `LICENSE.txt` inside that zip (checked
+# while writing this pin: 4463 bytes, sha256 below), so the text shipped beside
+# the fonts describes the same release the fonts came from.
+# Upstream: https://github.com/adobe-fonts/source-han-serif
+SOURCE_HAN_SERIF_VERSION = "2.003R"
+SOURCE_HAN_SERIF_LICENCE_URL = "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/{version}/LICENSE.txt"
+SOURCE_HAN_SERIF_LICENCE_SHA256 = "9ff5bb567e1b92c801fc1069e5fbf992ff8efccacb9db94e5959a5b3ba9bb903"
+# Component-named like the JetBrains row: the text carries Adobe's copyright line
+# (`Copyright 2017-2022 Adobe …`), so it is this font's copy of the OFL.
+SOURCE_HAN_SERIF_LICENCE_OUT = "SourceHanSerif-OFL-1.1.txt"
+SOURCE_HAN_SERIF_LICENCE_TITLE = f"Source Han Serif SC {SOURCE_HAN_SERIF_VERSION}（OFL-1.1）"
 
 # pi's own licence text, which the published npm tarball **does not contain**: the
 # MIT text lives at the monorepo root and `packages/coding-agent` is published
@@ -770,7 +789,7 @@ def main() -> None:
         "--fetch-missing",
         action="store_true",
         help="download the pinned licence texts that no artifact carries "
-        "(NPM_LICENCE_FILES, the pi LICENSE, the JetBrains Mono OFL, the proroot LICENSE)",
+        "(NPM_LICENCE_FILES, the pi LICENSE, the bundled fonts' OFL texts, the proroot LICENSE)",
     )
     args = parser.parse_args()
 
@@ -1001,8 +1020,9 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         manifest.append((out_name, out_name[:-4], "许可证全文"))
 
     # ------------------------------------------------------------- pinned texts
-    # Three licence texts come from a URL rather than from something the app ships: the
-    # bundled font's OFL, pi's LICENSE, and proroot's LICENSE. Each has a pinned sha256
+    # Four licence texts come from a URL rather than from something the app ships: the
+    # bundled fonts' OFL texts (JetBrains Mono and Source Han Serif SC), pi's LICENSE,
+    # and proroot's LICENSE. Each has a pinned sha256
     # beside its URL, and each is cached under `build/downloads/` so a build after the
     # first needs no network.
     #
@@ -1032,7 +1052,7 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         manifest.append((out_name, title, "许可证全文"))
 
     # ------------------------------------------------------------- font licences
-    # The bundled typeface's obligation. Same shape as the npm and pi texts above:
+    # The bundled typefaces' obligation. Same shape as the npm and pi texts above:
     # pinned URL + pinned sha256, cached, fetched only under --fetch-missing, and a
     # mismatch is a hard stop rather than a silent substitution.
     os.makedirs(FONT_CACHE, exist_ok=True)
@@ -1065,6 +1085,40 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         JETBRAINS_MONO_LICENCE_TITLE,
         JETBRAINS_MONO_LICENCE_SHA256,
         f"{JETBRAINS_MONO_LICENCE_OUT} not cached; re-run with --fetch-missing",
+    )
+
+    # Source Han Serif SC: the reading face's obligation. Same shape as the JetBrains
+    # block above — pinned URL + pinned sha256, cached, fetched only under
+    # --fetch-missing, and a mismatch is a hard stop rather than a silent substitution.
+    source_han = os.path.join(FONT_CACHE, SOURCE_HAN_SERIF_LICENCE_OUT)
+    if not os.path.isfile(source_han) and fetch_missing:
+        url = SOURCE_HAN_SERIF_LICENCE_URL.format(version=SOURCE_HAN_SERIF_VERSION)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                body = response.read()
+        except Exception as error:  # noqa: BLE001 - reported, not raised
+            notes.append(f"{SOURCE_HAN_SERIF_LICENCE_OUT}: {url} failed ({error})")
+            body = None
+        if body is not None:
+            digest = hashlib.sha256(body).hexdigest()
+            if digest != SOURCE_HAN_SERIF_LICENCE_SHA256:
+                sys.exit(
+                    f"Source Han Serif SC {SOURCE_HAN_SERIF_VERSION} OFL text changed\n"
+                    f"  pinned  {SOURCE_HAN_SERIF_LICENCE_SHA256}\n"
+                    f"  actual  {digest}\n"
+                    f"  The OTFs in app/src/main/res/font/ were extracted from the official\n"
+                    f"  09_SourceHanSerifSC.zip at tag {SOURCE_HAN_SERIF_VERSION}, so if that tag's\n"
+                    f"  LICENSE.txt no longer matches this pin the font and the licence shipped beside\n"
+                    f"  it describe different releases: re-extract the OTFs, then update the pin."
+                )
+            with open(source_han, "wb") as fh:
+                fh.write(body)
+    install_pinned_text(
+        source_han,
+        SOURCE_HAN_SERIF_LICENCE_OUT,
+        SOURCE_HAN_SERIF_LICENCE_TITLE,
+        SOURCE_HAN_SERIF_LICENCE_SHA256,
+        f"{SOURCE_HAN_SERIF_LICENCE_OUT} not cached; re-run with --fetch-missing",
     )
 
     # ------------------------------------- pi's own licence + the packages that lack one
@@ -1316,6 +1370,13 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("org.jetbrains:markdown", "0.7.9", "Apache-2.0", "编译进 App 代码", "https://github.com/JetBrains/markdown"),
     ("kotlinx-collections-immutable（随 markdown 渲染器一起分发）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin/kotlinx.collections.immutable"),
     ("JetBrains Mono", "2.304", "OFL-1.1", "编译进 App 代码（随包打包的等宽字体，Regular + Bold）", "https://github.com/JetBrains/JetBrainsMono"),
+    (
+        "Source Han Serif SC（思源宋体）",
+        SOURCE_HAN_SERIF_VERSION,
+        "OFL-1.1",
+        "编译进 App 代码（随包打包的阅读字体，Regular + SemiBold）",
+        "https://github.com/adobe-fonts/source-han-serif",
+    ),
     # Declared, but deliberately not in this list's scope: it is a test-only dependency
     # and no part of it reaches the APK, so it carries no distribution obligation.
     ("JUnit（仅测试用，不随 App 分发）", "4.13.2", "EPL-1.0", "不随包分发", "https://junit.org/junit4/"),

@@ -48,10 +48,10 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  * broke the build.
  *
  * The fix is to keep the *reads* composable and the *construction* pure:
- * `PiMarkdown.kt` reads `PiTheme.palette`, `isSystemInDarkTheme()`,
- * `PiTheme.text.prose`, `PiTheme.text.mono` and `PiTheme.text.code` at the
- * composition point and passes them here, so every function in this file is an
- * ordinary function and `remember(inputs) { ... }` is legal.
+ * `PiMarkdown.kt` reads `PiTheme.palette`, `isSystemInDarkTheme()` and the
+ * resolved 排版 profile (`PiTheme.typography`, which carries the reading role) at
+ * the composition point and passes them here, so every function in this file is
+ * an ordinary function and `remember(inputs) { ... }` is legal.
  *
  * Two of the five then need a detail of their own, because the library keeps the
  * implementation it returns private:
@@ -249,14 +249,26 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  *
  * @param palette pi's resolved token set.
  * @param profile the resolved 排版 preset: every size and leading here is the
- *   preset's, and the **body role is its [PiTypographyProfile.styles]`prose`**
- *   (14/23 in 经典, 16/25 in the default 舒适). The table's **type** is the preset's
- *   too — [PiTypographyProfile.tableSizeSp] / `tableLineHeightSp`, 12.5/18 in 经典
- *   (which is exactly the pair this file used to hard-code) and 14/22 in 舒适 — but
- *   the table's *geometry* is not: cell width (160 dp), horizontal scroll, corner
- *   size (8 dp) and cell padding (8 dp) are all outside the preset and unchanged by
- *   this feature (`PiMarkdownComponents.kt`'s `PiTable` only adds a header tint and
- *   a right-edge fade). The colour is still pi's: headings keep
+ *   preset's, and the **body role is its [PiTypographyProfile.styles]`reading`** —
+ *   the reading face (思源宋体 400) at the preset's prose size/leading (14/23 in
+ *   经典, 16/25 in the default 舒适). Every prose slot below — `h1`…`h6`,
+ *   `alertTitle`, `text`, `paragraph`, `ordered`, `list`, `quote`, `bullet`,
+ *   `textLink` and `table` — is derived from that one role, so the whole reading
+ *   hierarchy shares one family. `mono` and `code` stay the machine roles
+ *   (`PiMonoFamily`): inline code, fences, diffs, shell, commands and paths.
+ *
+ *   Bold is real, not synthesised: the library's annotator always emits
+ *   `SpanStyle(fontWeight = FontWeight.Bold)`, and the reading family registers its
+ *   600 face under **both** `SemiBold` and `Bold`, so `**strong**` selects the real
+ *   600 file and the headings' explicit `SemiBold` lands on the same one.
+ *
+ *   The table's **type** is the preset's too — [PiTypographyProfile.tableSizeSp] /
+ *   `tableLineHeightSp`, 12.5/18 in 经典 (which is exactly the pair this file used
+ *   to hard-code) and 14/22 in 舒适 — but the table's *geometry* is not: column
+ *   width (fitted to the column count, with a 120 dp floor), horizontal scroll,
+ *   corner size (8 dp) and cell padding (8 dp) are all outside the preset and
+ *   unchanged by this feature (`PiMarkdownComponents.kt`'s `PiTable` only adds a
+ *   header tint and a right-edge fade). The colour is still pi's: headings keep
  *   `mdHeading`, links `mdLink`, inline code `mdCode`, fences `mdCodeBlock`,
  *   quotes `mdQuote` and bullets `mdListBullet`, drawn on top of the body colour
  *   exactly as they sit on top of pi's base (`markdown.ts:377-403`).
@@ -281,9 +293,14 @@ internal fun piMarkdownTypography(
      */
     monoParagraph: Boolean = false,
 ): MarkdownTypography {
-    val base = profile.styles.prose
+    // 阅读正文：思源宋体 400，字号/行高由排版档给（经典 14/23）。Markdown 的
+    // 正文类角色全部由它派生；`mono`/`code` 只留给机器输出（代码、命令行、路径）。
+    val base = profile.styles.reading
     val mono = profile.styles.mono
     val code = profile.styles.code
+    // 标题/强调都落在真实 600：`PiProseFamily` 把 600 同时注册为 `SemiBold` 与
+    // `Bold`，所以这里的 `SemiBold` 与库 annotator 给 `**strong**` 的 `Bold`
+    // 取到的是同一个字体文件 —— 不是合成粗体。
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
     val body = textColor ?: palette.text
 
@@ -333,13 +350,14 @@ internal fun piMarkdownTypography(
         textLink = TextLinkStyles(
             style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
         ),
-        // The table's own role: `mono`'s family, the preset's size and leading, the
-        // body colour. The two numbers are taken from the profile **verbatim** — the
-        // 行距/字号 multipliers deliberately skip them (`PiTypographyProfile`), since a
-        // cell's leading only makes the cell taller while the column width it has to
-        // fit into is the renderer's fixed 160 dp. 经典 is 12.5/18, the exact pair this
-        // line used to carry as constants.
-        table = mono.copy(
+        // 表格属于"正文阅读体系"（任务书 §7.6），不是等宽表面：阅读字族 + 预设的
+        // 字号/行高 + 正文底色。两个数字从 profile **原样**取 —— 行距/字号乘子特意
+        // 跳过它们（`PiTypographyProfile`），因为单元格的行高只决定格子多高，而它要
+        // 挤进的列宽由 `PiTable` 决定。经典是 12.5/18，正是这行以前写死的那一对。
+        // 表头由库自己在这份 style 上 `copy(fontWeight = Bold)`，经字族的 Bold 别名
+        // 命中真实 600。**格子里**的行内代码仍走 `inlineCode`（mono）：只有单元格的
+        // 正文换成阅读字体。
+        table = base.copy(
             fontSize = profile.tableSizeSp.sp,
             lineHeight = profile.tableLineHeightSp.sp,
             color = body,
