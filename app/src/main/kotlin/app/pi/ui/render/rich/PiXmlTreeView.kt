@@ -37,7 +37,9 @@ import kotlinx.coroutines.delay
  * tag is not drawn — this is a tree, and the fold state already says whether the
  * element still has hidden children.
  *
- * - `▸` / `▾` folds the element's children.
+ * - `▸` / `▾` folds the element's children. The root starts expanded and every
+ *   nested element starts folded, so first paint is bounded to the root plus at
+ *   most [PI_TREE_MAX_VISIBLE_CHILDREN] rows and expanding is always a user action.
  * - The `⋯` menu copies the element's **path** (`/root/item[2]`) and, when it has
  *   direct text, that **text**.
  * - An attribute is a tap target itself: tapping `name="value"` copies the
@@ -132,7 +134,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
     val palette = PiTheme.palette
     val body = PiTheme.typography.styles.code
     val hasChildren = node.children.isNotEmpty()
-    var expanded by remember(node.path) { mutableStateOf(node.depth < 2) }
+    var expanded by remember(node.path) { mutableStateOf(node.depth == 0) }
 
     Column(Modifier.fillMaxWidth()) {
         Row(

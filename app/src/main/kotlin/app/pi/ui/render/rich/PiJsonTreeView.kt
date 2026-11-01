@@ -32,8 +32,11 @@ import kotlinx.coroutines.delay
  * ## Interaction
  *
  * - Objects and arrays fold: the `▸`/`▾` glyph or a tap on the summary line.
- *   The root and its immediate children start expanded; deeper nodes start folded,
- *   so a large document does not lay out thousands of rows on first paint.
+ *   The root starts expanded and every nested container starts folded. That shows
+ *   a small document's top level immediately while keeping first paint bounded to
+ *   the root plus at most [PI_TREE_MAX_VISIBLE_CHILDREN] rows — expanding a deep
+ *   tree is always a user action, never something a 20,000-node payload can force
+ *   during streaming.
  * - Every row has a `⋯` menu with **复制路径** (`$.user.name`, `$.items[2]`,
  *   `$['a.b']`) and, for leaves, **复制值** (the JSON token, e.g. `"text"` / `42` /
  *   `true` / `null`).
@@ -142,7 +145,7 @@ private fun JsonNodeRow(
 ) {
     val palette = PiTheme.palette
     val body = PiTheme.typography.styles.code
-    var expanded by remember(node.path) { mutableStateOf(node.depth < 2) }
+    var expanded by remember(node.path) { mutableStateOf(node.depth == 0) }
 
     Column(Modifier.fillMaxWidth()) {
         Row(

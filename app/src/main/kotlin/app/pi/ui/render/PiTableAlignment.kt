@@ -1,9 +1,5 @@
 package app.pi.ui.render
 
-import org.intellij.markdown.ast.ASTNode
-import org.intellij.markdown.ast.findChildOfType
-import org.intellij.markdown.flavours.gfm.GFMTokenTypes
-
 /**
  * 一列的 GFM 对齐方式：`TABLE_SEPARATOR` 那一行里冒号的位置。
  *
@@ -13,7 +9,9 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
  * （`MarkdownTable.kt` 只用 `TABLE_SEPARATOR` 决定哪一行要画分隔线）。所以对齐只能
  * 由 App 自己从这一行的**文本**里再读一次 —— 就是本文件那个纯函数。
  *
- * 纯逻辑、不碰 Compose、不碰 `android.*`：这样它可以被裸 JVM 的检查直接编译执行
+ * 纯逻辑、不碰 Compose、不碰 `android.*`、**也不 import 那个解析器**（把 AST 节点换算成
+ * 这一行文本的那一步在 `PiMarkdownComponents.kt` 的 `piTableAlignments` 里）：这样
+ * `tools/run-app-pure-checks.sh` 里的裸 JVM 检查只凭 kotlin stdlib 就能编译并执行它
  * （与 `PiMarkdownImageTap` / `PiLatex` 同一套做法）。
  */
 internal enum class PiTableAlign {
@@ -80,22 +78,4 @@ private fun alignmentOf(cell: String): PiTableAlign {
         ends -> PiTableAlign.Right
         else -> PiTableAlign.Default
     }
-}
-
-/**
- * 一张表的每列对齐方式；没有分隔行（理论上不会发生）时返回空列表。
- *
- * 取的是**表格节点的直接子节点** `TABLE_SEPARATOR` —— 整条对齐行是一个 token
- * （`|:--|:-:|--:|---|`）。注意表头/数据行里那些 `|` 也是 `TABLE_SEPARATOR`，但它们在
- * `HEADER` / `ROW` 的**里面**，不是表格的直接子节点；`findChildOfType` 只看直接子节点
- * （`ast/ASTUtil.kt` 的 `children.firstOrNull`），正好拿到整行那一个。
- *
- * 偏移量做了 `coerceIn`：这个函数会在**流式**的每一条内容上被调用，而节点是上一次解析的
- * 结果；宁可给空列表（退回库的默认），也不让一次越界的 `substring` 把整条消息打崩。
- */
-internal fun piTableAlignments(content: String, table: ASTNode): List<PiTableAlign> {
-    val separator = table.findChildOfType(GFMTokenTypes.TABLE_SEPARATOR) ?: return emptyList()
-    val start = separator.startOffset.coerceIn(0, content.length)
-    val end = separator.endOffset.coerceIn(start, content.length)
-    return parsePiTableAlignments(content.substring(start, end))
 }

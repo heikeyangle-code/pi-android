@@ -1120,6 +1120,27 @@ private fun piTableColumnCount(node: ASTNode): Int =
         ?: 0
 
 /**
+ * 一张表的每列对齐方式；没有分隔行（理论上不会发生）时返回空列表 —— 调用方据此退回库的默认行。
+ *
+ * 取的是**表格节点的直接子节点** `TABLE_SEPARATOR`：整条对齐行是一个 token
+ * （`|:--|:-:|--:|---|`）。表头/数据行里那些 `|` 也是 `TABLE_SEPARATOR`，但它们在
+ * `HEADER` / `ROW` 的**里面**，不是表格的直接子节点；`findChildOfType` 只看直接子节点
+ * （`ast/ASTUtil.kt` 的 `children.firstOrNull`），正好拿到整行那一个。
+ *
+ * 真正的解析在 `PiTableAlignment.kt` 的纯函数里（那份文件不 import 解析器，所以裸 JVM 的
+ * 检查能单独编译它）。这里只做"节点 → 文本"这一步。
+ *
+ * 偏移量做了 `coerceIn`：这个函数会在**流式**的每一条内容上被调用，而节点来自上一次解析；
+ * 宁可给空列表（退回库的默认），也不让一次越界的 `substring` 把整条消息打崩。
+ */
+private fun piTableAlignments(content: String, table: ASTNode): List<PiTableAlign> {
+    val separator = table.findChildOfType(GFMTokenTypes.TABLE_SEPARATOR) ?: return emptyList()
+    val start = separator.startOffset.coerceIn(0, content.length)
+    val end = separator.endOffset.coerceIn(start, content.length)
+    return parsePiTableAlignments(content.substring(start, end))
+}
+
+/**
  * 一格最多画几行，表格路径上这个数的**唯一**来源。
  *
  * 选 50 的完整理由（为什么不是 1、为什么不是 `Int.MAX_VALUE`，以及它换来的上界是什么）
