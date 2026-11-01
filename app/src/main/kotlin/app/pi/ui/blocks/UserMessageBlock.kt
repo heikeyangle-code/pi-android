@@ -122,7 +122,9 @@ fun UserMessageBlock(
         ) {
             Column(
                 // The board's `padding:12`, both axes.
-                modifier = Modifier.padding(PiSpacing.cardPadding),
+                // 水平 14、垂直 10：16 sp / 27 sp 的正文自带上下半行的空气（约 5 dp），
+                // 垂直再给 12 就比水平松；14/10 让气泡四边的视觉留白接近。
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 // `ImageGrid mb={8}`: the gap that follows the grid. The board has no
                 // gap between the body and the grid, and 8 is the nearest step of v2's
                 // own rhythm to the 10 this used to be.

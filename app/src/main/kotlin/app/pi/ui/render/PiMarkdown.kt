@@ -351,7 +351,7 @@ internal fun PiMarkdownText(
             colors = colors,
             typography = typography,
             padding = padding,
-            dimens = piMarkdownDimens,
+            dimens = if (classic) piMarkdownDimens else piMarkdownDimensRoomy,
             imageTransformer = imageTransformer,
             components = components,
             // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')

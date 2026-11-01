@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.times
@@ -249,7 +250,19 @@ private fun PiMarkdownHeading(
         else -> typography.h6
     }
     val extra = if (PiTheme.typography.isClassic || headingSkipsExtra(model.node)) 0.dp else extraTop
-    Box(Modifier.padding(top = extra)) {
+    // 标题与它领起的正文要「贴」：标题上方 block + extra（26 dp 量级），下方却也是整份 block
+    // （14 dp），邻近性不够，标题像悬在两段中间。把标题自己的高度少报 5 dp，下一块的
+    // block Spacer 就压进来 5 dp —— 下方净间距 9 dp。只画不裁剪，字形不受影响；经典不动。
+    val pull = if (PiTheme.typography.isClassic) 0.dp else 5.dp
+    Box(
+        Modifier
+            .padding(top = extra)
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                val cut = pull.roundToPx().coerceAtMost(placeable.height)
+                layout(placeable.width, placeable.height - cut) { placeable.place(0, 0) }
+            },
+    ) {
         MarkdownHeader(
             content = model.content,
             node = model.node,
@@ -948,7 +961,9 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
             ),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = if (mermaidWarning != null) 8.dp else 0.dp, bottom = 8.dp),
+                // 经典 block 只有 2/8，代码块自己补 8；非经典 block ≥ 10，再补就是上 14 / 下 22，
+                // 不对称，所以非经典不补。
+                .padding(top = if (mermaidWarning != null) 8.dp else 0.dp, bottom = if (classic) 8.dp else 0.dp),
             // The library's header reads `MarkdownColors.text`, which is the body colour
             // — pi prints the fence's info string in `mdCodeBlockBorder`, so the header
             // is ours ([PiCodeHeader]) and the library's is off. `language`/`code` are

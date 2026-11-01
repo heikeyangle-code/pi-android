@@ -12,7 +12,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.ThinkingBlock
@@ -113,7 +112,11 @@ fun ThinkingBlockBlock(
                         // v2: `t14`, italic, in the tool-body grey, indented past the stripe
                         // (`paddingLeft:11`) and one 6 dp step below the headline row.
                         modifier = Modifier.padding(start = THINK_BODY_INDENT, top = PiSpacing.gutter),
-                        style = PiTheme.text.prose.copy(fontStyle = FontStyle.Italic),
+                        // 不再用斜体：系统字没有中文斜体，Android 会把汉字硬斜 12°，字形发虚；
+                        // 思考与回答的区分已经由「小一号 + 淡色 + 左缩进」承担。
+                        style = PiTheme.text.prose.let {
+                            it.copy(fontSize = it.fontSize * 0.93f, lineHeight = it.lineHeight * 0.96f)
+                        },
                         color = palette.thinkingBodyOnCanvas,
                     )
                 }

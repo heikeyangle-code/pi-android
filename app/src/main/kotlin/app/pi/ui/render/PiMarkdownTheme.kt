@@ -497,6 +497,22 @@ private data class PiMarkdownDimens(
     override val alert: MarkdownAlertDimens,
 ) : MarkdownDimens
 
+/**
+ * 非经典档的几何：表格单元格内边距 8 → 10、圆角 8 → 12。15 sp 的宋体在 8 dp 的格子里
+ * 贴边，格线与文字挤在一起；表格圆角 8 又比紧挨着的代码块（12）小一圈，同一页上
+ * 两种「卡片」圆角不一致。经典档仍用下面那份不动的 [piMarkdownDimens]。
+ */
+internal val piMarkdownDimensRoomy: MarkdownDimens = PiMarkdownDimens(
+    dividerThickness = 1.dp,
+    codeBackgroundCornerSize = 12.dp,
+    blockQuoteThickness = 3.dp,
+    tableMaxWidth = Dp.Unspecified,
+    tableCellWidth = 160.dp,
+    tableCellPadding = 10.dp,
+    tableCornerSize = 12.dp,
+    alert = markdownAlertDimens(),
+)
+
 /** The one [PiMarkdownDimens] instance; constant, like the app has always had. */
 internal val piMarkdownDimens: MarkdownDimens = PiMarkdownDimens(
     dividerThickness = 1.dp,
