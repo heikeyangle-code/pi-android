@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,11 +64,16 @@ internal fun PiRichCodeBlock(
     classic: Boolean,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
-    var showLineNumbers by remember(code) { mutableStateOf(false) }
-    var wrap by remember(code) { mutableStateOf(false) }
-    var expanded by remember(code) { mutableStateOf(false) }
-    var copied by remember(code) { mutableStateOf(false) }
-    var menuOpen by remember(code) { mutableStateOf(false) }
+    // 这三个是**读者**的状态（行号 / 自动换行 / 展开全部），不是由 `code` 派生的值：
+    // 1. 不能以 `code` 为 key —— 流式中的未闭合围栏每来一个 token `code` 就变一次，key 一变状态
+    //    立刻被重置，读者刚点开「自动换行」下一个 token 就弹回去，菜单也被收起；
+    // 2. 必须 `rememberSaveable`（`BlockChrome.kt` 里同一条规则）：行滚出屏幕再回来是一次全新
+    //    的组合，普通 `remember` 会让展开的块回到折叠，行高突变，列表位置跟着跳。
+    var showLineNumbers by rememberSaveable { mutableStateOf(false) }
+    var wrap by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
 
     val allLines = remember(code) { code.split('\n') }
     val lineCount = allLines.size

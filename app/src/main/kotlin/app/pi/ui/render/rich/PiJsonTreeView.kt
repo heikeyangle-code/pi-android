@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,9 +68,13 @@ fun PiJsonTreeView(
     modifier: Modifier = Modifier,
 ) {
     val limits = remember { JsonTreeLimits() }
-    val result = remember(source, settled) { PiJsonTree.parse(source, settled, limits) }
+    // 解析在组合线程上跑（最多 256 KiB / 2 万节点），行每次滚回来都是新组合；走缓存，只在
+    // 第一次付一次代价（`PiTreeParseCache`）。
+    val result = remember(source, settled) {
+        PiTreeParseCache.getOrParse("json", source, settled) { PiJsonTree.parse(source, settled, limits) }
+    }
     val tree = result as? JsonTreeResult.Tree
-    var mode by remember(source, initialMode) { mutableStateOf(initialMode) }
+    var mode by rememberSaveable(source, initialMode) { mutableStateOf(initialMode) }
 
     val clipboard = LocalClipboardManager.current
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -145,7 +150,7 @@ private fun JsonNodeRow(
 ) {
     val palette = PiTheme.palette
     val body = PiTheme.typography.styles.code
-    var expanded by remember(node.path) { mutableStateOf(node.depth == 0) }
+    var expanded by rememberSaveable(node.path) { mutableStateOf(node.depth == 0) }
 
     Column(Modifier.fillMaxWidth()) {
         Row(

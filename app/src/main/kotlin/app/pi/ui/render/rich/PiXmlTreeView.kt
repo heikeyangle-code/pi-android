@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,9 +64,11 @@ fun PiXmlTreeView(
     modifier: Modifier = Modifier,
 ) {
     val limits = remember { XmlTreeLimits() }
-    val result = remember(source, settled) { PiXmlTreeParser.parse(source, settled, limits) }
+    val result = remember(source, settled) {
+        PiTreeParseCache.getOrParse("xml", source, settled) { PiXmlTreeParser.parse(source, settled, limits) }
+    }
     val tree = result as? XmlTreeResult.Tree
-    var mode by remember(source, initialMode) { mutableStateOf(initialMode) }
+    var mode by rememberSaveable(source, initialMode) { mutableStateOf(initialMode) }
 
     val clipboard = LocalClipboardManager.current
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -134,7 +137,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
     val palette = PiTheme.palette
     val body = PiTheme.typography.styles.code
     val hasChildren = node.children.isNotEmpty()
-    var expanded by remember(node.path) { mutableStateOf(node.depth == 0) }
+    var expanded by rememberSaveable(node.path) { mutableStateOf(node.depth == 0) }
 
     Column(Modifier.fillMaxWidth()) {
         Row(
