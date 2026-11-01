@@ -176,7 +176,10 @@ android {
     // the price of being able to open them at all.
     // ---------------------------------------------------------------------
     androidResources {
-        noCompress += listOf("tgz", "xz", "tar")
+        // `ttf`: the bundled text faces (`res/font/` — the reading serif pair and JetBrains
+        // Mono, ~6.7 MB). A stored font is `mmap`ped by the platform, so only the glyph pages
+        // actually drawn become resident; a deflated one is inflated into memory in full first.
+        noCompress += listOf("tgz", "xz", "tar", "ttf")
     }
 
     packaging {

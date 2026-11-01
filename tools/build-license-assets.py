@@ -200,13 +200,14 @@ JETBRAINS_MONO_LICENCE_OUT = "JetBrainsMono-OFL-1.1.txt"
 JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1.1）"
 
 # Source Han Serif CN (思源宋体 CN) 2.003R (OFL-1.1) — the **reading** face,
-# compiled into the APK as `app/src/main/res/font/source_han_serif_cn_vf.ttf`
-# (Adobe's official Simplified-Chinese **subset variable font**, TrueType `glyf`,
-# `wght` 250–900) and consumed only by `PiProseFamily` at the Markdown render
-# site. Same obligation and same shape as the JetBrains Mono pin below: the TTF
-# is extracted from Adobe's official `02_SourceHanSerif-VF.zip`
-# (`Variable/TTF/Subset/SourceHanSerifCN-VF.ttf`) for this release, and the OFL
-# requires the licence text to travel with the font. The tag-pinned
+# compiled into the APK as `app/src/main/res/font/source_han_serif_cn_{text,semibold}.ttf`
+# — two static instances (`wght` 450 / 600) cut and GB2312-subset by
+# `tools/build-prose-font.py` from Adobe's official Simplified-Chinese **subset variable
+# font** (`Variable/TTF/Subset/SourceHanSerifCN-VF.ttf` in `02_SourceHanSerif-VF.zip`),
+# renamed "Pi Reading Serif" because the licence reserves the name 'Source' for unmodified
+# copies; consumed only by `PiProseFamily` at the Markdown render site. Same obligation and
+# the same shape as the JetBrains Mono pin below: the OFL requires the licence text (and the
+# copyright notice, which the cut files still carry) to travel with the font. The tag-pinned
 # `LICENSE.txt` is byte-identical to the `LICENSE.txt` inside that zip and the CN
 # package (checked while writing this pin: 4463 bytes, sha256 below), so the text
 # shipped beside the font describes the same release the font came from.
@@ -1376,7 +1377,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
         "Source Han Serif CN（思源宋体 CN）",
         SOURCE_HAN_SERIF_VERSION,
         "OFL-1.1",
-        "编译进 App 代码（随包打包的阅读字体，CN 子集可变字体 TTF，400 / 600）",
+        "编译进 App 代码（随包打包的阅读字体：由 CN 子集可变字体裁出的 450 / 600 两个静态字重，GB2312 子集，已改名为 Pi Reading Serif）",
         "https://github.com/adobe-fonts/source-han-serif",
     ),
     # Declared, but deliberately not in this list's scope: it is a test-only dependency

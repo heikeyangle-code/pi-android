@@ -302,7 +302,7 @@ internal fun piMarkdownTypography(
     monoParagraph: Boolean = false,
 ): MarkdownTypography {
     // Markdown 正文字体：字号/行高/字距等一律取排版档的 `prose` 度量，只把字族换成
-    // 随包的思源宋体、字重固定 400（非经典档的 `prose` 是给 UI 用的 500，不搬进来）。
+    // 随包的思源宋体、字重取 `Normal`（`PiProseFamily` 里是 450 那一档；非经典档的 `prose` 是给 UI 用的 500，不搬进来）。
     // `prose` 本身仍是系统 Sans —— 设置页/Boot/文件页/诊断页共用它，只有 Markdown
     // 正文换成宋体。`mono`/`code` 只留给机器输出（代码、命令行、路径）。
     val base = profile.styles.prose.copy(

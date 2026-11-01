@@ -22,7 +22,6 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
@@ -296,87 +295,66 @@ val PiMonoFamily: FontFamily = FontFamily(
 )
 
 /**
- * The bundled reading face: **Source Han Serif CN（思源宋体 CN）2.003R**, the
- * official Simplified-Chinese **subset variable font** extracted from Adobe's
- * `02_SourceHanSerif-VF.zip` (`Variable/TTF/Subset/SourceHanSerifCN-VF.ttf`),
- * shipped as `app/src/main/res/font/source_han_serif_cn_vf.ttf` and licensed
- * OFL-1.1 — the licence text is in the in-app licence list as
- * `SourceHanSerif-OFL-1.1.txt` (OFL 1.1 + Adobe's copyright line; the file is
- * byte-identical across the SC, CN and VF packages of this release).
+ * The bundled reading face for the transcript's Markdown body: a **cut-down Source Han
+ * Serif CN（思源宋体 CN）2.003R** (Adobe, OFL-1.1) — two static TrueType instances,
+ * `app/src/main/res/font/source_han_serif_cn_{text,semibold}.ttf`, produced by
+ * `tools/build-prose-font.py` from Adobe's official Simplified-Chinese subset variable
+ * font. The OFL text is in the in-app licence list (`SourceHanSerif-OFL-1.1.txt`).
  *
- * ## Why the CN subset, and why one variable file
+ * ## Why this is a cut-down pair and not the 25 MB variable file
  *
- * A serif separates the transcript's Markdown *content* from the UI chrome: the
- * body role keeps the system Sans, and the Markdown renderer overrides only the
- * family with this one (`render/PiMarkdownTheme.kt`). The faces are therefore
- * only ever this family's body/heading text.
+ * A reading face is only ever asked for two weights, and a chat transcript only needs the
+ * GB2312 hanzi (6 763), ASCII/Latin-1, punctuation and the full-width forms — ~7.7 k glyphs
+ * instead of the CN subset's 31 k. So the build script instances the variable font at
+ * `wght` **450** and **600**, subsets each to that set and drops hinting and vertical
+ * forms: **3.0 MB per file, 6.1 MB for the pair**, against 25 MB (≈15 MB deflated) for the
+ * variable file. A character outside the subset is not tofu — Compose falls back to the
+ * platform face for that glyph only (the repo's own 540 k hanzi of Chinese text has one
+ * such character).
  *
- * The full `Source Han Serif SC` cut is 24.5 MB **per static weight** — 49.2 MB
- * for the 400/600 pair, ~40 MB in the APK, which is not acceptable for one
- * reading font. The CN subset is Adobe's official regional Simplified-Chinese
- * cut: 31,058 glyphs / 30,930 mapped code points. Measured against the full SC
- * cut (44,779 mapped code points) it keeps **all** 20,992 BMP Han, all 6,592
- * CJK Ext A, all 189 kana and all 336 Latin code points; what it drops is
- * Hangul (11,172 syllables), 2,676 other symbols/compatibility code points and
- * one punctuation mark. Neither cut maps CJK Ext B. Characters outside the
- * subset fall back per character to the platform font, which is Compose's
- * normal fallback for a missing glyph.
+ * Static instances also mean no variation settings at runtime: each entry is a plain file,
+ * so there is no `wght` axis to resolve on API 26/27 and no dependence on the variable
+ * default instance (this font's default is ExtraLight 250).
  *
- * The **variable** TTF folds all seven weights into one 25.1 MB file that
- * deflates to ~15.5 MB: smaller in the APK than the two static CN OTFs
- * (~19.9 MB deflated), and well clear of this feature's 20 MB budget. The CFF2
- * variable OTF from the same release is ~1.4 MB smaller but is not used: CFF2
- * variable rendering on the app's API 26 floor cannot be verified here, and
- * Adobe's own release notes warn about CFF2 variable fonts on some platforms.
- * The TTF uses `glyf` outlines, the format Android 8's variable-font support
- * (`FontVariationAxis` / `Paint.fontVariationSettings`, both API 26) targets.
+ * The TTFs are stored **uncompressed** in the APK (`noCompress += "ttf"` in
+ * `app/build.gradle.kts`) so the platform can `mmap` them and only the glyph pages that are
+ * actually drawn become resident; a deflated resource has to be inflated into memory first.
  *
- * ## Why every entry pins the `wght` axis
+ * ## Why 450 for the body
  *
- * This VF's default instance is **ExtraLight (250)**, not Regular: a 400 request
- * with no variation settings would render the thinnest cut. Each [Font] below
- * therefore passes `variationSettings = FontVariation.Settings(
- * FontVariation.weight(...))`. Compose applies these through
- * `Paint.fontVariationSettings` in `PlatformTypefaces.setFontVariationSettings`,
- * gated on `SDK_INT >= 26`; minSdk is 26, so every supported device takes that
- * path (Compose ui-text 1.8.3).
+ * 400 is Source Han Serif's Regular, and on a dark page at 16 sp its hairline strokes read
+ * spindly; the system-face body this replaced was Medium (500). 450 keeps the serif's
+ * stroke contrast and stays close to the density the transcript had before. `Normal` is
+ * therefore the 450 cut; weights are matched by Compose to the nearest entry, so the
+ * headings' `SemiBold` (and Material's `Medium`) land on the nearest of the two files.
  *
- * ## Why the Bold slot points at weight 600
+ * ## Why the Bold slot points at the 600 file
  *
- * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer
- * library, while the face's design weights top out at 600 here. Asking for 700
- * with only a 400 instance would make Android **synthesise** a faux-bold from
- * the Regular outlines: wrong advance widths, smeared strokes. So `Bold` is
- * declared as a third entry pinned to `wght` 600; a 700 request lands on the
- * real SemiBold instance instead of a synthesis.
+ * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer library and
+ * the heaviest cut here is 600. Asking for 700 with no 700 entry would make Android
+ * **synthesise** a faux-bold from the 450 outlines — wrong advance widths, smeared strokes.
+ * So the same 600 file is declared a second time as `Bold`, and `**strong**` gets a real
+ * SemiBold.
+ *
+ * ## The name is not "Source Han Serif"
+ *
+ * Adobe's licence reserves the font name 'Source' (OFL §3: a modified version may not use a
+ * Reserved Font Name). Instancing and subsetting make these files modified versions, so the
+ * script rewrites the `name` table to "Pi Reading Serif" and fails if 'Source' survives
+ * anywhere but the copyright/trademark notices, which are kept as the licence requires.
  *
  * ## Why there is no italic file
  *
- * Source Han Serif publishes no italic (CJK type is not oblique by convention),
- * and this app does not bundle an algorithmic slanted copy. Markdown's block
- * quote keeps `fontStyle = FontStyle.Italic` in `render/PiMarkdownTheme.kt`, so
- * Compose synthesises the oblique at draw time — the italic is a *semantic*
- * emphasis, not another font file, and it stays that way until a real italic is
- * vendored.
+ * Source Han Serif publishes no italic (CJK type is not oblique by convention), and this app
+ * does not bundle an algorithmic slanted copy. Markdown's block quote keeps
+ * `fontStyle = FontStyle.Italic` in `render/PiMarkdownTheme.kt`, so Compose synthesises the
+ * oblique at draw time — a *semantic* emphasis, not another font file.
  */
 val PiProseFamily: FontFamily = FontFamily(
-    Font(
-        R.font.source_han_serif_cn_vf,
-        FontWeight.Normal,
-        variationSettings = FontVariation.Settings(FontVariation.weight(400)),
-    ),
-    Font(
-        R.font.source_han_serif_cn_vf,
-        FontWeight.SemiBold,
-        variationSettings = FontVariation.Settings(FontVariation.weight(600)),
-    ),
-    // Markdown 的 **strong** 由库固定成 FontWeight.Bold(700)。把 600 这个实例再声明成
-    // Bold，粗体才会用真实 SemiBold，而不是合成粗体。
-    Font(
-        R.font.source_han_serif_cn_vf,
-        FontWeight.Bold,
-        variationSettings = FontVariation.Settings(FontVariation.weight(600)),
-    ),
+    Font(R.font.source_han_serif_cn_text, FontWeight.Normal),
+    Font(R.font.source_han_serif_cn_semibold, FontWeight.SemiBold),
+    // Markdown's **strong** is `FontWeight.Bold`; point it at the real 600 file, not a synthesis.
+    Font(R.font.source_han_serif_cn_semibold, FontWeight.Bold),
 )
 
 /**
