@@ -1,7 +1,8 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.layout.layout
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
@@ -111,16 +112,27 @@ fun UserMessageBlock(
         // menu's 复制. The ⋮ above keeps that whole-bubble copy for a single tap.
         SelectableContent {
         // 气泡右对齐（所有档位）、宽度跟内容走、最宽 86%，右下角收成小半径（「我说的」的落点）。
+        // **不用 `BoxWithConstraints`**：它是 SubcomposeLayout，内容在布局阶段才组合。气泡里是整段
+        // Markdown（异步解析），一条多屏高的用户消息放在 LazyColumn 里，子组合重来的那一刻行高会被
+        // 短暂算小，滚动偏移被夹回去，读者看到的就是「从气泡底部直接跳到顶部」（用户报的）。
+        // 这里用一个普通的 `layout` 修饰符：最大宽度取 86%，量完再靠右摆，没有子组合。
         // 通栏气泡里一个「好」字也占满整行，视觉重量比 AI 的整段回答还大，滚动时也分不出
         // 是谁在说话；右对齐后用户回合一眼可辨，长消息仍接近满宽，不吃亏。
-        BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Surface(
             // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
             // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
             // may not add a token. Applied outside the `Surface`, so it stacks with the
             // list's `Arrangement.spacedBy` instead of replacing it, and the gap is
             // never painted in `userMessageBg`.
-            modifier = Modifier.widthIn(max = maxWidth * 0.86f).padding(bottom = 10.dp),
+            modifier = Modifier
+                .layout { measurable, constraints ->
+                    val width = constraints.maxWidth
+                    val placeable = measurable.measure(
+                        constraints.copy(minWidth = 0, maxWidth = (width * 0.86f).roundToInt()),
+                    )
+                    layout(width, placeable.height) { placeable.placeRelative(width - placeable.width, 0) }
+                }
+                .padding(bottom = 10.dp),
             // `borderRadius:12`.
             shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 4.dp, bottomStart = 16.dp),
             color = palette.userMessageBg,
@@ -170,7 +182,6 @@ fun UserMessageBlock(
                     )
                 }
             }
-        }
         }
         }
         }
