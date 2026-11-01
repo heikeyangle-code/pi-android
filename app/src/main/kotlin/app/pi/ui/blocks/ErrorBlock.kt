@@ -85,9 +85,11 @@ fun ErrorBlock(
                     // (`renderers/edit.js:67`, `write.js:122`). This sentence used to be the one
                     // error text in the app painted `text`.
                     if (item.message.isNotBlank()) {
+                        // 标题与红条已经说明这是错误；整段报错正文再染成红色，长报错
+                        // 读起来很累。正文用工具卡的正文色，错误色只留给标题和红条。
                         ProseText(
                             text = item.message,
-                            color = palette.error,
+                            color = palette.bodyOnTool,
                         )
                     }
                 }

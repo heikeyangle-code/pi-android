@@ -43,6 +43,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.time.Instant
@@ -98,7 +100,11 @@ internal fun MonoText(
     )
 }
 
-/** Human prose: always the system font, at v2's chat-text step (14/23). */
+/**
+ * Human prose at the chat-text step. 经典档是系统字（v2 的 14/23，冻结）；非经典档与展开后的
+ * Markdown 正文同一套阅读宋体：这四个块（压缩摘要 / 钩子 / 分支摘要 / 错误）折叠时是这里、
+ * 展开时是 `PiMarkdownText`，两边字族不同，点一下字体就换，所以统一。
+ */
 @Composable
 internal fun ProseText(
     text: String,
@@ -112,7 +118,11 @@ internal fun ProseText(
         // M3's `bodyLarge` is 15 sp — which is v2's *row-title* step, not its chat-text
         // step (`06 §2` 字号 5 档: 14 = 正文、聊天文本、按钮). [app.pi.ui.theme.PiTextStyles]
         // carries the right one.
-        style = PiTheme.text.prose,
+        style = if (PiTheme.typography.isClassic) {
+            PiTheme.text.prose
+        } else {
+            PiTheme.text.prose.copy(fontFamily = PiProseFamily, fontWeight = FontWeight.Normal)
+        },
         color = color ?: MaterialTheme.colorScheme.onSurface,
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
