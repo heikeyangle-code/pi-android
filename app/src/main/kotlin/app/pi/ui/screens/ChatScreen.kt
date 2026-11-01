@@ -202,6 +202,7 @@ import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
@@ -3846,7 +3847,19 @@ private fun Composer(
     // 上面的 `borderColor`，色相与取色逻辑一个字节没改。
     val inputShape = RoundedCornerShape(PiSpacing.composerRadius)
     // 6 行是**按行高算**的，不是写死 120dp：系统字体放大后写死的 120 只能放 4 行半。
-    val lineHeightDp = with(LocalDensity.current) { COMPOSER_LINE_HEIGHT.toDp() }
+    //
+    // 输入框文字（非经典档）：与发出去后的用户气泡同一套阅读宋体、同字号，行高取字号的 1.5 倍。
+    // 原来写死 20 sp，而非经典档的正文是 16 sp：1.25 的行距，汉字多行输入又挤又闷，
+    // 敲出来是黑体、一发送变宋体也不连贯。经典档仍是 14/20。
+    val composerProse = PiTheme.text.prose
+    val composerClassic = PiTheme.typography.isClassic
+    val composerLineHeight = if (composerClassic) COMPOSER_LINE_HEIGHT else (composerProse.fontSize.value * 1.5f).sp
+    val composerTextStyle = if (composerClassic) {
+        composerProse.copy(lineHeight = composerLineHeight)
+    } else {
+        composerProse.copy(fontFamily = PiProseFamily, fontWeight = FontWeight.Normal, lineHeight = composerLineHeight)
+    }
+    val lineHeightDp = with(LocalDensity.current) { composerLineHeight.toDp() }
     val fieldMaxHeight = lineHeightDp * COMPOSER_MAX_LINES
     var focused by remember { mutableStateOf(false) }
     val borderWidth by animateDpAsState(
@@ -3947,10 +3960,7 @@ private fun Composer(
                     .onFocusChanged { focused = it.isFocused },
                 // `06 §2` 输入区「输入 14/20」: the composer's own text is the 14 sp
                 // chat-text step with a 20 sp lead, not M3's larger field default.
-                textStyle = PiTheme.text.prose.copy(
-                    lineHeight = COMPOSER_LINE_HEIGHT,
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
+                textStyle = composerTextStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                 // 1–6 行；第 7 行起由字段自己内部滚动，外面不再长高。
                 maxLines = COMPOSER_MAX_LINES,
                 cursorBrush = SolidColor(PiTheme.palette.accent),
@@ -3959,7 +3969,7 @@ private fun Composer(
                         if (draft.isEmpty()) {
                             Text(
                                 text = "输入消息，/ 选命令，! 直接跑命令，@ 提及文件",
-                                style = PiTheme.text.prose.copy(lineHeight = COMPOSER_LINE_HEIGHT),
+                                style = composerTextStyle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
