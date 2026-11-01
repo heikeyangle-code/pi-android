@@ -208,9 +208,8 @@ internal fun PiMarkdownText(
     // 一次；`PiMarkdownTheme.kt` 里 padding 因此从顶层 `val` 变成了函数（仍按预设缓存，
     // 不是每帧新建）。dimens 不随预设动（没有任何圆角变化），所以它还是那个顶层 `val`。
     val profile = PiTheme.typography
-    val classic = profile.isClassic
-    val colors = remember(palette, darkTheme, textColor, classic) {
-        piMarkdownColors(palette, darkTheme, textColor, classic)
+    val colors = remember(palette, darkTheme, textColor) {
+        piMarkdownColors(palette, darkTheme, textColor)
     }
     val typography = remember(palette, profile, textColor, hasGrid) {
         // 网格用**空格**对齐（`renderLayout` 逐行补齐），比例字体里空格与字形的宽度
@@ -351,7 +350,7 @@ internal fun PiMarkdownText(
             colors = colors,
             typography = typography,
             padding = padding,
-            dimens = if (classic) piMarkdownDimens else piMarkdownDimensRoomy,
+            dimens = piMarkdownDimensRoomy,
             imageTransformer = imageTransformer,
             components = components,
             // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')

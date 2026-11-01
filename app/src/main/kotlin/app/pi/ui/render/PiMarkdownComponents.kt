@@ -946,19 +946,16 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
     }
     if (art == null) {
         val highlighted = rememberPiHighlightedCode(code, normalized)
-        // 非经典档：1 dp 满不透明的灰边在深色底上是一圈亮框，代码块比它包着的文字还抢眼。
-        // 边线压到 28%，里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线；经典档不动。
+        // 1 dp 满不透明的灰边是一圈亮框，代码块比它包着的文字还抢眼。边线压到 28%，
+        // 里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线（所有档位一致）。
         val classic = PiTheme.typography.isClassic
         MarkdownCodeBackground(
-            color = if (classic) Color.Transparent else palette.mdCodeBlockBorder.copy(alpha = 0.06f),
+            color = palette.mdCodeBlockBorder.copy(alpha = 0.06f),
             // 12 dp 是 `06 §2` 的值，也是这个圆角一直以来的数。排版预设**不动它**：
             // 卡片（`BlockCardShape`）与代码块今天本来就都是 12，没有"不统一"这个对象，
             // 而 10 掉出 8 点网格。`MarkdownDimens.codeBackgroundCornerSize` 是同一个数。
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(
-                1.dp,
-                if (classic) palette.mdCodeBlockBorder else palette.mdCodeBlockBorder.copy(alpha = 0.28f),
-            ),
+            border = BorderStroke(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f)),
             modifier = Modifier
                 .fillMaxWidth()
                 // 经典 block 只有 2/8，代码块自己补 8；非经典 block ≥ 10，再补就是上 14 / 下 22，

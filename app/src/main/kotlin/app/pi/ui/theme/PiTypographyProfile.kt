@@ -100,11 +100,11 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * | inline code size/w | 12.5/400|  13/500 |    14/500   | 15/500|
  * | code size/leading  |  13/19  |  13/21  |    14/22    | 15/24 |
  * | table size/leading | 12.5/18 |  14/22  |    15/24    | 16/25 |
- * | headings size/leading | 22/30 20/28 18/26 16/24 15/22 14/21 | 21/28 19/26 17/24 16/22 16/22 16/22 | 22/29 20/27 18/25 17/23 17/23 17/23 | 24/32 22/30 20/28 18/24 18/24 18/24 |
+ * | headings size/leading | 22/30 20/28 18/26 16/24 15/22 14/21 | 22/28 20/26 18/24 17/24 16/23 15/22 | 24/31 22/29 20/27 18/25 17/24 16/23 | 26/34 24/32 22/30 20/28 19/27 18/26 |
  * | transcript gap     |    8    |    4    |      8      |  12   |
  * | 换人：消息之前       |    8    |   18    |     24      |  36   |
  *
- * **2026-11-01 重排：** 舒适档重做为母版（16/27、段间 14、项间 10、标题 22/20/18/17、表格 15/24），
+ * **2026-11-01 重排：** 舒适档重做为母版（16/27、段间 14、项间 10、标题 24/22/20/18/17/16、表格 15/24），
  * 紧凑/宽松按同一组比例推出；下面几段里的 25/26、12/20、25/23/21 等是此前的历史数字。
  *
  * 2026-10-26 修订（经典档不动）：列表项上下 padding 改为 **3 / 4 / 5**
@@ -426,7 +426,7 @@ data class PiTypographyProfile(
                 // 行内代码不再比正文重一档：等宽本来就显重，500 = 正文。
                 inlineSize = 13f, inlineWeight = 500,
                 tableSize = 14f, tableLine = 22,
-                headings = intArrayOf(21, 19, 17, 16, 16, 16),
+                headings = intArrayOf(22, 20, 18, 17, 16, 15),
             ),
             COMFORTABLE to Preset(
                 // 母版（2026-11-01 重排）：宋体 16 sp 配 27 sp 行高（1.69）。汉字是满格方块，
@@ -440,7 +440,7 @@ data class PiTypographyProfile(
                 messageGap = 24,
                 inlineSize = 14f, inlineWeight = 500,
                 tableSize = 15f, tableLine = 24,
-                headings = intArrayOf(22, 20, 18, 17, 17, 17),
+                headings = intArrayOf(24, 22, 20, 18, 17, 16),
             ),
             LOOSE to Preset(
                 proseSize = 17, proseLine = 28,
@@ -450,7 +450,7 @@ data class PiTypographyProfile(
                 messageGap = 36,
                 inlineSize = 15f, inlineWeight = 500,
                 tableSize = 16f, tableLine = 25,
-                headings = intArrayOf(24, 22, 20, 18, 18, 18),
+                headings = intArrayOf(26, 24, 22, 20, 19, 18),
             ),
         )
 
@@ -464,12 +464,13 @@ data class PiTypographyProfile(
         )
 
         /**
-         * 非经典档每个标题槽的行高比例 = 舒适档 22/29、20/27、18/25、17/23（h4–h6 同值）。
+         * 非经典档每个标题槽的行高比例 = 舒适档 24/31、22/29、20/27、18/25、17/24、16/23。
          * 紧凑/宽松用**同一组比例**乘各自字号四舍五入，四档的标题节奏是同一个形状
-         * （比例 1.32–1.39：标题多是一两行的短句，行高不必像正文那样松）。
+         * （比例 1.29–1.44：字号越小比例越大，小标题行高不至于贴着字走）。六级逐级递减，
+         * 每一级都和相邻一级差 1–2 sp。
          */
         private val HEADING_LEADING_RATIO = doubleArrayOf(
-            29.0 / 22.0, 27.0 / 20.0, 25.0 / 18.0, 23.0 / 17.0, 23.0 / 17.0, 23.0 / 17.0,
+            31.0 / 24.0, 29.0 / 22.0, 27.0 / 20.0, 25.0 / 18.0, 24.0 / 17.0, 23.0 / 16.0,
         )
 
         private fun heading(
