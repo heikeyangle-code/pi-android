@@ -1221,7 +1221,10 @@ private fun PiTaskCheckbox(model: MarkdownComponentModel) {
     }
     val lineHeight = model.typography.text.lineHeight
     val density = LocalDensity.current
-    // 行高是 sp；换成 dp 才能当 Box 的高度用（`TextUnit.toDp` 要求 Sp 单位）。
+    // 行高是 sp；换成 dp 才能当 Box 的高度用。判据是 `value > 0` 而不是 `TextUnit.isSp`：
+    // 后者在本项目当前的 Compose 产物里解析不到（CI 报过 Unresolved reference，见 c3005e5）。
+    // `value > 0` 同时排除了 `Unspecified`（它的 value 是 NaN）。前提是行高按 sp 写 ——
+    // `PiMarkdownTheme.kt` 的每个排版档都是 sp；若将来有主题改写成 em，`toDp()` 会抛异常。
     val markerHeight = if (lineHeight.value > 0f) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
     Box(
         modifier = Modifier
