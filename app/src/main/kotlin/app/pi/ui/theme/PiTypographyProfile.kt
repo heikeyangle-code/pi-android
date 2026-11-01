@@ -63,12 +63,12 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  * ## 阅读字体（2026-10-31 字体升级）
  *
  * 聊天 Markdown 的阅读正文用随包的思源宋体（`PiProseFamily`，Source Han Serif CN
- * 2.003R 裁出的 450 / 600 两个静态字重，OFL-1.1，见 `tools/build-prose-font.py`），但**不新增排版角色**：`render/PiMarkdownTheme.kt`
+ * 2.003R 裁出的 450 / 700 两个静态字重，OFL-1.1，见 `tools/build-prose-font.py`），但**不新增排版角色**：`render/PiMarkdownTheme.kt`
  * 在自己的消费点把本档 `styles.prose` 的字族覆盖成 `PiProseFamily`、字重 `Normal`（450）。
  * 四档的字号/行高仍就是下表的 `proseSize`/`proseLine`（经典 14/23、紧凑 15/24、
  * 舒适 16/25、宽松 17/26）；`prose` 本身仍是系统 Sans，设置页、Boot、文件页、
  * 诊断页不受影响。粗体由 Markdown 的 `**strong**` 落到 `PiProseFamily` 里注册为
- * `Bold` 的真实 SemiBold 实例上，不出现合成粗体。
+ * `Bold` 的真实 Bold（700）实例上，不出现合成粗体。
  *
  * **The sheet's 1.75–1.8 leading for 舒适 was not kept, and that is the one place
  * this file now contradicts the direction sheet.** The number came from Latin

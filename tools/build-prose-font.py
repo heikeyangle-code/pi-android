@@ -11,7 +11,7 @@ punctuation and the full-width forms — about 7.7 k glyphs — so this script p
 two **static** instances of the variable font, subset to that set:
 
     source_han_serif_cn_text.ttf       wght 450  (body)
-    source_han_serif_cn_semibold.ttf   wght 600  (headings, **strong**)
+    source_han_serif_cn_bold.ttf       wght 700  (headings, **strong**)
 
 ~3.0 MB each, no hinting, no vertical forms. A character outside the subset is not
 tofu: Compose falls back to the system face for that glyph only (measured on this
@@ -54,7 +54,7 @@ DEFAULT_OUT = os.path.join(ROOT, "app", "src", "main", "res", "font")
 # (output file, wght, family name, PostScript name)
 CUTS = [
     ("source_han_serif_cn_text.ttf", 450, "Pi Reading Serif Text", "PiReadingSerif-Text"),
-    ("source_han_serif_cn_semibold.ttf", 600, "Pi Reading Serif SemiBold", "PiReadingSerif-SemiBold"),
+    ("source_han_serif_cn_bold.ttf", 700, "Pi Reading Serif Bold", "PiReadingSerif-Bold"),
 ]
 
 # Everyday hanzi that GB2312 lacks (internet / dialect / given-name usage). Filtered at

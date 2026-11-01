@@ -297,7 +297,7 @@ val PiMonoFamily: FontFamily = FontFamily(
 /**
  * The bundled reading face for the transcript's Markdown body: a **cut-down Source Han
  * Serif CN（思源宋体 CN）2.003R** (Adobe, OFL-1.1) — two static TrueType instances,
- * `app/src/main/res/font/source_han_serif_cn_{text,semibold}.ttf`, produced by
+ * `app/src/main/res/font/source_han_serif_cn_{text,bold}.ttf`, produced by
  * `tools/build-prose-font.py` from Adobe's official Simplified-Chinese subset variable
  * font. The OFL text is in the in-app licence list (`SourceHanSerif-OFL-1.1.txt`).
  *
@@ -306,7 +306,7 @@ val PiMonoFamily: FontFamily = FontFamily(
  * A reading face is only ever asked for two weights, and a chat transcript only needs the
  * GB2312 hanzi (6 763), ASCII/Latin-1, punctuation and the full-width forms — ~7.7 k glyphs
  * instead of the CN subset's 31 k. So the build script instances the variable font at
- * `wght` **450** and **600**, subsets each to that set and drops hinting and vertical
+ * `wght` **450** and **700**, subsets each to that set and drops hinting and vertical
  * forms: **3.0 MB per file, 6.1 MB for the pair**, against 25 MB (≈15 MB deflated) for the
  * variable file. A character outside the subset is not tofu — Compose falls back to the
  * platform face for that glyph only (the repo's own 540 k hanzi of Chinese text has one
@@ -326,15 +326,17 @@ val PiMonoFamily: FontFamily = FontFamily(
  * spindly; the system-face body this replaced was Medium (500). 450 keeps the serif's
  * stroke contrast and stays close to the density the transcript had before. `Normal` is
  * therefore the 450 cut; weights are matched by Compose to the nearest entry, so the
- * headings' `SemiBold` (and Material's `Medium`) land on the nearest of the two files.
+ * headings' `SemiBold` lands on the 700 file and Material's `Medium` on the 450 one.
  *
- * ## Why the Bold slot points at the 600 file
+ * ## Why 700, and why both SemiBold and Bold point at it
  *
- * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer library and
- * the heaviest cut here is 600. Asking for 700 with no 700 entry would make Android
- * **synthesise** a faux-bold from the 450 outlines — wrong advance widths, smeared strokes.
- * So the same 600 file is declared a second time as `Bold`, and `**strong**` gets a real
- * SemiBold.
+ * Markdown's `**strong**` is fixed to `FontWeight.Bold` (700) by the renderer library, so a
+ * real 700 cut exists for it to land on; without one Android would **synthesise** a faux-bold
+ * from the 450 outlines — wrong advance widths, smeared strokes. The cut is 700 rather than
+ * 600 because 600 against 450 is a step of barely 150 units: on a dark page at 16 sp bold and
+ * body were hard to tell apart (measured side by side with 600/700/750 — 700 is the first
+ * clearly bold step, 750 starts to clot the dense hanzi). Headings' `SemiBold` is declared on
+ * the same file, so headings and `**strong**` share one real face.
  *
  * ## The name is not "Source Han Serif"
  *
@@ -352,9 +354,9 @@ val PiMonoFamily: FontFamily = FontFamily(
  */
 val PiProseFamily: FontFamily = FontFamily(
     Font(R.font.source_han_serif_cn_text, FontWeight.Normal),
-    Font(R.font.source_han_serif_cn_semibold, FontWeight.SemiBold),
-    // Markdown's **strong** is `FontWeight.Bold`; point it at the real 600 file, not a synthesis.
-    Font(R.font.source_han_serif_cn_semibold, FontWeight.Bold),
+    Font(R.font.source_han_serif_cn_bold, FontWeight.SemiBold),
+    // Markdown's **strong** is `FontWeight.Bold`; point it at the real 700 file, not a synthesis.
+    Font(R.font.source_han_serif_cn_bold, FontWeight.Bold),
 )
 
 /**

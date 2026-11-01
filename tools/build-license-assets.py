@@ -200,8 +200,8 @@ JETBRAINS_MONO_LICENCE_OUT = "JetBrainsMono-OFL-1.1.txt"
 JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1.1）"
 
 # Source Han Serif CN (思源宋体 CN) 2.003R (OFL-1.1) — the **reading** face,
-# compiled into the APK as `app/src/main/res/font/source_han_serif_cn_{text,semibold}.ttf`
-# — two static instances (`wght` 450 / 600) cut and GB2312-subset by
+# compiled into the APK as `app/src/main/res/font/source_han_serif_cn_{text,bold}.ttf`
+# — two static instances (`wght` 450 / 700) cut and GB2312-subset by
 # `tools/build-prose-font.py` from Adobe's official Simplified-Chinese **subset variable
 # font** (`Variable/TTF/Subset/SourceHanSerifCN-VF.ttf` in `02_SourceHanSerif-VF.zip`),
 # renamed "Pi Reading Serif" because the licence reserves the name 'Source' for unmodified
@@ -1377,7 +1377,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
         "Source Han Serif CN（思源宋体 CN）",
         SOURCE_HAN_SERIF_VERSION,
         "OFL-1.1",
-        "编译进 App 代码（随包打包的阅读字体：由 CN 子集可变字体裁出的 450 / 600 两个静态字重，GB2312 子集，已改名为 Pi Reading Serif）",
+        "编译进 App 代码（随包打包的阅读字体：由 CN 子集可变字体裁出的 450 / 700 两个静态字重，GB2312 子集，已改名为 Pi Reading Serif）",
         "https://github.com/adobe-fonts/source-han-serif",
     ),
     # Declared, but deliberately not in this list's scope: it is a test-only dependency

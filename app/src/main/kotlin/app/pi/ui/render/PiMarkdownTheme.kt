@@ -267,8 +267,8 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  *
  *   Bold is real, not synthesised: the library's annotator always emits
  *   `SpanStyle(fontWeight = FontWeight.Bold)`, and `PiProseFamily` registers its
- *   600 face under **both** `SemiBold` and `Bold`, so `**strong**` selects the
- *   real 600 file and the headings' explicit `SemiBold` lands on the same one.
+ *   700 face under **both** `SemiBold` and `Bold`, so `**strong**` selects the
+ *   real 700 file and the headings' explicit `SemiBold` lands on the same one.
  *
  *   The table's **type** is the preset's too — [PiTypographyProfile.tableSizeSp] /
  *   `tableLineHeightSp`, 12.5/18 in 经典 (which is exactly the pair this file used
@@ -311,7 +311,7 @@ internal fun piMarkdownTypography(
     )
     val mono = profile.styles.mono
     val code = profile.styles.code
-    // 标题/强调都落在真实 600：`PiProseFamily` 把 600 同时注册为 `SemiBold` 与
+    // 标题/强调都落在真实 700：`PiProseFamily` 把 700 同时注册为 `SemiBold` 与
     // `Bold`，所以这里的 `SemiBold` 与库 annotator 给 `**strong**` 的 `Bold`
     // 取到的是同一个字体文件 —— 不是合成粗体。
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
