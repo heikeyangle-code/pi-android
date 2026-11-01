@@ -83,14 +83,18 @@ internal object PiXmlTreeParser {
                                 value = parser.getAttributeValue(index),
                             )
                         }
-                        when (val feed = builder.startElement(parser.name, attributes)) {
+                        val name = parser.name
+                            ?: return XmlTreeResult.Failure(XmlTreeFailure.Malformed)
+                        when (val feed = builder.startElement(name, attributes)) {
                             XmlFeed.Ok -> Unit
                             else -> return failureFor(feed)
                         }
                     }
 
                     XmlPullParser.END_TAG -> {
-                        when (val feed = builder.endElement(parser.name)) {
+                        val name = parser.name
+                            ?: return XmlTreeResult.Failure(XmlTreeFailure.Malformed)
+                        when (val feed = builder.endElement(name)) {
                             XmlFeed.Ok -> Unit
                             else -> return failureFor(feed)
                         }
@@ -101,9 +105,12 @@ internal object PiXmlTreeParser {
                     XmlPullParser.IGNORABLE_WHITESPACE -> builder.text(parser.text ?: "")
 
                     XmlPullParser.ENTITY_REF -> {
-                        // Predefined entities normally arrive as TEXT; an ENTITY_REF
-                        // at this point means a declaration this build refuses.
-                        val resolved = parser.text
+                        // Predefined/numeric references normally arrive as TEXT.
+                        // Anything still an ENTITY_REF is either one of the five XML
+                        // built-ins (resolved here) or a reference this build has no
+                        // declaration for — and with declarations refused, that can
+                        // only be a document we will not interpret.
+                        val resolved = resolveEntity(parser.name, parser.text)
                             ?: return XmlTreeResult.Failure(XmlTreeFailure.Dtd)
                         builder.text(resolved)
                     }
@@ -122,6 +129,39 @@ internal object PiXmlTreeParser {
         }
 
         return builder.finish()
+    }
+
+    /**
+     * An `ENTITY_REF` event's replacement text.
+     *
+     * Only the five predefined XML entities and numeric character references are
+     * resolved. There is deliberately no general-entity table: `DOCTYPE`/`ENTITY`
+     * were refused before the parser was created, so any other name is a reference
+     * this build cannot (and must not) resolve.
+     */
+    private fun resolveEntity(name: String?, text: String?): String? {
+        if (!text.isNullOrEmpty()) return text
+        if (name.isNullOrEmpty()) return null
+        return when (name) {
+            "amp" -> "&"
+            "lt" -> "<"
+            "gt" -> ">"
+            "quot" -> "\""
+            "apos" -> "'"
+            else -> {
+                if (!name.startsWith("#")) return null
+                val code = if (name.startsWith("#x") || name.startsWith("#X")) {
+                    name.substring(2).toIntOrNull(16)
+                } else {
+                    name.substring(1).toIntOrNull()
+                }
+                if (code == null || !Character.isValidCodePoint(code) || code in 0xD800..0xDFFF) {
+                    null
+                } else {
+                    String(Character.toChars(code))
+                }
+            }
+        }
     }
 
     private fun failureFor(feed: XmlFeed): XmlTreeResult.Failure = when (feed) {

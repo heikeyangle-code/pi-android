@@ -78,7 +78,7 @@ fun PiJsonTreeView(
     }
 
     // A delegated `var` cannot be smart-cast, so take the value once.
-    val currentFeedback = feedback
+    val currentFeedback: String? = feedback
     val status = when {
         currentFeedback != null -> currentFeedback
         tree != null -> "${tree.nodeCount} 个节点"

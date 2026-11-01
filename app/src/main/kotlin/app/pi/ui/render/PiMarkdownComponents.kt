@@ -63,7 +63,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.isSp
 import androidx.compose.ui.unit.times
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
@@ -182,7 +181,7 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
 
 /**
  * The renderer's component set: pi's code-block chrome, pi's math, the
- * image fallback, the three table adjustments, bare block HTML, and the
+ * image fallback, the four table adjustments, bare block HTML, and the
  * read-only task-list marker.
  *
  * Everything except those keeps the library default, because the default
@@ -1081,7 +1080,15 @@ private fun PiTableCellText(
 private fun List<PiTableAlign>.alignAt(column: Int): PiTableAlign =
     getOrElse(column) { PiTableAlign.Default }
 
-/** 对齐 → `TextStyle.textAlign`；[PiTableAlign.Default] 是 `null`（不覆盖库的样式）。 */
+/**
+ * 对齐 → `TextStyle.textAlign`；[PiTableAlign.Default] 是 `null`（不覆盖库的样式）。
+ *
+ * 用 `Start`/`End` 而不是 `Left`/`Right`：两者在 LTR 界面里逐像素相同（本 App 的中文/英文
+ * 界面都是 LTR），而 `Start`/`End` 与下面的 [boxAlignment] 用的是**同一套方向规则**，所以
+ * "折行的长文字走 TextAlign、不折行的短文字走 Box 落点"这两条路不可能在 RTL 下指向相反
+ * 的两边。GFM 的 `align="left"` 是物理方向 —— 真要做 RTL 界面时，这里要同时把两条路改成
+ * 物理方向（Compose 的 `Alignment` 没有 `TopLeft`，得用 `BiasAlignment`），那是一笔单独的账。
+ */
 private val PiTableAlign.textAlign: TextAlign?
     get() = when (this) {
         PiTableAlign.Default -> null
@@ -1093,8 +1100,7 @@ private val PiTableAlign.textAlign: TextAlign?
 /**
  * 对齐 → 短文字时那一层 `Box` 的落点，见 [PiTableCellText]。
  *
- * `Left` 用 `TopStart`（不是 `TopLeft`）：GFM 的 `:---` 语义是"起始边"，与 `TextAlign.Start`
- * 同一套方向规则（RTL 下跟着翻）。
+ * 与 [textAlign] 同一套方向规则（`Start`/`End`），理由写在那里的注释里。
  */
 private val PiTableAlign.boxAlignment: Alignment
     get() = when (this) {
@@ -1195,7 +1201,7 @@ private fun PiTaskCheckbox(model: MarkdownComponentModel) {
     val lineHeight = model.typography.text.lineHeight
     val density = LocalDensity.current
     // 行高是 sp；换成 dp 才能当 Box 的高度用（`TextUnit.toDp` 要求 Sp 单位）。
-    val markerHeight = if (lineHeight.isSp) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
+    val markerHeight = if (lineHeight.value > 0f) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
     Box(
         modifier = Modifier
             .padding(end = TASK_CHECKBOX_END_PADDING)

@@ -254,9 +254,6 @@ internal class XmlTreeBuilder(private val limits: XmlTreeLimits = XmlTreeLimits(
     private var nodeCount = 0
     private var failure: XmlTreeFailure? = null
 
-    /** How many elements have been accepted so far. */
-    val builtNodes: Int get() = nodeCount
-
     fun startElement(name: String, attributes: List<XmlAttribute>): XmlFeed {
         failure?.let { return feedFor(it) }
         if (!isXmlName(name)) return fail(XmlTreeFailure.Malformed)

@@ -73,8 +73,8 @@ private fun alignmentOf(cell: String): PiTableAlign {
     val starts = cell.startsWith(':')
     val ends = cell.endsWith(':')
     return when {
-        // 上游把 ":": 也判成 center（`starts && ends`），这里不额外收紧：多一个字符的判断
-        // 只会让 App 与 GitHub/IDE 的对齐结果出现分叉。
+        // 上游对单个字符 `:` 也走"两端都有冒号"这一支（判成 center）。这里不额外收紧：
+        // 多一条"至少一个连字符"的判断，只会让 App 与 GitHub/IDE 的对齐结果出现分叉。
         starts && ends -> PiTableAlign.Center
         starts -> PiTableAlign.Left
         ends -> PiTableAlign.Right
