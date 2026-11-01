@@ -1,6 +1,9 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -107,17 +110,26 @@ fun UserMessageBlock(
         // first thing anyone tries to copy, and before this the only way was the
         // menu's 复制. The ⋮ above keeps that whole-bubble copy for a single tap.
         SelectableContent {
+        // 非经典档：气泡右对齐、宽度跟内容走、最宽 86%，右下角收成小半径（「我说的」的落点）。
+        // 通栏气泡里一个「好」字也占满整行，视觉重量比 AI 的整段回答还大，滚动时也分不出
+        // 是谁在说话；右对齐后用户回合一眼可辨，长消息仍接近满宽，不吃亏。
+        // 经典档保持冻结板的通栏（本文件头注释）。
+        val classic = PiTheme.typography.isClassic
+        BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Surface(
             // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
             // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
             // may not add a token. Applied outside the `Surface`, so it stacks with the
             // list's `Arrangement.spacedBy` instead of replacing it, and the gap is
             // never painted in `userMessageBg`.
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = (if (classic) Modifier.fillMaxWidth() else Modifier.widthIn(max = maxWidth * 0.86f))
                 .padding(bottom = 10.dp),
             // `borderRadius:12`.
-            shape = PiShapes.cardInner,
+            shape = if (classic) {
+                PiShapes.cardInner
+            } else {
+                RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 4.dp, bottomStart = 16.dp)
+            },
             color = palette.userMessageBg,
         ) {
             Column(
@@ -133,7 +145,7 @@ fun UserMessageBlock(
                 if (item.text.isNotEmpty()) {
                     PiMarkdownText(
                         markdown = item.text,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = if (classic) Modifier.fillMaxWidth() else Modifier,
                         textColor = palette.userMessageText,
                         // 用户自己消息里 markdown 写的图：与同一个气泡里那张附件网格走同一个
                         // 出口（下面 `ImageGridBlock` 的 `onImageClick`），不然"附件能点开、
@@ -144,7 +156,7 @@ fun UserMessageBlock(
                 if (item.images.isNotEmpty()) {
                     ImageGridBlock(
                         images = item.images,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = if (classic) Modifier.fillMaxWidth() else Modifier.widthIn(min = 160.dp),
                         onImageClick = onImageClick,
                     )
                 }
@@ -165,6 +177,7 @@ fun UserMessageBlock(
                     )
                 }
             }
+        }
         }
         }
         }
