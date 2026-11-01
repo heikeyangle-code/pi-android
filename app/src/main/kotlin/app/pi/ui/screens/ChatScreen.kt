@@ -2343,14 +2343,27 @@ private fun ChatBody(
             // `disableFollow`), and hiding the button there would leave no way to
             // re-arm it. A viewport that is at the bottom *and* following shows
             // neither, which is the state the transcript is in most of the time.
-            val showUp by remember(listState) {
-                derivedStateOf {
-                    val visible = listState.layoutInfo.visibleItemsInfo.size
-                    visible > 0 && listState.firstVisibleItemIndex >= visible * 2
+            // 「回到顶部」：带迟滞的开关。原来是 `firstVisibleItemIndex >= 可见行数 * 2` 的单阈值，
+            // 而「可见行数」会随流式增长的末行变高而抖（末行越高，同屏行数越少），首行下标
+            // 又在阈值附近，于是按钮在跟随期间一帧出、一帧没。现在：**越过 2 倍屏才出现，
+            // 回落到 1 倍屏以内才消失**，中间这一段不换状态，抖动被带宽吃掉。
+            var showUp by remember(listState) { mutableStateOf(false) }
+            LaunchedEffect(listState) {
+                snapshotFlow {
+                    listState.firstVisibleItemIndex to listState.layoutInfo.visibleItemsInfo.size
+                }.collect { (first, visible) ->
+                    if (visible > 0) {
+                        showUp = if (showUp) first >= visible else first >= visible * 2
+                    }
                 }
             }
 
-            val showDown = !atBottom || !following
+            // 「回到最新」只看用户意图（`following`），不再并上 `!atBottom`。流式跟随时每个
+            // token 都先把末行撑高、下一帧才钉回底：`canScrollForward` 在这一帧里是 true，
+            // `atBottom` 闪成 false，箭头就随每个 token 闪一下（用户报的「一直跳动」）。
+            // 跟随中的「暂时没贴底」是机器自己正在追的状态，不是读者离开了底部；读者真的
+            // 往上滑，机器在手势那一帧就 `pause()`，`following` 变 false，箭头照样出现。
+            val showDown = !following
             if (showUp || showDown) {
                 Column(
                     modifier = Modifier
