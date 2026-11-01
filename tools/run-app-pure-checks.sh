@@ -1327,6 +1327,31 @@ run_harness proroot-probe-detail \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
+# app.pi.ui.render.rich: Phase 1 的富块基础。四个 harness 都只依赖 stdlib +
+# kotlinx.serialization（没有 Compose / Android），所以能在裸 JVM 上跑；Compose 的
+# `PiJsonTreeView` / `PiXmlTreeView` 由 Android 构建验证，不在这里。
+run_harness fence-info \
+  app.pi.ui.render.rich.FenceInfoCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/FenceInfoCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/FenceInfo.kt"
+
+run_harness rich-block \
+  app.pi.ui.render.rich.RichBlockCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/RichBlockCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/RichBlock.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/FenceInfo.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiYamlTree.kt"
+
+run_harness json-tree \
+  app.pi.ui.render.rich.PiJsonTreeCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiJsonTreeCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiJsonTree.kt"
+
+run_harness xml-tree \
+  app.pi.ui.render.rich.PiXmlTreeCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiXmlTreeCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiXmlTree.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

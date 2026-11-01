@@ -161,6 +161,12 @@ internal fun PiMarkdownText(
     // 见 [LocalPiImageClick]：一个组合局部而不是参数，因为库的组件集是 `remember` 出来的、
     // 参数进不去。
     onImageClick: ((PiImage) -> Unit)? = null,
+    /**
+     * 这条消息是否还在流式生成（`AssistantText.streaming`）。默认 `false`：
+     * 工具卡、摘要、用户气泡等已完成的文本保持原渲染路径。富渲染不能只依赖它，
+     * 还要检查围栏/公式/结构是否闭合；见 [LocalPiMarkdownStreaming]。
+     */
+    streaming: Boolean = false,
 ) {
     val context = LocalContext.current
     // `remember(context)`: attach() is idempotent and cheap, but this keeps it to
@@ -341,6 +347,7 @@ internal fun PiMarkdownText(
         // 点开一张图的那条缝。`null` 时两个图片槽一个修饰符都不多（见 [LocalPiImageClick]），
         // 所以正文之外那几个没传回调的 markdown 表面不受影响。
         LocalPiImageClick provides onImageClick,
+        LocalPiMarkdownStreaming provides streaming,
     ) {
         Markdown(
             // The state built above, not the `content` overload: the state is what makes the
