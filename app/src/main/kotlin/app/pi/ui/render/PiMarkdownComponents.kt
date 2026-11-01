@@ -2,18 +2,23 @@ package app.pi.ui.render
 
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -28,11 +33,24 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CollectionItemInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.collectionItemInfo
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -45,11 +63,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSp
 import androidx.compose.ui.unit.times
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.rpc.PiImage
+import app.pi.ui.render.rich.FenceInfo
+import app.pi.ui.render.rich.PiJsonTreeView
+import app.pi.ui.render.rich.PiTreeMode
+import app.pi.ui.render.rich.PiXmlTreeView
+import app.pi.ui.render.rich.RichBlock
+import app.pi.ui.render.rich.RichBlockKind
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
@@ -65,7 +90,7 @@ import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
-import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
+import com.mikepenz.markdown.compose.elements.LocalTableRowIndex
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
@@ -73,6 +98,7 @@ import com.mikepenz.markdown.compose.elements.MarkdownHeader
 import com.mikepenz.markdown.compose.elements.MarkdownImage
 import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
 import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.model.ImageTransformer
@@ -156,10 +182,10 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
 
 /**
  * The renderer's component set: pi's code-block chrome, pi's math, the
- * image fallback, the three table adjustments, and bare
- * block HTML.
+ * image fallback, the three table adjustments, bare block HTML, and the
+ * read-only task-list marker.
  *
- * Everything except those five keeps the library default, because the default
+ * Everything except those keeps the library default, because the default
  * reads its colours and type from the [com.mikepenz.markdown.model.MarkdownColors]
  * and [com.mikepenz.markdown.model.MarkdownTypography] built in
  * `PiMarkdownTheme.kt` — which are pi's tokens. Overriding a component that
@@ -185,11 +211,20 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
  * all there. See each component's comment for why the decision is made on
  * `transform`'s *result* rather than on the transformer's type.
  *
- * Tables are the fourth, and they claim the `table` slot for three reasons, all of
+ * Tables are the fourth, and they claim the `table` slot for four reasons, all of
  * them listed on [PiTable]: the library gives every cell one line, the header has no
- * identity of its own, and a table that scrolls sideways says nothing about it.
- * Everything else about a table (the parse, the fixed 160 dp column width, the
- * horizontal scroll, the corner, the cell padding) stays the library's.
+ * identity of its own, a table that scrolls sideways says nothing about it, and the
+ * GFM alignment row is parsed by the library but never applied. Everything else about
+ * a table (the parse, the fitted column width, the horizontal scroll, the corner, the
+ * cell padding) stays the library's.
+ *
+ * Task lists are the sixth: the library's default `checkbox` slot draws the source
+ * text `[x] ` in monospace, which is exactly the raw-syntax look the task list is
+ * supposed to be upgraded away from. [PiTaskCheckbox] draws a read-only marker
+ * instead. It **cannot** go through `custom`: a `CHECK_BOX` is not a dispatched
+ * node — it is a marker inside a list item that the library hands to this one slot
+ * (`MarkdownList.kt`'s `markdownComponents.checkbox.invoke(model)`), so the
+ * `checkbox` slot is the only seam that reaches it.
  *
  * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
  * in the library (`.../compose/components/MarkdownComponents.kt`) whose
@@ -220,6 +255,9 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
     table = { model -> PiTable(model) },
+    // 任务清单的勾选标记：库的默认槽画的是源码文本 `[x] `（等宽），这里换成只读图形。
+    // 见 piMarkdownComponents 的注释与 [PiTaskCheckbox]。
+    checkbox = { model -> PiTaskCheckbox(model) },
     custom = { type, model -> piCustomComponent(type, model) },
 )
 
@@ -647,9 +685,9 @@ private fun PiImageFallback(
 }
 
 /**
- * GFM 表格：解析、列宽（160 dp，与今天逐字节相同）、横向滚动与语义都留给库；这个槽只做三件事
+ * GFM 表格：解析、列宽（默认 160 dp）、横向滚动与语义都留给库；这个槽只做四件事
  * —— 把库写死的「每格 1 行」换成 [TABLE_MAX_LINES]、给表头一层极淡底、在**真的要横滑**时
- * 于右缘画一条渐隐。
+ * 于右缘画一条渐隐、以及**按 GFM 的对齐行给每列设 `TextAlign`**（见 [PiTableHeaderCells]）。
  *
  * 列宽不是这里决定的：库把表格宽度算成 `tableWidth = columnsCount * tableCellWidth`
  * （`compose/elements/MarkdownTable.kt:88`），横滑判据是 `maxWidth <= tableWidth`（`:99`），
@@ -688,7 +726,8 @@ private fun PiImageFallback(
  *
  * 外面那个 Box 只是一个包裹：`MarkdownTableHeader` 的 `Row` 自己带
  * `Modifier.widthIn(tableWidth).height(IntrinsicSize.Max)`，Box 把约束原样传下去，
- * 测量结果与不包时相同 —— 这一层只有底色。
+ * 测量结果与不包时相同 —— 这一层只有底色。写了冒号的表格换成 [PiTableHeaderCells]
+ * 之后，那一行仍是同一个 `Row`、同一组修饰符（见它的注释），所以这一层仍然只有底色。
  *
  * ## 理由三：右缘渐隐，且只在真的要滑时
  *
@@ -712,8 +751,9 @@ private fun PiImageFallback(
  * ## 这个数字只有一处：[TABLE_MAX_LINES]
  *
  * 表头与数据行分成两个 lambda 只是因为库的签名如此；两边都引用同一个 [TABLE_MAX_LINES]，
- * 而第三个组件（单元格 `MarkdownTableBasicText`）拿到的是库从这两个值转交下去的同一个数
- * ——我们不自己调它（那要重写整行布局），所以表格路径上不存在第二个常量可以漂移。
+ * 而单元格的 `MarkdownTableBasicText` 拿到的是从这个值转交下去的同一个数 —— 全对齐（`---`）
+ * 的表由库的行组件转交，写了冒号的表由 [PiTableCellText] 直接传，两条路用的是同一个常量，
+ * 所以表格路径上不存在第二个"每格几行"可以漂移。
  *
  * ## 为什么是 50：不是 1，也不是无限
  *
@@ -785,6 +825,14 @@ private fun PiTable(model: MarkdownComponentModel) {
     val density = LocalDensity.current
     // 列数只用于「拟合列宽」和右缘渐隐两个判断，算法与库 MarkdownTable.kt:86 一样。
     val columns = remember(model.node) { piTableColumnCount(model.node) }
+    // 每列对齐方式：从 `TABLE_SEPARATOR` 的**文本**里再读一次（解析器不把它放进 AST）。
+    // 纯函数在 `PiTableAlignment.kt`，这里只负责把它接到两个行槽上。
+    val alignments = remember(model.content, model.node) {
+        piTableAlignments(model.content, model.node)
+    }
+    // 只有真的写了冒号才走"按列对齐"那条路；全是 `---` 的表仍由库自己的行组件画，
+    // 与这次改动之前逐字节相同（`MarkdownTableHeader` / `MarkdownTableRow`）。
+    val aligned = alignments.any { it != PiTableAlign.Default }
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val available = maxWidth
         // 2026-10-26：160dp 固定列宽在手机上很怪 —— 两列留一大块空、三列就横滑。
@@ -824,13 +872,33 @@ private fun PiTable(model: MarkdownComponentModel) {
                             .clip(headerShape)
                             .background(palette.mdHr.copy(alpha = 0.10f)),
                     ) {
-                        MarkdownTableHeader(
-                            content, header, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES,
-                        )
+                        if (aligned) {
+                            PiTableHeaderCells(
+                                content = content,
+                                header = header,
+                                tableWidth = tableWidth,
+                                style = tableStyle,
+                                alignments = alignments,
+                            )
+                        } else {
+                            MarkdownTableHeader(
+                                content, header, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES,
+                            )
+                        }
                     }
                 },
                 rowBlock = { content, row, tableWidth, tableStyle ->
-                    MarkdownTableRow(content, row, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES)
+                    if (aligned) {
+                        PiTableBodyCells(
+                            content = content,
+                            row = row,
+                            tableWidth = tableWidth,
+                            style = tableStyle,
+                            alignments = alignments,
+                        )
+                    } else {
+                        MarkdownTableRow(content, row, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES)
+                    }
                 },
             )
         }
@@ -851,6 +919,189 @@ private fun PiTable(model: MarkdownComponentModel) {
         }
     }
 }
+
+/**
+ * 表头行，**按列**设 `TextAlign` —— 只替换库 `MarkdownTableHeader` 里那次
+ * `MarkdownTableBasicText` 调用的样式，其余（`Row` 的 `widthIn(tableWidth)` +
+ * `height(IntrinsicSize.Max)`、`CenterVertically`、`padding(tableCellPadding).weight(1f)`、
+ * `heading()` 与 `collectionItemInfo` 语义）逐项照抄库，几何不变。
+ *
+ * ## 为什么必须自己排这一行
+ *
+ * 库的 `MarkdownTableHeader(content, header, tableWidth, style, …)` 只收**一个** `style`，
+ * 整个表头共用；`MarkdownTableBasicText` 也没有 `modifier`/`textAlign` 参数。Compose 的
+ * `TextAlign` 是 `TextStyle` 上的属性，所以"第 2 列居中、第 3 列靠右"只能落在
+ * **每格自己的那次 `MarkdownTableBasicText` 调用**上 —— 而库没有把这个调用点开成槽。
+ * 槽只有 `headerBlock` / `rowBlock`，那就得在这一层还原库的行布局。
+ *
+ * **没有复制的那部分**（也是这条改写不碰的东西）：`MarkdownTable` 的列数统计、`tableWidth`、
+ * 背景与圆角、`horizontalScroll(requiredWidth)`、`TABLE_SEPARATOR` → 分隔线、整张表的
+ * `collectionInfo`、行序号（`LocalTableRowIndex`）以及格子里的 annotator/图片管线
+ * （`MarkdownTableBasicText` 照旧调用）。改的只有"这一格用哪个 `TextStyle`"。
+ *
+ * 这个函数只在**表里真的写了冒号**时才被走到；全 `---` 的表仍走库的组件。
+ */
+@Composable
+private fun PiTableHeaderCells(
+    content: String,
+    header: ASTNode,
+    tableWidth: Dp,
+    style: TextStyle,
+    alignments: List<PiTableAlign>,
+) {
+    val cellPadding = LocalMarkdownDimens.current.tableCellPadding
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.widthIn(tableWidth).height(IntrinsicSize.Max),
+    ) {
+        header.children.filter { it.type == GFMTokenTypes.CELL }.forEachIndexed { column, cell ->
+            Column(
+                modifier = Modifier
+                    .padding(cellPadding)
+                    .weight(1f)
+                    .semantics {
+                        heading()
+                        collectionItemInfo = CollectionItemInfo(
+                            rowIndex = 0, rowSpan = 1,
+                            columnIndex = column, columnSpan = 1,
+                        )
+                    },
+            ) {
+                PiTableCellText(
+                    content = content,
+                    cell = cell,
+                    // 与库同一句：表头 = 表格样式 + Bold。
+                    style = style.copy(fontWeight = FontWeight.Bold),
+                    align = alignments.alignAt(column),
+                )
+            }
+        }
+    }
+}
+
+/** 数据行，同 [PiTableHeaderCells]：只有每格的 `TextAlign` 与库不同，行语义/几何照库。 */
+@Composable
+private fun PiTableBodyCells(
+    content: String,
+    row: ASTNode,
+    tableWidth: Dp,
+    style: TextStyle,
+    alignments: List<PiTableAlign>,
+) {
+    val cellPadding = LocalMarkdownDimens.current.tableCellPadding
+    // 行序号由库的 `MarkdownTable` 用 `LocalTableRowIndex` 提供（表头算第 0 行，数据行从 1 起），
+    // 库自己的 `MarkdownTableRow` 默认参数也是读它 —— 读同一个值，语义不变。
+    val rowIndex = LocalTableRowIndex.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.widthIn(tableWidth),
+    ) {
+        row.children.filter { it.type == GFMTokenTypes.CELL }.forEachIndexed { column, cell ->
+            Column(
+                modifier = Modifier
+                    .padding(cellPadding)
+                    .weight(1f)
+                    .semantics {
+                        collectionItemInfo = CollectionItemInfo(
+                            rowIndex = rowIndex, rowSpan = 1,
+                            columnIndex = column, columnSpan = 1,
+                        )
+                    },
+            ) {
+                PiTableCellText(
+                    content = content,
+                    cell = cell,
+                    style = style,
+                    align = alignments.alignAt(column),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 一格的内容：库的 [MarkdownTableBasicText]（annotator、行内图片、`maxLines`/`overflow`、
+ * `onPlaced` 全都留给它）+ **按列对齐**。
+ *
+ * `TextAlign` 是 `TextStyle` 的属性，这里把它 `copy` 进样式；[PiTableAlign.Default] 时
+ * **不 copy**，调用与库的表头/数据行逐字节相同。
+ *
+ * ## 为什么中间还要一层 `Box`
+ *
+ * `BasicText` 的测量宽度是 `maxIntrinsicWidth.coerceIn(minWidth, maxWidth)`
+ * （`foundation/text/TextDelegate.kt` 的 `layoutText`），而这一格给的 `minWidth` 是 0 ——
+ * 一行短文字量出来就是**它自己的宽度**，`TextAlign` 没有任何余量可对齐。所以：
+ *
+ *  - 折行的长文字：`maxIntrinsicWidth > 列宽` ⇒ 文本节点宽度 = 列宽，`TextAlign` 直接
+ *    对整行生效；
+ *  - 不折行的短文字：文本节点宽度 = 自身宽度，由 `Box` 的 `contentAlignment` 把它整体
+ *    推到列宽的起始/中间/右侧。
+ *
+ * 两者叠加在数学上正好等于"按列宽对齐每一行"：折行时块宽 = 列宽（`Box` 不移动），
+ * 不折行时块内只有一行（`Box` 定位）。**不折行 + 多行**不可能同时成立。
+ *
+ * 用 `fillMaxWidth()` 的 `Box` 而不是给 Text 加 `fillMaxWidth`：库的
+ * `MarkdownTableBasicText` 没有任何 `modifier` 参数，而它的
+ * `Modifier.onPlaced { parentLayoutCoordinates… }`（行内图片用它取容器尺寸）在包一层之后
+ * 报告的是这个 `Box` 的尺寸 —— 与原来的父 `Column` 同宽、同高，所以格子里的图不受影响。
+ */
+@Composable
+private fun PiTableCellText(
+    content: String,
+    cell: ASTNode,
+    style: TextStyle,
+    align: PiTableAlign,
+) {
+    val textAlign = align.textAlign
+    if (textAlign == null) {
+        MarkdownTableBasicText(
+            content = content,
+            cell = cell,
+            style = style,
+            maxLines = TABLE_MAX_LINES,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = align.boxAlignment,
+    ) {
+        MarkdownTableBasicText(
+            content = content,
+            cell = cell,
+            style = style.copy(textAlign = textAlign),
+            maxLines = TABLE_MAX_LINES,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 这条表一共几列是**表头**说了算；对齐列表比它短就按默认处理（缺列容错）。 */
+private fun List<PiTableAlign>.alignAt(column: Int): PiTableAlign =
+    getOrElse(column) { PiTableAlign.Default }
+
+/** 对齐 → `TextStyle.textAlign`；[PiTableAlign.Default] 是 `null`（不覆盖库的样式）。 */
+private val PiTableAlign.textAlign: TextAlign?
+    get() = when (this) {
+        PiTableAlign.Default -> null
+        PiTableAlign.Left -> TextAlign.Start
+        PiTableAlign.Center -> TextAlign.Center
+        PiTableAlign.Right -> TextAlign.End
+    }
+
+/**
+ * 对齐 → 短文字时那一层 `Box` 的落点，见 [PiTableCellText]。
+ *
+ * `Left` 用 `TopStart`（不是 `TopLeft`）：GFM 的 `:---` 语义是"起始边"，与 `TextAlign.Start`
+ * 同一套方向规则（RTL 下跟着翻）。
+ */
+private val PiTableAlign.boxAlignment: Alignment
+    get() = when (this) {
+        PiTableAlign.Default, PiTableAlign.Left -> Alignment.TopStart
+        PiTableAlign.Center -> Alignment.TopCenter
+        PiTableAlign.Right -> Alignment.TopEnd
+    }
 
 /**
  * 拟合列宽的下限：低于它就横滑，而不是把每格压成一条细缝。
@@ -880,17 +1131,171 @@ private const val TABLE_MAX_LINES = 50
  */
 private val TABLE_FADE_WIDTH = 26.dp
 
+/**
+ * GFM 任务清单（`- [x] done` / `- [ ] open`）的勾选标记，**只读**。
+ *
+ * ## 为什么需要覆盖 `checkbox` 槽
+ *
+ * 列表是库的组件（App 没覆盖 `orderedList` / `unorderedList`），它给每个 `LIST_ITEM` 找
+ * 第 2 个子节点 `CHECK_BOX`，找到了就把这个节点交给 `components.checkbox`
+ * （`MarkdownList.kt` 的 `markdownComponents.checkbox.invoke(model)`）—— 在 0.45.0 里那是
+ * `CurrentComponentsBridge.checkbox` → `MarkdownCheckBox`，默认实现画的是**源码文本**
+ * `"[x] "`（等宽字体，`elements/MarkdownCheckBox.kt`）。于是模型写好的任务清单在手机上
+ * 读起来就是原始语法：`[x]` 没有变成框，勾没勾要用户自己看方括号 —— 这正是这次要换掉的。
+ *
+ * **不能走 `custom` 槽。** `CHECK_BOX` 不是派发节点（`MarkdownExtension` 的 `when` 里没有它），
+ * 库是在列表内部直接调这个槽的；`custom` 那套"认领类型"的陷阱在这里也用不上。
+ * `checkbox` 是唯一能到这一格的缝。
+ *
+ * ## 只读：不伪造可点击状态
+ *
+ * Markdown 里的勾选状态是**模型写下的文本**，不是 App 的状态。所以这里：
+ *
+ *  - 不挂 `toggleable` / `clickable`，没有任何"点一下改成已勾"的行为（改了也没有地方存，
+ *    下一次重组就会变回去 —— 那才是骗人）；
+ *  - 无障碍只描述**事实**：`role = Role.Checkbox` + `stateDescription`（"已完成" / "未完成"），
+ *    没有 `onClick` 语义，TalkBack 不会提示可以切换。库的 m3 默认槽给
+ *    `Checkbox(onCheckedChange = null)` 的也是这两个语义（只是文案是英文的
+ *    "Checked"/"Unchecked"），这里跟随它、并把文案换成本 App 的语言。
+ *
+ * ## 画法：一个框 + 一个勾，两档
+ *
+ * - 未勾选：1.2 dp 圆角描边方框（3 dp 圆角，16 dp 见方）；
+ * - 已勾选：同样的框，加一层 16% 的同色填充和里面一道圆头勾。
+ *
+ * 颜色只用 `palette.mdListBullet` —— 也就是**子弹头列表那个 token**。勾选框站在子弹头的
+ * 位置上，就该用子弹头的颜色：它回答的是"这里是个列表标记"，而"勾没勾"由字形回答。
+ * 不为它新造颜色，也不引入 `success`（完成状态不是"成功事件"，正文里的绿色会读成状态灯）。
+ *
+ * ## 缩进与行高
+ *
+ * 标记是个 `Box`，高度 = `typography.text.lineHeight`（模板给的值，23/25/27/28 sp），
+ * 这个 16 dp 的图标在框里垂直居中 —— 于是它**正好压在第一行文字的视觉中线上**，而行高仍由
+ * 右侧正文决定（标记比行高低，不会把行撑高，嵌套列表的缩进也还是库的 `padding.listIndent * depth`）。
+ * `typography.text` 与 `paragraph` 在 `PiMarkdownTheme.kt` 里来自同一个 `base`，行高相同；
+ * 空任务项（没有正文）时标记自己撑着这一行，高度等于原来那行 `[x] ` 文本的高度。
+ *
+ * **一处已知的几何变化**：标记宽度从"`[x] ` 四个等宽字符"（约 34–38 dp）变成
+ * 16 + 6 = 22 dp，同一行的正文因此左移约 12–16 dp。这是换掉"用四个字符当图标"这件事本身
+ * 的代价；不补一段假的内边距去凑旧宽度，因为那 12 dp 买不到任何东西，只会让框和文字之间
+ * 空出一块。列表缩进（深度）与行高都不受影响。
+ */
+@Composable
+private fun PiTaskCheckbox(model: MarkdownComponentModel) {
+    val palette = PiTheme.palette
+    val content = model.content
+    val node = model.node
+    // `CHECK_BOX` 节点的文本就是 `[x] ` / `[X] ` / `[ ] `（含尾随空格）。偏移量做 coerceIn：
+    // 这段代码会在流式的每一次内容变化上跑，而节点来自上一次解析，宁可判成未勾选也不崩。
+    val checked = remember(content, node) {
+        val start = node.startOffset.coerceIn(0, content.length)
+        val end = node.endOffset.coerceIn(start, content.length)
+        piTaskCheckboxChecked(content.substring(start, end))
+    }
+    val lineHeight = model.typography.text.lineHeight
+    val density = LocalDensity.current
+    // 行高是 sp；换成 dp 才能当 Box 的高度用（`TextUnit.toDp` 要求 Sp 单位）。
+    val markerHeight = if (lineHeight.isSp) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
+    Box(
+        modifier = Modifier
+            .padding(end = TASK_CHECKBOX_END_PADDING)
+            .height(markerHeight)
+            .semantics {
+                role = Role.Checkbox
+                stateDescription = if (checked) "已完成" else "未完成"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(TASK_CHECKBOX_SIZE)) {
+            val strokeWidth = TASK_CHECKBOX_STROKE.toPx()
+            // 描边以路径为中心，向内缩半个线宽，线才不会在画布边缘被裁掉。
+            val inset = strokeWidth / 2f
+            val boxSize = Size(size.width - strokeWidth, size.height - strokeWidth)
+            val corner = CornerRadius(TASK_CHECKBOX_CORNER.toPx())
+            if (checked) {
+                drawRoundRect(
+                    color = palette.mdListBullet.copy(alpha = TASK_CHECKBOX_FILL_ALPHA),
+                    topLeft = Offset(inset, inset),
+                    size = boxSize,
+                    cornerRadius = corner,
+                )
+            }
+            drawRoundRect(
+                color = palette.mdListBullet,
+                topLeft = Offset(inset, inset),
+                size = boxSize,
+                cornerRadius = corner,
+                style = Stroke(width = strokeWidth),
+            )
+            if (checked) {
+                val w = size.width
+                val h = size.height
+                val check = Path().apply {
+                    moveTo(w * 0.27f, h * 0.52f)
+                    lineTo(w * 0.44f, h * 0.68f)
+                    lineTo(w * 0.74f, h * 0.33f)
+                }
+                drawPath(
+                    path = check,
+                    color = palette.mdListBullet,
+                    style = Stroke(
+                        width = strokeWidth * 1.35f,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * `CHECK_BOX` token 的文本是不是"已勾选"。
+ *
+ * GFM 只接受三种写法：`[x]`、`[X]`、`[ ]`（`GFMConstraints.fetchListMarker`），节点文本还带着
+ * 列表标记之后的空白（`[x] `）—— 用 `trim()` + 固定下标，比上游 `MarkdownCheckBox` 的
+ * `content.contains("[x]")` 多认一个大写 `[X]`（上游那条会把它当未勾选）。
+ *
+ * 形状不认得就返回 `false`：宁可把一格标成未勾选，也不要凭一个字符猜出"这件事做完了"。
+ */
+internal fun piTaskCheckboxChecked(text: CharSequence): Boolean {
+    val trimmed = text.trim()
+    if (trimmed.length < 3) return false
+    if (trimmed[0] != '[' || trimmed[2] != ']') return false
+    val mark = trimmed[1]
+    return mark == 'x' || mark == 'X'
+}
+
+/** 勾选框的边长；见 [PiTaskCheckbox] 的"缩进与行高"。 */
+private val TASK_CHECKBOX_SIZE = 16.dp
+
+/** 勾选框的圆角：方框的 3 dp，与 App 里小圆角的量级一致。 */
+private val TASK_CHECKBOX_CORNER = 3.dp
+
+/** 框线宽度：16 dp 的框上 1.2 dp，缩到屏幕上仍看得出是线而不是色块。 */
+private val TASK_CHECKBOX_STROKE = 1.2.dp
+
+/** 标记与正文之间留的白：4 dp（库默认 `[x] ` 的那个 `padding(end = 4.dp)`）加 2 dp。 */
+private val TASK_CHECKBOX_END_PADDING = 6.dp
+
+/** 已勾选时框内的填充透明度；16% 是"看得出有底、但不会抢正文"的量级。 */
+private const val TASK_CHECKBOX_FILL_ALPHA = 0.16f
+
 @Composable
 private fun PiCodeFence(model: MarkdownComponentModel) {
+    // 结束围栏 token 是“这块结构已经完整”的结构判据；流式中未闭合的围栏必须保持
+    // 代码块，不能把半截 JSON/Mermaid 交给富渲染。`PiMarkdownText` 的 streaming
+    // 只用于“整条消息还在生成”，闭合围栏可以比整条消息更早完成。
+    val settled = model.node.children.lastOrNull()?.type == MarkdownTokenTypes.CODE_FENCE_END
     MarkdownCodeFence(model.content, model.node, style = model.typography.code) { code, language, style ->
-        PiCodeSurface(code, language, style)
+        PiCodeSurface(code, language, style, settled = settled)
     }
 }
 
 @Composable
 private fun PiCodeBlock(model: MarkdownComponentModel) {
     MarkdownCodeBlock(model.content, model.node, style = model.typography.code) { code, language, style ->
-        PiCodeSurface(code, language, style)
+        PiCodeSurface(code, language, style, settled = true)
     }
 }
 
@@ -921,9 +1326,19 @@ private fun PiCodeBlock(model: MarkdownComponentModel) {
  * which is why the fence's label and border are gone with it.
  */
 @Composable
-private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
+private fun PiCodeSurface(
+    code: String,
+    language: String?,
+    style: TextStyle,
+    settled: Boolean = true,
+) {
     val palette = PiTheme.palette
-    val normalized = remember(language) { PiCodeLanguage.normalize(language) }
+    // `FENCE_LANG` 是完整 info string（包含 `title=...`），不是语言名。分类与高亮都
+    // 只拿第一个有效词；`PiCodeLanguage.normalize` 的整串 lowercase 会把属性一起
+    // 当成语言，见 `FenceInfo.kt` 的类注释。
+    val info = remember(language) { FenceInfo.parse(language) }
+    val normalized = info.language.takeIf { it.isNotEmpty() }
+    val kind = remember(info, code, settled) { RichBlock.classify(info, code, settled) }
     val mermaid = rememberPiMermaidArt(code, language)
     // pi's rule for an incomplete drawing, and it is **not** "show it anyway": when the
     // diagram is settled and `grok-mermaid` reported warnings, pi keeps the fence's
@@ -945,47 +1360,32 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
         )
     }
     if (art == null) {
+        // Phase 1 的结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。
+        // 解析失败/超限时 `PiJsonTreeView` 自己回退源码；YAML 目前没有安全解析器，仍走代码块。
+        when (kind) {
+            RichBlockKind.Json -> {
+                PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                return
+            }
+            RichBlockKind.Xml -> {
+                PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                return
+            }
+            else -> Unit
+        }
         val highlighted = rememberPiHighlightedCode(code, normalized)
         // 非经典档：1 dp 满不透明的灰边在深色底上是一圈亮框，代码块比它包着的文字还抢眼。
         // 边线压到 28%，里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线；经典档不动。
         val classic = PiTheme.typography.isClassic
-        MarkdownCodeBackground(
-            color = if (classic) Color.Transparent else palette.mdCodeBlockBorder.copy(alpha = 0.06f),
-            // 12 dp 是 `06 §2` 的值，也是这个圆角一直以来的数。排版预设**不动它**：
-            // 卡片（`BlockCardShape`）与代码块今天本来就都是 12，没有"不统一"这个对象，
-            // 而 10 掉出 8 点网格。`MarkdownDimens.codeBackgroundCornerSize` 是同一个数。
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(
-                1.dp,
-                if (classic) palette.mdCodeBlockBorder else palette.mdCodeBlockBorder.copy(alpha = 0.28f),
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                // 经典 block 只有 2/8，代码块自己补 8；非经典 block ≥ 10，再补就是上 14 / 下 22，
-                // 不对称，所以非经典不补。
-                .padding(top = if (mermaidWarning != null) 8.dp else 0.dp, bottom = if (classic) 8.dp else 0.dp),
-            // The library's header reads `MarkdownColors.text`, which is the body colour
-            // — pi prints the fence's info string in `mdCodeBlockBorder`, so the header
-            // is ours ([PiCodeHeader]) and the library's is off. `language`/`code` are
-            // still passed: the library uses them for the block's accessibility label,
-            // which has nothing to do with the top bar.
-            showHeader = false,
-            language = normalized.orEmpty(),
+        PiRichCodeBlock(
             code = code,
-        ) {
-            Column {
-                PiCodeHeader(language = normalized, code = code, palette = palette)
-                Text(
-                    text = highlighted.text,
-                    style = style.copy(
-                        color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
-                    ),
-                    modifier = Modifier
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                )
-            }
-        }
+            info = info,
+            highlighted = highlighted,
+            style = style,
+            palette = palette,
+            classic = classic,
+            topPadding = if (mermaidWarning != null) 8.dp else 0.dp,
+        )
     }
     // pi's warning line, in pi's `warning` token and after the source it belongs to.
     mermaidWarning?.let { warning ->
@@ -994,48 +1394,6 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
             style = MaterialTheme.typography.labelMedium,
             color = palette.warning,
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
-        )
-    }
-}
-
-/**
- * The fence's info string and a copy affordance, both in pi's token for that line.
- *
- * pi prints ` ```<lang> ` in `mdCodeBlockBorder` (`components/markdown.ts:522`,
- * `:535`). A card is not a terminal line, so the backticks are not drawn — but the
- * label's colour is pi's, and so is the copy affordance's, which has no counterpart
- * in pi at all and therefore must not bring a colour of its own. A fence with no
- * language shows no label, exactly as pi's line would be a bare fence.
- */
-@Composable
-private fun PiCodeHeader(language: String?, code: String, palette: PiPalette) {
-    val clipboard = LocalClipboardManager.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = language.orEmpty(),
-            modifier = Modifier.weight(1f, fill = false),
-            // 2026-10-31 字体升级：任务书 §7.9 明确「代码块标题、语言标签等 UI 仍使用
-            // Sans」。这里从 monoSmall 改回 `labelMedium`（系统 UI 字，12/16），与旁边
-            // 的「复制」同一档；代码体本身仍是 `typography.code`（JetBrains Mono），
-            // 规则 #7 的「机器输出用等宽」由代码体承担，不在块标题这一行 chrome 上。
-            style = MaterialTheme.typography.labelMedium,
-            color = palette.mdCodeBlockBorder,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "复制",
-            style = MaterialTheme.typography.labelMedium,
-            color = palette.mdCodeBlockBorder,
-            modifier = Modifier
-                .clickable(onClickLabel = "复制代码") { clipboard.setText(AnnotatedString(code)) }
-                .padding(start = 12.dp),
         )
     }
 }

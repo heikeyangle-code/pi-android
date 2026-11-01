@@ -88,6 +88,7 @@ fun AssistantTextBlock(
                         markdown = item.text,
                         modifier = Modifier.weight(1f),
                         onImageClick = onImageClick,
+                        streaming = item.streaming,
                     )
                 }
                 if (item.streaming) {
