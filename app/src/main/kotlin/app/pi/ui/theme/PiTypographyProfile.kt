@@ -93,16 +93,19 @@ data class PiHeading(val sizeSp: Int, val lineHeightSp: Int)
  *
  * |                    | classic | compact | comfortable | loose |
  * |--------------------|---------|---------|-------------|-------|
- * | prose size/leading |  14/23  |  15/24  |   16/25     | 17/26 |
- * | markdown `block`   |    2    |    8    |     12      |  20   |
- * | list item top/bot  |   2/2   |   3/3   |     4/4     |  5/5  |
- * | list indent        |   12    |   16    |     20      |  24   |
+ * | prose size/leading |  14/23  |  15/25  |   16/27     | 17/28 |
+ * | markdown `block`   |    2    |   10    |     14      |  22   |
+ * | list item top/bot  |   2/2   |   3/3   |     5/5     |  6/6  |
+ * | list indent        |   12    |   18    |     22      |  26   |
  * | inline code size/w | 12.5/400|  13/500 |    14/500   | 15/500|
- * | code size/leading  |  13/19  |  13/20  |    14/22    | 15/23 |
- * | table size/leading | 12.5/18 |  13/20  |    14/22    | 15/23 |
- * | headings size/leading | 22/30 20/28 18/26 16/24 15/22 14/21 | 24/29 22/27 20/25 18/23 17/22 16/21 | 25/30 23/28 21/26 19/24 18/23 17/22 | 26/31 24/29 22/27 20/25 19/24 18/23 |
+ * | code size/leading  |  13/19  |  13/21  |    14/22    | 15/24 |
+ * | table size/leading | 12.5/18 |  14/22  |    15/24    | 16/25 |
+ * | headings size/leading | 22/30 20/28 18/26 16/24 15/22 14/21 | 21/28 19/26 17/24 16/22 16/22 16/22 | 22/29 20/27 18/25 17/23 17/23 17/23 | 24/32 22/30 20/28 18/24 18/24 18/24 |
  * | transcript gap     |    8    |    4    |      8      |  12   |
- * | 换人：消息之前       |    8    |   16    |     20      |  32   |
+ * | 换人：消息之前       |    8    |   18    |     24      |  36   |
+ *
+ * **2026-11-01 重排：** 舒适档重做为母版（16/27、段间 14、项间 10、标题 22/20/18/17、表格 15/24），
+ * 紧凑/宽松按同一组比例推出；下面几段里的 25/26、12/20、25/23/21 等是此前的历史数字。
  *
  * 2026-10-26 修订（经典档不动）：列表项上下 padding 改为 **3 / 4 / 5**
  * （项间实际 6 / 8 / 10；库的 `list` 是整组上下 padding，非经典收到 0），
@@ -414,38 +417,40 @@ data class PiTypographyProfile(
                 headings = intArrayOf(22, 20, 18, 16, 15, 14),
             ),
             COMPACT to Preset(
-                proseSize = 15, proseLine = 24,
-                // 2026-10-26: 列表项 padding 4 → 3。库的 listItemTop/Bottom 是
-                // 每项上下 padding，不是「项间 4 + 两倍 padding」；2×3 = 6 才是
-                // 目标项间距（舒适 2×4=8、宽松 2×5=10）。
-                block = 8, listItem = 3, indent = 16,
-                codeSize = 13, codeLine = 20,
+                proseSize = 15, proseLine = 25,
+                // 列表项 padding 是每项上下各一份：项间距 = 2 × listItem（3 → 6）。
+                block = 10, listItem = 3, indent = 18,
+                codeSize = 13, codeLine = 21,
                 blockSpacing = 4,
-                messageGap = 16,
+                messageGap = 18,
                 // 行内代码不再比正文重一档：等宽本来就显重，500 = 正文。
                 inlineSize = 13f, inlineWeight = 500,
-                tableSize = 13f, tableLine = 20,
-                headings = intArrayOf(24, 22, 20, 18, 17, 16),
+                tableSize = 14f, tableLine = 22,
+                headings = intArrayOf(21, 19, 17, 16, 16, 16),
             ),
             COMFORTABLE to Preset(
-                proseSize = 16, proseLine = 25,
-                block = 12, listItem = 4, indent = 20,
+                // 母版（2026-11-01 重排）：宋体 16 sp 配 27 sp 行高（1.69）。汉字是满格方块，
+                // 行距低于 1.65 就挤，25 在真机深色底上读久了发闷；段间 14、项间 10。
+                // 标题阶梯收到 22/20/18/17：比正文大一档即可，粗体 + 金色已经承担层级，
+                // 再把字号拉到 25 只会让一屏里全是标题。紧凑/宽松照这一套比例推。
+                proseSize = 16, proseLine = 27,
+                block = 14, listItem = 5, indent = 22,
                 codeSize = 14, codeLine = 22,
                 blockSpacing = 8,
-                messageGap = 20,
+                messageGap = 24,
                 inlineSize = 14f, inlineWeight = 500,
-                tableSize = 14f, tableLine = 22,
-                headings = intArrayOf(25, 23, 21, 19, 18, 17),
+                tableSize = 15f, tableLine = 24,
+                headings = intArrayOf(22, 20, 18, 17, 17, 17),
             ),
             LOOSE to Preset(
-                proseSize = 17, proseLine = 26,
-                block = 20, listItem = 5, indent = 24,
-                codeSize = 15, codeLine = 23,
+                proseSize = 17, proseLine = 28,
+                block = 22, listItem = 6, indent = 26,
+                codeSize = 15, codeLine = 24,
                 blockSpacing = 12,
-                messageGap = 32,
+                messageGap = 36,
                 inlineSize = 15f, inlineWeight = 500,
-                tableSize = 15f, tableLine = 23,
-                headings = intArrayOf(26, 24, 22, 20, 19, 18),
+                tableSize = 16f, tableLine = 25,
+                headings = intArrayOf(24, 22, 20, 18, 18, 18),
             ),
         )
 
@@ -459,13 +464,12 @@ data class PiTypographyProfile(
         )
 
         /**
-         * 非经典档每个标题槽的行高比例，取自任务书舒适档的
-         * 25/30、23/28、21/26、19/24、18/23、17/22（即 30/25 … 22/17）。
-         * 紧凑/宽松用**同一组比例**乘各自字号四舍五入，不再各自手写一张行高表 ——
-         * 四档的标题节奏因此是同一个形状（比例落 1.20–1.29）。
+         * 非经典档每个标题槽的行高比例 = 舒适档 22/29、20/27、18/25、17/23（h4–h6 同值）。
+         * 紧凑/宽松用**同一组比例**乘各自字号四舍五入，四档的标题节奏是同一个形状
+         * （比例 1.32–1.39：标题多是一两行的短句，行高不必像正文那样松）。
          */
         private val HEADING_LEADING_RATIO = doubleArrayOf(
-            30.0 / 25.0, 28.0 / 23.0, 26.0 / 21.0, 24.0 / 19.0, 23.0 / 18.0, 22.0 / 17.0,
+            29.0 / 22.0, 27.0 / 20.0, 25.0 / 18.0, 23.0 / 17.0, 23.0 / 17.0, 23.0 / 17.0,
         )
 
         private fun heading(
@@ -477,13 +481,10 @@ data class PiTypographyProfile(
         ): PiHeading {
             val size = numbers.headings[slot]
             val ratio = (if (classic) CLASSIC_HEADING_LEADING_RATIO else HEADING_LEADING_RATIO)[slot]
-            val stepped = ratio * leading
-            // 行距乘子只在结果落回 1.40–1.85 时才生效。经典档 factor 恒为 1.0（不乘）；
-            // 非经典档的标题比例是任务书的 1.20–1.29，×0.92/×1.08 后为 1.10–1.40，
-            // 仍落在正文的 CJK 行距地板之外 —— 紧/松两档都被丢弃，标题行高固定按本表。
-            // 这是把标题表落成任务书数字的直接结果：比例低于 1.40 的标题本来就不该再
-            // 被「行距」压低；正文/代码/表格仍照旧随「行距」移动。
-            val effective = if (stepped < MIN_LEADING_RATIO || stepped > MAX_LEADING_RATIO) ratio else stepped
+            // 标题的行高固定按本表比例，不随「行距」档移动（比例 1.32–1.39 低于正文的
+            // CJK 行距地板 1.40，乘 0.92/1.08 之后有的落进范围、有的不落，同一档里
+            // 标题行距时变时不变，不如固定）；正文/代码/表格仍随「行距」移动。
+            val effective = ratio
             val base = PiHeading(size, (size * effective).roundToInt())
             // `字号` 的平移与 [PiTextStyles.shifted] 同一口径：字号与行高各 +offsetSp。
             // 六个槽加同一个数，所以阶梯形状（2/2/2/1/1）与「h6 = 正文 + 1」在四个
