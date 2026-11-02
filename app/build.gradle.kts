@@ -227,6 +227,11 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.markdown.renderer.m3)
 
+    // Rich rendering: SVG (Mermaid/MathJax output), safe HTML, safe YAML.
+    implementation(libs.androidsvg)
+    implementation(libs.jsoup)
+    implementation(libs.snakeyaml)
+
     // The Workbench terminal's engine. Apache-2.0, Maven Central, and — the
     // reason it is a one-line dependency rather than a vendored source module —
     // the AAR ships its own prebuilt `libjni_cb_term.so`, so no NDK/CMake step

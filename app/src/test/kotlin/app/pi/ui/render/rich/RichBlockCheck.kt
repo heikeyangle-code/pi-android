@@ -238,13 +238,17 @@ fun main() {
         }
     }
 
-    // =================================================== H. the YAML placeholder
+    // ====================================================== H. the YAML parser
     run {
-        check("H1 this build has no safe YAML parser", PiYamlTree.isSupported, false)
+        // Phase 3 起 YAML 有了安全解析器（SnakeYAML 的 SafeConstructor + 拒绝 global
+        // tag）。这条留在 `RichBlockCheck` 而不是只留在 `PiYamlTreeCheck`，是因为
+        // `RichBlock.classify` 的判定依赖它：解析器缺席时 `classify` 仍会给出 `Yaml`，
+        // 而视图只能回退源码 —— 那正是 Phase 1 的占位状态。
+        check("H1 this build has a safe YAML parser", PiYamlTree.isSupported, true)
         check(
-            "H2 a settled YAML body reports Unsupported",
-            PiYamlTree.parse(YAML_SOURCE),
-            YamlTreeResult.Failure(YamlTreeFailure.Unsupported),
+            "H2 a settled YAML body becomes a tree",
+            PiYamlTree.parse(YAML_SOURCE) is YamlTreeResult.Tree,
+            true,
         )
         check(
             "H3 a streaming YAML body reports NotSettled",

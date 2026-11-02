@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<!--
+  Network containment for the render host. The page is served from
+  https://appassets.androidplatform.net/rich-mermaid/ by WebViewAssetLoader, so
+  'self' is only the local asset directory. `connect-src 'none'` blocks fetch /
+  XHR / WebSocket / beacon even if a bundled mermaid code path ever tried one;
+  `default-src 'none'` covers everything the explicit directives do not name.
+  `'unsafe-eval'` is kept because mermaid is a bundled UMD build and the whole
+  page is trusted local code: the CSP here is about *network* containment, not
+  about sandboxing our own script.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none';">
+<title>pi mermaid render host</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+</style>
+</head>
+<body>
+<script src="mermaid.min.js"></script>
+<script>
+/*
+ * Kotlin ↔ mermaid bridge for PiMermaidRenderEngine.
+ *
+ * Direction of travel:
+ *   Kotlin → `window.__piRender(taskId, source, theme, width)`  (evaluateJavascript)
+ *   Kotlin → `window.__piPoll(taskId)`                          (evaluateJavascript,
+ *            repeated until it returns an object instead of null)
+ *   Kotlin → `window.__piReady()`                               (host readiness probe)
+ *
+ * There is deliberately **no** JavascriptInterface and no WebMessagePort: both
+ * directions are `evaluateJavascript`, which needs no interface object and no
+ * origin handshake. The cost is polling; the engine polls every ~64 ms only
+ * while a task is in flight, and a render is one-shot (no animation), so the
+ * total number of extra JS calls per diagram is small.
+ *
+ * Everything here is best-effort *inside* the sandbox the Kotlin side already
+ * enforces (no network, no file access, strict mermaid security). A bug in this
+ * file must therefore surface as `{ok:false,error}`, never as a security
+ * downgrade: the SVG still goes through PiSvgSanitizer before anyone draws it.
+ */
+(function () {
+  "use strict";
+
+  var TASKS = Object.create(null);
+  var MAX_SVG_CHARS = 2 * 1024 * 1024;
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  function describe(error) {
+    if (!error) return "unknown error";
+    if (typeof error === "string") return error;
+    if (error.str) return String(error.str);
+    if (error.message) return String(error.message);
+    return String(error);
+  }
+
+  function hasMermaid() {
+    return typeof window.mermaid !== "undefined" && window.mermaid !== null;
+  }
+
+  /* Theme values arrive from Kotlin as strings. Re-validate here as well: this
+     page builds CSS out of them, and a value that is not `#rrggbb` must never
+     reach a style declaration even though the Kotlin side already checks. */
+  function color(value, fallback) {
+    var text = String(value || "");
+    return /^#[0-9a-fA-F]{6}$/.test(text) ? text : fallback;
+  }
+
+  function fontFamily(value) {
+    var cleaned = String(value || "").replace(/[^A-Za-z0-9 ,_-]/g, "").trim();
+    return cleaned || "sans-serif";
+  }
+
+  function config(theme, width) {
+    theme = theme || {};
+    var background = color(theme.background, "#ffffff");
+    var foreground = color(theme.foreground, "#202124");
+    var accent = color(theme.accent, "#3f51b5");
+    var muted = color(theme.muted, "#5f6368");
+    var font = fontFamily(theme.fontFamily);
+    var wrap = Math.max(120, Math.min(480, (width | 0) || 240));
+    var ganttWidth = Math.max(240, Math.min(2000, (width | 0) || 360));
+    return {
+      startOnLoad: false,
+      securityLevel: "strict",
+      htmlLabels: false,
+      theme: "base",
+      themeVariables: {
+        background: background,
+        primaryColor: background,
+        primaryTextColor: foreground,
+        primaryBorderColor: accent,
+        secondaryColor: background,
+        tertiaryColor: background,
+        tertiaryTextColor: foreground,
+        lineColor: muted,
+        textColor: foreground,
+        mainBkg: background,
+        nodeBorder: accent,
+        clusterBkg: background,
+        clusterBorder: muted,
+        edgeLabelBackground: background,
+        titleColor: foreground,
+        fontFamily: font
+      },
+      fontFamily: font,
+      /* Kotlin already refuses >64 KiB sources and strips `%%{init}%%`
+         directives; these are the same limits expressed to mermaid. The
+         `secure` list in mermaid's defaults keeps securityLevel / startOnLoad /
+         maxTextSize / suppressErrorRendering / maxEdges from being changed by a
+         diagram-level directive. */
+      maxTextSize: 64 * 1024,
+      maxEdges: 500,
+      suppressErrorRendering: true,
+      deterministicIds: true,
+      logLevel: "fatal",
+      flowchart: { htmlLabels: false, useMaxWidth: false, wrappingWidth: wrap },
+      sequence: { useMaxWidth: false },
+      class: { useMaxWidth: false },
+      state: { useMaxWidth: false },
+      er: { useMaxWidth: false },
+      journey: { useMaxWidth: false },
+      pie: { useMaxWidth: false },
+      gantt: { useMaxWidth: false, useWidth: ganttWidth }
+    };
+  }
+
+  /* Intrinsic size from the SVG the renderer produced. The engine needs
+     width/height for `PiSvgResult.Ok`, and mermaid always emits a viewBox; the
+     attribute fallback only covers hand-edited/diagram-specific output. */
+  function measure(svg) {
+    var viewBox = /viewBox\s*=\s*["']([^"']*)["']/i.exec(svg);
+    if (viewBox) {
+      var parts = viewBox[1].trim().split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && isFinite(parts[2]) && isFinite(parts[3]) &&
+          parts[2] > 0 && parts[3] > 0) {
+        return { width: Math.round(parts[2]), height: Math.round(parts[3]) };
+      }
+    }
+    var width = /<svg[^>]*\bwidth\s*=\s*["']([0-9.]+)/i.exec(svg);
+    var height = /<svg[^>]*\bheight\s*=\s*["']([0-9.]+)/i.exec(svg);
+    if (width && height) {
+      return { width: Math.round(Number(width[1])), height: Math.round(Number(height[1])) };
+    }
+    return { width: 0, height: 0 };
+  }
+
+  /* mermaid leaves its scratch element behind when a render throws with
+     suppressErrorRendering:true. Removing it is best-effort cleanup, not
+     correctness: a stale node would only leak a few KB in a host that is
+     discarded on the next failure anyway. */
+  function cleanup(taskId) {
+    try {
+      var stale = document.getElementById("dpi-svg-" + taskId);
+      if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+    } catch (ignored) {
+      /* nothing to do */
+    }
+  }
+
+  function finish(taskId, svg) {
+    cleanup(taskId);
+    if (typeof svg !== "string" || svg.length === 0) {
+      fail(taskId, "mermaid produced no svg");
+      return;
+    }
+    if (svg.length > MAX_SVG_CHARS) {
+      fail(taskId, "svg exceeds 2 MiB");
+      return;
+    }
+    var size = measure(svg);
+    TASKS[taskId] = { state: "ok", svg: svg, width: size.width, height: size.height };
+  }
+
+  function fail(taskId, message) {
+    cleanup(taskId);
+    TASKS[taskId] = { state: "failed", error: String(message || "mermaid render failed") };
+  }
+
+  /* The single question that decides whether this host is usable at all: can the
+     renderer measure text? An off-screen, never-attached WebView can return
+     zero-width boxes from getBBox() on some WebView versions, which makes
+     mermaid produce overlapping nodes instead of an error. Measuring a known
+     string here turns that silent failure into an explicit one. */
+  function metricsUsable() {
+    var usable = false;
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "200");
+    svg.setAttribute("height", "40");
+    svg.setAttribute("style", "position:absolute;left:0;top:0;visibility:hidden;");
+    var text = document.createElementNS(SVG_NS, "text");
+    text.setAttribute("x", "0");
+    text.setAttribute("y", "30");
+    text.setAttribute("font-size", "16");
+    text.setAttribute("font-family", "sans-serif");
+    text.textContent = "MMMM";
+    svg.appendChild(text);
+    try {
+      document.body.appendChild(svg);
+      var box = text.getBBox();
+      usable = !!(box && box.width > 1 && box.height > 1);
+    } catch (error) {
+      usable = false;
+    } finally {
+      try {
+        if (svg.parentNode) svg.parentNode.removeChild(svg);
+      } catch (ignored) {
+        /* nothing to do */
+      }
+    }
+    return usable;
+  }
+
+  window.__piReady = function () {
+    if (!hasMermaid()) {
+      return { ok: false, error: "mermaid bundle did not define window.mermaid" };
+    }
+    var metrics = metricsUsable();
+    try {
+      window.mermaid.initialize(config({}, 360));
+      return { ok: true, metrics: metrics, version: String(window.mermaid.version || "unknown") };
+    } catch (error) {
+      return { ok: false, error: "mermaid.initialize failed: " + describe(error) };
+    }
+  };
+
+  window.__piRender = function (taskId, source, theme, width) {
+    TASKS[taskId] = { state: "pending" };
+    if (!hasMermaid()) {
+      fail(taskId, "mermaid bundle did not define window.mermaid");
+      return true;
+    }
+    try {
+      window.mermaid.initialize(config(theme, width));
+    } catch (error) {
+      fail(taskId, "mermaid.initialize failed: " + describe(error));
+      return true;
+    }
+
+    var text = String(source || "");
+    /* Defence in depth: the Kotlin side strips directives before sending, but a
+       `%%{init: {...}}%%` here could still try to soften securityLevel or raise
+       maxTextSize. Removing every directive costs nothing for valid diagrams. */
+    text = text.replace(/%%\{[\s\S]*?\}%%/g, "");
+
+    try {
+      var rendered = window.mermaid.render("pi-svg-" + taskId, text);
+      if (rendered && typeof rendered.then === "function") {
+        rendered.then(
+          function (output) { finish(taskId, output && output.svg); },
+          function (error) { fail(taskId, describe(error)); }
+        );
+      } else if (rendered && rendered.svg) {
+        finish(taskId, rendered.svg);
+      } else {
+        fail(taskId, "mermaid.render returned no svg");
+      }
+    } catch (error) {
+      fail(taskId, describe(error));
+    }
+    return true;
+  };
+
+  window.__piPoll = function (taskId) {
+    var task = TASKS[taskId];
+    if (!task) return { ok: false, error: "unknown render task " + taskId };
+    if (task.state === "pending") return null;
+    delete TASKS[taskId];
+    if (task.state === "ok") {
+      return { ok: true, svg: task.svg, width: task.width, height: task.height };
+    }
+    return { ok: false, error: task.error };
+  };
+})();
+</script>
+</body>
+</html>

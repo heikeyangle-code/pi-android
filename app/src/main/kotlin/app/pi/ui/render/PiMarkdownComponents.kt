@@ -69,11 +69,17 @@ import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.rpc.PiImage
 import app.pi.ui.render.rich.FenceInfo
+import app.pi.ui.render.rich.PiCsvTable
+import app.pi.ui.render.rich.PiCsvTableView
 import app.pi.ui.render.rich.PiJsonTreeView
+import app.pi.ui.render.rich.PiStackTraceView
 import app.pi.ui.render.rich.PiTreeMode
 import app.pi.ui.render.rich.PiXmlTreeView
+import app.pi.ui.render.rich.PiYamlTreeView
 import app.pi.ui.render.rich.RichBlock
 import app.pi.ui.render.rich.RichBlockKind
+import app.pi.ui.render.rich.html.PiHtmlBlockView
+import app.pi.ui.render.rich.svg.PiMermaidView
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
@@ -451,10 +457,11 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
         PiHtml.blockTextAt(content, node.startOffset, node.endOffset)
     }
     if (text.isEmpty()) return
-    Text(
-        text = text,
-        style = model.typography.paragraph,
-    )
+    // Phase 4：安全 HTML 子集。`PiHtmlBlockView` 自己决定「能不能画」——流式中的块、
+    // 白名单拒绝的块、超限的块全都会连同一行原因**原样显示 [text]**，与下面那段
+    // 「pi 把原文当文字排出来」的契约在失败路径上完全一致。也就是说这一步只是让
+    // **能安全画出来的** HTML 真的画出来，画不出来时的屏幕与 pi 逐字节相同。
+    PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
 /** One un-rewritten formula, in pi's "shown as written" style. */
@@ -1221,11 +1228,11 @@ private fun PiTaskCheckbox(model: MarkdownComponentModel) {
     }
     val lineHeight = model.typography.text.lineHeight
     val density = LocalDensity.current
-    // 行高是 sp；换成 dp 才能当 Box 的高度用。判据是 `value > 0` 而不是 `TextUnit.isSp`：
-    // 后者在本项目当前的 Compose 产物里解析不到（CI 报过 Unresolved reference，见 c3005e5）。
-    // `value > 0` 同时排除了 `Unspecified`（它的 value 是 NaN）。前提是行高按 sp 写 ——
-    // `PiMarkdownTheme.kt` 的每个排版档都是 sp；若将来有主题改写成 em，`toDp()` 会抛异常。
-    val markerHeight = if (lineHeight.value > 0f) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
+    // 行高是 sp；换成 dp 才能当 Box 的高度用。`TextUnit.isSp` 是 `TextUnit` 的**成员属性**，
+    // 直接读即可 —— 千万不要写 `import androidx.compose.ui.unit.isSp`：没有这个顶层扩展，
+    // CI 会报 Unresolved reference（`em` 走 else 分支，因为 `TextUnit.toDp()` 只接受 sp）。
+    // 已用 Compose 1.8.3 的 ui-unit-android 产物单独编译验证过：`t.isSp` 无需 import。
+    val markerHeight = if (lineHeight.isSp) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
     Box(
         modifier = Modifier
             .padding(end = TASK_CHECKBOX_END_PADDING)
@@ -1369,14 +1376,85 @@ private fun PiCodeSurface(
     val info = remember(language) { FenceInfo.parse(language) }
     val normalized = info.language.takeIf { it.isNotEmpty() }
     val kind = remember(info, code, settled) { RichBlock.classify(info, code, settled) }
+    // `markdown.mermaid = off` 时 pi 把 markdown 原样交出去（`components/mermaid.ts:62`），
+    // 所以这里连 WebView 都不碰：围栏落回下面的代码块，与其它语言完全一样。
+    val mermaidMode = rememberPiMermaidMode()
+    if (normalized?.lowercase() == MERMAID_LANGUAGE && mermaidMode != PiMermaidMode.Off) {
+        // Phase 2：Mermaid 走 `assets/rich/mermaid/mermaid.min.js` 的离屏 WebView，拿回
+        // SVG 再由 AndroidSVG 画 —— 与旧路径（guest 里 `grok-mermaid` 算好的 ASCII art）
+        // 相比，图是真矢量、可缩放、跟主题。**旧 ASCII 没有删**：它作为 `fallback` 只在
+        // 引擎确实画不出来时接管，见 [PiMermaidAsciiFallback]。
+        PiMermaidView(source = code, settled = settled) {
+            PiMermaidAsciiFallback(code = code, language = language, style = style)
+        }
+        return
+    }
+    // Phase 5：CSV/TSV 围栏。`formatForLanguage` 只认 `csv` / `tsv`（大小写不敏感），
+    // 其它语言返回 null，所以这一段不会误伤别的代码块。
+    val csvFormat = normalized?.let { PiCsvTable.formatForLanguage(it) }
+    if (csvFormat != null) {
+        PiCsvTableView(
+            source = code,
+            format = csvFormat,
+            settled = settled,
+            initialMode = PiTreeMode.Tree,
+        )
+        return
+    }
+    // Phase 5：栈围栏。只认显式标签，**不自动检测**普通文本 —— 一段散文被拆成帧
+    // （或一个真异常被当文本）都是安静的错误，而语言名是模型自己给的判据。
+    if (normalized?.lowercase() in STACK_TRACE_LANGUAGES) {
+        PiStackTraceView(source = code, settled = settled)
+        return
+    }
+    // Phase 1 的结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。
+    // 解析失败/超限时各视图自己回退源码。
+    when (kind) {
+        RichBlockKind.Json -> {
+            PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            return
+        }
+        RichBlockKind.Xml -> {
+            PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            return
+        }
+        RichBlockKind.Yaml -> {
+            PiYamlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            return
+        }
+        else -> Unit
+    }
+    val highlighted = rememberPiHighlightedCode(code, normalized)
+    // 非经典档：1 dp 满不透明的灰边在深色底上是一圈亮框，代码块比它包着的文字还抢眼。
+    // 边线压到 28%，里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线；经典档不动。
+    val classic = PiTheme.typography.isClassic
+    PiRichCodeBlock(
+        code = code,
+        info = info,
+        highlighted = highlighted,
+        style = style,
+        palette = palette,
+        classic = classic,
+    )
+}
+
+/**
+ * 旧 Mermaid 路径：guest 里的 `grok-mermaid` 算好的 ASCII art，作为 [PiMermaidView] 的
+ * **运行时回退**保留（方案 §五：新 SVG 稳定之前不删）。
+ *
+ * 它只在一种情况下被组合：引擎确实拿不到图（WebView 不可用、超时、SVG 被清洗器拒绝、
+ * AndroidSVG 解析失败）。此时 pi 的规则仍然有效 —— 图带着 warning 就**不画**，把围栏
+ * 原文留下、warning 放下面（`components/mermaid.ts:77-82`），因为一张被交叉检查判过
+ * 的残缺图比源码更误导人。
+ *
+ * 为什么整段搬进回调而不是留在 [PiCodeSurface] 里：`rememberPiMermaidArt` 会给 guest
+ * 发一次 RPC。只要新引擎能画出图，这一次 RPC 就不该发生 —— 它现在是懒的。
+ */
+@Composable
+private fun PiMermaidAsciiFallback(code: String, language: String?, style: TextStyle) {
+    val palette = PiTheme.palette
     val mermaid = rememberPiMermaidArt(code, language)
-    // pi's rule for an incomplete drawing, and it is **not** "show it anyway": when the
-    // diagram is settled and `grok-mermaid` reported warnings, pi keeps the fence's
-    // *source* and puts the warning underneath (`components/mermaid.ts:77-82`). The art
-    // is deliberately dropped — a cross-checked partial diagram is more misleading than
-    // the diagram's own code. "Settled" is what the producer already waited for.
     val art = mermaid?.takeIf { it.warnings.isEmpty() }
-    val mermaidWarning = mermaid?.let { piMermaidWarning(it) }
     if (art != null) {
         Text(
             text = piMermaidText(art, palette),
@@ -1388,43 +1466,27 @@ private fun PiCodeSurface(
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         )
-    }
-    if (art == null) {
-        // Phase 1 的结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。
-        // 解析失败/超限时 `PiJsonTreeView` 自己回退源码；YAML 目前没有安全解析器，仍走代码块。
-        when (kind) {
-            RichBlockKind.Json -> {
-                PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
-                return
-            }
-            RichBlockKind.Xml -> {
-                PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
-                return
-            }
-            else -> Unit
-        }
-        val highlighted = rememberPiHighlightedCode(code, normalized)
-        // 非经典档：1 dp 满不透明的灰边在深色底上是一圈亮框，代码块比它包着的文字还抢眼。
-        // 边线压到 28%，里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线；经典档不动。
-        val classic = PiTheme.typography.isClassic
-        PiRichCodeBlock(
-            code = code,
-            info = info,
-            highlighted = highlighted,
-            style = style,
-            palette = palette,
-            classic = classic,
-            topPadding = if (mermaidWarning != null) 8.dp else 0.dp,
-        )
-    }
-    // pi's warning line, in pi's `warning` token and after the source it belongs to.
-    mermaidWarning?.let { warning ->
+    } else {
+        // guest 也给不出 art（老引擎没装、或它自己拒绝了）：把围栏原文留在原处，
+        // 与新视图自己的「失败回退源码」是同一条契约，只是连源码块都没有才会走到。
         Text(
-            text = warning,
-            style = MaterialTheme.typography.labelMedium,
-            color = palette.warning,
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+            text = code,
+            style = style.copy(color = palette.mdCode),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         )
+    }
+    mermaid?.let { drawn ->
+        piMermaidWarning(drawn)?.let { warning ->
+            Text(
+                text = warning,
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.warning,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+            )
+        }
     }
 }
 
@@ -1503,6 +1565,15 @@ internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighl
 
 /** The one fence language pi's mermaid transformer claims (`components/mermaid.ts:15`). */
 private const val MERMAID_LANGUAGE = "mermaid"
+
+/**
+ * 会被画成栈卡片的围栏语言。
+ *
+ * 只有**显式**标签进来：`PiStackTrace` 能识别五种语言，但"这段文字是不是栈"不该由一段
+ * 正则去猜 —— 猜错的代价是一段普通输出被拆成帧，比不画更难读。`traceback` 是 Python
+ * 自己的叫法，所以它也在表里。
+ */
+private val STACK_TRACE_LANGUAGES = setOf("stacktrace", "stack", "stack-trace", "traceback")
 
 private val WHITESPACE = Regex("\\s+")
 

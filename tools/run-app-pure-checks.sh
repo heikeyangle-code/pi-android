@@ -51,8 +51,15 @@ TOML="$ROOT/gradle/libs.versions.toml"
 kotlin_version="$(sed -n 's/^kotlin = "\(.*\)"/\1/p' "$TOML")"
 coroutines_version="$(sed -n 's/^coroutines = "\(.*\)"/\1/p' "$TOML")"
 serialization_version="$(sed -n 's/^serializationJson = "\(.*\)"/\1/p' "$TOML")"
-if [ -z "$kotlin_version" ] || [ -z "$coroutines_version" ] || [ -z "$serialization_version" ]; then
-  echo "pure-checks: CANNOT RUN — could not read kotlin/coroutines/serializationJson from $TOML" >&2
+# The rich-rendering harnesses (`rich-block`, `yaml-tree`, `html-policy`) compile files
+# that import SnakeYAML and jsoup for real, so the same catalog must supply them here:
+# a version bump in `gradle/libs.versions.toml` has to move this script with it, or the
+# harness would compile against a parser that is not the one the APK ships.
+snakeyaml_version="$(sed -n 's/^snakeyaml = "\(.*\)"/\1/p' "$TOML")"
+jsoup_version="$(sed -n 's/^jsoup = "\(.*\)"/\1/p' "$TOML")"
+if [ -z "$kotlin_version" ] || [ -z "$coroutines_version" ] || [ -z "$serialization_version" ] \
+   || [ -z "$snakeyaml_version" ] || [ -z "$jsoup_version" ]; then
+  echo "pure-checks: CANNOT RUN — could not read kotlin/coroutines/serializationJson/snakeyaml/jsoup from $TOML" >&2
   exit 2
 fi
 
@@ -133,7 +140,9 @@ for path in \
   "org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/$serialization_version/kotlinx-serialization-json-jvm-$serialization_version.jar" \
   "org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/$serialization_version/kotlinx-serialization-core-jvm-$serialization_version.jar" \
   "org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/$coroutines_version/kotlinx-coroutines-core-jvm-$coroutines_version.jar" \
-  "org/jetbrains/annotations/23.0.0/annotations-23.0.0.jar" ; do
+  "org/jetbrains/annotations/23.0.0/annotations-23.0.0.jar" \
+  "org/yaml/snakeyaml/$snakeyaml_version/snakeyaml-$snakeyaml_version.jar" \
+  "org/jsoup/jsoup/$jsoup_version/jsoup-$jsoup_version.jar" ; do
   stage "$path" "$LIB_DIR/$(basename "$path")" || {
     echo "pure-checks: CANNOT RUN — could not fetch $(basename "$path")" >&2
     exit 2
@@ -1351,6 +1360,70 @@ run_harness xml-tree \
   app.pi.ui.render.rich.PiXmlTreeCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiXmlTreeCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiXmlTree.kt"
+
+# app.pi.ui.render.rich: Phase 3 的 YAML 树。`PiYamlTree` 从占位（`isSupported=false`）
+# 换成 SnakeYAML 的安全解析之后，"安全"这件事就只剩这些能证明：只用 `SafeConstructor`
+# 与 `load<Any?>`、global tag 被拒、别名炸弹与环在解析前被拦、每个上限先于解析生效。
+# 这些错了都**不会崩**——它们只会让一份 YAML 静默地整块回退源码，或者在更坏的情况下
+# 让 `!!javax.script.ScriptEngineManager` 之类的 tag 进入构造路径。所以它必须真跑。
+run_harness yaml-tree \
+  app.pi.ui.render.rich.PiYamlTreeCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiYamlTreeCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiYamlTree.kt"
+
+# app.pi.ui.render.rich.html: Phase 4 的安全 HTML 白名单。这是全仓唯一一个"把模型输出
+# 当结构执行"的入口，所以判定必须能在没有设备的机器上被跑到：白名单、协议校验（`javascript:`
+# 的实体/大小写/空白混淆）、危险标签的整棵子树、属性允许表、以及"清两次等于清一次"的幂等性。
+# 它 import jsoup，但 jsoup 是纯 JVM 库（无 Android），所以闭包仍然可以在裸 JVM 上编译。
+run_harness html-policy \
+  app.pi.ui.render.rich.html.PiHtmlPolicyCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/html/PiHtmlPolicyCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/html/PiHtmlPolicy.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/html/PiHtmlDocument.kt"
+
+# app.pi.ui.render.rich.svg: SVG 清洗器 —— AndroidSVG 之前的最后一道闸。它守的是
+# "模型输出里的 SVG 会被当 XML 解析并绘制"这件事：`<script>`/`foreignObject`/`on*`/外部
+# `href`/`javascript:`/DOCTYPE 实体扩张，以及 2 MiB / 20000 节点 / 64 层 / 8192 尺寸四个
+# 上限。任何一条漏掉都是"静默执行或静默卡死"，没有编译器能发现，所以它有一个可执行的清单。
+run_harness svg-sanitizer \
+  app.pi.ui.render.rich.svg.PiSvgSanitizerCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/svg/PiSvgSanitizerCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/svg/PiSvgSanitizer.kt"
+
+# app.pi.ui.render.rich: Phase 5 的 CSV/TSV 表格。RFC 4180 的引号规则是"看起来都差不多、
+# 错一处就静默丢字"的典型：`""` 转义、字段内换行、CRLF/裸 CR、未闭合引号。而且它的失败
+# 方式是把一张表解析成错位的列 —— 屏幕上仍然"像一张表"。所以边界（2000/2001 行、100 列、
+# 5 种 malformed）与"绝不截断成半张表"都在这里被真跑。
+run_harness csv-table \
+  app.pi.ui.render.rich.PiCsvTableCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiCsvTableCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiCsvTable.kt"
+
+# app.pi.ui.render.rich: 堆栈的**语言识别**。它决定的是"一段普通文本会不会被画成栈卡片"，
+# 错了不会崩：要么一段散文被拆成帧，要么真正的异常被当文本。所以每种语言都由它自己的
+# 强标记进来，`file`/`line` 只在语法真的给出时才填，Java 与 JS/TS 各占一半时返回
+# NotRecognized 而不是猜。这些断言是 138 条。
+run_harness stack-trace \
+  app.pi.ui.render.rich.PiStackTraceCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiStackTraceCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiStackTrace.kt"
+
+# app.pi.ui.render.rich: Markdown 脚注。`[^1]` 与 `[1]`、`[x]` 必须分开（任务清单的 `[x]`
+# 不能被当成脚注吞掉），围栏/行内代码里的 `[^1]` 不能被替换，未定义引用必须**原样留着**
+# 而不是消失 —— 三条都是"安静地吃掉用户文本"的形状。超限整体回退原文也是断言。
+run_harness footnote \
+  app.pi.ui.render.rich.PiFootnoteCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiFootnoteCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiFootnote.kt"
+
+# app.pi.ui.render.rich: 链接卡片**只允许说 URL 自己能证明的事**。这是它存在的全部理由：
+# 没有网络请求、没有 OG/标题/摘要/图片，`host` 里的 userinfo 不展示，默认端口隐藏，类型只
+# 由扩展名得出。这些错了都不会报错 —— 一张"看起来有标题"的卡片会让人以为 App 抓了页面。
+# 同时它必须拒绝 `javascript:`/`data:`/`file:`，否则一个链接就对整条消息做了执行。
+run_harness link-card \
+  app.pi.ui.render.rich.PiLinkCardCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiLinkCardCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiLinkCard.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
