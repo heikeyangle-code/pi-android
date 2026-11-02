@@ -2091,22 +2091,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // workspace by the time those run.
                 val stored = WorkspaceStore.setCurrent(app, name)
                 afterWorkspaceChanged(name, result.session)
-                // 切换工作区是**换项目**，不是"把这段对话带过去"：pi 的会话按 cwd 归属，
-                // 所以新引擎打开的是新工作区自己的会话（`-c` 按 cwd 挑最近一段），旧对话
-                // 留在旧工作区的列表里。以前这里只印一句"已切换"，用户看到的却是整段
-                // 对话被换掉 —— 所以这句话必须说清楚"刚才那段对话去哪了"。
-                val leftBehind = "刚才在「$previous」的那段对话留在那个工作区的会话列表里，" +
-                    "没有丢；要在列表里回到它，切回那个工作区再点那一行。"
-                when {
-                    wasBusy -> pushNotice(
-                        "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里开了一段新对话，" +
-                            "上一轮未完成的模型调用与工具都被停掉了。" + leftBehind,
+                // 切换成功**不弹通知**（用户要求：这一步应该是安静的）。只有一种情况还说话：
+                // 这一下真的打断了一个正在跑的回合，而那是用户刚在确认框里点过的事 ——
+                // 说完"被停掉了"就够了，不再附带"对话在哪"之类的解释。
+                if (wasBusy) {
+                    pushNotice(
+                        "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里，" +
+                            "上一轮未完成的模型调用与工具都被停掉了。",
                         Notice.Tone.Warning,
-                    )
-
-                    else -> pushNotice(
-                        "已切换到工作区「${target.displayName}」，开了一段新对话。" + leftBehind,
-                        Notice.Tone.Info,
                     )
                 }
                 if (!stored) {
