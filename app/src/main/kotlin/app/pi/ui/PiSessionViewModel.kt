@@ -5277,6 +5277,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 ?.let { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
         } ?: summary.cwd
         val name = WorkspaceStore.nameForGuestCwd(guestCwd) ?: return
+        // 认领是**后台**跑的：这期间用户可能已经点开了另一段会话（甚至又切了工作区）。
+        // 过期的认领会把工作区改回上一段会话的那个 —— 芯片指错，文件/终端跟着错。
+        // 以"引擎现在打开的是哪一段"为准判一次：`meta.sessionFile` 已经是另一段就丢弃。
+        // 它还没到（`get_state` 在路上）时为 null，按"可能是这一段"处理。
+        val guestPath = guestSessionPath(summary.file) ?: return
+        val open = _state.value.meta.sessionFile
+        if (open != null && open != guestPath) return
         if (_state.value.workspace.name == name) return
         val app = getApplication<Application>()
         // `existing` 同时校验「这个名字现在真的是一个工作区目录」；拿不到就越过。
