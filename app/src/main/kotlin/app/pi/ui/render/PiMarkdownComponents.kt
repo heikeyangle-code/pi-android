@@ -861,6 +861,8 @@ private fun PiTable(model: MarkdownComponentModel) {
             LocalPiImageTransformer provides transformer,
             LocalMarkdownDimens provides tableDimens,
         ) {
+            // 整张表统一裁成圆角：隔行底色（下面 rowBlock）与表头底色都是方角矩形，库本身不裁剪子项。
+            Box(modifier = Modifier.clip(RoundedCornerShape(dimens.tableCornerSize))) {
             MarkdownTable(
                 content = model.content,
                 node = model.node,
@@ -869,7 +871,7 @@ private fun PiTable(model: MarkdownComponentModel) {
                     Box(
                         modifier = Modifier
                             .clip(headerShape)
-                            .background(palette.mdHr.copy(alpha = 0.10f)),
+                            .background(palette.mdHr.copy(alpha = 0.14f)),
                     ) {
                         if (aligned) {
                             PiTableHeaderCells(
@@ -887,6 +889,13 @@ private fun PiTable(model: MarkdownComponentModel) {
                     }
                 },
                 rowBlock = { content, row, tableWidth, tableStyle ->
+                    // 隔行淡底色：数据行从 1 起，偶数行着色；表头/奇数行保持卡片底。
+                    val stripe = LocalTableRowIndex.current % 2 == 0
+                    Box(
+                        modifier = Modifier.background(
+                            if (stripe) palette.mdHr.copy(alpha = 0.06f) else Color.Transparent,
+                        ),
+                    ) {
                     if (aligned) {
                         PiTableBodyCells(
                             content = content,
@@ -898,8 +907,10 @@ private fun PiTable(model: MarkdownComponentModel) {
                     } else {
                         MarkdownTableRow(content, row, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES)
                     }
+                    }
                 },
             )
+            }
         }
 
         if (scrolls) {
