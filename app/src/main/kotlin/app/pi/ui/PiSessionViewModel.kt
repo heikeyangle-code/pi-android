@@ -5230,12 +5230,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@call
             }
             afterSessionReplaced()
+            // **先跳转，再认领工作区。** 认领要读会话文件头、可能还要写设置/重载主题；
+            // 把它放在 `requestNav` 前面会让"点一行 → 看到对话"多等它那一段 IO（用户在
+            // 2026-11-03 报的"从列表点进对话变慢"）。跳转不等它，认领在后台完成 ——
+            // 芯片晚一两帧才变，但对话立刻出来。
+            requestNav(NavRequest.Chat)
             // **认领这段会话所属的工作区。** pi 的 `switch_session` 会"用会话自己的 cwd
             // 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`）——也就是说引擎
             // 已经在那段会话的工作区里干活了，而工作区芯片、终端、`@` 补全、包命令还停在
             // 原来的工作区：两个真相。这里把 App 那一半对齐，**不重启引擎**（pi 已经切好）。
-            adoptSessionWorkspace(summary)
-            requestNav(NavRequest.Chat)
+            viewModelScope.launch { adoptSessionWorkspace(summary) }
         }
     }
 
@@ -5259,6 +5263,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 宁可保持现状，也不要猜一个工作区。
      */
     private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary) {
+        // **便宜的提前退出**：列表里那份 cwd 已经指向当前工作区时，连文件都不用开。
+        // 同工作区的会话是绝大多数点击，这条让它们完全不付认领的成本。
+        val listed = WorkspaceStore.nameForGuestCwd(summary.cwd)
+        if (listed == _state.value.workspace.name) return
         // 以**文件头**里的 cwd 为准，而不是列表里那份 `Summary.cwd`：列表可能来自更早的一次
         // 扫描（重命名/导入/旧拼法），而 pi 打开这段会话用的就是文件头里那个 cwd ——
         // 认领错了，芯片就停在旧工作区（用户报的「文件换了、芯片没换」）。
