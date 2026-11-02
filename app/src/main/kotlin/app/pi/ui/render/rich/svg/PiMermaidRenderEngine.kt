@@ -251,6 +251,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     private var activityRef: WeakReference<Activity>? = null
 
     private var lifecycleRegistered = false
+    private var memoryRegistered = false
 
     private var hostFailureReason: String? = null
 
@@ -457,6 +458,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     private fun createHost(): RenderHost {
         assertMainThread()
         registerLifecycleCallbacks()
+        registerMemoryCallbacks()
         val activity = currentActivity()
         val context: Context = activity ?: PiApplication.context
         val density = context.resources.displayMetrics.density
@@ -531,6 +533,39 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
      * 非 SDK 接口限制、字段改名、或系统实现不同都会让这里返回 `null`，此时宿主退化为
      * 纯离屏布局，由文本度量探针决定它到底能不能用。
      */
+    /**
+     * 系统说内存紧张时**主动**关掉 WebView 宿主。
+     *
+     * 一个离屏 WebView 不是"一个 View"那么便宜：它带一个 Chromium 渲染进程（也是本 App
+     * 进程树里的一个子进程）和几十 MB 的堆。这台设备上同时活着的 Mermaid 与 MathJax 两个
+     * 宿主，在跑 `npm run build` 的时候正好站在系统的内存线上 —— 而 Android 的回收不会先
+     * 问你，它直接杀进程树（用户看到的就是「引擎被系统结束了」那一屏）。
+     *
+     * `onTrimMemory` 是系统在动手**之前**给的机会：RUNNING_LOW 以上（含 CRITICAL、
+     * COMPLETE、以及后台档位）就把宿主释放掉，下一次有围栏要画时再懒重建（约一秒）。
+     * 释放比被杀好：对话、引擎和正在跑的命令都还在。
+     */
+    private fun registerMemoryCallbacks() {
+        if (memoryRegistered) return
+        val application = applicationOrNull() ?: return
+        memoryRegistered = true
+        application.registerComponentCallbacks(
+            object : android.content.ComponentCallbacks2 {
+                override fun onTrimMemory(level: Int) {
+                    if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                        disposeHost("系统内存紧张（onTrimMemory=$level）")
+                    }
+                }
+
+                override fun onConfigurationChanged(newConfig: android.content.res.Configuration) = Unit
+
+                override fun onLowMemory() {
+                    disposeHost("系统内存不足（onLowMemory）")
+                }
+            },
+        )
+    }
+
     private fun currentActivity(): Activity? {
         val tracked = activityRef?.get()
         if (tracked != null && !tracked.isFinishing && !tracked.isDestroyed) return tracked
