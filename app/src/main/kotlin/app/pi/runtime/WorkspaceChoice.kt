@@ -221,6 +221,38 @@ object WorkspaceChoice {
         GuestWorkspacePath.under(base, hostPath)
 
     /**
+     * 反过来：pi 在会话头里记的 **guest cwd** 属于哪个工作区。
+     *
+     * 为什么需要它：会话列表是**按 cwd 分组**的（`SessionsScreen` 的 `groupBy { it.cwd }`），
+     * 所以用户能点开一段属于别的工作区的对话。pi 的 `switch_session` 会"用会话自己的 cwd
+     * 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`），也就是说**引擎已经切过去了**，
+     * 而 App 的工作区状态、终端、`@` 补全、包命令还停在原地 —— 两个真相。这个函数就是让 App
+     * 把另一半对齐：把 cwd 翻译回工作区名字（自建的 `workspace-N`）或外部目录的绝对路径。
+     *
+     * @param rootRelative `WorkspaceStore.ROOT_RELATIVE`（`pi/workspaces`），由调用方给，
+     *   这样这个函数不依赖任何常量、能在裸 JVM 上被 harness 执行。
+     * @return 工作区名字；`null` 表示这个 cwd 不是本应用的工作区（例如用户自己 `cd` 出去的
+     *   目录、或会话来自别的安装），此时**不要**改当前工作区。
+     */
+    fun nameForGuestCwd(guestCwd: String, rootRelative: String): String? {
+        val root = GuestWorkspacePath.GUEST_ROOT
+        if (guestCwd == root) return null
+        val prefix = "$root/"
+        if (!guestCwd.startsWith(prefix)) return null
+        val rest = guestCwd.removePrefix(prefix)
+        val owned = "$rootRelative/"
+        if (rest.startsWith(owned)) {
+            val name = rest.removePrefix(owned)
+            // 只认**直接**在 `pi/workspaces/` 下的一层；`workspace-1/sub` 不是另一个工作区。
+            return name.takeIf { it.isNotEmpty() && !it.contains('/') }
+        }
+        // 外部工作区：guest 拼法是 `GuestWorkspacePath.under` 的产物，也就是 `/workspace` +
+        // 宿主绝对路径，所以去掉 `/workspace` 前缀就回到宿主路径。
+        val hostPath = "/" + rest
+        return hostPath.takeIf { it.length > 1 }
+    }
+
+    /**
      * 删一个工作区时，磁盘上的文件会不会一起消失。
      *
      * **只有名字是本应用创建的（`workspace-N`）才删文件**；外部目录永远只是「取消登记」。

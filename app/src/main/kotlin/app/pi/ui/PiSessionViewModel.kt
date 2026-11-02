@@ -5209,7 +5209,51 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@call
             }
             afterSessionReplaced()
+            // **认领这段会话所属的工作区。** pi 的 `switch_session` 会"用会话自己的 cwd
+            // 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`）——也就是说引擎
+            // 已经在那段会话的工作区里干活了，而工作区芯片、终端、`@` 补全、包命令还停在
+            // 原来的工作区：两个真相。这里把 App 那一半对齐，**不重启引擎**（pi 已经切好）。
+            adoptSessionWorkspace(summary.cwd)
             requestNav(NavRequest.Chat)
+        }
+    }
+
+    /**
+     * 打开一段**别的工作区**的会话之后，把 App 的当前工作区改到它所属的那个。
+     *
+     * 为什么需要：[`PiSessionStore.list()`] 把**所有** cwd 的会话按 cwd 分组列出来
+     * （`SessionsScreen` 的 `groupBy { it.cwd }`），所以用户可以在 B 的引擎里点开一段
+     * cwd=A 的会话。pi 自己会切（见调用点），App 不跟就会说两套话。
+     *
+     * 为什么**不重启引擎**：pi 已经按会话的 cwd 重建了运行时，重启没有任何信息可补，
+     * 只会多停一次进程、多丢一次上下文。这里只做三件便宜事：
+     *  1. 把选择写回设置（`WorkspaceStore.setCurrent`，一次原子小文件写）；
+     *  2. 把 `GuestWorkspacePath.RELATIVE` 指向新工作区（`setCurrent` 内部顺带）；
+     *  3. 让设置/主题缓存失效、把工作区状态发布给界面（芯片、`@`、包命令随之而变）。
+     *
+     * 会话列表**不重读**：它是按 cwd 分组的全量列表，当前工作区变了也不影响分组；
+     * 重读一次只会多扫一遍磁盘。
+     *
+     * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
+     * 宁可保持现状，也不要猜一个工作区。
+     */
+    private suspend fun adoptSessionWorkspace(guestCwd: String) {
+        val name = WorkspaceStore.nameForGuestCwd(guestCwd) ?: return
+        if (_state.value.workspace.name == name) return
+        val app = getApplication<Application>()
+        // `existing` 同时校验「这个名字现在真的是一个工作区目录」；拿不到就越过。
+        val entry = withContext(Dispatchers.IO) { WorkspaceStore.existing(app, name) } ?: return
+        val saved = withContext(Dispatchers.IO) { WorkspaceStore.setCurrent(app, name) }
+        rebuildWorkspaceScopedCaches()
+        publishWorkspaceState(name, note = null, bumped = true)
+        refreshPrefs()
+        refreshTheme()
+        if (!saved) {
+            pushNotice(
+                "这段对话属于工作区「${entry.displayName}」，但这次切换没有保存成功（设置文件不可写）；" +
+                    "重启应用后会回到原来的工作区。",
+                Notice.Tone.Warning,
+            )
         }
     }
 
