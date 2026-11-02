@@ -572,7 +572,9 @@ internal object PiMathRenderEngine : PiSvgEngine {
                         PiSvgResult.Failure("MathJax 的输出里没有完整的 <svg> 文档")
                     } else {
                         val prepared = fitViewBox(
-                            ensureNamespaces(promoteHrefAttributes(document)),
+                            ensureNamespaces(
+                                promoteHrefAttributes(escapeLessThanInAttributes(document)),
+                            ),
                         )
                         val colored = replaceCurrentColor(prepared, foregroundOf(request.theme))
                         when (val sanitized = PiSvgSanitizer.sanitize(colored)) {
@@ -1082,6 +1084,60 @@ private fun mathTagIsSelfClosing(text: String, gtIndex: Int): Boolean {
     var index = gtIndex - 1
     while (index >= 0 && text[index].isWhitespace()) index--
     return index >= 0 && text[index] == '/'
+}
+
+/**
+ * 把开始标签里**属性值内部**的裸 `<` 转义成 `&lt;`。
+ *
+ * 为什么需要：XML 属性值里不允许裸 `<`，而 [PiSvgSanitizer] 的 `parseStartTag` 遇到这种
+ * 值会整条属性解析失败、整份 SVG 以"开始标签格式错误"拒绝。MathJax 会把原始 TeX 写进
+ * `data-latex="…"`，所以一条含小于号的公式（`x < 0`、`\text{a < b}`）正好会踩到这一点。
+ * 浏览器把 DOM 序列化回 `innerHTML` 时按 HTML 规范会把 `<` 写成 `&lt;`（已用 Chromium
+ * 同款实现核对过），但那是**序列化器**的义务，不是我们这条管线能替它保证的；Node 侧的
+ * MathJax 适配器就确实会漏转义（实测 `data-latex="x < 0"`），换一个 WebView 版本也可能。
+ *
+ * 安全性：这个函数只会改写**本来就非法**的字符，对合法 XML 是恒等变换——它只能把一份
+ * 解析不了的文档变成能解析的，不会把好文档改坏。它不碰文本节点里的 `<`（那由序列化器
+ * 负责转义，且 `<text>` 的内容在 MathJax 输出里本来就是转义过的）。
+ */
+private fun escapeLessThanInAttributes(svg: String): String {
+    if (svg.indexOf('<') < 0) return svg
+    val out = StringBuilder(svg.length + 16)
+    var quote: Char? = null
+    var inTag = false
+    for (char in svg) {
+        if (!inTag) {
+            if (char == '<') inTag = true
+            out.append(char)
+            continue
+        }
+        if (quote != null) {
+            when {
+                char == quote -> {
+                    quote = null
+                    out.append(char)
+                }
+
+                char == '<' -> out.append("&lt;")
+                else -> out.append(char)
+            }
+            continue
+        }
+        when (char) {
+            '"', '\'' -> {
+                quote = char
+                out.append(char)
+            }
+
+            '>' -> {
+                inTag = false
+                out.append(char)
+            }
+
+            else -> out.append(char)
+        }
+    }
+    return out.toString()
 }
 
 /**

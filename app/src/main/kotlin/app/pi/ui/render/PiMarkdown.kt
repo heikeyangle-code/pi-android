@@ -1,5 +1,11 @@
 package app.pi.ui.render
 
+import java.util.WeakHashMap
+import app.pi.ui.theme.PiMonoFamily
+import androidx.compose.ui.text.style.BaselineShift
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
@@ -74,15 +80,90 @@ import org.intellij.markdown.parser.MarkdownParser
  */
 private val piInlineHtmlAnnotate: AnnotatedString.Builder.(String, ASTNode) -> Boolean =
     { content, child ->
-        if (PiHtml.handlesInline(child.type.name)) {
-            // pi 的行内分支：`result += applyTextWithNewlines(token.raw)`（原文照排）。
-            append(PiHtml.inlineTextAt(content, child.startOffset, child.endOffset))
-            true
-        } else {
+        if (!PiHtml.handlesInline(child.type.name)) {
             // 不是 HTML_TAG：交回库的默认处理，与今天逐字节相同。
             false
+        } else {
+            val raw = PiHtml.inlineTextAt(content, child.startOffset, child.endOffset)
+            val tag = piInlineHtmlTagName(raw)
+            when {
+                // 叫不出名字（注释、CDATA、`<!DOCTYPE>` 片段）：原文照排，一个字都不丢。
+                tag == null -> {
+                    append(raw)
+                    true
+                }
+                // `<br>` 是空元素：它没有"闭标签"可等，直接换行。
+                tag == TAG_BREAK -> {
+                    append('\n')
+                    true
+                }
+                else -> {
+                    val span = piInlineHtmlSpan(tag)
+                    if (span == null) {
+                        // 没有 markdown 等价物、也不是安全子集里的标签（例如 `<a>`）：
+                        // 仍然原文照排 —— 标签被吃掉、URL 消失才是更坏的答案。
+                        append(raw)
+                    } else if (raw.startsWith("</")) {
+                        // 闭标签：弹掉本段落里最近压入的那一层。栈空（模型写了孤立的
+                        // `</b>`）时什么都不做，不能因此抛。
+                        // 只弹**我们自己**压进去的那一层：栈空时（模型写了一个孤立的
+                        // `</b>`）绝不 `pop()`，否则会弹掉库为 `**粗体**` 压的样式。
+                        val stack = piInlineHtmlStyles[this]
+                        if (stack != null && stack.isNotEmpty()) {
+                            stack.removeAt(stack.size - 1)
+                            pop()
+                        }
+                    } else {
+                        pushStyle(span)
+                        piInlineHtmlStyles.getOrPut(this) { ArrayList() }.add(span)
+                    }
+                    true
+                }
+            }
         }
     }
+
+private const val TAG_BREAK = "br"
+
+/**
+ * 行内标签的样式表。**只包含"markdown 没有等价物"或"必须由 span 表达"的标签**：
+ *
+ *  - `b`/`strong`、`i`/`em`、`del`/`s`、`u` 是纯 span 样式，与 `**`/`*`/`~~` 画出来
+ *    同一个东西；
+ *  - `code`/`kbd` 换成 App 的等宽族（**不**改字号：一行里混三个字号比不换更糟）；
+ *  - `sup`/`sub` 用 `BaselineShift`，这是 markdown 根本没有的能力；
+ *  - `span` 在安全子集里没有属性可留（`style`/`class` 都被白名单丢掉），认领它只是为
+ *    了让标签本身不显示。
+ *
+ * `a` 故意**不在**表里：行内链接要可点，而 `AnnotatedString` 的链接注解在这套组件里
+ * 没有出口（库的 annotator 只拼文本）。保留原文，用户至少能看到 URL。
+ */
+private fun piInlineHtmlSpan(tag: String): SpanStyle? = when (tag) {
+    "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold)
+    "i", "em" -> SpanStyle(fontStyle = FontStyle.Italic)
+    "del", "s" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+    "u" -> SpanStyle(textDecoration = TextDecoration.Underline)
+    "code", "kbd" -> SpanStyle(fontFamily = PiMonoFamily)
+    "sup" -> SpanStyle(baselineShift = BaselineShift.Superscript)
+    "sub" -> SpanStyle(baselineShift = BaselineShift.Subscript)
+    "span" -> SpanStyle()
+    else -> null
+}
+
+/** `</b>` / `< b >` → `b`；叫不出名字返回 `null`。 */
+private fun piInlineHtmlTagName(raw: String): String? {
+    val name = raw.removePrefix("<").removePrefix("/").trimStart()
+    val end = name.indexOfFirst { !it.isLetterOrDigit() }
+    val head = (if (end < 0) name else name.substring(0, end)).lowercase()
+    return head.ifEmpty { null }
+}
+
+/**
+ * 样式栈按 `AnnotatedString.Builder` 存：一次 `annotate` 调用只覆盖一个段落，而同一个
+ * builder 会连续访问该段落的全部子节点，两个段落是两个 builder。`WeakHashMap` 因此
+ * 既不需要"段落结束时清理"，也不会让两条正在同时渲染的消息串味。
+ */
+private val piInlineHtmlStyles = WeakHashMap<AnnotatedString.Builder, ArrayList<SpanStyle>>()
 
 /**
  * Renders pi's markdown natively.
