@@ -574,7 +574,7 @@ class ComposerDraft {
     /** The images staged for the next message, in the order the user picked them. */
     val attachments: MutableState<List<PiImage>> = mutableStateOf(emptyList())
 
-    /** Both halves — what a workspace switch clears. */
+    /** 文字与待发图片一起清空；`发送` 与用户主动清空走它，**工作区切换不走**。 */
     fun clear() {
         text.value = ""
         attachments.value = emptyList()
@@ -1274,9 +1274,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * the startup reconcile of a workspace the user did not choose — is an alignment,
      * and an alignment must not delete what the user wrote.
      */
+    /**
+     * 记下这次工作区版本。
+     *
+     * **不在这里清草稿。** 以前 revision 一变就 `composerDraft.clear()`，切工作区时用户
+     * 正在打的字和已经选好的图片会**无声消失** —— 而切工作区本身已经是"换项目"这件
+     * 大事，不该顺带吃掉输入。草稿留在输入框里由用户自己决定：接着发（新工作区里发）、
+     * 或者手动清掉。两个工作区的草稿互相覆盖并不比"被清空"更糟，因为清空是**静默的**、
+     * 而覆盖是用户自己按了发送。
+     */
     private fun alignComposerToWorkspace(revision: Int) {
-        val mark = composerRevision
-        if (mark != null && revision > mark) composerDraft.clear()
         composerRevision = revision
     }
 
@@ -2064,7 +2071,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // cannot be the thing that decides where the new engine starts.
                 workspaceProvider = { target.host },
                 allowInterrupt = allowInterrupt,
-                launch = launchOptions(),
+                // **新工作区开一段新对话。** 以前这里传 `launchOptions()`，其中
+                // `continueMostRecent = app.sessions.resumeLast`（默认开）→ pi 用 `-c`
+                // 在新 cwd 里挑"最近一段"恢复。结果就是用户说的那件事：切到 B，屏幕上
+                // 突然换成 B 里另一段旧对话（或者干脆空白），而他刚才在 A 的那段像是
+                // "被切掉了"。切换工作区是换项目，语义应该是**从新项目的空白开始**；
+                // 想接着看旧对话，去会话列表里点那一段（同一个 cwd 的 `switch_session`）。
+                launch = launchOptions().copy(continueMostRecent = false),
             )
         } finally {
             engineTransition = false
@@ -2078,14 +2091,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // workspace by the time those run.
                 val stored = WorkspaceStore.setCurrent(app, name)
                 afterWorkspaceChanged(name, result.session)
+                // 切换工作区是**换项目**，不是"把这段对话带过去"：pi 的会话按 cwd 归属，
+                // 所以新引擎打开的是新工作区自己的会话（`-c` 按 cwd 挑最近一段），旧对话
+                // 留在旧工作区的列表里。以前这里只印一句"已切换"，用户看到的却是整段
+                // 对话被换掉 —— 所以这句话必须说清楚"刚才那段对话去哪了"。
+                val leftBehind = "刚才在「$previous」的那段对话留在那个工作区的会话列表里，" +
+                    "没有丢；要在列表里回到它，切回那个工作区再点那一行。"
                 when {
                     wasBusy -> pushNotice(
-                        "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里，" +
-                            "上一轮未完成的模型调用与工具都被停掉了。",
+                        "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里开了一段新对话，" +
+                            "上一轮未完成的模型调用与工具都被停掉了。" + leftBehind,
                         Notice.Tone.Warning,
                     )
 
-                    else -> pushNotice("已切换到工作区「${target.displayName}」。", Notice.Tone.Info)
+                    else -> pushNotice(
+                        "已切换到工作区「${target.displayName}」，开了一段新对话。" + leftBehind,
+                        Notice.Tone.Info,
+                    )
                 }
                 if (!stored) {
                     pushNotice(
