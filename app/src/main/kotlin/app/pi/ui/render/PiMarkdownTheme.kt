@@ -183,8 +183,6 @@ internal fun piMarkdownColors(
     palette: PiPalette,
     darkTheme: Boolean,
     textColor: Color? = null,
-    /** 经典档冻结：不透明分割线、行内代码无底；其余档用更轻的分割线和行内代码淡底。 */
-    classic: Boolean = true,
 ): MarkdownColors =
     DefaultMarkdownColors(
         text = textColor ?: palette.text,
@@ -194,12 +192,12 @@ internal fun piMarkdownColors(
         // Transparent is therefore the faithful value, not a pi token borrowed for
         // a surface pi does not have.
         codeBackground = Color.Transparent,
-        // 行内代码（非经典）：mdCode 紫的 14% 做一层淡底。宋体正文里一个裸的等宽紫字
-        // 与周围没有边界，长标识符一换行就散；淡底把它收成一个「词块」，不抢眼。
-        inlineCodeBackground = if (classic) Color.Transparent else palette.mdCode.copy(alpha = 0.14f),
-        // 分割线：`mdHr` 是 #9DA5A9 满不透明，0.75 dp 的细线也亮得像一道裂缝；
-        // 非经典压到 35%，仍看得见但不再切断阅读。
-        dividerColor = if (classic) palette.mdHr else palette.mdHr.copy(alpha = 0.35f),
+        // 行内代码**不要底色**：库把行内代码的底色铺满整行高度（不是字高），在浅色主题里
+        // 就是一个比字还高、左右带空隙的紫框（真机截图确认过，曾经加过 14% 淡底，已撤）。
+        inlineCodeBackground = Color.Transparent,
+        // 分割线：`mdHr` 是 #9DA5A9 满不透明，细线也亮得像一道裂缝；压到 35%，
+        // 仍看得见但不再切断阅读。所有档位一致。
+        dividerColor = palette.mdHr.copy(alpha = 0.35f),
         tableBackground = palette.cardBg,
         // One value for both slots: the renderer uses this flag for its own
         // derived container/on-container pairs, and the alert accents below
@@ -324,8 +322,8 @@ internal fun piMarkdownTypography(
     val body = textColor ?: palette.text
 
     return DefaultMarkdownTypography(
-        // h1 的下划线只留给经典档：下划线 + 金色标题读起来像一条链接，非经典靠字号与字重分层。
-        h1 = heading.headingSlot(profile.h1, underline = profile.isClassic),
+        // h1 不画下划线（所有档位）：下划线 + 金色标题读起来像一条链接，层级靠字号与字重。
+        h1 = heading.headingSlot(profile.h1),
         h2 = heading.headingSlot(profile.h2),
         h3 = heading.headingSlot(profile.h3),
         h4 = heading.headingSlot(profile.h4),

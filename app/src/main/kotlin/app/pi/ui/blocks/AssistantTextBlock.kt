@@ -82,6 +82,7 @@ fun AssistantTextBlock(
                     markdown = shown,
                     modifier = Modifier.fillMaxWidth(),
                     onImageClick = onImageClick,
+                    streaming = item.streaming,
                 )
             }
         }

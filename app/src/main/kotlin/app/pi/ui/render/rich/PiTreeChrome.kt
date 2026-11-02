@@ -1,12 +1,18 @@
 package app.pi.ui.render.rich
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -51,11 +57,21 @@ enum class PiTreeMode {
  */
 internal const val PI_TREE_MAX_VISIBLE_CHILDREN = 200
 
+/** 一个容器首次最多排版这么多子节点；其余用「显示更多」每次再加一页，避免一次组合出 200 行。 */
+internal const val PI_TREE_PAGE = 50
+
 /** One leaf's display cap, in characters; "复制值" still copies the whole value. */
 internal const val PI_TREE_MAX_SCALAR_CHARS = 400
 
 /** Indentation per tree level, `dp`. */
 internal const val PI_TREE_INDENT_DP = 14
+
+/**
+ * 第 [depth] 层的左缩进（dp）。前 6 层每层 14 dp；更深的每层只加 5 dp，总量封顶 140 dp，
+ * 这样 64 层的极端文档也始终给内容留得出宽度（不做横向滚动：会破坏标签行的自动换行）。
+ */
+internal fun piTreeIndentDp(depth: Int): Int =
+    (PI_TREE_INDENT_DP * minOf(depth, 6) + 5 * maxOf(depth - 6, 0)).coerceAtMost(140)
 
 /**
  * One-line, escaped, length-capped preview of a string leaf.
@@ -98,7 +114,7 @@ internal fun piTreeNodeLabel(text: String, maxChars: Int = 80): String = piTreeP
  * machine output is the mono face, UI labels the sans face).
  */
 
-/** The mode switch plus a one-line status (`已复制…`, node count, parse failure). */
+/** 分段控件（源码 | 树）+ 一行状态（已复制 / 节点数 / 失败原因），下方一条发丝线。 */
 @Composable
 internal fun PiTreeToolbar(
     mode: PiTreeMode,
@@ -111,42 +127,40 @@ internal fun PiTreeToolbar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PiTreeModeLabel(
-            label = "源码",
-            selected = mode == PiTreeMode.Code,
-            onClickLabel = "查看原始源码",
-            onClick = { onSelect(PiTreeMode.Code) },
-        )
-        Spacer(Modifier.width(12.dp))
-        if (treeAvailable) {
+        Row(
+            modifier = Modifier
+                .background(palette.mdCodeBlockBorder.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                .padding(2.dp),
+        ) {
+            PiTreeModeLabel(
+                label = "源码",
+                selected = mode == PiTreeMode.Code,
+                enabled = true,
+                onClickLabel = "查看原始源码",
+                onClick = { onSelect(PiTreeMode.Code) },
+            )
             PiTreeModeLabel(
                 label = "树",
                 selected = mode == PiTreeMode.Tree,
+                enabled = treeAvailable,
                 onClickLabel = "查看树状视图",
                 onClick = { onSelect(PiTreeMode.Tree) },
             )
-        } else {
-            Text(
-                text = "树",
-                style = PiTheme.text.monoSmall,
-                color = palette.dim,
-                maxLines = 1,
-            )
         }
-        if (!status.isNullOrEmpty()) {
-            Text(
-                text = status,
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
-            )
-        }
+        Text(
+            text = status.orEmpty(),
+            style = PiTheme.text.monoSmall,
+            color = palette.muted,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 10.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+        )
     }
 }
 
@@ -154,6 +168,7 @@ internal fun PiTreeToolbar(
 private fun PiTreeModeLabel(
     label: String,
     selected: Boolean,
+    enabled: Boolean,
     onClickLabel: String,
     onClick: () -> Unit,
 ) {
@@ -161,11 +176,43 @@ private fun PiTreeModeLabel(
     Text(
         text = label,
         style = PiTheme.text.monoSmall,
-        color = if (selected) palette.accent else palette.muted,
+        color = when {
+            selected -> palette.accent
+            enabled -> palette.muted
+            else -> palette.dim
+        },
         maxLines = 1,
         modifier = Modifier
-            .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(vertical = 2.dp, horizontal = 2.dp),
+            .background(
+                if (selected) palette.accent.copy(alpha = 0.14f) else Color.Transparent,
+                RoundedCornerShape(6.dp),
+            )
+            .then(if (enabled) Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick) else Modifier)
+            .padding(vertical = 5.dp, horizontal = 12.dp),
+    )
+}
+
+/** 每个树行左侧的缩进参考线：每一层一条，行与行首尾相接，连成连续竖线。 */
+internal fun Modifier.piTreeGuides(depth: Int, color: Color): Modifier =
+    if (depth <= 0) this else this.drawBehind {
+        val stroke = 1.dp.toPx()
+        for (level in 1..depth) {
+            val x = piTreeIndentDp(level).dp.toPx() - 5.dp.toPx()
+            drawLine(color, Offset(x, 0f), Offset(x, size.height), stroke)
+        }
+    }
+
+/** 「显示更多（还剩 N）」行：点一下再多排一页。 */
+@Composable
+internal fun PiTreeMoreRow(depth: Int, remaining: Int, onMore: () -> Unit) {
+    Text(
+        text = "显示更多（还有 $remaining 项）",
+        style = PiTheme.text.monoSmall,
+        color = PiTheme.palette.accent,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = "显示更多", onClick = onMore)
+            .padding(start = (piTreeIndentDp(depth) + 15).dp, top = 6.dp, bottom = 6.dp),
     )
 }
 
@@ -220,10 +267,10 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
         Text(
             text = "⋯",
             style = PiTheme.text.monoSmall,
-            color = PiTheme.palette.dim,
+            color = PiTheme.palette.dim.copy(alpha = 0.7f),
             modifier = Modifier
                 .clickable(onClickLabel = "更多操作") { open = true }
-                .padding(horizontal = 6.dp, vertical = 2.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             actions.forEach { (label, action) ->
@@ -237,4 +284,15 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
             }
         }
     }
+}
+
+/** 工具栏与树/源码之间的发丝线，和 `PiCardDivider` 同色同粗。 */
+@Composable
+internal fun PiCardHairline() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(PiTheme.palette.mdCodeBlockBorder.copy(alpha = 0.16f)),
+    )
 }

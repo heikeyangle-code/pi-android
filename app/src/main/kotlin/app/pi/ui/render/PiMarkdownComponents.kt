@@ -1,5 +1,18 @@
 package app.pi.ui.render
 
+import com.mikepenz.markdown.compose.elements.MarkdownParagraph
+import app.pi.ui.render.rich.svg.PiSvgFenceView
+import app.pi.ui.render.rich.svg.PiMermaidView
+import app.pi.ui.render.rich.svg.PiMathView
+import app.pi.ui.render.rich.html.PiHtmlBlockView
+import app.pi.ui.render.rich.PiYamlTreeView
+import app.pi.ui.render.rich.PiStackTraceView
+import app.pi.ui.render.rich.PiLinkPreview
+import app.pi.ui.render.rich.PiLinkCard
+import app.pi.ui.render.rich.PiCsvTableView
+import app.pi.ui.render.rich.PiCsvTable
+import app.pi.ui.render.rich.LinkCardResult
+import androidx.compose.ui.platform.LocalUriHandler
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -44,7 +57,6 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.CollectionItemInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.collectionItemInfo
@@ -70,22 +82,11 @@ import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.rpc.PiImage
 import app.pi.ui.render.rich.FenceInfo
-import app.pi.ui.render.rich.PiCsvTable
-import app.pi.ui.render.rich.PiCsvTableView
 import app.pi.ui.render.rich.PiJsonTreeView
-import app.pi.ui.render.rich.LinkCardResult
-import app.pi.ui.render.rich.PiLinkCard
-import app.pi.ui.render.rich.PiLinkPreview
-import app.pi.ui.render.rich.PiStackTraceView
 import app.pi.ui.render.rich.PiTreeMode
 import app.pi.ui.render.rich.PiXmlTreeView
-import app.pi.ui.render.rich.PiYamlTreeView
-import app.pi.ui.render.rich.svg.PiMathView
 import app.pi.ui.render.rich.RichBlock
 import app.pi.ui.render.rich.RichBlockKind
-import app.pi.ui.render.rich.html.PiHtmlBlockView
-import app.pi.ui.render.rich.svg.PiMermaidView
-import app.pi.ui.render.rich.svg.PiSvgFenceView
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
@@ -107,7 +108,6 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
 import com.mikepenz.markdown.compose.elements.MarkdownHeader
 import com.mikepenz.markdown.compose.elements.MarkdownImage
-import com.mikepenz.markdown.compose.elements.MarkdownParagraph
 import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
@@ -267,12 +267,14 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
     table = { model -> PiTable(model) },
-    // 链接卡片（Phase 5）：**整段只有一个裸 URL** 的段落改画成一张卡片，其它段落原样
-    // 交给库的 `MarkdownParagraph`。判定在 `PiParagraph` 里，见那里的注释。
-    paragraph = { model -> PiParagraph(model) },
     // 任务清单的勾选标记：库的默认槽画的是源码文本 `[x] `（等宽），这里换成只读图形。
     // 见 piMarkdownComponents 的注释与 [PiTaskCheckbox]。
     checkbox = { model -> PiTaskCheckbox(model) },
+    // 链接卡片与显示式公式（Phase 3/5）：这两样都必须**接管整个段落**才做得到 ——
+    // 库的 `PARAGRAPH` 一旦有内容就不再往下分派，`custom` 槽收不到里面的 math 节点，
+    // 而"整段只有一个 URL"也只能在段落这一层看。其余段落原样交给库的
+    // `MarkdownParagraph`，逐字节不变。
+    paragraph = { model -> PiParagraph(model) },
     custom = { type, model -> piCustomComponent(type, model) },
 )
 
@@ -468,26 +470,28 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
     }
     if (text.isEmpty()) return
     // Phase 4：安全 HTML 子集。`PiHtmlBlockView` 自己决定「能不能画」——流式中的块、
-    // 白名单拒绝的块、超限的块全都会连同一行原因**原样显示 [text]**，与下面那段
+    // 白名单拒绝的块、超限的块全都会连同一行原因**原样显示 [text]**，与上面那段
     // 「pi 把原文当文字排出来」的契约在失败路径上完全一致。也就是说这一步只是让
     // **能安全画出来的** HTML 真的画出来，画不出来时的屏幕与 pi 逐字节相同。
     PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
 /**
- * 一个普通段落 —— 除非它**整段就是一个裸 URL**，那时它是一张链接卡片。
+ * 一个普通段落 —— 除非它整段只有一条显示式公式，或者整段只有一个裸 URL。
  *
- * 为什么判据是"整段"而不是"段落里出现链接"：一张卡片会吃掉它周围的所有排版意图。
- * `见 https://… 的那一段` 是一句话，把 URL 抽出来画成卡片等于把句子拆了；而模型常见的
- * "八条直链"输出里，每一行正好是一个段落、一个 URL —— 那才是卡片该接管的地方。
+ * **为什么必须接管段落。** 库的组件分派表里 `PARAGRAPH` 自己就有组件，而且"已处理就不再
+ * 递归进子节点"（`compose/MarkdownExtension.kt`），所以 `custom` 槽里那两个
+ * `INLINE_MATH`/`BLOCK_MATH` 分支在真实文档里几乎永远收不到节点 —— 这也是 App 当年改用
+ * "把公式预先改写成 Unicode"的原因（`docs/known-gaps.md` 的 A2 条目）。`PiMarkdown` 现在只在
+ * **整行独立的 `$$…$$`** 时才把节点留给解析器，于是这里看到的 `$$` 一定是一整段。
  *
- * 为什么卡片只显示 URL 自己能证明的东西：`PiLinkCard` 不发任何网络请求，也不读 OG 标签
- * （方案 §九.2 明确禁止"为了卡片去抓页面"）。所以标题、摘要、缩略图都不存在；卡片上是
- * 域名、路径和扩展名推出的类型。看起来信息少，但每一个字都是真的。
+ * **链接卡片为什么判"整段"而不是"段落里出现链接"。** 一张卡片会吃掉它周围的所有排版
+ * 意图：`见 https://… 的那一段` 是一句话，把 URL 抽出来画卡片等于把句子拆了；而模型常见的
+ * "八条直链"输出里，每一行正好是一个段落、一个 URL —— 那才是卡片该接管的地方。卡片只显示
+ * URL 自己能证明的东西（域名/路径/扩展名推出的类型），不发任何网络请求，也不读 OG 标签。
  *
- * 回调走 [LocalUriHandler]，与库自己的链接组件同一条出口（`PiHtmlRenderer` 也用它）。
- * `runCatching`：没有浏览器可接受的 Activity 时 `openUri` 会抛 `IllegalArgumentException`，
- * 点一下链接不该让整条消息崩掉。
+ * 其余段落交给库的 `MarkdownParagraph(content, node)`：它自己从 `LocalMarkdownTypography`
+ * 与 `LocalMarkdownAnnotator` 取排版与颜色，所以结果与该组件作为默认槽时逐字节相同。
  */
 @Composable
 private fun PiParagraph(model: MarkdownComponentModel) {
@@ -498,9 +502,8 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         val end = node.endOffset.coerceIn(start, content.length)
         start to content.substring(start, end).trim()
     }
-    // 整段只是一条显示式公式。判定与 `piDisplayMathIsStandalone` 同源（`PiMarkdown` 只
-    // 在那种形状下才把 `$$…$$` 留进源文本），所以这里看到 `$$` 就意味着它确实是节点。
-    // 交给 MathJax；失败时用 `PiLatex` 的 Unicode 结果，屏幕不会因此空一行。
+    // 整段只是一条显示式公式。判定与 `piDisplayMathIsStandalone` 同源（`PiMarkdown` 只在
+    // 那种形状下才把 `$$…$$` 留进源文本），所以这里看到 `$$` 就意味着它确实是节点。
     val mathSource = remember(bounds) {
         val text = bounds.second
         if (text.length > 4 && text.startsWith("$$") && text.endsWith("$$") &&
@@ -534,9 +537,6 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         }
     }
     if (info == null) {
-        // 库的这个组件收的是 `(content, node)`，不是组件模型；段落排版/颜色/annotator
-        // 它自己从 `LocalMarkdownTypography` 与 `LocalMarkdownAnnotator` 取，所以这里
-        // 交出去的结果与该组件作为默认槽时逐字节相同。
         MarkdownParagraph(model.content, model.node)
         return
     }
@@ -572,9 +572,6 @@ private const val BARE_URL_MAX_CHARS = 8192
  * **回退不是可选项。** WebView 起不来、MathJax 超时、SVG 被清洗器拒绝、AndroidSVG 解析
  * 失败 —— 任何一条都让这段代码回到升级前的输出（`fallbackText` 就是 [PiLatex.formulaText]
  * 的字符串，逐字相同），所以一条公式永远至少有一个数字或一个符号在屏幕上，不会变成空白。
- *
- * 块级与行内的差别只在 [PiMathView] 内部：行内固定行高、不占整行、没有工具栏，这样它
- * 能待在段落中间；块级才给「源码 / 公式」「适应」「复制」。
  */
 @Composable
 private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
@@ -996,6 +993,8 @@ private fun PiTable(model: MarkdownComponentModel) {
             LocalPiImageTransformer provides transformer,
             LocalMarkdownDimens provides tableDimens,
         ) {
+            // 整张表统一裁成圆角：隔行底色（下面 rowBlock）与表头底色都是方角矩形，库本身不裁剪子项。
+            Box(modifier = Modifier.clip(RoundedCornerShape(dimens.tableCornerSize))) {
             MarkdownTable(
                 content = model.content,
                 node = model.node,
@@ -1004,7 +1003,7 @@ private fun PiTable(model: MarkdownComponentModel) {
                     Box(
                         modifier = Modifier
                             .clip(headerShape)
-                            .background(palette.mdHr.copy(alpha = 0.10f)),
+                            .background(palette.mdHr.copy(alpha = 0.14f)),
                     ) {
                         if (aligned) {
                             PiTableHeaderCells(
@@ -1022,6 +1021,13 @@ private fun PiTable(model: MarkdownComponentModel) {
                     }
                 },
                 rowBlock = { content, row, tableWidth, tableStyle ->
+                    // 隔行淡底色：数据行从 1 起，偶数行着色；表头/奇数行保持卡片底。
+                    val stripe = LocalTableRowIndex.current % 2 == 0
+                    Box(
+                        modifier = Modifier.background(
+                            if (stripe) palette.mdHr.copy(alpha = 0.06f) else Color.Transparent,
+                        ),
+                    ) {
                     if (aligned) {
                         PiTableBodyCells(
                             content = content,
@@ -1033,8 +1039,10 @@ private fun PiTable(model: MarkdownComponentModel) {
                     } else {
                         MarkdownTableRow(content, row, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES)
                     }
+                    }
                 },
             )
+            }
         }
 
         if (scrolls) {
@@ -1356,11 +1364,11 @@ private fun PiTaskCheckbox(model: MarkdownComponentModel) {
     }
     val lineHeight = model.typography.text.lineHeight
     val density = LocalDensity.current
-    // 行高是 sp；换成 dp 才能当 Box 的高度用。`TextUnit.isSp` 是 `TextUnit` 的**成员属性**，
-    // 直接读即可 —— 千万不要写 `import androidx.compose.ui.unit.isSp`：没有这个顶层扩展，
-    // CI 会报 Unresolved reference（`em` 走 else 分支，因为 `TextUnit.toDp()` 只接受 sp）。
-    // 已用 Compose 1.8.3 的 ui-unit-android 产物单独编译验证过：`t.isSp` 无需 import。
-    val markerHeight = if (lineHeight.isSp) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
+    // 行高是 sp；换成 dp 才能当 Box 的高度用。判据是 `value > 0` 而不是 `TextUnit.isSp`：
+    // 后者在本项目当前的 Compose 产物里解析不到（CI 报过 Unresolved reference，见 c3005e5）。
+    // `value > 0` 同时排除了 `Unspecified`（它的 value 是 NaN）。前提是行高按 sp 写 ——
+    // `PiMarkdownTheme.kt` 的每个排版档都是 sp；若将来有主题改写成 em，`toDp()` 会抛异常。
+    val markerHeight = if (lineHeight.value > 0f) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
     Box(
         modifier = Modifier
             .padding(end = TASK_CHECKBOX_END_PADDING)
@@ -1504,6 +1512,7 @@ private fun PiCodeSurface(
     val info = remember(language) { FenceInfo.parse(language) }
     val normalized = info.language.takeIf { it.isNotEmpty() }
     val kind = remember(info, code, settled) { RichBlock.classify(info, code, settled) }
+
     // `markdown.mermaid = off` 时 pi 把 markdown 原样交出去（`components/mermaid.ts:62`），
     // 所以这里连 WebView 都不碰：围栏落回下面的代码块，与其它语言完全一样。
     val mermaidMode = rememberPiMermaidMode()
@@ -1535,33 +1544,39 @@ private fun PiCodeSurface(
         PiStackTraceView(source = code, settled = settled)
         return
     }
-    // Phase 5 / 方案 §八：` ```svg ` 围栏。清洗器先过一遍（脚本、事件属性、外部引用、
-    // foreignObject、尺寸/节点/深度上限都在那里），再交给 AndroidSVG 画；任何一步失败
-    // 都回退源码，见 `PiSvgFenceView`。
+    // 方案 §八：` ```svg ` 围栏。清洗器先过一遍（脚本、事件属性、外部引用、foreignObject、
+    // 尺寸/节点/深度上限都在那里），再交给 AndroidSVG 画；任何一步失败都回退源码。
     if (normalized?.lowercase() == SVG_LANGUAGE) {
         PiSvgFenceView(source = code, settled = settled)
         return
     }
-    // Phase 1 的结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。
+    // 结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。外框
+    // （标题 + 复制）由 `PiRichCardFrame` 提供，树视图自己只有工具栏与树行。
     // 解析失败/超限时各视图自己回退源码。
     when (kind) {
         RichBlockKind.Json -> {
-            PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            PiRichCardFrame(code, info, palette) {
+                PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            }
             return
         }
         RichBlockKind.Xml -> {
-            PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            PiRichCardFrame(code, info, palette) {
+                PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            }
             return
         }
         RichBlockKind.Yaml -> {
-            PiYamlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            PiRichCardFrame(code, info, palette) {
+                PiYamlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+            }
             return
         }
         else -> Unit
     }
     val highlighted = rememberPiHighlightedCode(code, normalized)
-    // 非经典档：1 dp 满不透明的灰边在深色底上是一圈亮框，代码块比它包着的文字还抢眼。
-    // 边线压到 28%，里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线；经典档不动。
+    // 1 dp 满不透明的灰边是一圈亮框，代码块比它包着的文字还抢眼。边线压到 28%，
+    // 里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线（所有档位一致）。
     val classic = PiTheme.typography.isClassic
     PiRichCodeBlock(
         code = code,

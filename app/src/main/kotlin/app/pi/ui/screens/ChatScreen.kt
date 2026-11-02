@@ -3205,7 +3205,6 @@ private const val COMPOSER_PULSE_MS = 1600
 private const val COMPOSER_PULSE_MIN = 0.45f
 private const val COMPOSER_MAX_LINES = 6
 
-private val COMPOSER_LINE_HEIGHT = 20.sp
 
 /**
  * The search input row's height: **40**, which is the number `06 §2` gives the search
@@ -3861,17 +3860,13 @@ private fun Composer(
     val inputShape = RoundedCornerShape(PiSpacing.composerRadius)
     // 6 行是**按行高算**的，不是写死 120dp：系统字体放大后写死的 120 只能放 4 行半。
     //
-    // 输入框文字（非经典档）：与发出去后的用户气泡同一套阅读宋体、同字号，行高取字号的 1.5 倍。
+    // 输入框文字（所有档位）：与发出去后的用户气泡同一套阅读宋体、同字号，行高取字号的 1.5 倍。
     // 原来写死 20 sp，而非经典档的正文是 16 sp：1.25 的行距，汉字多行输入又挤又闷，
     // 敲出来是黑体、一发送变宋体也不连贯。经典档仍是 14/20。
     val composerProse = PiTheme.text.prose
-    val composerClassic = PiTheme.typography.isClassic
-    val composerLineHeight = if (composerClassic) COMPOSER_LINE_HEIGHT else (composerProse.fontSize.value * 1.5f).sp
-    val composerTextStyle = if (composerClassic) {
-        composerProse.copy(lineHeight = composerLineHeight)
-    } else {
+    val composerLineHeight = (composerProse.fontSize.value * 1.5f).sp
+    val composerTextStyle =
         composerProse.copy(fontFamily = PiProseFamily, fontWeight = FontWeight.Normal, lineHeight = composerLineHeight)
-    }
     val lineHeightDp = with(LocalDensity.current) { composerLineHeight.toDp() }
     val fieldMaxHeight = lineHeightDp * COMPOSER_MAX_LINES
     var focused by remember { mutableStateOf(false) }

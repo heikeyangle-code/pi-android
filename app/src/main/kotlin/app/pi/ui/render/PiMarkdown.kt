@@ -260,11 +260,6 @@ internal fun PiMarkdownText(
     // 预处理还要报告"这次有没有写进一块多行网格"：网格靠换行与空格对齐，而库的
     // annotator 默认把段落内换行压成空格，所以含网格的这条消息要按下一段的两个
     // 开关渲染 —— 别的消息一个字节都不变（`PiLatex.prepare` 的注释）。
-    // **不许抛。** `PiLatex.prepare` 本身只走字符串与正则，但它的数学替换会进
-    // `PiLatex.toUnicode`，而那个解析器是按 `{` 直接递归的（见那里的注释）：一条病态的
-    // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
-    // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
-    // 拿到的是同一个对象，逐字节相同。
     // Phase 3：**整行独立的**显示式公式不再在这里被改写成 Unicode —— `PiLatex.prepare`
     // 的产出是给终端看的近似（`a/b`、Unicode 上下标、空格对齐的矩阵），而 MathJax 的入口
     // 是 markdown 里的 `BLOCK_MATH` 节点；改写过的源里已经没有节点了。
@@ -328,9 +323,8 @@ internal fun PiMarkdownText(
     // 一次；`PiMarkdownTheme.kt` 里 padding 因此从顶层 `val` 变成了函数（仍按预设缓存，
     // 不是每帧新建）。dimens 不随预设动（没有任何圆角变化），所以它还是那个顶层 `val`。
     val profile = PiTheme.typography
-    val classic = profile.isClassic
-    val colors = remember(palette, darkTheme, textColor, classic) {
-        piMarkdownColors(palette, darkTheme, textColor, classic)
+    val colors = remember(palette, darkTheme, textColor) {
+        piMarkdownColors(palette, darkTheme, textColor)
     }
     val typography = remember(palette, profile, textColor, hasGrid) {
         // 网格用**空格**对齐（`renderLayout` 逐行补齐），比例字体里空格与字形的宽度
@@ -472,7 +466,7 @@ internal fun PiMarkdownText(
             colors = colors,
             typography = typography,
             padding = padding,
-            dimens = if (classic) piMarkdownDimens else piMarkdownDimensRoomy,
+            dimens = piMarkdownDimensRoomy,
             imageTransformer = imageTransformer,
             components = components,
             // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')
