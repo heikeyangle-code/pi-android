@@ -59,7 +59,34 @@ data class EngineFailure(
     val detail: String?,
     /** 只有 [EngineFailureKind.Provisioning] 为 `true`。 */
     val rebuildOffered: Boolean,
-)
+) {
+    /**
+     * 用户点「重试」时该走哪条路。
+     *
+     * `Provisioning` 这一类**第一次重试**走 [RetryMode.Repair]（重新解包、不删数据）：
+     * 这条失败最常见的原因是树里少了/坏了文件，而普通重试只做"戳记相符 → 什么都不做"的
+     * 快路径，点一百次也是同一个结果。修复再失败，回到普通重试；`rebuild` 仍然是用户手动
+     * 点的最后手段（它是唯一会删 guest 安装物的动作，不能自动升级到那一步）。
+     *
+     * 其余几类（引擎自己退出的那四种）必须是 [RetryMode.Plain]：它们和运行环境的完整性
+     * 无关，重新解包只会白花几十秒。
+     */
+    fun retryMode(repairAttempted: Boolean): RetryMode =
+        if (kind == EngineFailureKind.Provisioning && !repairAttempted) {
+            RetryMode.Repair
+        } else {
+            RetryMode.Plain
+        }
+}
+
+/** 「重试」的两个档位，见 [EngineFailure.retryMode]。 */
+enum class RetryMode {
+    /** 普通重试：戳记相符就是快路径。 */
+    Plain,
+
+    /** 不删数据的修复：重新解包全部 payload，再重写戳记。 */
+    Repair,
+}
 
 object EngineFailureClassify {
 
@@ -67,8 +94,9 @@ object EngineFailureClassify {
     fun provisioning(message: String, detail: String?): EngineFailure = EngineFailure(
         kind = EngineFailureKind.Provisioning,
         title = message.ifBlank { "运行环境没有装好" },
-        explanation = "运行环境没有准备好，引擎还没能启动。重建运行时会把易失树整个重新解包，" +
-            "这是唯一能修好这一类失败的动作（它只删 guest 里装的东西，工作区/会话/设置不会动）。",
+        explanation = "运行环境没有准备好，引擎还没能启动。点「重试」会先做一次**不删数据**的修复：" +
+            "把运行时重新解包一遍（guest 里装的 apt/pip/npm 包都还在）。修复也失败时才需要" +
+            "「重建运行时」—— 它会清空易失树，只保留工作区、会话、设置和凭证。",
         detail = detail,
         rebuildOffered = true,
     )

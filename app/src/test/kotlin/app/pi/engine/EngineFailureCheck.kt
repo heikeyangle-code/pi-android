@@ -121,6 +121,43 @@ fun main() {
         )
     }
 
+    // ================================ F. 点「重试」时走哪条路
+    run {
+        val provisioning = EngineFailureClassify.provisioning("运行时解包失败", null)
+        // 这一类普通重试是空转（戳记相符 → 什么都不做），所以第一次必须走"不删数据的修复"。
+        check(
+            "F1 运行环境失败第一次重试走修复",
+            provisioning.retryMode(repairAttempted = false),
+            RetryMode.Repair,
+        )
+        check(
+            "F2 修复过了就回到普通重试",
+            provisioning.retryMode(repairAttempted = true),
+            RetryMode.Plain,
+        )
+        // 引擎自己退出的四类与树无关，重新解包只会白等。
+        check(
+            "F3 被系统结束不重解",
+            EngineFailureClassify.exit(137, null, null).retryMode(false),
+            RetryMode.Plain,
+        )
+        check(
+            "F4 内存耗尽不重解",
+            EngineFailureClassify.exit(134, null, null).retryMode(false),
+            RetryMode.Plain,
+        )
+        check(
+            "F5 参数错不重解",
+            EngineFailureClassify.exit(1, "Unknown option '--a'", null).retryMode(false),
+            RetryMode.Plain,
+        )
+        check(
+            "F6 切工作区失败不重解",
+            EngineFailureClassify.workspaceSwitch("x", null).retryMode(false),
+            RetryMode.Plain,
+        )
+    }
+
     // ================================ E. detail 是唯一能带走的证据
     run {
         check(

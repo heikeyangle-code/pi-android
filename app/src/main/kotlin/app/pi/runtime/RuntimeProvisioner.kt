@@ -215,12 +215,32 @@ class RuntimeProvisioner(
     suspend fun ensureReady(
         revision: String,
         rebuild: Boolean = false,
+        /**
+         * **不删数据的修复**：跳过"戳记相符就什么都不做"的快路径，把每个 payload 重新解包
+         * 一遍（覆盖写），再重写戳记。
+         *
+         * 为什么需要它：快路径只比 `<runtime>/.stamp` 与 payload 的摘要 —— 它证明的是
+         * "这个 APK 的运行时被解包过"，**不是**"现在这棵树还完整"。文件被删、被写坏、
+         * 被半途中断的解包留下空洞时，戳记仍然相符，于是「重试」永远返回成功、引擎永远
+         * 起不来，用户只剩「重建运行时」一条路 —— 而那条路会删掉他在 guest 里装的一切。
+         * 这一档填的就是中间那条：重新解包（不 wipe），把缺的/坏的补回来。
+         *
+         * 与 [rebuild] 的区别只有一处：**不调用 `wipe()`**。所以 `/usr/local`、`/root`、
+         * apt/pip/npm 装的东西都还在；代价是要重新解出全部 payload（首次安装那个量级），
+         * 因此它只该在"启动失败之后的那一次重试"上被触发，不在每次冷启动。
+         */
+        repair: Boolean = false,
         onStep: (Step) -> Unit = {},
     ): Result<ProvisionOutcome> = withContext(Dispatchers.IO) {
-        runCatching { provision(revision, rebuild, onStep) }
+        runCatching { provision(revision, rebuild, repair, onStep) }
     }
 
-    private fun provision(revision: String, rebuild: Boolean, onStep: (Step) -> Unit): ProvisionOutcome {
+    private fun provision(
+        revision: String,
+        rebuild: Boolean,
+        repair: Boolean,
+        onStep: (Step) -> Unit,
+    ): ProvisionOutcome {
         // ---------------------------------------------------------------- fast path
         // Byte-for-byte the boot this app has always had: read the 16-character
         // revision from the APK and compare it with `<files>/pi/runtime/.stamp`. Equal
@@ -231,7 +251,7 @@ class RuntimeProvisioner(
         //
         // `rebuild` deliberately bypasses it: a caller that decided the tree is broken
         // must be able to rebuild a tree whose stamp happens to match.
-        if (!rebuild && paths.rootfs.isDirectory && isStampCurrent(revision)) {
+        if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) {
             return finishCurrent(revision, migration = false, onStep)
         }
 
@@ -286,6 +306,8 @@ class RuntimeProvisioner(
         val packagedDigests = PAYLOADS.associateWith { packagedDigest(it) }
         val plan: List<Payload> = when {
             rebuild -> PAYLOADS
+            // 不删数据的修复：每个 payload 都重解一遍（覆盖写），把缺失/损坏的文件补回来。
+            repair -> PAYLOADS
             rootfsMissing -> PAYLOADS
             migration -> PAYLOADS
             else -> PAYLOADS.filter { payload ->

@@ -435,6 +435,13 @@ class PiEngineHost(private val appContext: Context) {
          * settings and credentials are outside the deleted tree and survive.
          */
         rebuild: Boolean = false,
+        /**
+         * 不删数据的修复（`RuntimeProvisioner.ensureReady(repair = true)`）。
+         *
+         * 启动失败之后的那一次重试走它：重新解包全部 payload，但不清空易失树，所以 guest
+         * 里装的东西都还在。`rebuild` 是最后手段，`repair` 是中间那条。
+         */
+        repair: Boolean = false,
         // `onStep` must stay LAST: callers pass it as a trailing lambda
         // (`boot { step -> ... }`), and a trailing lambda always binds to the
         // final parameter. Adding `launch` after it silently rebound every such
@@ -442,7 +449,7 @@ class PiEngineHost(private val appContext: Context) {
         // put it before this one.
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
     ): Boot = lifecycleLock.withLock {
-        bootLocked(revision, workspaceProvider, onStep, launch, rebuild)
+        bootLocked(revision, workspaceProvider, onStep, launch, rebuild, repair)
     }
 
     /**
@@ -459,10 +466,11 @@ class PiEngineHost(private val appContext: Context) {
         onStep: (RuntimeProvisioner.Step) -> Unit,
         launch: PiLaunchOptions,
         rebuild: Boolean = false,
+        repair: Boolean = false,
     ): Boot =
         withContext(Dispatchers.IO) {
             // 1. Runtime payload.
-            val provisioned = provisioner.ensureReady(revision, rebuild, onStep)
+            val provisioned = provisioner.ensureReady(revision, rebuild, repair, onStep)
             val outcome = provisioned.getOrNull()
 
             // 1b. The durable boot audit (BootAudit). Recorded on the background scope,

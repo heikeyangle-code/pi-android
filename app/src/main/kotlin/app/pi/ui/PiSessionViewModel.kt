@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import app.pi.engine.EngineCrashRecovery
 import app.pi.engine.EngineFailure
 import app.pi.engine.EngineFailureClassify
+import app.pi.engine.RetryMode
 import app.pi.engine.EngineExitCause
 import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
@@ -1023,6 +1024,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * [boot]，那条路上计数不归零没关系 —— 下一次起来时 [attach] 会清。
      */
     private var autoEngineRestarts = 0
+
+    /**
+     * 这条启动链上是否已经试过**不删数据的修复**（`ensureReady(repair = true)`）。
+     *
+     * 「重试」曾经对"树里少文件/坏文件"这一类失败完全无效：快路径只比戳记，戳记相符就
+     * 立刻返回成功，于是点一百次也是同一个结果，用户只能点「重建运行时」——而它会删掉
+     * guest 里装的一切。现在第一次重试走修复（重新解包、不 wipe），再失败回到普通重试，
+     * 重建仍然只由用户显式点。
+     */
+    private var provisioningRepairAttempted = false
 
     /**
      * pi's settings documents, addressed exactly as a desktop install has them.
@@ -2437,6 +2448,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun boot(rebuild: Boolean = false) {
         if (_state.value.boot is Boot.Working) return
+        // 「重试」不是"再跑一遍同样的东西"：运行环境那类失败第一次重试要走不删数据的修复
+        // （重新解包），否则戳记相符的快路径会让它永远返回成功、引擎永远起不来。
+        val retryMode = if (rebuild) {
+            RetryMode.Plain
+        } else {
+            (_state.value.boot as? Boot.Failed)?.failure?.retryMode(provisioningRepairAttempted)
+                ?: RetryMode.Plain
+        }
+        val repair = retryMode == RetryMode.Repair
+        if (repair) provisioningRepairAttempted = true
         viewModelScope.launch {
             // Read the preferences first: `app.runtime.keepAlive` decides whether
             // the foreground service is started at all, so it cannot be read
@@ -2468,7 +2489,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val launchOptions = launchOptions()
             reportExtensionArgsRefusal(launchOptions)
             val boot = try {
-                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions, rebuild = rebuild) { step ->
+                host.boot(
+                    workspaceProvider = ::defaultWorkspace,
+                    launch = launchOptions,
+                    rebuild = rebuild,
+                    repair = repair,
+                ) { step ->
                     _state.value = _state.value.copy(boot = Boot.Working(step))
                 }
             } finally {
@@ -2617,6 +2643,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 引擎真的起来了：连续失败的计数归零。放在 `Boot.Ready` 这一句旁边，是因为
         // "起来了"就是它的判据 —— 不能放在 `boot()` 的开头（那时还不知道会不会失败）。
         autoEngineRestarts = 0
+        provisioningRepairAttempted = false
         _state.value = _state.value.copy(boot = Boot.Ready)
         // The queue counters describe **this engine process's** queues, and the engine in
         // hand is brand new, so its queues are empty. pi sends `queue_update` only when
