@@ -621,19 +621,29 @@ class PiEngineHost(private val appContext: Context) {
             // (`RuntimeSelection`). The install/maintenance paths deliberately do not;
             // see that class's KDoc for where the line is drawn and why.
             val selection = RuntimeSelection.of(appContext, paths)
-            // **No extra binds at all** (2026-09-23). The engine's cwd
-            // (`/workspace/pi/workspaces/<name>`) and pi's home (`/root/.pi/agent`) are
-            // spelled exactly like the host directories backing them — both live in the
-            // rootfs — so the guest reaches them through the rootfs prefix and there is
-            // nothing to mount.
+            // **内部工作区没有任何额外 bind** (2026-09-23)。引擎的 cwd
+            // (`/workspace/pi/workspaces/<name>`) 与 pi 的家 (`/root/.pi/agent`) 的拼法
+            // 就是它们在 rootfs 里的宿主目录，靠根前缀就能到，不需要挂载。那两个 bind
+            // 正是让 `git` 在 proroot 下不可用的东西：`scandir`/`mkstemp`/`mkdtemp` 在
+            // 任何"宿主源是本应用私有目录"的 bind 下都返回 `ENOENT`
+            // (`docs/proroot-scandir-defect.md`)，而 `.git/tXXXXXX` 就创建在工作区里。
             //
-            // The two bindings that used to be here are what made `git` unusable under
-            // proroot: its `scandir`/`mkstemp`/`mkdtemp` return `ENOENT` anywhere under a
-            // bind whose host source is an app-private directory
-            // (`docs/proroot-scandir-defect.md`), and `.git/tXXXXXX` is created *inside the
-            // workspace*. The engine is where pi runs `git`, so this is the fix that
-            // matters.
-            val extraBinds = emptyList<Pair<String, String>>()
+            // **外部工作区（用户在手机上选的 `/storage/...` 目录）相反：必须有 bind。**
+            // `GuestWorkspacePath.under` 把它们映射成 `/workspace/storage/emulated/0/Foo`，
+            // 而那个路径在 rootfs 里并不存在 —— 没有 bind 时 pi 的 `chdir` 失败、进程立刻
+            // 退出，界面就是「切换工作区失败」，而且**重试永远同一结果**（映射是确定的）。
+            // 2026-11-02 用户报的就是这个：选手机目录 → 引擎起不来 → 以为只能重建。
+            //
+            // 挂载点必须先在 rootfs 里存在：proot/proroot 不会替我们创建 `-b` 的目标。
+            val workspaceBasePath = paths.workspaceBase.absolutePath
+            val externalWorkspace = workspace.absolutePath != workspaceBasePath &&
+                !workspace.absolutePath.startsWith(workspaceBasePath + File.separator)
+            val extraBinds = if (externalWorkspace) {
+                File(paths.rootfs, guestWorkspace.removePrefix("/")).mkdirs()
+                listOf(workspace.absolutePath to guestWorkspace)
+            } else {
+                emptyList()
+            }
             val extraEnv = mapOf(
                 // pi's file surface is 1:1 with a desktop install, so settings,
                 // skills, extensions and themes are interchangeable with one.
