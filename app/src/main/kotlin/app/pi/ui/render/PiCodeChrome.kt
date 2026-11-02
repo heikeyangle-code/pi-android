@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiPalette
+import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import kotlinx.coroutines.delay
 
@@ -236,3 +237,72 @@ internal fun PiRichCodeBlock(
  * 复制始终是全文。
  */
 private const val MAX_COLLAPSED_LINES = 24
+
+/**
+ * JSON / XML 树视图的外框：与 [PiRichCodeBlock] 同一套卡片（12 dp 圆角、28% 边线、6% 淡底）
+ * 加一行标题（语言名或围栏 title）和「复制」（复制**整段源码**）。
+ *
+ * 树视图本身（`PiJsonTreeView` / `PiXmlTreeView`）只有「源码 / 树」工具栏和树行，没有任何外框：
+ * 直接放进 `PiCodeSurface` 时，一个 JSON 块在页面上是光秃秃的一排字，与同页其他代码块
+ * （有边框、有语言名、能复制）完全不是一个东西，整段 JSON 也没有一键复制。外框放在这里而不是
+ * 树视图里，是因为树视图文档写明它「不拥有真正的代码块」。
+ */
+@Composable
+internal fun PiRichCardFrame(
+    code: String,
+    info: FenceInfo,
+    palette: PiPalette,
+    topPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    content: @Composable () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1200)
+            copied = false
+        }
+    }
+    val classic = PiTheme.typography.isClassic
+    MarkdownCodeBackground(
+        color = palette.mdCodeBlockBorder.copy(alpha = 0.06f),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topPadding, bottom = if (classic) 8.dp else 0.dp),
+        showHeader = false,
+        language = info.language,
+        code = code,
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 8.dp, top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = info.title ?: info.language,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.mdCodeBlockBorder,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (copied) "已复制" else "复制",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.mdCodeBlockBorder,
+                    modifier = Modifier
+                        .clickable(onClickLabel = "复制代码") {
+                            clipboard.setText(AnnotatedString(code))
+                            copied = true
+                        }
+                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                )
+            }
+            content()
+        }
+    }
+}

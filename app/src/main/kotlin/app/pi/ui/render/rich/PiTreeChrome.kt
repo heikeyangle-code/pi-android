@@ -165,7 +165,7 @@ private fun PiTreeModeLabel(
         maxLines = 1,
         modifier = Modifier
             .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(vertical = 2.dp, horizontal = 2.dp),
+            .padding(vertical = 8.dp, horizontal = 6.dp),
     )
 }
 
@@ -223,7 +223,7 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
             color = PiTheme.palette.dim,
             modifier = Modifier
                 .clickable(onClickLabel = "更多操作") { open = true }
-                .padding(horizontal = 6.dp, vertical = 2.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             actions.forEach { (label, action) ->

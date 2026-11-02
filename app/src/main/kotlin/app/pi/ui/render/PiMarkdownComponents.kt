@@ -1394,11 +1394,15 @@ private fun PiCodeSurface(
         // 解析失败/超限时 `PiJsonTreeView` 自己回退源码；YAML 目前没有安全解析器，仍走代码块。
         when (kind) {
             RichBlockKind.Json -> {
-                PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                PiRichCardFrame(code, info, palette, if (mermaidWarning != null) 8.dp else 0.dp) {
+                    PiJsonTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                }
                 return
             }
             RichBlockKind.Xml -> {
-                PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                PiRichCardFrame(code, info, palette, if (mermaidWarning != null) 8.dp else 0.dp) {
+                    PiXmlTreeView(source = code, settled = settled, initialMode = PiTreeMode.Tree)
+                }
                 return
             }
             else -> Unit

@@ -156,6 +156,14 @@ private fun JsonNodeRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // 整行都是展开/收起的点击区（含缩进部分）：原来只有那个 9 dp 宽的三角能点。
+                .then(
+                    if (node.isContainer) {
+                        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(
                     start = (node.depth * PI_TREE_INDENT_DP).dp,
                     top = 2.dp,
@@ -167,11 +175,7 @@ private fun JsonNodeRow(
                 Text(
                     text = if (expanded) "▾" else "▸",
                     style = body.copy(color = palette.dim),
-                    modifier = Modifier
-                        .clickable(
-                            onClickLabel = if (expanded) "收起" else "展开",
-                        ) { expanded = !expanded }
-                        .padding(end = 3.dp),
+                    modifier = Modifier.padding(end = 3.dp),
                 )
             } else {
                 Spacer(Modifier.width(15.dp))

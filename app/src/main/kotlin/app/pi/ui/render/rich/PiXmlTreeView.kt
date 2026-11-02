@@ -19,6 +19,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
@@ -143,6 +146,14 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // 整行都是展开/收起的点击区（含缩进部分）：原来只有那个 9 dp 宽的三角能点。
+                .then(
+                    if (hasChildren) {
+                        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(
                     start = (node.depth * PI_TREE_INDENT_DP).dp,
                     top = 2.dp,
@@ -154,60 +165,46 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
                 Text(
                     text = if (expanded) "▾" else "▸",
                     style = body.copy(color = palette.dim),
-                    modifier = Modifier
-                        .clickable(
-                            onClickLabel = if (expanded) "收起" else "展开",
-                        ) { expanded = !expanded }
-                        .padding(end = 3.dp),
+                    modifier = Modifier.padding(end = 3.dp),
                 )
             } else {
                 Spacer(Modifier.width(15.dp))
             }
 
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Text(text = "<", style = body.copy(color = palette.syntaxPunctuation))
-                Text(text = node.name, style = body.copy(color = palette.syntaxKeyword))
-
-                val shownAttributes = node.attributes.take(MAX_VISIBLE_ATTRIBUTES)
-                shownAttributes.forEach { attribute ->
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = "${attribute.name}=",
-                        style = body.copy(color = palette.syntaxVariable),
-                        modifier = Modifier.clickable(
-                            onClickLabel = "复制属性值",
-                        ) { onCopy(attribute.value, "属性值") },
-                    )
-                    Text(
-                        text = "\"${piTreePreview(attribute.value, 120)}\"",
-                        style = body.copy(color = palette.syntaxString),
-                    )
-                }
-                val hiddenAttributes = node.attributes.size - shownAttributes.size
-                if (hiddenAttributes > 0) {
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = "… +$hiddenAttributes",
-                        style = body.copy(color = palette.muted),
-                    )
-                }
-
-                Text(
-                    text = if (node.isEmptyElement) " />" else ">",
-                    style = body.copy(color = palette.syntaxPunctuation),
-                )
-
-                if (node.text != null) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = piTreePreview(node.text),
-                        style = body.copy(color = palette.text),
-                    )
+            // 标签行是**一个** `AnnotatedString`，不是一排并列的 `Text`：`Row` 不会换行，带三四个
+            // 属性的标签在手机上要么被截断、要么每个 `Text` 被挤成一两个字宽的细条。单个 `Text`
+            // 按词换行，颜色靠 span。（原来点属性名复制属性值的小手势随之去掉；行右侧的 ⋯ 菜单仍
+            // 可复制路径与文本。）
+            val shownAttributes = node.attributes.take(MAX_VISIBLE_ATTRIBUTES)
+            val hiddenAttributes = node.attributes.size - shownAttributes.size
+            val tagLine = remember(node, palette) {
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = palette.syntaxPunctuation)) { append("<") }
+                    withStyle(SpanStyle(color = palette.syntaxKeyword)) { append(node.name) }
+                    shownAttributes.forEach { attribute ->
+                        append(" ")
+                        withStyle(SpanStyle(color = palette.syntaxVariable)) { append("${attribute.name}=") }
+                        withStyle(SpanStyle(color = palette.syntaxString)) {
+                            append("\"${piTreePreview(attribute.value, 120)}\"")
+                        }
+                    }
+                    if (hiddenAttributes > 0) {
+                        withStyle(SpanStyle(color = palette.muted)) { append(" … +$hiddenAttributes") }
+                    }
+                    withStyle(SpanStyle(color = palette.syntaxPunctuation)) {
+                        append(if (node.isEmptyElement) " />" else ">")
+                    }
+                    if (node.text != null) {
+                        append("  ")
+                        withStyle(SpanStyle(color = palette.text)) { append(piTreePreview(node.text)) }
+                    }
                 }
             }
+            Text(
+                text = tagLine,
+                style = body,
+                modifier = Modifier.weight(1f),
+            )
 
             Spacer(Modifier.width(4.dp))
             PiTreeRowMenu(actions = xmlRowActions(node, onCopy))
