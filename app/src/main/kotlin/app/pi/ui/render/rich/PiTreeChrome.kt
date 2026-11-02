@@ -67,6 +67,13 @@ internal const val PI_TREE_MAX_SCALAR_CHARS = 400
 internal const val PI_TREE_INDENT_DP = 14
 
 /**
+ * 第 [depth] 层的左缩进（dp）。前 6 层每层 14 dp；更深的每层只加 5 dp，总量封顶 140 dp，
+ * 这样 64 层的极端文档也始终给内容留得出宽度（不做横向滚动：会破坏标签行的自动换行）。
+ */
+internal fun piTreeIndentDp(depth: Int): Int =
+    (PI_TREE_INDENT_DP * minOf(depth, 6) + 5 * maxOf(depth - 6, 0)).coerceAtMost(140)
+
+/**
  * One-line, escaped, length-capped preview of a string leaf.
  *
  * Escapes newlines/tabs/quotes/backslashes so a leaf cannot add rows to the tree,
@@ -190,7 +197,7 @@ internal fun Modifier.piTreeGuides(depth: Int, color: Color): Modifier =
     if (depth <= 0) this else this.drawBehind {
         val stroke = 1.dp.toPx()
         for (level in 1..depth) {
-            val x = (level * PI_TREE_INDENT_DP).dp.toPx() - 5.dp.toPx()
+            val x = piTreeIndentDp(level).dp.toPx() - 5.dp.toPx()
             drawLine(color, Offset(x, 0f), Offset(x, size.height), stroke)
         }
     }
@@ -205,7 +212,7 @@ internal fun PiTreeMoreRow(depth: Int, remaining: Int, onMore: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClickLabel = "显示更多", onClick = onMore)
-            .padding(start = ((depth * PI_TREE_INDENT_DP) + 15).dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = (piTreeIndentDp(depth) + 15).dp, top = 6.dp, bottom = 6.dp),
     )
 }
 

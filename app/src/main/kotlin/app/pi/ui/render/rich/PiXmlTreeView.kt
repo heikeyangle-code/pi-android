@@ -156,7 +156,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
                 )
                 .piTreeGuides(node.depth, palette.mdCodeBlockBorder.copy(alpha = 0.18f))
                 .padding(
-                    start = (node.depth * PI_TREE_INDENT_DP).dp,
+                    start = piTreeIndentDp(node.depth).dp,
                     top = 3.dp,
                     end = 4.dp,
                     bottom = 1.dp,
@@ -225,7 +225,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
                     modifier = Modifier.padding(
-                        start = ((node.depth + 1) * PI_TREE_INDENT_DP).dp,
+                        start = piTreeIndentDp(node.depth + 1).dp,
                         top = 2.dp,
                         bottom = 2.dp,
                     ),

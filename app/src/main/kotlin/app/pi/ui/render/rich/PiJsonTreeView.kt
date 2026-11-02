@@ -166,7 +166,7 @@ private fun JsonNodeRow(
                 )
                 .piTreeGuides(node.depth, palette.mdCodeBlockBorder.copy(alpha = 0.18f))
                 .padding(
-                    start = (node.depth * PI_TREE_INDENT_DP).dp,
+                    start = piTreeIndentDp(node.depth).dp,
                     top = 3.dp,
                     end = 4.dp,
                     bottom = 1.dp,
@@ -288,7 +288,7 @@ private fun JsonHiddenChildrenRow(depth: Int, hidden: Int) {
         style = PiTheme.text.monoSmall,
         color = PiTheme.palette.muted,
         modifier = Modifier.padding(
-            start = (depth * PI_TREE_INDENT_DP).dp,
+            start = piTreeIndentDp(depth).dp,
             top = 2.dp,
             bottom = 2.dp,
         ),
