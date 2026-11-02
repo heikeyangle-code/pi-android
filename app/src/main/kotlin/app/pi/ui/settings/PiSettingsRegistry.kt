@@ -1465,7 +1465,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.keepAlive",
             title = "后台保活",
-            description = "后台继续跑回合（前台服务保活）。",
+            description = "空闲时也让引擎活着（前台服务保活）。回合进行中始终保活，关掉它不会让长构建被系统回收。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",

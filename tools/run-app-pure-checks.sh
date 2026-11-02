@@ -869,6 +869,26 @@ run_harness engine-exit-cause \
   "$ROOT/app/src/test/kotlin/app/pi/engine/EngineExitCauseCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/engine/EngineExitCause.kt"
 
+# app.pi.engine: 引擎**中途退出**之后是静默重启还是把失败页交出去。这条判定决定了用户
+# 会不会在干活的途中被一整屏"引擎没有在运行 + 重建运行时"打断 —— 而那个按钮会删掉 guest
+# 里装的 apt/pip/npm 包，却修不好一次被系统回收的进程（用户报的「两个小时一直弹」就是
+# 这一圈）。预算（两次）、间隔（800 ms）、以及"配置类错误一次都不重试"是这里钉死的。
+run_harness engine-crash-recovery \
+  app.pi.engine.EngineCrashRecoveryCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/EngineCrashRecoveryCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineCrashRecovery.kt"
+
+# app.pi.engine: 失败页**说什么**。以前所有失败共用一句「引擎没有在运行」和同一组按钮；
+# 现在按证据分成六类（运行环境没装好 / 切工作区失败 / 被系统结束 / 内存耗尽 / 参数或扩展
+# 错 / 普通崩溃），每一类有自己的标题与解释，且只有第一类提供「重建运行时」。误判的两个
+# 方向都会伤人：把"被系统结束"说成"环境坏了"会骗用户删掉环境；把"参数写错"说成"内存不足"
+# 会让用户去清内存。夹具逐条钉住退出码与 stderr 的判据，以及"六个标题必须互不相同"。
+run_harness engine-failure \
+  app.pi.engine.EngineFailureCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/EngineFailureCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineFailure.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineCrashRecovery.kt"
+
 # app.pi.ui.blocks: P2-1's per-tool result parser (`docs/capability-gap.md` §4.9).
 # Every rule in `ToolOutputParse.kt` is a claim about text pi wrote somewhere else — grep's
 # two row shapes (`core/tools/grep.ts:211-212`, empty answer `:256-259`, notice `:303`),

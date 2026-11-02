@@ -86,8 +86,22 @@ object PiEngineLifecyclePolicy {
      * service with no engine is a permanent notification about a process that does
      * not exist, and the honest state is the engine's own (`Boot.Failed` + 重试).
      */
-    fun shouldServiceRun(keepAlive: Boolean, engineAttached: Boolean, bootInProgress: Boolean): Boolean =
-        keepAlive && (engineAttached || bootInProgress)
+    /**
+     * @param turnRunning 此刻是否有一轮正在跑（模型调用 + 工具调用）。
+     *
+     * **回合进行中一律保活，与 `app.runtime.keepAlive` 无关。** 这条是 2026-11-02 补的：
+     * 那个开关的语义是"空闲时也别让引擎退出"，而旧判定把它当成了"要不要保护正在干活的
+     * 引擎"——关掉开关的人（或默认被改过的构建）在跑 `npm run build` 时没有任何前台服务，
+     * Android 的内存回收会把整棵进程树收走，用户看到的就是「引擎被系统结束了」那一屏。
+     * 打包/构建这种一跑几分钟的回合正是最需要前台服务的时候，它不该取决于一个描述
+     * "后台保活"的开关。
+     */
+    fun shouldServiceRun(
+        keepAlive: Boolean,
+        engineAttached: Boolean,
+        bootInProgress: Boolean,
+        turnRunning: Boolean = false,
+    ): Boolean = bootInProgress || (engineAttached && (keepAlive || turnRunning))
 
     /**
      * How long a one-second countdown may sleep: up to the moment its displayed

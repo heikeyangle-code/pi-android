@@ -83,9 +83,30 @@ fun main() {
 
     // ----------------------------------------------------------- the service itself
     run {
+        // C1 is the rule the 2026-11-02 batch changed. It used to be "the user's switch
+        // off wins over everything", which meant a turned-off 后台保活 left a running
+        // build with no foreground service at all — and that is precisely the window
+        // Android's memory reclaim takes the whole process tree down in. The switch is
+        // about staying alive while *idle*; a boot already ignores it.
         check(
-            "C1 the user's switch off wins over everything",
-            PiEngineLifecyclePolicy.shouldServiceRun(keepAlive = false, engineAttached = true, bootInProgress = true),
+            "C1 the user's switch off still keeps the service up while the runtime is booting",
+            PiEngineLifecyclePolicy.shouldServiceRun(
+                keepAlive = false, engineAttached = true, bootInProgress = true,
+            ),
+            true,
+        )
+        check(
+            "C1b and a turn running keeps it up even with the switch off",
+            PiEngineLifecyclePolicy.shouldServiceRun(
+                keepAlive = false, engineAttached = true, bootInProgress = false, turnRunning = true,
+            ),
+            true,
+        )
+        check(
+            "C1c an idle engine with the switch off is the one case that stops it",
+            PiEngineLifecyclePolicy.shouldServiceRun(
+                keepAlive = false, engineAttached = true, bootInProgress = false, turnRunning = false,
+            ),
             false,
         )
         check(
@@ -103,6 +124,15 @@ fun main() {
         check(
             "C4 nothing attached and nothing booting: the service should not exist",
             PiEngineLifecyclePolicy.shouldServiceRun(keepAlive = true, engineAttached = false, bootInProgress = false),
+            false,
+        )
+        // A turn cannot be running without an engine; the combination is only here to
+        // pin that the turn flag does not resurrect the service over a dead engine.
+        check(
+            "C5 a turn flag with no engine still stops it",
+            PiEngineLifecyclePolicy.shouldServiceRun(
+                keepAlive = true, engineAttached = false, bootInProgress = false, turnRunning = true,
+            ),
             false,
         )
     }

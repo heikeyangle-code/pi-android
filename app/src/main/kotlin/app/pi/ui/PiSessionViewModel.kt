@@ -11,6 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.pi.engine.EngineCrashRecovery
+import app.pi.engine.EngineFailure
+import app.pi.engine.EngineFailureClassify
 import app.pi.engine.EngineExitCause
 import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
@@ -137,7 +140,14 @@ sealed interface Boot {
      * stderr or exception text, which is the only thing that lets a failure be
      * diagnosed remotely.
      */
-    data class Failed(val message: String, val detail: String?) : Boot
+    /**
+     * 失败页的内容，由 [EngineFailureClassify] 按**真实原因**算出来。
+     *
+     * 以前这里只有 `message`/`detail` 两个字符串，三种完全不同的失败共用一句
+     * 「引擎没有在运行」和同一组按钮（含会删掉 guest 安装物的「重建运行时」）。现在
+     * 每一类有自己的标题、解释和该不该给重建按钮。
+     */
+    data class Failed(val failure: EngineFailure) : Boot
 }
 
 /**
@@ -1006,6 +1016,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var engineTransition = false
 
     /**
+     * 这条会话里已经替用户**静默重启**过几次引擎（见 [EngineCrashRecovery]）。
+     *
+     * 不清零会在一个长会话里把"三次抖动"误判成"引擎坏了"：只要引擎重新起来，这个
+     * 计数就归零（[attach]），所以它数的是**连续**失败。用户从失败页点「重试」也走
+     * [boot]，那条路上计数不归零没关系 —— 下一次起来时 [attach] 会清。
+     */
+    private var autoEngineRestarts = 0
+
+    /**
      * pi's settings documents, addressed exactly as a desktop install has them.
      *
      * The engine host owns the path layout, so the store is built from it rather
@@ -1830,8 +1849,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun syncEngineService(engineAttached: Boolean, bootInProgress: Boolean) {
         val keepAlive = _state.value.prefs.keepAlive
-        if (PiEngineLifecyclePolicy.shouldServiceRun(keepAlive, engineAttached, bootInProgress)) return
+        // 回合进行中也算"需要保活"：长构建被系统回收是用户报的那一屏最常见的来源，
+        // 而 `app.runtime.keepAlive` 描述的是空闲时要不要继续挂着，不是"干活时要不要保护"。
+        if (PiEngineLifecyclePolicy.shouldServiceRun(keepAlive, engineAttached, bootInProgress, turnRunning())) {
+            return
+        }
         PiEngineService.stopIfRunning()
+    }
+
+    /** 与 [reportWakeLockNeed] 同一组输入：引擎在忙、正在流式、或有一个工具在跑。 */
+    private fun turnRunning(): Boolean {
+        val current = _state.value
+        return current.engine == PiEngineSession.EngineState.Busy ||
+            current.streaming ||
+            current.busy != null
     }
 
     /**
@@ -2173,7 +2204,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             else -> {
                 val detail = (back as? PiEngineHost.Boot.Failed)?.detail ?: failure.detail
                 val why = (back as? PiEngineHost.Boot.Failed)?.message ?: "引擎未能重新启动"
-                _state.value = _state.value.copy(boot = Boot.Failed(headline, detail))
+                _state.value = _state.value.copy(
+                    boot = Boot.Failed(EngineFailureClassify.workspaceSwitch(headline, detail)),
+                )
                 syncEngineService(engineAttached = false, bootInProgress = false)
                 reportWakeLockNeed()
                 val message = "$headline；在「$previous」重新启动也失败了（$why）。" +
@@ -2417,7 +2450,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // mid-write. The service is what keeps that process tree alive — the
             // engine itself is a child of this process (`host`). `keepAlive = false`
             // is the user asking for exactly that risk.
-            if (prefs.keepAlive) startEngineService()
+            // **安装运行时/冷启动这一段无条件开前台服务**：它是整条链上最容易被系统打断的
+            // 窗口（解包几十秒、node 冷启动），被打断就留下半棵树 —— 那正是下一次"重建"
+            // 的来由。`keepAlive` 只决定**空闲之后**还留不留着。
+            startEngineService()
             // Unpacking the runtime and pi's cold start are CPU-bound with nothing on
             // screen, so the wake lock has to be held across them; the service takes
             // it when it starts (`startForegroundWithNotification`), and the engine
@@ -2441,7 +2477,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             when (boot) {
                 is PiEngineHost.Boot.Ready -> attach(boot.session)
                 is PiEngineHost.Boot.Failed -> {
-                    _state.value = _state.value.copy(boot = Boot.Failed(boot.message, boot.detail))
+                    _state.value = _state.value.copy(
+                        boot = Boot.Failed(EngineFailureClassify.provisioning(boot.message, boot.detail)),
+                    )
                     // There is no engine and none is coming, so the service has
                     // nothing to protect: leaving it up would keep a notification
                     // saying 「PI 正在运行」 over a process that failed to start.
@@ -2576,6 +2614,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
         invalidateSettingsCache()
+        // 引擎真的起来了：连续失败的计数归零。放在 `Boot.Ready` 这一句旁边，是因为
+        // "起来了"就是它的判据 —— 不能放在 `boot()` 的开头（那时还不知道会不会失败）。
+        autoEngineRestarts = 0
         _state.value = _state.value.copy(boot = Boot.Ready)
         // The queue counters describe **this engine process's** queues, and the engine in
         // hand is brand new, so its queues are empty. pi sends `queue_update` only when
@@ -2719,6 +2760,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     bashStream.setLength(0)
                     lastBashPublishAt = 0L
                     bashStreamTrimmed = false
+                    // 中途退出不是"运行环境没准备好"。这两件事以前共用一屏，于是一次
+                    // 被系统杀掉（客人里跑 `npm run build` 时最容易被 LMK 收走）就把整屏
+                    // 对话换成失败页，还配一个会删掉 guest 里所有安装物的「重建运行时」。
+                    // 先静默重启（有上限），连续失败才让用户看到那一屏，而且不给重建按钮。
+                    val crashedMidSession = !engineTransition
+                    val recovery = if (crashedMidSession) {
+                        EngineCrashRecovery.decide(
+                            attempts = autoEngineRestarts,
+                            exitCode = engine.lastExitCode,
+                            stderr = engine.stderr.toString(),
+                        )
+                    } else {
+                        EngineCrashRecovery.Decision.GiveUp
+                    }
+                    val autoRestarting = recovery == EngineCrashRecovery.Decision.Restart
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
@@ -2727,34 +2783,44 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         // so leaving it true would keep the CPU wake lock held for a
                         // turn that no longer exists.
                         streaming = false,
-                        boot = Boot.Failed(
-                            if (engineState == PiEngineSession.EngineState.Stopped) {
-                                "引擎已停止，可以重新启动后继续。"
-                            } else {
-                                "引擎异常退出，可以重新启动后继续。"
-                            },
-                            // The engine's own reason, in one sentence plus the stderr
-                            // line it came from. `BootScreen` renders this under the
-                            // title (`BootScreen.kt:129-133`), and its own last line
-                            // asks the user to send exactly this text on. `null` when
-                            // there is nothing attributable, in which case the generic
-                            // sentence above is the honest answer.
+                        boot = if (autoRestarting) {
+                            // 对话留在屏幕上：这次死亡不打断用户。失败页只留给
+                            // "重启也修不好"的那种退出。
+                            _state.value.boot
+                        } else Boot.Failed(
+                            // 真实原因：退出码 + stderr 决定这是"被系统结束"、"内存耗尽"、
+                            // "参数/扩展错"还是普通崩溃。四类的标题、解释、是否给
+                            // 「重建运行时」都不同（`EngineFailureClassify`）。
                             //
-                            // The third argument is `app.extensions.args`: the one
-                            // launch input the user types freely, and the most common
-                            // source of the `Unknown option` exit since the app started
-                            // forwarding it. Read through the same sidecar the launch
-                            // itself uses (`ExtensionArgsStore`, line 2219), because
-                            // only this layer owns storage — `EngineExitCause` is
-                            // Android-free by design.
-                            EngineExitCause.detail(
-                                engine.lastExitCode,
-                                engine.stderr.toString(),
-                                extensionArgsStore.read(),
+                            // 第三个实参是 `app.extensions.args`：唯一由用户自由输入的启动
+                            // 输入，也是 App 开始转发它之后 `Unknown option` 最常见的来源。
+                            // 它经与启动同一个 sidecar 读取（`ExtensionArgsStore`）—— 只有
+                            // 这一层拥有存储。
+                            EngineFailureClassify.exit(
+                                exitCode = engine.lastExitCode,
+                                stderr = engine.stderr.toString(),
+                                detail = EngineExitCause.detail(
+                                    engine.lastExitCode,
+                                    engine.stderr.toString(),
+                                    extensionArgsStore.read(),
+                                ),
                             ),
                         ),
                     )
-                    if (!engineTransition) {
+                    if (autoRestarting) {
+                        autoEngineRestarts += 1
+                        pushNotice(
+                            "引擎已退出，正在自动重启（第 $autoEngineRestarts 次）…",
+                            Notice.Tone.Warning,
+                        )
+                        viewModelScope.launch {
+                            delay(EngineCrashRecovery.RESTART_DELAY_MS)
+                            // 等一下再起：立刻 fork 一个 pi 会在同一份内存压力下再死一次。
+                            // 只有此刻仍然没有引擎时才起 —— 期间用户可能已经点了重试、
+                            // 换了工作区，或者别的路径把它拉起来了。
+                            if (session == null) boot()
+                        }
+                    } else if (!engineTransition) {
                         // Not a restart: nothing is replacing this engine, so the
                         // foreground service has nothing left to protect a retry
                         // (the new failure screen's button) is a *new* engine.

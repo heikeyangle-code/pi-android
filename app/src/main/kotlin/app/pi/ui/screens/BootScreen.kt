@@ -122,29 +122,40 @@ fun BootScreen(
             }
 
             is Boot.Failed -> {
-                // "引擎没能启动" described the only case this screen had when it was
-                // written. It is also where a *mid-session* engine death now lands
-                // (the ViewModel publishes `Boot.Failed` when pi exits on its own, so
-                // the composer cannot write into a closed pipe), and for that case the
-                // old title was false: the engine had started, and stopped. The
-                // neutral wording is true for both; the message below says which.
+                // 标题与解释**按真实原因**来（`EngineFailureClassify`）：运行环境没装好、
+                // 被系统结束、内存耗尽、参数/扩展错、切工作区失败 —— 五类不是同一件事，
+                // 需要的动作也不同。以前它们共用一句「引擎没有在运行」，用户只能猜。
                 Spacer(Modifier.height(BootHeadingGap))
-                BootHeading("引擎没有在运行")
+                BootHeading(boot.failure.title)
                 Spacer(Modifier.height(BootCardGap))
-                BootErrorCard(message = boot.message, detail = boot.detail)
+                BootErrorCard(message = boot.failure.explanation, detail = boot.failure.detail)
                 Spacer(Modifier.height(BootCardActionGap))
                 BootButton("重试", onRetry)
-                Spacer(Modifier.height(BootCardActionGap))
-                // The repair action, and the one place the user can reach it. It is
-                // visually the destructive one (error fill, not the accent) because it
-                // is the only button in this app that deletes anything inside the guest.
-                BootButton("重建运行时", onRebuild, destructive = true)
-                Spacer(Modifier.height(BootNoteGap))
-                BootParagraph(
-                    "重建会删掉 guest 里你自己装的东西：apt/pip 包、npm -g 包、" +
-                        "/usr/local/bin 下的文件、/root 下除 .pi/agent 之外的文件。" +
-                        "工作区、会话、设置和凭证在易失树之外，不会被删。",
-                )
+                if (boot.failure.rebuildOffered) {
+                    Spacer(Modifier.height(BootCardActionGap))
+                    // The repair action, and the one place the user can reach it. It is
+                    // visually the destructive one (error fill, not the accent) because it
+                    // is the only button in this app that deletes anything inside the guest.
+                    //
+                    // **Only for "the runtime could not be prepared".** A mid-session engine
+                    // exit reaches this screen with `rebuildOffered = false`: wiping the guest
+                    // cannot fix a killed or crashed process, and the button's presence is
+                    // what turned one crash into "点了重建、装的东西没了、还是崩".
+                    BootButton("重建运行时", onRebuild, destructive = true)
+                    Spacer(Modifier.height(BootNoteGap))
+                    BootParagraph(
+                        "重建会删掉 guest 里你自己装的东西：apt/pip 包、npm -g 包、" +
+                            "/usr/local/bin 下的文件、/root 下除 .pi/agent 之外的文件。" +
+                            "工作区、会话、设置和凭证在易失树之外，不会被删。",
+                    )
+                } else {
+                    Spacer(Modifier.height(BootNoteGap))
+                    BootParagraph(
+                        "运行环境本身是好的：这是引擎跑着跑着自己退出了（被系统回收、内存不足、" +
+                            "或者启动参数/扩展出错）。重建运行环境修不好这类退出，只会删掉你在 " +
+                            "guest 里装的东西，所以这里没有那个按钮。",
+                    )
+                }
                 Spacer(Modifier.height(BootNoteGap))
                 BootParagraph("如果反复失败，把这个提示连同它下面的文字发给我。")
             }
