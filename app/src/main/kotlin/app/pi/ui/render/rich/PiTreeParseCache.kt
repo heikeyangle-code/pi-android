@@ -23,9 +23,34 @@ internal object PiTreeParseCache {
 
     @Synchronized
     @Suppress("UNCHECKED_CAST")
+    fun <T : Any> peek(kind: String, source: String, settled: Boolean): T? =
+        entries[Key(kind, settled, source)] as? T
+
+    @Synchronized
+    @Suppress("UNCHECKED_CAST")
     fun <T : Any> getOrParse(kind: String, source: String, settled: Boolean, parse: () -> T): T {
         val key = Key(kind, settled, source)
         (entries[key] as? T)?.let { return it }
         return parse().also { entries[key] = it }
     }
+}
+
+/**
+ * 解析放到后台：命中缓存立刻返回；未命中先返回 null（调用方先显示源码 + 「解析中…」），
+ * 在 `Dispatchers.Default` 上解析完再换成树。第一次出现大 JSON/XML 不再卡主线程。
+ */
+@androidx.compose.runtime.Composable
+internal fun <T : Any> rememberTreeParse(
+    kind: String,
+    source: String,
+    settled: Boolean,
+    parse: () -> T,
+): T? {
+    val cached = PiTreeParseCache.peek<T>(kind, source, settled)
+    if (cached != null) return cached
+    return androidx.compose.runtime.produceState<T?>(initialValue = null, kind, source, settled) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            PiTreeParseCache.getOrParse(kind, source, settled, parse)
+        }
+    }.value
 }

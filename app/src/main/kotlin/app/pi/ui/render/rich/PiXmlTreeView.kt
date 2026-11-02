@@ -67,9 +67,7 @@ fun PiXmlTreeView(
     modifier: Modifier = Modifier,
 ) {
     val limits = remember { XmlTreeLimits() }
-    val result = remember(source, settled) {
-        PiTreeParseCache.getOrParse("xml", source, settled) { PiXmlTreeParser.parse(source, settled, limits) }
-    }
+    val result = rememberTreeParse("xml", source, settled) { PiXmlTreeParser.parse(source, settled, limits) }
     val tree = result as? XmlTreeResult.Tree
     var mode by rememberSaveable(source, initialMode) { mutableStateOf(initialMode) }
 
@@ -87,6 +85,7 @@ fun PiXmlTreeView(
     val status = when {
         currentFeedback != null -> currentFeedback
         tree != null -> "${tree.nodeCount} 个元素"
+        result == null -> "解析中…"
         mode == PiTreeMode.Tree && result is XmlTreeResult.Failure ->
             xmlFailureNotice(result.reason, limits)
         else -> null
@@ -99,6 +98,7 @@ fun PiXmlTreeView(
             status = status,
             onSelect = { mode = it },
         )
+        PiCardHairline()
         if (mode == PiTreeMode.Tree && tree != null) {
             PiXmlTreeBody(
                 root = tree.root,
@@ -154,10 +154,12 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
                         Modifier
                     },
                 )
+                .piTreeGuides(node.depth, palette.mdCodeBlockBorder.copy(alpha = 0.18f))
                 .padding(
                     start = (node.depth * PI_TREE_INDENT_DP).dp,
-                    top = 2.dp,
+                    top = 3.dp,
                     end = 4.dp,
+                    bottom = 1.dp,
                 ),
             verticalAlignment = Alignment.Top,
         ) {
@@ -211,10 +213,13 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
         }
 
         if (expanded) {
-            val shown = node.children.take(PI_TREE_MAX_VISIBLE_CHILDREN)
+            var limit by rememberSaveable(node.path) { mutableStateOf(PI_TREE_PAGE) }
+            val shown = node.children.take(minOf(limit, PI_TREE_MAX_VISIBLE_CHILDREN))
             shown.forEach { child -> XmlNodeRow(node = child, onCopy = onCopy) }
             val hidden = node.children.size - shown.size
-            if (hidden > 0) {
+            if (hidden > 0 && shown.size < PI_TREE_MAX_VISIBLE_CHILDREN) {
+                PiTreeMoreRow(node.depth + 1, hidden) { limit += PI_TREE_PAGE }
+            } else if (hidden > 0) {
                 Text(
                     text = "… 还有 $hidden 个子元素，切换源码查看",
                     style = PiTheme.text.monoSmall,

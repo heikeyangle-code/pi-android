@@ -70,9 +70,7 @@ fun PiJsonTreeView(
     val limits = remember { JsonTreeLimits() }
     // 解析在组合线程上跑（最多 256 KiB / 2 万节点），行每次滚回来都是新组合；走缓存，只在
     // 第一次付一次代价（`PiTreeParseCache`）。
-    val result = remember(source, settled) {
-        PiTreeParseCache.getOrParse("json", source, settled) { PiJsonTree.parse(source, settled, limits) }
-    }
+    val result = rememberTreeParse("json", source, settled) { PiJsonTree.parse(source, settled, limits) }
     val tree = result as? JsonTreeResult.Tree
     var mode by rememberSaveable(source, initialMode) { mutableStateOf(initialMode) }
 
@@ -90,6 +88,7 @@ fun PiJsonTreeView(
     val status = when {
         currentFeedback != null -> currentFeedback
         tree != null -> "${tree.nodeCount} 个节点"
+        result == null -> "解析中…"
         mode == PiTreeMode.Tree && result is JsonTreeResult.Failure ->
             jsonFailureNotice(result.reason, limits)
         else -> null
@@ -102,6 +101,7 @@ fun PiJsonTreeView(
             status = status,
             onSelect = { mode = it },
         )
+        PiCardHairline()
         if (mode == PiTreeMode.Tree && tree != null) {
             PiJsonTreeBody(
                 root = tree.root,
@@ -164,10 +164,12 @@ private fun JsonNodeRow(
                         Modifier
                     },
                 )
+                .piTreeGuides(node.depth, palette.mdCodeBlockBorder.copy(alpha = 0.18f))
                 .padding(
                     start = (node.depth * PI_TREE_INDENT_DP).dp,
-                    top = 2.dp,
+                    top = 3.dp,
                     end = 4.dp,
+                    bottom = 1.dp,
                 ),
             verticalAlignment = Alignment.Top,
         ) {
@@ -218,7 +220,8 @@ private fun JsonNodeRow(
         if (expanded) {
             when (node) {
                 is JsonObjectNode -> {
-                    val shown = node.entries.take(PI_TREE_MAX_VISIBLE_CHILDREN)
+                    var limit by rememberSaveable(node.path) { mutableStateOf(PI_TREE_PAGE) }
+                    val shown = node.entries.take(minOf(limit, PI_TREE_MAX_VISIBLE_CHILDREN))
                     shown.forEach { entry ->
                         JsonNodeRow(
                             node = entry.value,
@@ -229,11 +232,16 @@ private fun JsonNodeRow(
                     }
                     val hidden = node.entries.size - shown.size
                     if (hidden > 0) {
-                        JsonHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        if (shown.size < PI_TREE_MAX_VISIBLE_CHILDREN) {
+                            PiTreeMoreRow(node.depth + 1, hidden) { limit += PI_TREE_PAGE }
+                        } else {
+                            JsonHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        }
                     }
                 }
                 is JsonArrayNode -> {
-                    val shown = node.items.take(PI_TREE_MAX_VISIBLE_CHILDREN)
+                    var limit by rememberSaveable(node.path) { mutableStateOf(PI_TREE_PAGE) }
+                    val shown = node.items.take(minOf(limit, PI_TREE_MAX_VISIBLE_CHILDREN))
                     shown.forEach { item ->
                         JsonNodeRow(
                             node = item.value,
@@ -244,7 +252,11 @@ private fun JsonNodeRow(
                     }
                     val hidden = node.items.size - shown.size
                     if (hidden > 0) {
-                        JsonHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        if (shown.size < PI_TREE_MAX_VISIBLE_CHILDREN) {
+                            PiTreeMoreRow(node.depth + 1, hidden) { limit += PI_TREE_PAGE }
+                        } else {
+                            JsonHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        }
                     }
                 }
                 is JsonScalarNode -> Unit

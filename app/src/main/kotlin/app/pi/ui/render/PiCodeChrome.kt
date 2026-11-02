@@ -1,6 +1,7 @@
 package app.pi.ui.render
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -110,79 +112,56 @@ internal fun PiRichCodeBlock(
         code = code,
     ) {
         Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 8.dp, top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = info.title ?: info.language,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = palette.mdCodeBlockBorder,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (info.title != null && info.language.isNotEmpty()) {
+            PiCardHeader(
+                language = info.language,
+                title = info.title,
+                palette = palette,
+                copied = copied,
+                onCopy = {
+                    clipboard.setText(AnnotatedString(code))
+                    copied = true
+                },
+                menu = {
+                    Box {
                         Text(
-                            text = info.language,
-                            style = MaterialTheme.typography.labelSmall,
+                            text = "⋯",
+                            style = MaterialTheme.typography.titleMedium,
                             color = palette.muted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clickable(onClickLabel = "代码块显示选项") { menuOpen = true }
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
                         )
-                    }
-                }
-                Text(
-                    text = if (copied) "已复制" else "复制",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = palette.mdCodeBlockBorder,
-                    modifier = Modifier
-                        .clickable(onClickLabel = "复制代码") {
-                            clipboard.setText(AnnotatedString(code))
-                            copied = true
-                        }
-                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                )
-                Box {
-                    Text(
-                        text = "⋯",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = palette.mdCodeBlockBorder,
-                        modifier = Modifier
-                            .clickable(onClickLabel = "代码块显示选项") { menuOpen = true }
-                            .padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                    )
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text(if (showLineNumbers) "隐藏行号" else "显示行号") },
-                            enabled = !wrap,
-                            onClick = {
-                                showLineNumbers = !showLineNumbers
-                                menuOpen = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(if (wrap) "横向滚动" else "自动换行") },
-                            onClick = {
-                                wrap = !wrap
-                                if (wrap) showLineNumbers = false
-                                menuOpen = false
-                            },
-                        )
-                        if (lineCount > MAX_COLLAPSED_LINES) {
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
-                                text = { Text(if (expanded) "收起" else "展开全部（$lineCount 行）") },
+                                text = { Text(if (showLineNumbers) "隐藏行号" else "显示行号") },
+                                enabled = !wrap,
                                 onClick = {
-                                    expanded = !expanded
+                                    showLineNumbers = !showLineNumbers
                                     menuOpen = false
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text(if (wrap) "横向滚动" else "自动换行") },
+                                onClick = {
+                                    wrap = !wrap
+                                    if (wrap) showLineNumbers = false
+                                    menuOpen = false
+                                },
+                            )
+                            if (lineCount > MAX_COLLAPSED_LINES) {
+                                DropdownMenuItem(
+                                    text = { Text(if (expanded) "收起" else "展开全部（$lineCount 行）") },
+                                    onClick = {
+                                        expanded = !expanded
+                                        menuOpen = false
+                                    },
+                                )
+                            }
                         }
                     }
-                }
-            }
+                },
+            )
+            PiCardDivider(palette)
 
             val codeColor = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock
             if (wrap) {
@@ -217,14 +196,16 @@ internal fun PiRichCodeBlock(
             }
 
             if (lineCount > MAX_COLLAPSED_LINES) {
+                PiCardDivider(palette)
                 Text(
-                    text = if (expanded) "收起" else "展开全部（$lineCount 行）",
+                    text = if (expanded) "收起 ▴" else "展开全部（$lineCount 行）▾",
                     style = MaterialTheme.typography.labelMedium,
-                    color = palette.mdCodeBlockBorder,
+                    color = palette.muted,
+                    textAlign = TextAlign.Center,
                     modifier = Modifier
-                        .align(Alignment.End)
+                        .fillMaxWidth()
                         .clickable { expanded = !expanded }
-                        .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp),
+                        .padding(vertical = 10.dp),
                 )
             }
         }
@@ -276,33 +257,83 @@ internal fun PiRichCardFrame(
         code = code,
     ) {
         Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 8.dp, top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = info.title ?: info.language,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = palette.mdCodeBlockBorder,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = if (copied) "已复制" else "复制",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = palette.mdCodeBlockBorder,
-                    modifier = Modifier
-                        .clickable(onClickLabel = "复制代码") {
-                            clipboard.setText(AnnotatedString(code))
-                            copied = true
-                        }
-                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                )
-            }
+            PiCardHeader(
+                language = info.language,
+                title = info.title,
+                palette = palette,
+                copied = copied,
+                onCopy = {
+                    clipboard.setText(AnnotatedString(code))
+                    copied = true
+                },
+            )
+            PiCardDivider(palette)
             content()
         }
     }
+}
+
+/**
+ * 代码块与 JSON / XML 树共用的卡片头：左侧语言胶囊 + 可选标题，右侧「复制」和可选菜单。
+ * 三者共用一个头，才不会同一页里出现三种长相的「代码卡片」。
+ */
+@Composable
+internal fun PiCardHeader(
+    language: String,
+    title: String?,
+    palette: PiPalette,
+    copied: Boolean,
+    onCopy: () -> Unit,
+    menu: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = if (menu == null) 6.dp else 0.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (language.isNotEmpty()) {
+            Text(
+                text = language,
+                style = PiTheme.text.monoSmall,
+                color = palette.accent,
+                maxLines = 1,
+                modifier = Modifier
+                    .background(palette.accent.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+        }
+        if (!title.isNullOrEmpty()) {
+            if (language.isNotEmpty()) Spacer(Modifier.width(8.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = if (copied) "已复制" else "复制",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (copied) palette.accent else palette.muted,
+            modifier = Modifier
+                .clickable(onClickLabel = "复制代码", onClick = onCopy)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+        menu?.invoke()
+    }
+}
+
+/** 卡片内的发丝分隔线（头 / 正文 / 折叠条之间）。 */
+@Composable
+internal fun PiCardDivider(palette: PiPalette) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(palette.mdCodeBlockBorder.copy(alpha = 0.16f)),
+    )
 }
