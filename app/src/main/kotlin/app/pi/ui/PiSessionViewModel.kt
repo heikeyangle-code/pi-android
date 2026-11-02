@@ -2845,7 +2845,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                             // 等一下再起：立刻 fork 一个 pi 会在同一份内存压力下再死一次。
                             // 只有此刻仍然没有引擎时才起 —— 期间用户可能已经点了重试、
                             // 换了工作区，或者别的路径把它拉起来了。
-                            if (session == null) boot()
+                            // 这一条是**没人看着**的路径：失败也必须变成状态，而不是一个
+                            // 未捕获异常（`viewModelScope` 的默认处理器会直接把 App 带走）。
+                            if (session == null) runCatching { boot() }
                         }
                     } else if (!engineTransition) {
                         // Not a restart: nothing is replacing this engine, so the

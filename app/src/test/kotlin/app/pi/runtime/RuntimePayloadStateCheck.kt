@@ -343,7 +343,12 @@ fun main() {
     )
 
     // ① The fast path is one comparison and one early return.
-    val fastPath = "if (!rebuild && paths.rootfs.isDirectory && isStampCurrent(revision)) " +
+    //
+    // 2026-11-02: 守卫多了一个 `!repair`。`repair` 是「不删数据的重新解包」——它必须走
+    // 慢路径，否则戳记相符时它会立刻返回成功，而它存在的理由正是"戳记相符但树不完整"。
+    // 所以这不是绕过这条性质，而是把这条性质补完整：**唯一**的提前返回，仍然只由戳记与
+    // 两个显式开关决定，仍然不做摘要/清单/遍历。
+    val fastPath = "if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) " +
         "{ return finishCurrent(revision, migration = false, onStep) }"
     check("P1 the fast path is one guarded early return", provisionerSource.split(fastPath).size - 1, 1)
     check(

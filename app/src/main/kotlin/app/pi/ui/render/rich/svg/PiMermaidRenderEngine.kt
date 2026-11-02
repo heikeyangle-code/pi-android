@@ -552,9 +552,13 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         application.registerComponentCallbacks(
             object : android.content.ComponentCallbacks2 {
                 override fun onTrimMemory(level: Int) {
-                    if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-                        disposeHost("系统内存紧张（onTrimMemory=$level）")
-                    }
+                    // 只看"系统现在真的缺内存"的那几档：RUNNING_LOW(10)、RUNNING_CRITICAL(15)、
+                    // 以及后台档位 BACKGROUND(40)/MODERATE(60)/COMPLETE(80)。
+                    // **跳过 UI_HIDDEN(20)**：它只表示"App 切到后台"，几乎每次切应用都发，
+                    // 在那里拆宿主会让用户切回来时看到一次"源码"闪一下，而当时并不缺内存。
+                    val pressured = level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW &&
+                        level != android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
+                    if (pressured) disposeHost("系统内存紧张（onTrimMemory=$level）")
                 }
 
                 override fun onConfigurationChanged(newConfig: android.content.res.Configuration) = Unit
