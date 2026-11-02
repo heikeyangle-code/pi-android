@@ -1,21 +1,12 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.dp
 import app.pi.rpc.AssistantText
 import app.pi.rpc.PiImage
 import app.pi.ui.render.PiMarkdownText
-import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiSpacing
+import app.pi.ui.render.withStreamingCursor
 
 /**
  * `assistant-text` (docs/pi-android-ui-spec.md §7.4): no container at all — the
@@ -66,7 +57,6 @@ fun AssistantTextBlock(
      */
     onImageClick: ((PiImage) -> Unit)? = null,
 ) {
-    val palette = PiTheme.palette
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     BlockColumn(modifier) {
         // §4.8: 助手消息长按 → 复制全部. 保存为文件 / 重新生成 are not offered here —
@@ -82,24 +72,17 @@ fun AssistantTextBlock(
             ),
         ) {
         SelectableContent {
-            Row(verticalAlignment = Alignment.Bottom) {
-                if (item.text.isNotEmpty()) {
-                    PiMarkdownText(
-                        markdown = item.text,
-                        modifier = Modifier.weight(1f),
-                        onImageClick = onImageClick,
-                        streaming = item.streaming,
-                    )
-                }
-                if (item.streaming) {
-                    Box(
-                        modifier = Modifier
-                            .padding(start = PiSpacing.small)
-                            .size(width = 8.dp, height = 16.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(palette.accent.copy(alpha = 0.65f)),
-                    )
-                }
+            // 光标 `▍` 接在 Markdown 源码末尾（`withStreamingCursor`），紧跟最后一个字，也不占
+            // 布局宽度：原来是正文旁边另放一个 8×16 的方块，贴着整块正文的右缘（最后一行很短
+            // 时离字很远），并且流式结束它消失的那一帧正文变宽、已断好的行会重排。
+            // 「复制全部」仍复制 `item.text` 原文，光标不会进剪贴板。
+            val shown = if (item.streaming) withStreamingCursor(item.text) else item.text
+            if (shown.isNotEmpty()) {
+                PiMarkdownText(
+                    markdown = shown,
+                    modifier = Modifier.fillMaxWidth(),
+                    onImageClick = onImageClick,
+                )
             }
         }
         }

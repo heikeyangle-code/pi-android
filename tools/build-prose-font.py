@@ -62,6 +62,7 @@ CUTS = [
 EXTRA_HANZI = "啰怼囧嘚嫑粿煋妳祂祐翀垚堃琇珺珅珣琤瑄璟玥玙彧旻暕"
 
 VERSION = "2.003R-subset"
+CARET = 0x258D  # ▍, the streaming caret (see build())
 
 
 def gb2312(ch):
@@ -88,7 +89,7 @@ def charset(cmap):
     for cp in (
         list(range(0x2190, 0x2194))
         + [0x21D2, 0x21D4, 0x2200, 0x2203, 0x2208, 0x2211, 0x221A, 0x221E, 0x2248, 0x2260, 0x2264, 0x2265]
-        + [0x2713, 0x2717, 0x25CF, 0x25CB, 0x25A0, 0x25A1, 0x2605, 0x2606]
+        + [0x2713, 0x2717, 0x25CF, 0x25CB, 0x25A0, 0x25A1, 0x2605, 0x2606, 0x258D]  # 0x258D ▍ = the streaming caret
     ):
         chars.add(chr(cp))  # arrows, maths, check marks, geometric shapes
     chars.update(chr(cp) for cp in range(0x3000, 0x3040))  # CJK symbols and punctuation
@@ -136,6 +137,13 @@ def build(source, out_dir):
         subsetter = subset.Subsetter(opts)
         subsetter.populate(text="".join(chars))
         subsetter.subset(font)
+        # The streaming caret ▍ (U+258D). In a CJK face it is a full-width (1 em) block glyph whose
+        # ink is only the left 3/8; set at the end of a line it would claim a whole em and wrap
+        # onto the next line whenever less than 16 sp was left. Shrink the *advance* to 0.4 em and
+        # leave the outline alone: the ink still fits (0.375 em) and the caret takes a caret's room.
+        caret = font.getBestCmap()[CARET]
+        advance, lsb = font["hmtx"][caret]
+        font["hmtx"][caret] = (int(font["head"].unitsPerEm * 0.4), lsb)
         font["OS/2"].usWeightClass = wght
         rename(font, family, postscript)
         assert_no_reserved_name(font, filename)
