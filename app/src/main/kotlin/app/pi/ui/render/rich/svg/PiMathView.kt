@@ -80,6 +80,14 @@ import kotlin.math.roundToInt
  * 行高那么高的公式。代价是行内公式失败时看不到原因（那行原因会把段落撑乱），这是有意的
  * 取舍：原因在日志/块级回退里能看到。
  *
+ * ## `fallbackText`：升级前的文本，只用在行内兜底
+ *
+ * 调用方（`PiMarkdownComponents`）把 `PiLatex.formulaText` 的 Unicode 结果传进来：行内公式
+ * 还没画出来或失败时，屏幕上先显示这段文本——也就是"没接这个 view 之前"逐字相同的样子，
+ * 而不是一串带反斜杠的 TeX。块级公式失败时走的是源码块（[PiMathSourceBlock]）：那里有整行
+ * 宽度，既能显示原文也能显示一行原因，比一行被截断的 Unicode 近似更有用，所以块级分支
+ * 不用 `fallbackText`。这个差异是有意的，不是漏接参数。
+ *
  * ## 状态与失效
  *
  * 新 `source` 会在同一次组合里重置渲染状态（`remember(source, display)`），所以绝不会出

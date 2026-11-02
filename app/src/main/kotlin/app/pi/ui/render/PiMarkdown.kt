@@ -3,6 +3,7 @@ package app.pi.ui.render
 import java.util.WeakHashMap
 import app.pi.ui.theme.PiMonoFamily
 import androidx.compose.ui.text.style.BaselineShift
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.SpanStyle

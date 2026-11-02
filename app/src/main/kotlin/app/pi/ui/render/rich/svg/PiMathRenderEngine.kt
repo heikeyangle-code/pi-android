@@ -159,13 +159,16 @@ private const val MAX_VIEWBOX_SPAN = 4096.0
  * 的任何东西。所以 [accept] 依次做：
  *
  * 1. 从 `innerHTML` 里抽出第一个完整的 `<svg>…</svg>`（按标签深度配对，不是正则截断）；
- * 2. 补回 `xmlns` / `xmlns:xlink`，并把裸 `href="#…"` 提升成 `xlink:href`——浏览器把 DOM
+ * 2. 把开始标签里**属性值内部**的裸 `<` 转义成 `&lt;`（MathJax 会把原始 TeX 写进
+ *    `data-latex="…"`，一条含小于号的公式会让 sanitizer 的标签解析直接失败，见
+ *    [escapeLessThanInAttributes]）；
+ * 3. 补回 `xmlns` / `xmlns:xlink`，并把裸 `href="#…"` 提升成 `xlink:href`——浏览器把 DOM
  *    再序列化成 HTML 时可能丢掉命名空间前缀，而 AndroidSVG 的 `use` 走的是 SVG 1.1 的
  *    `xlink:href`（选型文档 §3.3 第 5 条明确"裸 href 是否认需实测"，这里不走那条未验证路径）；
- * 3. `viewBox` 跨度超过 [MAX_VIEWBOX_SPAN] 时整体等比缩放（见 [fitViewBox]）；
- * 4. 把 `currentColor` 换成 `theme.foreground`（AndroidSVG 不解析 `currentColor`，缺省按
+ * 4. `viewBox` 跨度超过 [MAX_VIEWBOX_SPAN] 时整体等比缩放（见 [fitViewBox]）；
+ * 5. 把 `currentColor` 换成 `theme.foreground`（AndroidSVG 不解析 `currentColor`，缺省按
  *    黑色画——深色主题下就是黑字贴黑底，选型文档 R7）；
- * 5. 才交给 sanitizer，再从**已清洗**的 SVG 里取固有尺寸。
+ * 6. 才交给 sanitizer，再从**已清洗**的 SVG 里取固有尺寸。
  *
  * ## 缓存
  *
