@@ -238,18 +238,34 @@ object WorkspaceChoice {
         val root = GuestWorkspacePath.GUEST_ROOT
         if (guestCwd == root) return null
         val prefix = "$root/"
-        if (!guestCwd.startsWith(prefix)) return null
-        val rest = guestCwd.removePrefix(prefix)
-        val owned = "$rootRelative/"
-        if (rest.startsWith(owned)) {
-            val name = rest.removePrefix(owned)
-            // 只认**直接**在 `pi/workspaces/` 下的一层；`workspace-1/sub` 不是另一个工作区。
+        if (guestCwd.startsWith(prefix)) {
+            val rest = guestCwd.removePrefix(prefix)
+            val owned = "$rootRelative/"
+            if (rest.startsWith(owned)) {
+                val name = rest.removePrefix(owned)
+                // 只认**直接**在 `pi/workspaces/` 下的一层；`workspace-1/sub` 不是另一个工作区。
+                return name.takeIf { it.isNotEmpty() && !it.contains('/') }
+            }
+            // 外部工作区：guest 拼法是 `GuestWorkspacePath.under` 的产物，也就是 `/workspace` +
+            // 宿主绝对路径，所以去掉 `/workspace` 前缀就回到宿主路径。
+            val hostPath = "/" + rest
+            return hostPath.takeIf { it.length > 1 }
+        }
+        // **旧拼法**：2026-09-23 工作区搬进 rootfs 之前，pi 记的 cwd 是宿主路径
+        // （`<files>/pi/workspaces/workspace-1`）。这些会话还在用户的列表里，点开它们时
+        // pi 会按这个 cwd 重建运行时（目录仍在），而 App 这边必须同样认得出它是哪个工作区
+        // —— 否则芯片就停在旧工作区（用户报的「文件都换了、芯片没换」）。
+        val marker = "/$rootRelative/"
+        val at = guestCwd.lastIndexOf(marker)
+        if (at >= 0) {
+            val name = guestCwd.substring(at + marker.length)
             return name.takeIf { it.isNotEmpty() && !it.contains('/') }
         }
-        // 外部工作区：guest 拼法是 `GuestWorkspacePath.under` 的产物，也就是 `/workspace` +
-        // 宿主绝对路径，所以去掉 `/workspace` 前缀就回到宿主路径。
-        val hostPath = "/" + rest
-        return hostPath.takeIf { it.length > 1 }
+        // 旧拼法里的**外部**工作区就是它的宿主绝对路径；只有存储卷下的路径才认
+        // （系统目录不是工作区，`existing()` 还会再校验一次）。
+        return guestCwd.takeIf {
+            it.length > 1 && (it.startsWith("/storage/") || it.startsWith("/sdcard/"))
+        }
     }
 
     /**

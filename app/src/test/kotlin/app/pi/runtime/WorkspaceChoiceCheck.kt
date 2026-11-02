@@ -588,6 +588,22 @@ private fun pickChecks() {
             ),
             "workspace-3",
         )
+        // 旧拼法（2026-09-23 之前记的是宿主路径）—— 用户列表里还有这类会话。
+        check(
+            "legacy: a host-spelled workspace still maps",
+            WorkspaceChoice.nameForGuestCwd("/data/user/0/app.pi/files/pi/workspaces/workspace-4", root),
+            "workspace-4",
+        )
+        check(
+            "legacy: a host-spelled external directory maps to itself",
+            WorkspaceChoice.nameForGuestCwd("/storage/emulated/0/Old Proj", root),
+            "/storage/emulated/0/Old Proj",
+        )
+        check(
+            "legacy: a system path is still refused",
+            WorkspaceChoice.nameForGuestCwd("/data/data/app.pi/files/pi", root),
+            null,
+        )
         check(
             "round trip: external",
             WorkspaceChoice.nameForGuestCwd(

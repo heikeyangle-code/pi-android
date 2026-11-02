@@ -2658,7 +2658,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // "起来了"就是它的判据 —— 不能放在 `boot()` 的开头（那时还不知道会不会失败）。
         autoEngineRestarts = 0
         provisioningRepairAttempted = false
-        _state.value = _state.value.copy(boot = Boot.Ready)
+        // **换了引擎就是换了会话：先把上一段对话的投影清空。**
+        //
+        // 以前这里只把 `boot` 改成 Ready，转录（`transcript`/`revision`/`streaming`）留着
+        // 等新引擎的第一条 publication 来覆盖。那条路依赖 `pub.replaced`/`appliedRevision`
+        // 的时序：只要新引擎的第一帧没有以 `replaced = true` 抵达（或者被 `session !== engine`
+        // 的守卫吞掉），屏幕上就会**一直留着旧对话**，而模型那边是全新的会话 —— 用户报的
+        // 「切完工作区，老对话还在屏幕上，发消息却像新会话」就是这一格。
+        //
+        // 现在无条件清空：宁可让新会话先空一帧（紧接着 `get_entries` 就把它的内容补上），
+        // 也不能让一段已经不属于当前引擎的对话继续显示。
+        _state.value = _state.value.copy(
+            boot = Boot.Ready,
+            transcript = emptyList(),
+            revision = 0,
+            streaming = false,
+            busy = null,
+            bash = null,
+            nowMs = null,
+            lastUsage = null,
+            turnUsage = null,
+        )
+        appliedRevision = 0
         // The queue counters describe **this engine process's** queues, and the engine in
         // hand is brand new, so its queues are empty. pi sends `queue_update` only when
         // the queue changes — `_emitQueueUpdate` (`core/agent-session.js:655`) is called
@@ -5213,7 +5234,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`）——也就是说引擎
             // 已经在那段会话的工作区里干活了，而工作区芯片、终端、`@` 补全、包命令还停在
             // 原来的工作区：两个真相。这里把 App 那一半对齐，**不重启引擎**（pi 已经切好）。
-            adoptSessionWorkspace(summary.cwd)
+            adoptSessionWorkspace(summary)
             requestNav(NavRequest.Chat)
         }
     }
@@ -5237,7 +5258,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
      * 宁可保持现状，也不要猜一个工作区。
      */
-    private suspend fun adoptSessionWorkspace(guestCwd: String) {
+    private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary) {
+        // 以**文件头**里的 cwd 为准，而不是列表里那份 `Summary.cwd`：列表可能来自更早的一次
+        // 扫描（重命名/导入/旧拼法），而 pi 打开这段会话用的就是文件头里那个 cwd ——
+        // 认领错了，芯片就停在旧工作区（用户报的「文件换了、芯片没换」）。
+        val guestCwd = withContext(Dispatchers.IO) {
+            runCatching { SessionFileReader.readHeader(summary.file) }
+                .getOrNull()
+                ?.get("cwd")
+                ?.let { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+        } ?: summary.cwd
         val name = WorkspaceStore.nameForGuestCwd(guestCwd) ?: return
         if (_state.value.workspace.name == name) return
         val app = getApplication<Application>()
