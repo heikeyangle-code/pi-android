@@ -5263,20 +5263,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 宁可保持现状，也不要猜一个工作区。
      */
     private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary) {
-        // **便宜的提前退出**：列表里那份 cwd 已经指向当前工作区时，连文件都不用开。
-        // 同工作区的会话是绝大多数点击，这条让它们完全不付认领的成本。
-        val listed = WorkspaceStore.nameForGuestCwd(summary.cwd)
-        if (listed == _state.value.workspace.name) return
-        // 以**文件头**里的 cwd 为准，而不是列表里那份 `Summary.cwd`：列表可能来自更早的一次
-        // 扫描（重命名/导入/旧拼法），而 pi 打开这段会话用的就是文件头里那个 cwd ——
-        // 认领错了，芯片就停在旧工作区（用户报的「文件换了、芯片没换」）。
-        val guestCwd = withContext(Dispatchers.IO) {
-            runCatching { SessionFileReader.readHeader(summary.file) }
-                .getOrNull()
-                ?.get("cwd")
-                ?.let { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
-        } ?: summary.cwd
-        val name = WorkspaceStore.nameForGuestCwd(guestCwd) ?: return
+        // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
+        //
+        // `Summary.cwd` 本来就是**从会话文件头里读出来的**（`PiSessionStore` 的第 622/744 行
+        // 读 header 的 `cwd`），所以为了认领再开一次文件是多余的 IO。用户的原话：
+        // 「大多数时候点的都是当下选择的工作区的会话」—— 那就一条内存里的字符串映射搞定：
+        //
+        //  - 映射结果 == 当前工作区 → 直接返回（同工作区的点击，**零 IO**）；
+        //  - 映射结果 != 当前工作区 → 可能是跨工作区，继续（后台写设置）；
+        //  - 映射不出来（空 cwd、别的安装留下的怪路径）→ 什么都不做，宁可芯片不动也不猜。
+        val name = WorkspaceStore.nameForGuestCwd(summary.cwd) ?: return
+        if (name == _state.value.workspace.name) return
         // 认领是**后台**跑的：这期间用户可能已经点开了另一段会话（甚至又切了工作区）。
         // 过期的认领会把工作区改回上一段会话的那个 —— 芯片指错，文件/终端跟着错。
         // 以"引擎现在打开的是哪一段"为准判一次：`meta.sessionFile` 已经是另一段就丢弃。
