@@ -16,8 +16,10 @@ package app.pi.ui.render.rich
 //   tools/run-app-pure-checks.sh
 
 private var failures = 0
+private var checks = 0
 
 private fun check(name: String, actual: Any?, expected: Any?) {
+    checks++
     if (actual == expected) {
         println("PASS $name")
     } else {
@@ -228,6 +230,101 @@ fun main() {
         check("G4 no failure", blank.failure, null)
     }
 
-    println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
+    // =================================================== H. id 的上限、锚点的稳定性与编号顺序
+    // 为什么必须钉：
+    //  - id 上限（1–64）只写在 KDoc 里，实现是两条不同的循环（定义用正则 `{1,64}`、
+    //    引用用手写扫描的 `<= 64`）。两边差一位，就会出现"定义成立、引用却不是引用"的
+    //    单向失配 —— 正文里留着一个方括号、脚注列表里却有一条永远到不了的定义；
+    //  - 模型**不清洗** id（这是有意的：它是文档里的原文，不是生成的 slug），所以带引号、
+    //    尖括号、中文的 id 会原样进 Marker。钉住这一点，是为了让"渲染层必须自己转义成
+    //    安全的锚点"成为一个有测试的事实，而不是靠人记得；
+    //  - 编号顺序决定列表的长相：被引用的按首次引用顺序在前，从未被引用的按源码顺序排在
+    //    后面。写成"按源码顺序"或"按字母顺序"都不会报错，只是脚注列表和正文对不上号。
+    run {
+        val id64 = "a".repeat(64)
+        val id65 = "a".repeat(65)
+
+        check("H1 64 字符的 id 是合法定义", PiFootnote.parse("x[^$id64]\n[^$id64]: note").definitions.size, 1)
+        check("H2 65 字符的 id 连定义都不成立", PiFootnote.parse("x[^$id65]\n[^$id65]: note").definitions.size, 0)
+        check(
+            "H3 65 字符的 id 因此整份文档原样保留",
+            PiFootnote.parse("x[^$id65]\n[^$id65]: note").bodyText(),
+            "x[^$id65]\n[^$id65]: note",
+        )
+
+        val mixed = PiFootnote.parse("ok[^$id64] bad[^$id65]\n[^$id64]: note")
+        check("H4 64 字符的引用被替换成标记", mixed.bodyText().startsWith("ok¹"), true)
+        check("H5 65 字符的引用是普通文本", mixed.bodyText().contains("[^$id65]"), true)
+        check("H6 只有那一个引用被记下", mixed.references.size, 1)
+
+        // 锚点：模型给出的是原文 id，渲染层要自己把它变成安全的锚点。
+        val rawId = "a\"b<c"
+        val raw = PiFootnote.parse("see[^$rawId]\n[^$rawId]: note")
+        check("H7 带引号和尖括号的 id 仍是定义（模型不做清洗）", raw.definitions.size, 1)
+        check("H8 Marker 带的是原文 id，不是生成的 slug", raw.parts.filterIsInstance<FootnoteBodyPart.Marker>().single().id, rawId)
+        check("H9 定义 id 与引用 id 逐字一致", raw.definitions[0].id, rawId)
+
+        val chinese = PiFootnote.parse("见[^注1]\n[^注1]: 说明")
+        check("H10 中文 id 逐字保留", chinese.definitions[0].id, "注1")
+        check("H11 中文 id 的正文替换", chinese.bodyText(), "见¹")
+
+        val order = PiFootnote.parse("ref[^b]\n[^z]: Z\n[^a]: A\n[^b]: B\n[^y]: Y")
+        check("H12 被引用的定义排在最前（首次引用顺序）", order.definitions.map { it.id }, listOf("b", "z", "a", "y"))
+        check("H13 未引用定义按源码顺序排在后面", order.definitions.map { it.number }, listOf(1, 2, 3, 4))
+        check("H14 只有 b 被标记为已引用", order.definitions.map { it.referenced }, listOf(true, false, false, false))
+        check("H15 正文只替换被引用的那一个", order.bodyText(), "ref¹")
+        check(
+            "H16 同一份源码解析两次给出同样的 id 与编号（锚点稳定）",
+            PiFootnote.parse("ref[^b]\n[^z]: Z\n[^a]: A\n[^b]: B\n[^y]: Y").definitions,
+            order.definitions,
+        )
+    }
+
+    // ========================================== I. the source-level rewrite
+    //
+    // `PiFootnoteMarkdown` 是真正接线的那一层：把 `[^id]` 变成上标、定义块变成末尾列表。
+    // 它错的方式全是安静的 —— 编号错、未引用的定义也列进去、或者"没有脚注"的文档被丢回
+    // 一份被改过的文本。所以这里断言的是**整份输出逐字节**，不是某个字段。
+    run {
+        check(
+            "I1 a referenced footnote becomes a superscript plus a trailing list",
+            PiFootnoteMarkdown.rewrite("正文[^1]\n\n[^1]: 说明"),
+            "正文¹\n\n---\n\n1. 说明\n",
+        )
+        check(
+            "I2 a document with no footnote is not rewritten",
+            PiFootnoteMarkdown.rewrite("普通的一段 [x] 与 [1]"),
+            null,
+        )
+        check(
+            "I3 an unreferenced definition is not listed",
+            PiFootnoteMarkdown.rewrite("正文[^a]\n\n[^a]: A\n[^b]: B"),
+            "正文¹\n\n---\n\n1. A\n",
+        )
+        check(
+            "I4 two references keep document order and the original body",
+            PiFootnoteMarkdown.rewrite("一[^x] 二[^y]\n\n[^x]: X\n[^y]: Y"),
+            "一¹ 二²\n\n---\n\n1. X\n2. Y\n",
+        )
+        check(
+            "I5 an over-limit document falls back to null, not a half rewrite",
+            PiFootnoteMarkdown.rewrite("a[^1]\n[^1]: b", FootnoteLimits(maxChars = 4)),
+            null,
+        )
+        check(
+            "I6 a multi-paragraph definition is flattened into one list item",
+            PiFootnoteMarkdown.rewrite("a[^1]\n\n[^1]: 第一段\n\n    第二段"),
+            "a¹\n\n---\n\n1. 第一段 第二段\n",
+        )
+        check(
+            "I7 the rewrite is idempotent on its own output",
+            PiFootnoteMarkdown.rewrite(
+                PiFootnoteMarkdown.rewrite("a[^1]\n\n[^1]: note").orEmpty(),
+            ),
+            null,
+        )
+    }
+
+    println(if (failures == 0) "\nharness: OK ($checks checks)" else "\nharness: FAILED ($failures of $checks)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

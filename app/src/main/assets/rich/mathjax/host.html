@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<!--
+  渲染宿主的网络遏制。页面由 WebViewAssetLoader 从
+  https://appassets.androidplatform.net/rich-mathjax/ 提供，所以 'self' 只等于本地资产目录。
+  `connect-src 'none'` 挡掉 fetch / XHR / WebSocket / beacon；`default-src 'none'` 覆盖所有
+  没有被显式列出的资源类型。
+
+  `'unsafe-eval'` 保留，是因为 MathJax 的合并组件是本地可信代码（且 TeX 的宏展开在某些路径上
+  会用到 Function 构造）。这里的 CSP 管的是**网络边界**，不是沙箱化我们自己的脚本。
+
+  `font-src 'none'`：SVG 输出把字形转成内联 path，不需要字体文件；只有 CHTML 输出才需要。
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none';">
+<title>pi mathjax render host</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  /*
+    排版容器。`position: absolute` + 无滚动，让它不参与正常文档流；`opacity: 0` 而不是
+    `display: none`：MathJax 的 em/ex 来自真实布局（getBBox/offsetWidth），display:none
+    会让它量出 0 并产出 viewBox 病态的 SVG。宿主 WebView 本身已经被平移到窗口之外，用户
+    看不到它；这里再用 opacity 0 省掉一次绘制。
+
+    宽度给足（960px）：MathJax 的 display 公式在容器放不下时可能走"缩到能放下"的兜底，
+    而我们只取 viewBox（不受 width/height 属性影响），给宽一点让兜底根本不触发。
+  */
+  #pi-math {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 960px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* 度量探针用，平时不可见、也不参与交互。 */
+  #pi-metrics {
+    position: absolute;
+    left: 0;
+    top: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="pi-metrics"></div>
+<div id="pi-math"></div>
+<!--
+  MathJax 配置必须在加载 tex-svg.js **之前**写进 window.MathJax：合并组件在脚本执行时读取
+  它，之后再改只会留下一半生效的配置。
+
+  - `tex.inlineMath` / `tex.displayMath`：宿主只认这两种定界符。Kotlin 侧永远按 display 参数
+    包成 `$$…$$` 或 `\(…\)`，所以这里不需要再开 `$…$`（单 `$` 会把普通文本里的美元符号当
+    公式，evaluated 的源码不含上下文，开了只会更容易误判）。
+  - `tex.processEnvironments`：让 `\begin{aligned}` 这类环境在 `$$…$$` 里也被识别。
+  - `svg.fontCache: 'local'`：字形 path 放在每个 SVG 自己的 `<defs>` 里，抽出来就是一份
+    自包含文档（选型文档 §3.2）。
+  - `startup.typeset: false`：不在页面加载时自动排版，排版只由 `piRender` 触发。
+  - `options.enableMenu/enableAssistiveMml/enableEnrichment` 全关：宿主永远不显示菜单、
+    不需要隐藏的 MathML（那双倍放大回传的字节）、也不做语义增强。
+-->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [["\\(", "\\)"]],
+      displayMath: [["$$", "$$"]],
+      processEnvironments: true
+    },
+    svg: { fontCache: "local" },
+    startup: { typeset: false },
+    options: {
+      enableMenu: false,
+      enableAssistiveMml: false,
+      enableEnrichment: false
+    }
+  };
+</script>
+<script src="tex-svg.js"></script>
+<script>
+/*
+ * Kotlin ↔ MathJax 的桥，供 PiMathRenderEngine 使用。
+ *
+ * 方向：
+ *   Kotlin → `window.__piRender(taskId, tex, display)`   （evaluateJavascript）
+ *   Kotlin → `window.__piPoll(taskId)`                   （evaluateJavascript，重复到返回对象）
+ *   Kotlin → `window.__piReady()`                        （宿主就绪探针）
+ *
+ * 没有 JavascriptInterface、没有 WebMessagePort：两个方向都是 evaluateJavascript，不需要接口
+ * 对象，也不需要 origin 握手。代价是轮询；引擎只在有任务在飞时每 ~64 ms 问一次，而排版是
+ * 一次性动作（没有动画），每条公式的额外调用很少。
+ *
+ * 这里的一切都在 Kotlin 已经限定的沙箱**之内**：没有网络、没有文件访问、没有 eval 模型源码。
+ * 本文件的 bug 必须表现为 `{ok:false,error}`，绝不能变成安全降级——抽出来的 SVG 仍然要过
+ * PiSvgSanitizer 才会被绘制。
+ */
+(function () {
+  "use strict";
+
+  var TASKS = Object.create(null);
+  var MAX_OUTPUT_CHARS = 2 * 1024 * 1024;
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  function describe(error) {
+    if (!error) return "unknown error";
+    if (typeof error === "string") return error;
+    if (error.message) return String(error.message);
+    return String(error);
+  }
+
+  function container() {
+    return document.getElementById("pi-math");
+  }
+
+  /* 用户 TeX 只以 textContent 的形式进入 DOM，从不拼进 HTML/脚本。定界符由 display 决定，
+     Kotlin 侧只传 TeX 原文（它已经把 `"`、反斜杠、换行转义成 JS 字符串字面量了）。 */
+  function wrapped(tex, display) {
+    return display ? "$$" + tex + "$$" : "\\(" + tex + "\\)";
+  }
+
+  /* MathJax 的启动是异步的：typesetPromise 在 startup 完成前调用会被排队，但这里显式等
+     startup.promise，让"第一次排版"和"页面就绪"的时序可读。没有 startup 时退化为立刻执行，
+     后面的 hasApi() 检查会给出明确错误。 */
+  function startupPromise() {
+    var startup = window.MathJax && window.MathJax.startup;
+    return (startup && startup.promise) || Promise.resolve();
+  }
+
+  function hasApi() {
+    return !!(window.MathJax && typeof window.MathJax.typesetPromise === "function");
+  }
+
+  /*
+    排版一条公式并返回容器的 innerHTML。
+    - 先清空容器：上一次的 `<mjx-container>`（以及它引用的 defs id）不能留在 DOM 里，
+      否则 querySelector("svg") 可能拿到上一条公式。
+    - 再写入 `$$…$$` / `\(…\)` 文本，交给 MathJax.typesetPromise([element])。
+    - 读完 innerHTML 立刻清空，别让宿主常驻一份 2 MiB 的 DOM。
+
+    MathJax 有两条错误路径，都要在抽 SVG 之前识别，否则会把错误信息当公式画出来：
+    1. 类型化失败：容器被换成 `<mjx-container class="MathJax mjx-output-error">` 里的
+       `<span data-mjx-error="…">`（没有 svg）；
+    2. TeX 语法错误：输出里出现 `<g data-mml-node="merror">`（svg 是有的，但画的是
+       "Math input error"）。
+  */
+  function piRender(tex, display) {
+    var host = container();
+    if (!host) return Promise.reject(new Error("host container missing"));
+    if (!hasApi()) return Promise.reject(new Error("MathJax 尚未就绪（typesetPromise 不存在）"));
+    var text = wrapped(tex, display);
+    return startupPromise().then(function () {
+      host.textContent = "";
+      host.textContent = text;
+      return window.MathJax.typesetPromise([host]);
+    }).then(function () {
+      var failures = host.querySelectorAll("[data-mjx-error]");
+      if (failures && failures.length > 0) {
+        throw new Error(String(failures[0].getAttribute("data-mjx-error") || "MathJax 渲染失败"));
+      }
+      if (host.querySelector('g[data-mml-node="merror"]')) {
+        throw new Error("TeX 语法错误，MathJax 无法排版这段公式");
+      }
+      var svg = host.querySelector("svg");
+      if (!svg) throw new Error("MathJax 没有产出 SVG");
+      var markup = host.innerHTML;
+      host.textContent = "";
+      return markup;
+    }, function (error) {
+      try { host.textContent = ""; } catch (ignored) { /* 清理失败不影响错误上报 */ }
+      throw error;
+    });
+  }
+
+  /* 对外也暴露一个不带任务号的版本，方便真机用 evaluateJavascript 手动验证宿主。 */
+  window.piRender = function (tex, display) {
+    return piRender(String(tex || ""), !!display);
+  };
+
+  /*
+    就绪探针。除了 API 存在，还必须确认**文本度量可用**：MathJax 用真实布局算 em/ex
+    （createSVG 里的 `this.math.metrics.em`），一个从未布局过的 WebView 会给出零宽文本，
+    产出 viewBox 病态的 SVG，而 MathJax 自己不会报错。用一段 16px 文本量 getBBox()，量不出
+    就显式返回 metrics=false，让 Kotlin 侧回退源码而不是画一张悄悄错位的公式。
+  */
+  function metricsUsable() {
+    var usable = false;
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "200");
+    svg.setAttribute("height", "40");
+    svg.setAttribute("style", "position:absolute;left:0;top:0;visibility:hidden;");
+    var text = document.createElementNS(SVG_NS, "text");
+    text.setAttribute("x", "0");
+    text.setAttribute("y", "30");
+    text.setAttribute("font-size", "16");
+    text.setAttribute("font-family", "sans-serif");
+    text.textContent = "MMMM";
+    svg.appendChild(text);
+    var probe = document.getElementById("pi-metrics") || document.body;
+    try {
+      probe.appendChild(svg);
+      var box = text.getBBox();
+      usable = !!(box && box.width > 1 && box.height > 1);
+    } catch (error) {
+      usable = false;
+    } finally {
+      try {
+        if (svg.parentNode) svg.parentNode.removeChild(svg);
+      } catch (ignored) {
+        /* nothing to do */
+      }
+    }
+    return usable;
+  }
+
+  function version() {
+    try {
+      return String((window.MathJax && window.MathJax.version) || "unknown");
+    } catch (error) {
+      return "unknown";
+    }
+  }
+
+  window.__piReady = function () {
+    var metrics = metricsUsable();
+    if (!hasApi()) {
+      return {
+        ok: false,
+        error: "tex-svg.js 没有完成启动（window.MathJax.typesetPromise 不存在）"
+      };
+    }
+    return { ok: true, metrics: metrics, version: version() };
+  };
+
+  function finish(taskId, markup) {
+    if (typeof markup !== "string" || markup.length === 0) {
+      fail(taskId, "MathJax 没有产出标记");
+      return;
+    }
+    if (markup.length > MAX_OUTPUT_CHARS) {
+      fail(taskId, "公式输出超过 2 MiB");
+      return;
+    }
+    TASKS[taskId] = { state: "ok", svg: markup };
+  }
+
+  function fail(taskId, message) {
+    TASKS[taskId] = { state: "failed", error: String(message || "公式渲染失败") };
+  }
+
+  window.__piRender = function (taskId, tex, display) {
+    TASKS[taskId] = { state: "pending" };
+    try {
+      piRender(String(tex || ""), !!display).then(
+        function (markup) { finish(taskId, markup); },
+        function (error) { fail(taskId, describe(error)); }
+      );
+    } catch (error) {
+      fail(taskId, describe(error));
+    }
+    return true;
+  };
+
+  window.__piPoll = function (taskId) {
+    var task = TASKS[taskId];
+    if (!task) return { ok: false, error: "unknown render task " + taskId };
+    if (task.state === "pending") return null;
+    delete TASKS[taskId];
+    if (task.state === "ok") {
+      return { ok: true, svg: task.svg };
+    }
+    return { ok: false, error: task.error };
+  };
+})();
+</script>
+</body>
+</html>

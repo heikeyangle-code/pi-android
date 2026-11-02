@@ -506,3 +506,45 @@ private fun footnoteSuperscript(number: Int): String {
         for (digit in number.toString()) append(digits[digit - '0'])
     }
 }
+
+/**
+ * 把一份带脚注的 markdown **改写成库能画的 markdown**。
+ *
+ * 为什么需要这一层：`org.jetbrains:markdown` 的 GFM 方言里没有脚注节点，mikepenz 的组件集
+ * 也没有脚注槽。要让脚注在这条流水线上真的出现，只有两条路 —— 改库（不可能）或在交给库
+ * 之前把 `[^id]` 变成它可以排的东西。这里选后者，于是"脚注"的可见形态是：
+ *
+ *  - 正文里的 `[^id]` → Unicode 上标（`¹`、`²³`），`FootnoteDocument.bodyText()` 已经算好；
+ *  - 定义块从原文里消失，改成一个普通有序列表追加在末尾（`---` 分隔）。
+ *
+ * **它必须返回 `null` 而不是"尽量改写"。** 没有脚注、超过上限、或者解析给出任何
+ * [FootnoteFailure] 时，调用方拿到 `null` 就把原文原样交给渲染器 —— 一份被改写了一半的
+ * 文档（定义没删干净、编号错位）比完全不支持脚注更难查。
+ *
+ * 已知取舍：上标不是链接，点不回去（方案 §十一 的跳转需要正文/定义两侧的锚点，而这条
+ * 流水线里没有"块内锚点"这种东西）。定义文本按原样保留 markdown，因此列表项里仍可以有
+ * 粗体/链接；多段定义压成一行，因为库的列表项不会为它保留换行。
+ */
+private val WHITESPACE_RUN = Regex("\\s+")
+
+object PiFootnoteMarkdown {
+
+    /**
+     * @return 改写后的 markdown，或 `null` 表示"没有可改的，原样交回去"。
+     */
+    fun rewrite(source: String, limits: FootnoteLimits = PiFootnote.DEFAULT_LIMITS): String? {
+        val document = PiFootnote.parse(source, limits)
+        if (document.failure != null || !document.hasFootnotes) return null
+        val body = document.bodyText().trimEnd()
+        if (body.isEmpty()) return null
+        val definitions = document.definitions
+            .filter { it.referenced }
+            .joinToString("\n") { definition ->
+                // 定义里的空行（多段）与换行都压成一个空格：库的列表项不会为它保留
+                // 换行，留着原来的 `\n\n` 会在列表行里变成一串空格。
+                "${definition.number}. " + definition.text.replace(WHITESPACE_RUN, " ").trim()
+            }
+        if (definitions.isEmpty()) return null
+        return body + "\n\n---\n\n" + definitions + "\n"
+    }
+}

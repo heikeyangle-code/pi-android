@@ -16,6 +16,7 @@ import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.rpc.PiImage
+import app.pi.ui.render.rich.PiFootnoteMarkdown
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.MarkdownElement
@@ -182,16 +183,43 @@ internal fun PiMarkdownText(
     // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
     // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
     // 拿到的是同一个对象，逐字节相同。
-    val prepared = remember(markdown) {
-        runCatching { PiLatex.prepare(markdown) }
-            .getOrElse { PiLatex.PreparedMath(markdown, false) }
+    // Phase 3：**已结束**的消息不再把公式改写成 Unicode。`PiLatex.prepare` 的产出是给
+    // 终端看的近似（`a/b`、Unicode 上下标、空格对齐的矩阵），而 MathJax 要的是真正的
+    // `INLINE_MATH` / `BLOCK_MATH` 节点 —— 改写过的源文本里已经没有它们了，组件根本收
+    // 不到一条公式。流式期间仍然走旧路径：`grok` 一拍一拍地长出来时，一次 WebView 排版
+    // 比一个 Unicode 近似贵得多，而"半条公式"本来也不该排版（见 `LocalPiMarkdownStreaming`）。
+    //
+    // **不许抛。** `PiLatex.prepare` 本身只走字符串与正则，但它的数学替换会进
+    // `PiLatex.toUnicode`，而那个解析器是按 `{` 直接递归的（见那里的注释）：一条病态的
+    // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
+    // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
+    // 拿到的是同一个对象，逐字节相同。
+    val prepared = remember(markdown, streaming) {
+        if (streaming) {
+            runCatching { PiLatex.prepare(markdown) }
+                .getOrElse { PiLatex.PreparedMath(markdown, false) }
+        } else {
+            PiLatex.PreparedMath(markdown, false)
+        }
+    }
+    // 脚注（Phase 5）：库的 AST 没有脚注节点，所以在交给库之前把 `[^id]` 换成 Unicode
+    // 上标、把定义块换成末尾的有序列表（见 `PiFootnoteMarkdown`）。流式期间**不换** ——
+    // 半份定义会被改写成半张列表，不如先按源码显示；`null` 表示"没有脚注可改"，此时
+    // 下面拿到的就是 `prepared.text` 本身，逐字节与上一版相同。
+    val footnoteSource = remember(prepared.text, streaming) {
+        if (streaming) {
+            null
+        } else {
+            // 与 `PiLatex.prepare` 同一条理由：这里在组合里跑，不许抛。
+            runCatching { PiFootnoteMarkdown.rewrite(prepared.text) }.getOrNull()
+        }
     }
     // **裸 URL 不改写**（用户裁定，撤销，见 `docs/known-gaps.md` §A3 的 R2 末条）：
     // `![]()` 才是图，链接就是链接 —— 模型给的"八条直链，复制即可"必须还是可复制的一行
     // 链接文字。这里曾经挂过 `PiImageLinks.rewrite(prepared.text)`（把"整行只有一个图片
     // 后缀 URL"改成 `![](...)`），那个模块与它的 harness 已删除；不要在没有新裁定的情况下
     // 把它加回来。
-    val content = prepared.text
+    val content = footnoteSource ?: prepared.text
     val hasGrid = prepared.hasDisplayGrid
     // 「这条消息里有没有可能出现裸 HTML」—— 就是一次 `contains('<')`，扫一遍字符串（一次
     // 组合，不是每帧）。这个布尔值买到的是**库那行判定回到 `annotate == null` 的短路**：

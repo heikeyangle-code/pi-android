@@ -208,6 +208,10 @@ fun PiMermaidView(
             }
         }
 
+        // `Column` 的 scope 带 `@LayoutScopeMarker`，所以从它里面**读不到**外层
+        // `BoxWithConstraintsScope` 的 `maxWidth`（DslMarker 会挡住隐式外层接收者）。
+        // 在进入 `Column` 之前把它取出来。
+        val availableWidth = maxWidth
         val ready = draw as? PiMermaidDraw.Ready
         // Source is the fallback for "no picture yet" and the user's explicit
         // choice; it is never used to *hide* a successful render automatically.
@@ -285,7 +289,7 @@ fun PiMermaidView(
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_MERMAID_FALLBACK_ASPECT
-                val imageHeight = (maxWidth / aspect)
+                val imageHeight = (availableWidth / aspect)
                     .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, PI_MERMAID_MAX_IMAGE_HEIGHT)
                 Canvas(
                     modifier = Modifier
@@ -610,7 +614,7 @@ private fun PiMermaidActionLabel(
         maxLines = 1,
         modifier = Modifier
             .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(start = 12.dp, vertical = 2.dp),
+            .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
     )
 }
 

@@ -239,6 +239,25 @@ fun main() {
         check("H29 trailing empty fragment", info("https://x/p#")!!.pathForDisplay, "/p")
     }
 
+    // =================================================== I. 显示文本只来自 URL 本身
+    // 为什么必须钉：§十一.3 的原话是"只能展示 URL 本身可以确定的信息，不得伪造标题、摘要
+    // 和图片"。这一条在设备上无法用肉眼验证 —— 卡片上多出一行"标题"永远看着像真的。所以
+    // 这里直接钉**字段集合**：模型里根本没有 title/description/image 可以填；再钉"路径不
+    // 截断"（模型不做省略，截断只能发生在绘制层），以及 host 不做小写化之外的重写。
+    run {
+        check(
+            "I1 the model has no title/description/image field to fill",
+            PiLinkInfo::class.java.declaredFields.map { it.name }.filterNot { it.startsWith("\$") }.sorted(),
+            listOf("fileExtension", "hasFragment", "hasQuery", "host", "kind", "path", "port", "scheme", "url"),
+        )
+
+        val longPath = "/" + "a".repeat(1_000)
+        val longUrl = info("https://example.com$longPath")!!
+        check("I2 a 1,000-character path is kept whole", longUrl.path.length, 1_001)
+        check("I3 pathForDisplay does not truncate it", longUrl.pathForDisplay, longPath)
+        check("I4 the model carries the whole URL text", longUrl.url, "https://example.com$longPath")
+    }
+
     if (failures == 0) {
         println("\nharness: OK ($checks checks)")
     } else {

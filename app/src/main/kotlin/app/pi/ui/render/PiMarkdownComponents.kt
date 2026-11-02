@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.CollectionItemInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.collectionItemInfo
@@ -72,14 +73,19 @@ import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.PiCsvTable
 import app.pi.ui.render.rich.PiCsvTableView
 import app.pi.ui.render.rich.PiJsonTreeView
+import app.pi.ui.render.rich.LinkCardResult
+import app.pi.ui.render.rich.PiLinkCard
+import app.pi.ui.render.rich.PiLinkPreview
 import app.pi.ui.render.rich.PiStackTraceView
 import app.pi.ui.render.rich.PiTreeMode
 import app.pi.ui.render.rich.PiXmlTreeView
 import app.pi.ui.render.rich.PiYamlTreeView
+import app.pi.ui.render.rich.svg.PiMathView
 import app.pi.ui.render.rich.RichBlock
 import app.pi.ui.render.rich.RichBlockKind
 import app.pi.ui.render.rich.html.PiHtmlBlockView
 import app.pi.ui.render.rich.svg.PiMermaidView
+import app.pi.ui.render.rich.svg.PiSvgFenceView
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
@@ -101,6 +107,7 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
 import com.mikepenz.markdown.compose.elements.MarkdownHeader
 import com.mikepenz.markdown.compose.elements.MarkdownImage
+import com.mikepenz.markdown.compose.elements.MarkdownParagraph
 import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
@@ -260,6 +267,9 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
     table = { model -> PiTable(model) },
+    // 链接卡片（Phase 5）：**整段只有一个裸 URL** 的段落改画成一张卡片，其它段落原样
+    // 交给库的 `MarkdownParagraph`。判定在 `PiParagraph` 里，见那里的注释。
+    paragraph = { model -> PiParagraph(model) },
     // 任务清单的勾选标记：库的默认槽画的是源码文本 `[x] `（等宽），这里换成只读图形。
     // 见 piMarkdownComponents 的注释与 [PiTaskCheckbox]。
     checkbox = { model -> PiTaskCheckbox(model) },
@@ -464,37 +474,113 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
     PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
-/** One un-rewritten formula, in pi's "shown as written" style. */
+/**
+ * 一个普通段落 —— 除非它**整段就是一个裸 URL**，那时它是一张链接卡片。
+ *
+ * 为什么判据是"整段"而不是"段落里出现链接"：一张卡片会吃掉它周围的所有排版意图。
+ * `见 https://… 的那一段` 是一句话，把 URL 抽出来画成卡片等于把句子拆了；而模型常见的
+ * "八条直链"输出里，每一行正好是一个段落、一个 URL —— 那才是卡片该接管的地方。
+ *
+ * 为什么卡片只显示 URL 自己能证明的东西：`PiLinkCard` 不发任何网络请求，也不读 OG 标签
+ * （方案 §九.2 明确禁止"为了卡片去抓页面"）。所以标题、摘要、缩略图都不存在；卡片上是
+ * 域名、路径和扩展名推出的类型。看起来信息少，但每一个字都是真的。
+ *
+ * 回调走 [LocalUriHandler]，与库自己的链接组件同一条出口（`PiHtmlRenderer` 也用它）。
+ * `runCatching`：没有浏览器可接受的 Activity 时 `openUri` 会抛 `IllegalArgumentException`，
+ * 点一下链接不该让整条消息崩掉。
+ */
+@Composable
+private fun PiParagraph(model: MarkdownComponentModel) {
+    val content = model.content
+    val node = model.node
+    val info = remember(content, node) {
+        val start = node.startOffset.coerceIn(0, content.length)
+        val end = node.endOffset.coerceIn(start, content.length)
+        val text = content.substring(start, end).trim()
+        if (text.length > BARE_URL_MAX_CHARS || text.any { it.isWhitespace() }) {
+            null
+        } else if (!text.startsWith("http://") && !text.startsWith("https://")) {
+            null
+        } else {
+            (PiLinkCard.parse(text) as? LinkCardResult.Info)?.info
+        }
+    }
+    if (info == null) {
+        MarkdownParagraph(model)
+        return
+    }
+    val uriHandler = LocalUriHandler.current
+    PiLinkPreview(
+        url = info.url,
+        onOpen = { url -> runCatching { uriHandler.openUri(url) } },
+    )
+}
+
+/** 与 `PiLinkCard.MAX_URL_CHARS` 同一个上限；更长的"URL"不是一条链接。 */
+private const val BARE_URL_MAX_CHARS = 8192
+
+/**
+ * 一条公式：Phase 3 起由 MathJax 真正排版，`PiLatex` 的 Unicode 结果是它的**回退**。
+ *
+ * 为什么不再用 [PiLatex.toUnicode] 画正文：那个转换器的产出是"终端里能看的近似"
+ * （`\frac{a}{b}` → `a/b`、上下标用 Unicode 字符、矩阵靠空格对齐），在等宽终端里成立，
+ * 在手机上只是"看起来像公式"。MathJax 输出的是真 SVG：分式、根号、求和上下限、矩阵
+ * 都是排版过的。
+ *
+ * **回退不是可选项。** WebView 起不来、MathJax 超时、SVG 被清洗器拒绝、AndroidSVG 解析
+ * 失败 —— 任何一条都让这段代码回到升级前的输出（`fallbackText` 就是 [PiLatex.formulaText]
+ * 的字符串，逐字相同），所以一条公式永远至少有一个数字或一个符号在屏幕上，不会变成空白。
+ *
+ * 块级与行内的差别只在 [PiMathView] 内部：行内固定行高、不占整行、没有工具栏，这样它
+ * 能待在段落中间；块级才给「源码 / 公式」「适应」「复制」。
+ */
 @Composable
 private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
-    val palette = PiTheme.palette
-    val source = remember(model.content, model.node) {
-        PiLatex.formulaText(
-            content = model.content,
-            text = model.content.substring(model.node.startOffset, model.node.endOffset),
-            block = block,
-            fallback = "（公式）",
+    val content = model.content
+    val node = model.node
+    val raw = remember(content, node) {
+        content.substring(
+            node.startOffset.coerceIn(0, content.length),
+            node.endOffset.coerceIn(node.startOffset.coerceIn(0, content.length), content.length),
         )
     }
-    // 能归约成多行网格时画网格（`PiLatex` 的 layout 支），否则按 pi 的回退画原文。
-    // 正常路径下块级公式根本到不了这里 —— 预处理已经把网格写回源文本了
-    // （`PiLatex.prepare` 的注释），这一段是"源里还有漏网的 math 节点"时的兜底。
-    val grid = remember(source, block) {
-        PiLatex.toUnicode(source, display = block)?.takeIf { it.contains('\n') }
+    // MathJax 要的是**不含分隔符**的 TeX。节点跨度通常带 `$` / `$$`，先剥掉；`\[` `\]`
+    // 与 `\(` `\)` 也一并处理，因为 GFM 的块级公式两种写法都认。
+    val tex = remember(raw) { piMathTex(raw) }
+    // 升级前的显示文本（`PiLatex` 的 Unicode 近似），只在渲染失败时出现。
+    val fallback = remember(content, node, block) {
+        PiLatex.formulaText(content = content, text = raw, block = block, fallback = "（公式）")
     }
-    Text(
-        text = grid ?: source,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = if (block) 6.dp else 2.dp),
-        style = model.typography.code,
-        color = palette.mdCode,
-        // **网格不能居中**：`TextAlign.Center` 是**逐行**居中的，每一行的偏移量都等于
-        // (可用宽度 − 这一行宽度) / 2，于是 `⎛ a │ b ⎞` 与 `⎝ c │ d ⎠` 会被推成不同的
-        // 起点、整块拆散。网格的对齐全靠它自己的空格（`renderLayout` 逐行补齐），
-        // 所以必须左对齐 —— pi 也是这么推行的（`components/markdown.js:384-386`）。
-        textAlign = TextAlign.Start,
+    PiMathView(
+        source = tex,
+        display = block,
+        settled = !LocalPiMarkdownStreaming.current,
+        fallbackText = fallback,
     )
+}
+
+/**
+ * 从 math 节点的原文里剥掉分隔符，留下 TeX。
+ *
+ * 顺序是**先长后短**：`$$x$$` 必须先被当成 `$$`，否则 `removePrefix("$")` 会把它切成
+ * `$x$`，再被当成行内。`\[` / `\(` 两种 LaTeX 写法同样处理。
+ */
+private fun piMathTex(raw: String): String {
+    var text = raw.trim()
+    for ((open, close) in listOf(
+        "$$" to "$$",
+        "\\[" to "\\]",
+        "\\(" to "\\)",
+        "$" to "$",
+    )) {
+        if (text.length >= open.length + close.length &&
+            text.startsWith(open) && text.endsWith(close)
+        ) {
+            text = text.substring(open.length, text.length - close.length).trim()
+            break
+        }
+    }
+    return text
 }
 
 /**
@@ -1407,6 +1493,13 @@ private fun PiCodeSurface(
         PiStackTraceView(source = code, settled = settled)
         return
     }
+    // Phase 5 / 方案 §八：` ```svg ` 围栏。清洗器先过一遍（脚本、事件属性、外部引用、
+    // foreignObject、尺寸/节点/深度上限都在那里），再交给 AndroidSVG 画；任何一步失败
+    // 都回退源码，见 `PiSvgFenceView`。
+    if (normalized?.lowercase() == SVG_LANGUAGE) {
+        PiSvgFenceView(source = code, settled = settled)
+        return
+    }
     // Phase 1 的结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。
     // 解析失败/超限时各视图自己回退源码。
     when (kind) {
@@ -1565,6 +1658,9 @@ internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighl
 
 /** The one fence language pi's mermaid transformer claims (`components/mermaid.ts:15`). */
 private const val MERMAID_LANGUAGE = "mermaid"
+
+/** 方案 §八的 SVG 围栏语言。**只认显式标签**：一段以 `<svg` 开头的普通代码不是证据。 */
+private const val SVG_LANGUAGE = "svg"
 
 /**
  * 会被画成栈卡片的围栏语言。
