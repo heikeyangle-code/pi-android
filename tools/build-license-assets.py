@@ -1372,6 +1372,16 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("multiplatform-markdown-renderer-m3", "0.45.0", "Apache-2.0", "编译进 App 代码", "https://github.com/mikepenz/multiplatform-markdown-renderer"),
     ("org.jetbrains:markdown", "0.7.9", "Apache-2.0", "编译进 App 代码", "https://github.com/JetBrains/markdown"),
     ("kotlinx-collections-immutable（随 markdown 渲染器一起分发）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin/kotlinx.collections.immutable"),
+    # Rich rendering (Phase 2–5). AndroidSVG draws the Mermaid/MathJax SVG, jsoup parses the
+    # safe HTML subset, SnakeYAML parses the YAML fences, and the two JS engines ship inside
+    # the APK (`assets/rich/…`) and run in an offscreen WebView with no network access — so
+    # their licence texts travel with those directories (`assets/rich/*/LICENSE`) while the
+    # rows here are the manifest the settings screen lists.
+    ("AndroidSVG（SVG 渲染：Mermaid 图与 MathJax 公式）", "1.4", "Apache-2.0", "编译进 App 代码", "https://github.com/BigBadaboom/androidsvg"),
+    ("jsoup（安全 HTML 子集的解析与清理）", "1.18.3", "MIT", "编译进 App 代码", "https://github.com/jhy/jsoup"),
+    ("SnakeYAML（YAML 围栏的安全解析）", "2.4", "Apache-2.0", "编译进 App 代码", "https://bitbucket.org/snakeyaml/snakeyaml"),
+    ("Mermaid（随包分发的 WebView 引擎）", "12.2.0", "MIT", "编译进 App 代码", "https://github.com/mermaid-js/mermaid"),
+    ("MathJax（随包分发的 WebView 引擎）", "4.1.3", "Apache-2.0", "编译进 App 代码", "https://github.com/mathjax/MathJax"),
     ("JetBrains Mono", "2.304", "OFL-1.1", "编译进 App 代码（随包打包的等宽字体，Regular + Bold）", "https://github.com/JetBrains/JetBrainsMono"),
     (
         "Source Han Serif CN（思源宋体 CN）",

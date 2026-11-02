@@ -184,7 +184,7 @@
       许可证    Apache-2.0
       上游      https://github.com/Kotlin/kotlinx.collections.immutable
 
-  AndroidSVG（SVG 光栅化：Mermaid 图与 MathJax 公式的绘制）
+  AndroidSVG（SVG 渲染：Mermaid 图与 MathJax 公式）
       版本      1.4
       许可证    Apache-2.0
       上游      https://github.com/BigBadaboom/androidsvg
@@ -194,17 +194,17 @@
       许可证    MIT
       上游      https://github.com/jhy/jsoup
 
-  SnakeYAML（YAML 围栏的安全解析：只走 SafeConstructor）
+  SnakeYAML（YAML 围栏的安全解析）
       版本      2.4
       许可证    Apache-2.0
       上游      https://bitbucket.org/snakeyaml/snakeyaml
 
-  Mermaid（随包分发的 `assets/rich/mermaid/mermaid.min.js`；不联网，由离屏 WebView 执行）
+  Mermaid（随包分发的 WebView 引擎）
       版本      12.2.0
       许可证    MIT
       上游      https://github.com/mermaid-js/mermaid
 
-  MathJax（随包分发的 `assets/rich/mathjax/tex-svg.js`；TeX → SVG，不联网）
+  MathJax（随包分发的 WebView 引擎）
       版本      4.1.3
       许可证    Apache-2.0
       上游      https://github.com/mathjax/MathJax

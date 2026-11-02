@@ -1425,6 +1425,16 @@ run_harness link-card \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/rich/PiLinkCardCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/rich/PiLinkCard.kt"
 
+# app.pi.ui.render: 流式光标 `▍` 的**接线位置**。它以前是正文旁边另放的 8×16 方块，
+# 贴整块正文的右缘（末行短时离字很远），流式结束时消失还会让已断好的行重排一次。改成
+# 把 `▍` 接在 markdown 源码末尾之后，唯一能出错的地方是"接在哪种末行上"：围栏行/表格行/
+# 分隔线/`$$`/HTML 末行接一个字符就会改变解析结果（半张表、一个未闭合围栏），而末行只有
+# 块标记时要补一个空格。31 条夹具钉的就是这张表。
+run_harness streaming-cursor \
+  app.pi.ui.render.StreamingCursorCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/StreamingCursorCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/StreamingCursor.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much
