@@ -4,8 +4,10 @@ import kotlin.system.exitProcess
 
 /** `StreamingCursor.kt` 的行为夹具（`tools/run-app-pure-checks.sh` 里的 `streaming-cursor`）。 */
 private var failures = 0
+private var checks = 0
 
 private fun expect(name: String, actual: String, expected: String) {
+    checks++
     if (actual != expected) {
         failures++
         println("FAIL  $name\n   expected: ${expected.replace("\n", "⏎")}\n   actual:   ${actual.replace("\n", "⏎")}")
@@ -49,5 +51,7 @@ fun main() {
         println("$failures failure(s)")
         exitProcess(1)
     }
-    println("streaming-cursor: all passed")
+    // 成功行必须是 runner 认的那一句（`harness: OK`）：纯检查这一关的判定就是它在不在，
+    // 不是退出码 —— 而 `exit 0` 也可能是"什么都没跑"。
+    println("harness: OK ($checks checks)")
 }
