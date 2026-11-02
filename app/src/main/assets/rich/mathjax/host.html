@@ -58,6 +58,13 @@
   - `tex.processEnvironments`：让 `\begin{aligned}` 这类环境在 `$$…$$` 里也被识别。
   - `svg.fontCache: 'local'`：字形 path 放在每个 SVG 自己的 `<defs>` 里，抽出来就是一份
     自包含文档（选型文档 §3.2）。
+  - `svg.linebreaks.inline: false`：**必须关掉**。MathJax 4 默认允许行内公式在运算符处换行，
+    而且这个默认值在容器宽度紧的时候会把**一条公式拆成多个 `<svg>`**，中间用
+    `<mjx-break>` 元素隔开（实测：`x^2+y^2=z^2` 在无宽度约束的 Node 环境里就被拆成 3 个
+    `<svg>`；公式越长拆得越多）。我们的契约是"一次请求 = 一条公式 = 一份 SVG"：Kotlin 侧只
+    抽取第一个 `<svg>`，剩下的片段会被静默丢掉，画出来就是半条公式。关掉之后同样的输入
+    稳定产出一份完整文档（长公式只是 `viewBox` 更宽，由引擎按比例缩放）。
+    这不影响块级公式：`displayOverflow` 保持默认的 `overflow`，块级公式从不拆。
   - `startup.typeset: false`：不在页面加载时自动排版，排版只由 `piRender` 触发。
   - `options.enableMenu/enableAssistiveMml/enableEnrichment` 全关：宿主永远不显示菜单、
     不需要隐藏的 MathML（那双倍放大回传的字节）、也不做语义增强。
@@ -69,7 +76,10 @@
       displayMath: [["$$", "$$"]],
       processEnvironments: true
     },
-    svg: { fontCache: "local" },
+    svg: {
+      fontCache: "local",
+      linebreaks: { inline: false }
+    },
     startup: { typeset: false },
     options: {
       enableMenu: false,
@@ -159,11 +169,19 @@
       if (failures && failures.length > 0) {
         throw new Error(String(failures[0].getAttribute("data-mjx-error") || "MathJax 渲染失败"));
       }
-      if (host.querySelector('g[data-mml-node="merror"]')) {
-        throw new Error("TeX 语法错误，MathJax 无法排版这段公式");
+      var mmlError = host.querySelector('g[data-mml-node="merror"]');
+      if (mmlError) {
+        var detail = String(mmlError.getAttribute("data-mjx-error") || "");
+        throw new Error(detail ? ("TeX 语法错误：" + detail) : "TeX 语法错误，MathJax 无法排版这段公式");
       }
       var svg = host.querySelector("svg");
       if (!svg) throw new Error("MathJax 没有产出 SVG");
+      /*
+        `innerHTML` 走浏览器的 HTML 序列化：属性值里的 `<` / `&` 会被转义成 `&lt;` / `&amp;`
+        （已用 Chromium 的实现与 HTML 规范核对过），所以这里的字符串是 XML 良构的，Kotlin 侧
+        的 sanitizer（要求单根 `<svg>` 文档）可以直接吃。反过来说，**不能**用
+        `textContent`/`innerText` 之外的 DOM 路径回传，也不能在 Kotlin 侧做 HTML 反转义。
+      */
       var markup = host.innerHTML;
       host.textContent = "";
       return markup;

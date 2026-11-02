@@ -70,24 +70,24 @@ import kotlin.math.roundToInt
  * | AndroidSVG 解析/绘制失败 | 源码 + 一行原因 |
  * | 成功 | 图（工具栏可切「源码」） |
  *
- * 最后四种都必须是源码而不是空白区域：一段画不出来的 SVG 在聊天记录里仍然是一份可以
- * 阅读、可以复制的文档，把它变成空白既丢信息又让人以为消息没发完（§十五「超出限制不
- * 崩溃、不冻结，回退源码」）。源码回退不是「错误卡片」：它复用代码块的视觉语言，读起来
- * 就是「这里是一段代码」。
+ * 未完成或失败的几种都必须是源码而不是空白区域：一段画不出来的 SVG 在聊天记录
+ * 里仍然是一份可以阅读、可以复制的文档，把它变成空白既丢信息又让人以为消息没
+ * 发完（§十五「超出限制不崩溃、不冻结，回退源码」）。源码回退不是「错误卡片」：
+ * 它复用代码块的视觉语言，读起来就是「这里是一段代码」。
  *
  * ## 为什么先过 sanitizer，再碰 AndroidSVG
  *
  * XML 里的脚本、事件属性、外部引用、`foreignObject` 和 XXE 都在 [PiSvgSanitizer] 里被
- * 拒绝或移除（§八「SVG 安全规则」）。顺序是硬约束：交给 AndroidSVG 的**必须**是清洗后的
- * 字符串，而不是原文 —— 否则「已经检查过」就只是一句注释。正文先 `trim()` 再送入，因为
- * 闸门的输入契约是「完整单根 `<svg>` 文档」，而围栏正文常带首尾空行。
+ * 拒绝或移除（§八「SVG 安全规则」）。顺序是硬约束：交给 AndroidSVG 的**必须**是
+ * 清洗后的字符串，而不是原文 —— 否则「已经检查过」就只是一句注释。正文先 `trim()`
+ * 再送入，因为闸门的输入契约是「完整单根 `<svg>` 文档」，而围栏正文常带首尾空行。
  *
  * ## 为什么是 `Picture` 而不是 `Bitmap`
  *
  * 和 Mermaid 同一个理由：`Picture` 记录的是矢量指令，缩放矩阵写在
  * `nativeCanvas.translate/scale` → `drawPicture` 上，Skia 在最终矩阵下重放路径和文字，
- * 所以 8× 仍然清晰，也不用为 8× 分配一张巨幅位图。代价是记录与每帧重放的开销，因此
- * 基础视口必须有界（见 [PI_SVG_MAX_BASE_WIDTH_PX]）。
+ * 所以 8× 仍然清晰，也不用为 8× 分配一张巨幅位图。代价是记录与每帧重放的开销，
+ * 因此基础视口必须有界（见 [PI_SVG_MAX_BASE_WIDTH_PX]）。
  *
  * ## 为什么基础视口是 1600 × 4096 px
  *
@@ -100,18 +100,20 @@ import kotlin.math.roundToInt
  * ## 交互
  *
  * - **捏合** 以手势质心为锚点缩放到 1×…8×；
- * - **拖动** 只在放大后平移，1× 时的单指拖动**不消费**，让聊天列表照常滚动 —— 图不能
- *   变成滚动陷阱；
+ * - **拖动** 只在放大后平移，1× 时的单指拖动**不消费**，让聊天列表照常滚动 ——
+ *   图不能变成滚动陷阱；
  * - **适应** 回到 1× 并居中；
  * - **源码 / 图** 只切显示、不重渲染，且用户手动选择不被渲染结果覆盖；
- * - **复制** 复制围栏的原始正文（§二「复制操作默认复制原始源码」），从不复制渲染结果。
+ * - **复制** 复制围栏的原始正文（§二「复制操作默认复制原始源码」），从不复制渲染
+ *   结果。
  *
  * ## 已知取舍：不给原始 SVG 注入主题色
  *
- * Mermaid 的管线会把主题色写进它能控制的样式；这里不行 —— 围栏作者用的是什么颜色就是
- * 什么颜色，替一份手写 SVG 猜前景/背景会把有意的配色改错，甚至让浅色底图在深色主题下
- * 变成一块亮砖。所以本文件不构造 `PiSvgTheme`，主题变化只重绘工具栏、不重解析文档
- * （`LaunchedEffect` 的键里刻意没有主题）；深色主题下「黑线黑底」的 SVG 由「源码」按钮兜底。
+ * Mermaid 的管线会把主题色写进它能控制的样式；这里不行 —— 围栏作者用的是什么颜色
+ * 就是什么颜色，替一份手写 SVG 猜前景/背景会把有意的配色改错，甚至让浅色底图在深色
+ * 主题下变成一块亮砖。所以本文件不构造 `PiSvgTheme`，主题变化只重绘工具栏、不重解析
+ * 文档（`LaunchedEffect` 的键里刻意没有主题）；深色主题下「黑线黑底」的 SVG 由
+ * 「源码」按钮兜底。
  *
  * 所有解析与录制都在 [Dispatchers.Default] 上、在 `LaunchedEffect` 里做；`LaunchedEffect`
  * 的键覆盖 `source / settled / 宽度`，正文一变，旧任务立刻取消，旧 `Picture` 不会再被画到
@@ -381,8 +383,8 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
     }
 
     val aspect = piSvgAspect(svg)
-    // 记录视口：跟着块宽（有界），再按长宽比推高度。记录得比屏幕大只会让每次捏合的
-    // 重放更贵；记录得再小也不丢细节，因为重放仍然是矢量的。
+    // 记录视口：跟着块宽（有界），再按长宽比推高度。记录得比屏幕大只会让每次
+    // 捏合的重放更贵；记录得再小也不丢细节，因为重放仍然是矢量的。
     var baseWidth = requestedWidthPx.coerceIn(PI_SVG_MIN_BASE_WIDTH_PX, PI_SVG_MAX_BASE_WIDTH_PX)
     var baseHeight = (baseWidth / aspect).roundToInt()
     if (baseHeight > PI_SVG_MAX_BASE_HEIGHT_PX) {
@@ -434,8 +436,8 @@ private fun piSvgAspect(svg: SVG): Float {
  * 捏合缩放 + 拖动平移，手写而不 `detectTransformGestures`。
  *
  * `detectTransformGestures` 一旦有手指移动就消费整条指针流，于是每一张图都会吞掉竖直
- * 拖动、让下面的聊天列表滚不动。这个检测器只在**真的改变了什么**时才消费：两指以上
- * （缩放），或者已经放大后的单指（平移）。1× 下的单指拖动原样留给 `LazyColumn`。
+ * 拖动、让下面的聊天列表滚不动。这个检测器只在**真的改变了什么**时才消费：两指
+ * 以上（缩放），或者已经放大后的单指（平移）。1× 下的单指拖动原样留给 `LazyColumn`。
  *
  * 缩放围绕手势质心，手指底下的那一点保持不动；缩放与偏移都过 [piSvgClampOffset]，
  * 图不会被甩出可视框。
@@ -512,8 +514,8 @@ private fun piSvgFitScale(
 /**
  * 把画出来的图夹在框内。
  *
- * 放大后的图在某个轴上比视口小时，唯一合法的偏移是 0（居中）；否则图可以一直移动到
- * 它的边缘碰到视口边缘，这样平移不会在框里留下空白。
+ * 放大后的图在某个轴上比视口小时，唯一合法的偏移是 0（居中）；否则图可以一直
+ * 移动到它的边缘碰到视口边缘，这样平移不会在框里留下空白。
  */
 private fun piSvgClampOffset(
     wanted: Offset,
@@ -583,7 +585,7 @@ private fun PiSvgActionLabel(
         maxLines = 1,
         modifier = Modifier
             .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(start = 12.dp, vertical = 2.dp),
+            .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
     )
 }
 
@@ -654,21 +656,21 @@ private fun PiSvgSourceBlock(source: String, notice: String?) {
 /**
  * 围栏正文的字符上限：256 KiB。
  *
- * 取 256 KiB 而不是闸门的 2 MiB，有两个理由：一是聊天里一段超过 256 KiB 的 SVG 已经
- * 不是「图」，逐字阅读和逐帧重放都没有意义；二是这个值换算成 UTF-8 最多 768 KiB，永远
- * 低于 [PiSvgSanitizer.MAX_BYTES]，于是用户看到的是「源码超过 256 KiB」这条**关于围栏**
- * 的提示，而不是一条关于字节数的、和围栏无关的闸门提示。真正的结构/尺寸上限仍由闸门的
- * [PiSvgSanitizer.MAX_NODES] / [PiSvgSanitizer.MAX_DEPTH] / [PiSvgSanitizer.MAX_DIMENSION]
- * 负责。
+ * 取 256 KiB 而不是闸门的 2 MiB，有两个理由：一是聊天里一段超过 256 KiB 的 SVG
+ * 已经不是「图」，逐字阅读和逐帧重放都没有意义；二是这个值换算成 UTF-8 最多
+ * 768 KiB，永远低于 [PiSvgSanitizer.MAX_BYTES]，于是用户看到的是「源码超过
+ * 256 KiB」这条**关于围栏**的提示，而不是一条关于字节数、和围栏无关的闸门提示。
+ * 真正的结构/尺寸上限仍由闸门的 [PiSvgSanitizer.MAX_NODES] /
+ * [PiSvgSanitizer.MAX_DEPTH] / [PiSvgSanitizer.MAX_DIMENSION] 负责。
  */
 private const val PI_SVG_MAX_SOURCE_CHARS = 256 * 1024
 
 /**
  * 记录用的基础视口上限（px），与 Mermaid 视图共用同一组数字。
  *
- * 1600 px 覆盖高分屏手机按 1:1 记录所需的宽度；再大只让每次捏合的重放更贵。4096 px
- * 给竖长图一个上限，避免单帧重放病态 —— 更高的图在显示端被 `height` 夹住并靠缩放/平移
- * 查看。
+ * 1600 px 覆盖高分屏手机按 1:1 记录所需的宽度；再大只让每次捏合的重放更贵。
+ * 4096 px 给竖长图一个上限，避免单帧重放病态 —— 更高的图在显示端被 `height` 夹住
+ * 并靠缩放/平移查看。
  */
 private const val PI_SVG_MAX_BASE_WIDTH_PX = 1600
 private const val PI_SVG_MAX_BASE_HEIGHT_PX = 4096

@@ -183,11 +183,18 @@ internal fun PiMarkdownText(
     // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
     // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
     // 拿到的是同一个对象，逐字节相同。
-    // Phase 3：**已结束**的消息不再把公式改写成 Unicode。`PiLatex.prepare` 的产出是给
-    // 终端看的近似（`a/b`、Unicode 上下标、空格对齐的矩阵），而 MathJax 要的是真正的
-    // `INLINE_MATH` / `BLOCK_MATH` 节点 —— 改写过的源文本里已经没有它们了，组件根本收
-    // 不到一条公式。流式期间仍然走旧路径：`grok` 一拍一拍地长出来时，一次 WebView 排版
-    // 比一个 Unicode 近似贵得多，而"半条公式"本来也不该排版（见 `LocalPiMarkdownStreaming`）。
+    // Phase 3：**整行独立的**显示式公式不再在这里被改写成 Unicode —— `PiLatex.prepare`
+    // 的产出是给终端看的近似（`a/b`、Unicode 上下标、空格对齐的矩阵），而 MathJax 的入口
+    // 是 markdown 里的 `BLOCK_MATH` 节点；改写过的源里已经没有节点了。
+    //
+    // 判据是 [piDisplayMathIsStandalone]：只有当每一条含 `$$` 的行都**整行只是公式**
+    // （或多行公式的 `$$` 定界符行）时，才把显示式公式留给排版器。混在句子中间的
+    // `$$…$$` 仍然走旧路径 —— 那种形状下 `PARAGRAPH` 里除了 math 还有文字，段落组件
+    // 不会为它让路，留在源里只会显示成一串 `$$`。
+    //
+    // 行内 `$…$` 始终走旧路径：它要和同段的粗体/链接/行内代码拼进同一个
+    // `AnnotatedString`，而库的 annotator 没有插行内组件的缝（见 `PiLatex` 的 KDoc）。
+    // 流式期间也全走旧路径：一个 token 一次 WebView 排版不值得。
     //
     // **不许抛。** `PiLatex.prepare` 本身只走字符串与正则，但它的数学替换会进
     // `PiLatex.toUnicode`，而那个解析器是按 `{` 直接递归的（见那里的注释）：一条病态的
@@ -195,12 +202,9 @@ internal fun PiMarkdownText(
     // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
     // 拿到的是同一个对象，逐字节相同。
     val prepared = remember(markdown, streaming) {
-        if (streaming) {
-            runCatching { PiLatex.prepare(markdown) }
-                .getOrElse { PiLatex.PreparedMath(markdown, false) }
-        } else {
-            PiLatex.PreparedMath(markdown, false)
-        }
+        val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
+        runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
+            .getOrElse { PiLatex.PreparedMath(markdown, false) }
     }
     // 脚注（Phase 5）：库的 AST 没有脚注节点，所以在交给库之前把 `[^id]` 换成 Unicode
     // 上标、把定义块换成末尾的有序列表（见 `PiFootnoteMarkdown`）。流式期间**不换** ——
@@ -536,3 +540,38 @@ internal fun PiMarkdownText(
  * 名字与签名保持原样：`PiMarkdownComponents.kt` 的文档引用着它。
  */
 internal fun piMarkdownSource(markdown: String): String = PiLatex.preprocess(markdown)
+
+/**
+ * 这条消息里的显示式公式是不是**各自整行独立**。
+ *
+ * MathJax 只能接管 `BLOCK_MATH` 节点，而库的 `PARAGRAPH` 组件一旦有文字就不会把
+ * 子节点交给 `custom` 槽（`docs/known-gaps.md` 的 A2 条目）。所以只有在"一行要么是
+ * `$$`、要么整行就是一个 `$$…$$`"时，那个段落才**只有** math 节点，`PiParagraph` 才
+ * 能把它整个换掉。混在句子里的 `$$…$$` 一律交给 [PiLatex] 的近似路径。
+ *
+ * 这个函数故意保守：宁可少接管，也不要让一个 `$$` 留在正文里当字面量。
+ */
+internal fun piDisplayMathIsStandalone(markdown: String): Boolean {
+    if (!markdown.contains("$$")) return false
+    var seen = false
+    for (line in markdown.lineSequence()) {
+        if (!line.contains("$$")) continue
+        seen = true
+        val trimmed = line.trim()
+        if (trimmed == "$$") continue
+        val occurrences = countOccurrences(trimmed, "$$")
+        if (occurrences != 2) return false
+        if (!trimmed.startsWith("$$") || !trimmed.endsWith("$$") || trimmed.length <= 4) return false
+    }
+    return seen
+}
+
+private fun countOccurrences(text: String, needle: String): Int {
+    var count = 0
+    var index = text.indexOf(needle)
+    while (index >= 0) {
+        count++
+        index = text.indexOf(needle, index + needle.length)
+    }
+    return count
+}

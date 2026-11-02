@@ -1151,7 +1151,39 @@ internal object PiLatex {
      * 行内公式也要算：环境（矩阵/`cases`/`aligned`）**不受 `display` 门控**，行内的
      * `$\begin{pmatrix}…\end{pmatrix}$` 也会写成一块网格。
      */
-    fun prepare(markdown: String): PreparedMath {
+    /**
+     * 与 [preparePlain] 相同，但可以选择**把显示式公式留给上层**（`keepBlockMath`）。
+     *
+     * 为什么需要这个开关：MathJax 的入口是 markdown 里的 `BLOCK_MATH` 节点，而
+     * [preparePlain] 的产出是"已经排好的 Unicode 文本" —— 转换过的源里不再有节点，
+     * 渲染层根本收不到一条公式。`keepBlockMath = true` 时把 `$$…$$` / `\[…\]` 先藏进
+     * 占位符，只做行内替换，最后原样放回；于是行内公式仍是这套（便宜的）近似，显示式
+     * 公式则以节点形式交出去、由真正的排版器接手。
+     *
+     * 默认 `false`：调用方不显式要求时，输出与旧行为**逐字节相同**（`PiLatexCheck` 的
+     * 428 条夹具全部走这条路径）。
+     */
+    fun prepare(markdown: String, keepBlockMath: Boolean = false): PreparedMath {
+        if (!keepBlockMath) return preparePlain(markdown)
+        if (!markdown.contains(BLOCK_MATH_MARKER) && !markdown.contains(BLOCK_BRACKET_MARKER)) {
+            return preparePlain(markdown)
+        }
+        val held = ArrayList<String>()
+        val masked = BLOCK_MATH.replace(markdown) { match ->
+            held.add(match.value)
+            // 占位符里没有 `$` 也没有反斜杠，所以行内那一趟不可能碰到它。
+            "\u0000" + (held.size - 1) + "\u0000"
+        }
+        val prepared = preparePlain(masked)
+        if (held.isEmpty()) return prepared
+        var text = prepared.text
+        for (index in held.indices) {
+            text = text.replace("\u0000" + index + "\u0000", held[index])
+        }
+        return PreparedMath(text, prepared.hasDisplayGrid)
+    }
+
+    private fun preparePlain(markdown: String): PreparedMath {
         // 快路径：两个定界符家族（`$` 与 `\(`/`\[`）都没有时，整篇没有任何东西可改。
         // 流式转写里这是绝大多数帧的情况。
         if (!markdown.contains('$') && !markdown.contains('\\')) return PreparedMath(markdown, false)

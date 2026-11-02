@@ -142,7 +142,7 @@ private const val MAX_VIEWBOX_SPAN = 4096.0
  * - 网络边界由三件事承担：① `shouldInterceptRequest` 对**所有**非白名单 URL 直接返回空
  *   响应（请求根本到不了网络栈）；② `shouldOverrideUrlLoading` 一律返回 `true`；③ 宿主页
  *   的 CSP `default-src 'none'; connect-src 'none'`。特别地，MathJax 4 对冷僻字形会尝试
- *   动态加载 `@mathjax/mathjax-newcm-font/js/svg/dynamic/*.js`，这些请求**同样**被 ① 挡掉：
+ *   动态加载 `@mathjax/mathjax-newcm-font/js/svg/dynamic/… .js`，这些请求**同样**被 ① 挡掉：
  *   常见公式的字形数据已经内联在 `tex-svg.js` 里（`defaultChars` 含 ASCII、希腊字母、
  *   `∑`/`∫`/`√`/`∞` 等），只有扩展拉丁、双线体等冷僻变体可能缺字形——缺字形只影响那个
  *   字符，不会变成网络请求，也不会越出白名单。
@@ -539,7 +539,7 @@ internal object PiMathRenderEngine : PiSvgEngine {
         "window.__piRender(" +
             taskId + "," +
             quote(request.source) + "," +
-            if (display) "true" else "false" +
+            (if (display) "true" else "false") +
             ")"
 
     private fun quote(value: String): String = JSONObject.quote(value)
@@ -981,7 +981,7 @@ private fun mathBlockedResponse(): WebResourceResponse =
     WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
 
 /**
- * `/rich-mathjax/**` → `assets/rich/mathjax/**`，**只放行两个文件**。
+ * `/rich-mathjax/…` → `assets/rich/mathjax/…`，**只放行两个文件**。
  *
  * 不直接用 `WebViewAssetLoader.AssetsPathHandler`：它把整个 assets 暴露在一个前缀下，
  * 而这里的要求是"只加载 assets/rich/mathjax/"。白名单 + 目录前缀让越界路径（`..`、

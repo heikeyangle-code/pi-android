@@ -493,10 +493,38 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
 private fun PiParagraph(model: MarkdownComponentModel) {
     val content = model.content
     val node = model.node
-    val info = remember(content, node) {
+    val bounds = remember(content, node) {
         val start = node.startOffset.coerceIn(0, content.length)
         val end = node.endOffset.coerceIn(start, content.length)
-        val text = content.substring(start, end).trim()
+        start to content.substring(start, end).trim()
+    }
+    // 整段只是一条显示式公式。判定与 `piDisplayMathIsStandalone` 同源（`PiMarkdown` 只
+    // 在那种形状下才把 `$$…$$` 留进源文本），所以这里看到 `$$` 就意味着它确实是节点。
+    // 交给 MathJax；失败时用 `PiLatex` 的 Unicode 结果，屏幕不会因此空一行。
+    val mathSource = remember(bounds) {
+        val text = bounds.second
+        if (text.length > 4 && text.startsWith("$$") && text.endsWith("$$") &&
+            countDisplayDelimiters(text) == 2
+        ) {
+            text.substring(2, text.length - 2).trim().ifEmpty { null }
+        } else {
+            null
+        }
+    }
+    if (mathSource != null) {
+        val fallback = remember(mathSource) {
+            runCatching { PiLatex.toUnicode(mathSource, display = true) }.getOrNull() ?: mathSource
+        }
+        PiMathView(
+            source = mathSource,
+            display = true,
+            settled = !LocalPiMarkdownStreaming.current,
+            fallbackText = fallback,
+        )
+        return
+    }
+    val info = remember(bounds) {
+        val text = bounds.second
         if (text.length > BARE_URL_MAX_CHARS || text.any { it.isWhitespace() }) {
             null
         } else if (!text.startsWith("http://") && !text.startsWith("https://")) {
@@ -506,7 +534,10 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         }
     }
     if (info == null) {
-        MarkdownParagraph(model)
+        // 库的这个组件收的是 `(content, node)`，不是组件模型；段落排版/颜色/annotator
+        // 它自己从 `LocalMarkdownTypography` 与 `LocalMarkdownAnnotator` 取，所以这里
+        // 交出去的结果与该组件作为默认槽时逐字节相同。
+        MarkdownParagraph(model.content, model.node)
         return
     }
     val uriHandler = LocalUriHandler.current
@@ -514,6 +545,17 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         url = info.url,
         onOpen = { url -> runCatching { uriHandler.openUri(url) } },
     )
+}
+
+/** `$$` 在整段里出现几次；只有正好两次（一条公式）才认。 */
+private fun countDisplayDelimiters(text: String): Int {
+    var count = 0
+    var index = text.indexOf("$$")
+    while (index >= 0) {
+        count++
+        index = text.indexOf("$$", index + 2)
+    }
+    return count
 }
 
 /** 与 `PiLinkCard.MAX_URL_CHARS` 同一个上限；更长的"URL"不是一条链接。 */
