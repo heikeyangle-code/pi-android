@@ -13,6 +13,7 @@ import app.pi.runtime.ProrootProbe
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.RuntimeSelfCheck
+import app.pi.runtime.RuntimeTreeAudit
 import app.pi.runtime.WorkspaceStore
 import app.pi.rpc.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
@@ -524,9 +525,16 @@ class PiEngineHost(private val appContext: Context) {
                 // `BootErrorCard` renders. Using it here also removes the hand-rolled
                 // `check.stderr.takeIf { … }` that could only ever show the stderr and
                 // never the marker or the reason.
+                // The tree description is appended, and only on failure: proot's `not
+                // found` cannot say whether the file is absent, the `/bin` link is
+                // dangling, or the whole rootfs is empty, and that difference decides
+                // whether the next step is 「重建运行时」 or a bug report. Four `stat`s on a
+                // boot that has already failed. ([RuntimeTreeAudit] is what the provisioner
+                // checks too, so the two agree on what "the guest cannot run" means.)
                 return@withContext Boot.Failed(
                     message = "运行时自检未通过",
-                    detail = selfCheck.summarize(check),
+                    detail = selfCheck.summarize(check) + "\n\n" +
+                        RuntimeTreeAudit.describe(paths.rootfs),
                 )
             }
 

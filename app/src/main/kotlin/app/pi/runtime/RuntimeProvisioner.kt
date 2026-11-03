@@ -251,8 +251,20 @@ class RuntimeProvisioner(
         //
         // `rebuild` deliberately bypasses it: a caller that decided the tree is broken
         // must be able to rebuild a tree whose stamp happens to match.
+        //
+        // ...and a current stamp is not proof that the tree is *complete*. A device report
+        // (2026-11-03) had a finished unpack, a current stamp, and a rootfs without
+        // `/bin/bash`: proot then fails at `which()` with "not found", every later boot
+        // takes this early return, and only 「重建运行时」 — which deletes everything the user
+        // installed inside the guest — could get past it. So this path asks
+        // [RuntimeTreeAudit.missing] first (four `isFile` probes on paths the guest cannot
+        // run without, a few microseconds against a boot) and treats a tree that lacks any
+        // of them as "not provisioned": `treeIncomplete` below plans every payload, which
+        // extracts **over** the tree and deletes nothing.
         if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) {
-            return finishCurrent(revision, migration = false, onStep)
+            if (RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) {
+                return finishCurrent(revision, migration = false, onStep)
+            }
         }
 
         // `<files>/pi` may not exist yet on a first boot, and `usableSpace` on a path
@@ -277,6 +289,10 @@ class RuntimeProvisioner(
         // it as "every payload changed" re-extracts over what is there (nothing is
         // deleted), which repairs it without needing the explicit rebuild.
         val rootfsMissing = !paths.rootfs.isDirectory
+        // 有根目录、却缺了 guest 起不来必须要的那几个文件 —— 上面快路径的判据，这里再算一次
+        // （快路径只在戳记相符时才会走到；走到这里说明戳记不符、或者戳记相符但树是残的）。
+        // 与 `rootfsMissing` 同一个处置：全部载荷覆盖解压一遍，不删任何东西。
+        val treeIncomplete = !rootfsMissing && RuntimeTreeAudit.criticalProblems(paths.rootfs).isNotEmpty()
 
         // A warning accumulator, cleared per attempt: same shape and same reason as
         // [payloadReport] (written on this path, read on this path only).
@@ -309,6 +325,9 @@ class RuntimeProvisioner(
             // 不删数据的修复：每个 payload 都重解一遍（覆盖写），把缺失/损坏的文件补回来。
             repair -> PAYLOADS
             rootfsMissing -> PAYLOADS
+            // 残树（戳记在、文件缺）：同样全部重解一遍。`migration` 之前，因为它说的是
+            // "这棵树现在不能用"，而迁移只是"这是第一次用新格式"。
+            treeIncomplete -> PAYLOADS
             migration -> PAYLOADS
             else -> PAYLOADS.filter { payload ->
                 // An APK that carries no engine asset (the assembler always writes one,
@@ -402,6 +421,28 @@ class RuntimeProvisioner(
         for (payload in plan) {
             next()
             extractPayloadOver(payload)
+            // ---------------------------------------------- the gate, per payload
+            // **Before** the digest is recorded, and that order is the whole point. The
+            // extractor now throws on a link it could not create, but "no exception" is
+            // not yet "the payload's files are usable": a short write, a copy that landed
+            // as an empty directory, an exec bit the filesystem refused, or a guest-absolute
+            // symlink pointing at something the payload never wrote all reach this line
+            // silently. So each payload is asked about *its own* files
+            // ([RuntimeTreeAudit.requirementsFor]), and a payload that cannot answer is a
+            // failure of this boot — its digest is never written, so the next launch
+            // re-extracts exactly it (nothing is deleted, no rebuild needed).
+            //
+            // The engine payload is exempt only when the APK carries no engine asset:
+            // `extractEngine` treats that as provisionable (a hand-assembled package), and
+            // the host's own "引擎未安装" check is the card for it.
+            val meta = payloadMetaName(payload)
+            val gated = !(payload.name == ENGINE_ARCHIVE && !assetExists("runtime/$ENGINE_ARCHIVE"))
+            if (gated) {
+                val problems = RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.requirementsFor(meta))
+                if (problems.isNotEmpty()) {
+                    throw ProvisioningException(RuntimeTreeAudit.payloadFailure(meta, paths.rootfs, problems))
+                }
+            }
             // Order matters: extract over first (the new bytes are in place), then delete
             // only what the old list owned and the new one does not, then record the new
             // state. Recording before pruning would lose the old list.
@@ -417,6 +458,31 @@ class RuntimeProvisioner(
         // One line for the directories this pass deliberately left alone (user content inside
         // them). Here rather than at the end so a later failure cannot swallow it.
         reportKeptDirectories()
+
+        // ------------------------------------------------ the tree, verified, not assumed
+        // Everything above can report success while the tree is still unusable: the
+        // archives are read, the prunes run, the digests land — and the guest's own
+        // `/bin/bash` is missing, which is what a device reported (2026-11-03) with a
+        // complete-looking unpack and a `not found` from proot's `which()`.
+        //
+        // So the *slow* path — the one that just wrote several hundred megabytes — ends by
+        // asking the tree, not the bookkeeping: repair the four usrmerge links whose target
+        // is present but whose link is missing or dangling ([RuntimeTreeAudit.repairUsrMergeLinks];
+        // the one failure mode that is about the link and not the bytes), then re-check the
+        // critical paths. Whatever is still missing at that point is not something another
+        // retry fixes by itself, so it fails **here**, before the config write and before the
+        // stamp: the boot card then says which path, what `/bin` actually is, and what the
+        // rootfs contains, instead of proot's two-line "not found" three steps later.
+        val linkRepair = RuntimeTreeAudit.repairUsrMergeLinks(paths.rootfs)
+        if (linkRepair.repaired.isNotEmpty()) {
+            payloadWarnings += "补回了 usrmerge 链接：" + linkRepair.repaired.joinToString("、") { "/$it" }
+        }
+        val problems = RuntimeTreeAudit.criticalProblems(paths.rootfs)
+        if (problems.isNotEmpty()) {
+            throw ProvisioningException(
+                RuntimeTreeAudit.failure(paths.rootfs, problems, linkRepair),
+            )
+        }
 
         // The guest's required configuration (`/etc/resolv.conf`, `/etc/hosts`, the two
         // directories) and the `/etc/group` repair, through the same idempotent function the

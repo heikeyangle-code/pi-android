@@ -38,6 +38,20 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         NotProvisioned,
 
         /**
+         * The tree is there but a file the guest cannot run without is missing or unusable
+         * — the current `proot error: '/bin/bash' not found` class of failure.
+         *
+         * Why this is its own status rather than "proot failed": the old check started
+         * `/bin/bash` to see whether the runtime worked, so a missing bash reported itself
+         * as `proot 返回了非预期结果 (exit 1)` — a sentence that names neither the file nor
+         * the cause, and that sent the first device report down the wrong path. The local
+         * check below ([RuntimeTreeAudit.failures]) answers this **before** spawning proot,
+         * so the card says "缺 /bin/bash" instead, and proot is only blamed for things that
+         * are actually proot's.
+         */
+        TreeIncomplete,
+
+        /**
          * proot itself could not start. Usually SELinux denying `ptrace` (hardened
          * ROMs), a missing loader, or the native library not extracted.
          */
@@ -72,6 +86,22 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
                 Status.ProotFailed,
                 "缺少 proot loader（${paths.prootLoader().name}）——jniLibs 里没有它，" +
                     "targetSdk >= 29 时 proot 无法启动",
+            )
+        }
+
+        // The tree itself, before proot is asked to run anything out of it.
+        //
+        // Four `stat`s plus the exec bit, and the order is as load-bearing as the check:
+        // (a) it runs **before** the pass-stamp shortcut below, because a stamp written by
+        // an earlier boot must not hide a tree that has since lost its bash; (b) it runs
+        // before proot, because proot's `not found` cannot distinguish "this rootfs has no
+        // /bin/bash" from "proot cannot translate paths on this ROM" — and the first device
+        // report of this class was read as the second for exactly that reason.
+        val problems = RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.CRITICAL_REQUIREMENTS)
+        if (problems.isNotEmpty()) {
+            return@withContext Outcome(
+                Status.TreeIncomplete,
+                "运行时不完整（解包没有把 guest 起不来的文件写全）：\n" + problems.joinToString("\n"),
             )
         }
 

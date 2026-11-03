@@ -326,6 +326,20 @@ jobs:
         with:
           path: build/pure-checks
           key: pi-pure-checks-deps-${{ hashFiles('gradle/libs.versions.toml') }}
+      # `runtime-extract-real` unpacks the **real** Ubuntu base through the app's own
+      # `TarExtractor` and asserts the guest's own `/bin/bash` is there and executable.
+      # That is the check whose absence let a first install on a device report
+      # `proot error: '/bin/bash' not found` (2026-11-03) after a "successful" unpack.
+      # The URL comes from the lock file, so this download is the same bytes the APK
+      # carries; it fails the job if the pinned upstream is gone rather than silently
+      # skipping the harness.
+      - name: Fetch the pinned Ubuntu base payload
+        run: |
+          set -o pipefail
+          url="$(node -e 'process.stdout.write(require("./runtime.lock.json").artifacts.ubuntuBase.url)')"
+          mkdir -p build/downloads
+          curl -fsSL --retry 3 --retry-delay 2 -o build/downloads/ubuntu-base.tar.gz "$url"
+          ls -l build/downloads/ubuntu-base.tar.gz
       - name: Run app/src/test harnesses
         run: |
           set -o pipefail

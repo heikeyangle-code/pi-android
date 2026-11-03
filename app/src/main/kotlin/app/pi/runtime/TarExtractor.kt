@@ -37,24 +37,61 @@ import java.util.zip.GZIPInputStream
  *  - **entries may not escape the destination.** A `..` component or an absolute
  *    path is rejected rather than followed — the archives are third-party
  *    downloadables and this is the one place a mistake is unrecoverable.
+ *  - **a link that could not be created is a failure, not a bounce.** Until
+ *    2026-11-03 the symlink branch swallowed every exception and tried to `Files.copy`
+ *    the target in its place. For Ubuntu's merged-usr layout that copy produces
+ *    `bin/` as an empty directory next to the real `usr/bin/bash`, so the tree ends up
+ *    without `/bin/bash` while every caller is told the extraction succeeded — the
+ *    device report that opened this work ("proot error: '/bin/bash' not found", then
+ *    every later boot short-circuited by the stamp). Hard links had the same shape
+ *    (source missing → skip silently). Both now throw [IOException] naming the entry,
+ *    the link target and the underlying error, and the symlink is verified to *be* a
+ *    link after creation. [symlink] and [copyLink] are injectable so a bare-JVM
+ *    harness can prove the failure path without a filesystem that refuses links.
  */
 class TarExtractor(
     private val destination: File,
     private val onEntry: ((String) -> Unit)? = null,
+    /**
+     * How a symlink is created. Defaults to `Files.createSymbolicLink`; the parameter
+     * exists so the strict-failure behaviour is testable (`runtime-extract-real` passes
+     * one that throws, which is what a device refusing `symlink(2)` looks like), and so
+     * an Android caller could pass `Os.symlink` for a better errno without touching this
+     * class's Android-free contract.
+     */
+    private val symlink: (link: Path, target: Path) -> Unit = { link, target ->
+        Files.createSymbolicLink(link, target)
+    },
+    /** How a hard link is recreated (a copy on this platform); injectable for the same reason. */
+    private val copyLink: (source: Path, target: Path) -> Unit = { source, target ->
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
+    },
 ) {
 
     private var filesWritten = 0L
     private var bytesWritten = 0L
     private var entriesSeen = 0L
+    private var symlinksWritten = 0L
 
-    data class Result(val files: Long, val bytes: Long, val entries: Long)
+    /**
+     * [links] is how many symlinks were actually created. It is the number the
+     * integrity gate and the `runtime-extract-real` harness look at: zero links on an
+     * Ubuntu base is a broken tree even when every byte was written, and that is the
+     * exact shape a silently-skipped link left behind.
+     */
+    data class Result(
+        val files: Long,
+        val bytes: Long,
+        val entries: Long,
+        val links: Long = 0L,
+    )
 
     fun extractGzip(stream: InputStream): Result {
         destination.mkdirs()
         GZIPInputStream(BufferedInputStream(stream, 1 shl 16)).use { gz ->
             extractTar(gz)
         }
-        return Result(filesWritten, bytesWritten, entriesSeen)
+        return Result(filesWritten, bytesWritten, entriesSeen, symlinksWritten)
     }
 
     private fun extractTar(input: InputStream): Result {
@@ -124,16 +161,32 @@ class TarExtractor(
                 '2' -> {
                     ensureParent(target)
                     unlinkIfPresent(target)
-                    runCatching { Files.createSymbolicLink(target.toPath(), Path.of(linkName)) }
-                        .onFailure {
-                            // Some Android filesystems refuse symlinks; a copy is a
-                            // worse but working fallback, and in practice this only
-                            // ever happens for non-executable data.
-                            if (!linkName.startsWith("/")) {
-                                val src = File(target.parentFile, linkName)
-                                if (src.exists()) runCatching { Files.copy(src.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-                            }
-                        }
+                    // Strict on purpose (2026-11-03): a link that could not be created used
+                    // to be "recovered" by copying its target, which for `bin -> usr/bin`
+                    // leaves an empty `bin/` directory — a rootfs that looks extracted and
+                    // has no `/bin/bash`. Nothing above could tell: no exception, no
+                    // retry, and the provisioning stamp was written anyway. The failure is
+                    // named with the entry, the target and the underlying error, because
+                    // that sentence is the only thing the boot card can show.
+                    try {
+                        symlink(target.toPath(), Path.of(linkName))
+                    } catch (error: Exception) {
+                        throw IOException(
+                            "tar entry '$rawName' 是符号链接 -> '$linkName'，创建失败：" +
+                                "${target.path}（${error.javaClass.simpleName}: ${error.message}）",
+                            error,
+                        )
+                    }
+                    // A filesystem that "succeeds" without producing a link has not created
+                    // one. This also catches the old empty-directory shape if a device ever
+                    // answers success to a refused symlink.
+                    if (!isSymlink(target)) {
+                        throw IOException(
+                            "tar entry '$rawName' 的符号链接 -> '$linkName' 创建后不是链接：" +
+                                "${target.path}（${describeNode(target)}）",
+                        )
+                    }
+                    symlinksWritten++
                     onEntry?.invoke(rawName)
                 }
                 '1' -> {
@@ -141,13 +194,35 @@ class TarExtractor(
                     // create hardlinks across these trees, and a copy preserves
                     // behaviour for every case pi hits (the size cost is why the
                     // build must not ship a dereferenced tree in the first place).
+                    //
+                    // Strict for the same reason as the symlink branch: a missing source
+                    // or a failed copy used to be skipped, so an archive whose hard links
+                    // did not land still reported success. `usr/bin/perl5.38.2` and
+                    // `usr/bin/uncompress` are the two the Ubuntu base carries, and a
+                    // tool that silently does not exist is a support ticket, not a tree.
                     ensureParent(target)
                     unlinkIfPresent(target)
                     val src = resolveSafely(linkName)
-                    if (src != null && src.exists()) {
-                        runCatching { Files.copy(src.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-                            .onSuccess { filesWritten++ }
+                        ?: throw IOException(
+                            "tar entry '$rawName' 是硬链接 -> '$linkName'，目标路径越界，拒绝复制",
+                        )
+                    if (!src.isFile) {
+                        throw IOException(
+                            "tar entry '$rawName' 是硬链接 -> '$linkName'，但目标不存在或不是文件：" +
+                                "${src.path}（${describeNode(src)}）",
+                        )
                     }
+                    try {
+                        copyLink(src.toPath(), target.toPath())
+                    } catch (error: IOException) {
+                        throw IOException(
+                            "tar entry '$rawName' 的硬链接 -> '$linkName' 复制失败：" +
+                                "${src.path} -> ${target.path}（${error.javaClass.simpleName}: ${error.message}）",
+                            error,
+                        )
+                    }
+                    applyMode(target, mode)
+                    filesWritten++
                     onEntry?.invoke(rawName)
                 }
                 '0', '\u0000', '7' -> {
