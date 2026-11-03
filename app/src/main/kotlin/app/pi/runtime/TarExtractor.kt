@@ -136,6 +136,158 @@ class TarExtractor(
         )
     }
 
+    private fun extractTar(input: InputStream): Result {
+        val header = ByteArray(512)
+        var longName: String? = null
+        var longLink: String? = null
+        var paxPath: String? = null
+        var paxLink: String? = null
+
+        while (true) {
+            if (!readFully(input, header, 512)) {
+                // The stream ran out where a header should start. A well-formed archive
+                // ends with a zero block (the check below), so reaching here means the
+                // payload is truncated — and this is the one truncation that used to
+                // look like success: `readFully` reported "no bytes at all" the same way
+                // it reported the end of the data, so an archive cut exactly on a
+                // 512-byte boundary extracted a **partial rootfs** and then had its
+                // provisioning stamp written, i.e. a device that boots into a
+                // half-extracted runtime with nothing on screen saying so.
+                //
+                // `IOException` rather than `IllegalStateException` so
+                // `RuntimeProvisioner.extractAsset` wraps it with the payload audit and
+                // names the archive.
+                throw IOException("tar payload ended before its end-of-archive marker（档案被截断？）")
+            }
+            if (header.all { it == 0.toByte() }) break // end-of-archive marker
+
+            val nameRaw = header.string(0, 100)
+            val mode = header.octal(100, 8)
+            val size = header.octal(124, 12)
+            val typeFlag = header[156].toInt().toChar()
+            val linkNameRaw = header.string(157, 100)
+            val prefix = header.string(345, 155)
+
+            entriesSeen++
+
+            when (typeFlag) {
+                // Metadata records: consume the payload and remember it.
+                'L' -> { longName = readPayload(input, size).toString(Charsets.UTF_8).trimEnd('\u0000', '\n'); continue }
+                'K' -> { longLink = readPayload(input, size).toString(Charsets.UTF_8).trimEnd('\u0000', '\n'); continue }
+                'x', 'X' -> {
+                    val records = readPayload(input, size).toString(Charsets.UTF_8)
+                    parsePax(records).let { pax ->
+                        pax["path"]?.let { paxPath = it }
+                        pax["linkpath"]?.let { paxLink = it }
+                    }
+                    continue
+                }
+                'g' -> { readPayload(input, size); continue } // global pax header
+            }
+
+            val rawName = longName ?: paxPath ?: if (prefix.isNotEmpty()) "$prefix/$nameRaw" else nameRaw
+            val linkName = longLink ?: paxLink ?: linkNameRaw
+            longName = null; longLink = null; paxPath = null; paxLink = null
+
+            val target = resolveSafely(rawName) ?: run {
+                // Refused: skip the payload but keep the stream aligned.
+                skip(input, size)
+                continue
+            }
+
+            when (typeFlag) {
+                '5' -> {
+                    ensureDirectory(target)
+                    onEntry?.invoke(rawName)
+                }
+                '2' -> {
+                    ensureParent(target)
+                    unlinkIfPresent(target)
+                    // A link that could not be created must not become an empty directory.
+                    // That is the 2026-11-03 first-install failure: `bin -> usr/bin` failed,
+                    // the old fallback copied the *directory node*, `/bin/bash` did not
+                    // exist, and the tree was stamped as provisioned anyway.
+                    //
+                    // Two steps, in this order:
+                    //
+                    //  1. create the link;
+                    //  2. if the filesystem refuses it, **materialise** what it points at —
+                    //     a file is copied, a directory is mirrored — so the guest still has
+                    //     `/bin/bash`. This is the difference between "we report the failure"
+                    //     and "it cannot fail": on a device where `symlink(2)` is denied the
+                    //     runtime works, just with copies instead of links, and the boot
+                    //     screen says so once (`degraded`).
+                    //
+                    // If even the copy cannot be written (ENOSPC, a refused chmod) this
+                    // throws with the archive entry, the link target and the reason, and
+                    // `RuntimeProvisioner` never records the payload as installed.
+                    val linked = runCatching { symlink(target.toPath(), Path.of(linkName)) }
+                        .isSuccess && isSymlink(target)
+                    if (linked) {
+                        symlinksWritten++
+                    } else {
+                        if (isSymlink(target)) runCatching { Files.deleteIfExists(target.toPath()) }
+                        // Deferred on purpose: the target usually does not exist yet (the
+                        // first entry of the Ubuntu base is `bin -> usr/bin`, and `usr/bin`
+                        // is created by later entries). [materialisePendingLinks] runs after
+                        // the whole archive.
+                        pendingMaterialise += Triple(target, linkName, rawName)
+                    }
+                    onEntry?.invoke(rawName)
+                }
+                '1' -> {
+                    // Hard link: recreate by copying. Android's storage cannot
+                    // create hardlinks across these trees, and a copy preserves
+                    // behaviour for every case pi hits (the size cost is why the
+                    // build must not ship a dereferenced tree in the first place).
+                    //
+                    // Strict for the same reason as the symlink branch: a missing source
+                    // or a failed copy used to be skipped, so an archive whose hard links
+                    // did not land still reported success. `usr/bin/perl5.38.2` and
+                    // `usr/bin/uncompress` are the two the Ubuntu base carries, and a
+                    // tool that silently does not exist is a support ticket, not a tree.
+                    ensureParent(target)
+                    unlinkIfPresent(target)
+                    val src = resolveSafely(linkName)
+                        ?: throw IOException(
+                            "tar entry '$rawName' 是硬链接 -> '$linkName'，目标路径越界，拒绝复制",
+                        )
+                    if (!src.isFile) {
+                        // Its source may itself be a link that could not be created and is
+                        // waiting for [materialisePendingLinks] (`usr/bin/perl5.38.2` links
+                        // to `usr/bin/perl`; a no-symlink device materialises it later).
+                        pendingHardLinks += PendingHardLink(target, linkName, rawName, mode)
+                        onEntry?.invoke(rawName)
+                        continue
+                    }
+                    try {
+                        copyLink(src.toPath(), target.toPath())
+                    } catch (error: IOException) {
+                        throw IOException(
+                            "tar entry '$rawName' 的硬链接 -> '$linkName' 复制失败：" +
+                                "${src.path} -> ${target.path}（${error.javaClass.simpleName}: ${error.message}）",
+                            error,
+                        )
+                    }
+                    applyMode(target, mode)
+                    filesWritten++
+                    onEntry?.invoke(rawName)
+                }
+                '0', '\u0000', '7' -> {
+                    ensureParent(target)
+                    unlinkIfPresent(target)
+                    writeFile(input, target, size)
+                    applyMode(target, mode)
+                    onEntry?.invoke(rawName)
+                }
+                else -> skip(input, size) // char/block/fifo: unused by a rootfs tarball
+            }
+        }
+        return Result(filesWritten, bytesWritten, entriesSeen)
+    }
+
+
+
     /**
      * 把这次解包中"建不出来的符号链接"铺成实物，**在整份档案解完之后**。
      *
