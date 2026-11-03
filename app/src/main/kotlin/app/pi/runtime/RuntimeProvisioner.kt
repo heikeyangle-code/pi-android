@@ -159,6 +159,14 @@ class RuntimeProvisioner(
     private val payloadWarnings = mutableListOf<String>()
 
     /**
+     * 这台设备上"符号链接建不出来、改用壳脚本"的入口（`/usr/local/bin/node` 等）。
+     *
+     * 只在拒绝 `symlink(2)` 的设备上非空；`provision` 结束时把它变成启动页的一行提示 ——
+     * 用户需要知道为什么这里的 `node` 是个脚本，而不是链接。
+     */
+    private val substitutedLinks = mutableListOf<String>()
+
+    /**
      * Directories this attempt **kept** because they were not empty.
      *
      * The counterpart of [payloadWarnings], and deliberately not part of it: a directory that
@@ -473,6 +481,12 @@ class RuntimeProvisioner(
         // retry fixes by itself, so it fails **here**, before the config write and before the
         // stamp: the boot card then says which path, what `/bin` actually is, and what the
         // rootfs contains, instead of proot's two-line "not found" three steps later.
+        if (substitutedLinks.isNotEmpty()) {
+            payloadWarnings +=
+                "这台设备的应用数据目录不支持符号链接：已用壳脚本代替 " +
+                    substitutedLinks.size + " 个入口（" +
+                    substitutedLinks.take(5).joinToString("、") + "）"
+        }
         val linkRepair = RuntimeTreeAudit.repairUsrMergeLinks(paths.rootfs)
         if (linkRepair.repaired.isNotEmpty()) {
             payloadWarnings += "补回了 usrmerge 链接：" + linkRepair.repaired.joinToString("、") { "/$it" }
@@ -1907,11 +1921,50 @@ class RuntimeProvisioner(
      * Only symlinks that Android itself follows — the `libtalloc.so.2` alias in
      * [PiPaths.lib], which lives outside the rootfs — may name host paths.
      */
+    /**
+     * 把 [guestTarget] 暴露在 guest 的 [guestLink] 上 —— 链接，或者这台设备上的等价物。
+     *
+     * ## 为什么不能只 `createSymbolicLink`（2026-11-04 真机报告）
+     *
+     * 那台设备的应用数据目录**拒绝 `symlink(2)`**：载荷里的链接由 `TarExtractor` 铺成实物
+     * （所以失败页上 `/bin/bash`、`/bin/sh` 都是普通文件、`/bin` 是目录），但这里仍然直接
+     * `createSymbolicLink` 而且**吞掉失败** —— `/usr/local/bin/node` 于是根本不存在，node
+     * 载荷的闸门报「关键文件不完整：/usr/local/bin/node 不存在」，启动被卡住。同一个设备上
+     * 一半修好了、另一半没有，这是我漏掉的第二处。
+     *
+     * ## 为什么是壳脚本、不是复制
+     *
+     * 目标都很大：`/opt/node/bin/node` 在真机上是上百 MB 到 GB 级，`node`/`npm`/`npx` 三份
+     * 复制会把 rootfs 撑大几百 MB。壳脚本只有几十字节，语义等价（`exec` 目标、把参数原样
+     * 转过去），而且 `#!/bin/sh` 本身在这台设备上是真实文件（`bin/sh` 已被铺开）。
+     *
+     * 壳脚本写不进去（磁盘满、目录只读）才是真失败：那时记一条警告，载荷闸门会在同一轮
+     * 把缺哪个路径报出来，启动失败且**不写** digest/stamp。
+     */
     private fun guestSymlink(guestLink: String, guestTarget: String) {
         val link = File(paths.rootfs, guestLink.removePrefix("/"))
         link.parentFile?.mkdirs()
         if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
-        runCatching { java.nio.file.Files.createSymbolicLink(link.toPath(), java.nio.file.Path.of(guestTarget)) }
+        val linked = runCatching {
+            java.nio.file.Files.createSymbolicLink(link.toPath(), java.nio.file.Path.of(guestTarget))
+        }.isSuccess && runCatching {
+            java.nio.file.Files.isSymbolicLink(link.toPath())
+        }.getOrDefault(false)
+        if (linked) return
+        if (java.nio.file.Files.isSymbolicLink(link.toPath())) {
+            runCatching { java.nio.file.Files.deleteIfExists(link.toPath()) }
+        }
+        val wrapped = runCatching {
+            link.writeText("#!/bin/sh\nexec $guestTarget \"\$@\"\n")
+            link.setExecutable(true, false)
+            true
+        }.getOrDefault(false)
+        if (wrapped) {
+            substitutedLinks += guestLink
+        } else {
+            payloadWarnings +=
+                "没能建立 $guestLink -> $guestTarget（设备不支持符号链接，壳脚本也写不进去）"
+        }
     }
 
     private fun assetExists(name: String): Boolean = runCatching {

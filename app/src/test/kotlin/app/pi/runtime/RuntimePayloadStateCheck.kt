@@ -1127,6 +1127,34 @@ fun main() {
         true,
     )
 
+    // ------------------------------------------------------- ③c' 链接被拒时，app 自己建的入口也要兜底
+    //
+    // 2026-11-04 真机报告：同一台拒绝 symlink 的设备上，tar 里的链接已经被铺成实物
+    // （失败页上 `/bin/bash`、`/bin/sh` 是普通文件），但 `guestSymlink` 仍然只
+    // `createSymbolicLink` 且吞掉失败 —— `/usr/local/bin/node` 根本不存在，node 载荷的闸门
+    // 报「关键文件不完整」，启动卡住。这四条钉的是第二处兜底。
+    val guestLinkBody = provisionerSource
+        .substringAfter("private fun guestSymlink(guestLink: String, guestTarget: String) {")
+        .substringBefore("private fun assetExists(")
+    check("P45 the guest link is verified to be a link", guestLinkBody.contains("isSymbolicLink(link.toPath())"), true)
+    check(
+        "P46 a refused guest link becomes a shell wrapper instead of nothing",
+        guestLinkBody.contains("#!/bin/sh") && guestLinkBody.contains("substitutedLinks += guestLink"),
+        true,
+    )
+    check(
+        "P47 the wrapper is reported on the boot screen (not silent)",
+        provisionerSource.contains("这台设备的应用数据目录不支持符号链接：已用壳脚本代替"),
+        true,
+    )
+    check(
+        "P48 node's three PATH entries still go through guestSymlink",
+        provisionerSource.contains("guestSymlink(\"/usr/local/bin/node\", \"/opt/node/bin/node\")") &&
+            provisionerSource.contains("guestSymlink(\"/usr/local/bin/npm\", \"/opt/node/bin/npm\")") &&
+            provisionerSource.contains("guestSymlink(\"/usr/local/bin/npx\", \"/opt/node/bin/npx\")"),
+        true,
+    )
+
     // ------------------------------------------------------- ③d 自检先查树，再怪 proot
     //
     // 老的自检**用 `/bin/bash` 去证明运行时可执行**：bash 没了，它自己就起不来，然后报一句
