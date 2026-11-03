@@ -1094,8 +1094,21 @@ fun main() {
         false,
     )
     check(
-        "P37 a refused symlink throws instead",
-        extractorSource.contains("是符号链接 -> '\$linkName'，创建失败"),
+        "P37 a refused symlink is materialised, and only then can it fail",
+        extractorSource.contains("是符号链接 -> '\$target'，创建失败") &&
+            extractorSource.contains("materialiseLink(target, linkName)")
+                .let { it || extractorSource.contains("materialiseLink(link, target)") },
+        true,
+    )
+    check(
+        "P37b the materialisation is two-phase (files first, then directories)",
+        extractorSource.contains("val (toFiles, toDirectories) = pendingMaterialise.partition") &&
+            extractorSource.contains("toFiles + toDirectories"),
+        true,
+    )
+    check(
+        "P37c hard links defer when their source is itself a pending link",
+        extractorSource.contains("pendingHardLinks += PendingHardLink(target, linkName, rawName, mode)"),
         true,
     )
     check(
