@@ -2967,7 +2967,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 它在 `busy = "正在加载会话"` **之前**：`refreshState` 走 `call`，会先把自己的标签
             // （「读取会话状态」）写上、再在 finally 里清掉；放在它后面写，外层那句会被那次清理
             // 抹掉，replay 期间顶栏什么都不说。
-            refreshState()
+            // **必须 await**：`refreshState()` 只是排了一次协程，紧接着的 `replayHistory`
+            // 会用**旧 meta** 去挑会话文件 —— 切工作区后重新画出老对话、要发一句消息才切换，
+            // 就是这一格。`refreshStateNow` 的 KDoc 是权威版本。
+            api?.let { refreshStateNow(it) }
             // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是
             // **这一次 replay 的**，所以只有它还握着这行时才允许清掉。
             val replayToken = claimBusy("正在加载会话")
@@ -4355,31 +4358,56 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * on attach and after every `agent_settled` (audit §6.8).
      */
     fun refreshState() {
-        call("读取会话状态", NoEngine.Quiet) { api ->
-            val remote = api.getState()
-            val current = _state.value.meta
-            val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
-            _state.value = _state.value.copy(
-                meta = current.copy(
-                    model = remote.model,
-                    thinkingLevel = level,
-                    steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
-                    followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
-                    autoCompaction = remote.autoCompactionEnabled,
-                    sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
-                    sessionId = remote.sessionId,
-                    sessionFile = remote.sessionFile,
-                    messageCount = remote.messageCount,
-                    // `get_state` is the reconciliation for the event-tracked flag:
-                    // if `compaction_end` was dropped, the next attach/settle puts
-                    // this back to pi's own answer. `isCompacting` was parsed all
-                    // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
-                    // teardown ever read it.
-                    compacting = remote.isCompacting,
-                ),
-            )
-            refreshThinkingLevels()
-        }
+        call("读取会话状态", NoEngine.Quiet) { api -> loadState(api) }
+    }
+
+    /**
+     * [refreshState] 的**可等待**版本：发一次 `get_state`、写进 meta，然后才返回。
+     *
+     * ## 为什么必须有它（2026-11-04 用户报的「切完工作区还是老会话」）
+     *
+     * `call` 是 fire-and-forget —— 它内部 `viewModelScope.launch`，**立刻返回**。于是
+     *
+     *     refreshState()          // 只是排了一次协程
+     *     replayHistory(engine)   // 用的仍然是**旧** meta
+     *
+     * 两句写在相邻行也毫无顺序保证。`replayHistory` 的源文件由 `meta.sessionFile` 决定，
+     * 所以它读的是**上一个引擎那段会话的文件**：切工作区之后，新引擎在一个全新的空会话上，
+     * 屏幕上却重新画出了旧对话；而 clearing 那一帧要等到新会话的第一条 publication
+     * (`replaced = true`) 才到 —— 用户看到的就是「表面上还是老会话，发一句话才切换」。
+     *
+     * 所以凡是以 meta 为输入的后续动作（`attach` 的 replay、`afterSessionReplaced` 的
+     * replay）都必须先 await 这一句。失败不抛：`get_state` 拿不到时 replay 会走
+     * `get_entries` 回落，而 `call` 版本的报错行为一点没变。
+     */
+    private suspend fun refreshStateNow(api: PiEngineApi) {
+        runCatching { loadState(api) }
+    }
+
+    private suspend fun loadState(api: PiEngineApi) {
+        val remote = api.getState()
+        val current = _state.value.meta
+        val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
+        _state.value = _state.value.copy(
+            meta = current.copy(
+                model = remote.model,
+                thinkingLevel = level,
+                steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
+                followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
+                autoCompaction = remote.autoCompactionEnabled,
+                sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
+                sessionId = remote.sessionId,
+                sessionFile = remote.sessionFile,
+                messageCount = remote.messageCount,
+                // `get_state` is the reconciliation for the event-tracked flag:
+                // if `compaction_end` was dropped, the next attach/settle puts
+                // this back to pi's own answer. `isCompacting` was parsed all
+                // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
+                // teardown ever read it.
+                compacting = remote.isCompacting,
+            ),
+        )
+        refreshThinkingLevels()
     }
 
     /**
@@ -6052,7 +6080,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // `get_state` just reported. Reading it first would use the meta of the session the
         // user just left. It cannot fix the in-place rebind paths — nothing can, because
         // there is no file yet — which is what `brandNew` is for.
-        refreshState()
+        // 同上：`refreshState()` 是 fire-and-forget，replay 会拿着**上一条会话**的 meta 去读
+        // 文件（`switch_session`/import 之后屏幕上还是旧对话，直到下一帧 publication）。
+        api?.let { refreshStateNow(it) }
         replayHistory(engine, brandNew)
         refreshStats()
         refreshCommands()
