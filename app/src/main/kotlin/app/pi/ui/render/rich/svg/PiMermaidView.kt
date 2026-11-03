@@ -11,7 +11,9 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -144,10 +148,28 @@ fun PiMermaidView(
 
     // `null` follows the render result; `true` / `false` is the user's explicit
     // 源码 / 图 choice. Keying on `source` means a new block starts in auto mode.
-    var pinned by remember(source) { mutableStateOf<Boolean?>(null) }
-    var draw by remember(source) {
+    // Int 编码（0 跟随 / 1 源码 / 2 图），`rememberSaveable`：滚出屏幕再回来，读者选过的
+    // 「源码」不能弹回去。
+    var pinMode by rememberSaveable(source) { mutableStateOf(0) }
+    val pinned: Boolean? = when (pinMode) {
+        1 -> true
+        2 -> false
+        else -> null
+    }
+    // 宽度取屏宽而不是 `BoxWithConstraints` 量出来的宽度：后者是 SubcomposeLayout，放进
+    // `LazyColumn` 的行里会让行高在测量期反复变化（滚动跳动）；引擎按这个宽度排版，屏宽
+    // 也让缓存键在整个会话里稳定。
+    val configuration = LocalConfiguration.current
+    val widthPx = remember(configuration.screenWidthDp, density) {
+        with(density) { configuration.screenWidthDp.dp.toPx() }
+            .roundToInt()
+            .coerceIn(PI_MERMAID_MIN_WIDTH_PX, PI_MERMAID_MAX_BASE_WIDTH_PX)
+    }
+    // 渲染成功过的图按（源码、宽度、主题）缓存：行滚回来直接是图，不再闪「渲染中」并让行高变两次。
+    var draw by remember(source, widthPx, theme) {
         mutableStateOf<PiMermaidDraw>(
-            if (settled) PiMermaidDraw.Rendering else PiMermaidDraw.Streaming,
+            PiMermaidDrawCache.get(PiMermaidDrawKey(source, widthPx, theme))
+                ?: if (settled) PiMermaidDraw.Rendering else PiMermaidDraw.Streaming,
         )
     }
     var scale by remember(source) { mutableStateOf(PI_MERMAID_MIN_ZOOM) }
@@ -163,16 +185,7 @@ fun PiMermaidView(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        // The engine lays the diagram out at a CSS width, so measure before asking.
-        // `constraints.maxWidth` is already px; the fallback covers an unbounded
-        // parent (e.g. a horizontal scroller), where this block cannot fit anyway.
-        val widthPx = if (constraints.hasBoundedWidth && constraints.maxWidth > 0) {
-            constraints.maxWidth.coerceIn(PI_MERMAID_MIN_WIDTH_PX, PI_MERMAID_MAX_BASE_WIDTH_PX)
-        } else {
-            with(density) { PI_MERMAID_FALLBACK_WIDTH.toPx() }.roundToInt()
-        }
-
+    Box(modifier.fillMaxWidth()) {
         LaunchedEffect(source, settled, widthPx, theme) {
             if (!settled) {
                 draw = PiMermaidDraw.Streaming
@@ -186,6 +199,10 @@ fun PiMermaidView(
                 draw = PiMermaidDraw.Unavailable(
                     "源码超过 ${PI_MERMAID_MAX_SOURCE_CHARS / 1024} KiB，未渲染",
                 )
+                return@LaunchedEffect
+            }
+            PiMermaidDrawCache.get(PiMermaidDrawKey(source, widthPx, theme))?.let {
+                draw = it
                 return@LaunchedEffect
             }
             draw = PiMermaidDraw.Rendering
@@ -206,12 +223,11 @@ fun PiMermaidView(
 
                 is PiSvgResult.Failure -> PiMermaidDraw.Unavailable(result.reason)
             }
+            (draw as? PiMermaidDraw.Ready)?.let {
+                PiMermaidDrawCache.put(PiMermaidDrawKey(source, widthPx, theme), it)
+            }
         }
 
-        // `Column` 的 scope 带 `@LayoutScopeMarker`，所以从它里面**读不到**外层
-        // `BoxWithConstraintsScope` 的 `maxWidth`（DslMarker 会挡住隐式外层接收者）。
-        // 在进入 `Column` 之前把它取出来。
-        val availableWidth = maxWidth
         val ready = draw as? PiMermaidDraw.Ready
         // Source is the fallback for "no picture yet" and the user's explicit
         // choice; it is never used to *hide* a successful render automatically.
@@ -220,7 +236,7 @@ fun PiMermaidView(
 
         val status: String? = feedback ?: when (draw) {
             PiMermaidDraw.Streaming -> "生成中…"
-            PiMermaidDraw.Rendering -> "渲染中…"
+            PiMermaidDraw.Rendering -> null
             // The reason is printed on the source block itself (with room for the
             // whole sentence); the one-line toolbar slot is not where it belongs.
             is PiMermaidDraw.Unavailable -> null
@@ -228,42 +244,21 @@ fun PiMermaidView(
         }
 
         Column(Modifier.fillMaxWidth()) {
+            // 工具栏收成右对齐的一行淡色小字（状态在左，动作在右），与公式视图同款；动作触控高度 ≥ 40 dp。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 8.dp, top = 2.dp),
+                    .padding(start = 12.dp, end = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PiMermaidModeLabel(
-                    label = "源码",
-                    selected = showSource,
-                    enabled = true,
-                    onClickLabel = "查看 Mermaid 源码",
-                    onClick = { pinned = true },
+                Text(
+                    text = status.orEmpty(),
+                    style = PiTheme.text.monoSmall,
+                    color = palette.muted,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.width(12.dp))
-                PiMermaidModeLabel(
-                    label = "图",
-                    selected = !showSource,
-                    enabled = ready != null,
-                    onClickLabel = "查看渲染后的图",
-                    onClick = { pinned = false },
-                )
-                if (status != null) {
-                    Text(
-                        text = status,
-                        style = PiTheme.text.monoSmall,
-                        color = palette.muted,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 8.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.End,
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
                 if (image != null) {
                     PiMermaidActionLabel(
                         label = "适应",
@@ -272,6 +267,13 @@ fun PiMermaidView(
                             scale = PI_MERMAID_MIN_ZOOM
                             offset = Offset.Zero
                         },
+                    )
+                }
+                if (ready != null) {
+                    PiMermaidActionLabel(
+                        label = if (showSource) "图" else "源码",
+                        onClickLabel = if (showSource) "查看渲染后的图" else "查看 Mermaid 源码",
+                        onClick = { pinMode = if (showSource) 2 else 1 },
                     )
                 }
                 PiMermaidActionLabel(
@@ -289,12 +291,13 @@ fun PiMermaidView(
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_MERMAID_FALLBACK_ASPECT
-                val imageHeight = (availableWidth / aspect)
-                    .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, PI_MERMAID_MAX_IMAGE_HEIGHT)
+                // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
+                // 这样不需要 `BoxWithConstraints`。
                 Canvas(
                     modifier = Modifier
+                        .heightIn(min = PI_MERMAID_MIN_IMAGE_HEIGHT, max = PI_MERMAID_MAX_IMAGE_HEIGHT)
                         .fillMaxWidth()
-                        .height(imageHeight)
+                        .aspectRatio(aspect.coerceIn(0.05f, 60f))
                         .clipToBounds()
                         .pointerInput(image) {
                             piMermaidTransformGestures(
@@ -306,7 +309,7 @@ fun PiMermaidView(
                                 offset = nextOffset
                             }
                         }
-                        .semantics { contentDescription = "Mermaid 渲染图" },
+                        .semantics { contentDescription = "Mermaid 渲染图：$source" },
                 ) {
                     val fit = piMermaidFitScale(
                         viewWidth = size.width,
@@ -331,6 +334,21 @@ fun PiMermaidView(
                         native.restore()
                     }
                 }
+            } else if (draw == PiMermaidDraw.Rendering && pinned != true) {
+                // 已问管线、还没回答：固定高度的占位，而不是先摊一整块源码再缩成图 —— 后者让行高
+                // 突变、列表跳动。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(PI_MERMAID_PLACEHOLDER_HEIGHT),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "渲染中…",
+                        style = PiTheme.text.monoSmall,
+                        color = palette.dim,
+                    )
+                }
             } else {
                 val unavailable = draw as? PiMermaidDraw.Unavailable
                 // 旧 ASCII 渲染器的位置在这里：`fallback` 只在**引擎真的画不出来**时接
@@ -352,6 +370,29 @@ fun PiMermaidView(
                 }
             }
         }
+    }
+}
+
+/** 渲染占位的固定高度：一张典型小流程图的量级，避免「源码 → 图」的行高突变。 */
+private val PI_MERMAID_PLACEHOLDER_HEIGHT = 120.dp
+
+/** 缓存键：源码、基准宽度、主题，缺一不可。 */
+private data class PiMermaidDrawKey(val source: String, val widthPx: Int, val theme: PiSvgTheme)
+
+/** 最近渲染成功的图（`Picture` 是录制好的矢量）：16 条 LRU，只缓存成功结果。 */
+private object PiMermaidDrawCache {
+    private const val CAPACITY = 16
+    private val entries = object : LinkedHashMap<PiMermaidDrawKey, PiMermaidDraw.Ready>(CAPACITY, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PiMermaidDrawKey, PiMermaidDraw.Ready>): Boolean =
+            size > CAPACITY
+    }
+
+    @Synchronized
+    fun get(key: PiMermaidDrawKey): PiMermaidDraw.Ready? = entries[key]
+
+    @Synchronized
+    fun put(key: PiMermaidDrawKey, value: PiMermaidDraw.Ready) {
+        entries[key] = value
     }
 }
 
@@ -614,7 +655,8 @@ private fun PiMermaidActionLabel(
         maxLines = 1,
         modifier = Modifier
             .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 10.dp, vertical = 11.dp),
     )
 }
 
