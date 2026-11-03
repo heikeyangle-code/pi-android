@@ -1183,13 +1183,10 @@ fun main() {
         .substringAfter("private fun attach(engine: PiEngineSession", "")
         .take(20_000)
     checkTrue("找到了 attach 的函数体", attachBody.isNotEmpty(), "marker not found")
-    val refreshAt = attachBody.indexOf("refreshState()")
-    val replayAt = attachBody.indexOf("replayHistory(engine)")
-    checkTrue(
-        "attach 里 refreshState() 在 replayHistory 之前（否则会拿上一个引擎的 meta 去读文件）",
-        refreshAt >= 0 && replayAt >= 0 && refreshAt < replayAt,
-        "refreshAt=$refreshAt replayAt=$replayAt",
-    )
+    // 2026-11-04：这条断言原先钉的是 `refreshState()`（fire-and-forget 版本）在 replay 之前。
+    // 那个版本**根本不构成顺序**（`call` 内部 launch 后立刻返回），所以真正的断言挪到下面
+    // 「先 await 新会话身份」那一节（`refreshStateNow`）；这里只保留"attach 不再有事后接回"。
+
     checkTrue(
         "attach 不再有「事后接回」这个形参（会话由 argv 钉住）",
         viewModelText.contains("private fun attach(engine: PiEngineSession) {"),

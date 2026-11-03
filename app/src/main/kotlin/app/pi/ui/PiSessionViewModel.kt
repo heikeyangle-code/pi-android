@@ -2951,7 +2951,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // fork / clone replays get it from `call`; this attach-time replay is the
             // one that never did. Cleared token-matched, exactly like `call`'s
             // `finally`, so a newer operation's label is never wiped.
-            // **`refreshState()` 在 replay 之前**，与 [afterSessionReplaced] 同一条规则（那句
+            // **刷新状态在 replay 之前**，与 [afterSessionReplaced] 同一条规则（那句
             // KDoc 就是权威版本：replay 的源文件只能由 `get_state` 刚报出来的那个名字决定）。
             //
             // 这一条以前在 attach 里是**反的**（replay 先、refreshState 后），后果正是「一个对话
@@ -2967,7 +2967,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 它在 `busy = "正在加载会话"` **之前**：`refreshState` 走 `call`，会先把自己的标签
             // （「读取会话状态」）写上、再在 finally 里清掉；放在它后面写，外层那句会被那次清理
             // 抹掉，replay 期间顶栏什么都不说。
-            // **必须 await**：`refreshState()` 只是排了一次协程，紧接着的 `replayHistory`
+            // **必须 await**：`refreshState` 只是排了一次协程，紧接着的 `replayHistory`
             // 会用**旧 meta** 去挑会话文件 —— 切工作区后重新画出老对话、要发一句消息才切换，
             // 就是这一格。`refreshStateNow` 的 KDoc 是权威版本。
             api?.let { refreshStateNow(it) }
@@ -4368,7 +4368,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * `call` 是 fire-and-forget —— 它内部 `viewModelScope.launch`，**立刻返回**。于是
      *
-     *     refreshState()          // 只是排了一次协程
+     *     refreshState()          // 只是排了一次协程（fire-and-forget）
      *     replayHistory(engine)   // 用的仍然是**旧** meta
      *
      * 两句写在相邻行也毫无顺序保证。`replayHistory` 的源文件由 `meta.sessionFile` 决定，
@@ -6080,7 +6080,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // `get_state` just reported. Reading it first would use the meta of the session the
         // user just left. It cannot fix the in-place rebind paths — nothing can, because
         // there is no file yet — which is what `brandNew` is for.
-        // 同上：`refreshState()` 是 fire-and-forget，replay 会拿着**上一条会话**的 meta 去读
+        // 同上：`refreshState` 是 fire-and-forget，replay 会拿着**上一条会话**的 meta 去读
         // 文件（`switch_session`/import 之后屏幕上还是旧对话，直到下一帧 publication）。
         api?.let { refreshStateNow(it) }
         replayHistory(engine, brandNew)
