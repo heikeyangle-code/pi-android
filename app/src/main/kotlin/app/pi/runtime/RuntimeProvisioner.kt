@@ -1000,7 +1000,18 @@ class RuntimeProvisioner(
         // with the contents of the package attached.
         val stream = openPayload(archive)
         try {
-            stream.use { TarExtractor(into).extractGzip(it) }
+            stream.use { input ->
+                val result = TarExtractor(into).extractGzip(input)
+                // The fallback in `TarExtractor` is what makes a device that refuses
+                // `symlink(2)` still boot (links become copies). It is not silent: the
+                // user sees one line on the boot screen, because it costs disk and it is
+                // the answer to "why is my runtime bigger here".
+                if (result.degraded > 0L) {
+                    payloadWarnings +=
+                        "$assetName：这台设备的应用数据目录不支持符号链接，" +
+                            "已用复制代替 ${result.degraded} 条（运行时可用，代价是磁盘）"
+                }
+            }
         } catch (e: IOException) {
             throw unpackFailure(assetName, e)
         } catch (e: IllegalStateException) {

@@ -72,6 +72,15 @@ class TarExtractor(
     private var bytesWritten = 0L
     private var entriesSeen = 0L
     private var symlinksWritten = 0L
+    private var degradedLinks = 0L
+    private var danglingLinks = 0L
+    /**
+     * 建不出来、等着铺成实物的链接：`(链接路径, 目标, tar 条目名)`。
+     *
+     * **必须等整份档案解完**：Ubuntu 的 tar 第一条就是 `bin -> usr/bin`，而 `usr/bin` 在
+     * 那一刻还不存在（它由后面的条目创建）。当初即时回退失败，正是因为目标还没写出来。
+     */
+    private val pendingMaterialise = mutableListOf<Triple<File, String, String>>()
 
     /**
      * [links] is how many symlinks were actually created. It is the number the
@@ -84,6 +93,22 @@ class TarExtractor(
         val bytes: Long,
         val entries: Long,
         val links: Long = 0L,
+        /**
+         * Links the filesystem refused, which were **materialised instead** ([materialiseLink]).
+         *
+         * Non-zero means "this device cannot create symlinks, and the tree was written
+         * without them": usable, but larger on disk, and worth one line on the boot screen
+         * (`RuntimeProvisioner` turns it into a warning). Zero on every normal device.
+         */
+        val degraded: Long = 0L,
+        /**
+         * 链接建不出来、而它指向的东西**本来也不存在**（官方 base 里的 `etc/rmt ->
+         * /usr/sbin/rmt` 就是一条：alternatives 目标没装）。这种路径按"悬空"略过——真机上
+         * 一条悬空链接与一个不存在的路径对 guest 是同一个答案（ENOENT），而为了它失败会把
+         * 一台本来能用的设备挡在门外。**有害**的缺失（少了 `usr/bin`）不靠这里兜，靠
+         * `RuntimeTreeAudit` 的闸门。
+         */
+        val dangling: Long = 0L,
     )
 
     fun extractGzip(stream: InputStream): Result {
@@ -91,7 +116,43 @@ class TarExtractor(
         GZIPInputStream(BufferedInputStream(stream, 1 shl 16)).use { gz ->
             extractTar(gz)
         }
-        return Result(filesWritten, bytesWritten, entriesSeen, symlinksWritten)
+        materialisePendingLinks()
+        return Result(
+            filesWritten,
+            bytesWritten,
+            entriesSeen,
+            symlinksWritten,
+            degradedLinks,
+            danglingLinks,
+        )
+    }
+
+    /**
+     * 把这次解包中"建不出来的符号链接"铺成实物，**在整份档案解完之后**。
+     *
+     * 目标现在一定写出来了（`/usr/bin` 由它自己的条目创建），所以这是唯一能保证成功的时机。
+     * 任何一条铺不出来都是失败：那说明复制也写不进去（ENOSPC、权限），而这棵树此后会在
+     * `RuntimeTreeAudit` 的闸门上失败——失败页上宁可写"哪条链接、哪个目标、为什么"，也不要
+     * 留一棵看起来解完、其实没有 `/bin/bash` 的树。
+     */
+    private fun materialisePendingLinks() {
+        if (pendingMaterialise.isEmpty()) return
+        for ((link, target, entry) in pendingMaterialise) {
+            try {
+                if (materialiseLink(link, target)) {
+                    degradedLinks++
+                } else {
+                    danglingLinks++
+                }
+            } catch (error: IOException) {
+                throw IOException(
+                    "tar entry '$entry' 是符号链接 -> '$target'，创建失败，" +
+                        "复制兜底也失败：${link.path}（${error.message}）",
+                    error,
+                )
+            }
+        }
+        pendingMaterialise.clear()
     }
 
     private fun extractTar(input: InputStream): Result {
@@ -161,32 +222,36 @@ class TarExtractor(
                 '2' -> {
                     ensureParent(target)
                     unlinkIfPresent(target)
-                    // Strict on purpose (2026-11-03): a link that could not be created used
-                    // to be "recovered" by copying its target, which for `bin -> usr/bin`
-                    // leaves an empty `bin/` directory — a rootfs that looks extracted and
-                    // has no `/bin/bash`. Nothing above could tell: no exception, no
-                    // retry, and the provisioning stamp was written anyway. The failure is
-                    // named with the entry, the target and the underlying error, because
-                    // that sentence is the only thing the boot card can show.
-                    try {
-                        symlink(target.toPath(), Path.of(linkName))
-                    } catch (error: Exception) {
-                        throw IOException(
-                            "tar entry '$rawName' 是符号链接 -> '$linkName'，创建失败：" +
-                                "${target.path}（${error.javaClass.simpleName}: ${error.message}）",
-                            error,
-                        )
+                    // A link that could not be created must not become an empty directory.
+                    // That is the 2026-11-03 first-install failure: `bin -> usr/bin` failed,
+                    // the old fallback copied the *directory node*, `/bin/bash` did not
+                    // exist, and the tree was stamped as provisioned anyway.
+                    //
+                    // Two steps, in this order:
+                    //
+                    //  1. create the link;
+                    //  2. if the filesystem refuses it, **materialise** what it points at —
+                    //     a file is copied, a directory is mirrored — so the guest still has
+                    //     `/bin/bash`. This is the difference between "we report the failure"
+                    //     and "it cannot fail": on a device where `symlink(2)` is denied the
+                    //     runtime works, just with copies instead of links, and the boot
+                    //     screen says so once (`degraded`).
+                    //
+                    // If even the copy cannot be written (ENOSPC, a refused chmod) this
+                    // throws with the archive entry, the link target and the reason, and
+                    // `RuntimeProvisioner` never records the payload as installed.
+                    val linked = runCatching { symlink(target.toPath(), Path.of(linkName)) }
+                        .isSuccess && isSymlink(target)
+                    if (linked) {
+                        symlinksWritten++
+                    } else {
+                        if (isSymlink(target)) runCatching { Files.deleteIfExists(target.toPath()) }
+                        // Deferred on purpose: the target usually does not exist yet (the
+                        // first entry of the Ubuntu base is `bin -> usr/bin`, and `usr/bin`
+                        // is created by later entries). [materialisePendingLinks] runs after
+                        // the whole archive.
+                        pendingMaterialise += Triple(target, linkName, rawName)
                     }
-                    // A filesystem that "succeeds" without producing a link has not created
-                    // one. This also catches the old empty-directory shape if a device ever
-                    // answers success to a refused symlink.
-                    if (!isSymlink(target)) {
-                        throw IOException(
-                            "tar entry '$rawName' 的符号链接 -> '$linkName' 创建后不是链接：" +
-                                "${target.path}（${describeNode(target)}）",
-                        )
-                    }
-                    symlinksWritten++
                     onEntry?.invoke(rawName)
                 }
                 '1' -> {
@@ -236,6 +301,91 @@ class TarExtractor(
             }
         }
         return Result(filesWritten, bytesWritten, entriesSeen)
+    }
+
+
+    /**
+     * 把一条**建不出来**的符号链接铺成实物。
+     *
+     * 这是"不能失败"那一半：`symlink(2)` 被设备拒绝时，`bin -> usr/bin` 的正确替代不是
+     * 一个空 `bin/`，而是把 `usr/bin` 的内容真的放进去（文件复制；目录逐项递归；遇到嵌套
+     * 链接就复制它最终指向的东西）。代价是磁盘（`/usr/bin` 约 29 MB、`/usr/lib` 约 62 MB，
+     * 只在被拒绝的设备上付），换来的是 `/bin/bash` 真的存在且可执行。
+     *
+     * 目标越界（`../..` 爬出 rootfs）与目标缺失都抛 [IOException]：那两种不是"设备不支持"，
+     * 是载荷有问题，不能靠复制掩盖。
+     */
+    private fun materialiseLink(link: File, target: String): Boolean {
+        val source = linkSource(link, target)
+        if (!insideDestination(source)) {
+            throw IOException("目标在 rootfs 之外：${source.path}")
+        }
+        if (!source.exists()) return false
+        val failures = mirrorInto(source, link, depth = 0, seen = HashSet())
+        if (failures.isNotEmpty()) {
+            throw IOException(failures.take(3).joinToString("；"))
+        }
+        return true
+    }
+
+    /** 一条链接的目标，按 **guest 语义**落到宿主路径（`/opt/node/x` 与 `dash` 两种拼法）。 */
+    private fun linkSource(link: File, target: String): File =
+        if (target.startsWith("/")) {
+            File(destination, target.removePrefix("/"))
+        } else {
+            File(link.parentFile, target)
+        }
+
+    /** 复制出来的东西必须仍在 [destination] 里；一条 `../../etc/passwd` 的链接不能被执行。 */
+    private fun insideDestination(file: File): Boolean {
+        val base = File(canonicalBase)
+        val resolved = runCatching { file.canonicalFile }.getOrNull() ?: return false
+        return resolved.path == base.path || resolved.path.startsWith(base.path + File.separator)
+    }
+
+    /**
+     * 把一个节点复制到 [to]，返回失败描述（空 = 全部成功）。
+     *
+     * [seen] 是目录环的护栏：Ubuntu 的 `/usr/bin/X11 -> .` 就是一条指回自己的链接，没有它
+     * 这条递归不会停。深度上限 [MAX_MIRROR_DEPTH] 是第二道。
+     */
+    private fun mirrorInto(
+        source: File,
+        to: File,
+        depth: Int,
+        seen: MutableSet<String>,
+    ): List<String> {
+        if (depth > MAX_MIRROR_DEPTH) return listOf("${source.path}：嵌套太深")
+        if (isSymlink(source)) {
+            val target = runCatching { Files.readSymbolicLink(source.toPath()) }.getOrNull()
+                ?: return listOf("${source.path}：链接读不出来")
+            val resolved = linkSource(source, target.toString())
+            // 官方 base 里本来就有悬空链接（`etc/rmt -> /usr/sbin/rmt`）；复制它们没有对象，
+            // 而"复制不了的悬空链接"和"原本就悬空的链接"对 guest 是同一个结果。
+            if (!resolved.exists()) return emptyList()
+            return mirrorInto(resolved, to, depth + 1, seen)
+        }
+        if (source.isDirectory) {
+            val key = runCatching { source.canonicalPath }.getOrDefault(source.path)
+            if (!seen.add(key)) return emptyList()
+            ensureDirectory(to)
+            val children = source.listFiles() ?: return listOf("${source.path}：目录读不出来")
+            return children.flatMap { child ->
+                mirrorInto(child, File(to, child.name), depth + 1, seen)
+            }
+        }
+        if (!source.isFile) return listOf("${source.path}：不是普通文件")
+        return try {
+            ensureParent(to)
+            unlinkIfPresent(to)
+            Files.copy(source.toPath(), to.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            if (source.canExecute()) to.setExecutable(true, false)
+            if (source.canRead()) to.setReadable(true, false)
+            filesWritten++
+            emptyList()
+        } catch (error: IOException) {
+            listOf("${source.path} -> ${to.path}：${error.javaClass.simpleName}: ${error.message}")
+        }
     }
 
     /**
@@ -535,5 +685,8 @@ class TarExtractor(
          * that is corrupt or not ours.
          */
         const val MAX_METADATA_RECORD_BYTES: Long = 1L shl 20
+
+        /** 复制兜底递归的上限；超过就报失败，而不是无限展开。 */
+        const val MAX_MIRROR_DEPTH: Int = 8
     }
 }

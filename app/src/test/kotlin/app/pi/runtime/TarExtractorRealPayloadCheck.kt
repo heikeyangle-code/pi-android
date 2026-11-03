@@ -120,34 +120,37 @@ fun main() {
         emptyList<String>(),
     )
 
-    // ④ 反向断言：链接建不出来时，解包必须**失败并点名**，绝不允许像 2026-11-03 之前那样
-    // 退回 `Files.copy` 造一个空目录然后继续。
-    val doomed = File.createTempFile("pi-real-rootfs-refused", "").let { file ->
+    // ④ "不能失败"那一半：这台设备**拒绝 symlink(2)** 时，解包必须照样给出可用的树 ——
+    // 链接变成复制（`/bin`、`/lib` 等按内容铺开），而不是 2026-11-03 之前那样造一个空目录
+    // 然后报"成功"。用一个必失败的 linker 制造这个环境：真机上对应 SELinux/文件系统拒绝。
+    val fallback = File.createTempFile("pi-real-rootfs-refused", "").let { file ->
         file.delete()
         file.mkdirs()
         file
     }
-    val error = runCatching {
-        archive.inputStream().use { stream ->
-            TarExtractor(
-                doomed,
-                symlink = { _, _ -> throw IOException("Operation not permitted") },
-            ).extractGzip(stream)
-        }
-    }.exceptionOrNull()
-    check("a refused symlink aborts the extraction", error is IOException, true)
-    val message = error?.message.orEmpty()
-    check("the refusal names the tar entry", message.contains("tar entry 'bin'"), true)
-    check("the refusal says it was a symlink", message.contains("符号链接"), true)
-    check("the refusal carries the reason", message.contains("Operation not permitted"), true)
-    // The tree must not be mistaken for a usable one afterwards.
+    val degraded = archive.inputStream().use { stream ->
+        TarExtractor(
+            fallback,
+            symlink = { _, _ -> throw IOException("Operation not permitted") },
+        ).extractGzip(stream)
+    }
+    check("a refused symlink does not abort the extraction", degraded.links, 0L)
+    check("every refused link was materialised instead", degraded.degraded >= 150L, true)
+    check("bin/bash exists after the fallback", File(fallback, "bin/bash").isFile, true)
+    check("bin/bash is executable after the fallback", File(fallback, "bin/bash").canExecute(), true)
     check(
-        "the aborted tree fails the gate",
-        RuntimeTreeAudit.failures(doomed, RuntimeTreeAudit.requirementsFor("ubuntu-base")).isNotEmpty(),
-        true,
+        "bin/sh became a real file, not a link",
+        Files.isSymbolicLink(File(fallback, "bin/sh").toPath()),
+        false,
+    )
+    check("bin is a directory now, not a link", Files.isSymbolicLink(File(fallback, "bin").toPath()), false)
+    check(
+        "the production gate passes the fallback tree",
+        RuntimeTreeAudit.failures(fallback, RuntimeTreeAudit.requirementsFor("ubuntu-base")),
+        emptyList<String>(),
     )
 
-    doomed.deleteRecursively()
+    fallback.deleteRecursively()
     root.deleteRecursively()
 
     if (failures != 0) {
