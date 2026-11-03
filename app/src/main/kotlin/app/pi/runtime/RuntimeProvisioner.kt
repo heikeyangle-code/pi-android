@@ -269,17 +269,19 @@ class RuntimeProvisioner(
         // run without, a few microseconds against a boot) and treats a tree that lacks any
         // of them as "not provisioned": `treeIncomplete` below plans every payload, which
         // extracts **over** the tree and deletes nothing.
-        if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) {
+        if (!rebuild && !repair && paths.rootfs.isDirectory) {
+            val stamp = stampState()
             // Once a tree has been verified, the verdict is recorded in the stamp's second
             // line. Probing four paths on **every** launch would make every healthy phone
             // pay for a defect that happens once per install — and a tree this version
             // wrote was already gated at unpack time. So: probe only for a stamp that does
             // not carry the marker (one written by an older version, or one whose marker
             // never landed), and write it as soon as the tree answers.
-            val audited = stampAudited()
-            if (audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) {
-                if (!audited) writeStamp(revision)
-                return finishCurrent(revision, migration = false, onStep)
+            if (stamp.revision == revision) {
+                if (stamp.audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) {
+                    if (!stamp.audited) writeStamp(revision)
+                    return finishCurrent(revision, migration = false, onStep)
+                }
             }
         }
 
@@ -2014,20 +2016,26 @@ class RuntimeProvisioner(
 
     private fun stampFile() = paths.stampFile()
 
-    private fun isStampCurrent(revision: String): Boolean = paths.stampRevision() == revision
-
     /**
-     * 戳记的第二行：`RuntimeTreeAudit` 验过这棵树、而且验完之后它没有被替换过。
+     * `.stamp` 的两部分，**一次读出来**：第一行是版本（`PiPaths.stampRevision` 的同一口径），
+     * 第二行是 `RuntimeTreeAudit` 的 `audited` 标记。
      *
-     * 只有本版本写出的戳记才带它；老版本只有一行，所以升级后的第一次启动会探测一次
-     * （见快路径）。之后每次启动都不再碰 rootfs。
+     * 快路径以前读两次（一次比版本、一次看标记），两次读的是同一个二十来字节的文件；合成一次
+     * 不是性能问题，是让"戳记有什么"只有一个答案，免得以后的读者又拼出第三种口径。
      */
-    private fun stampAudited(): Boolean {
+    private data class StampState(val revision: String?, val audited: Boolean)
+
+    private fun stampState(): StampState {
         val stamp = stampFile()
-        if (!stamp.isFile) return false
-        return runCatching { stamp.readLines().getOrNull(1)?.trim() == AUDITED_LINE }
-            .getOrDefault(false)
+        if (!stamp.isFile) return StampState(null, false)
+        val lines = runCatching { stamp.readLines() }.getOrNull() ?: return StampState(null, false)
+        return StampState(
+            revision = lines.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() },
+            audited = lines.getOrNull(1)?.trim() == AUDITED_LINE,
+        )
     }
+
+    private fun isStampCurrent(revision: String): Boolean = stampState().revision == revision
 
     /**
      * Write the stamp that says this revision is unpacked. Returns null on success, or

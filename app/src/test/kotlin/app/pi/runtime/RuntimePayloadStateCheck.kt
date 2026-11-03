@@ -354,14 +354,13 @@ fun main() {
     // 成功，proot 只剩一句 `'/bin/bash' not found`，用户除了删数据的「重建」无路可走。
     // 所以这条性质现在准确的说法是：**戳记相符且树是完整的**才提前返回；判完整性用的是
     // 四条 `isFile`（不读摘要、不读清单、不遍历目录），残树则走慢路径被全部重解一遍。
-    val fastPathGuard =
-        "if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) {"
+    val fastPathGuard = "if (!rebuild && !repair && paths.rootfs.isDirectory) { val stamp = stampState()"
     check("P1 the fast path is one guarded early return", provisionerSource.split(fastPathGuard).size - 1, 1)
     check(
         "P1c the early return also requires the audit verdict (or its marker)",
-        provisionerSource.contains("val audited = stampAudited()") &&
-            provisionerSource.contains("if (!audited) writeStamp(revision)") &&
-            provisionerSource.contains("criticalProblems(paths.rootfs).isEmpty()"),
+        provisionerSource.contains("if (stamp.revision == revision)") &&
+            provisionerSource.contains("if (stamp.audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty())") &&
+            provisionerSource.contains("if (!stamp.audited) writeStamp(revision)"),
         true,
     )
     check(
@@ -376,9 +375,7 @@ fun main() {
     // 缓存、重启判定都会因此每次重做）。所有读戳记的地方都改走 `PiPaths.stampRevision()`。
     check(
         "P2 the comparison is the stamp's revision line against the packaged revision",
-        provisionerSource.contains(
-            "private fun isStampCurrent(revision: String): Boolean = paths.stampRevision() == revision",
-        ),
+        provisionerSource.contains("private fun isStampCurrent(revision: String): Boolean = stampState().revision == revision"),
         true,
     )
     check(
@@ -389,8 +386,8 @@ fun main() {
     // P49/P50: 验过就记在戳记里，之后每次启动都不再探测 —— 正常设备只为一次安装付一次代价。
     check(
         "P49 the fast path probes only for a stamp without the audited marker",
-        provisionerSource.contains("val audited = stampAudited()") &&
-            provisionerSource.contains("if (!audited) writeStamp(revision)"),
+        provisionerSource.contains("if (stamp.audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty())") &&
+            provisionerSource.contains("if (!stamp.audited) writeStamp(revision)"),
         true,
     )
     check(
@@ -1123,9 +1120,8 @@ fun main() {
     )
     check(
         "P37 a refused symlink is materialised, and only then can it fail",
-        extractorSource.contains("是符号链接 -> '\$target'，创建失败") &&
-            extractorSource.contains("materialiseLink(target, linkName)")
-                .let { it || extractorSource.contains("materialiseLink(link, target)") },
+        extractorSource.contains("是符号链接 -> '\${pending.linkName}'，创建失败") &&
+            extractorSource.contains("materialiseLink(pending.target, pending.linkName)"),
         true,
     )
     check(

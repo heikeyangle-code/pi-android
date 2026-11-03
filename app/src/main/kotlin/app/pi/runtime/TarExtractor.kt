@@ -80,7 +80,22 @@ class TarExtractor(
      * **必须等整份档案解完**：Ubuntu 的 tar 第一条就是 `bin -> usr/bin`，而 `usr/bin` 在
      * 那一刻还不存在（它由后面的条目创建）。当初即时回退失败，正是因为目标还没写出来。
      */
-    private val pendingMaterialise = mutableListOf<Triple<File, String, String>>()
+    private val pendingMaterialise = mutableListOf<PendingLink>()
+
+    /**
+     * 一条没建成的链接：目标、tar 里的目标名、条目名，以及**当初为什么没建成**。
+     *
+     * 最后一项是诊断用的：真机上"链接建不出来"的原因（`java.nio` 不支持？SELinux？
+     * 存储不支持？）决定了该不该走复制，而以前这个异常被 `runCatching` 吞掉、失败页上只剩
+     * "复制兜底也失败"——看不出是哪一层的问题。`RuntimeProvisioner` 的两层创建
+     * （NIO → `Os.symlink`）会把两层的原因一起带进来。
+     */
+    private data class PendingLink(
+        val target: File,
+        val linkName: String,
+        val entry: String,
+        val reason: String?,
+    )
     /** 源文件当时还不存在的硬链接（它可能本身就是一条待铺的链接）。 */
     private val pendingHardLinks = mutableListOf<PendingHardLink>()
 
@@ -221,9 +236,9 @@ class TarExtractor(
                     // If even the copy cannot be written (ENOSPC, a refused chmod) this
                     // throws with the archive entry, the link target and the reason, and
                     // `RuntimeProvisioner` never records the payload as installed.
-                    val linked = runCatching { symlink(target.toPath(), Path.of(linkName)) }
-                        .isSuccess && isSymlink(target)
-                    if (linked) {
+                    val linkError = runCatching { symlink(target.toPath(), Path.of(linkName)) }
+                        .exceptionOrNull()
+                    if (linkError == null && isSymlink(target)) {
                         symlinksWritten++
                     } else {
                         if (isSymlink(target)) runCatching { Files.deleteIfExists(target.toPath()) }
@@ -231,7 +246,12 @@ class TarExtractor(
                         // first entry of the Ubuntu base is `bin -> usr/bin`, and `usr/bin`
                         // is created by later entries). [materialisePendingLinks] runs after
                         // the whole archive.
-                        pendingMaterialise += Triple(target, linkName, rawName)
+                        pendingMaterialise += PendingLink(
+                            target,
+                            linkName,
+                            rawName,
+                            linkError?.let { it.message ?: it.javaClass.simpleName },
+                        )
                     }
                     onEntry?.invoke(rawName)
                 }
@@ -310,20 +330,21 @@ class TarExtractor(
         // `bin -> usr/bin` **first**, so mirroring it before `usr/bin/sh` exists produced a
         // `bin/` without a shell — the exact "looks extracted, has no /bin/sh" shape this
         // change is about. `runtime-extract-real` caught it in CI.
-        val (toFiles, toDirectories) = pendingMaterialise.partition { (link, target, _) ->
-            !linkSource(link, target).isDirectory
+        val (toFiles, toDirectories) = pendingMaterialise.partition { pending ->
+            !linkSource(pending.target, pending.linkName).isDirectory
         }
-        for ((link, target, entry) in toFiles + toDirectories) {
+        for (pending in toFiles + toDirectories) {
             try {
-                if (materialiseLink(link, target)) {
+                if (materialiseLink(pending.target, pending.linkName)) {
                     degradedLinks++
                 } else {
                     danglingLinks++
                 }
             } catch (error: IOException) {
                 throw IOException(
-                    "tar entry '$entry' 是符号链接 -> '$target'，创建失败，" +
-                        "复制兜底也失败：${link.path}（${error.message}）",
+                    "tar entry '${pending.entry}' 是符号链接 -> '${pending.linkName}'，创建失败" +
+                        (pending.reason?.let { "（$it）" } ?: "") +
+                        "，复制兜底也失败：${pending.target.path}（${error.message}）",
                     error,
                 )
             }
@@ -430,6 +451,7 @@ class TarExtractor(
             ensureParent(to)
             unlinkIfPresent(to)
             Files.copy(source.toPath(), to.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            bytesWritten += source.length()
             if (source.canExecute()) to.setExecutable(true, false)
             if (source.canRead()) to.setReadable(true, false)
             filesWritten++
