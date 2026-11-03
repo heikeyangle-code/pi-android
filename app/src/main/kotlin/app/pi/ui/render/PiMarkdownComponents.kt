@@ -536,7 +536,11 @@ private fun PiParagraph(model: MarkdownComponentModel) {
             (PiLinkCard.parse(text) as? LinkCardResult.Info)?.info
         }
     }
-    if (info == null) {
+    // 流式中**正在写的那一段**不画卡片：URL 一个字一个字出现，卡片会随着域名逐字变化并反复
+    // 跳高。写完（下一段开始、或整条结束）再换成卡片；前面已写完的段落不受影响。
+    val writingTail = LocalPiMarkdownStreaming.current &&
+        content.substring(node.endOffset.coerceIn(0, content.length)).isBlank()
+    if (info == null || writingTail) {
         MarkdownParagraph(model.content, model.node)
         return
     }

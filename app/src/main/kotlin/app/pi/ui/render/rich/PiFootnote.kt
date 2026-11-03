@@ -537,8 +537,8 @@ object PiFootnoteMarkdown {
         if (document.failure != null || !document.hasFootnotes) return null
         val body = document.bodyText().trimEnd()
         if (body.isEmpty()) return null
+        // 没被引用的定义也留下（编号排在被引用的之后）：模型写出来的内容不应静默消失。
         val definitions = document.definitions
-            .filter { it.referenced }
             .joinToString("\n") { definition ->
                 // 定义里的空行（多段）与换行都压成一个空格：库的列表项不会为它保留
                 // 换行，留着原来的 `\n\n` 会在列表行里变成一串空格。
