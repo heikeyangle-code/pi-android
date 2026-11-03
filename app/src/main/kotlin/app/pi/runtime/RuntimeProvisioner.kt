@@ -316,6 +316,10 @@ class RuntimeProvisioner(
         // [payloadReport] (written on this path, read on this path only).
         payloadWarnings.clear()
         keptDirectories.clear()
+        // Per attempt like the warnings: this list is what the boot screen reports as
+        // "N 个入口用壳脚本代替", and leaving it to accumulate would report the count of every
+        // repair this process ever did.
+        substitutedLinks.clear()
 
         // P1b: a `wipe()` killed between its move-out and its move-back leaves the user's
         // sessions/workspaces parked in `<files>/pi/.preserve`, and nothing else in this app
@@ -2068,7 +2072,7 @@ class RuntimeProvisioner(
 
     companion object {
         /** `.stamp` 的第二行：这棵树被 `RuntimeTreeAudit` 验过（见 `stampAudited`）。 */
-        private const val AUDITED_LINE = "audited"
+        private const val AUDITED_LINE = "audited-1"
 
         /** `logcat` tag for the one line [reportKeptDirectories] emits. */
         private const val TAG = "RuntimeProvisioner"

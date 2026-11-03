@@ -89,22 +89,6 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
             )
         }
 
-        // The tree itself, before proot is asked to run anything out of it.
-        //
-        // Four `stat`s plus the exec bit, and the order is as load-bearing as the check:
-        // (a) it runs **before** the pass-stamp shortcut below, because a stamp written by
-        // an earlier boot must not hide a tree that has since lost its bash; (b) it runs
-        // before proot, because proot's `not found` cannot distinguish "this rootfs has no
-        // /bin/bash" from "proot cannot translate paths on this ROM" — and the first device
-        // report of this class was read as the second for exactly that reason.
-        val problems = RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.CRITICAL_REQUIREMENTS)
-        if (problems.isNotEmpty()) {
-            return@withContext Outcome(
-                Status.TreeIncomplete,
-                "运行时不完整（解包没有把 guest 起不来的文件写全）：\n" + problems.joinToString("\n"),
-            )
-        }
-
         // A pass at this exact unpacked revision is as good as a fresh probe.
         //
         // What this check answers is "can this device execute a guest binary", a
@@ -123,6 +107,29 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
             return@withContext Outcome(
                 Status.Ok,
                 "运行时可用（这个解包版本上次已通过自检，本次没有重复探测）",
+            )
+        }
+
+        // The tree itself, before proot is asked to run anything out of it — and **after**
+        // the pass stamp, which is what keeps this off the per-boot path.
+        //
+        // Why that order: a pass at this revision means a proot guest really executed a
+        // binary here, which is a stronger statement than "the files are there" — and the
+        // provisioner already gates every unpack and records `audited` in the stamp. So the
+        // local check is only worth running when we are about to pay for a proot probe
+        // anyway (first boot after an update, or a tree whose pass stamp is missing). Before
+        // this reordering it ran on **every** boot: four `stat`s plus the exec bit for every
+        // user, forever, to re-learn what the pass stamp had already answered.
+        //
+        // It still runs before proot, which is the point of having it: proot's `not found`
+        // cannot distinguish "this rootfs has no /bin/bash" from "proot cannot translate
+        // paths on this ROM", and the first device report of this class was read as the
+        // second for exactly that reason.
+        val problems = RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.CRITICAL_REQUIREMENTS)
+        if (problems.isNotEmpty()) {
+            return@withContext Outcome(
+                Status.TreeIncomplete,
+                "运行时不完整（解包没有把 guest 起不来的文件写全）：\n" + problems.joinToString("\n"),
             )
         }
 

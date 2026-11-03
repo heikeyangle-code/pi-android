@@ -1237,7 +1237,10 @@ fun main() {
     val stampPassAt = selfCheckSource.indexOf("passedAtRevision(revision)")
     check("P41 the self-check has a local tree gate", localGateAt >= 0, true)
     check("P42 and it runs before proot is spawned", localGateAt < prootAt, true)
-    check("P43 and before the cached pass can short-circuit it", localGateAt < stampPassAt, true)
+    // P43 的口径 2026-11-04 改过一次：闸门**必须**在 proot 之前（否则区分不了"文件缺"
+    // 与"proot 翻译坏了"），但**不必**在缓存戳记之前 —— 那样等于每次启动都探 4 条，让所有
+    // 正常用户为一棵残树付代价。现在它只在"马上要跑 proot"时执行（无缓存通过戳记）。
+    check("P43 and it is skipped when a pass stamp already answers", localGateAt > stampPassAt, true)
     check(
         "P44 an incomplete tree is its own status, not \"proot failed\"",
         selfCheckSource.contains("Status.TreeIncomplete") &&
