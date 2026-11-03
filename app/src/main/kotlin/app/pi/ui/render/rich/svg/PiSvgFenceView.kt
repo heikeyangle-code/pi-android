@@ -11,7 +11,9 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,10 +25,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +43,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -131,10 +138,26 @@ fun PiSvgFenceView(
 
     // `null` 跟渲染结果走；`true` / `false` 是用户显式选的「源码 / 图」。键是 `source`，
     // 所以新的一段围栏从自动模式开始，不会继承上一段的偏好。
-    var pinned by remember(source) { mutableStateOf<Boolean?>(null) }
-    var draw by remember(source) {
+    // Int 编码（0 跟随 / 1 源码 / 2 图），`rememberSaveable`：滚出屏幕再回来读者的选择不能弹回去。
+    var pinMode by rememberSaveable(source) { mutableStateOf(0) }
+    val pinned: Boolean? = when (pinMode) {
+        1 -> true
+        2 -> false
+        else -> null
+    }
+    // 宽度取屏宽而不是 `BoxWithConstraints` 量出来的宽度：后者是 SubcomposeLayout，放进
+    // `LazyColumn` 的行里会让行高在测量期反复变化（滚动跳动）。
+    val configuration = LocalConfiguration.current
+    val widthPx = remember(configuration.screenWidthDp, density) {
+        with(density) { configuration.screenWidthDp.dp.toPx() }
+            .roundToInt()
+            .coerceIn(PI_SVG_MIN_BASE_WIDTH_PX, PI_SVG_MAX_BASE_WIDTH_PX)
+    }
+    // 画成功过的图按（源码、宽度）缓存：行滚回来直接是图，不再闪「渲染中」并让行高变两次。
+    var draw by remember(source, widthPx) {
         mutableStateOf<PiSvgDraw>(
-            if (settled) PiSvgDraw.Rendering else PiSvgDraw.Streaming,
+            PiSvgDrawCache.get(PiSvgDrawKey(source, widthPx))
+                ?: if (settled) PiSvgDraw.Rendering else PiSvgDraw.Streaming,
         )
     }
     var scale by remember(source) { mutableStateOf(PI_SVG_MIN_ZOOM) }
@@ -150,15 +173,7 @@ fun PiSvgFenceView(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        // 记录宽度跟着块宽走（`constraints.maxWidth` 已是 px）；无界父容器（横向滚动
-        // 区里）退到一个手机宽度，否则这块本来也放不下。
-        val widthPx = if (constraints.hasBoundedWidth && constraints.maxWidth > 0) {
-            constraints.maxWidth.coerceIn(PI_SVG_MIN_BASE_WIDTH_PX, PI_SVG_MAX_BASE_WIDTH_PX)
-        } else {
-            with(density) { PI_SVG_FALLBACK_WIDTH.toPx() }.roundToInt()
-        }
-
+    Box(modifier.fillMaxWidth()) {
         LaunchedEffect(source, settled, widthPx) {
             if (!settled) {
                 draw = PiSvgDraw.Streaming
@@ -172,6 +187,10 @@ fun PiSvgFenceView(
                 draw = PiSvgDraw.Unavailable(
                     "源码超过 ${PI_SVG_MAX_SOURCE_CHARS / 1024} KiB，未渲染",
                 )
+                return@LaunchedEffect
+            }
+            PiSvgDrawCache.get(PiSvgDrawKey(source, widthPx))?.let {
+                draw = it
                 return@LaunchedEffect
             }
             draw = PiSvgDraw.Rendering
@@ -191,11 +210,9 @@ fun PiSvgFenceView(
                     "SVG 渲染失败：${error.message ?: error::class.java.simpleName}",
                 )
             }
+            (draw as? PiSvgDraw.Ready)?.let { PiSvgDrawCache.put(PiSvgDrawKey(source, widthPx), it) }
         }
 
-        // `Column` 的 scope 带 `@LayoutScopeMarker`，从它里面读不到外层 `BoxWithConstraintsScope`
-        // 的 `maxWidth`（DslMarker 挡住隐式外层接收者）。进 `Column` 之前先取出来。
-        val blockWidth = maxWidth
         val ready = draw as? PiSvgDraw.Ready
         // 没有图 / 还在流式 / 用户选了源码 → 显示源码。成功的渲染不会被自动藏起来。
         val showSource = ready == null || !settled || pinned == true
@@ -203,49 +220,28 @@ fun PiSvgFenceView(
 
         val status: String? = feedback ?: when (draw) {
             PiSvgDraw.Streaming -> "生成中…"
-            PiSvgDraw.Rendering -> "渲染中…"
+            PiSvgDraw.Rendering -> null
             // 原因整句写在源码块上（那里有整行宽度）；工具栏只留一行状态，放不下。
             is PiSvgDraw.Unavailable -> null
             is PiSvgDraw.Ready -> if (showSource) "源码" else null
         }
 
         Column(Modifier.fillMaxWidth()) {
+            // 工具栏收成右对齐的一行淡色小字（状态在左，动作在右），与公式 / Mermaid 同款；动作触控 ≥ 40 dp。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 8.dp, top = 2.dp),
+                    .padding(start = 12.dp, end = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PiSvgModeLabel(
-                    label = "源码",
-                    selected = showSource,
-                    enabled = true,
-                    onClickLabel = "查看 SVG 源码",
-                    onClick = { pinned = true },
+                Text(
+                    text = status.orEmpty(),
+                    style = PiTheme.text.monoSmall,
+                    color = palette.muted,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.width(12.dp))
-                PiSvgModeLabel(
-                    label = "图",
-                    selected = !showSource,
-                    enabled = ready != null,
-                    onClickLabel = "查看渲染后的 SVG",
-                    onClick = { pinned = false },
-                )
-                if (status != null) {
-                    Text(
-                        text = status,
-                        style = PiTheme.text.monoSmall,
-                        color = palette.muted,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 8.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.End,
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
                 if (image != null) {
                     PiSvgActionLabel(
                         label = "适应",
@@ -254,6 +250,13 @@ fun PiSvgFenceView(
                             scale = PI_SVG_MIN_ZOOM
                             offset = Offset.Zero
                         },
+                    )
+                }
+                if (ready != null) {
+                    PiSvgActionLabel(
+                        label = if (showSource) "图" else "源码",
+                        onClickLabel = if (showSource) "查看渲染后的 SVG" else "查看 SVG 源码",
+                        onClick = { pinMode = if (showSource) 2 else 1 },
                     )
                 }
                 PiSvgActionLabel(
@@ -272,12 +275,25 @@ fun PiSvgFenceView(
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_SVG_FALLBACK_ASPECT
-                val imageHeight = (blockWidth / aspect)
-                    .coerceIn(PI_SVG_MIN_IMAGE_HEIGHT, PI_SVG_MAX_IMAGE_HEIGHT)
+                // 围栏作者的 SVG 不被改色（见类注释），深色主题下「黑线、无底」的图会隐形。
+                // 解法不是替他改色，而是给图垫一块浅色「纸」：深色主题下铺一层浅灰圆角底，
+                // 浅色主题下页面本来就是浅的，什么都不垫。
+                val darkPage = palette.pageBg.luminance() < 0.5f
+                val shape = RoundedCornerShape(12.dp)
+                // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
+                // 这样不需要 `BoxWithConstraints`。
                 Canvas(
                     modifier = Modifier
+                        .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
                         .fillMaxWidth()
-                        .height(imageHeight)
+                        .aspectRatio(aspect.coerceIn(0.05f, 60f))
+                        .then(
+                            if (darkPage) {
+                                Modifier.clip(shape).background(Color(0xFFF4F4F2))
+                            } else {
+                                Modifier
+                            },
+                        )
                         .clipToBounds()
                         .pointerInput(image) {
                             piSvgTransformGestures(
@@ -312,6 +328,20 @@ fun PiSvgFenceView(
                         native.restore()
                     }
                 }
+            } else if (draw == PiSvgDraw.Rendering && pinned != true) {
+                // 已在渲染、还没回答：固定高度占位，而不是先摊一整块源码再缩成图（行高突变、列表跳动）。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(PI_SVG_PLACEHOLDER_HEIGHT),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "渲染中…",
+                        style = PiTheme.text.monoSmall,
+                        color = palette.dim,
+                    )
+                }
             } else {
                 val unavailable = draw as? PiSvgDraw.Unavailable
                 PiSvgSourceBlock(
@@ -320,6 +350,29 @@ fun PiSvgFenceView(
                 )
             }
         }
+    }
+}
+
+/** 渲染占位的固定高度。 */
+private val PI_SVG_PLACEHOLDER_HEIGHT = 120.dp
+
+/** 缓存键：源码与基准宽度（该围栏不注入主题，所以主题不进键）。 */
+private data class PiSvgDrawKey(val source: String, val widthPx: Int)
+
+/** 最近渲染成功的图：16 条 LRU，只缓存成功结果。 */
+private object PiSvgDrawCache {
+    private const val CAPACITY = 16
+    private val entries = object : LinkedHashMap<PiSvgDrawKey, PiSvgDraw.Ready>(CAPACITY, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PiSvgDrawKey, PiSvgDraw.Ready>): Boolean =
+            size > CAPACITY
+    }
+
+    @Synchronized
+    fun get(key: PiSvgDrawKey): PiSvgDraw.Ready? = entries[key]
+
+    @Synchronized
+    fun put(key: PiSvgDrawKey, value: PiSvgDraw.Ready) {
+        entries[key] = value
     }
 }
 
@@ -585,7 +638,8 @@ private fun PiSvgActionLabel(
         maxLines = 1,
         modifier = Modifier
             .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 10.dp, vertical = 11.dp),
     )
 }
 
