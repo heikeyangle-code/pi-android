@@ -1530,12 +1530,14 @@ private fun PiCodeSurface(
     // 其它语言返回 null，所以这一段不会误伤别的代码块。
     val csvFormat = normalized?.let { PiCsvTable.formatForLanguage(it) }
     if (csvFormat != null) {
-        PiCsvTableView(
-            source = code,
-            format = csvFormat,
-            settled = settled,
-            initialMode = PiTreeMode.Tree,
-        )
+        PiRichCardFrame(code, info, palette) {
+            PiCsvTableView(
+                source = code,
+                format = csvFormat,
+                settled = settled,
+                initialMode = PiTreeMode.Tree,
+            )
+        }
         return
     }
     // Phase 5：栈围栏。只认显式标签，**不自动检测**普通文本 —— 一段散文被拆成帧

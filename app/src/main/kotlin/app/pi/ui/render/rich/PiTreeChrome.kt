@@ -122,6 +122,7 @@ internal fun PiTreeToolbar(
     status: String?,
     onSelect: (PiTreeMode) -> Unit,
     modifier: Modifier = Modifier,
+    treeLabel: String = "树",
 ) {
     val palette = PiTheme.palette
     Row(
@@ -143,7 +144,7 @@ internal fun PiTreeToolbar(
                 onClick = { onSelect(PiTreeMode.Code) },
             )
             PiTreeModeLabel(
-                label = "树",
+                label = treeLabel,
                 selected = mode == PiTreeMode.Tree,
                 enabled = treeAvailable,
                 onClickLabel = "查看树状视图",
