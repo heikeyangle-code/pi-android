@@ -11,6 +11,9 @@ package app.pi.ui.render.rich
  * 有界：最近用到的 [CAPACITY] 条，超出淘汰最久未用的；键里存的是调用方已有的同一个 `String`
  * 引用（不复制），最坏占用是 [CAPACITY] 份源码 + 解析树。
  */
+/** 不超过这个长度的源码同步解析（见 [rememberTreeParse]）。 */
+internal const val SYNC_PARSE_MAX_CHARS = 8 * 1024
+
 internal object PiTreeParseCache {
     private const val CAPACITY = 16
 
@@ -48,6 +51,13 @@ internal fun <T : Any> rememberTreeParse(
 ): T? {
     val cached = PiTreeParseCache.peek<T>(kind, source, settled)
     if (cached != null) return cached
+    // 小文档（几 KiB）解析只要微秒到毫秒：直接同步做并缓存。若为它们也走「先显示源码、再换成
+    // 树」，每个块首次出现都会闪一帧源码并让行高突变，滚动列表时会跳。只有大文档才值得后台。
+    if (source.length <= SYNC_PARSE_MAX_CHARS) {
+        return androidx.compose.runtime.remember(kind, source, settled) {
+            PiTreeParseCache.getOrParse(kind, source, settled, parse)
+        }
+    }
     return androidx.compose.runtime.produceState<T?>(initialValue = null, kind, source, settled) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             PiTreeParseCache.getOrParse(kind, source, settled, parse)

@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.ui.render.rich.rememberTreeParse
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -47,11 +48,14 @@ fun PiHtmlBlockView(
     settled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    val result = remember(source, settled) {
+    // jsoup 解析放后台并缓存（小块同步，见 `rememberTreeParse`）：大块第一次出现不卡主线程。
+    val result = rememberTreeParse("html", source, settled) {
         PiHtmlDocument.parse(source = source, settled = settled)
     }
 
     when (result) {
+        null -> HtmlSourceFallback(source = source, notice = "解析中…", modifier = modifier)
+
         is PiHtmlParseResult.Success -> PiHtmlRenderer(
             nodes = result.nodes,
             modifier = modifier,
