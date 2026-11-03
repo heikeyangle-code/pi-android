@@ -1355,12 +1355,12 @@ fun main() {
     //
     // 修法是 `refreshStateNow()`（可 await 的版本）。这一节钉的是**顺序**，因为它是唯一在
     // 本机可判的性质：真正的 RPC 时序只有真机能验证。
-    val attachBody = viewModelText
+    val attachReplayBody = viewModelText
         .substringAfter("private fun attach(engine: PiEngineSession) {", "")
         .take(24000)
-    checkTrue("找到了 attach 的函数体", attachBody.isNotEmpty(), "marker not found")
-    val attachRefresh = attachBody.indexOf("refreshStateNow(it)")
-    val attachReplay = attachBody.indexOf("replayHistory(engine)")
+    checkTrue("找到了 attach 的函数体", attachReplayBody.isNotEmpty(), "marker not found")
+    val attachRefresh = attachReplayBody.indexOf("refreshStateNow(it)")
+    val attachReplay = attachReplayBody.indexOf("replayHistory(engine)")
     checkTrue(
         "attach 里先 await 新会话的身份，再 replay（否则 replay 读的是旧会话文件）",
         attachRefresh >= 0 && attachReplay >= 0 && attachRefresh < attachReplay,
@@ -1368,13 +1368,13 @@ fun main() {
     )
     checkTrue(
         "attach 里不再有 fire-and-forget 的 refreshState()",
-        !attachBody.contains("refreshState()"),
+        !attachReplayBody.contains("refreshState()"),
     )
-    val replacedBody = viewModelText
+    val replacedReplayBody = viewModelText
         .substringAfter("private suspend fun afterSessionReplaced(", "")
         .take(6000)
-    val replacedRefresh = replacedBody.indexOf("refreshStateNow(it)")
-    val replacedReplay = replacedBody.indexOf("replayHistory(engine, brandNew)")
+    val replacedRefresh = replacedReplayBody.indexOf("refreshStateNow(it)")
+    val replacedReplay = replacedReplayBody.indexOf("replayHistory(engine, brandNew)")
     checkTrue(
         "afterSessionReplaced 同样先 await 再 replay（switch_session 之后不许画旧对话）",
         replacedRefresh >= 0 && replacedReplay >= 0 && replacedRefresh < replacedReplay,

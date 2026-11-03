@@ -135,7 +135,14 @@ fun main() {
         ).extractGzip(stream)
     }
     check("a refused symlink does not abort the extraction", degraded.links, 0L)
-    check("every refused link was materialised instead", degraded.degraded >= 150L, true)
+    // 每一条链接要么变成副本，要么本来就悬空 —— 两者之和必须等于正常解包里建成的链接数
+    // （194）。这个等式比"至少 N 条"稳：它不依赖官方 base 里有多少条悬空链接。
+    check(
+        "every refused link either became a copy or was already dangling",
+        degraded.degraded + degraded.dangling,
+        result.links,
+    )
+    check("most of them became copies", degraded.degraded >= 100L, true)
     check("bin/bash exists after the fallback", File(fallback, "bin/bash").isFile, true)
     check("bin/bash is executable after the fallback", File(fallback, "bin/bash").canExecute(), true)
     check(
