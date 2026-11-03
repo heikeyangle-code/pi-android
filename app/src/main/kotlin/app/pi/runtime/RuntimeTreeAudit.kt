@@ -140,16 +140,6 @@ object RuntimeTreeAudit {
     }
 
     /**
-     * 这棵树缺哪些关键路径（相对 [rootfs] 的写法，与 [CRITICAL] 同一套拼写）。
-     *
-     * 空列表 = 四条都在。`isFile` 会跟随符号链接，所以 `bin` 是链接、`usr/bin/bash` 是文件
-     * 的正常形状判为"在"；链接悬空、被换成目录、文件根本没写，三种都判为"缺"。
-     */
-    fun missing(rootfs: File): List<String> = CRITICAL.filter { relative ->
-        !File(rootfs, relative).isFile
-    }
-
-    /**
      * [requirements] 里每一条没满足的原因，一条一句话；全满足时是空列表。
      *
      * 与 [missing] 的分工：`missing` 只回答"在不在"（快路径上每轮都跑，四条 `isFile`），
@@ -177,23 +167,26 @@ object RuntimeTreeAudit {
         val link = if (node === file) null else {
             runCatching { Files.readSymbolicLink(file.toPath()) }.getOrNull()?.toString()
         }
-        val via = if (link == null) "" else "：符号链接 -> $link"
+        // Every sentence has to read as one clause, because it is shown verbatim on the boot
+        // card and copied into a report: `…/bin/bash：不存在` for a plain file,
+        // `…/bin/bash：符号链接 -> usr/bin/bash，不存在` for a link.
+        val lead = if (link == null) "$label：" else "$label：符号链接 -> $link，"
         if (!node.exists()) {
             val ancestor = danglingAncestor(rootfs, file)
-            return if (ancestor == null) "$label$via，目标不存在" else "$label$via，目标不存在（$ancestor）"
+            return if (ancestor == null) "${lead}不存在" else "${lead}不存在（$ancestor）"
         }
         // A link that climbs out with `..` would run a file outside the tree. Guest-absolute
         // links (`/opt/node/bin/node`) are anchored inside the rootfs by construction, so
         // only the relative spelling can escape — and only that one is checked.
         if (link != null && !link.startsWith("/")) {
-            escapesRootfs(rootfs, node)?.let { return "$label$via，$it" }
+            escapesRootfs(rootfs, node)?.let { return "$lead$it" }
         }
         // A non-executable requirement only asks for the node: `usr/local/bin/node` is a
         // link into `/opt/node`, and whether it is executable is the target's answer.
         if (!requirement.executable) return null
-        if (node.isDirectory) return "$label$via，是目录，不是可执行文件"
-        if (!node.canExecute()) return "$label$via，没有可执行权限"
-        if (node.length() == 0L) return "$label$via，是 0 字节的空文件"
+        if (node.isDirectory) return "${lead}是目录，不是可执行文件"
+        if (!node.canExecute()) return "${lead}没有可执行权限"
+        if (node.length() == 0L) return "${lead}是 0 字节的空文件"
         return null
     }
 

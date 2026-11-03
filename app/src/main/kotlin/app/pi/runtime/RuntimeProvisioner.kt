@@ -257,7 +257,7 @@ class RuntimeProvisioner(
         // `/bin/bash`: proot then fails at `which()` with "not found", every later boot
         // takes this early return, and only 「重建运行时」 — which deletes everything the user
         // installed inside the guest — could get past it. So this path asks
-        // [RuntimeTreeAudit.missing] first (four `isFile` probes on paths the guest cannot
+        // [RuntimeTreeAudit.criticalProblems] first (four probes on paths the guest cannot
         // run without, a few microseconds against a boot) and treats a tree that lacks any
         // of them as "not provisioned": `treeIncomplete` below plans every payload, which
         // extracts **over** the tree and deletes nothing.

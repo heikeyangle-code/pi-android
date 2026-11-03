@@ -9,7 +9,7 @@ import kotlin.system.exitProcess
 // 为什么这值得钉：它守的是"解包说成功、树里却少了 guest 起不来的东西"这一类故障的唯一
 // 判据，以及 usrmerge 链接的唯一修复动作。两者错都不会抛异常：
 //
-//  - [RuntimeTreeAudit.missing] 少判一条 ⇒ 残树被当成完整树，之后每次启动都走快路径，
+//  - [RuntimeTreeAudit.criticalProblems] 少判一条 ⇒ 残树被当成完整树，之后每次启动都走快路径，
 //    proot 只留下两句 `'/bin/bash' not found`，用户除了「重建运行时」无路可走（真机报告
 //    2026-11-03 就是这个形状）；
 //  - [RuntimeTreeAudit.repairUsrMergeLinks] 多删一个真目录 ⇒ 删的是用户自己的文件。所以
@@ -59,7 +59,7 @@ fun main() {
         val root = completeRootfs("ok")
         link(root, "bin", "usr/bin")
         link(root, "sbin", "usr/sbin")
-        check("complete tree reports nothing missing", RuntimeTreeAudit.missing(root), emptyList<String>())
+        check("complete tree reports nothing missing", RuntimeTreeAudit.criticalProblems(root), emptyList<String>())
         val repair = RuntimeTreeAudit.repairUsrMergeLinks(root)
         check("complete tree repairs nothing", repair.repaired, emptyList<String>())
         check("complete tree leaves nothing alone", repair.leftAlone, emptyList<String>())
@@ -70,15 +70,17 @@ fun main() {
     // 2. 真机形状：`usr/bin/bash` 在，但 `bin` 链接根本不存在 ⇒ /bin/bash 与 /bin/sh 都缺。
     run {
         val root = completeRootfs("nolink")
+        val problems = RuntimeTreeAudit.criticalProblems(root)
         check(
             "missing /bin link is reported as bin/bash and bin/sh",
-            RuntimeTreeAudit.missing(root),
-            listOf("bin/bash", "bin/sh"),
+            problems.filter { it.startsWith("/bin/") }.size,
+            2,
         )
+        check("and the report says they do not exist", problems.all { it.contains("不存在（上级 /bin 是悬空链接") || it.contains("：不存在") }, true)
         val repair = RuntimeTreeAudit.repairUsrMergeLinks(root)
         check("missing /bin link is repaired", repair.repaired, listOf("bin"))
         check("repaired link resolves", File(root, "bin/bash").isFile, true)
-        check("after repair nothing is missing", RuntimeTreeAudit.missing(root), emptyList<String>())
+        check("after repair nothing is missing", RuntimeTreeAudit.criticalProblems(root), emptyList<String>())
         // 幂等：第二遍不写任何东西（快路径不会每轮重建链接）。
         check("repair is idempotent", RuntimeTreeAudit.repairUsrMergeLinks(root).repaired, emptyList<String>())
         root.deleteRecursively()
@@ -88,7 +90,7 @@ fun main() {
     run {
         val root = completeRootfs("dangling")
         link(root, "bin", "usr/bin-old")
-        check("dangling /bin is missing bin/bash", RuntimeTreeAudit.missing(root).contains("bin/bash"), true)
+        check("dangling /bin is missing bin/bash", RuntimeTreeAudit.criticalProblems(root).any { it.startsWith("/bin/bash") }, true)
         val repair = RuntimeTreeAudit.repairUsrMergeLinks(root)
         check("dangling /bin is relinked", repair.repaired, listOf("bin"))
         check(
@@ -96,7 +98,7 @@ fun main() {
             runCatching { java.nio.file.Files.readSymbolicLink(File(root, "bin").toPath()).toString() }.getOrNull(),
             "usr/bin",
         )
-        check("relinked tree has no missing paths", RuntimeTreeAudit.missing(root), emptyList<String>())
+        check("relinked tree has no missing paths", RuntimeTreeAudit.criticalProblems(root), emptyList<String>())
         root.deleteRecursively()
     }
 
@@ -105,8 +107,10 @@ fun main() {
         val root = completeRootfs("realdir")
         File(root, "bin").mkdirs()
         File(root, "bin/bash").writeText("x")
+        File(root, "bin/bash").setExecutable(true, false)
         File(root, "bin/sh").writeText("x")
-        check("a real /bin directory satisfies the audit", RuntimeTreeAudit.missing(root), emptyList<String>())
+        File(root, "bin/sh").setExecutable(true, false)
+        check("a real /bin directory satisfies the audit", RuntimeTreeAudit.criticalProblems(root), emptyList<String>())
         val repair = RuntimeTreeAudit.repairUsrMergeLinks(root)
         check("a real /bin directory is left alone", repair.leftAlone, listOf("bin"))
         check("a real /bin directory is not a failure", repair.failed, emptyList<String>())
@@ -122,7 +126,7 @@ fun main() {
         val repair = RuntimeTreeAudit.repairUsrMergeLinks(root)
         check("no target directory means no repair", repair.repaired, emptyList<String>())
         check("no target directory is not a link failure", repair.failed, emptyList<String>())
-        check("no target directory still reports every critical path", RuntimeTreeAudit.missing(root).size, 3)
+        check("no target directory still reports every critical path", RuntimeTreeAudit.criticalProblems(root).size, 3)
         root.deleteRecursively()
     }
 
@@ -133,8 +137,8 @@ fun main() {
         File(root, "opt/node/bin/node").delete()
         check(
             "a missing node binary is reported",
-            RuntimeTreeAudit.missing(root),
-            listOf("opt/node/bin/node"),
+            RuntimeTreeAudit.criticalProblems(root).single().startsWith("/opt/node/bin/node"),
+            true,
         )
         root.deleteRecursively()
     }
@@ -143,8 +147,9 @@ fun main() {
     run {
         val root = completeRootfs("failure")
         File(root, "usr/bin/bash").delete()
-        val missing = RuntimeTreeAudit.missing(root)
-        val text = RuntimeTreeAudit.failure(root, missing, RuntimeTreeAudit.Repair())
+        val problems = RuntimeTreeAudit.criticalProblems(root)
+        val text = RuntimeTreeAudit.failure(root, problems, RuntimeTreeAudit.Repair())
+        check("failure lists the problems as bullets", text.contains("  · /bin/bash："), true)
         check("failure names bin/bash", text.contains("/bin/bash"), true)
         check("failure names bin/sh", text.contains("/bin/sh"), true)
         check("failure describes /bin", text.contains("/bin："), true)
@@ -153,7 +158,7 @@ fun main() {
         check("failure names the repair that failed", text.contains("没能补回的链接"), false)
         check(
             "failure names the repaired link when one was rebuilt",
-            RuntimeTreeAudit.failure(root, missing, RuntimeTreeAudit.Repair(repaired = listOf("bin")))
+            RuntimeTreeAudit.failure(root, problems, RuntimeTreeAudit.Repair(repaired = listOf("bin")))
                 .contains("补回 usrmerge 链接：/bin"),
             true,
         )
@@ -254,7 +259,7 @@ fun main() {
         check(
             "a guest-absolute link with no target fails",
             RuntimeTreeAudit.failures(root, RuntimeTreeAudit.requirementsFor("node"))
-                .any { it.contains("/usr/local/bin/node") && it.contains("目标不存在") },
+                .any { it.contains("/usr/local/bin/node") && it.contains("不存在") },
             true,
         )
         root.deleteRecursively()
@@ -262,17 +267,26 @@ fun main() {
 
     // 12. 相对链接用 `..` 爬出 rootfs：那是载荷能让我们执行树外文件的一条路，必须被判出来。
     run {
-        val root = completeRootfs("escape")
+        // A controlled base, because the escape target has to live **beside** the rootfs and
+        // the temp directory on CI is not writable above its own level (`/outside-bash`
+        // answered EACCES on the runner, which is how this fixture first failed).
+        val base = java.nio.file.Files.createTempDirectory("pi-escape").toFile()
+        val root = File(base, "rootfs").also { it.mkdirs() }
+        listOf("usr/bin/bash", "usr/bin/sh", "usr/bin/dash", "usr/bin/env", "opt/node/bin/node").forEach { relative ->
+            val file = File(root, relative)
+            file.parentFile.mkdirs()
+            file.writeText("x")
+            file.setExecutable(true, false)
+        }
         File(root, "bin").mkdirs()
-        File(root, "bin/bash").delete()
         // The target must *exist* for this to be an escape (otherwise it is reported as
-        // "target missing", which is also true but less specific).
-        val outside = File(root.parentFile.parentFile, "outside-bash")
+        // "does not exist", which is also true but less specific).
+        val outside = File(base, "outside-bash")
         outside.writeText("x")
         outside.setExecutable(true, false)
         java.nio.file.Files.createSymbolicLink(
             File(root, "bin/bash").toPath(),
-            java.nio.file.Path.of("../../../outside-bash"),
+            java.nio.file.Path.of("../../outside-bash"),
         )
         val problems = RuntimeTreeAudit.failures(root, RuntimeTreeAudit.requirementsFor("ubuntu-base"))
         check(
@@ -290,8 +304,7 @@ fun main() {
             true,
         )
         dangling.deleteRecursively()
-        outside.delete()
-        root.deleteRecursively()
+        base.deleteRecursively()
     }
 
     // 13. 载荷失败页：必须说清"哪个载荷、缺什么、digest 没写、下次会重解"——用户不用点
