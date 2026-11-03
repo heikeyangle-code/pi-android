@@ -2152,7 +2152,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // `attach` is not optional and not cosmetic: `PiEngineHost.restart` closed
         // the old engine before starting the new one, and every action here checks
         // `api != null`, so without it the UI would be inert until the next boot.
-        if (engine != null) attach(engine)
+        // 切工作区 = 换项目 = 新的一段会话：`restart` 用 `continueMostRecent = false` 起了
+        // 一个新会话，这里把这件事告诉 attach，好让它不必为确认身份多等一次 `get_state`。
+        if (engine != null) attach(engine, freshSession = true)
         refreshPrefs()
         refreshTheme()
         refreshSessions()
@@ -2638,7 +2640,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun isTurnRunning(): Boolean = host.turnRunning
 
-    private fun attach(engine: PiEngineSession) {
+    /**
+     * @param freshSession 这次引擎起来时**确定**开了一段全新会话（切工作区的重启就是），
+     *        所以 `meta` 里那段旧身份既不可信、也没有必要问 `get_state` 去确认：
+     *        清掉它、replay 就没有文件可读（走 `get_entries` 回落 = 空屏），
+     *        而 `get_state` 继续以 fire-and-forget 的方式补顶栏。切工作区因此**不付**那
+     *        2–5 ms 的等待。
+     */
+    private fun attach(engine: PiEngineSession, freshSession: Boolean = false) {
         // Anything still pending belongs to the *previous* engine (a boot after a
         // failure, or a restart). It can never be answered now, so answer it
         // cancelled against the old session before this one's events arrive —
@@ -2650,6 +2659,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         session = engine
         api = PiEngineApi(engine)
+        if (freshSession) {
+            // The old identity belongs to another workspace and another pi process. Keeping
+            // it would let `replayHistory` read a file this engine never opened — the
+            // "surface still shows the old conversation" defect.
+            _state.value = _state.value.copy(
+                meta = _state.value.meta.copy(
+                    sessionId = null,
+                    sessionFile = null,
+                    sessionName = null,
+                    messageCount = 0,
+                ),
+            )
+        }
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
@@ -2967,10 +2989,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 它在 `busy = "正在加载会话"` **之前**：`refreshState` 走 `call`，会先把自己的标签
             // （「读取会话状态」）写上、再在 finally 里清掉；放在它后面写，外层那句会被那次清理
             // 抹掉，replay 期间顶栏什么都不说。
-            // **必须 await**：`refreshState` 只是排了一次协程，紧接着的 `replayHistory`
-            // 会用**旧 meta** 去挑会话文件 —— 切工作区后重新画出老对话、要发一句消息才切换，
-            // 就是这一格。`refreshStateNow` 的 KDoc 是权威版本。
-            api?.let { refreshStateNow(it) }
+            // **只有"旧身份可能还在、而且新引擎可能换了一段会话"时才必须 await**：
+            // `refreshState` 只是排了一次协程，紧接着的 `replayHistory` 会用**旧 meta** 去挑
+            // 会话文件 —— 切工作区后重新画出老对话、要发一句消息才切换，就是这一格。
+            //
+            // 反过来，下面两种情形没有任何东西要对齐，等待就是白付 2–5 ms：
+            //  - `freshSession`：引擎确定开了新会话，上面已经把旧身份清空；
+            //  - 冷启动：`meta` 本来就是空的，没有旧文件可被读错。
+            val staleIdentity = _state.value.meta.sessionFile != null ||
+                _state.value.meta.sessionId != null
+            if (!freshSession && staleIdentity) {
+                api?.let { refreshStateNow(it) }
+            } else {
+                refreshState()
+            }
             // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是
             // **这一次 replay 的**，所以只有它还握着这行时才允许清掉。
             val replayToken = claimBusy("正在加载会话")
