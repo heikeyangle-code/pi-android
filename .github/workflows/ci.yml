@@ -226,6 +226,12 @@ jobs:
           done
           apk="${all[0]}"
           "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
+          # v1（JAR）签名不是冗余：HarmonyOS 的安装器只认 META-INF 里的证书，纯 v2/v3 的包
+          # 会被它报成「该安装包未包含任何证书」（nova 9 的实际报告；MT 重签后即能装）。
+          if ! grep -qF "Verified using v1 scheme (JAR signing): true" /tmp/apksigner.txt; then
+            echo "::error::$apk has no v1 (JAR) signature; HarmonyOS installers reject it as having no certificate"
+            exit 1
+          fi
           expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
           if ! grep -qi "$expected" /tmp/apksigner.txt; then
             echo "::error::$apk is not signed with keystore/pi-sideload.jks; devices with the app installed could not update over it"

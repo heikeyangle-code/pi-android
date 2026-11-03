@@ -72,6 +72,14 @@ android {
             storePassword = System.getenv("PI_KEYSTORE_PASSWORD") ?: "android"
             keyAlias = System.getenv("PI_KEY_ALIAS") ?: "pi"
             keyPassword = System.getenv("PI_KEY_PASSWORD") ?: "android"
+            // 鸿蒙（HarmonyOS，nova 9 那一类）的安装器对**只有 v2/v3 签名块**的 APK 报
+            // 「该安装包未包含任何证书」，而用户用 MT 管理器重签（默认 v1+v2）之后就能装 ——
+            // 那条报告就是这个，而不是"包坏了"。v1（JAR 签名）对 minSdk 26 的包本来是可选的，
+            // 代价是几 MB 的 META-INF，换来的是旧安装器也能从 META-INF 里读到证书。
+            //
+            // CI 的 `Verify the release APK is signed` 会断言
+            // `Verified using v1 scheme (JAR signing): true`，所以这条不会被悄悄去掉。
+            enableV1Signing = true
         }
     }
 

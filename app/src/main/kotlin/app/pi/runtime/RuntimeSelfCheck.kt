@@ -118,7 +118,7 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         // pass. Nothing is written on a failure (see the end of this function), so a
         // failure is never cached, and `RuntimeProvisioner.wipe()` removes the stamp
         // together with the tree it describes.
-        val revision = runCatching { paths.stampFile().readText().trim() }.getOrNull()
+        val revision = paths.stampRevision()
         if (!revision.isNullOrEmpty() && passedAtRevision(revision)) {
             return@withContext Outcome(
                 Status.Ok,
@@ -291,6 +291,8 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
 
     /** Has a probe already passed at this unpacked revision? */
     private fun passedAtRevision(revision: String): Boolean = runCatching {
+        // `revision` is `PiPaths.stampRevision()` — the **first line** of `.stamp`. This
+        // file's own format is unchanged (one line), so it is compared whole.
         val stamp = paths.selfCheckStamp()
         stamp.isFile && stamp.readText().trim() == revision
     }.getOrDefault(false)

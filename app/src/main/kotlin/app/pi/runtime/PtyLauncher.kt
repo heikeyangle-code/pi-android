@@ -323,7 +323,7 @@ object PtyLauncher {
     private fun probe(paths: PiPaths, storage: File): ScriptFlags {
         // One guest exec, cached against the unpacked runtime's stamp so it is
         // re-run when the runtime changes and never inside a hot path.
-        val stamp = runCatching { paths.stampFile().readText().trim() }.getOrNull()
+        val stamp = paths.stampRevision()
         val cached = cachedFlags
         if (cached != null && cachedStamp == stamp) return cached
 

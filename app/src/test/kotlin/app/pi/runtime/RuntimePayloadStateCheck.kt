@@ -354,10 +354,16 @@ fun main() {
     // 成功，proot 只剩一句 `'/bin/bash' not found`，用户除了删数据的「重建」无路可走。
     // 所以这条性质现在准确的说法是：**戳记相符且树是完整的**才提前返回；判完整性用的是
     // 四条 `isFile`（不读摘要、不读清单、不遍历目录），残树则走慢路径被全部重解一遍。
-    val fastPath = "if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) " +
-        "{ if (RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) " +
-        "{ return finishCurrent(revision, migration = false, onStep) } }"
-    check("P1 the fast path is one guarded early return", provisionerSource.split(fastPath).size - 1, 1)
+    val fastPathGuard =
+        "if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) {"
+    check("P1 the fast path is one guarded early return", provisionerSource.split(fastPathGuard).size - 1, 1)
+    check(
+        "P1c the early return also requires the audit verdict (or its marker)",
+        provisionerSource.contains("val audited = stampAudited()") &&
+            provisionerSource.contains("if (!audited) writeStamp(revision)") &&
+            provisionerSource.contains("criticalProblems(paths.rootfs).isEmpty()"),
+        true,
+    )
     check(
         "P1b the guard asks the tree, not only the stamp",
         provisionerSource.contains(
@@ -365,9 +371,31 @@ fun main() {
         ),
         true,
     )
+    // 2026-11-04: 戳记现在有两行（revision + `audited`），所以比较的必须是**第一行** ——
+    // `readText().trim() == revision` 式的比较在写入第二行之后永远不相等（自检、proroot 探针
+    // 缓存、重启判定都会因此每次重做）。所有读戳记的地方都改走 `PiPaths.stampRevision()`。
     check(
-        "P2 the comparison is the stamp file against the packaged revision",
-        provisionerSource.contains("return stamp.isFile && stamp.readText().trim() == revision"),
+        "P2 the comparison is the stamp's revision line against the packaged revision",
+        provisionerSource.contains(
+            "private fun isStampCurrent(revision: String): Boolean = paths.stampRevision() == revision",
+        ),
+        true,
+    )
+    check(
+        "P2b no reader compares the whole stamp text any more",
+        provisionerSource.contains("readText().trim() == revision"),
+        false,
+    )
+    // P49/P50: 验过就记在戳记里，之后每次启动都不再探测 —— 正常设备只为一次安装付一次代价。
+    check(
+        "P49 the fast path probes only for a stamp without the audited marker",
+        provisionerSource.contains("val audited = stampAudited()") &&
+            provisionerSource.contains("if (!audited) writeStamp(revision)"),
+        true,
+    )
+    check(
+        "P50 the marker is written with the stamp",
+        provisionerSource.contains("revision + \"\\n\" + AUDITED_LINE + \"\\n\""),
         true,
     )
     val slowPathReads = listOf(
@@ -377,7 +405,7 @@ fun main() {
     )
     check(
         "P3 the early return precedes every per-payload read",
-        slowPathReads.all { provisionerSource.indexOf(fastPath) < provisionerSource.indexOf(it) },
+        slowPathReads.all { provisionerSource.indexOf(fastPathGuard) < provisionerSource.indexOf(it) },
         true,
     )
     // …and the work the fast path *does* do reads none of it either: the two idempotent
@@ -1152,6 +1180,45 @@ fun main() {
         provisionerSource.contains("guestSymlink(\"/usr/local/bin/node\", \"/opt/node/bin/node\")") &&
             provisionerSource.contains("guestSymlink(\"/usr/local/bin/npm\", \"/opt/node/bin/npm\")") &&
             provisionerSource.contains("guestSymlink(\"/usr/local/bin/npx\", \"/opt/node/bin/npx\")"),
+        true,
+    )
+
+    // ------------------------------------------------------- ③c'' 戳记格式：两行，第一行才是版本
+    //
+    // 这一段是**真跑**的（`PiPaths` 在纯 JVM 闭包里），不是读源码：两行格式一旦被某个
+    // 读者当成整串比较，症状是"自检每次重启都重跑 / 重启总被拒"，而它不会报错。
+    run {
+        val base = File.createTempFile("pi-stamp", "").let { it.delete(); it.mkdirs(); it }
+        val paths = PiPaths(File(base, "files").also { it.mkdirs() }, File(base, "lib"))
+        paths.stampFile().parentFile?.mkdirs()
+        paths.stampFile().writeText("rev\n")
+        check("S1 an old one-line stamp still answers its revision", paths.stampRevision(), "rev")
+        paths.stampFile().writeText("rev\naudited\n")
+        check("S2 the audited marker does not change the revision", paths.stampRevision(), "rev")
+        paths.stampFile().delete()
+        check("S3 a missing stamp has no revision", paths.stampRevision(), null)
+        base.deleteRecursively()
+    }
+
+    // ------------------------------------------------------- ③c2 链接创建的两层
+    //
+    // 鸿蒙（nova 9）的实际报告：`/bin` 是真实目录、`/bin/bash` 是真实文件，说明
+    // `Files.createSymbolicLink` 被拒、走了复制兜底。而鸿蒙的 `java.nio.file` 链接实现并不
+    // 完整，`android.system.Os.symlink` 通常是好的 —— 补第二层，复制兜底退成最后手段。
+    check(
+        "P51 a refused NIO symlink falls back to Os.symlink",
+        provisionerSource.contains("android.system.Os.symlink") &&
+            provisionerSource.contains("Os.symlink: "),
+        true,
+    )
+    check(
+        "P52 the tar extractor goes through the same two tiers",
+        provisionerSource.contains("symlink = { link, target -> createLink("),
+        true,
+    )
+    check(
+        "P53 guestSymlink reuses createLink (no third copy of the rule)",
+        provisionerSource.contains("if (createLink(link, guestTarget) == null) return"),
         true,
     )
 

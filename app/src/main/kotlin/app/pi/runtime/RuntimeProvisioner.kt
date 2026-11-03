@@ -270,7 +270,15 @@ class RuntimeProvisioner(
         // of them as "not provisioned": `treeIncomplete` below plans every payload, which
         // extracts **over** the tree and deletes nothing.
         if (!rebuild && !repair && paths.rootfs.isDirectory && isStampCurrent(revision)) {
-            if (RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) {
+            // Once a tree has been verified, the verdict is recorded in the stamp's second
+            // line. Probing four paths on **every** launch would make every healthy phone
+            // pay for a defect that happens once per install — and a tree this version
+            // wrote was already gated at unpack time. So: probe only for a stamp that does
+            // not carry the marker (one written by an older version, or one whose marker
+            // never landed), and write it as soon as the tree answers.
+            val audited = stampAudited()
+            if (audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) {
+                if (!audited) writeStamp(revision)
                 return finishCurrent(revision, migration = false, onStep)
             }
         }
@@ -1015,7 +1023,15 @@ class RuntimeProvisioner(
         val stream = openPayload(archive)
         try {
             stream.use { input ->
-                val result = TarExtractor(into).extractGzip(input)
+                // Same two-tier creation as `guestSymlink`: HarmonyOS's `java.nio` symlink
+                // support is incomplete while the syscall works, and the extractor's
+                // copy fallback is the expensive last resort, not the first answer.
+                val result = TarExtractor(
+                    into,
+                    symlink = { link, target -> createLink(link.toFile(), target.toString())?.let { message ->
+                        throw IOException(message)
+                    } },
+                ).extractGzip(input)
                 // The fallback in `TarExtractor` is what makes a device that refuses
                 // `symlink(2)` still boot (links become copies). It is not silent: the
                 // user sees one line on the boot screen, because it costs disk and it is
@@ -1941,19 +1957,43 @@ class RuntimeProvisioner(
      * 壳脚本写不进去（磁盘满、目录只读）才是真失败：那时记一条警告，载荷闸门会在同一轮
      * 把缺哪个路径报出来，启动失败且**不写** digest/stamp。
      */
+    /**
+     * 建一条符号链接，三层：`java.nio` → `Os.symlink` → 交给调用方兜底。
+     *
+     * 第二层是为鸿蒙（nova 9 / HarmonyOS，安卓 10 底座）加的：那台设备的失败页显示
+     * `/bin` 是**真实目录**、`/bin/bash` 与 `/bin/sh` 是真实文件 —— 说明 `Files.createSymbolicLink`
+     * 被拒绝了，载荷因此走了复制兜底。而 `java.nio.file` 的链接实现在鸿蒙上并不完整，
+     * `android.system.Os.symlink`（一条裸 syscall）通常是好的。先试 NIO、再试 syscall，
+     * 两层都失败才让调用方铺实物：这样那台设备不需要为"一半修好"付磁盘和壳脚本的代价，
+     * 而真正不支持链接的存储仍然由兜底接住。
+     *
+     * 返回 null 表示成功（链接已建立并且确实是链接）；否则返回一句话，调用方据此兜底。
+     */
+    private fun createLink(link: File, target: String): String? {
+        val linkPath = link.toPath()
+        val targetPath = java.nio.file.Path.of(target)
+        val nio = runCatching { java.nio.file.Files.createSymbolicLink(linkPath, targetPath) }
+        val linked = nio.isSuccess && runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }
+            .getOrDefault(false)
+        if (linked) return null
+        if (runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }.getOrDefault(false)) {
+            runCatching { java.nio.file.Files.deleteIfExists(linkPath) }
+        }
+        val viaOs = runCatching { android.system.Os.symlink(target, link.path) }
+        if (viaOs.isSuccess && runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }
+                .getOrDefault(false)
+        ) {
+            return null
+        }
+        return "Files.createSymbolicLink: ${nio.exceptionOrNull()?.let { it::class.java.simpleName + ": " + it.message }}; " +
+            "Os.symlink: ${viaOs.exceptionOrNull()?.let { it::class.java.simpleName + ": " + it.message }}"
+    }
+
     private fun guestSymlink(guestLink: String, guestTarget: String) {
         val link = File(paths.rootfs, guestLink.removePrefix("/"))
         link.parentFile?.mkdirs()
         if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
-        val linked = runCatching {
-            java.nio.file.Files.createSymbolicLink(link.toPath(), java.nio.file.Path.of(guestTarget))
-        }.isSuccess && runCatching {
-            java.nio.file.Files.isSymbolicLink(link.toPath())
-        }.getOrDefault(false)
-        if (linked) return
-        if (java.nio.file.Files.isSymbolicLink(link.toPath())) {
-            runCatching { java.nio.file.Files.deleteIfExists(link.toPath()) }
-        }
+        if (createLink(link, guestTarget) == null) return
         val wrapped = runCatching {
             link.writeText("#!/bin/sh\nexec $guestTarget \"\$@\"\n")
             link.setExecutable(true, false)
@@ -1974,9 +2014,19 @@ class RuntimeProvisioner(
 
     private fun stampFile() = paths.stampFile()
 
-    private fun isStampCurrent(revision: String): Boolean {
+    private fun isStampCurrent(revision: String): Boolean = paths.stampRevision() == revision
+
+    /**
+     * 戳记的第二行：`RuntimeTreeAudit` 验过这棵树、而且验完之后它没有被替换过。
+     *
+     * 只有本版本写出的戳记才带它；老版本只有一行，所以升级后的第一次启动会探测一次
+     * （见快路径）。之后每次启动都不再碰 rootfs。
+     */
+    private fun stampAudited(): Boolean {
         val stamp = stampFile()
-        return stamp.isFile && stamp.readText().trim() == revision
+        if (!stamp.isFile) return false
+        return runCatching { stamp.readLines().getOrNull(1)?.trim() == AUDITED_LINE }
+            .getOrDefault(false)
     }
 
     /**
@@ -1998,7 +2048,10 @@ class RuntimeProvisioner(
      * stamp as empty on the next one.
      */
     private fun writeStamp(revision: String): String? =
-        if (writeStampAtomically(stampFile(), revision + "\n")) {
+        // Two lines: the revision every reader compares (`PiPaths.stampRevision` takes the
+        // first), then the marker that says this tree was verified — which is what keeps
+        // the fast path from probing on every launch.
+        if (writeStampAtomically(stampFile(), revision + "\n" + AUDITED_LINE + "\n")) {
             null
         } else {
             "运行时版本戳记写入失败（${stampFile().absolutePath}）：本次解包可用，" +
@@ -2006,6 +2059,9 @@ class RuntimeProvisioner(
         }
 
     companion object {
+        /** `.stamp` 的第二行：这棵树被 `RuntimeTreeAudit` 验过（见 `stampAudited`）。 */
+        private const val AUDITED_LINE = "audited"
+
         /** `logcat` tag for the one line [reportKeptDirectories] emits. */
         private const val TAG = "RuntimeProvisioner"
 

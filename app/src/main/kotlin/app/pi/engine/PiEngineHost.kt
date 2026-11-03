@@ -1064,9 +1064,10 @@ class PiEngineHost(private val appContext: Context) {
      */
     private fun stampMatches(revision: String): Boolean {
         if (!paths.rootfs.isDirectory) return false
-        val stamp = paths.stampFile()
-        if (!stamp.isFile) return false
-        return runCatching { stamp.readText().trim() == revision }.getOrDefault(false)
+        // First line only: the stamp's second line is the `audited` marker
+        // (`PiPaths.stampRevision`), and comparing the whole text would refuse every
+        // restart on a tree that has been verified.
+        return paths.stampRevision() == revision
     }
 
     /**
