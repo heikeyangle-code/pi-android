@@ -11,7 +11,9 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -141,10 +145,29 @@ fun PiMathView(
 
     // `null` 跟随渲染结果；`true` / `false` 是用户显式选的 源码 / 公式。按 `source` 记忆，
     // 换一段源码就回到自动模式。
-    var pinned by remember(source) { mutableStateOf<Boolean?>(null) }
-    var draw by remember(source, display) {
+    // 用 Int 编码（0 跟随 / 1 源码 / 2 公式）而不是 `Boolean?`：`rememberSaveable` 滚出屏幕再回来
+    // 必须还在；读者点过「源码」后一滑就弹回去是错的。
+    var pinMode by rememberSaveable(source) { mutableStateOf(0) }
+    val pinned: Boolean? = when (pinMode) {
+        1 -> true
+        2 -> false
+        else -> null
+    }
+    // 宽度：屏宽，而不是 `BoxWithConstraints` 量出来的宽度。后者是 SubcomposeLayout，放进
+    // `LazyColumn` 的行里会让行高在测量期反复变化（滚动跳动）；而引擎本来就不按宽度换行
+    // （宽度只进缓存键和宿主视口上限），屏宽同样够用，还让缓存键在整个会话里稳定。
+    val configuration = LocalConfiguration.current
+    val widthPx = remember(configuration.screenWidthDp, density) {
+        with(density) { configuration.screenWidthDp.dp.toPx() }
+            .roundToInt()
+            .coerceIn(PI_MATH_MIN_WIDTH_PX, PI_MATH_MAX_BASE_WIDTH_PX)
+    }
+    // 已经画过的结果按（源码、显示方式、宽度、主题）缓存：行滚出屏幕再回来直接是公式，
+    // 不会再闪一次「渲染中」并让行高变两次。
+    var draw by remember(source, display, widthPx, theme) {
         mutableStateOf<PiMathDraw>(
-            if (settled) PiMathDraw.Rendering else PiMathDraw.Streaming,
+            PiMathDrawCache.get(PiMathDrawKey(source, display, widthPx, theme))
+                ?: if (settled) PiMathDraw.Rendering else PiMathDraw.Streaming,
         )
     }
     var scale by remember(source) { mutableStateOf(PI_MATH_MIN_ZOOM) }
@@ -162,15 +185,7 @@ fun PiMathView(
 
     // 块级占满一行（和 Mermaid 视图一致）；行内不加 `fillMaxWidth`，宽度跟随父级约束，
     // 这样放进段落/行内槽位时不会把整段撑断。
-    BoxWithConstraints(modifier = if (display) modifier.fillMaxWidth() else modifier) {
-        // 引擎按 CSS 宽度排版；这里先把宽度量出来再请求。行内公式的宽度只进缓存键和宿主
-        // 视口边界，MathJax 不按宽度换行。
-        val widthPx = if (constraints.hasBoundedWidth && constraints.maxWidth > 0) {
-            constraints.maxWidth.coerceIn(PI_MATH_MIN_WIDTH_PX, PI_MATH_MAX_BASE_WIDTH_PX)
-        } else {
-            with(density) { PI_MATH_FALLBACK_WIDTH.toPx() }.roundToInt()
-        }
-
+    Box(modifier = if (display) modifier.fillMaxWidth() else modifier) {
         LaunchedEffect(source, display, settled, widthPx, theme) {
             if (!settled) {
                 draw = PiMathDraw.Streaming
@@ -184,6 +199,10 @@ fun PiMathView(
                 draw = PiMathDraw.Unavailable(
                     "源码超过 ${PI_MATH_MAX_SOURCE_CHARS / 1024} KiB，未渲染",
                 )
+                return@LaunchedEffect
+            }
+            PiMathDrawCache.get(PiMathDrawKey(source, display, widthPx, theme))?.let {
+                draw = it
                 return@LaunchedEffect
             }
             draw = PiMathDraw.Rendering
@@ -203,11 +222,11 @@ fun PiMathView(
 
                 is PiSvgResult.Failure -> PiMathDraw.Unavailable(result.reason)
             }
+            (draw as? PiMathDraw.Ready)?.let {
+                PiMathDrawCache.put(PiMathDrawKey(source, display, widthPx, theme), it)
+            }
         }
 
-        // `Column` 的 scope 带 `@LayoutScopeMarker`，从它里面读不到外层 `BoxWithConstraintsScope`
-        // 的 `maxWidth`（DslMarker 挡住隐式外层接收者）。进 `Column` 之前先取出来。
-        val blockWidth = maxWidth
         val ready = draw as? PiMathDraw.Ready
 
         if (!display) {
@@ -228,12 +247,8 @@ fun PiMathView(
             } else {
                 val aspect = piMathAspectOrFallback(ready)
                 val naturalWidth = PI_MATH_INLINE_HEIGHT * aspect
-                val availableWidth = if (constraints.hasBoundedWidth && constraints.maxWidth > 0) {
-                    with(density) { constraints.maxWidth.toDp() }
-                } else {
-                    // 无界父级（例如行内槽位）：按公式自身的自然宽度排，别去猜上限。
-                    naturalWidth
-                }
+                // 上限取屏宽；父级若更窄，`width()` 修饰符会自己被父级约束收住。
+                val availableWidth = configuration.screenWidthDp.dp
                 val formulaWidth = minOf(naturalWidth, availableWidth).coerceAtLeast(1.dp)
                 Canvas(
                     modifier = Modifier
@@ -267,49 +282,29 @@ fun PiMathView(
 
             val status: String? = feedback ?: when (draw) {
                 PiMathDraw.Streaming -> "生成中…"
-                PiMathDraw.Rendering -> "渲染中…"
+                PiMathDraw.Rendering -> null
                 // 原因印在源码块上（那里有整行的位置），工具栏这一格放不下。
                 is PiMathDraw.Unavailable -> null
                 is PiMathDraw.Ready -> if (showSource) "源码" else null
             }
 
             Column(Modifier.fillMaxWidth()) {
+                // 工具栏收成右对齐的一行淡色小字（状态在左，动作在右）：公式本身是主角，不该在每条
+                // 公式上方都挂一排左对齐的"源码 / 公式"标签。动作的触控高度 ≥ 40 dp。
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 8.dp, top = 2.dp),
+                        .padding(start = 12.dp, end = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PiMathModeLabel(
-                        label = "源码",
-                        selected = showSource,
-                        enabled = true,
-                        onClickLabel = "查看 TeX 源码",
-                        onClick = { pinned = true },
+                    Text(
+                        text = status.orEmpty(),
+                        style = PiTheme.text.monoSmall,
+                        color = palette.muted,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.width(12.dp))
-                    PiMathModeLabel(
-                        label = "公式",
-                        selected = !showSource,
-                        enabled = ready != null,
-                        onClickLabel = "查看渲染后的公式",
-                        onClick = { pinned = false },
-                    )
-                    if (status != null) {
-                        Text(
-                            text = status,
-                            style = PiTheme.text.monoSmall,
-                            color = palette.muted,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(start = 8.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.End,
-                        )
-                    } else {
-                        Spacer(Modifier.weight(1f))
-                    }
                     if (image != null) {
                         PiMathActionLabel(
                             label = "适应",
@@ -318,6 +313,13 @@ fun PiMathView(
                                 scale = PI_MATH_MIN_ZOOM
                                 offset = Offset.Zero
                             },
+                        )
+                    }
+                    if (ready != null) {
+                        PiMathActionLabel(
+                            label = if (showSource) "公式" else "源码",
+                            onClickLabel = if (showSource) "查看渲染后的公式" else "查看 TeX 源码",
+                            onClick = { pinMode = if (showSource) 2 else 1 },
                         )
                     }
                     PiMathActionLabel(
@@ -333,12 +335,13 @@ fun PiMathView(
 
                 if (image != null) {
                     val aspect = piMathAspectOrFallback(image)
-                    val imageHeight = (blockWidth / aspect)
-                        .coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
+                    // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 而不是先量宽度再算
+                    // 高度，这样不需要 `BoxWithConstraints`。
                     Canvas(
                         modifier = Modifier
+                            .heightIn(min = PI_MATH_MIN_IMAGE_HEIGHT, max = PI_MATH_MAX_IMAGE_HEIGHT)
                             .fillMaxWidth()
-                            .height(imageHeight)
+                            .aspectRatio(aspect.coerceIn(0.05f, 60f))
                             .clipToBounds()
                             .pointerInput(image) {
                                 piMathTransformGestures(
@@ -350,7 +353,7 @@ fun PiMathView(
                                     offset = nextOffset
                                 }
                             }
-                            .semantics { contentDescription = "数学公式" },
+                            .semantics { contentDescription = "数学公式：$source" },
                     ) {
                         val fit = piMathFitScale(
                             viewWidth = size.width,
@@ -373,6 +376,21 @@ fun PiMathView(
                             native.restore()
                         }
                     }
+                } else if (draw == PiMathDraw.Rendering && pinned != true) {
+                    // 已问管线、还没回答：给一块固定高度的占位，而不是先摊出一整块源码再缩成公式
+                    // ——后者会让行高突变、列表跳动。
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(PI_MATH_PLACEHOLDER_HEIGHT),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "渲染中…",
+                            style = PiTheme.text.monoSmall,
+                            color = palette.dim,
+                        )
+                    }
                 } else {
                     PiMathSourceBlock(
                         source = source,
@@ -381,6 +399,34 @@ fun PiMathView(
                 }
             }
         }
+    }
+}
+
+/** 已渲染公式的缓存键：源码、块/行内、基准宽度、主题，缺一不可（任何一个变了图就不同）。 */
+private data class PiMathDrawKey(
+    val source: String,
+    val display: Boolean,
+    val widthPx: Int,
+    val theme: PiSvgTheme,
+)
+
+/**
+ * 最近渲染成功的公式（`Picture` 是录制好的矢量，很小）：24 条 LRU。行滚出屏幕再回来命中它，
+ * 不再重走「渲染中 → 公式」，也就不会让行高变两次。只缓存成功结果。
+ */
+private object PiMathDrawCache {
+    private const val CAPACITY = 24
+    private val entries = object : LinkedHashMap<PiMathDrawKey, PiMathDraw.Ready>(CAPACITY, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PiMathDrawKey, PiMathDraw.Ready>): Boolean =
+            size > CAPACITY
+    }
+
+    @Synchronized
+    fun get(key: PiMathDrawKey): PiMathDraw.Ready? = entries[key]
+
+    @Synchronized
+    fun put(key: PiMathDrawKey, value: PiMathDraw.Ready) {
+        entries[key] = value
     }
 }
 
@@ -637,8 +683,9 @@ private fun PiMathActionLabel(
         color = palette.muted,
         maxLines = 1,
         modifier = Modifier
+            .heightIn(min = 40.dp)
             .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+            .padding(horizontal = 10.dp, vertical = 11.dp),
     )
 }
 
@@ -729,6 +776,9 @@ private const val PI_MATH_MIN_WIDTH_PX = 240
 
 /** 无界父级（行内槽位/横向滚动容器）：按一个手机宽度请求，而不是失败。 */
 private val PI_MATH_FALLBACK_WIDTH = 360.dp
+
+/** 渲染中的占位高度（固定，避免行高突变）。 */
+private val PI_MATH_PLACEHOLDER_HEIGHT = 56.dp
 
 private const val PI_MATH_MIN_ZOOM = 1f
 private const val PI_MATH_MAX_ZOOM = 8f
