@@ -196,13 +196,25 @@ jobs:
       # whose private key is the only one existing installs can update over).
       - name: Verify the release APK is signed with the sideload key
         run: |
-          set -o pipefail
-          apksigner="$(ls -d "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
-          if [ ! -x "$apksigner" ]; then
-            echo "::error::no apksigner under $SDK/build-tools; the signature can not be verified"
+          # `set -e` is on for `run:` steps, so every lookup below has to be allowed to fail
+          # *locally*: the first version of this step exited 2 with no output at all because
+          # `apksigner="$(ls -d ...)"` found nothing on the runner's SDK layout and killed
+          # the shell before the `if` that was supposed to explain it.
+          set -uo pipefail
+          sdk="${ANDROID_HOME:-${SDK:-}}"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null             | sort -V | tail -1)"
+          if [ -z "$apksigner" ] || [ ! -x "$apksigner" ]; then
+            echo "::error::no apksigner under ${sdk:-<unset SDK>}/build-tools; the signature can not be verified"
+            find "$sdk" -maxdepth 3 -name 'apksigner*' 2>/dev/null | head -5
             exit 1
           fi
-          mapfile -t all < <(ls app/build/outputs/apk/release/*.apk)
+          echo "apksigner: $apksigner"
+          ls -l app/build/outputs/apk/release/
+          mapfile -t all < <(ls app/build/outputs/apk/release/*.apk 2>/dev/null || true)
+          if [ "${#all[@]}" -eq 0 ]; then
+            echo "::error::no APK under app/build/outputs/apk/release; assembleRelease did not produce one"
+            exit 1
+          fi
           printf 'outputs: %s\n' "${all[@]}"
           for f in "${all[@]}"; do
             case "$f" in
