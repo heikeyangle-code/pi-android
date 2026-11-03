@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -24,9 +26,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -43,6 +47,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.ui.render.LocalPiImageTransformer
+import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiProseFamily
@@ -144,10 +150,8 @@ private fun RenderBlock(node: PiHtmlNode.Block, style: TextStyle) {
             ) {
                 RenderBlocks(
                     nodes = node.children,
-                    style = style.copy(
-                        color = palette.mdQuote,
-                        fontStyle = FontStyle.Italic,
-                    ),
+                    // 不用斜体：中文没有真斜体，合成倾斜很难看（Markdown 引用同理）。
+                    style = style.copy(color = palette.mdQuote),
                 )
             }
         }
@@ -163,7 +167,7 @@ private fun RenderBlock(node: PiHtmlNode.Block, style: TextStyle) {
                 .fillMaxWidth()
                 .padding(vertical = 4.dp),
             thickness = 1.dp,
-            color = palette.mdHr,
+            color = palette.mdHr.copy(alpha = 0.35f),
         )
 
         // 未知块：不丢内容，透明地画子节点。文档层对未知标签通常已经展开；这里
@@ -435,27 +439,38 @@ private fun inlineImageLabel(node: PiHtmlNode.Image): String {
 }
 
 /**
- * `<details>`：默认状态严格取 `open` 属性。每一层 `Details` 自己 `remember`，
- * 所以嵌套的 details 各自展开/收起，互不影响。
+ * `<details>`：默认状态严格取 `open` 属性；读者的展开/收起用 `rememberSaveable`，滚出屏幕
+ * 再回来不丢。画成统一卡片（12 dp 圆角、淡底 + 28% 边线、展开时头与正文之间一条发丝线），
+ * 嵌套的 details 各自一张卡、各自的状态。
  */
 @Composable
 private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
     val palette = PiTheme.palette
-    var expanded by remember(node) { mutableStateOf(node.open) }
-    Column(Modifier.fillMaxWidth()) {
+    val shape = RoundedCornerShape(12.dp)
+    var expanded by rememberSaveable(node.summary.hashCode(), node.body.hashCode()) {
+        mutableStateOf(node.open)
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
+            .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 44.dp)
                 .clickable(
                     onClickLabel = if (expanded) "收起详情" else "展开详情",
                 ) { expanded = !expanded }
-                .padding(vertical = 4.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = if (expanded) "▾" else "▸",
-                style = style.copy(color = palette.dim),
-                modifier = Modifier.padding(end = 6.dp),
+                style = style.copy(color = palette.muted),
+                modifier = Modifier.padding(end = 8.dp),
             )
             if (node.summary.isEmpty()) {
                 Text(
@@ -477,10 +492,16 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
             }
         }
         if (expanded) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(palette.mdCodeBlockBorder.copy(alpha = 0.16f)),
+            )
             RenderBlocks(
                 nodes = node.body,
                 style = style,
-                modifier = Modifier.padding(start = 18.dp, top = 2.dp, bottom = 4.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
             )
         }
     }
@@ -516,9 +537,15 @@ private fun HtmlList(node: PiHtmlNode.List, style: TextStyle) {
 /** 132 dp 让两列在 360 dp 手机上放得下，三列起横向滚动。 */
 private val PI_HTML_TABLE_CELL_WIDTH = 132.dp
 
+/**
+ * 与 Markdown 表格同一套外观：12 dp 圆角外框（28% 边线）、表头淡底（14%）、行与行之间一条
+ * 发丝线、数据行隔行淡底；没有单元格四周的网格线。整行用 `IntrinsicSize.Min` 取最高的那格，
+ * 行底色因此铺满整行，不会在矮格下面留缝。
+ */
 @Composable
 private fun HtmlTable(node: PiHtmlNode.Table, style: TextStyle) {
     val palette = PiTheme.palette
+    val shape = RoundedCornerShape(12.dp)
     val scroll = rememberScrollState()
     Column(Modifier.fillMaxWidth()) {
         val caption = node.caption
@@ -530,15 +557,42 @@ private fun HtmlTable(node: PiHtmlNode.Table, style: TextStyle) {
             )
         }
         if (node.rows.isNotEmpty()) {
-            Column(
+            // 横向滚动容器里 `fillMaxWidth` 没有有限宽可填（发丝线会变成 0 宽），所以列显式给出
+            // 表宽 = 最宽那一行各格宽度之和；外框不 fillMaxWidth：窄表紧贴内容，宽表由滚动容器收到屏宽。
+            val tableWidth = node.rows.maxOf { row ->
+                row.cells.sumOf { (PI_HTML_TABLE_CELL_WIDTH.value * it.colspan.coerceIn(1, 4)).toDouble() }
+            }.toFloat().dp
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(scroll),
+                    .clip(shape)
+                    .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape),
             ) {
-                node.rows.forEach { row ->
-                    Row {
-                        row.cells.forEach { cell ->
-                            HtmlTableCell(cell, row.header, style)
+                Column(Modifier.horizontalScroll(scroll).width(tableWidth)) {
+                    var dataIndex = 0
+                    node.rows.forEachIndexed { rowIndex, row ->
+                        val headerRow = row.header || row.cells.all { it.header }
+                        val background = when {
+                            headerRow -> palette.mdHr.copy(alpha = 0.14f)
+                            dataIndex++ % 2 == 1 -> palette.mdHr.copy(alpha = 0.06f)
+                            else -> Color.Transparent
+                        }
+                        if (rowIndex > 0) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(palette.mdHr.copy(alpha = 0.35f)),
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                                .background(background),
+                        ) {
+                            row.cells.forEach { cell ->
+                                HtmlTableCell(cell, row.header, style)
+                            }
                         }
                     }
                 }
@@ -553,20 +607,13 @@ private fun HtmlTableCell(
     rowHeader: Boolean,
     style: TextStyle,
 ) {
-    val palette = PiTheme.palette
     val header = cell.header || rowHeader
     val width = (PI_HTML_TABLE_CELL_WIDTH.value * cell.colspan.coerceIn(1, 4)).dp
     Box(
         modifier = Modifier
             .width(width)
-            .background(
-                if (header) palette.mdHr.copy(alpha = 0.10f) else Color.Transparent,
-            )
-            .border(
-                width = 0.5.dp,
-                color = palette.mdHr.copy(alpha = 0.35f),
-            )
-            .padding(8.dp),
+            .fillMaxHeight()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         RenderBlocks(
             nodes = cell.children,
@@ -578,23 +625,16 @@ private fun HtmlTableCell(
 @Composable
 private fun HtmlCode(node: PiHtmlNode.Code) {
     val palette = PiTheme.palette
-    Column(Modifier.fillMaxWidth()) {
-        val language = node.language
-        if (!language.isNullOrBlank()) {
-            Text(
-                text = language,
-                style = PiTheme.text.monoSmall,
-                color = palette.mdCodeBlockBorder,
-                modifier = Modifier.padding(start = 2.dp, bottom = 2.dp),
-            )
-        }
+    // 与 Markdown 围栏代码块同一张卡：语言胶囊 + 复制 + 发丝线（`PiRichCardFrame`）。
+    val info = remember(node.language) { FenceInfo.parse(node.language) }
+    PiRichCardFrame(node.text, info, palette) {
         Text(
             text = node.text,
             style = PiTheme.text.code.copy(color = palette.mdCodeBlock),
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(start = 2.dp, end = 2.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         )
     }
 }

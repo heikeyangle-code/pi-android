@@ -9,6 +9,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.rememberTreeParse
 import app.pi.ui.theme.PiTheme
 
@@ -83,23 +85,27 @@ private fun HtmlSourceFallback(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    Column(modifier.fillMaxWidth()) {
-        Text(
-            text = notice,
-            style = PiTheme.text.monoSmall,
-            color = palette.muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp),
-        )
-        if (source.isNotBlank()) {
+    // 回退也套同一张卡（`html` 胶囊 + 复制）：裸的一行原因加一坨源码在页面上不像一个"块"。
+    val info = remember { FenceInfo.parse("html") }
+    PiRichCardFrame(source, info, palette) {
+        Column(modifier.fillMaxWidth()) {
             Text(
-                text = source,
-                style = PiTheme.text.code.copy(color = palette.text),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 8.dp),
+                text = notice,
+                style = PiTheme.text.monoSmall,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
             )
+            if (source.isNotBlank()) {
+                Text(
+                    text = source,
+                    style = PiTheme.text.code.copy(color = palette.text),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp),
+                )
+            }
         }
     }
 }
