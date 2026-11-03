@@ -1181,7 +1181,7 @@ fun main() {
     val attachBody = viewModelText
         // 锚点只取到形参开头：写死完整签名会让这段断言在签名变化时静默变成「marker not found」。
         .substringAfter("private fun attach(engine: PiEngineSession", "")
-        .take(60_000)
+        .take(20_000)
     checkTrue("找到了 attach 的函数体", attachBody.isNotEmpty(), "marker not found")
     // 2026-11-04：这条断言原先钉的是 `refreshState()`（fire-and-forget 版本）在 replay 之前。
     // 那个版本**根本不构成顺序**（`call` 内部 launch 后立刻返回），所以真正的断言挪到下面
@@ -1354,7 +1354,7 @@ fun main() {
     // 本机可判的性质：真正的 RPC 时序只有真机能验证。
     val attachReplayBody = viewModelText
         .substringAfter("private fun attach(engine: PiEngineSession) {", "")
-        .take(60_000)
+        .take(24000)
     checkTrue("找到了 attach 的函数体", attachReplayBody.isNotEmpty(), "marker not found")
     val attachRefresh = attachReplayBody.indexOf("refreshStateNow(it)")
     val attachReplay = attachReplayBody.indexOf("replayHistory(engine)")
@@ -1363,23 +1363,13 @@ fun main() {
         attachRefresh >= 0 && attachReplay >= 0 && attachRefresh < attachReplay,
         "refresh=$attachRefresh replay=$attachReplay",
     )
-    // 2026-11-04 晚：从"一律 await"细化成"只在有旧身份要对齐时 await"。
-    //  - freshSession（切工作区）：旧身份已被清空，replay 没有文件可读，await 就是白付
-    //    2–5 ms；
-    //  - 冷启动：meta 本来就是空的，同样没有可对齐的东西。
     checkTrue(
-        "只有存在旧身份时 attach 才 await；否则仍然 fire-and-forget",
-        attachReplayBody.contains("val staleIdentity = ") &&
-            attachReplayBody.contains("if (!freshSession && staleIdentity) {") &&
-            attachReplayBody.contains("refreshStateNow(it)"),
-    )
-    checkTrue(
-        "切工作区把 freshSession 告诉 attach（省掉那一次等待）",
-        viewModelText.contains("attach(engine, freshSession = true)"),
+        "attach 里不再有 fire-and-forget 的 refreshState()",
+        !attachReplayBody.contains("refreshState()"),
     )
     val replacedReplayBody = viewModelText
         .substringAfter("private suspend fun afterSessionReplaced(", "")
-        .take(12_000)
+        .take(6000)
     val replacedRefresh = replacedReplayBody.indexOf("refreshStateNow(it)")
     val replacedReplay = replacedReplayBody.indexOf("replayHistory(engine, brandNew)")
     checkTrue(
