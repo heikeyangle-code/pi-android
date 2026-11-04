@@ -15,6 +15,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +85,6 @@ internal fun PiRichCodeBlock(
     var wrap by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
-    var menuOpen by remember { mutableStateOf(false) }
 
     val allLines = remember(code) { code.split('\n') }
     val lineCount = allLines.size
@@ -122,43 +130,30 @@ internal fun PiRichCodeBlock(
                     copied = true
                 },
                 menu = {
-                    Box {
-                        Text(
-                            text = "⋯",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = palette.muted,
-                            modifier = Modifier
-                                .clickable(onClickLabel = "代码块显示选项") { menuOpen = true }
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                        )
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text(if (showLineNumbers) "隐藏行号" else "显示行号") },
-                                enabled = !wrap,
-                                onClick = {
-                                    showLineNumbers = !showLineNumbers
-                                    menuOpen = false
-                                },
+                    PiCardMenu(
+                        palette = palette,
+                        items = buildList {
+                            add(
+                                PiCardMenuItem(
+                                    label = if (showLineNumbers) "隐藏行号" else "显示行号",
+                                    enabled = !wrap,
+                                ) { showLineNumbers = !showLineNumbers },
                             )
-                            DropdownMenuItem(
-                                text = { Text(if (wrap) "横向滚动" else "自动换行") },
-                                onClick = {
+                            add(
+                                PiCardMenuItem(label = if (wrap) "横向滚动" else "自动换行") {
                                     wrap = !wrap
                                     if (wrap) showLineNumbers = false
-                                    menuOpen = false
                                 },
                             )
                             if (lineCount > MAX_COLLAPSED_LINES) {
-                                DropdownMenuItem(
-                                    text = { Text(if (expanded) "收起" else "展开全部（$lineCount 行）") },
-                                    onClick = {
-                                        expanded = !expanded
-                                        menuOpen = false
-                                    },
+                                add(
+                                    PiCardMenuItem(
+                                        label = if (expanded) "收起" else "展开全部（$lineCount 行）",
+                                    ) { expanded = !expanded },
                                 )
                             }
-                        }
-                    }
+                        },
+                    )
                 },
             )
             PiCardDivider(palette)
@@ -234,6 +229,8 @@ internal fun PiRichCardFrame(
     info: FenceInfo,
     palette: PiPalette,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    status: String? = null,
+    menu: List<PiCardMenuItem> = emptyList(),
     content: @Composable () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -266,6 +263,8 @@ internal fun PiRichCardFrame(
                     clipboard.setText(AnnotatedString(code))
                     copied = true
                 },
+                status = status,
+                menu = if (menu.isEmpty()) null else ({ PiCardMenu(palette, menu) }),
             )
             PiCardDivider(palette)
             content()
@@ -284,12 +283,13 @@ internal fun PiCardHeader(
     palette: PiPalette,
     copied: Boolean,
     onCopy: () -> Unit,
+    status: String? = null,
     menu: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = if (menu == null) 6.dp else 0.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 12.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (language.isNotEmpty()) {
@@ -315,15 +315,81 @@ internal fun PiCardHeader(
             )
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            text = if (copied) "已复制" else "复制",
-            style = MaterialTheme.typography.labelMedium,
-            color = if (copied) palette.accent else palette.muted,
-            modifier = Modifier
-                .clickable(onClickLabel = "复制代码", onClick = onCopy)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-        )
+        if (!status.isNullOrEmpty()) {
+            Text(
+                text = status,
+                style = PiTheme.text.monoSmall,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+        PiCopyIcon(palette = palette, copied = copied, onCopy = onCopy)
         menu?.invoke()
+    }
+}
+
+/**
+ * 所有卡片共用的复制按钮：一个 18 dp 的小图标（复制后 1.2 s 变成对勾），触控区 40 dp。
+ * 不再占一个「复制」字的宽度，窄屏上语言胶囊、标题、状态都有更多位置。
+ */
+@Composable
+internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clickable(role = Role.Button, onClickLabel = "复制源码", onClick = onCopy)
+            .semantics { contentDescription = if (copied) "已复制" else "复制" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (copied) Icons.Rounded.Check else Icons.Outlined.ContentCopy,
+            contentDescription = null,
+            tint = if (copied) palette.accent else palette.muted,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+internal class PiCardMenuItem(
+    val label: String,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+/** 卡片头最右边的「⋮」菜单：源码/图切换、适应窗口、行号、换行等低频动作都收在这里。 */
+@Composable
+internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
+    if (items.isEmpty()) return
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clickable(role = Role.Button, onClickLabel = "更多选项") { open = true }
+                .semantics { contentDescription = "更多选项" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = null,
+                tint = palette.muted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            items.forEach { item ->
+                DropdownMenuItem(
+                    text = { Text(item.label) },
+                    enabled = item.enabled,
+                    onClick = {
+                        open = false
+                        item.onClick()
+                    },
+                )
+            }
+        }
     }
 }
 
