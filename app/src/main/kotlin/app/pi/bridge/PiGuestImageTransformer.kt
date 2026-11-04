@@ -153,8 +153,10 @@ internal class PiGuestImageTransformer(
             if (value == null) value = load(link, widthPx)
         }
         val image = bitmap ?: return null
+        // 动图：位图只是第一帧；有动图字节且解得出来就换成会动的 painter。
+        val animated = rememberAnimatedPainter(link, widthPx)
         return ImageData(
-            painter = BitmapPainter(image.asImageBitmap()),
+            painter = animated ?: BitmapPainter(image.asImageBitmap()),
             // 按可用宽度铺开，比例交给 `ContentScale.Fit`。不加这一条的话，库拿
             // `imageData.modifier`（默认是空 `Modifier`）直接量这张位图的本征尺寸
             // (`MarkdownImage.kt:20-29`)，一张 4000 px 宽的图就要一个 4000 px 的框：
@@ -248,6 +250,7 @@ internal class PiGuestImageTransformer(
             // 上界悄悄翻倍。它与 `GuestImageBytes` 那把"同时在开的连接"（3 许可）是两回事。
             piImageDecodeGate.withPermit { decode(loaded.bytes, key.widthPx) }
         } ?: return Result.failure(IllegalStateException("图片解码失败：${loaded.source}"))
+        if (PiAnimatedImages.isAnimated(loaded.bytes)) PiAnimatedImages.remember(key.link, loaded.bytes)
         store(key, decoded)
         return Result.success(decoded)
     }

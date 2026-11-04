@@ -248,7 +248,21 @@ fun PiSvgFenceView(
                 val shape = RoundedCornerShape(8.dp)
                 // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
                 // 这样不需要 `BoxWithConstraints`。
-                Canvas(
+                if (image.animatedSvg != null) {
+                    PiSvgAnimatedView(
+                        svg = image.animatedSvg,
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
+                            .fillMaxWidth()
+                            .aspectRatio(aspect.coerceIn(0.05f, 60f))
+                            .then(
+                                if (darkPage) Modifier.clip(shape).background(Color(0xFFF4F4F2)) else Modifier,
+                            )
+                            .clipToBounds()
+                            .semantics { contentDescription = "动画 SVG" },
+                    )
+                } else Canvas(
                     modifier = Modifier
                         .padding(8.dp)
                         .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
@@ -357,6 +371,8 @@ private sealed interface PiSvgDraw {
         val baseWidthPx: Int,
         val baseHeightPx: Int,
         val aspect: Float,
+        /** 非空 = 这份 SVG 带动画，用 WebView 播放（清理后的文本）。 */
+        val animatedSvg: String? = null,
     ) : PiSvgDraw
 
     /** 这份源码不会出图；原因印在源码块上。 */
@@ -421,7 +437,10 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
     } catch (error: Exception) {
         return PiSvgDraw.Unavailable("SVG 绘制失败：${error.message ?: error::class.java.simpleName}")
     }
-    return PiSvgDraw.Ready(picture, baseWidth, baseHeight, aspect)
+    return PiSvgDraw.Ready(
+        picture, baseWidth, baseHeight, aspect,
+        animatedSvg = safe.takeIf { piSvgIsAnimated(it) },
+    )
 }
 
 /**
