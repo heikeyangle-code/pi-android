@@ -436,10 +436,11 @@ private fun piMermaidDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiM
         return PiMermaidDraw.Unavailable("SVG 超过 ${PI_MERMAID_MAX_SVG_CHARS / (1024 * 1024)} MiB，未渲染")
     }
     val svg = try {
-        SVG.getFromString(result.svg)
+        SVG.getFromString(PiSvgFit.compat(result.svg))
     } catch (error: Exception) {
         return PiMermaidDraw.Unavailable("SVG 解析失败：${error.message ?: error::class.java.simpleName}")
     }
+    PiSvgFit.fill(svg, result.widthPx, result.heightPx)
 
     val aspect = piMermaidAspect(svg, result)
     // Base viewport: the block's own width, bounded. Recording larger than the

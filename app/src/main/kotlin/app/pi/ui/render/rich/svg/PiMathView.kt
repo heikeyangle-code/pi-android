@@ -468,10 +468,11 @@ private fun piMathDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiMath
         return PiMathDraw.Unavailable("公式 SVG 超过 ${PI_MATH_MAX_SVG_CHARS / (1024 * 1024)} MiB，未渲染")
     }
     val svg = try {
-        SVG.getFromString(result.svg)
+        SVG.getFromString(PiSvgFit.compat(result.svg))
     } catch (error: Exception) {
         return PiMathDraw.Unavailable("公式 SVG 解析失败：${error.message ?: error::class.java.simpleName}")
     }
+    PiSvgFit.fill(svg, result.widthPx, result.heightPx)
 
     val aspect = piMathAspect(svg, result)
     // 基础视口：块/行内都按"请求宽度（有界）"录制。录制得比屏幕大只会让每次回放更贵，

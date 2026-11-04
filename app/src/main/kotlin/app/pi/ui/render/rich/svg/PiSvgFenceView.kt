@@ -430,10 +430,11 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
     }
 
     val svg = try {
-        SVG.getFromString(safe)
+        SVG.getFromString(PiSvgFit.compat(safe))
     } catch (error: Exception) {
         return PiSvgDraw.Unavailable("SVG 解析失败：${error.message ?: error::class.java.simpleName}")
     }
+    PiSvgFit.fill(svg)
 
     val aspect = piSvgAspect(svg)
     // 记录视口：跟着块宽（有界），再按长宽比推高度。记录得比屏幕大只会让每次
