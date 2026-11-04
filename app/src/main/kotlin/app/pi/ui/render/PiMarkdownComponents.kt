@@ -808,21 +808,7 @@ private fun PiImageFallback(
     typography: MarkdownTypography,
     modifier: Modifier = Modifier,
 ) {
-    val palette = PiTheme.palette
-    Column(modifier = modifier) {
-        Text(
-            text = alt?.takeIf { it.isNotBlank() } ?: "图片",
-            style = typography.text,
-            color = palette.text,
-        )
-        Text(
-            text = link?.takeIf { it.isNotBlank() }?.let { "图片地址：$it（当前无法显示）" }
-                ?: "图片地址缺失",
-            modifier = Modifier.padding(top = 2.dp),
-            style = typography.code,
-            color = palette.dim,
-        )
-    }
+    PiImageFailureCard(alt = alt, link = link, altStyle = typography.text, modifier = modifier)
 }
 
 /**

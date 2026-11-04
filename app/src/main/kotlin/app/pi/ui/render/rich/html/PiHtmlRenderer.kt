@@ -664,27 +664,12 @@ private fun HtmlImage(node: PiHtmlNode.Image, modifier: Modifier = Modifier) {
         return
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-    ) {
-        Text(
-            text = node.alt.ifBlank { "图片" },
-            style = piHtmlBodyStyle(),
-            color = palette.text,
-        )
-        Text(
-            text = if (node.src.isBlank()) {
-                "图片地址缺失"
-            } else {
-                "图片地址：${node.src}（当前无法显示）"
-            },
-            style = PiTheme.text.monoSmall,
-            color = palette.dim,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-    }
+    app.pi.ui.render.PiImageFailureCard(
+        alt = node.alt,
+        link = node.src,
+        altStyle = piHtmlBodyStyle(),
+        modifier = modifier,
+    )
 }
 
 @Composable
