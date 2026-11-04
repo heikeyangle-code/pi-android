@@ -12,6 +12,9 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import app.pi.ui.render.PiCardMenuItem
+import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rich.FenceInfo
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
@@ -131,7 +134,6 @@ fun PiMermaidView(
 ) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
-    val clipboard = LocalClipboardManager.current
 
     // The pipeline's theme is a pure value: `PiSvgTheme` is a data class, so this
     // `remember` only changes when the palette does, and the equals-based
@@ -174,16 +176,6 @@ fun PiMermaidView(
     }
     var scale by remember(source) { mutableStateOf(PI_MERMAID_MIN_ZOOM) }
     var offset by remember(source) { mutableStateOf(Offset.Zero) }
-    var feedback by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(feedback) {
-        val shown = feedback
-        if (shown != null) {
-            delay(PI_MERMAID_FEEDBACK_MS)
-            // Only clear our own message; a newer copy must not be blanked early.
-            if (feedback == shown) feedback = null
-        }
-    }
 
     Box(modifier.fillMaxWidth()) {
         LaunchedEffect(source, settled, widthPx, theme) {
@@ -234,60 +226,34 @@ fun PiMermaidView(
         val showSource = ready == null || !settled || pinned == true
         val image = ready?.takeIf { !showSource }
 
-        val status: String? = feedback ?: when (draw) {
+        val status: String? = when (draw) {
             PiMermaidDraw.Streaming -> "生成中…"
-            PiMermaidDraw.Rendering -> null
-            // The reason is printed on the source block itself (with room for the
-            // whole sentence); the one-line toolbar slot is not where it belongs.
-            is PiMermaidDraw.Unavailable -> null
-            is PiMermaidDraw.Ready -> if (showSource) "源码" else null
+            else -> null
         }
 
-        Column(Modifier.fillMaxWidth()) {
-            // 工具栏收成右对齐的一行淡色小字（状态在左，动作在右），与公式视图同款；动作触控高度 ≥ 40 dp。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = status.orEmpty(),
-                    style = PiTheme.text.monoSmall,
-                    color = palette.muted,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        PiRichCardFrame(
+            code = source,
+            info = PI_MERMAID_CARD_INFO,
+            palette = palette,
+            status = status,
+            menu = buildList {
                 if (image != null) {
-                    PiMermaidActionLabel(
-                        label = "适应",
-                        onClickLabel = "适应屏幕，重置缩放",
-                        onClick = {
+                    add(
+                        PiCardMenuItem("适应屏幕") {
                             scale = PI_MERMAID_MIN_ZOOM
                             offset = Offset.Zero
                         },
                     )
                 }
                 if (ready != null) {
-                    PiMermaidActionLabel(
-                        label = if (showSource) "图" else "源码",
-                        onClickLabel = if (showSource) "查看渲染后的图" else "查看 Mermaid 源码",
-                        onClick = { pinMode = if (showSource) 2 else 1 },
+                    add(
+                        PiCardMenuItem(if (showSource) "查看图" else "查看 Mermaid 源码") {
+                            pinMode = if (showSource) 2 else 1
+                        },
                     )
                 }
-                PiMermaidActionLabel(
-                    // The toolbar's status slot carries "已复制源码"; the action's own
-                    // label stays stable so the row does not reflow on every copy.
-                    label = "复制",
-                    onClickLabel = "复制 Mermaid 源码",
-                    onClick = {
-                        clipboard.setText(AnnotatedString(source))
-                        feedback = PI_MERMAID_COPIED
-                    },
-                )
-            }
-
+            },
+        ) {
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_MERMAID_FALLBACK_ASPECT
@@ -295,6 +261,7 @@ fun PiMermaidView(
                 // 这样不需要 `BoxWithConstraints`。
                 Canvas(
                     modifier = Modifier
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
                         .heightIn(min = PI_MERMAID_MIN_IMAGE_HEIGHT, max = PI_MERMAID_MAX_IMAGE_HEIGHT)
                         .fillMaxWidth()
                         .aspectRatio(aspect.coerceIn(0.05f, 60f))
@@ -372,6 +339,9 @@ fun PiMermaidView(
         }
     }
 }
+
+/** Mermaid 卡片头的「语言」胶囊。 */
+private val PI_MERMAID_CARD_INFO = FenceInfo(language = "mermaid", title = null, attributes = emptyMap(), raw = "mermaid")
 
 /** 渲染占位的固定高度：一张典型小流程图的量级，避免「源码 → 图」的行高突变。 */
 private val PI_MERMAID_PLACEHOLDER_HEIGHT = 120.dp
@@ -641,26 +611,6 @@ private fun PiMermaidModeLabel(
             ),
     )
 }
-
-@Composable
-private fun PiMermaidActionLabel(
-    label: String,
-    onClickLabel: String,
-    onClick: () -> Unit,
-) {
-    val palette = PiTheme.palette
-    Text(
-        text = label,
-        style = PiTheme.text.monoSmall,
-        color = palette.muted,
-        maxLines = 1,
-        modifier = Modifier
-            .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .heightIn(min = 40.dp)
-            .padding(horizontal = 10.dp, vertical = 11.dp),
-    )
-}
-
 /**
  * The raw-source fallback: the fence body verbatim, in the same visual language as
  * the app's code blocks (`mdCodeBlockBorder` at 6 % fill, 28 % border, 12 dp radius),
@@ -683,18 +633,9 @@ private fun PiMermaidSourceBlock(source: String, notice: String?) {
             lines.take(PI_MERMAID_MAX_VISIBLE_SOURCE_LINES).joinToString("\n")
         }
     }
-    val shape = RoundedCornerShape(12.dp)
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 2.dp)
-            .background(color = palette.mdCodeBlockBorder.copy(alpha = 0.06f), shape = shape)
-            .border(
-                width = 1.dp,
-                color = palette.mdCodeBlockBorder.copy(alpha = 0.28f),
-                shape = shape,
-            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         if (!notice.isNullOrEmpty()) {
@@ -769,7 +710,6 @@ private const val PI_MERMAID_FONT_FAMILY = "sans-serif"
 
 /** Shown in the toolbar long enough to read, not long enough to linger. */
 private const val PI_MERMAID_FEEDBACK_MS = 1500L
-private const val PI_MERMAID_COPIED = "已复制源码"
 
 /** A failed render's source is displayed up to this many lines; copy is unaffected. */
 private const val PI_MERMAID_MAX_VISIBLE_SOURCE_LINES = 200
