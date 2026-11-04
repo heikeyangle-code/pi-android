@@ -62,7 +62,7 @@ private const val HOST_PAGE_URL = "https://appassets.androidplatform.net" + ASSE
 private val MERMAID_ASSET_FILES = setOf(HOST_PAGE, "mermaid.min.js")
 
 /** 轮询间隔。只在有任务在飞的时候才发生，一次渲染通常 1–10 次。 */
-private const val POLL_INTERVAL_MS = 64L
+private const val POLL_INTERVAL_MS = 16L
 
 /** `%%{init: ...}%%`（以及其它 `%%{...}%%` 指令）在进 mermaid 之前就被删掉。 */
 private val MERMAID_DIRECTIVE = Regex("""%%\{[\s\S]*?\}%%""")
@@ -193,7 +193,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     private const val MAX_SVG_BYTES = 2 * 1024 * 1024
 
     /** 等待位（不含正在渲染的那个）。 */
-    private const val MAX_PENDING = 8
+    private const val MAX_PENDING = 64
 
     private const val MAX_CACHE_ENTRIES = 48
     private const val MAX_CACHE_BYTES = 8 * 1024 * 1024

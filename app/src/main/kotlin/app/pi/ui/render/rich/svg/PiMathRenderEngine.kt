@@ -67,7 +67,7 @@ private const val HOST_PAGE_URL = "https://appassets.androidplatform.net" + ASSE
 private val MATH_ASSET_FILES = setOf(HOST_PAGE, "tex-svg.js")
 
 /** 轮询间隔。只在有任务在飞的时候才发生，一次排版通常 1–10 次。 */
-private const val POLL_INTERVAL_MS = 64L
+private const val POLL_INTERVAL_MS = 16L
 
 /** 主题色只接受 `#RRGGBB`；`PiSvgTheme` 是纯字符串，契约不保证格式。 */
 private val HEX_COLOR = Regex("^#[0-9a-fA-F]{6}$")
@@ -197,7 +197,7 @@ internal object PiMathRenderEngine : PiSvgEngine {
     private const val MAX_SVG_BYTES = PiSvgSanitizer.MAX_BYTES
 
     /** 等待位（不含正在渲染的那个）。 */
-    private const val MAX_PENDING = 8
+    private const val MAX_PENDING = 64
 
     private const val MAX_CACHE_ENTRIES = 48
     private const val MAX_CACHE_BYTES = 4 * 1024 * 1024

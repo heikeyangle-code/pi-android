@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -140,7 +141,10 @@ fun PiMermaidView(
     // `LaunchedEffect` key below then re-renders instead of keeping stale colours.
     val theme = remember(palette) {
         PiSvgTheme(
-            background = palette.pageBg.piHex(),
+            // 与卡片正文同色（页面底 + 6% 的卡片淡底）：节点底色与连线标签底色不再是比卡片更亮
+            // 的一块块「白块」。
+            background = palette.mdCodeBlockBorder.copy(alpha = 0.06f)
+                .compositeOver(palette.pageBg).piHex(),
             foreground = palette.text.piHex(),
             accent = palette.accent.piHex(),
             muted = palette.muted.piHex(),
@@ -323,7 +327,8 @@ fun PiMermaidView(
                 // 否则点「源码」会跳去 ASCII，与按钮的字面意思相反。
                 if (unavailable != null && pinned != true && fallback != null) {
                     fallback()
-                    Text(
+                    // 队列满不是这张图的错，也不该吓读者：只回退不写字（队列上限已放到 64）。
+                    if (!unavailable.reason.contains("队列已满")) Text(
                         text = unavailable.reason,
                         style = PiTheme.text.monoSmall,
                         color = palette.warning,
@@ -410,7 +415,7 @@ private fun piMermaidDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiM
     } catch (error: Exception) {
         return PiMermaidDraw.Unavailable("SVG 解析失败：${error.message ?: error::class.java.simpleName}")
     }
-    PiSvgFit.fill(svg, result.widthPx, result.heightPx)
+    PiSvgFit.fill(svg, result.widthPx, result.heightPx, margin = 16f)
 
     val aspect = piMermaidAspect(svg, result)
     // Base viewport: the block's own width, bounded. Recording larger than the
