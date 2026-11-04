@@ -439,27 +439,6 @@ fun ModelProviderScreen(
                 }
                 note?.let { msg -> item { Note(msg) } }
 
-                // ---- 订阅账号：订阅登录写的是 auth.json 同一个键空间，登录完的模型就在
-                // 下面这张清单里，所以放在这一屏而不是另开一页。
-                item {
-                    SubscriptionCard(
-                        providers = subscriptionProviders,
-                        statuses = subscriptionStatuses,
-                        loading = subscriptionLoading,
-                        problem = subscriptionProblem,
-                        onLogin = { subscriptionLogin = it },
-                        onRetry = { subscriptionTick++ },
-                        onLogout = { provider ->
-                            scope.launch {
-                                val problem = withContext(Dispatchers.IO) { service.remove(provider.id) }
-                                note = problem ?: "已退出 ${provider.oauthName}。重启引擎后它的模型会从列表里消失。"
-                                reloadTick++
-                                onFilesWritten()
-                            }
-                        },
-                    )
-                }
-
                 // ---- 默认模型 / 默认厂商 / 循环模型：三行都是点开在清单里点选，不再手打。
                 // 原来这里的「当前与循环」节标题已删：设置面不再有节标题（统一口径）。
                 // 三个选择键收在一张卡里（原来三行各自独立，看着散）。
@@ -546,6 +525,27 @@ fun ModelProviderScreen(
                             }
                         },
                         oauth = provider.id in subscriptionStatuses.keys,
+                    )
+                }
+
+                // ---- 订阅账号：订阅登录写的是 auth.json 同一个键空间，登录完的模型就在
+                // 下面这张清单里，所以放在这一屏而不是另开一页；排在厂商卡后面：先看「我的模型」，再看「去哪登录订阅」。
+                item {
+                    SubscriptionCard(
+                        providers = subscriptionProviders,
+                        statuses = subscriptionStatuses,
+                        loading = subscriptionLoading,
+                        problem = subscriptionProblem,
+                        onLogin = { subscriptionLogin = it },
+                        onRetry = { subscriptionTick++ },
+                        onLogout = { provider ->
+                            scope.launch {
+                                val problem = withContext(Dispatchers.IO) { service.remove(provider.id) }
+                                note = problem ?: "已退出 ${provider.oauthName}。重启引擎后它的模型会从列表里消失。"
+                                reloadTick++
+                                onFilesWritten()
+                            }
+                        },
                     )
                 }
 
@@ -877,12 +877,16 @@ private fun ImportSheet(
     // **基线是预设表，不是目录。** 目录整份读不到时（载荷换了依赖树布局、还没解包），
     // 原来这里只剩「App 自建」那三个，用户报的正是「已有厂商，再点导入模型，列表里
     // 只有三个，搜也搜不出来」；目录正常时它仍然排在前（41+），两边都成立。
-    val providerChoices = remember(officialProviders) {
+    val providerChoices = remember(officialProviders, knownProviders) {
         val fromCatalog = officialProviders.map { provider ->
             PiProviderPresets.byId(provider.id) ?: presetFromOfficial(provider)
         }
         val covered = fromCatalog.mapTo(HashSet()) { it.id }
-        fromCatalog + PiProviderPresets.all.filterNot { it.id in covered }
+        val base = fromCatalog + PiProviderPresets.all.filterNot { it.id in covered }
+        // 文件里已经有、但官方目录与预设表都不认识的厂商（自建的、AI 手写的）也要出现在列表里，
+        // 否则它们只能从厂商卡进来，在这里「选厂商」时像是不存在。
+        val seen = base.mapTo(HashSet()) { it.id }
+        base + knownProviders.filter { it.id !in seen }.map { customPresetFromInventory(it) }
     }
     // **选中的那一档必须从同一张表里取。** 这里曾经是 `byId(presetId) ?: all.first()`：
     // 手写表只有 13 个 id，官方目录有 42 个，于是选中 `kimi-coding` 这类官方独有的厂商时
@@ -944,8 +948,11 @@ private fun ImportSheet(
     // 「默认全勾」漏掉目录那批的竞态。切厂商即重置，和旧表单同一个键。
     LaunchedEffect(presetId) {
         if (presetId.isEmpty()) return@LaunchedEffect
+        // 「新建自定义厂商」没有任何已存状态：用一个不可能存在的 id 去读，拿到的是空表单
+        // （而不是 `prefill(null)`——那会读到「当前默认厂商」的凭证）。
+        val lookupId = if (presetId == PiProviderPresets.NEW_CUSTOM_ID) "\u0000new" else presetId
         val (existing, entries) = withContext(Dispatchers.IO) {
-            service.prefill(presetId) to service.catalogModels(presetId)
+            service.prefill(lookupId) to service.catalogModels(lookupId)
         }
         baseUrl = existing.baseUrl ?: preset.baseUrl
         api = existing.api ?: preset.api
@@ -1175,8 +1182,21 @@ private fun ImportSheet(
             saveSteps = emptyList()
             savedOk = false
             val result = withContext(Dispatchers.IO) {
+                // 新建自定义厂商：保存时才按名字生成一个不冲突的 id。
+                val savePreset = if (presetId == PiProviderPresets.NEW_CUSTOM_ID) {
+                    val taken = providerChoices.mapTo(HashSet()) { it.id } +
+                        knownProviders.map { it.id } + configuredProviderIds
+                    preset.copy(
+                        id = PiProviderPresets.uniqueCustomProviderId(
+                            providerName.ifBlank { suggestedProviderName(baseUrl, preset) },
+                            taken,
+                        ),
+                    )
+                } else {
+                    preset
+                }
                 service.save(
-                    preset = preset,
+                    preset = savePreset,
                     apiKey = apiKey,
                     baseUrl = baseUrl,
                     api = api,
@@ -1203,6 +1223,13 @@ private fun ImportSheet(
             // 失败时最后一步就是错误句，它在固定页脚里显示 —— 正文不再重复一遍。
             saveSteps = if (result.ok) result.steps else result.steps.dropLast(1)
             savedOk = result.ok
+            if (result.ok && presetId == PiProviderPresets.NEW_CUSTOM_ID) {
+                // 新建的厂商保存完就回到清单：它已经是一张独立的厂商卡，要再改就从卡片进（编辑态）。
+                // 留在原地继续点「保存」会按名字再生成一个 id，造出重复的厂商。
+                onSaved()
+                onClose()
+                return@launch
+            }
             if (result.ok) {
                 onSaved()
                 // B2：只重读「已配置」那几个字段与错误态，本次保存的步骤
@@ -1271,7 +1298,7 @@ private fun ImportSheet(
                                 "点下面的一个厂商"
                             } else {
                                 buildString {
-                                    append(preset.id)
+                                    if (preset.id == PiProviderPresets.NEW_CUSTOM_ID) append("新建") else append(preset.id)
                                     modelCounts[preset.id]?.let { append(" · ").append(it).append(" 个模型") }
                                     if (preset.id in configuredIds) append(" · 已配置")
                                     append(if (preset.builtInPi) " · pi 官方" else " · App 自建")
@@ -1282,8 +1309,8 @@ private fun ImportSheet(
                         )
                     }
                     TextButton(
-                        // 编辑已有厂商时锁住：换一家保存会把块与凭证写到别人名下。
-                        enabled = !(presetId.isNotEmpty() && credentialPresent),
+                        // 不再锁：保存写到的是**当前选中的**厂商（换厂商会整表重载），
+                        // 以前「已配置就不能换」让人想再导入一个别的厂商时只能关掉重进。
                         onClick = { pickerOpen = !pickerOpen },
                     ) {
                         Text(if (pickerOpen) "收起" else "更换")
@@ -1362,9 +1389,13 @@ private fun ImportSheet(
                                         // 「已配置」是这一屏最重要的一格：它决定下面的 Key/扫描
                                         // 要不要填。机器 id 放最后。
                                         buildList {
-                                            if (option.id in configuredIds) add("已配置")
-                                            modelCounts[option.id]?.let { add("$it 个模型") }
-                                            add(option.id)
+                                            if (option.id == PiProviderPresets.NEW_CUSTOM_ID) {
+                                                add("可重复添加，每次一个新厂商")
+                                            } else {
+                                                if (option.id in configuredIds) add("已配置")
+                                                modelCounts[option.id]?.let { add("$it 个模型") }
+                                                add(option.id)
+                                            }
                                         }.joinToString(" · "),
                                         style = PiTheme.text.meta,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
