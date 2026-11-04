@@ -148,12 +148,28 @@ fun ModelPickerSheet(
                 LazyColumn(
                     Modifier.fillMaxWidth().heightIn(max = 420.dp),
                 ) {
-                    items(shown) { model ->
-                        ModelRow(
-                            model = model,
-                            selected = model.id == current?.id && model.provider == current.provider,
-                            onClick = { onPick(model) },
-                        )
+                    // 厂商不止一个时按厂商分段（段内与段间都保持 pi 的原顺序：厂商按第一次出现的
+                    // 先后，所以选中模型不会让列表跳）。一个厂商一个小标题，几百个模型不再是一整面
+                    // 一模一样的行。只有一个厂商时不画标题，与以前完全相同。
+                    val groups = shown.groupBy { it.provider.orEmpty() }
+                    groups.forEach { (provider, inGroup) ->
+                        if (groups.size > 1) {
+                            item {
+                                Text(
+                                    "${provider.ifEmpty { "其他" }} · ${inGroup.size}",
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                                )
+                            }
+                        }
+                        items(inGroup) { model ->
+                            ModelRow(
+                                model = model,
+                                selected = model.id == current?.id && model.provider == current.provider,
+                                onClick = { onPick(model) },
+                            )
+                        }
                     }
                 }
             }

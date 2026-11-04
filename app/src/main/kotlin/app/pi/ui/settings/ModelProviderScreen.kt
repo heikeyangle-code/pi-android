@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -2027,6 +2028,18 @@ private fun ProviderCard(
                         },
                         maxLines = 1,
                     )
+                    // 自建 / 非预设厂商再补一行「id · 主机」：现在可以建任意多个自定义厂商，
+                    // 它们的名字可能相近，id 与端点主机才是能把它们分开的东西。
+                    if (!oauth && PiProviderPresets.byId(provider.id)?.builtInPi != true) {
+                        val host = runCatching { java.net.URI(provider.baseUrl.orEmpty().trim()).host }
+                            .getOrNull()?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+                        Text(
+                            listOfNotNull(provider.id, host).joinToString(" · "),
+                            style = PiTheme.text.monoSmall,
+                            color = PiTheme.palette.dim,
+                            maxLines = 1,
+                        )
+                    }
                 }
                 Icon(
                     Icons.Filled.KeyboardArrowRight,
@@ -2136,7 +2149,17 @@ private fun StatusTag(status: PiModelInventory.Status) {
         PiModelInventory.Status.MISSING_CREDENTIAL -> MaterialTheme.colorScheme.onSurfaceVariant
         PiModelInventory.Status.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(statusText(status), style = PiTheme.text.meta, color = color)
+    // 淡色胶囊：一眼扫过一长串模型时，「现在可用」与「缺凭证 / 等待重启」靠底色就分得开，
+    // 不用逐行读字。底色就是文字色的 12%，不引入新颜色。
+    Text(
+        statusText(status),
+        style = PiTheme.text.meta,
+        color = color,
+        maxLines = 1,
+        modifier = Modifier
+            .background(color.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    )
 }
 
 /**
