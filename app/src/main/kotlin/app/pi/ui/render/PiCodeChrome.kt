@@ -97,6 +97,12 @@ internal fun PiRichCodeBlock(
         if (!truncated) highlighted.text else highlighted.text.subSequence(0, shownCode.length.coerceAtMost(highlighted.text.length))
     }
 
+    // diff / patch：整行底色（加 = 绿、删 = 红、@@ = 强调色），不只是字符着色。
+    val isDiff = info.language == "diff" || info.language == "patch"
+    val displayText = remember(shownHighlighted, isDiff, palette) {
+        if (!isDiff) shownHighlighted else piDiffTinted(shownHighlighted, palette)
+    }
+
     val clipboard = LocalClipboardManager.current
     LaunchedEffect(copied) {
         if (copied) {
@@ -161,7 +167,7 @@ internal fun PiRichCodeBlock(
             val codeColor = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock
             if (wrap) {
                 Text(
-                    text = shownHighlighted,
+                    text = displayText,
                     style = style.copy(color = codeColor),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -183,7 +189,7 @@ internal fun PiRichCodeBlock(
                         )
                     }
                     Text(
-                        text = shownHighlighted,
+                        text = displayText,
                         style = style.copy(color = codeColor),
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                     )
@@ -213,6 +219,30 @@ internal fun PiRichCodeBlock(
  * 复制始终是全文。
  */
 private const val MAX_COLLAPSED_LINES = 24
+
+/** 给 diff 的每一行铺底色：`+`（不含 `+++`）绿、`-`（不含 `---`）红、`@@` 强调色。 */
+private fun piDiffTinted(text: AnnotatedString, palette: PiPalette): AnnotatedString {
+    val raw = text.text
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(text)
+        var start = 0
+        while (start <= raw.length) {
+            var end = raw.indexOf('\n', start)
+            if (end < 0) end = raw.length
+            if (end > start) {
+                val tint = when {
+                    raw.startsWith("+++", start) || raw.startsWith("---", start) -> null
+                    raw[start] == '+' -> palette.toolDiffAdded.copy(alpha = 0.18f)
+                    raw[start] == '-' -> palette.toolDiffRemoved.copy(alpha = 0.18f)
+                    raw.startsWith("@@", start) -> palette.accent.copy(alpha = 0.12f)
+                    else -> null
+                }
+                if (tint != null) addStyle(androidx.compose.ui.text.SpanStyle(background = tint), start, end)
+            }
+            start = end + 1
+        }
+    }
+}
 
 /**
  * JSON / XML 树视图的外框：与 [PiRichCodeBlock] 同一套卡片（12 dp 圆角、28% 边线、6% 淡底）
