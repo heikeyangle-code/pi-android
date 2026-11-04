@@ -1423,6 +1423,31 @@ private fun ImportSheet(
                 // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
                 if (presetId.isNotEmpty()) {
                     // ------------------------------------------------------ 2 粘 Key
+                    // 新建自定义厂商：名称与 Base URL 是**必填的第一步**，不能藏在「高级」里
+                    // （以前名称框根本没有画出来，Base URL 在「高级」后面，保存时才被一句
+                    // 「Base URL 不能为空」拦下，用户却找不到那个框）。
+                    if (!preset.builtInPi) {
+                        PiEditorField(
+                            value = providerName,
+                            onValueChange = { providerName = it },
+                            label = "厂商名称（显示用，可留空）",
+                            height = 44.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                        )
+                    }
+                    if (presetId == PiProviderPresets.NEW_CUSTOM_ID) {
+                        PiEditorField(
+                            value = baseUrl,
+                            onValueChange = { baseUrl = it },
+                            label = "Base URL（例：https://api.example.com/v1）",
+                            height = 44.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                        )
+                    }
                     // （节标题已删：下面的「API Key」输入框 / 已存凭证就是这一步。）
                     if (credentialPresent && !keyOpen) {
                         // 已配置的厂商：一行说清"凭证已经在文件里、留空就是沿用"，
@@ -1488,7 +1513,7 @@ private fun ImportSheet(
                             }
                         }
                         if (advancedOpen) {
-                            PiEditorField(
+                            if (presetId != PiProviderPresets.NEW_CUSTOM_ID) PiEditorField(
                                 value = baseUrl,
                                 onValueChange = { baseUrl = it },
                                 label = "Base URL",
