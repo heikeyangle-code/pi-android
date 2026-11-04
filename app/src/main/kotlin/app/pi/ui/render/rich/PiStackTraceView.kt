@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.render.PiCardDivider
+import app.pi.ui.render.PiCardHeader
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
@@ -135,36 +136,16 @@ fun PiStackTraceCard(
             .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
             .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = trace.kind.displayName,
-                style = PiTheme.text.monoSmall,
-                color = palette.accent,
-                maxLines = 1,
-                modifier = Modifier
-                    .background(palette.accent.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = if (copied) "已复制" else "复制",
-                style = PiTheme.text.monoSmall,
-                color = if (copied) palette.accent else palette.muted,
-                maxLines = 1,
-                modifier = Modifier
-                    .heightIn(min = 40.dp)
-                    .clickable(onClickLabel = "复制原始堆栈") {
-                        clipboard.setText(AnnotatedString(source))
-                        copied = true
-                    }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            )
-        }
+        PiCardHeader(
+            language = trace.kind.displayName,
+            title = null,
+            palette = palette,
+            copied = copied,
+            onCopy = {
+                clipboard.setText(AnnotatedString(source))
+                copied = true
+            },
+        )
         PiCardDivider(palette)
 
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp)) {

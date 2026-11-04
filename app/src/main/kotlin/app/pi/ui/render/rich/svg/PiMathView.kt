@@ -12,6 +12,9 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import app.pi.ui.render.PiCardMenuItem
+import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rich.FenceInfo
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
@@ -129,7 +132,6 @@ fun PiMathView(
 ) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
-    val clipboard = LocalClipboardManager.current
 
     // 纯值主题：`PiSvgTheme` 是 data class，所以这个 `remember` 只在调色板变化时重建，
     // 下面 equals 语义的 LaunchedEffect 键才会真正触发重渲染。
@@ -172,16 +174,6 @@ fun PiMathView(
     }
     var scale by remember(source) { mutableStateOf(PI_MATH_MIN_ZOOM) }
     var offset by remember(source) { mutableStateOf(Offset.Zero) }
-    var feedback by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(feedback) {
-        val shown = feedback
-        if (shown != null) {
-            delay(PI_MATH_FEEDBACK_MS)
-            // 只清自己发的那条；更新的一条不能被提前抹掉。
-            if (feedback == shown) feedback = null
-        }
-    }
 
     // 块级占满一行（和 Mermaid 视图一致）；行内不加 `fillMaxWidth`，宽度跟随父级约束，
     // 这样放进段落/行内槽位时不会把整段撑断。
@@ -280,65 +272,41 @@ fun PiMathView(
             val showSource = ready == null || !settled || pinned == true
             val image = ready?.takeIf { !showSource }
 
-            val status: String? = feedback ?: when (draw) {
+            val status: String? = when (draw) {
                 PiMathDraw.Streaming -> "生成中…"
-                PiMathDraw.Rendering -> null
-                // 原因印在源码块上（那里有整行的位置），工具栏这一格放不下。
-                is PiMathDraw.Unavailable -> null
-                is PiMathDraw.Ready -> if (showSource) "源码" else null
+                else -> null
             }
 
-            Column(Modifier.fillMaxWidth()) {
-                // 工具栏收成右对齐的一行淡色小字（状态在左，动作在右）：公式本身是主角，不该在每条
-                // 公式上方都挂一排左对齐的"源码 / 公式"标签。动作的触控高度 ≥ 40 dp。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = status.orEmpty(),
-                        style = PiTheme.text.monoSmall,
-                        color = palette.muted,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+            PiRichCardFrame(
+                code = source,
+                info = PI_MATH_CARD_INFO,
+                palette = palette,
+                status = status,
+                menu = buildList {
                     if (image != null) {
-                        PiMathActionLabel(
-                            label = "适应",
-                            onClickLabel = "适应宽度，重置缩放",
-                            onClick = {
+                        add(
+                            PiCardMenuItem("适应宽度") {
                                 scale = PI_MATH_MIN_ZOOM
                                 offset = Offset.Zero
                             },
                         )
                     }
                     if (ready != null) {
-                        PiMathActionLabel(
-                            label = if (showSource) "公式" else "源码",
-                            onClickLabel = if (showSource) "查看渲染后的公式" else "查看 TeX 源码",
-                            onClick = { pinMode = if (showSource) 2 else 1 },
+                        add(
+                            PiCardMenuItem(if (showSource) "查看公式" else "查看 TeX 源码") {
+                                pinMode = if (showSource) 2 else 1
+                            },
                         )
                     }
-                    PiMathActionLabel(
-                        // 工具栏状态位负责"已复制源码"；动作本身的标签保持稳定，不随复制抖动。
-                        label = "复制",
-                        onClickLabel = "复制 TeX 源码",
-                        onClick = {
-                            clipboard.setText(AnnotatedString(source))
-                            feedback = PI_MATH_COPIED
-                        },
-                    )
-                }
-
+                },
+            ) {
                 if (image != null) {
                     val aspect = piMathAspectOrFallback(image)
                     // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 而不是先量宽度再算
                     // 高度，这样不需要 `BoxWithConstraints`。
                     Canvas(
                         modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                             .heightIn(min = PI_MATH_MIN_IMAGE_HEIGHT, max = PI_MATH_MAX_IMAGE_HEIGHT)
                             .fillMaxWidth()
                             .aspectRatio(aspect.coerceIn(0.05f, 60f))
@@ -401,6 +369,9 @@ fun PiMathView(
         }
     }
 }
+
+/** 公式卡片头的「语言」胶囊：与代码块 / 树卡片同一套头。 */
+private val PI_MATH_CARD_INFO = FenceInfo(language = "math", title = null, attributes = emptyMap(), raw = "math")
 
 /** 已渲染公式的缓存键：源码、块/行内、基准宽度、主题，缺一不可（任何一个变了图就不同）。 */
 private data class PiMathDrawKey(
@@ -671,28 +642,8 @@ private fun PiMathModeLabel(
     )
 }
 
-@Composable
-private fun PiMathActionLabel(
-    label: String,
-    onClickLabel: String,
-    onClick: () -> Unit,
-) {
-    val palette = PiTheme.palette
-    Text(
-        text = label,
-        style = PiTheme.text.monoSmall,
-        color = palette.muted,
-        maxLines = 1,
-        modifier = Modifier
-            .heightIn(min = 40.dp)
-            .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 11.dp),
-    )
-}
-
 /**
- * 源码回退块：围栏里的 TeX 原样，用与 App 代码块同一套视觉语言（`mdCodeBlockBorder`
- * 6 % 填充、28 % 边框、12 dp 圆角），失败时读起来像"这里是代码"，而不是一张错误卡片。
+ * 源码回退块：围栏里的 TeX 原样，放在公共卡片里，失败时读起来像"这里是代码"，而不是一张错误卡片。
  *
  * 显示上限 [PI_MATH_MAX_VISIBLE_SOURCE_LINES] 行并明说剩余行数；复制动作仍然给完整源码。
  * 上限的意义：一条 32 KiB 的坏公式如果整段塞进 `LazyColumn` 会成为一整个巨大的 `Text`。
@@ -709,18 +660,10 @@ private fun PiMathSourceBlock(source: String, notice: String?) {
             lines.take(PI_MATH_MAX_VISIBLE_SOURCE_LINES).joinToString("\n")
         }
     }
-    val shape = RoundedCornerShape(12.dp)
-
+    // 外框（边线 / 淡底 / 圆角）由 [PiRichCardFrame] 提供，这里只管内容。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 2.dp)
-            .background(color = palette.mdCodeBlockBorder.copy(alpha = 0.06f), shape = shape)
-            .border(
-                width = 1.dp,
-                color = palette.mdCodeBlockBorder.copy(alpha = 0.28f),
-                shape = shape,
-            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         if (!notice.isNullOrEmpty()) {
@@ -803,7 +746,6 @@ private const val PI_MATH_FALLBACK_ASPECT = 1.6f
 private const val PI_MATH_FONT_FAMILY = "sans-serif"
 
 private const val PI_MATH_FEEDBACK_MS = 1500L
-private const val PI_MATH_COPIED = "已复制公式源码"
 
 /** 行内公式在没准备好时显示的占位（与 `PiLatex` 的回退同一措辞）。 */
 private const val PI_MATH_INLINE_FALLBACK = "（公式）"
