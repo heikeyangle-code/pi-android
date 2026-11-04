@@ -83,8 +83,12 @@
     startup: { typeset: false },
     options: {
       enableMenu: false,
-      enableAssistiveMml: false,
-      enableEnrichment: false
+      enableEnrichment: false,
+      enableSpeech: false,
+      enableBraille: false,
+      enableComplexity: false,
+      enableExplorer: false,
+      a11y: { speech: false, braille: false }
     }
   };
 </script>
@@ -138,6 +142,20 @@
     return (startup && startup.promise) || Promise.resolve();
   }
 
+  /* MathJax 4 的朗读 / 盲文 / 语义增强默认全开，且 config.options 里关掉它们**不会**落到文档对象上
+     （实测 document.options.enableEnrichment 仍为 true）。开着的话每次排版都会起一个 Web Worker
+     去拉 sre 数据；这里 CSP 禁了 worker，排版 Promise 就永远不返回。直接改文档选项。 */
+  function quiet() {
+    try {
+      var doc = window.MathJax && window.MathJax.startup && window.MathJax.startup.document;
+      if (!doc || !doc.options) return;
+      doc.options.enableEnrichment = false;
+      doc.options.enableSpeech = false;
+      doc.options.enableBraille = false;
+      doc.options.enableComplexity = false;
+      doc.options.enableExplorer = false;
+    } catch (ignored) { /* 关不掉就让排版自己报错 */ }
+  }
   function hasApi() {
     return !!(window.MathJax && typeof window.MathJax.typesetPromise === "function");
   }
@@ -161,6 +179,7 @@
     if (!hasApi()) return Promise.reject(new Error("MathJax 尚未就绪（typesetPromise 不存在）"));
     var text = wrapped(tex, display);
     return startupPromise().then(function () {
+      quiet();
       host.textContent = "";
       host.textContent = text;
       return window.MathJax.typesetPromise([host]);
