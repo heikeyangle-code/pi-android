@@ -437,34 +437,59 @@ internal object GuestImageBytes {
      */
     private suspend fun fetchOverNetwork(uri: URI): ByteArray? = remoteFetchGate.withPermit {
         val deadlineNanos = System.nanoTime() + TOTAL_TIMEOUT_MS * 1_000_000
-        val connection = (uri.toURL().openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            // 默认就是 true，写出来是因为它决定了 http→https 这类跳转要不要跟：
-            // 平台不会把 https 重定向到 http，所以这里不需要额外判断。
-            instanceFollowRedirects = true
-            useCaches = false
-            // 故意不调 setRequestProperty：见类注释「取的是什么」。
-        }
-        try {
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                return@withPermit fail("远端图片返回 HTTP $status：$uri")
+        // 手动跟跳转（最多 5 跳）：`HttpURLConnection` 的自动跟随**不会**跨协议，
+        // 于是 `http://…` → `https://…`（现在几乎所有图床的第一跳）会停在 301 上，
+        // 被上面当成「HTTP 301」失败。https → http 的降级仍然拒绝。
+        var current = uri
+        var hops = 0
+        while (true) {
+            val connection = (current.toURL().openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                instanceFollowRedirects = false
+                useCaches = false
+                // 不带 cookie / Authorization / Referer；只带一个常规 UA 和 Accept。
+                // 默认的 `Dalvik/…` UA 会被不少图床（Wikimedia、部分 Cloudflare 站）直接 403。
+                setRequestProperty("User-Agent", REMOTE_USER_AGENT)
+                setRequestProperty("Accept", "image/avif,image/webp,image/png,image/jpeg,image/gif,image/svg+xml,image/*;q=0.8")
             }
-            // 声明的大小先挡一道：一个 500 MB 的响应不必先下载 8 MiB 才知道它太大。
-            val declared = connection.contentLengthLong
-            if (declared > MAX_BYTES) {
-                return@withPermit fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+            try {
+                val status = connection.responseCode
+                if (status in REDIRECT_STATUSES) {
+                    val location = connection.getHeaderField("Location")
+                        ?: return@withPermit fail("远端图片跳转（HTTP $status）没有 Location")
+                    if (++hops > MAX_REDIRECTS) return@withPermit fail("远端图片跳转超过 $MAX_REDIRECTS 次")
+                    val next = runCatching { current.resolve(location.trim()) }.getOrNull()
+                        ?: return@withPermit fail("远端图片跳转目标无法解析")
+                    val scheme = next.scheme?.lowercase()
+                    if (scheme != "http" && scheme != "https") {
+                        return@withPermit fail("远端图片跳转到不支持的协议：$scheme")
+                    }
+                    if (current.scheme.equals("https", true) && scheme == "http") {
+                        return@withPermit fail("远端图片从 https 跳转到 http，拒绝降级")
+                    }
+                    if (!next.userInfo.isNullOrEmpty()) return@withPermit fail("远端图片跳转目标内嵌凭据，拒绝")
+                    current = next
+                    continue
+                }
+                if (status !in 200..299) {
+                    return@withPermit fail("远端图片返回 HTTP $status：${current.host}")
+                }
+                // 声明的大小先挡一道：一个 500 MB 的响应不必先下载 8 MiB 才知道它太大。
+                val declared = connection.contentLengthLong
+                if (declared > MAX_BYTES) {
+                    return@withPermit fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+                }
+                return@withPermit readBounded(connection.inputStream, declared, deadlineNanos)
+            } catch (cancel: CancellationException) {
+                // 与 `load` 里同一条规矩：取消照原样抛，别变成一条假的失败原因。
+                throw cancel
+            } catch (error: Exception) {
+                return@withPermit fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
+            } finally {
+                connection.disconnect()
             }
-            readBounded(connection.inputStream, declared, deadlineNanos)
-        } catch (cancel: CancellationException) {
-            // 与 `load` 里同一条规矩：取消照原样抛，别变成一条假的失败原因。
-            throw cancel
-        } catch (error: Exception) {
-            return@withPermit fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -622,7 +647,24 @@ internal object GuestImageBytes {
         }
     }
 
+    private const val REMOTE_USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36 Pi/1.0"
+    private const val MAX_REDIRECTS = 5
+    private val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
+
+    /** 文本开头像 SVG（允许 BOM、XML 声明、注释、空白在前）。 */
+    internal fun looksLikeSvg(bytes: ByteArray): Boolean {
+        val head = String(bytes, 0, minOf(bytes.size, 1024), Charsets.UTF_8).trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+        return head.startsWith("<svg", ignoreCase = true) ||
+            ((head.startsWith("<?xml") || head.startsWith("<!--") || head.startsWith("<!DOCTYPE svg", true)) &&
+                head.contains("<svg", ignoreCase = true))
+    }
+
     private fun sniff(bytes: ByteArray): String? = when {
+        looksLikeSvg(bytes) -> "image/svg+xml"
+
+        bytes.size >= 12 && String(bytes, 4, 8, Charsets.US_ASCII) in setOf("ftypavif", "ftypavis") -> "image/avif"
+
         bytes.size >= 8 &&
             bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
             bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
