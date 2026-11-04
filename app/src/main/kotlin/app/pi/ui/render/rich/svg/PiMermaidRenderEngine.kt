@@ -357,7 +357,14 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     // ---------------------------------------------------------------- one task
 
     private suspend fun runTask(task: Task) {
-        val result = try {
+        // 宿主在这次渲染进行中被系统回收（内存紧张时主动释放）或崩了：这不是这条内容的错，
+        // 重建一次宿主再试一次；第二次还失效才报失败。以前直接报「宿主失效」，那一格就
+        // 一直停在源码上，直到滚出去再滚回来。
+        var retried = false
+        var result: PiSvgResult
+        while (true) {
+            var hostLost = false
+            result = try {
             val renderHost = ensureHost()
             val rawReply = withTimeout(RENDER_TIMEOUT_MS) {
                 renderHost.render { taskId -> renderScript(taskId, task.request) }
@@ -368,6 +375,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
             PiSvgResult.Failure("Mermaid 渲染超时（${RENDER_TIMEOUT_MS} ms）")
         } catch (gone: MermaidHostLostException) {
             disposeHost("宿主失效：${gone.message}")
+            hostLost = true
             PiSvgResult.Failure("Mermaid 渲染宿主失效：${gone.message ?: "未知原因"}")
         } catch (unavailable: MermaidHostUnavailableException) {
             PiSvgResult.Failure(unavailable.message ?: "Mermaid 渲染宿主不可用")
@@ -375,6 +383,12 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
             throw cancellation
         } catch (error: Throwable) {
             PiSvgResult.Failure("Mermaid 渲染失败：${error.message ?: error::class.java.simpleName}")
+        }
+            if (hostLost && !retried) {
+                retried = true
+                continue
+            }
+            break
         }
         finish(task, result)
     }
