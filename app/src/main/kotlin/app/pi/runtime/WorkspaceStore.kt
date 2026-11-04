@@ -230,6 +230,13 @@ object WorkspaceStore {
     /** `pi/workspaces/<name>` — the spelling `GuestWorkspacePath` needs. */
     fun relativeOf(name: String): String = "$ROOT_RELATIVE/$name"
 
+    /**
+     * 会话头里的 guest cwd → 工作区名字，规则在 [WorkspaceChoice.nameForGuestCwd]。
+     * 这里只补上本对象拥有的那个常量。
+     */
+    fun nameForGuestCwd(guestCwd: String): String? =
+        WorkspaceChoice.nameForGuestCwd(guestCwd, ROOT_RELATIVE)
+
     /** True for the directory names this app creates — [WorkspaceChoice.isOwned], the one rule. */
     fun isOwned(name: String): Boolean = WorkspaceChoice.isOwned(name)
 

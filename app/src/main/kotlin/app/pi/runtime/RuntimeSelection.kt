@@ -461,9 +461,7 @@ class RuntimeSelection(
             .getOrDefault(false)
 
     /** The unpacked revision the gate and its cache are keyed by. */
-    private fun revision(): String = runCatching {
-        paths.stampFile().readText().trim()
-    }.getOrNull().orEmpty().ifEmpty { "unstamped" }
+    private fun revision(): String = paths.stampRevision().orEmpty().ifEmpty { "unstamped" }
 
     private fun notesFor(
         decision: EngineDecision,

@@ -11,6 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.pi.engine.EngineCrashRecovery
+import app.pi.engine.EngineFailure
+import app.pi.engine.EngineFailureClassify
+import app.pi.engine.RetryMode
 import app.pi.engine.EngineExitCause
 import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
@@ -137,7 +141,14 @@ sealed interface Boot {
      * stderr or exception text, which is the only thing that lets a failure be
      * diagnosed remotely.
      */
-    data class Failed(val message: String, val detail: String?) : Boot
+    /**
+     * 失败页的内容，由 [EngineFailureClassify] 按**真实原因**算出来。
+     *
+     * 以前这里只有 `message`/`detail` 两个字符串，三种完全不同的失败共用一句
+     * 「引擎没有在运行」和同一组按钮（含会删掉 guest 安装物的「重建运行时」）。现在
+     * 每一类有自己的标题、解释和该不该给重建按钮。
+     */
+    data class Failed(val failure: EngineFailure) : Boot
 }
 
 /**
@@ -563,7 +574,7 @@ class ComposerDraft {
     /** The images staged for the next message, in the order the user picked them. */
     val attachments: MutableState<List<PiImage>> = mutableStateOf(emptyList())
 
-    /** Both halves — what a workspace switch clears. */
+    /** 文字与待发图片一起清空；`发送` 与用户主动清空走它，**工作区切换不走**。 */
     fun clear() {
         text.value = ""
         attachments.value = emptyList()
@@ -1006,6 +1017,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var engineTransition = false
 
     /**
+     * 这条会话里已经替用户**静默重启**过几次引擎（见 [EngineCrashRecovery]）。
+     *
+     * 不清零会在一个长会话里把"三次抖动"误判成"引擎坏了"：只要引擎重新起来，这个
+     * 计数就归零（[attach]），所以它数的是**连续**失败。用户从失败页点「重试」也走
+     * [boot]，那条路上计数不归零没关系 —— 下一次起来时 [attach] 会清。
+     */
+    private var autoEngineRestarts = 0
+
+    /**
+     * 这条启动链上是否已经试过**不删数据的修复**（`ensureReady(repair = true)`）。
+     *
+     * 「重试」曾经对"树里少文件/坏文件"这一类失败完全无效：快路径只比戳记，戳记相符就
+     * 立刻返回成功，于是点一百次也是同一个结果，用户只能点「重建运行时」——而它会删掉
+     * guest 里装的一切。现在第一次重试走修复（重新解包、不 wipe），再失败回到普通重试，
+     * 重建仍然只由用户显式点。
+     */
+    private var provisioningRepairAttempted = false
+
+    /**
      * pi's settings documents, addressed exactly as a desktop install has them.
      *
      * The engine host owns the path layout, so the store is built from it rather
@@ -1244,9 +1274,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * the startup reconcile of a workspace the user did not choose — is an alignment,
      * and an alignment must not delete what the user wrote.
      */
+    /**
+     * 记下这次工作区版本。
+     *
+     * **不在这里清草稿。** 以前 revision 一变就 `composerDraft.clear()`，切工作区时用户
+     * 正在打的字和已经选好的图片会**无声消失** —— 而切工作区本身已经是"换项目"这件
+     * 大事，不该顺带吃掉输入。草稿留在输入框里由用户自己决定：接着发（新工作区里发）、
+     * 或者手动清掉。两个工作区的草稿互相覆盖并不比"被清空"更糟，因为清空是**静默的**、
+     * 而覆盖是用户自己按了发送。
+     */
     private fun alignComposerToWorkspace(revision: Int) {
-        val mark = composerRevision
-        if (mark != null && revision > mark) composerDraft.clear()
         composerRevision = revision
     }
 
@@ -1830,8 +1867,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun syncEngineService(engineAttached: Boolean, bootInProgress: Boolean) {
         val keepAlive = _state.value.prefs.keepAlive
-        if (PiEngineLifecyclePolicy.shouldServiceRun(keepAlive, engineAttached, bootInProgress)) return
+        // 回合进行中也算"需要保活"：长构建被系统回收是用户报的那一屏最常见的来源，
+        // 而 `app.runtime.keepAlive` 描述的是空闲时要不要继续挂着，不是"干活时要不要保护"。
+        if (PiEngineLifecyclePolicy.shouldServiceRun(keepAlive, engineAttached, bootInProgress, turnRunning())) {
+            return
+        }
         PiEngineService.stopIfRunning()
+    }
+
+    /** 与 [reportWakeLockNeed] 同一组输入：引擎在忙、正在流式、或有一个工具在跑。 */
+    private fun turnRunning(): Boolean {
+        val current = _state.value
+        return current.engine == PiEngineSession.EngineState.Busy ||
+            current.streaming ||
+            current.busy != null
     }
 
     /**
@@ -2022,7 +2071,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // cannot be the thing that decides where the new engine starts.
                 workspaceProvider = { target.host },
                 allowInterrupt = allowInterrupt,
-                launch = launchOptions(),
+                // **新工作区开一段新对话。** 以前这里传 `launchOptions()`，其中
+                // `continueMostRecent = app.sessions.resumeLast`（默认开）→ pi 用 `-c`
+                // 在新 cwd 里挑"最近一段"恢复。结果就是用户说的那件事：切到 B，屏幕上
+                // 突然换成 B 里另一段旧对话（或者干脆空白），而他刚才在 A 的那段像是
+                // "被切掉了"。切换工作区是换项目，语义应该是**从新项目的空白开始**；
+                // 想接着看旧对话，去会话列表里点那一段（同一个 cwd 的 `switch_session`）。
+                launch = launchOptions().copy(continueMostRecent = false),
             )
         } finally {
             engineTransition = false
@@ -2036,14 +2091,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // workspace by the time those run.
                 val stored = WorkspaceStore.setCurrent(app, name)
                 afterWorkspaceChanged(name, result.session)
-                when {
-                    wasBusy -> pushNotice(
+                // 切换成功**不弹通知**（用户要求：这一步应该是安静的）。只有一种情况还说话：
+                // 这一下真的打断了一个正在跑的回合，而那是用户刚在确认框里点过的事 ——
+                // 说完"被停掉了"就够了，不再附带"对话在哪"之类的解释。
+                if (wasBusy) {
+                    pushNotice(
                         "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里，" +
                             "上一轮未完成的模型调用与工具都被停掉了。",
                         Notice.Tone.Warning,
                     )
-
-                    else -> pushNotice("已切换到工作区「${target.displayName}」。", Notice.Tone.Info)
                 }
                 if (!stored) {
                     pushNotice(
@@ -2173,7 +2229,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             else -> {
                 val detail = (back as? PiEngineHost.Boot.Failed)?.detail ?: failure.detail
                 val why = (back as? PiEngineHost.Boot.Failed)?.message ?: "引擎未能重新启动"
-                _state.value = _state.value.copy(boot = Boot.Failed(headline, detail))
+                _state.value = _state.value.copy(
+                    boot = Boot.Failed(EngineFailureClassify.workspaceSwitch(headline, detail)),
+                )
                 syncEngineService(engineAttached = false, bootInProgress = false)
                 reportWakeLockNeed()
                 val message = "$headline；在「$previous」重新启动也失败了（$why）。" +
@@ -2404,6 +2462,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun boot(rebuild: Boolean = false) {
         if (_state.value.boot is Boot.Working) return
+        // 「重试」不是"再跑一遍同样的东西"：运行环境那类失败第一次重试要走不删数据的修复
+        // （重新解包），否则戳记相符的快路径会让它永远返回成功、引擎永远起不来。
+        val retryMode = if (rebuild) {
+            RetryMode.Plain
+        } else {
+            (_state.value.boot as? Boot.Failed)?.failure?.retryMode(provisioningRepairAttempted)
+                ?: RetryMode.Plain
+        }
+        val repair = retryMode == RetryMode.Repair
+        if (repair) provisioningRepairAttempted = true
         viewModelScope.launch {
             // Read the preferences first: `app.runtime.keepAlive` decides whether
             // the foreground service is started at all, so it cannot be read
@@ -2417,7 +2485,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // mid-write. The service is what keeps that process tree alive — the
             // engine itself is a child of this process (`host`). `keepAlive = false`
             // is the user asking for exactly that risk.
-            if (prefs.keepAlive) startEngineService()
+            // **安装运行时/冷启动这一段无条件开前台服务**：它是整条链上最容易被系统打断的
+            // 窗口（解包几十秒、node 冷启动），被打断就留下半棵树 —— 那正是下一次"重建"
+            // 的来由。`keepAlive` 只决定**空闲之后**还留不留着。
+            startEngineService()
             // Unpacking the runtime and pi's cold start are CPU-bound with nothing on
             // screen, so the wake lock has to be held across them; the service takes
             // it when it starts (`startForegroundWithNotification`), and the engine
@@ -2432,7 +2503,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val launchOptions = launchOptions()
             reportExtensionArgsRefusal(launchOptions)
             val boot = try {
-                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions, rebuild = rebuild) { step ->
+                host.boot(
+                    workspaceProvider = ::defaultWorkspace,
+                    launch = launchOptions,
+                    rebuild = rebuild,
+                    repair = repair,
+                ) { step ->
                     _state.value = _state.value.copy(boot = Boot.Working(step))
                 }
             } finally {
@@ -2441,7 +2517,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             when (boot) {
                 is PiEngineHost.Boot.Ready -> attach(boot.session)
                 is PiEngineHost.Boot.Failed -> {
-                    _state.value = _state.value.copy(boot = Boot.Failed(boot.message, boot.detail))
+                    _state.value = _state.value.copy(
+                        boot = Boot.Failed(EngineFailureClassify.provisioning(boot.message, boot.detail)),
+                    )
                     // There is no engine and none is coming, so the service has
                     // nothing to protect: leaving it up would keep a notification
                     // saying 「PI 正在运行」 over a process that failed to start.
@@ -2576,7 +2654,32 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
         invalidateSettingsCache()
-        _state.value = _state.value.copy(boot = Boot.Ready)
+        // 引擎真的起来了：连续失败的计数归零。放在 `Boot.Ready` 这一句旁边，是因为
+        // "起来了"就是它的判据 —— 不能放在 `boot()` 的开头（那时还不知道会不会失败）。
+        autoEngineRestarts = 0
+        provisioningRepairAttempted = false
+        // **换了引擎就是换了会话：先把上一段对话的投影清空。**
+        //
+        // 以前这里只把 `boot` 改成 Ready，转录（`transcript`/`revision`/`streaming`）留着
+        // 等新引擎的第一条 publication 来覆盖。那条路依赖 `pub.replaced`/`appliedRevision`
+        // 的时序：只要新引擎的第一帧没有以 `replaced = true` 抵达（或者被 `session !== engine`
+        // 的守卫吞掉），屏幕上就会**一直留着旧对话**，而模型那边是全新的会话 —— 用户报的
+        // 「切完工作区，老对话还在屏幕上，发消息却像新会话」就是这一格。
+        //
+        // 现在无条件清空：宁可让新会话先空一帧（紧接着 `get_entries` 就把它的内容补上），
+        // 也不能让一段已经不属于当前引擎的对话继续显示。
+        _state.value = _state.value.copy(
+            boot = Boot.Ready,
+            transcript = emptyList(),
+            revision = 0,
+            streaming = false,
+            busy = null,
+            bash = null,
+            nowMs = null,
+            lastUsage = null,
+            turnUsage = null,
+        )
+        appliedRevision = 0
         // The queue counters describe **this engine process's** queues, and the engine in
         // hand is brand new, so its queues are empty. pi sends `queue_update` only when
         // the queue changes — `_emitQueueUpdate` (`core/agent-session.js:655`) is called
@@ -2719,6 +2822,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     bashStream.setLength(0)
                     lastBashPublishAt = 0L
                     bashStreamTrimmed = false
+                    // 中途退出不是"运行环境没准备好"。这两件事以前共用一屏，于是一次
+                    // 被系统杀掉（客人里跑 `npm run build` 时最容易被 LMK 收走）就把整屏
+                    // 对话换成失败页，还配一个会删掉 guest 里所有安装物的「重建运行时」。
+                    // 先静默重启（有上限），连续失败才让用户看到那一屏，而且不给重建按钮。
+                    val crashedMidSession = !engineTransition
+                    val recovery = if (crashedMidSession) {
+                        EngineCrashRecovery.decide(
+                            attempts = autoEngineRestarts,
+                            exitCode = engine.lastExitCode,
+                            stderr = engine.stderr.toString(),
+                        )
+                    } else {
+                        EngineCrashRecovery.Decision.GiveUp
+                    }
+                    val autoRestarting = recovery == EngineCrashRecovery.Decision.Restart
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
@@ -2727,34 +2845,46 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         // so leaving it true would keep the CPU wake lock held for a
                         // turn that no longer exists.
                         streaming = false,
-                        boot = Boot.Failed(
-                            if (engineState == PiEngineSession.EngineState.Stopped) {
-                                "引擎已停止，可以重新启动后继续。"
-                            } else {
-                                "引擎异常退出，可以重新启动后继续。"
-                            },
-                            // The engine's own reason, in one sentence plus the stderr
-                            // line it came from. `BootScreen` renders this under the
-                            // title (`BootScreen.kt:129-133`), and its own last line
-                            // asks the user to send exactly this text on. `null` when
-                            // there is nothing attributable, in which case the generic
-                            // sentence above is the honest answer.
+                        boot = if (autoRestarting) {
+                            // 对话留在屏幕上：这次死亡不打断用户。失败页只留给
+                            // "重启也修不好"的那种退出。
+                            _state.value.boot
+                        } else Boot.Failed(
+                            // 真实原因：退出码 + stderr 决定这是"被系统结束"、"内存耗尽"、
+                            // "参数/扩展错"还是普通崩溃。四类的标题、解释、是否给
+                            // 「重建运行时」都不同（`EngineFailureClassify`）。
                             //
-                            // The third argument is `app.extensions.args`: the one
-                            // launch input the user types freely, and the most common
-                            // source of the `Unknown option` exit since the app started
-                            // forwarding it. Read through the same sidecar the launch
-                            // itself uses (`ExtensionArgsStore`, line 2219), because
-                            // only this layer owns storage — `EngineExitCause` is
-                            // Android-free by design.
-                            EngineExitCause.detail(
-                                engine.lastExitCode,
-                                engine.stderr.toString(),
-                                extensionArgsStore.read(),
+                            // 第三个实参是 `app.extensions.args`：唯一由用户自由输入的启动
+                            // 输入，也是 App 开始转发它之后 `Unknown option` 最常见的来源。
+                            // 它经与启动同一个 sidecar 读取（`ExtensionArgsStore`）—— 只有
+                            // 这一层拥有存储。
+                            EngineFailureClassify.exit(
+                                exitCode = engine.lastExitCode,
+                                stderr = engine.stderr.toString(),
+                                detail = EngineExitCause.detail(
+                                    engine.lastExitCode,
+                                    engine.stderr.toString(),
+                                    extensionArgsStore.read(),
+                                ),
                             ),
                         ),
                     )
-                    if (!engineTransition) {
+                    if (autoRestarting) {
+                        autoEngineRestarts += 1
+                        pushNotice(
+                            "引擎已退出，正在自动重启（第 $autoEngineRestarts 次）…",
+                            Notice.Tone.Warning,
+                        )
+                        viewModelScope.launch {
+                            delay(EngineCrashRecovery.RESTART_DELAY_MS)
+                            // 等一下再起：立刻 fork 一个 pi 会在同一份内存压力下再死一次。
+                            // 只有此刻仍然没有引擎时才起 —— 期间用户可能已经点了重试、
+                            // 换了工作区，或者别的路径把它拉起来了。
+                            // 这一条是**没人看着**的路径：失败也必须变成状态，而不是一个
+                            // 未捕获异常（`viewModelScope` 的默认处理器会直接把 App 带走）。
+                            if (session == null) runCatching { boot() }
+                        }
+                    } else if (!engineTransition) {
                         // Not a restart: nothing is replacing this engine, so the
                         // foreground service has nothing left to protect a retry
                         // (the new failure screen's button) is a *new* engine.
@@ -2821,7 +2951,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // fork / clone replays get it from `call`; this attach-time replay is the
             // one that never did. Cleared token-matched, exactly like `call`'s
             // `finally`, so a newer operation's label is never wiped.
-            // **`refreshState()` 在 replay 之前**，与 [afterSessionReplaced] 同一条规则（那句
+            // **刷新状态在 replay 之前**，与 [afterSessionReplaced] 同一条规则（那句
             // KDoc 就是权威版本：replay 的源文件只能由 `get_state` 刚报出来的那个名字决定）。
             //
             // 这一条以前在 attach 里是**反的**（replay 先、refreshState 后），后果正是「一个对话
@@ -2837,7 +2967,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 它在 `busy = "正在加载会话"` **之前**：`refreshState` 走 `call`，会先把自己的标签
             // （「读取会话状态」）写上、再在 finally 里清掉；放在它后面写，外层那句会被那次清理
             // 抹掉，replay 期间顶栏什么都不说。
-            refreshState()
+            // **必须 await**：`refreshState` 只是排了一次协程，紧接着的 `replayHistory`
+            // 会用**旧 meta** 去挑会话文件 —— 切工作区后重新画出老对话、要发一句消息才切换，
+            // 就是这一格。`refreshStateNow` 的 KDoc 是权威版本。
+            api?.let { refreshStateNow(it) }
             // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是
             // **这一次 replay 的**，所以只有它还握着这行时才允许清掉。
             val replayToken = claimBusy("正在加载会话")
@@ -4225,31 +4358,56 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * on attach and after every `agent_settled` (audit §6.8).
      */
     fun refreshState() {
-        call("读取会话状态", NoEngine.Quiet) { api ->
-            val remote = api.getState()
-            val current = _state.value.meta
-            val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
-            _state.value = _state.value.copy(
-                meta = current.copy(
-                    model = remote.model,
-                    thinkingLevel = level,
-                    steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
-                    followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
-                    autoCompaction = remote.autoCompactionEnabled,
-                    sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
-                    sessionId = remote.sessionId,
-                    sessionFile = remote.sessionFile,
-                    messageCount = remote.messageCount,
-                    // `get_state` is the reconciliation for the event-tracked flag:
-                    // if `compaction_end` was dropped, the next attach/settle puts
-                    // this back to pi's own answer. `isCompacting` was parsed all
-                    // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
-                    // teardown ever read it.
-                    compacting = remote.isCompacting,
-                ),
-            )
-            refreshThinkingLevels()
-        }
+        call("读取会话状态", NoEngine.Quiet) { api -> loadState(api) }
+    }
+
+    /**
+     * [refreshState] 的**可等待**版本：发一次 `get_state`、写进 meta，然后才返回。
+     *
+     * ## 为什么必须有它（2026-11-04 用户报的「切完工作区还是老会话」）
+     *
+     * `call` 是 fire-and-forget —— 它内部 `viewModelScope.launch`，**立刻返回**。于是
+     *
+     *     refreshState()          // 只是排了一次协程（fire-and-forget）
+     *     replayHistory(engine)   // 用的仍然是**旧** meta
+     *
+     * 两句写在相邻行也毫无顺序保证。`replayHistory` 的源文件由 `meta.sessionFile` 决定，
+     * 所以它读的是**上一个引擎那段会话的文件**：切工作区之后，新引擎在一个全新的空会话上，
+     * 屏幕上却重新画出了旧对话；而 clearing 那一帧要等到新会话的第一条 publication
+     * (`replaced = true`) 才到 —— 用户看到的就是「表面上还是老会话，发一句话才切换」。
+     *
+     * 所以凡是以 meta 为输入的后续动作（`attach` 的 replay、`afterSessionReplaced` 的
+     * replay）都必须先 await 这一句。失败不抛：`get_state` 拿不到时 replay 会走
+     * `get_entries` 回落，而 `call` 版本的报错行为一点没变。
+     */
+    private suspend fun refreshStateNow(api: PiEngineApi) {
+        runCatching { loadState(api) }
+    }
+
+    private suspend fun loadState(api: PiEngineApi) {
+        val remote = api.getState()
+        val current = _state.value.meta
+        val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
+        _state.value = _state.value.copy(
+            meta = current.copy(
+                model = remote.model,
+                thinkingLevel = level,
+                steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
+                followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
+                autoCompaction = remote.autoCompactionEnabled,
+                sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
+                sessionId = remote.sessionId,
+                sessionFile = remote.sessionFile,
+                messageCount = remote.messageCount,
+                // `get_state` is the reconciliation for the event-tracked flag:
+                // if `compaction_end` was dropped, the next attach/settle puts
+                // this back to pi's own answer. `isCompacting` was parsed all
+                // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
+                // teardown ever read it.
+                compacting = remote.isCompacting,
+            ),
+        )
+        refreshThinkingLevels()
     }
 
     /**
@@ -5100,7 +5258,72 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@call
             }
             afterSessionReplaced()
+            // **先跳转，再认领工作区。** 认领要读会话文件头、可能还要写设置/重载主题；
+            // 把它放在 `requestNav` 前面会让"点一行 → 看到对话"多等它那一段 IO（用户在
+            // 2026-11-03 报的"从列表点进对话变慢"）。跳转不等它，认领在后台完成 ——
+            // 芯片晚一两帧才变，但对话立刻出来。
             requestNav(NavRequest.Chat)
+            // **认领这段会话所属的工作区。** pi 的 `switch_session` 会"用会话自己的 cwd
+            // 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`）——也就是说引擎
+            // 已经在那段会话的工作区里干活了，而工作区芯片、终端、`@` 补全、包命令还停在
+            // 原来的工作区：两个真相。这里把 App 那一半对齐，**不重启引擎**（pi 已经切好）。
+            viewModelScope.launch { adoptSessionWorkspace(summary) }
+        }
+    }
+
+    /**
+     * 打开一段**别的工作区**的会话之后，把 App 的当前工作区改到它所属的那个。
+     *
+     * 为什么需要：[`PiSessionStore.list()`] 把**所有** cwd 的会话按 cwd 分组列出来
+     * （`SessionsScreen` 的 `groupBy { it.cwd }`），所以用户可以在 B 的引擎里点开一段
+     * cwd=A 的会话。pi 自己会切（见调用点），App 不跟就会说两套话。
+     *
+     * 为什么**不重启引擎**：pi 已经按会话的 cwd 重建了运行时，重启没有任何信息可补，
+     * 只会多停一次进程、多丢一次上下文。这里只做三件便宜事：
+     *  1. 把选择写回设置（`WorkspaceStore.setCurrent`，一次原子小文件写）；
+     *  2. 把 `GuestWorkspacePath.RELATIVE` 指向新工作区（`setCurrent` 内部顺带）；
+     *  3. 让设置/主题缓存失效、把工作区状态发布给界面（芯片、`@`、包命令随之而变）。
+     *
+     * 会话列表**不重读**：它是按 cwd 分组的全量列表，当前工作区变了也不影响分组；
+     * 重读一次只会多扫一遍磁盘。
+     *
+     * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
+     * 宁可保持现状，也不要猜一个工作区。
+     */
+    private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary) {
+        // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
+        //
+        // `Summary.cwd` 本来就是**从会话文件头里读出来的**（`PiSessionStore` 的第 622/744 行
+        // 读 header 的 `cwd`），所以为了认领再开一次文件是多余的 IO。用户的原话：
+        // 「大多数时候点的都是当下选择的工作区的会话」—— 那就一条内存里的字符串映射搞定：
+        //
+        //  - 映射结果 == 当前工作区 → 直接返回（同工作区的点击，**零 IO**）；
+        //  - 映射结果 != 当前工作区 → 可能是跨工作区，继续（后台写设置）；
+        //  - 映射不出来（空 cwd、别的安装留下的怪路径）→ 什么都不做，宁可芯片不动也不猜。
+        val name = WorkspaceStore.nameForGuestCwd(summary.cwd) ?: return
+        if (name == _state.value.workspace.name) return
+        // 认领是**后台**跑的：这期间用户可能已经点开了另一段会话（甚至又切了工作区）。
+        // 过期的认领会把工作区改回上一段会话的那个 —— 芯片指错，文件/终端跟着错。
+        // 以"引擎现在打开的是哪一段"为准判一次：`meta.sessionFile` 已经是另一段就丢弃。
+        // 它还没到（`get_state` 在路上）时为 null，按"可能是这一段"处理。
+        val guestPath = guestSessionPath(summary.file) ?: return
+        val open = _state.value.meta.sessionFile
+        if (open != null && open != guestPath) return
+        if (_state.value.workspace.name == name) return
+        val app = getApplication<Application>()
+        // `existing` 同时校验「这个名字现在真的是一个工作区目录」；拿不到就越过。
+        val entry = withContext(Dispatchers.IO) { WorkspaceStore.existing(app, name) } ?: return
+        val saved = withContext(Dispatchers.IO) { WorkspaceStore.setCurrent(app, name) }
+        rebuildWorkspaceScopedCaches()
+        publishWorkspaceState(name, note = null, bumped = true)
+        refreshPrefs()
+        refreshTheme()
+        if (!saved) {
+            pushNotice(
+                "这段对话属于工作区「${entry.displayName}」，但这次切换没有保存成功（设置文件不可写）；" +
+                    "重启应用后会回到原来的工作区。",
+                Notice.Tone.Warning,
+            )
         }
     }
 
@@ -5857,7 +6080,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // `get_state` just reported. Reading it first would use the meta of the session the
         // user just left. It cannot fix the in-place rebind paths — nothing can, because
         // there is no file yet — which is what `brandNew` is for.
-        refreshState()
+        // 同上：`refreshState` 是 fire-and-forget，replay 会拿着**上一条会话**的 meta 去读
+        // 文件（`switch_session`/import 之后屏幕上还是旧对话，直到下一帧 publication）。
+        api?.let { refreshStateNow(it) }
         replayHistory(engine, brandNew)
         refreshStats()
         refreshCommands()

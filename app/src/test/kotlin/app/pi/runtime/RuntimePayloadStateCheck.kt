@@ -343,12 +343,56 @@ fun main() {
     )
 
     // ① The fast path is one comparison and one early return.
-    val fastPath = "if (!rebuild && paths.rootfs.isDirectory && isStampCurrent(revision)) " +
-        "{ return finishCurrent(revision, migration = false, onStep) }"
-    check("P1 the fast path is one guarded early return", provisionerSource.split(fastPath).size - 1, 1)
+    //
+    // 2026-11-02: 守卫多了一个 `!repair`。`repair` 是「不删数据的重新解包」——它必须走
+    // 慢路径，否则戳记相符时它会立刻返回成功，而它存在的理由正是"戳记相符但树不完整"。
+    // 所以这不是绕过这条性质，而是把这条性质补完整：**唯一**的提前返回，仍然只由戳记与
+    // 两个显式开关决定，仍然不做摘要/清单/遍历。
+    //
+    // 2026-11-03: 戳记之外又加了 `RuntimeTreeAudit.criticalProblems(...).isEmpty()`。真机上出现过
+    // "戳记相符、解包也走完了、rootfs 里却没有 /bin/bash"，此后每次启动都从这个早返回直接
+    // 成功，proot 只剩一句 `'/bin/bash' not found`，用户除了删数据的「重建」无路可走。
+    // 所以这条性质现在准确的说法是：**戳记相符且树是完整的**才提前返回；判完整性用的是
+    // 四条 `isFile`（不读摘要、不读清单、不遍历目录），残树则走慢路径被全部重解一遍。
+    val fastPathGuard = "if (!rebuild && !repair && paths.rootfs.isDirectory) { val stamp = stampState()"
+    check("P1 the fast path is one guarded early return", provisionerSource.split(fastPathGuard).size - 1, 1)
     check(
-        "P2 the comparison is the stamp file against the packaged revision",
-        provisionerSource.contains("return stamp.isFile && stamp.readText().trim() == revision"),
+        "P1c the early return also requires the audit verdict (or its marker)",
+        provisionerSource.contains("if (stamp.revision == revision)") &&
+            provisionerSource.contains("if (stamp.audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty())") &&
+            provisionerSource.contains("if (!stamp.audited) writeStamp(revision)"),
+        true,
+    )
+    check(
+        "P1b the guard asks the tree, not only the stamp",
+        provisionerSource.contains(
+            "val treeIncomplete = !rootfsMissing && RuntimeTreeAudit.criticalProblems(paths.rootfs).isNotEmpty()",
+        ),
+        true,
+    )
+    // 2026-11-04: 戳记现在有两行（revision + `audited`），所以比较的必须是**第一行** ——
+    // `readText().trim() == revision` 式的比较在写入第二行之后永远不相等（自检、proroot 探针
+    // 缓存、重启判定都会因此每次重做）。所有读戳记的地方都改走 `PiPaths.stampRevision()`。
+    check(
+        "P2 the comparison is the stamp's revision line against the packaged revision",
+        provisionerSource.contains("private fun isStampCurrent(revision: String): Boolean = stampState().revision == revision"),
+        true,
+    )
+    check(
+        "P2b no reader compares the whole stamp text any more",
+        provisionerSource.contains("readText().trim() == revision"),
+        false,
+    )
+    // P49/P50: 验过就记在戳记里，之后每次启动都不再探测 —— 正常设备只为一次安装付一次代价。
+    check(
+        "P49 the fast path probes only for a stamp without the audited marker",
+        provisionerSource.contains("if (stamp.audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty())") &&
+            provisionerSource.contains("if (!stamp.audited) writeStamp(revision)"),
+        true,
+    )
+    check(
+        "P50 the marker is written with the stamp",
+        provisionerSource.contains("revision + \"\\n\" + AUDITED_LINE + \"\\n\""),
         true,
     )
     val slowPathReads = listOf(
@@ -358,7 +402,7 @@ fun main() {
     )
     check(
         "P3 the early return precedes every per-payload read",
-        slowPathReads.all { provisionerSource.indexOf(fastPath) < provisionerSource.indexOf(it) },
+        slowPathReads.all { provisionerSource.indexOf(fastPathGuard) < provisionerSource.indexOf(it) },
         true,
     )
     // …and the work the fast path *does* do reads none of it either: the two idempotent
@@ -1023,6 +1067,187 @@ fun main() {
         ),
         "",
     )
+
+
+    // ------------------------------------------------------- ③b 完整性闸门的位置
+    //
+    // 2026-11-03：真机报告"刚安装就 /bin/bash not found"，而 `.stamp` 已经写了。修法是两道
+    // 闸门，且**位置**就是修法本身：
+    //
+    //  - 每个载荷解完、写 digest **之前**查它自己那组文件（写早了，下次启动会因为 digest
+    //    相符而跳过补解，残树永久化）；
+    //  - 整树在写 stamp **之前**再查一次，顺带补 usrmerge 链接。
+    //
+    // 这两条只能按源码文本钉：`RuntimeProvisioner` 编译不了（AssetManager/Dispatchers）。
+    val gateAt = provisionerSource.indexOf(
+        "RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.requirementsFor(meta))",
+    )
+    val recordAt = provisionerSource.indexOf(
+        "recordPayloadState(payload, packagedDigests[payload], newList)",
+    )
+    check("P30 the per-payload gate exists", gateAt >= 0, true)
+    check("P31 and it runs before that payload's digest is recorded", gateAt < recordAt, true)
+    check(
+        "P32 the gate is inside the extraction loop (after extractPayloadOver)",
+        provisionerSource.indexOf("extractPayloadOver(payload)") < gateAt,
+        true,
+    )
+    val auditAt = provisionerSource.indexOf(
+        "RuntimeTreeAudit.failure(paths.rootfs, problems, linkRepair)",
+    )
+    val stampAt = provisionerSource.indexOf("val stampWarning = writeStamp(revision)")
+    check("P33 the whole-tree gate exists and fails the boot", auditAt >= 0, true)
+    check("P34 and it runs before the stamp is written", auditAt < stampAt, true)
+    check(
+        "P35 the usrmerge repair runs before that gate",
+        provisionerSource.indexOf("val linkRepair = RuntimeTreeAudit.repairUsrMergeLinks(paths.rootfs)") in 0 until auditAt,
+        true,
+    )
+
+    // ------------------------------------------------------- ③c 解包器不再吞链接失败
+    //
+    // 老代码在符号链接创建失败时退回 `Files.copy(...)`：对 `bin -> usr/bin` 这会产生一个
+    // **空目录**，然后 `onEntry` 照常回调、解包照常"成功"。这三条断言守的就是"这件事不能
+    // 再发生"：不再有那个回退、失败会抛、链接是注入的（所以可以测失败路径）。
+    val extractorSource = File(
+        File(System.getProperty("pi.repo.root") ?: "."),
+        "app/src/main/kotlin/app/pi/runtime/TarExtractor.kt",
+    ).readText().replace(Regex("\\s+"), " ")
+    check(
+        "P36 the symlink copy fallback is gone",
+        extractorSource.contains("if (src.exists()) runCatching { Files.copy("),
+        false,
+    )
+    check(
+        "P37 a refused symlink is materialised, and only then can it fail",
+        extractorSource.contains("是符号链接 -> '\${pending.linkName}'，创建失败") &&
+            extractorSource.contains("materialiseLink(pending.target, pending.linkName)"),
+        true,
+    )
+    check(
+        "P37b the materialisation is two-phase (files first, then directories)",
+        extractorSource.contains("val (toFiles, toDirectories) = pendingMaterialise.partition") &&
+            extractorSource.contains("toFiles + toDirectories"),
+        true,
+    )
+    check(
+        "P37c hard links defer when their source is itself a pending link",
+        extractorSource.contains("pendingHardLinks += PendingHardLink(target, linkName, rawName, mode)"),
+        true,
+    )
+    check(
+        "P38 symlink creation is injectable (so the failure path is testable)",
+        extractorSource.contains("private val symlink: (link: Path, target: Path) -> Unit"),
+        true,
+    )
+    check(
+        "P39 a refused hard link throws too",
+        extractorSource.contains("是硬链接 -> '\$linkName'，但目标不存在或不是文件"),
+        true,
+    )
+    check(
+        "P40 the extractor counts the links it really created",
+        extractorSource.contains("val links: Long = 0L"),
+        true,
+    )
+
+    // ------------------------------------------------------- ③c' 链接被拒时，app 自己建的入口也要兜底
+    //
+    // 2026-11-04 真机报告：同一台拒绝 symlink 的设备上，tar 里的链接已经被铺成实物
+    // （失败页上 `/bin/bash`、`/bin/sh` 是普通文件），但 `guestSymlink` 仍然只
+    // `createSymbolicLink` 且吞掉失败 —— `/usr/local/bin/node` 根本不存在，node 载荷的闸门
+    // 报「关键文件不完整」，启动卡住。这四条钉的是第二处兜底。
+    val guestLinkBody = provisionerSource
+        .substringAfter("private fun guestSymlink(guestLink: String, guestTarget: String) {")
+        .substringBefore("private fun assetExists(")
+    check("P45 the guest link is verified to be a link", guestLinkBody.contains("isSymbolicLink(link.toPath())"), true)
+    check(
+        "P46 a refused guest link becomes a shell wrapper instead of nothing",
+        guestLinkBody.contains("#!/bin/sh") && guestLinkBody.contains("substitutedLinks += guestLink"),
+        true,
+    )
+    check(
+        "P47 the wrapper is reported on the boot screen (not silent)",
+        provisionerSource.contains("这台设备的应用数据目录不支持符号链接：已用壳脚本代替"),
+        true,
+    )
+    check(
+        "P48 node's three PATH entries still go through guestSymlink",
+        provisionerSource.contains("guestSymlink(\"/usr/local/bin/node\", \"/opt/node/bin/node\")") &&
+            provisionerSource.contains("guestSymlink(\"/usr/local/bin/npm\", \"/opt/node/bin/npm\")") &&
+            provisionerSource.contains("guestSymlink(\"/usr/local/bin/npx\", \"/opt/node/bin/npx\")"),
+        true,
+    )
+
+    // ------------------------------------------------------- ③c'' 戳记格式：两行，第一行才是版本
+    //
+    // 这一段是**真跑**的（`PiPaths` 在纯 JVM 闭包里），不是读源码：两行格式一旦被某个
+    // 读者当成整串比较，症状是"自检每次重启都重跑 / 重启总被拒"，而它不会报错。
+    run {
+        val base = File.createTempFile("pi-stamp", "").let { it.delete(); it.mkdirs(); it }
+        val paths = PiPaths(File(base, "files").also { it.mkdirs() }, File(base, "lib"))
+        paths.stampFile().parentFile?.mkdirs()
+        paths.stampFile().writeText("rev\n")
+        check("S1 an old one-line stamp still answers its revision", paths.stampRevision(), "rev")
+        paths.stampFile().writeText("rev\naudited\n")
+        check("S2 the audited marker does not change the revision", paths.stampRevision(), "rev")
+        paths.stampFile().delete()
+        check("S3 a missing stamp has no revision", paths.stampRevision(), null)
+        base.deleteRecursively()
+    }
+
+    // ------------------------------------------------------- ③c2 链接创建的两层
+    //
+    // 鸿蒙（nova 9）的实际报告：`/bin` 是真实目录、`/bin/bash` 是真实文件，说明
+    // `Files.createSymbolicLink` 被拒、走了复制兜底。而鸿蒙的 `java.nio.file` 链接实现并不
+    // 完整，`android.system.Os.symlink` 通常是好的 —— 补第二层，复制兜底退成最后手段。
+    check(
+        "P51 a refused NIO symlink falls back to Os.symlink",
+        provisionerSource.contains("android.system.Os.symlink") &&
+            provisionerSource.contains("Os.symlink: "),
+        true,
+    )
+    check(
+        "P52 the tar extractor goes through the same two tiers",
+        provisionerSource.contains("symlink = { link, target -> createLink("),
+        true,
+    )
+    check(
+        "P53 guestSymlink reuses createLink (no third copy of the rule)",
+        provisionerSource.contains("if (createLink(link, guestTarget) == null) return"),
+        true,
+    )
+
+    // ------------------------------------------------------- ③d 自检先查树，再怪 proot
+    //
+    // 老的自检**用 `/bin/bash` 去证明运行时可执行**：bash 没了，它自己就起不来，然后报一句
+    // 「proot 返回了非预期结果 (exit 1)」——既不说是哪个文件，也把"rootfs 不完整"说成了
+    // "proot 坏了"。第一份真机报告就是被这句话带偏的。所以自检的本地闸门必须
+    // (a) 存在、(b) 在 proot 之前、(c) 在"上次已通过"的戳记之前（旧戳记不许掩盖一棵已经
+    // 坏掉的树）。`RuntimeSelfCheck` 依赖 coroutines 与 proot 配方，裸 JVM 编译不了，因此
+    // 这里按源码文本钉位置。
+    val selfCheckSource = File(
+        File(System.getProperty("pi.repo.root") ?: "."),
+        "app/src/main/kotlin/app/pi/runtime/RuntimeSelfCheck.kt",
+    ).readText().replace(Regex("\\s+"), " ")
+    val localGateAt = selfCheckSource.indexOf(
+        "RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.CRITICAL_REQUIREMENTS)",
+    )
+    val prootAt = selfCheckSource.indexOf("GuestCommandLine.build(")
+    val stampPassAt = selfCheckSource.indexOf("passedAtRevision(revision)")
+    check("P41 the self-check has a local tree gate", localGateAt >= 0, true)
+    check("P42 and it runs before proot is spawned", localGateAt < prootAt, true)
+    // P43 的口径 2026-11-04 改过一次：闸门**必须**在 proot 之前（否则区分不了"文件缺"
+    // 与"proot 翻译坏了"），但**不必**在缓存戳记之前 —— 那样等于每次启动都探 4 条，让所有
+    // 正常用户为一棵残树付代价。现在它只在"马上要跑 proot"时执行（无缓存通过戳记）。
+    check("P43 and it is skipped when a pass stamp already answers", localGateAt > stampPassAt, true)
+    check(
+        "P44 an incomplete tree is its own status, not \"proot failed\"",
+        selfCheckSource.contains("Status.TreeIncomplete") &&
+            selfCheckSource.contains("运行时不完整（解包没有把 guest 起不来的文件写全）"),
+        true,
+    )
+
 
     root.deleteRecursively()
 

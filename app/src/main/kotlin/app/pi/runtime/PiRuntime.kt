@@ -492,6 +492,27 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     fun stampFile(): File = File(runtime, ".stamp")
 
     /**
+     * `.stamp` 的**版本**部分 —— 第一行；第二行（`audited`）是"这棵树已经被
+     * `RuntimeTreeAudit` 验过"的标记。
+     *
+     * 为什么要有第二行：启动快路径要靠"戳记相符"决定不解包，可戳记本身证明不了树是完整的
+     * （真机报告：戳记在、`/bin/bash` 不在）。以前每次启动都查 4 条关键路径，等于让**所有**
+     * 正常的手机为极少数残树付代价；现在验过一次就把 `audited` 写进戳记，之后不再探测。
+     * 老版本写的戳记只有第一行，所以升级后的**第一次**启动会验一次 —— 那是唯一会付代价的
+     * 时刻，也正是最需要验的那一次。
+     *
+     * 所有读戳记的地方都必须走这一个函数：`readText().trim()` 式的比较在写入第二行之后会
+     * 永远不相等（自检、proroot 探针缓存、重启判定都会因此每次都重做）。
+     */
+    fun stampRevision(): String? {
+        val file = stampFile()
+        if (!file.isFile) return null
+        return runCatching { file.readLines().firstOrNull()?.trim() }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
      * Marker recording which unpacked revision passed [RuntimeSelfCheck].
      *
      * A separate file from [stampFile], on purpose: that one means "this revision

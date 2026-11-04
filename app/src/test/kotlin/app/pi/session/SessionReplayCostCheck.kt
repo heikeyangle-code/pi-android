@@ -1183,13 +1183,10 @@ fun main() {
         .substringAfter("private fun attach(engine: PiEngineSession", "")
         .take(20_000)
     checkTrue("找到了 attach 的函数体", attachBody.isNotEmpty(), "marker not found")
-    val refreshAt = attachBody.indexOf("refreshState()")
-    val replayAt = attachBody.indexOf("replayHistory(engine)")
-    checkTrue(
-        "attach 里 refreshState() 在 replayHistory 之前（否则会拿上一个引擎的 meta 去读文件）",
-        refreshAt >= 0 && replayAt >= 0 && refreshAt < replayAt,
-        "refreshAt=$refreshAt replayAt=$replayAt",
-    )
+    // 2026-11-04：这条断言原先钉的是 `refreshState()`（fire-and-forget 版本）在 replay 之前。
+    // 那个版本**根本不构成顺序**（`call` 内部 launch 后立刻返回），所以真正的断言挪到下面
+    // 「先 await 新会话身份」那一节（`refreshStateNow`）；这里只保留"attach 不再有事后接回"。
+
     checkTrue(
         "attach 不再有「事后接回」这个形参（会话由 argv 钉住）",
         viewModelText.contains("private fun attach(engine: PiEngineSession) {"),
@@ -1338,6 +1335,54 @@ fun main() {
             ),
         )
     }
+
+    // ---------------- 8. 切工作区后 replay 必须用**新**会话的 meta（用户 2026-11-04 报）
+    //
+    // 用户原话：「在其中一个对话，停留在这里，切换工作区，回到界面还是老会话，但实际上
+    // 已经不是老会话了；得发上一句消息，它才会切换成新会话。」
+    //
+    // `call()` 是 fire-and-forget（内部 `viewModelScope.launch` 后立刻返回），所以
+    //
+    //     refreshState()        // 只是排了一次协程
+    //     replayHistory(engine) // 仍然用旧 meta 挑会话文件
+    //
+    // 两行相邻也**没有任何顺序保证**。replay 的源文件由 `meta.sessionFile` 决定，于是它读的是
+    // 上一个引擎那段会话的文件：屏幕上重新画出旧对话，而新引擎其实在一个全新的空会话上；要等
+    // 新会话的第一条 publication（`replaced = true`）才把屏幕换过去 —— 那正是「发一句才切换」。
+    //
+    // 修法是 `refreshStateNow()`（可 await 的版本）。这一节钉的是**顺序**，因为它是唯一在
+    // 本机可判的性质：真正的 RPC 时序只有真机能验证。
+    val attachReplayBody = viewModelText
+        .substringAfter("private fun attach(engine: PiEngineSession) {", "")
+        .take(24000)
+    checkTrue("找到了 attach 的函数体", attachReplayBody.isNotEmpty(), "marker not found")
+    val attachRefresh = attachReplayBody.indexOf("refreshStateNow(it)")
+    val attachReplay = attachReplayBody.indexOf("replayHistory(engine)")
+    checkTrue(
+        "attach 里先 await 新会话的身份，再 replay（否则 replay 读的是旧会话文件）",
+        attachRefresh >= 0 && attachReplay >= 0 && attachRefresh < attachReplay,
+        "refresh=$attachRefresh replay=$attachReplay",
+    )
+    checkTrue(
+        "attach 里不再有 fire-and-forget 的 refreshState()",
+        !attachReplayBody.contains("refreshState()"),
+    )
+    val replacedReplayBody = viewModelText
+        .substringAfter("private suspend fun afterSessionReplaced(", "")
+        .take(6000)
+    val replacedRefresh = replacedReplayBody.indexOf("refreshStateNow(it)")
+    val replacedReplay = replacedReplayBody.indexOf("replayHistory(engine, brandNew)")
+    checkTrue(
+        "afterSessionReplaced 同样先 await 再 replay（switch_session 之后不许画旧对话）",
+        replacedRefresh >= 0 && replacedReplay >= 0 && replacedRefresh < replacedReplay,
+        "refresh=$replacedRefresh replay=$replacedReplay",
+    )
+    checkTrue(
+        "可等待的版本真的在等 RPC（`loadState` 是 suspend 且被 await，不是又一次 launch）",
+        viewModelText.contains("private suspend fun refreshStateNow(api: PiEngineApi)") &&
+            viewModelText.contains("private suspend fun loadState(api: PiEngineApi)"),
+    )
+
     println()
     println("harness: ${if (failures == 0) "OK" else "FAILED ($failures)"}")
     if (failures != 0) kotlin.system.exitProcess(1)

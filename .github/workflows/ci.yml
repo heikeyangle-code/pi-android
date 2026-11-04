@@ -184,6 +184,53 @@ jobs:
       #     survive: 28.5 MiB does not equal 106 MB;
       #   * a ceiling on the APK itself, so a future packaging accident surfaces as
       #     a number rather than as a bug report from a phone.
+      # The APK has to carry a certificate, and it has to be the sideload one.
+      #
+      # This gate exists because a build reached devices **unsigned**: the installer said
+      # 「该安装包未包含任何证书」 and the only way past it was re-signing with MT Manager —
+      # while CI was green. Nothing here had ever looked at the signature, and the payload
+      # step below happily took `ls *.apk | head -1`, so an `-unsigned` output would have
+      # been inspected and uploaded like any other. Two assertions close that: no
+      # `*unsigned*` artefact may exist in the output directory, and the shipped APK's
+      # certificate must be `keystore/pi-sideload.jks` (whose SHA-256 is pinned below and
+      # whose private key is the only one existing installs can update over).
+      - name: Verify the release APK is signed with the sideload key
+        run: |
+          # `set -e` is on for `run:` steps, so every lookup below has to be allowed to fail
+          # *locally*: the first version of this step exited 2 with no output at all because
+          # `apksigner="$(ls -d ...)"` found nothing on the runner's SDK layout and killed
+          # the shell before the `if` that was supposed to explain it.
+          set -uo pipefail
+          sdk="${ANDROID_HOME:-${SDK:-}}"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null             | sort -V | tail -1)"
+          if [ -z "$apksigner" ] || [ ! -x "$apksigner" ]; then
+            echo "::error::no apksigner under ${sdk:-<unset SDK>}/build-tools; the signature can not be verified"
+            find "$sdk" -maxdepth 3 -name 'apksigner*' 2>/dev/null | head -5
+            exit 1
+          fi
+          echo "apksigner: $apksigner"
+          ls -l app/build/outputs/apk/release/
+          mapfile -t all < <(ls app/build/outputs/apk/release/*.apk 2>/dev/null || true)
+          if [ "${#all[@]}" -eq 0 ]; then
+            echo "::error::no APK under app/build/outputs/apk/release; assembleRelease did not produce one"
+            exit 1
+          fi
+          printf 'outputs: %s\n' "${all[@]}"
+          for f in "${all[@]}"; do
+            case "$f" in
+              *unsigned*)
+                echo "::error::assembleRelease produced $f; the signingConfig did not apply (keystore/pi-sideload.jks is committed, so the build lost it)"
+                exit 1
+                ;;
+            esac
+          done
+          apk="${all[0]}"
+          "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
+          expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
+          if ! grep -qi "$expected" /tmp/apksigner.txt; then
+            echo "::error::$apk is not signed with keystore/pi-sideload.jks; devices with the app installed could not update over it"
+            exit 1
+          fi
       - name: Verify runtime payloads are stored uncompressed and unrecompressed
         run: |
           set -euo pipefail
@@ -326,6 +373,20 @@ jobs:
         with:
           path: build/pure-checks
           key: pi-pure-checks-deps-${{ hashFiles('gradle/libs.versions.toml') }}
+      # `runtime-extract-real` unpacks the **real** Ubuntu base through the app's own
+      # `TarExtractor` and asserts the guest's own `/bin/bash` is there and executable.
+      # That is the check whose absence let a first install on a device report
+      # `proot error: '/bin/bash' not found` (2026-11-03) after a "successful" unpack.
+      # The URL comes from the lock file, so this download is the same bytes the APK
+      # carries; it fails the job if the pinned upstream is gone rather than silently
+      # skipping the harness.
+      - name: Fetch the pinned Ubuntu base payload
+        run: |
+          set -o pipefail
+          url="$(node -e 'process.stdout.write(require("./runtime.lock.json").artifacts.ubuntuBase.url)')"
+          mkdir -p build/downloads
+          curl -fsSL --retry 3 --retry-delay 2 -o build/downloads/ubuntu-base.tar.gz "$url"
+          ls -l build/downloads/ubuntu-base.tar.gz
       - name: Run app/src/test harnesses
         run: |
           set -o pipefail

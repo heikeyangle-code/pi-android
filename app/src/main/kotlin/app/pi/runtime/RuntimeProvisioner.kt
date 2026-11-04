@@ -159,6 +159,14 @@ class RuntimeProvisioner(
     private val payloadWarnings = mutableListOf<String>()
 
     /**
+     * 这台设备上"符号链接建不出来、改用壳脚本"的入口（`/usr/local/bin/node` 等）。
+     *
+     * 只在拒绝 `symlink(2)` 的设备上非空；`provision` 结束时把它变成启动页的一行提示 ——
+     * 用户需要知道为什么这里的 `node` 是个脚本，而不是链接。
+     */
+    private val substitutedLinks = mutableListOf<String>()
+
+    /**
      * Directories this attempt **kept** because they were not empty.
      *
      * The counterpart of [payloadWarnings], and deliberately not part of it: a directory that
@@ -215,12 +223,32 @@ class RuntimeProvisioner(
     suspend fun ensureReady(
         revision: String,
         rebuild: Boolean = false,
+        /**
+         * **不删数据的修复**：跳过"戳记相符就什么都不做"的快路径，把每个 payload 重新解包
+         * 一遍（覆盖写），再重写戳记。
+         *
+         * 为什么需要它：快路径只比 `<runtime>/.stamp` 与 payload 的摘要 —— 它证明的是
+         * "这个 APK 的运行时被解包过"，**不是**"现在这棵树还完整"。文件被删、被写坏、
+         * 被半途中断的解包留下空洞时，戳记仍然相符，于是「重试」永远返回成功、引擎永远
+         * 起不来，用户只剩「重建运行时」一条路 —— 而那条路会删掉他在 guest 里装的一切。
+         * 这一档填的就是中间那条：重新解包（不 wipe），把缺的/坏的补回来。
+         *
+         * 与 [rebuild] 的区别只有一处：**不调用 `wipe()`**。所以 `/usr/local`、`/root`、
+         * apt/pip/npm 装的东西都还在；代价是要重新解出全部 payload（首次安装那个量级），
+         * 因此它只该在"启动失败之后的那一次重试"上被触发，不在每次冷启动。
+         */
+        repair: Boolean = false,
         onStep: (Step) -> Unit = {},
     ): Result<ProvisionOutcome> = withContext(Dispatchers.IO) {
-        runCatching { provision(revision, rebuild, onStep) }
+        runCatching { provision(revision, rebuild, repair, onStep) }
     }
 
-    private fun provision(revision: String, rebuild: Boolean, onStep: (Step) -> Unit): ProvisionOutcome {
+    private fun provision(
+        revision: String,
+        rebuild: Boolean,
+        repair: Boolean,
+        onStep: (Step) -> Unit,
+    ): ProvisionOutcome {
         // ---------------------------------------------------------------- fast path
         // Byte-for-byte the boot this app has always had: read the 16-character
         // revision from the APK and compare it with `<files>/pi/runtime/.stamp`. Equal
@@ -231,8 +259,30 @@ class RuntimeProvisioner(
         //
         // `rebuild` deliberately bypasses it: a caller that decided the tree is broken
         // must be able to rebuild a tree whose stamp happens to match.
-        if (!rebuild && paths.rootfs.isDirectory && isStampCurrent(revision)) {
-            return finishCurrent(revision, migration = false, onStep)
+        //
+        // ...and a current stamp is not proof that the tree is *complete*. A device report
+        // (2026-11-03) had a finished unpack, a current stamp, and a rootfs without
+        // `/bin/bash`: proot then fails at `which()` with "not found", every later boot
+        // takes this early return, and only 「重建运行时」 — which deletes everything the user
+        // installed inside the guest — could get past it. So this path asks
+        // [RuntimeTreeAudit.criticalProblems] first (four probes on paths the guest cannot
+        // run without, a few microseconds against a boot) and treats a tree that lacks any
+        // of them as "not provisioned": `treeIncomplete` below plans every payload, which
+        // extracts **over** the tree and deletes nothing.
+        if (!rebuild && !repair && paths.rootfs.isDirectory) {
+            val stamp = stampState()
+            // Once a tree has been verified, the verdict is recorded in the stamp's second
+            // line. Probing four paths on **every** launch would make every healthy phone
+            // pay for a defect that happens once per install — and a tree this version
+            // wrote was already gated at unpack time. So: probe only for a stamp that does
+            // not carry the marker (one written by an older version, or one whose marker
+            // never landed), and write it as soon as the tree answers.
+            if (stamp.revision == revision) {
+                if (stamp.audited || RuntimeTreeAudit.criticalProblems(paths.rootfs).isEmpty()) {
+                    if (!stamp.audited) writeStamp(revision)
+                    return finishCurrent(revision, migration = false, onStep)
+                }
+            }
         }
 
         // `<files>/pi` may not exist yet on a first boot, and `usableSpace` on a path
@@ -257,11 +307,19 @@ class RuntimeProvisioner(
         // it as "every payload changed" re-extracts over what is there (nothing is
         // deleted), which repairs it without needing the explicit rebuild.
         val rootfsMissing = !paths.rootfs.isDirectory
+        // 有根目录、却缺了 guest 起不来必须要的那几个文件 —— 上面快路径的判据，这里再算一次
+        // （快路径只在戳记相符时才会走到；走到这里说明戳记不符、或者戳记相符但树是残的）。
+        // 与 `rootfsMissing` 同一个处置：全部载荷覆盖解压一遍，不删任何东西。
+        val treeIncomplete = !rootfsMissing && RuntimeTreeAudit.criticalProblems(paths.rootfs).isNotEmpty()
 
         // A warning accumulator, cleared per attempt: same shape and same reason as
         // [payloadReport] (written on this path, read on this path only).
         payloadWarnings.clear()
         keptDirectories.clear()
+        // Per attempt like the warnings: this list is what the boot screen reports as
+        // "N 个入口用壳脚本代替", and leaving it to accumulate would report the count of every
+        // repair this process ever did.
+        substitutedLinks.clear()
 
         // P1b: a `wipe()` killed between its move-out and its move-back leaves the user's
         // sessions/workspaces parked in `<files>/pi/.preserve`, and nothing else in this app
@@ -286,7 +344,12 @@ class RuntimeProvisioner(
         val packagedDigests = PAYLOADS.associateWith { packagedDigest(it) }
         val plan: List<Payload> = when {
             rebuild -> PAYLOADS
+            // 不删数据的修复：每个 payload 都重解一遍（覆盖写），把缺失/损坏的文件补回来。
+            repair -> PAYLOADS
             rootfsMissing -> PAYLOADS
+            // 残树（戳记在、文件缺）：同样全部重解一遍。`migration` 之前，因为它说的是
+            // "这棵树现在不能用"，而迁移只是"这是第一次用新格式"。
+            treeIncomplete -> PAYLOADS
             migration -> PAYLOADS
             else -> PAYLOADS.filter { payload ->
                 // An APK that carries no engine asset (the assembler always writes one,
@@ -380,6 +443,28 @@ class RuntimeProvisioner(
         for (payload in plan) {
             next()
             extractPayloadOver(payload)
+            // ---------------------------------------------- the gate, per payload
+            // **Before** the digest is recorded, and that order is the whole point. The
+            // extractor now throws on a link it could not create, but "no exception" is
+            // not yet "the payload's files are usable": a short write, a copy that landed
+            // as an empty directory, an exec bit the filesystem refused, or a guest-absolute
+            // symlink pointing at something the payload never wrote all reach this line
+            // silently. So each payload is asked about *its own* files
+            // ([RuntimeTreeAudit.requirementsFor]), and a payload that cannot answer is a
+            // failure of this boot — its digest is never written, so the next launch
+            // re-extracts exactly it (nothing is deleted, no rebuild needed).
+            //
+            // The engine payload is exempt only when the APK carries no engine asset:
+            // `extractEngine` treats that as provisionable (a hand-assembled package), and
+            // the host's own "引擎未安装" check is the card for it.
+            val meta = payloadMetaName(payload)
+            val gated = !(payload.name == ENGINE_ARCHIVE && !assetExists("runtime/$ENGINE_ARCHIVE"))
+            if (gated) {
+                val problems = RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.requirementsFor(meta))
+                if (problems.isNotEmpty()) {
+                    throw ProvisioningException(RuntimeTreeAudit.payloadFailure(meta, paths.rootfs, problems))
+                }
+            }
             // Order matters: extract over first (the new bytes are in place), then delete
             // only what the old list owned and the new one does not, then record the new
             // state. Recording before pruning would lose the old list.
@@ -395,6 +480,37 @@ class RuntimeProvisioner(
         // One line for the directories this pass deliberately left alone (user content inside
         // them). Here rather than at the end so a later failure cannot swallow it.
         reportKeptDirectories()
+
+        // ------------------------------------------------ the tree, verified, not assumed
+        // Everything above can report success while the tree is still unusable: the
+        // archives are read, the prunes run, the digests land — and the guest's own
+        // `/bin/bash` is missing, which is what a device reported (2026-11-03) with a
+        // complete-looking unpack and a `not found` from proot's `which()`.
+        //
+        // So the *slow* path — the one that just wrote several hundred megabytes — ends by
+        // asking the tree, not the bookkeeping: repair the four usrmerge links whose target
+        // is present but whose link is missing or dangling ([RuntimeTreeAudit.repairUsrMergeLinks];
+        // the one failure mode that is about the link and not the bytes), then re-check the
+        // critical paths. Whatever is still missing at that point is not something another
+        // retry fixes by itself, so it fails **here**, before the config write and before the
+        // stamp: the boot card then says which path, what `/bin` actually is, and what the
+        // rootfs contains, instead of proot's two-line "not found" three steps later.
+        if (substitutedLinks.isNotEmpty()) {
+            payloadWarnings +=
+                "这台设备的应用数据目录不支持符号链接：已用壳脚本代替 " +
+                    substitutedLinks.size + " 个入口（" +
+                    substitutedLinks.take(5).joinToString("、") + "）"
+        }
+        val linkRepair = RuntimeTreeAudit.repairUsrMergeLinks(paths.rootfs)
+        if (linkRepair.repaired.isNotEmpty()) {
+            payloadWarnings += "补回了 usrmerge 链接：" + linkRepair.repaired.joinToString("、") { "/$it" }
+        }
+        val problems = RuntimeTreeAudit.criticalProblems(paths.rootfs)
+        if (problems.isNotEmpty()) {
+            throw ProvisioningException(
+                RuntimeTreeAudit.failure(paths.rootfs, problems, linkRepair),
+            )
+        }
 
         // The guest's required configuration (`/etc/resolv.conf`, `/etc/hosts`, the two
         // directories) and the `/etc/group` repair, through the same idempotent function the
@@ -912,7 +1028,26 @@ class RuntimeProvisioner(
         // with the contents of the package attached.
         val stream = openPayload(archive)
         try {
-            stream.use { TarExtractor(into).extractGzip(it) }
+            stream.use { input ->
+                // Same two-tier creation as `guestSymlink`: HarmonyOS's `java.nio` symlink
+                // support is incomplete while the syscall works, and the extractor's
+                // copy fallback is the expensive last resort, not the first answer.
+                val result = TarExtractor(
+                    into,
+                    symlink = { link, target -> createLink(link.toFile(), target.toString())?.let { message ->
+                        throw IOException(message)
+                    } },
+                ).extractGzip(input)
+                // The fallback in `TarExtractor` is what makes a device that refuses
+                // `symlink(2)` still boot (links become copies). It is not silent: the
+                // user sees one line on the boot screen, because it costs disk and it is
+                // the answer to "why is my runtime bigger here".
+                if (result.degraded > 0L) {
+                    payloadWarnings +=
+                        "$assetName：这台设备的应用数据目录不支持符号链接，" +
+                            "已用复制代替 ${result.degraded} 条（运行时可用，代价是磁盘）"
+                }
+            }
         } catch (e: IOException) {
             throw unpackFailure(assetName, e)
         } catch (e: IllegalStateException) {
@@ -1808,11 +1943,74 @@ class RuntimeProvisioner(
      * Only symlinks that Android itself follows — the `libtalloc.so.2` alias in
      * [PiPaths.lib], which lives outside the rootfs — may name host paths.
      */
+    /**
+     * 把 [guestTarget] 暴露在 guest 的 [guestLink] 上 —— 链接，或者这台设备上的等价物。
+     *
+     * ## 为什么不能只 `createSymbolicLink`（2026-11-04 真机报告）
+     *
+     * 那台设备的应用数据目录**拒绝 `symlink(2)`**：载荷里的链接由 `TarExtractor` 铺成实物
+     * （所以失败页上 `/bin/bash`、`/bin/sh` 都是普通文件、`/bin` 是目录），但这里仍然直接
+     * `createSymbolicLink` 而且**吞掉失败** —— `/usr/local/bin/node` 于是根本不存在，node
+     * 载荷的闸门报「关键文件不完整：/usr/local/bin/node 不存在」，启动被卡住。同一个设备上
+     * 一半修好了、另一半没有，这是我漏掉的第二处。
+     *
+     * ## 为什么是壳脚本、不是复制
+     *
+     * 目标都很大：`/opt/node/bin/node` 在真机上是上百 MB 到 GB 级，`node`/`npm`/`npx` 三份
+     * 复制会把 rootfs 撑大几百 MB。壳脚本只有几十字节，语义等价（`exec` 目标、把参数原样
+     * 转过去），而且 `#!/bin/sh` 本身在这台设备上是真实文件（`bin/sh` 已被铺开）。
+     *
+     * 壳脚本写不进去（磁盘满、目录只读）才是真失败：那时记一条警告，载荷闸门会在同一轮
+     * 把缺哪个路径报出来，启动失败且**不写** digest/stamp。
+     */
+    /**
+     * 建一条符号链接，三层：`java.nio` → `Os.symlink` → 交给调用方兜底。
+     *
+     * 第二层是为鸿蒙（nova 9 / HarmonyOS，安卓 10 底座）加的：那台设备的失败页显示
+     * `/bin` 是**真实目录**、`/bin/bash` 与 `/bin/sh` 是真实文件 —— 说明 `Files.createSymbolicLink`
+     * 被拒绝了，载荷因此走了复制兜底。而 `java.nio.file` 的链接实现在鸿蒙上并不完整，
+     * `android.system.Os.symlink`（一条裸 syscall）通常是好的。先试 NIO、再试 syscall，
+     * 两层都失败才让调用方铺实物：这样那台设备不需要为"一半修好"付磁盘和壳脚本的代价，
+     * 而真正不支持链接的存储仍然由兜底接住。
+     *
+     * 返回 null 表示成功（链接已建立并且确实是链接）；否则返回一句话，调用方据此兜底。
+     */
+    private fun createLink(link: File, target: String): String? {
+        val linkPath = link.toPath()
+        val targetPath = java.nio.file.Path.of(target)
+        val nio = runCatching { java.nio.file.Files.createSymbolicLink(linkPath, targetPath) }
+        val linked = nio.isSuccess && runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }
+            .getOrDefault(false)
+        if (linked) return null
+        if (runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }.getOrDefault(false)) {
+            runCatching { java.nio.file.Files.deleteIfExists(linkPath) }
+        }
+        val viaOs = runCatching { android.system.Os.symlink(target, link.path) }
+        if (viaOs.isSuccess && runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }
+                .getOrDefault(false)
+        ) {
+            return null
+        }
+        return "Files.createSymbolicLink: ${nio.exceptionOrNull()?.let { it::class.java.simpleName + ": " + it.message }}; " +
+            "Os.symlink: ${viaOs.exceptionOrNull()?.let { it::class.java.simpleName + ": " + it.message }}"
+    }
+
     private fun guestSymlink(guestLink: String, guestTarget: String) {
         val link = File(paths.rootfs, guestLink.removePrefix("/"))
         link.parentFile?.mkdirs()
         if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
-        runCatching { java.nio.file.Files.createSymbolicLink(link.toPath(), java.nio.file.Path.of(guestTarget)) }
+        if (createLink(link, guestTarget) == null) return
+        val wrapped = runCatching {
+            link.writeText("#!/bin/sh\nexec $guestTarget \"\$@\"\n")
+            link.setExecutable(true, false)
+            true
+        }.getOrDefault(false)
+        if (wrapped) {
+            substitutedLinks += guestLink
+        } else {
+            payloadWarnings +=
+                "没能建立 $guestLink -> $guestTarget（设备不支持符号链接，壳脚本也写不进去）"
+        }
     }
 
     private fun assetExists(name: String): Boolean = runCatching {
@@ -1822,10 +2020,26 @@ class RuntimeProvisioner(
 
     private fun stampFile() = paths.stampFile()
 
-    private fun isStampCurrent(revision: String): Boolean {
+    /**
+     * `.stamp` 的两部分，**一次读出来**：第一行是版本（`PiPaths.stampRevision` 的同一口径），
+     * 第二行是 `RuntimeTreeAudit` 的 `audited` 标记。
+     *
+     * 快路径以前读两次（一次比版本、一次看标记），两次读的是同一个二十来字节的文件；合成一次
+     * 不是性能问题，是让"戳记有什么"只有一个答案，免得以后的读者又拼出第三种口径。
+     */
+    private data class StampState(val revision: String?, val audited: Boolean)
+
+    private fun stampState(): StampState {
         val stamp = stampFile()
-        return stamp.isFile && stamp.readText().trim() == revision
+        if (!stamp.isFile) return StampState(null, false)
+        val lines = runCatching { stamp.readLines() }.getOrNull() ?: return StampState(null, false)
+        return StampState(
+            revision = lines.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() },
+            audited = lines.getOrNull(1)?.trim() == AUDITED_LINE,
+        )
     }
+
+    private fun isStampCurrent(revision: String): Boolean = stampState().revision == revision
 
     /**
      * Write the stamp that says this revision is unpacked. Returns null on success, or
@@ -1846,7 +2060,10 @@ class RuntimeProvisioner(
      * stamp as empty on the next one.
      */
     private fun writeStamp(revision: String): String? =
-        if (writeStampAtomically(stampFile(), revision + "\n")) {
+        // Two lines: the revision every reader compares (`PiPaths.stampRevision` takes the
+        // first), then the marker that says this tree was verified — which is what keeps
+        // the fast path from probing on every launch.
+        if (writeStampAtomically(stampFile(), revision + "\n" + AUDITED_LINE + "\n")) {
             null
         } else {
             "运行时版本戳记写入失败（${stampFile().absolutePath}）：本次解包可用，" +
@@ -1854,6 +2071,9 @@ class RuntimeProvisioner(
         }
 
     companion object {
+        /** `.stamp` 的第二行：这棵树被 `RuntimeTreeAudit` 验过（见 `stampAudited`）。 */
+        private const val AUDITED_LINE = "audited-1"
+
         /** `logcat` tag for the one line [reportKeptDirectories] emits. */
         private const val TAG = "RuntimeProvisioner"
 

@@ -38,6 +38,20 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         NotProvisioned,
 
         /**
+         * The tree is there but a file the guest cannot run without is missing or unusable
+         * — the current `proot error: '/bin/bash' not found` class of failure.
+         *
+         * Why this is its own status rather than "proot failed": the old check started
+         * `/bin/bash` to see whether the runtime worked, so a missing bash reported itself
+         * as `proot 返回了非预期结果 (exit 1)` — a sentence that names neither the file nor
+         * the cause, and that sent the first device report down the wrong path. The local
+         * check below ([RuntimeTreeAudit.failures]) answers this **before** spawning proot,
+         * so the card says "缺 /bin/bash" instead, and proot is only blamed for things that
+         * are actually proot's.
+         */
+        TreeIncomplete,
+
+        /**
          * proot itself could not start. Usually SELinux denying `ptrace` (hardened
          * ROMs), a missing loader, or the native library not extracted.
          */
@@ -88,11 +102,34 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         // pass. Nothing is written on a failure (see the end of this function), so a
         // failure is never cached, and `RuntimeProvisioner.wipe()` removes the stamp
         // together with the tree it describes.
-        val revision = runCatching { paths.stampFile().readText().trim() }.getOrNull()
+        val revision = paths.stampRevision()
         if (!revision.isNullOrEmpty() && passedAtRevision(revision)) {
             return@withContext Outcome(
                 Status.Ok,
                 "运行时可用（这个解包版本上次已通过自检，本次没有重复探测）",
+            )
+        }
+
+        // The tree itself, before proot is asked to run anything out of it — and **after**
+        // the pass stamp, which is what keeps this off the per-boot path.
+        //
+        // Why that order: a pass at this revision means a proot guest really executed a
+        // binary here, which is a stronger statement than "the files are there" — and the
+        // provisioner already gates every unpack and records `audited` in the stamp. So the
+        // local check is only worth running when we are about to pay for a proot probe
+        // anyway (first boot after an update, or a tree whose pass stamp is missing). Before
+        // this reordering it ran on **every** boot: four `stat`s plus the exec bit for every
+        // user, forever, to re-learn what the pass stamp had already answered.
+        //
+        // It still runs before proot, which is the point of having it: proot's `not found`
+        // cannot distinguish "this rootfs has no /bin/bash" from "proot cannot translate
+        // paths on this ROM", and the first device report of this class was read as the
+        // second for exactly that reason.
+        val problems = RuntimeTreeAudit.failures(paths.rootfs, RuntimeTreeAudit.CRITICAL_REQUIREMENTS)
+        if (problems.isNotEmpty()) {
+            return@withContext Outcome(
+                Status.TreeIncomplete,
+                "运行时不完整（解包没有把 guest 起不来的文件写全）：\n" + problems.joinToString("\n"),
             )
         }
 
@@ -261,6 +298,8 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
 
     /** Has a probe already passed at this unpacked revision? */
     private fun passedAtRevision(revision: String): Boolean = runCatching {
+        // `revision` is `PiPaths.stampRevision()` — the **first line** of `.stamp`. This
+        // file's own format is unchanged (one line), so it is compared whole.
         val stamp = paths.selfCheckStamp()
         stamp.isFile && stamp.readText().trim() == revision
     }.getOrDefault(false)

@@ -833,6 +833,35 @@ run_harness runtime-payload-state \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt"
 
+# app.pi.runtime: 「解包说成功、树里却少了 guest 起不来的文件」的判据与修复
+# （`RuntimeTreeAudit`）。真机报告 2026-11-03：刚安装的设备解包走完、戳记相符，proot 却报
+# `'/bin/bash' not found`，此后每次启动都被快路径判成"已就绪"。所以这份 harness 真的建
+# 目录和符号链接，把四种形状各造一遍：完整树（链接在）一个都不许报；`bin` 链接缺失/悬空
+# 必须被修好且第二次调用不再写；`bin` 是**真实目录**时绝不删除（那可能是用户自己的文件），
+# 只记录；目标目录不在时不动链接、也不假装失败。失败页正文同样要能独立成句（缺哪个、
+# `/bin` 是什么、不是权限问题、重建能不能救），因为那是用户唯一能截图带走的东西。
+run_harness runtime-tree-audit \
+  app.pi.runtime.RuntimeTreeAuditCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimeTreeAuditCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeTreeAudit.kt"
+
+# app.pi.runtime: **真实载荷**过一遍 app 自己的解包器（`TarExtractor`）。上面那条
+# `runtime-tree-audit` 建的是手造的小树，`runtime-payload-state` 读的是源码文本 —— 没有一条
+# 证明过 APK 里那份 30 MB 的 Ubuntu base 解出来之后真的有可执行的 `/bin/bash`。2026-11-03 的
+# 首次安装故障（解包"成功"、`.stamp` 已写、proot 报 `'/bin/bash' not found`）正是从这个缺口
+# 里出来的。这条检查：真实解一遍 → 断言 `bin -> usr/bin`、bash/sh/env/dash 可执行、两条硬
+# 链接（perl5.38.2 / uncompress）落成文件 → 让生产代码里的完整性闸门对真实树答"完整" →
+# 再用一个"建不出链接"的注入 linker 断言解包**失败并点名条目**（老代码在这里退回复制、
+# 造出空目录还继续）。
+#
+# 载荷不在（本地没跑 assembler）时它打印 `harness: OK (skipped …)`：价值在 CI，CI 的
+# pure-checks 作业在跑本脚本之前会把它下载到 `build/downloads/ubuntu-base.tar.gz`。
+run_harness runtime-extract-real \
+  app.pi.runtime.TarExtractorRealPayloadCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/TarExtractorRealPayloadCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TarExtractor.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeTreeAudit.kt"
+
 # app.pi.runtime: the durable boot audit (`BootAudit` + `TreeSnapshot`), the only evidence a
 # user can hand us about an update that deleted their workspace root. Every way it can lie is
 # silent, and each one is a check here: a budgeted walk that stopped at 2000 entries without
@@ -868,6 +897,26 @@ run_harness engine-exit-cause \
   app.pi.engine.EngineExitCauseCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/engine/EngineExitCauseCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/engine/EngineExitCause.kt"
+
+# app.pi.engine: 引擎**中途退出**之后是静默重启还是把失败页交出去。这条判定决定了用户
+# 会不会在干活的途中被一整屏"引擎没有在运行 + 重建运行时"打断 —— 而那个按钮会删掉 guest
+# 里装的 apt/pip/npm 包，却修不好一次被系统回收的进程（用户报的「两个小时一直弹」就是
+# 这一圈）。预算（两次）、间隔（800 ms）、以及"配置类错误一次都不重试"是这里钉死的。
+run_harness engine-crash-recovery \
+  app.pi.engine.EngineCrashRecoveryCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/EngineCrashRecoveryCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineCrashRecovery.kt"
+
+# app.pi.engine: 失败页**说什么**。以前所有失败共用一句「引擎没有在运行」和同一组按钮；
+# 现在按证据分成六类（运行环境没装好 / 切工作区失败 / 被系统结束 / 内存耗尽 / 参数或扩展
+# 错 / 普通崩溃），每一类有自己的标题与解释，且只有第一类提供「重建运行时」。误判的两个
+# 方向都会伤人：把"被系统结束"说成"环境坏了"会骗用户删掉环境；把"参数写错"说成"内存不足"
+# 会让用户去清内存。夹具逐条钉住退出码与 stderr 的判据，以及"六个标题必须互不相同"。
+run_harness engine-failure \
+  app.pi.engine.EngineFailureCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/EngineFailureCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineFailure.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineCrashRecovery.kt"
 
 # app.pi.ui.blocks: P2-1's per-tool result parser (`docs/capability-gap.md` §4.9).
 # Every rule in `ToolOutputParse.kt` is a claim about text pi wrote somewhere else — grep's

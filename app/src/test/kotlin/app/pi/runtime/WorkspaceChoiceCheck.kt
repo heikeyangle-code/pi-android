@@ -560,4 +560,57 @@ private fun pickChecks() {
         }
     }
     check("all four inputs agree with the rule", wrong, 0)
+
+    // ------------------------------------------------------------------ 反向映射
+    // 会话头里记的 guest cwd 回到工作区名字。**点开别的工作区的会话**时靠它把 App 的
+    // 当前工作区对齐（pi 已经按会话 cwd 切过去了）。判据必须与 `GuestWorkspacePath.under`
+    // 严格互为逆运算，否则 App 会把芯片指到一个不存在的名字上。
+    run {
+        val root = "pi/workspaces"
+        check("owned: workspace-2", WorkspaceChoice.nameForGuestCwd("/workspace/pi/workspaces/workspace-2", root), "workspace-2")
+        check("owned: the default", WorkspaceChoice.nameForGuestCwd("/workspace/pi/workspaces/workspace-1", root), "workspace-1")
+        check("owned: /workspace itself is not a workspace", WorkspaceChoice.nameForGuestCwd("/workspace", root), null)
+        check("owned: a nested dir is not a workspace name", WorkspaceChoice.nameForGuestCwd("/workspace/pi/workspaces/workspace-1/sub", root), null)
+        check("a path outside /workspace is ignored", WorkspaceChoice.nameForGuestCwd("/root", root), null)
+        check("an empty guest path is ignored", WorkspaceChoice.nameForGuestCwd("", root), null)
+        // 外部工作区：guest 拼法 = `/workspace` + 宿主绝对路径。
+        check(
+            "external: a phone directory maps back to its host path",
+            WorkspaceChoice.nameForGuestCwd("/workspace/storage/emulated/0/Proj", root),
+            "/storage/emulated/0/Proj",
+        )
+        // 与正向规则互为逆运算：两边都用同一组常量，谁改了另一个就要红。
+        check(
+            "round trip: owned",
+            WorkspaceChoice.nameForGuestCwd(
+                GuestWorkspacePath.under("/x/workspace", "/x/workspace/pi/workspaces/workspace-3"),
+                root,
+            ),
+            "workspace-3",
+        )
+        // 旧拼法（2026-09-23 之前记的是宿主路径）—— 用户列表里还有这类会话。
+        check(
+            "legacy: a host-spelled workspace still maps",
+            WorkspaceChoice.nameForGuestCwd("/data/user/0/app.pi/files/pi/workspaces/workspace-4", root),
+            "workspace-4",
+        )
+        check(
+            "legacy: a host-spelled external directory maps to itself",
+            WorkspaceChoice.nameForGuestCwd("/storage/emulated/0/Old Proj", root),
+            "/storage/emulated/0/Old Proj",
+        )
+        check(
+            "legacy: a system path is still refused",
+            WorkspaceChoice.nameForGuestCwd("/data/data/app.pi/files/pi", root),
+            null,
+        )
+        check(
+            "round trip: external",
+            WorkspaceChoice.nameForGuestCwd(
+                GuestWorkspacePath.under("/x/workspace", "/storage/emulated/0/A b"),
+                root,
+            ),
+            "/storage/emulated/0/A b",
+        )
+    }
 }
