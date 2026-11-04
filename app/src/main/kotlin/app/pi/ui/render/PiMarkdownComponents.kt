@@ -473,6 +473,12 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
     // 白名单拒绝的块、超限的块全都会连同一行原因**原样显示 [text]**，与上面那段
     // 「pi 把原文当文字排出来」的契约在失败路径上完全一致。也就是说这一步只是让
     // **能安全画出来的** HTML 真的画出来，画不出来时的屏幕与 pi 逐字节相同。
+    // 整块就是一个内联 `<svg>…</svg>`：HTML 策略会把 svg 标签整个剥掉、只剩里面的文字，
+    // 画出来是一堆无意义的字。交给 SVG 渲染器（它有自己的消毒器、尺寸上限和源码回退）。
+    if (isSingleSvgRoot(text)) {
+        PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
+        return
+    }
     PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
@@ -1960,4 +1966,14 @@ private fun buildPiCodeText(
         }
         addStyle(style, start, end)
     }
+}
+
+/** 文本以 `<svg` 开头、且只有这一个 svg 根（可以尚未闭合：流式中）。 */
+private fun isSingleSvgRoot(text: String): Boolean {
+    val head = text.trimStart()
+    if (!head.startsWith("<svg", ignoreCase = true)) return false
+    if (head.length > 4 && !(head[4].isWhitespace() || head[4] == '>' || head[4] == '/')) return false
+    val close = head.lastIndexOf("</svg>", ignoreCase = true)
+    // 允许嵌套 svg（next>0 且在 close 之前）；不允许根闭合之后还有别的内容。
+    return close < 0 || head.substring(close + 6).isBlank()
 }
