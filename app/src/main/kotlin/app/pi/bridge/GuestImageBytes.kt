@@ -436,11 +436,26 @@ internal object GuestImageBytes {
      * "这一次取字节"的时间，排队等许可的时间不该从网络预算里扣。
      */
     private suspend fun fetchOverNetwork(uri: URI): ByteArray? = remoteFetchGate.withPermit {
+        // `deadlineNanos` 在这里算而不是在调用方：它量的是"这一次取字节"的时间，排队等许可
+        // 的时间不该从网络预算里扣。
         val deadlineNanos = System.nanoTime() + TOTAL_TIMEOUT_MS * 1_000_000
-        // 手动跟跳转（最多 5 跳）：`HttpURLConnection` 的自动跟随**不会**跨协议，
-        // 于是 `http://…` → `https://…`（现在几乎所有图床的第一跳）会停在 301 上，
-        // 被上面当成「HTTP 301」失败。https → http 的降级仍然拒绝。
-        var current = uri
+        fetchFollowingRedirects(uri, deadlineNanos)
+    }
+
+    /**
+     * 跟完跳转之后的 `GET`：手动跟，最多 [MAX_REDIRECTS] 跳。
+     *
+     * 为什么手动：`HttpURLConnection` 的自动跟随**不会**跨协议，于是 `http://…` →
+     * `https://…`（现在几乎所有图床的第一跳）会停在 301 上，被当成「HTTP 301」失败。
+     * https → http 的降级仍然拒绝。
+     *
+     * 为什么是独立函数而不是写在 `withPermit` 的 lambda 里：`while (true)` 在 lambda 里的
+     * 类型是 `Unit`，而 lambda 的返回类型是 `ByteArray?` —— 合并进来的那一版就是这么写的，
+     * CI 直接报 `Return type mismatch: expected 'ByteArray?', actual 'Unit'`。放在一个声明了
+     * 返回类型的函数里，`while (true)` 才被当作"不会正常结束"。
+     */
+    private suspend fun fetchFollowingRedirects(start: URI, deadlineNanos: Long): ByteArray? {
+        var current = start
         var hops = 0
         while (true) {
             val connection = (current.toURL().openConnection() as HttpURLConnection).apply {
@@ -458,35 +473,35 @@ internal object GuestImageBytes {
                 val status = connection.responseCode
                 if (status in REDIRECT_STATUSES) {
                     val location = connection.getHeaderField("Location")
-                        ?: return@withPermit fail("远端图片跳转（HTTP $status）没有 Location")
-                    if (++hops > MAX_REDIRECTS) return@withPermit fail("远端图片跳转超过 $MAX_REDIRECTS 次")
+                        ?: return fail("远端图片跳转（HTTP $status）没有 Location")
+                    if (++hops > MAX_REDIRECTS) return fail("远端图片跳转超过 $MAX_REDIRECTS 次")
                     val next = runCatching { current.resolve(location.trim()) }.getOrNull()
-                        ?: return@withPermit fail("远端图片跳转目标无法解析")
+                        ?: return fail("远端图片跳转目标无法解析")
                     val scheme = next.scheme?.lowercase()
                     if (scheme != "http" && scheme != "https") {
-                        return@withPermit fail("远端图片跳转到不支持的协议：$scheme")
+                        return fail("远端图片跳转到不支持的协议：$scheme")
                     }
                     if (current.scheme.equals("https", true) && scheme == "http") {
-                        return@withPermit fail("远端图片从 https 跳转到 http，拒绝降级")
+                        return fail("远端图片从 https 跳转到 http，拒绝降级")
                     }
-                    if (!next.userInfo.isNullOrEmpty()) return@withPermit fail("远端图片跳转目标内嵌凭据，拒绝")
+                    if (!next.userInfo.isNullOrEmpty()) return fail("远端图片跳转目标内嵌凭据，拒绝")
                     current = next
                     continue
                 }
                 if (status !in 200..299) {
-                    return@withPermit fail("远端图片返回 HTTP $status：${current.host}")
+                    return fail("远端图片返回 HTTP $status：${current.host}")
                 }
                 // 声明的大小先挡一道：一个 500 MB 的响应不必先下载 8 MiB 才知道它太大。
                 val declared = connection.contentLengthLong
                 if (declared > MAX_BYTES) {
-                    return@withPermit fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+                    return fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
                 }
-                return@withPermit readBounded(connection.inputStream, declared, deadlineNanos)
+                return readBounded(connection.inputStream, declared, deadlineNanos)
             } catch (cancel: CancellationException) {
                 // 与 `load` 里同一条规矩：取消照原样抛，别变成一条假的失败原因。
                 throw cancel
             } catch (error: Exception) {
-                return@withPermit fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
+                return fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
             } finally {
                 connection.disconnect()
             }
