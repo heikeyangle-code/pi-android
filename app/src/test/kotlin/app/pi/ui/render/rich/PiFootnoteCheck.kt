@@ -297,9 +297,9 @@ fun main() {
             null,
         )
         check(
-            "I3 an unreferenced definition is not listed",
+            "I3 an unreferenced definition is still listed, after the referenced ones",
             PiFootnoteMarkdown.rewrite("正文[^a]\n\n[^a]: A\n[^b]: B"),
-            "正文¹\n\n---\n\n1. A\n",
+            "正文¹\n\n---\n\n1. A\n2. B\n",
         )
         check(
             "I4 two references keep document order and the original body",

@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,9 +72,11 @@ fun PiYamlTreeView(
     modifier: Modifier = Modifier,
 ) {
     val limits = remember { YamlTreeLimits() }
-    val result = remember(source, settled) { PiYamlTree.parse(source, settled, limits) }
+    // 解析放后台并缓存（SnakeYAML 在主线程上最多跑 256 KiB），滚回来不重解析。
+    val result = rememberTreeParse("yaml", source, settled) { PiYamlTree.parse(source, settled, limits) }
     val tree = result as? YamlTreeResult.Tree
-    var mode by remember(source, initialMode) { mutableStateOf(initialMode) }
+    // 读者的「源码 / 树」选择：滚出屏幕再回来必须还在。
+    var mode by rememberSaveable(source, initialMode) { mutableStateOf(initialMode) }
 
     val clipboard = LocalClipboardManager.current
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -89,6 +92,7 @@ fun PiYamlTreeView(
     val status = when {
         currentFeedback != null -> currentFeedback
         tree != null -> "${tree.nodeCount} 个节点"
+        result == null -> "解析中…"
         mode == PiTreeMode.Tree && result is YamlTreeResult.Failure ->
             yamlFailureNotice(result.reason, limits)
         else -> null
@@ -101,6 +105,7 @@ fun PiYamlTreeView(
             status = status,
             onSelect = { mode = it },
         )
+        PiCardHairline()
         if (mode == PiTreeMode.Tree && tree != null) {
             PiYamlTreeBody(
                 root = tree.root,
@@ -149,16 +154,26 @@ private fun YamlNodeRow(
 ) {
     val palette = PiTheme.palette
     val body = PiTheme.typography.styles.code
-    var expanded by remember(node.path) { mutableStateOf(node.depth == 0) }
+    var expanded by rememberSaveable(node.path) { mutableStateOf(node.depth == 0) }
 
     Column(Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // 整行都是展开/收起的点击区（含缩进部分），与 JSON / XML 树同款。
+                .then(
+                    if (node.isContainer) {
+                        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+                    } else {
+                        Modifier
+                    },
+                )
+                .piTreeGuides(node.depth, palette.mdCodeBlockBorder.copy(alpha = 0.18f))
                 .padding(
-                    start = (node.depth * PI_TREE_INDENT_DP).dp,
-                    top = 2.dp,
+                    start = piTreeIndentDp(node.depth).dp,
+                    top = 3.dp,
                     end = 4.dp,
+                    bottom = 1.dp,
                 ),
             verticalAlignment = Alignment.Top,
         ) {
@@ -166,11 +181,7 @@ private fun YamlNodeRow(
                 Text(
                     text = if (expanded) "▾" else "▸",
                     style = body.copy(color = palette.dim),
-                    modifier = Modifier
-                        .clickable(
-                            onClickLabel = if (expanded) "收起" else "展开",
-                        ) { expanded = !expanded }
-                        .padding(end = 3.dp),
+                    modifier = Modifier.padding(end = 3.dp),
                 )
             } else {
                 Spacer(Modifier.width(15.dp))
@@ -213,7 +224,8 @@ private fun YamlNodeRow(
         if (expanded) {
             when (node) {
                 is YamlMapNode -> {
-                    val shown = node.entries.take(PI_TREE_MAX_VISIBLE_CHILDREN)
+                    var limit by rememberSaveable(node.path) { mutableStateOf(PI_TREE_PAGE) }
+                    val shown = node.entries.take(minOf(limit, PI_TREE_MAX_VISIBLE_CHILDREN))
                     shown.forEach { entry ->
                         YamlNodeRow(
                             node = entry.value,
@@ -224,11 +236,16 @@ private fun YamlNodeRow(
                     }
                     val hidden = node.entries.size - shown.size
                     if (hidden > 0) {
-                        YamlHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        if (shown.size < PI_TREE_MAX_VISIBLE_CHILDREN) {
+                            PiTreeMoreRow(node.depth + 1, hidden) { limit += PI_TREE_PAGE }
+                        } else {
+                            YamlHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        }
                     }
                 }
                 is YamlListNode -> {
-                    val shown = node.items.take(PI_TREE_MAX_VISIBLE_CHILDREN)
+                    var limit by rememberSaveable(node.path) { mutableStateOf(PI_TREE_PAGE) }
+                    val shown = node.items.take(minOf(limit, PI_TREE_MAX_VISIBLE_CHILDREN))
                     shown.forEach { item ->
                         YamlNodeRow(
                             node = item.value,
@@ -239,7 +256,11 @@ private fun YamlNodeRow(
                     }
                     val hidden = node.items.size - shown.size
                     if (hidden > 0) {
-                        YamlHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        if (shown.size < PI_TREE_MAX_VISIBLE_CHILDREN) {
+                            PiTreeMoreRow(node.depth + 1, hidden) { limit += PI_TREE_PAGE }
+                        } else {
+                            YamlHiddenChildrenRow(depth = node.depth + 1, hidden = hidden)
+                        }
                     }
                 }
                 is YamlScalarNode -> Unit
@@ -271,7 +292,7 @@ private fun YamlHiddenChildrenRow(depth: Int, hidden: Int) {
         style = PiTheme.text.monoSmall,
         color = PiTheme.palette.muted,
         modifier = Modifier.padding(
-            start = (depth * PI_TREE_INDENT_DP).dp,
+            start = piTreeIndentDp(depth).dp,
             top = 2.dp,
             bottom = 2.dp,
         ),

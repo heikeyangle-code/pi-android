@@ -1,5 +1,7 @@
 package app.pi.ui.render.rich
 
+import app.pi.ui.render.LocalPiCardMenuSlot
+import app.pi.ui.render.PiCardMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -122,8 +124,28 @@ internal fun PiTreeToolbar(
     status: String?,
     onSelect: (PiTreeMode) -> Unit,
     modifier: Modifier = Modifier,
+    treeLabel: String = "树",
 ) {
     val palette = PiTheme.palette
+    val slot = LocalPiCardMenuSlot.current
+    if (slot != null) {
+        // 在卡片里：切换动作与状态文字交给卡片头（⋮ 菜单 + 状态位），这里不画工具栏。
+        val select = androidx.compose.runtime.rememberUpdatedState(onSelect)
+        androidx.compose.runtime.SideEffect {
+            val toTree = mode == PiTreeMode.Code
+            slot.publish(
+                sig = Triple(mode, treeAvailable, status),
+                items = listOf(
+                    PiCardMenuItem(
+                        label = if (toTree) "查看$treeLabel" else "查看源码",
+                        enabled = !toTree || treeAvailable,
+                    ) { select.value(if (toTree) PiTreeMode.Tree else PiTreeMode.Code) },
+                ),
+                status = status,
+            )
+        }
+        return
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -143,7 +165,7 @@ internal fun PiTreeToolbar(
                 onClick = { onSelect(PiTreeMode.Code) },
             )
             PiTreeModeLabel(
-                label = "树",
+                label = treeLabel,
                 selected = mode == PiTreeMode.Tree,
                 enabled = treeAvailable,
                 onClickLabel = "查看树状视图",
@@ -289,6 +311,8 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
 /** 工具栏与树/源码之间的发丝线，和 `PiCardDivider` 同色同粗。 */
 @Composable
 internal fun PiCardHairline() {
+    // 在卡片里时，卡片头下面已经有一条分隔线。
+    if (LocalPiCardMenuSlot.current != null) return
     Box(
         Modifier
             .fillMaxWidth()

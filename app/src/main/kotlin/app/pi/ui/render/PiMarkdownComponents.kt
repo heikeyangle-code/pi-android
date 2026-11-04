@@ -473,6 +473,12 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
     // 白名单拒绝的块、超限的块全都会连同一行原因**原样显示 [text]**，与上面那段
     // 「pi 把原文当文字排出来」的契约在失败路径上完全一致。也就是说这一步只是让
     // **能安全画出来的** HTML 真的画出来，画不出来时的屏幕与 pi 逐字节相同。
+    // 整块就是一个内联 `<svg>…</svg>`：HTML 策略会把 svg 标签整个剥掉、只剩里面的文字，
+    // 画出来是一堆无意义的字。交给 SVG 渲染器（它有自己的消毒器、尺寸上限和源码回退）。
+    if (isSingleSvgRoot(text)) {
+        PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
+        return
+    }
     PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
@@ -536,7 +542,11 @@ private fun PiParagraph(model: MarkdownComponentModel) {
             (PiLinkCard.parse(text) as? LinkCardResult.Info)?.info
         }
     }
-    if (info == null) {
+    // 流式中**正在写的那一段**不画卡片：URL 一个字一个字出现，卡片会随着域名逐字变化并反复
+    // 跳高。写完（下一段开始、或整条结束）再换成卡片；前面已写完的段落不受影响。
+    val writingTail = LocalPiMarkdownStreaming.current &&
+        content.substring(node.endOffset.coerceIn(0, content.length)).isBlank()
+    if (info == null || writingTail) {
         MarkdownParagraph(model.content, model.node)
         return
     }
@@ -798,21 +808,7 @@ private fun PiImageFallback(
     typography: MarkdownTypography,
     modifier: Modifier = Modifier,
 ) {
-    val palette = PiTheme.palette
-    Column(modifier = modifier) {
-        Text(
-            text = alt?.takeIf { it.isNotBlank() } ?: "图片",
-            style = typography.text,
-            color = palette.text,
-        )
-        Text(
-            text = link?.takeIf { it.isNotBlank() }?.let { "图片地址：$it（当前无法显示）" }
-                ?: "图片地址缺失",
-            modifier = Modifier.padding(top = 2.dp),
-            style = typography.code,
-            color = palette.dim,
-        )
-    }
+    PiImageFailureCard(alt = alt, link = link, altStyle = typography.text, modifier = modifier)
 }
 
 /**
@@ -1530,12 +1526,14 @@ private fun PiCodeSurface(
     // 其它语言返回 null，所以这一段不会误伤别的代码块。
     val csvFormat = normalized?.let { PiCsvTable.formatForLanguage(it) }
     if (csvFormat != null) {
-        PiCsvTableView(
-            source = code,
-            format = csvFormat,
-            settled = settled,
-            initialMode = PiTreeMode.Tree,
-        )
+        PiRichCardFrame(code, info, palette) {
+            PiCsvTableView(
+                source = code,
+                format = csvFormat,
+                settled = settled,
+                initialMode = PiTreeMode.Tree,
+            )
+        }
         return
     }
     // Phase 5：栈围栏。只认显式标签，**不自动检测**普通文本 —— 一段散文被拆成帧
@@ -1954,4 +1952,14 @@ private fun buildPiCodeText(
         }
         addStyle(style, start, end)
     }
+}
+
+/** 文本以 `<svg` 开头、且只有这一个 svg 根（可以尚未闭合：流式中）。 */
+private fun isSingleSvgRoot(text: String): Boolean {
+    val head = text.trimStart()
+    if (!head.startsWith("<svg", ignoreCase = true)) return false
+    if (head.length > 4 && !(head[4].isWhitespace() || head[4] == '>' || head[4] == '/')) return false
+    val close = head.lastIndexOf("</svg>", ignoreCase = true)
+    // 允许嵌套 svg（next>0 且在 close 之前）；不允许根闭合之后还有别的内容。
+    return close < 0 || head.substring(close + 6).isBlank()
 }

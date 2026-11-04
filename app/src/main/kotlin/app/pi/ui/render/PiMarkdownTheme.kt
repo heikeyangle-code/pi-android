@@ -356,7 +356,7 @@ internal fun piMarkdownTypography(
         // `paragraph` 槽渲染的（`MarkdownBlockQuote.kt:90-96`），所以这里的 mdQuote/斜体
         // 目前落在竖条上，引文正文仍是 paragraph 的颜色与字形。这是库的实现，不是本文件
         // 的笔误；要不要把引文真正染成 mdQuote+斜体，需要另立一项（会改变引用的观感）。
-        quote = base.copy(color = palette.mdQuote, fontStyle = FontStyle.Italic),
+        quote = base.copy(color = palette.mdQuote),
         paragraph = if (monoParagraph) mono.copy(color = body) else base.copy(color = body),
         ordered = base.copy(color = body),
         // 2026-10-26: 圆点只放大字形（1.4×），行高保持正文档，不把列表项撑高；

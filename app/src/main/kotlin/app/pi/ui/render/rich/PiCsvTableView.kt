@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,11 +89,14 @@ fun PiCsvTableView(
     limits: CsvLimits = PiCsvTable.DEFAULT_LIMITS,
     modifier: Modifier = Modifier,
 ) {
-    val result = remember(source, format, settled, limits) {
+    // 解析放后台并缓存（`rememberTreeParse`）：大表第一次出现不卡主线程，滚回来不重解析。
+    // 种类里带上格式与限额，缓存键不会把 CSV 与 TSV、不同限额的结果串起来。
+    val result = rememberTreeParse("csv-$format-${limits.hashCode()}", source, settled) {
         PiCsvTable.parse(source, format, settled, limits)
     }
     val table = result as? CsvParseResult.Table
-    var mode by remember(source, format, initialMode) { mutableStateOf(initialMode) }
+    // 读者的「源码 / 表」选择：滚出屏幕再回来必须还在，所以是 rememberSaveable。
+    var mode by rememberSaveable(source, format, initialMode) { mutableStateOf(initialMode) }
 
     val clipboard = LocalClipboardManager.current
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -110,15 +114,19 @@ fun PiCsvTableView(
         null
     }
     val status = currentFeedback
-        ?: if (table != null) "${table.rowCount} 行 × ${table.columnCount} 列" else failureNotice
+        ?: if (table != null) "${table.rowCount} 行 × ${table.columnCount} 列"
+        else if (result == null) "解析中…"
+        else failureNotice
 
     Column(modifier.fillMaxWidth()) {
-        CsvToolbar(
+        PiTreeToolbar(
             mode = mode,
-            tableAvailable = table != null,
+            treeAvailable = table != null,
             status = status,
             onSelect = { mode = it },
+            treeLabel = "表",
         )
+        PiCardHairline()
         if (mode == PiTreeMode.Tree && table != null) {
             PiCsvTableBody(
                 table = table,
@@ -158,23 +166,27 @@ fun PiCsvTableBody(
     }
     val scroll = rememberScrollState()
     val tableWidth = widths.fold(0.dp) { total, width -> total + width }
-    val visibleRows = visibleRowCount(table)
+    // 数值列右对齐：采样行里每个非空单元格都是数字才算（表头不参与判定）。
+    val numeric = remember(table) { numericColumns(table) }
+    // 一次只排版一页行：200 行 × 20 列 = 4000 个 Text 同时组合太重。点「显示更多」再加一页。
+    var shown by rememberSaveable(table.rowCount, table.columnCount) { mutableStateOf(PI_CSV_PAGE_ROWS) }
+    val capRows = visibleRowCount(table)
+    val visibleRows = minOf(capRows, shown)
     val hiddenRows = table.rows.size - visibleRows
 
     Column(modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, palette.borderMuted.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                 .horizontalScroll(scroll),
         ) {
             Column(Modifier.width(tableWidth)) {
                 CsvRow(
                     cells = List(table.columnCount) { table.header.getOrNull(it) ?: "" },
                     widths = widths,
+                    numeric = numeric,
                     style = headerStyle,
-                    background = palette.mdHr.copy(alpha = 0.12f),
+                    background = palette.mdHr.copy(alpha = 0.14f),
                     onCopyCell = onCopyCell,
                 )
                 CsvDivider()
@@ -183,22 +195,27 @@ fun PiCsvTableBody(
                     CsvRow(
                         cells = List(table.columnCount) { row.getOrNull(it) ?: "" },
                         widths = widths,
+                        numeric = numeric,
                         style = cellStyle,
-                        background = Color.Transparent,
+                        // 隔行淡底色，与 Markdown 表格同一套。
+                        background = if (rowIndex % 2 == 1) palette.mdHr.copy(alpha = 0.06f) else Color.Transparent,
                         onCopyCell = onCopyCell,
                     )
-                    if (rowIndex != visibleRows - 1) CsvDivider()
                 }
             }
         }
 
         if (hiddenRows > 0) {
-            Text(
-                text = "… 还有 $hiddenRows 行未显示（切换源码查看全部）",
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp),
-            )
+            if (visibleRows < capRows) {
+                PiTreeMoreRow(depth = 0, remaining = hiddenRows) { shown += PI_CSV_PAGE_ROWS }
+            } else {
+                Text(
+                    text = "… 还有 $hiddenRows 行未显示（切换源码查看全部）",
+                    style = PiTheme.text.monoSmall,
+                    color = palette.muted,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 8.dp),
+                )
+            }
         }
     }
 }
@@ -207,6 +224,7 @@ fun PiCsvTableBody(
 private fun CsvRow(
     cells: List<String>,
     widths: List<Dp>,
+    numeric: BooleanArray,
     style: TextStyle,
     background: Color,
     onCopyCell: (String) -> Unit,
@@ -216,7 +234,11 @@ private fun CsvRow(
             val width = widths.getOrNull(column) ?: return@forEachIndexed
             Text(
                 text = cell,
-                style = style,
+                style = if (column < numeric.size && numeric[column]) {
+                    style.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                } else {
+                    style
+                },
                 maxLines = PI_CSV_CELL_MAX_LINES,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
@@ -244,75 +266,6 @@ private fun CsvDivider() {
             .fillMaxWidth()
             .height(1.dp)
             .background(PiTheme.palette.borderMuted.copy(alpha = 0.35f)),
-    )
-}
-
-@Composable
-private fun CsvToolbar(
-    mode: PiTreeMode,
-    tableAvailable: Boolean,
-    status: String?,
-    onSelect: (PiTreeMode) -> Unit,
-) {
-    val palette = PiTheme.palette
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CsvModeLabel(
-            label = "源码",
-            selected = mode == PiTreeMode.Code,
-            onClickLabel = "查看原始 CSV/TSV 源码",
-            onClick = { onSelect(PiTreeMode.Code) },
-        )
-        Spacer(Modifier.width(12.dp))
-        if (tableAvailable) {
-            CsvModeLabel(
-                label = "表",
-                selected = mode == PiTreeMode.Tree,
-                onClickLabel = "查看数据表",
-                onClick = { onSelect(PiTreeMode.Tree) },
-            )
-        } else {
-            Text(
-                text = "表",
-                style = PiTheme.text.monoSmall,
-                color = palette.dim,
-                maxLines = 1,
-            )
-        }
-        if (!status.isNullOrEmpty()) {
-            Text(
-                text = status,
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = androidx.compose.ui.text.style.TextAlign.End,
-            )
-        }
-    }
-}
-
-@Composable
-private fun CsvModeLabel(
-    label: String,
-    selected: Boolean,
-    onClickLabel: String,
-    onClick: () -> Unit,
-) {
-    val palette = PiTheme.palette
-    Text(
-        text = label,
-        style = PiTheme.text.monoSmall,
-        color = if (selected) palette.accent else palette.muted,
-        maxLines = 1,
-        modifier = Modifier
-            .clickable(onClickLabel = onClickLabel, onClick = onClick)
-            .padding(vertical = 2.dp, horizontal = 2.dp),
     )
 }
 
@@ -362,6 +315,32 @@ private fun computeColumnWidths(
 
     return widths.map { px -> with(density) { px.coerceIn(minPx, maxPx).toDp() } }
 }
+
+/** 数值列：采样行里所有非空单元格都读得成数字（容忍千分位、%、货币符号、科学计数），且至少一个非空。 */
+private fun numericColumns(table: CsvParseResult.Table): BooleanArray {
+    val out = BooleanArray(table.columnCount)
+    val sample = minOf(table.rows.size, PI_CSV_WIDTH_SAMPLE_ROWS)
+    for (column in 0 until table.columnCount) {
+        var any = false
+        var ok = true
+        for (rowIndex in 0 until sample) {
+            val cell = table.rows[rowIndex].getOrNull(column)?.trim().orEmpty()
+            if (cell.isEmpty()) continue
+            if (!CSV_NUMBER.matches(cell)) {
+                ok = false
+                break
+            }
+            any = true
+        }
+        out[column] = ok && any
+    }
+    return out
+}
+
+private val CSV_NUMBER = Regex("[-+]?[\\$¥€£]?\\s?\\d[\\d,]*(\\.\\d+)?([eE][-+]?\\d+)?%?")
+
+/** 一页行数；「显示更多」每次再加一页。 */
+private const val PI_CSV_PAGE_ROWS = 40
 
 /** Rows drawn: bounded by both a row cap and a total-cell cap (wide tables show fewer rows). */
 private fun visibleRowCount(table: CsvParseResult.Table): Int {

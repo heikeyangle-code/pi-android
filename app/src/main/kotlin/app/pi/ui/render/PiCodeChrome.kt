@@ -15,6 +15,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +85,6 @@ internal fun PiRichCodeBlock(
     var wrap by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
-    var menuOpen by remember { mutableStateOf(false) }
 
     val allLines = remember(code) { code.split('\n') }
     val lineCount = allLines.size
@@ -87,6 +95,12 @@ internal fun PiRichCodeBlock(
     }
     val shownHighlighted = remember(highlighted.text, truncated, shownCode) {
         if (!truncated) highlighted.text else highlighted.text.subSequence(0, shownCode.length.coerceAtMost(highlighted.text.length))
+    }
+
+    // diff / patch：整行底色（加 = 绿、删 = 红、@@ = 强调色），不只是字符着色。
+    val isDiff = info.language == "diff" || info.language == "patch"
+    val displayText = remember(shownHighlighted, isDiff, palette) {
+        if (!isDiff) shownHighlighted else piDiffTinted(shownHighlighted, palette)
     }
 
     val clipboard = LocalClipboardManager.current
@@ -122,43 +136,30 @@ internal fun PiRichCodeBlock(
                     copied = true
                 },
                 menu = {
-                    Box {
-                        Text(
-                            text = "⋯",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = palette.muted,
-                            modifier = Modifier
-                                .clickable(onClickLabel = "代码块显示选项") { menuOpen = true }
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                        )
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text(if (showLineNumbers) "隐藏行号" else "显示行号") },
-                                enabled = !wrap,
-                                onClick = {
-                                    showLineNumbers = !showLineNumbers
-                                    menuOpen = false
-                                },
+                    PiCardMenu(
+                        palette = palette,
+                        items = buildList {
+                            add(
+                                PiCardMenuItem(
+                                    label = if (showLineNumbers) "隐藏行号" else "显示行号",
+                                    enabled = !wrap,
+                                ) { showLineNumbers = !showLineNumbers },
                             )
-                            DropdownMenuItem(
-                                text = { Text(if (wrap) "横向滚动" else "自动换行") },
-                                onClick = {
+                            add(
+                                PiCardMenuItem(label = if (wrap) "横向滚动" else "自动换行") {
                                     wrap = !wrap
                                     if (wrap) showLineNumbers = false
-                                    menuOpen = false
                                 },
                             )
                             if (lineCount > MAX_COLLAPSED_LINES) {
-                                DropdownMenuItem(
-                                    text = { Text(if (expanded) "收起" else "展开全部（$lineCount 行）") },
-                                    onClick = {
-                                        expanded = !expanded
-                                        menuOpen = false
-                                    },
+                                add(
+                                    PiCardMenuItem(
+                                        label = if (expanded) "收起" else "展开全部（$lineCount 行）",
+                                    ) { expanded = !expanded },
                                 )
                             }
-                        }
-                    }
+                        },
+                    )
                 },
             )
             PiCardDivider(palette)
@@ -166,7 +167,7 @@ internal fun PiRichCodeBlock(
             val codeColor = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock
             if (wrap) {
                 Text(
-                    text = shownHighlighted,
+                    text = displayText,
                     style = style.copy(color = codeColor),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -188,7 +189,7 @@ internal fun PiRichCodeBlock(
                         )
                     }
                     Text(
-                        text = shownHighlighted,
+                        text = displayText,
                         style = style.copy(color = codeColor),
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                     )
@@ -219,6 +220,30 @@ internal fun PiRichCodeBlock(
  */
 private const val MAX_COLLAPSED_LINES = 24
 
+/** 给 diff 的每一行铺底色：`+`（不含 `+++`）绿、`-`（不含 `---`）红、`@@` 强调色。 */
+private fun piDiffTinted(text: AnnotatedString, palette: PiPalette): AnnotatedString {
+    val raw = text.text
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(text)
+        var start = 0
+        while (start <= raw.length) {
+            var end = raw.indexOf('\n', start)
+            if (end < 0) end = raw.length
+            if (end > start) {
+                val tint = when {
+                    raw.startsWith("+++", start) || raw.startsWith("---", start) -> null
+                    raw[start] == '+' -> palette.toolDiffAdded.copy(alpha = 0.18f)
+                    raw[start] == '-' -> palette.toolDiffRemoved.copy(alpha = 0.18f)
+                    raw.startsWith("@@", start) -> palette.accent.copy(alpha = 0.12f)
+                    else -> null
+                }
+                if (tint != null) addStyle(androidx.compose.ui.text.SpanStyle(background = tint), start, end)
+            }
+            start = end + 1
+        }
+    }
+}
+
 /**
  * JSON / XML 树视图的外框：与 [PiRichCodeBlock] 同一套卡片（12 dp 圆角、28% 边线、6% 淡底）
  * 加一行标题（语言名或围栏 title）和「复制」（复制**整段源码**）。
@@ -234,6 +259,8 @@ internal fun PiRichCardFrame(
     info: FenceInfo,
     palette: PiPalette,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    status: String? = null,
+    menu: List<PiCardMenuItem> = emptyList(),
     content: @Composable () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -245,6 +272,9 @@ internal fun PiRichCardFrame(
         }
     }
     val classic = PiTheme.typography.isClassic
+    val slot = remember { PiCardMenuSlot() }
+    val allMenu = menu + slot.items
+    val shownStatus = status ?: slot.status
     MarkdownCodeBackground(
         color = palette.mdCodeBlockBorder.copy(alpha = 0.06f),
         shape = RoundedCornerShape(12.dp),
@@ -266,9 +296,13 @@ internal fun PiRichCardFrame(
                     clipboard.setText(AnnotatedString(code))
                     copied = true
                 },
+                status = shownStatus,
+                menu = if (allMenu.isEmpty()) null else ({ PiCardMenu(palette, allMenu) }),
             )
             PiCardDivider(palette)
-            content()
+            androidx.compose.runtime.CompositionLocalProvider(LocalPiCardMenuSlot provides slot) {
+                content()
+            }
         }
     }
 }
@@ -284,12 +318,13 @@ internal fun PiCardHeader(
     palette: PiPalette,
     copied: Boolean,
     onCopy: () -> Unit,
+    status: String? = null,
     menu: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = if (menu == null) 6.dp else 0.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 12.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (language.isNotEmpty()) {
@@ -315,15 +350,104 @@ internal fun PiCardHeader(
             )
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            text = if (copied) "已复制" else "复制",
-            style = MaterialTheme.typography.labelMedium,
-            color = if (copied) palette.accent else palette.muted,
-            modifier = Modifier
-                .clickable(onClickLabel = "复制代码", onClick = onCopy)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-        )
+        if (!status.isNullOrEmpty()) {
+            Text(
+                text = status,
+                style = PiTheme.text.monoSmall,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+        PiCopyIcon(palette = palette, copied = copied, onCopy = onCopy)
         menu?.invoke()
+    }
+}
+
+/**
+ * 所有卡片共用的复制按钮：一个 18 dp 的小图标（复制后 1.2 s 变成对勾），触控区 40 dp。
+ * 不再占一个「复制」字的宽度，窄屏上语言胶囊、标题、状态都有更多位置。
+ */
+@Composable
+internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clickable(role = Role.Button, onClickLabel = "复制源码", onClick = onCopy)
+            .semantics { contentDescription = if (copied) "已复制" else "复制" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (copied) Icons.Rounded.Check else Icons.Outlined.ContentCopy,
+            contentDescription = null,
+            tint = if (copied) palette.accent else palette.muted,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/**
+ * 卡片头的「菜单槽」。[PiRichCardFrame] 建一个并通过 [LocalPiCardMenuSlot] 提供；卡片里的内容
+ * （树 / CSV 的「源码 ↔ 树」切换及其状态文字）把自己的动作登记进来，由卡片头的 ⋮ 菜单和状态位
+ * 呈现，内容区里就不再需要自己的工具栏。没有框的场合（槽为 `null`）内容自己画工具栏。
+ */
+internal class PiCardMenuSlot {
+    var items by mutableStateOf<List<PiCardMenuItem>>(emptyList())
+        private set
+    var status by mutableStateOf<String?>(null)
+        private set
+    private var signature: Any? = null
+
+    /** 只在 [sig] 变了才写：内容每次重组都调用也不会反复触发卡片头重组。 */
+    fun publish(sig: Any, items: List<PiCardMenuItem>, status: String?) {
+        if (signature == sig) return
+        signature = sig
+        this.items = items
+        this.status = status
+    }
+}
+
+internal val LocalPiCardMenuSlot = androidx.compose.runtime.compositionLocalOf<PiCardMenuSlot?> { null }
+
+internal class PiCardMenuItem(
+    val label: String,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+/** 卡片头最右边的「⋮」菜单：源码/图切换、适应窗口、行号、换行等低频动作都收在这里。 */
+@Composable
+internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
+    if (items.isEmpty()) return
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clickable(role = Role.Button, onClickLabel = "更多选项") { open = true }
+                .semantics { contentDescription = "更多选项" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = null,
+                tint = palette.muted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            items.forEach { item ->
+                DropdownMenuItem(
+                    text = { Text(item.label) },
+                    enabled = item.enabled,
+                    onClick = {
+                        open = false
+                        item.onClick()
+                    },
+                )
+            }
+        }
     }
 }
 
