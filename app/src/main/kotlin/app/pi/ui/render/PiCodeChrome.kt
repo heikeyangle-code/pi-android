@@ -242,6 +242,9 @@ internal fun PiRichCardFrame(
         }
     }
     val classic = PiTheme.typography.isClassic
+    val slot = remember { PiCardMenuSlot() }
+    val allMenu = menu + slot.items
+    val shownStatus = status ?: slot.status
     MarkdownCodeBackground(
         color = palette.mdCodeBlockBorder.copy(alpha = 0.06f),
         shape = RoundedCornerShape(12.dp),
@@ -263,11 +266,13 @@ internal fun PiRichCardFrame(
                     clipboard.setText(AnnotatedString(code))
                     copied = true
                 },
-                status = status,
-                menu = if (menu.isEmpty()) null else ({ PiCardMenu(palette, menu) }),
+                status = shownStatus,
+                menu = if (allMenu.isEmpty()) null else ({ PiCardMenu(palette, allMenu) }),
             )
             PiCardDivider(palette)
-            content()
+            androidx.compose.runtime.CompositionLocalProvider(LocalPiCardMenuSlot provides slot) {
+                content()
+            }
         }
     }
 }
@@ -351,6 +356,29 @@ internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit)
         )
     }
 }
+
+/**
+ * 卡片头的「菜单槽」。[PiRichCardFrame] 建一个并通过 [LocalPiCardMenuSlot] 提供；卡片里的内容
+ * （树 / CSV 的「源码 ↔ 树」切换及其状态文字）把自己的动作登记进来，由卡片头的 ⋮ 菜单和状态位
+ * 呈现，内容区里就不再需要自己的工具栏。没有框的场合（槽为 `null`）内容自己画工具栏。
+ */
+internal class PiCardMenuSlot {
+    var items by mutableStateOf<List<PiCardMenuItem>>(emptyList())
+        private set
+    var status by mutableStateOf<String?>(null)
+        private set
+    private var signature: Any? = null
+
+    /** 只在 [sig] 变了才写：内容每次重组都调用也不会反复触发卡片头重组。 */
+    fun publish(sig: Any, items: List<PiCardMenuItem>, status: String?) {
+        if (signature == sig) return
+        signature = sig
+        this.items = items
+        this.status = status
+    }
+}
+
+internal val LocalPiCardMenuSlot = androidx.compose.runtime.compositionLocalOf<PiCardMenuSlot?> { null }
 
 internal class PiCardMenuItem(
     val label: String,
