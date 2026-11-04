@@ -102,8 +102,33 @@ object PiProviderPresets {
         // 下存在，模型选择器里于是同时有两条互不相干的本地厂商。这里不做迁移（这个 App
         // 还没发布过，`llamacpp` 只存在于本轮之前的源码里）。
         Preset("llama.cpp", "llama.cpp / LM Studio / vLLM", "http://localhost:8080/v1", "openai-completions", ScanStyle.Keyless, true, false, "本地"),
-        Preset("custom", "自定义（OpenAI 兼容）", "", "openai-completions", ScanStyle.OpenAiCompatible, true, false, "自定义"),
+        // 「新建一个」的入口，不是一个具体的厂商：`id` 是占位（[NEW_CUSTOM_ID]），真正写进
+        // `models.json` / `auth.json` 的 id 在保存时按名字现生成（[uniqueCustomProviderId]），所以
+        // 可以导入任意多个自定义厂商。以前这里固定写 `custom`，第二个自定义厂商只能覆盖第一个。
+        Preset(NEW_CUSTOM_ID, "新建自定义厂商（OpenAI 兼容）", "", "openai-completions", ScanStyle.OpenAiCompatible, true, false, "自定义"),
     )
+
+    /** 「新建自定义厂商」入口的占位 id：不是合法的厂商 id，永远不会被写进文件。 */
+    const val NEW_CUSTOM_ID = "+custom"
+
+    /**
+     * 为新建的自定义厂商生成**不与任何已有 id 冲突**的厂商 id：名字（或端点主机名）转成
+     * 小写 ASCII slug（`api.foo.com` → `api-foo-com`），撞了就加 `-2`、`-3`。
+     * 只含 `[a-z0-9-]`：id 会出现在 `enabledModels` 的 `provider/model` 模式里，不能带 `/`、`:`、空格。
+     * 取不出任何字符（纯中文名）时退回 `custom`。
+     */
+    fun uniqueCustomProviderId(name: String, taken: Set<String>): String {
+        val slug = name.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .take(32)
+            .trim('-')
+            .ifEmpty { "custom" }
+        if (slug !in taken) return slug
+        var n = 2
+        while ("$slug-$n" in taken) n++
+        return "$slug-$n"
+    }
 
     fun byId(id: String): Preset? = all.firstOrNull { it.id == id }
 

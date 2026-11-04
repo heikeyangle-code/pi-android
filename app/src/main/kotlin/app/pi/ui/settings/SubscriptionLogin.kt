@@ -89,7 +89,7 @@ internal fun SubscriptionCard(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                if (expanded) "收起" else "${providers.size} 个可登录 · 展开",
+                if (expanded) "收起" else if (statuses.isEmpty()) "${providers.size} 个可登录 · 展开" else "已登录 ${statuses.size} · 共 ${providers.size} 个 · 展开",
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
