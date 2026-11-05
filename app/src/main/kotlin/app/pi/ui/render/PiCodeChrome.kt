@@ -75,6 +75,7 @@ internal fun PiRichCodeBlock(
     palette: PiPalette,
     classic: Boolean,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    extraMenu: List<PiCardMenuItem> = emptyList(),
 ) {
     // 这三个是**读者**的状态（行号 / 自动换行 / 展开全部），不是由 `code` 派生的值：
     // 1. 不能以 `code` 为 key —— 流式中的未闭合围栏每来一个 token `code` 就变一次，key 一变状态
@@ -139,6 +140,7 @@ internal fun PiRichCodeBlock(
                     PiCardMenu(
                         palette = palette,
                         items = buildList {
+                            addAll(extraMenu)
                             add(
                                 PiCardMenuItem(
                                     label = if (showLineNumbers) "隐藏行号" else "显示行号",

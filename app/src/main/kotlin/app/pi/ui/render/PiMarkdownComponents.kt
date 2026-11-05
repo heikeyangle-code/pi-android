@@ -479,7 +479,7 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
         PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
         return
     }
-    PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
+    PiHtmlSegments(text = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
 /**
@@ -1625,6 +1625,10 @@ private fun PiCodeSurface(
     // 1 dp 满不透明的灰边是一圈亮框，代码块比它包着的文字还抢眼。边线压到 28%，
     // 里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线（所有档位一致）。
     val classic = PiTheme.typography.isClassic
+    if (settled && code.isNotBlank() && (normalized?.lowercase() == "html" || normalized?.lowercase() == "htm")) {
+        PiHtmlFence(code, info, highlighted, style, palette, classic)
+        return
+    }
     PiRichCodeBlock(
         code = code,
         info = info,
