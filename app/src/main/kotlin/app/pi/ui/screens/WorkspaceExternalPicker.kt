@@ -187,6 +187,10 @@ private class ExternalLevel(
     val children: List<ExternalChild>,
     /** 被截断时说明为什么 —— 一个静默变短的列表看起来就像「这个目录是空的」。 */
     val truncated: Boolean,
+    /** 这个目录读得到吗；读不到时列表是空的，但**不**代表目录空。 */
+    val readable: Boolean,
+    /** 可写才能当工作区（pi 要在里面建文件）。 */
+    val writable: Boolean,
 )
 
 @Composable
