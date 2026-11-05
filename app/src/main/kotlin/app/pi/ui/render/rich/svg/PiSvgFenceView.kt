@@ -299,6 +299,8 @@ fun PiSvgFenceView(
                         // 变换写在 native canvas 上而不是 `graphicsLayer`：layer 会把记录
                         // 好的栅格放大、文字发虚，这里是在最终矩阵下重放矢量指令。
                         native.save()
+                        // 显式裁到画布：放大后图不许画进标题栏/卡片边缘（只靠 clipToBounds 不够稳）。
+                        native.clipRect(0f, 0f, size.width, size.height)
                         native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
                         native.scale(fit, fit)
                         native.translate(

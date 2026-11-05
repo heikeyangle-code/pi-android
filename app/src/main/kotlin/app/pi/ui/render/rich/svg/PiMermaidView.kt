@@ -295,6 +295,8 @@ fun PiMermaidView(
                         // and blur the labels, whereas this replays the vector ops
                         // at the final matrix.
                         native.save()
+                        // 显式裁到画布：放大后图不许画进标题栏/卡片边缘（只靠 clipToBounds 不够稳）。
+                        native.clipRect(0f, 0f, size.width, size.height)
                         native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
                         native.scale(fit, fit)
                         native.translate(

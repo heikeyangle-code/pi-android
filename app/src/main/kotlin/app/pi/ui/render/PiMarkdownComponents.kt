@@ -532,6 +532,14 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         )
         return
     }
+    // 整段只是一条音频/视频链接（裸 URL、[文字](URL)、![](URL)）：画播放卡片。
+    val mediaUrl = remember(bounds) { piMediaFromParagraph(bounds.second) }
+    if (mediaUrl != null && !(LocalPiMarkdownStreaming.current &&
+            content.substring(node.endOffset.coerceIn(0, content.length)).isBlank())
+    ) {
+        PiMediaCard(mediaUrl, piMediaKind(mediaUrl)!!)
+        return
+    }
     val info = remember(bounds) {
         val text = bounds.second
         if (text.length > BARE_URL_MAX_CHARS || text.any { it.isWhitespace() }) {
@@ -672,6 +680,7 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
     val transformer = LocalPiImageTransformer.current
     val referenceHandler = LocalReferenceLinkHandler.current
     val link = remember(content, node) { node.resolveImageLink(content, referenceHandler) }
+    piMediaKind(link)?.let { kind -> PiMediaCard(link!!, kind); return }
     // Ask for the bytes before deciding, for the reason in the doc above: a `null`
     // result must fall through to the text fallback instead of handing the node to a
     // component that would draw nothing.
@@ -733,6 +742,7 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
 @Composable
 private fun PiInlineImage(model: MarkdownComponentModel) {
     val link = model.content
+    piMediaKind(link)?.let { kind -> PiMediaCard(link, kind); return }
     val transformer = LocalPiImageTransformer.current
     val decoded = if (link.isNotBlank()) transformer.transform(link) else null
     if (decoded != null) {

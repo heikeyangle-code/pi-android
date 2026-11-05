@@ -334,6 +334,8 @@ fun PiMathView(
                             // 变换放在 native canvas 上，不用 `graphicsLayer`：图层会缩放
                             // 已经录制好的位图，8× 时字会糊；这里交给矢量回放。
                             native.save()
+                            // 显式裁到画布：放大后图不许画进标题栏/卡片边缘（只靠 clipToBounds 不够稳）。
+                            native.clipRect(0f, 0f, size.width, size.height)
                             native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
                             native.scale(fit, fit)
                             native.translate(
