@@ -250,13 +250,19 @@ fun PiSvgFenceView(
                 // 这样不需要 `BoxWithConstraints`。
                 val animKey = remember { Any() }
                 val isAnimatedSvg = image.animatedSvg != null
+                // 第一帧：有空位就直接按「会播」画（随后的 effect 真正占位）；占位被拒才退成静态。
+                // 占位之后一律以真实占用为准，被别的卡片顶掉就回到静态。
+                val room = remember { PiSvgAnimationSlots.hasRoom() }
+                var decided by remember { mutableStateOf(false) }
                 if (isAnimatedSvg) {
                     androidx.compose.runtime.DisposableEffect(animKey) {
                         PiSvgAnimationSlots.tryAcquire(animKey)
+                        decided = true
                         onDispose { PiSvgAnimationSlots.release(animKey) }
                     }
                 }
-                if (isAnimatedSvg && PiSvgAnimationSlots.isActive(animKey)) {
+                val playingSvg = if (decided) PiSvgAnimationSlots.isActive(animKey) else room
+                if (isAnimatedSvg && playingSvg) {
                     PiSvgAnimatedView(
                         svg = image.animatedSvg,
                         modifier = Modifier

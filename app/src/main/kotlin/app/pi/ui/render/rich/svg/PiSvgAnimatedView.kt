@@ -30,10 +30,13 @@ import androidx.compose.ui.viewinterop.AndroidView
  * （最早占用的那个退回静态）。滚出屏幕的卡片离开组合时自动归还名额。
  */
 internal object PiSvgAnimationSlots {
-    private const val MAX_ACTIVE = 2
+    private const val MAX_ACTIVE = 3
     private val active = androidx.compose.runtime.mutableStateListOf<Any>()
 
     fun isActive(key: Any): Boolean = active.any { it === key }
+
+    /** 现在还有空位（只读，不占）：让第一帧就能直接画动画，不先闪一下静态图。 */
+    fun hasRoom(): Boolean = active.size < MAX_ACTIVE
 
     /** 有空位就占上并返回 true；没有空位返回 false（保持静态，等用户点）。 */
     fun tryAcquire(key: Any): Boolean {

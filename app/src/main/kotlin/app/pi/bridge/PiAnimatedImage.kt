@@ -113,7 +113,7 @@ internal fun decodeAnimated(bytes: ByteArray, maxWidthPx: Int): AnimatedImageDra
 internal class AnimatedDrawablePainter private constructor(private val drawable: AnimatedImageDrawable) : Painter() {
     companion object {
         /** 同时在动的动图上限：每个都是一条持续解码 + 每帧重画，长表格里几十张会把帧时间吃光。 */
-        private const val MAX_ACTIVE = 4
+        private const val MAX_ACTIVE = 8
         private val active = java.util.concurrent.atomic.AtomicInteger(0)
 
         /** 超过上限返回 null（调用方回退静态首帧）。 */

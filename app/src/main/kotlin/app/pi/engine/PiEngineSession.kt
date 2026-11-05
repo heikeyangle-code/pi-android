@@ -588,12 +588,42 @@ class PiEngineSession(
                     -1
                 }
                 if (read < 0) break
-                val records = framer.feed(decoder.decode(buffer, read))
+                // 内存不足不能放过去：这条读取循环是 pi stdout 的唯一读者，`OutOfMemoryError`
+                // 是 Error 不是 Exception，上面的 reducer 保护接不住，它一路冒到协程的未捕获
+                // 处理器，整个 App（连同正在跑的引擎）一起死。最典型的触发是一条几十 MB 的记录
+                // （`get_entries` 带内嵌图片、或 agent 把一个大文件整个读出来）。放弃这一条、
+                // 照实告诉等待者，会话和 App 都留着。
+                val records = try {
+                    framer.feed(decoder.decode(buffer, read))
+                } catch (oom: OutOfMemoryError) {
+                    // 失败发生在「正在累积某一条」的中途：丢掉这一条的余下部分（到下一个换行为止），
+                    // 缓冲立刻归还；这一行的丢弃计数由 framer 在换行处记，所以把 `dropped` 预先
+                    // 加一，免得那一次又把当时在等的新请求再失败一遍。
+                    framer.abandonCurrent()
+                    dropped = framer.droppedRecords + 1
+                    reportProblem(
+                        "内存不足，已放弃一条过大的引擎消息（会话和已保存的内容不受影响）",
+                        rateLimited = false,
+                    )
+                    onRecordDropped()
+                    emptyList()
+                }
                 if (framer.droppedRecords != dropped) {
                     dropped = framer.droppedRecords
                     onRecordDropped()
                 }
-                for (record in records) handle(record)
+                for (record in records) {
+                    try {
+                        handle(record)
+                    } catch (oom: OutOfMemoryError) {
+                        // 这一条已经是完整的记录，framer 状态干净，**不能**再 abandon（会误丢下一条）。
+                        reportProblem(
+                            "内存不足，处理一条引擎消息失败，已跳过（会话和已保存的内容不受影响）",
+                            rateLimited = false,
+                        )
+                        onRecordDropped()
+                    }
+                }
             }
         }
         // A partial sequence at EOF is genuinely truncated input, so this is where it
