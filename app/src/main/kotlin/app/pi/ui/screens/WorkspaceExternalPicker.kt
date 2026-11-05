@@ -76,6 +76,20 @@ internal fun WorkspaceExternalPicker(
     // 从系统设置页回来：重新判定，而不是假定用户开了。`ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`
     // 在少数 ROM 上不存在，那时退回全局的「所有文件访问」列表页 —— 两者都在系统设置里，都不是
     // 本应用能替用户点的。
+    // 回到前台就重查一次权限：不少系统（MIUI / ColorOS …）把「所有文件访问」页开在另一个任务里，
+    // `StartActivityForResult` 的回调在页面刚打开时就触发了，用户授权完回来没有任何回调；
+    // 只靠回调会永远停在「需要授权」那一屏。
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                granted = storageAccessGranted(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val settingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { granted = storageAccessGranted(context) }
@@ -204,8 +218,19 @@ private fun WorkspaceExternalBrowser(
         }
         return
     }
-    val readable = level?.children != null
-    val refusal = WorkspaceChoice.pickRefusal(here, volumes, readable)
+    // 只认**当前这一层**的读取结果：切目录时 `level` 还是上一层的，拿它判断新目录会放行一个
+    // 根本没读过的目录。读完之前一律不让选。
+    val levelHere = level?.takeIf { it.dir.absolutePath == here }
+    val refusal = when {
+        levelHere == null -> WorkspaceChoice.pickRefusal(here, volumes, readable = true)
+            ?: "正在读这个目录…"
+        else -> WorkspaceChoice.pickRefusal(here, volumes, levelHere.readable)
+            ?: if (!levelHere.writable) {
+                "这个目录不可写（只读目录，或没有写权限）：pi 要在里面建文件，选它也用不了。"
+            } else {
+                null
+            }
+    }
 
     WsSheet(
         title = "选择设备目录",
@@ -252,11 +277,11 @@ private fun WorkspaceExternalBrowser(
             }
         }
 
-        if (loading && level == null) {
+        if (loading && levelHere == null) {
             WsNotice(text = "正在读这个目录…", tone = StateTone.Muted, glyph = "·")
         }
 
-        val children = level?.children
+        val children = levelHere?.children
         if (children != null && children.isEmpty()) {
             WsNotice(
                 text = "这个目录里没有子目录（空目录也可以当工作区）。",
@@ -305,7 +330,7 @@ private fun WorkspaceExternalBrowser(
                 }
             }
         }
-        if (children != null && level?.truncated == true) {
+        if (children != null && levelHere?.truncated == true) {
             WsNotice(
                 text = "这个目录里还有更多子目录，这里只列了前 $EXTERNAL_MAX_CHILDREN 个；" +
                     "从上面逐级下去，或者用「上一级」换一条路。",
@@ -319,39 +344,37 @@ private fun WorkspaceExternalBrowser(
 /** 数一个目录的子目录与可读性。IO 线程上调用。 */
 private fun readLevel(dir: File): ExternalLevel {
     val listed = runCatching { dir.listFiles() }.getOrNull()
-    if (listed == null) return ExternalLevel(dir, emptyList(), truncated = false)
+    if (listed == null) {
+        return ExternalLevel(dir, emptyList(), truncated = false, readable = false, writable = false)
+    }
     val dirs = listed
         .filter { it.isDirectory && !it.name.startsWith(".") }
         .sortedBy { it.name.lowercase() }
     val truncated = dirs.size > EXTERNAL_MAX_CHILDREN
     val shown = if (truncated) dirs.take(EXTERNAL_MAX_CHILDREN) else dirs
     val children = shown.map { child ->
-        // 每个子目录数一次条目：这是「里面有没有东西」唯一的真实读数。读不到（Android/data
-        // 那种被系统挡住的位置）就是 null，界面印「读不到」而不是「0 个条目」。
-        val count = runCatching { child.listFiles()?.size }.getOrNull()
+        val count = runCatching { child.list()?.size }.getOrNull()
         ExternalChild(child, count)
     }
-    return ExternalLevel(dir, children, truncated)
+    return ExternalLevel(
+        dir, children, truncated,
+        readable = true,
+        writable = runCatching { dir.canWrite() }.getOrDefault(false),
+    )
 }
 
-/**
- * 这个应用现在能不能列出共享存储。
- *
- * 它是**能力**判据，不是某个开关的读数：API 30+ 看 `isExternalStorageManager()`，更早的版本
- * 看主共享存储能不能读（`MANAGE_EXTERNAL_STORAGE` 在那些版本上不参与，老式存储权限才管用）。
- */
 private fun storageAccessGranted(context: Context): Boolean =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
     } else {
-        runCatching { File(Environment.getExternalStorageDirectory(), "").canRead() }.getOrDefault(false)
+        // 以前用 `File(...).canRead()`：在 Android 10 上没有权限也可能读得出根目录，
+        // 于是跳过授权直接进浏览器，里面却什么都列不出来。直接问权限本身。
+        fun held(permission: String) = androidx.core.content.ContextCompat
+            .checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        held(android.Manifest.permission.READ_EXTERNAL_STORAGE) &&
+            held(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
     }
 
-/**
- * 可以出发的卷根：主共享存储 + `StorageManager` 报告的可移除卷。
- *
- * 顺序与去重由 [WorkspaceChoice.volumeRoots] 决定（主存储第一，重复的根只留一次）。
- */
 private fun volumeRoots(context: Context): List<String> {
     val primary = runCatching { Environment.getExternalStorageDirectory()?.absolutePath }.getOrNull()
     val removable = runCatching {
@@ -360,7 +383,15 @@ private fun volumeRoots(context: Context): List<String> {
             // 只列可移除卷：内置卷就是主共享存储，重复列一次只会多一行一样的字。
             if (!volume.isRemovable) return@mapNotNull null
             if (volume.state != Environment.MEDIA_MOUNTED) return@mapNotNull null
-            volume.directory?.absolutePath
+            // `StorageVolume.getDirectory()` 是 API 30 才有的；更早的系统上它不存在，
+            // 存储卡就整个不出现在可选卷里。旧系统退回隐藏的 `getPath()`。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                volume.directory?.absolutePath
+            } else {
+                runCatching {
+                    volume.javaClass.getMethod("getPath").invoke(volume) as? String
+                }.getOrNull()
+            }
         }
     }.getOrDefault(emptyList())
     return WorkspaceChoice.volumeRoots(primary, removable)
