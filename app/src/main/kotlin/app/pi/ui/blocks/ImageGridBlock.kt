@@ -434,6 +434,10 @@ internal fun decodePiImageFile(file: File, targetWidth: Int = 0, targetHeight: I
 /** 解码本身：wire 与宿主文件都走这里，所以"一次解码"这件事只有一份实现。 */
 private fun decodePiImageBytes(bytes: ByteArray, targetWidth: Int, targetHeight: Int): Bitmap? =
     runCatching {
+        // SVG 不是 BitmapFactory 认得的格式：交给 AndroidSVG 栅格化（查看器按 2× 画布宽画，缩放时不糊）。
+        if (app.pi.bridge.GuestImageBytes.looksLikeSvg(bytes)) {
+            return@runCatching app.pi.bridge.rasterizeSvg(bytes, targetWidth * 2, allowUpscaleFactor = 8f)
+        }
         if (targetWidth <= 0 || targetHeight <= 0) {
             return@runCatching BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         }

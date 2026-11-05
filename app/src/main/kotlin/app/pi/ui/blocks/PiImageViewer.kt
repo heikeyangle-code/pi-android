@@ -327,6 +327,17 @@ internal fun PiImageViewerSurface(
         // 格式 32 字节，JPEG 最多 64 KiB），在 IO 上做 —— 宿主文件那一支是一次真实的文件读，不能
         // 放在主线程。读不出来（不是这五种格式、文件打不开）就是 null：这一屏退回上面那张采样
         // 位图，一个字节都不多要。
+        val animatedPainter = app.pi.bridge.rememberAnimatedPainterFor(image.cacheKey, boxWidthPx) {
+            runCatching {
+                when (image) {
+                    is PiImageViewerSource.Wire ->
+                        if (image.base64.length > 12_000_000) null else Base64.decode(image.base64, Base64.DEFAULT)
+                    is PiImageViewerSource.HostFile ->
+                        if (image.file.length() > 8L * 1024 * 1024) null else image.file.readBytes()
+                }
+            }.getOrNull()
+        }
+
         val sourcePixels by produceState<ImagePixels?>(null, image.cacheKey) {
             value = withContext(Dispatchers.IO) { readSourcePixels(image) }
         }
@@ -587,16 +598,26 @@ internal fun PiImageViewerSurface(
                         },
                     contentAlignment = Alignment.TopStart,
                 ) {
-                    Image(
-                        bitmap = decoded.asImageBitmap(),
-                        contentDescription = "放大的图片",
-                        // The node is exactly the bitmap's aspect, so `Fit` fills it.
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (animatedPainter != null) {
+                        // 动图：画会动的 painter（首帧位图仍负责尺寸与缩放范围）。
+                        Image(
+                            painter = animatedPainter,
+                            contentDescription = "放大的图片",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Image(
+                            bitmap = decoded.asImageBitmap(),
+                            contentDescription = "放大的图片",
+                            // The node is exactly the bitmap's aspect, so `Fit` fills it.
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     // 放大后那一块：贴在画面的对应位置上，由上面那层 `graphicsLayer` 跟着一起放大，
                     // 所以它与倍率、平移无关（拖动时不会跟丢），也不需要每帧重算。
-                    val held = block
+                    val held = if (animatedPainter != null) null else block
                     if (source != null && held != null) {
                         val at = zoomDecodePlacement(
                             window = held.window,
@@ -823,6 +844,7 @@ private fun saveImage(context: Context, image: PiImageViewerSource): String = tr
  */
 private fun wireImageName(mimeType: String, nowMs: Long): String {
     val subtype = mimeType.substringBefore(';').substringAfter('/', "").lowercase(Locale.US)
+        .let { if (it == "svg+xml") "svg" else it }
     val extension = subtype.filter { it.isLetterOrDigit() }.ifEmpty { "img" }
     return "pi-image-$nowMs.$extension"
 }

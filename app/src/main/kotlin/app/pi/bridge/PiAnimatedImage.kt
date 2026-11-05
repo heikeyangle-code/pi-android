@@ -153,3 +153,21 @@ internal fun rememberAnimatedPainter(link: String, widthPx: Int): Painter? {
     }
     return p
 }
+
+/** 查看器等「字节在别处」的场景：后台取字节，是动图且解得出来才给 painter，离开组合时停掉。 */
+@Composable
+internal fun rememberAnimatedPainterFor(key: Any, widthPx: Int, loadBytes: () -> ByteArray?): Painter? {
+    if (Build.VERSION.SDK_INT < 28) return null
+    val painter by produceState<AnimatedDrawablePainter?>(null, key, widthPx) {
+        value = withContext(Dispatchers.IO) {
+            val bytes = loadBytes()?.takeIf { PiAnimatedImages.isAnimated(it) } ?: return@withContext null
+            decodeAnimated(bytes, widthPx)?.let { AnimatedDrawablePainter(it) }
+        }
+    }
+    val p = painter
+    DisposableEffect(p) {
+        p?.start()
+        onDispose { p?.release() }
+    }
+    return p
+}
