@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.rememberTreeParse
 import app.pi.ui.theme.PiTheme
@@ -87,25 +88,26 @@ private fun HtmlSourceFallback(
     val palette = PiTheme.palette
     // 回退也套同一张卡（`html` 胶囊 + 复制）：裸的一行原因加一坨源码在页面上不像一个"块"。
     val info = remember { FenceInfo.parse("html") }
-    PiRichCardFrame(source, info, palette) {
-        Column(modifier.fillMaxWidth()) {
+    // 回退就是一个**带语法高亮的 html 代码块**：原因放进卡片头的状态位（一行、省略），
+    // 正文只有高亮后的源码。以前正文是一行原因 + 一坨没高亮的灰字，和同页别的 html 代码块
+    // 长得不一样。
+    val highlighted = rememberPiHighlightedCode(source, "html")
+    PiRichCardFrame(
+        code = source,
+        info = info,
+        palette = palette,
+        status = notice.takeIf { it != "解析中…" },
+    ) {
+        if (source.isNotBlank()) {
             Text(
-                text = notice,
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                text = highlighted.text,
+                style = PiTheme.text.code.copy(
+                    color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+                ),
+                modifier = modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
             )
-            if (source.isNotBlank()) {
-                Text(
-                    text = source,
-                    style = PiTheme.text.code.copy(color = palette.text),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp),
-                )
-            }
         }
     }
 }

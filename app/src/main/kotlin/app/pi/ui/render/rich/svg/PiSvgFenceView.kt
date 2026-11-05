@@ -248,6 +248,35 @@ fun PiSvgFenceView(
                 val shape = RoundedCornerShape(8.dp)
                 // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
                 // 这样不需要 `BoxWithConstraints`。
+                val animKey = remember { Any() }
+                val isAnimatedSvg = image.animatedSvg != null
+                // 第一帧：有空位就直接按「会播」画（随后的 effect 真正占位）；占位被拒才退成静态。
+                // 占位之后一律以真实占用为准，被别的卡片顶掉就回到静态。
+                val room = remember { PiSvgAnimationSlots.hasRoom() }
+                var decided by remember { mutableStateOf(false) }
+                if (isAnimatedSvg) {
+                    androidx.compose.runtime.DisposableEffect(animKey) {
+                        PiSvgAnimationSlots.tryAcquire(animKey)
+                        decided = true
+                        onDispose { PiSvgAnimationSlots.release(animKey) }
+                    }
+                }
+                val playingSvg = if (decided) PiSvgAnimationSlots.isActive(animKey) else room
+                if (isAnimatedSvg && playingSvg) {
+                    PiSvgAnimatedView(
+                        svg = image.animatedSvg,
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
+                            .fillMaxWidth()
+                            .aspectRatio(aspect.coerceIn(0.05f, 60f))
+                            .then(
+                                if (darkPage) Modifier.clip(shape).background(Color(0xFFF4F4F2)) else Modifier,
+                            )
+                            .clipToBounds()
+                            .semantics { contentDescription = "动画 SVG" },
+                    )
+                } else Box {
                 Canvas(
                     modifier = Modifier
                         .padding(8.dp)
@@ -285,6 +314,8 @@ fun PiSvgFenceView(
                         // 变换写在 native canvas 上而不是 `graphicsLayer`：layer 会把记录
                         // 好的栅格放大、文字发虚，这里是在最终矩阵下重放矢量指令。
                         native.save()
+                        // 显式裁到画布：放大后图不许画进标题栏/卡片边缘（只靠 clipToBounds 不够稳）。
+                        native.clipRect(0f, 0f, size.width, size.height)
                         native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
                         native.scale(fit, fit)
                         native.translate(
@@ -294,6 +325,22 @@ fun PiSvgFenceView(
                         native.drawPicture(image.picture)
                         native.restore()
                     }
+                }
+                if (isAnimatedSvg) {
+                    // 名额用完时的静态图：点一下才开始播（会顶掉最早在播的那个）。
+                    Text(
+                        text = "▶ 播放动画",
+                        style = PiTheme.text.monoSmall,
+                        color = palette.accent,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(14.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(palette.pageBg.copy(alpha = 0.85f))
+                            .clickable { PiSvgAnimationSlots.steal(animKey) }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
                 }
             } else if (draw == PiSvgDraw.Rendering && pinned != true) {
                 // 已在渲染、还没回答：固定高度占位，而不是先摊一整块源码再缩成图（行高突变、列表跳动）。
@@ -357,6 +404,8 @@ private sealed interface PiSvgDraw {
         val baseWidthPx: Int,
         val baseHeightPx: Int,
         val aspect: Float,
+        /** 非空 = 这份 SVG 带动画，用 WebView 播放（清理后的文本）。 */
+        val animatedSvg: String? = null,
     ) : PiSvgDraw
 
     /** 这份源码不会出图；原因印在源码块上。 */
@@ -421,7 +470,10 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
     } catch (error: Exception) {
         return PiSvgDraw.Unavailable("SVG 绘制失败：${error.message ?: error::class.java.simpleName}")
     }
-    return PiSvgDraw.Ready(picture, baseWidth, baseHeight, aspect)
+    return PiSvgDraw.Ready(
+        picture, baseWidth, baseHeight, aspect,
+        animatedSvg = safe.takeIf { piSvgIsAnimated(it) },
+    )
 }
 
 /**

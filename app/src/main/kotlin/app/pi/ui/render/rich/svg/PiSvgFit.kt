@@ -32,7 +32,7 @@ internal object PiSvgFit {
      * 解析后让文档铺满视口。[fallbackWidth] / [fallbackHeight] 是文档自己没有 `viewBox` 且
      * `width/height` 也不是绝对数值时的兜底（管线报告的像素尺寸），≤ 0 表示没有。
      */
-    fun fill(svg: SVG, fallbackWidth: Int = 0, fallbackHeight: Int = 0) {
+    fun fill(svg: SVG, fallbackWidth: Int = 0, fallbackHeight: Int = 0, margin: Float = 0f) {
         try {
             val viewBox = svg.documentViewBox
             val hasViewBox = viewBox != null && viewBox.width() > 0f && viewBox.height() > 0f
@@ -43,6 +43,19 @@ internal object PiSvgFit {
                     ?: fallbackHeight.takeIf { it > 0 }?.toFloat()
                 if (w == null || h == null) return
                 svg.setDocumentViewBox(0f, 0f, w, h)
+            }
+            if (margin > 0f) {
+                // 给内容留一圈边：量字宽用的字体与最终绘制的字体不同时（CJK 标签、菱形节点），
+                // 节点会略微超出量出来的 viewBox，被视口直接裁掉一截。
+                val vb = svg.documentViewBox
+                if (vb != null && vb.width() > 0f && vb.height() > 0f) {
+                    svg.setDocumentViewBox(
+                        vb.left - margin,
+                        vb.top - margin,
+                        vb.width() + margin * 2,
+                        vb.height() + margin * 2,
+                    )
+                }
             }
             svg.setDocumentWidth("100%")
             svg.setDocumentHeight("100%")

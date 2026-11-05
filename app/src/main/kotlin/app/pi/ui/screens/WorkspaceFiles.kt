@@ -187,7 +187,8 @@ internal object WorkspaceFiles {
         kind = if (file.isDirectory) WorkspaceEntryKind.Directory else kindOf(file),
         sizeBytes = if (file.isDirectory) 0L else file.length(),
         modifiedAt = file.lastModified(),
-        childCount = if (file.isDirectory) file.listFiles()?.size ?: 0 else 0,
+        // `list()` 只要名字（不为每个子项建 File 对象），大目录（node_modules / .git）上快得多。
+        childCount = if (file.isDirectory) file.list()?.size ?: 0 else 0,
     )
 
     /**
@@ -210,6 +211,8 @@ internal object WorkspaceFiles {
     }
 
     private fun looksBinary(file: File): Boolean = runCatching {
+        // 空文件不可能是二进制，省一次打开。
+        if (file.length() == 0L) return@runCatching false
         file.inputStream().use { input ->
             val buffer = ByteArray(SNIFF_BYTES)
             val read = input.read(buffer)
@@ -377,17 +380,41 @@ internal object WorkspaceFiles {
 
     /** 永久删除：目录连同内容一起删。design 稿的确认框就是这么说的。 */
     fun delete(file: File): Result<Unit> = runCatching {
-        val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
-        if (!deleted || file.exists()) throw java.io.IOException("删除失败：${file.absolutePath}")
+        // 不能用 `File.deleteRecursively()`：它会**跟进目录符号链接**，目录里有一条指向别处的
+        // 相对链接（pnpm 的 node_modules 就是），删它会把链接目标里的内容一起删掉。
+        // 这里按 NOFOLLOW 走：符号链接本身当作一个文件删掉，绝不进入它的目标。
+        val path = file.toPath()
+        val isLink = java.nio.file.Files.isSymbolicLink(path)
+        if (isLink || !file.isDirectory) {
+            java.nio.file.Files.deleteIfExists(path)
+        } else {
+            java.nio.file.Files.walkFileTree(
+                path,
+                object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun visitFile(
+                        file: java.nio.file.Path,
+                        attrs: java.nio.file.attribute.BasicFileAttributes,
+                    ): java.nio.file.FileVisitResult {
+                        java.nio.file.Files.deleteIfExists(file)
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+
+                    override fun postVisitDirectory(
+                        dir: java.nio.file.Path,
+                        exc: java.io.IOException?,
+                    ): java.nio.file.FileVisitResult {
+                        if (exc != null) throw exc
+                        java.nio.file.Files.deleteIfExists(dir)
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+                },
+            )
+        }
+        if (java.nio.file.Files.exists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw java.io.IOException("删除失败：${file.absolutePath}")
+        }
     }
 
-    /**
-     * 把编辑器的内容写回整个文件（覆盖写）。
-     *
-     * **这是「工作区里任何普通文件」的写法**：无锁、非原子、没有内容校验 —— 对用户自己的
-     * 文档正是编辑器的意义。写 pi 会读的文件请用 [save]：它对工作区自己的 `.pi/` 目录换用
-     * pi 的锁 + 原子替换（必要时还先过写前校验）。这个函数不再被编辑器的保存路径直接调用。
-     */
     fun writeText(file: File, text: String): Result<Unit> = runCatching {
         file.parentFile?.mkdirs()
         file.writeText(text)
@@ -415,20 +442,24 @@ internal object WorkspaceFiles {
         relativePath: String,
         text: String,
         openedStamp: String? = null,
+        crlf: Boolean = false,
     ): Result<Unit> = runCatching {
-        WorkspacePiWrite.problem(relativePath, file, text)?.let { throw java.io.IOException(it) }
+        // 编辑器里一律是 LF；原文件是 CRLF 的，写回时还原，免得每次保存都把整个文件的换行改掉。
+        val body = text.replace("\r\n", "\n").let { if (crlf) it.replace("\n", "\r\n") else it }
+        WorkspacePiWrite.problem(relativePath, file, body)?.let { throw java.io.IOException(it) }
         if (!WorkspacePiWrite.isPiDocumentPath(relativePath, file)) {
-            writeText(file, text).getOrThrow()
-            return@runCatching
-        }
-        val written = PiConfigFiles.withLock(file) {
-            // 变更检测在锁**里面**：这样「比指纹 → 写」对 pi 自己的写是原子的，否则检查过了、
-            // 写完之前 pi 还是能插进来。指纹就是 [stampOf]（与「Pi 文件」屏同一个判据），
-            // [openedStamp] 为 null（打开时没记下）时跳过检查。
+            // 普通文件也要查「打开之后有没有被改过」：Agent 可能正在写它，直接覆盖会吞掉那次改动。
             if (WorkspacePiWrite.stampChanged(openedStamp, stampOf(file))) {
                 throw java.io.IOException(WorkspacePiWrite.staleStampSentence())
             }
-            PiConfigFiles.write(file, text, mode600 = WorkspacePiWrite.restrictToOwner(relativePath, file))
+            atomicWriteText(file, body)
+            return@runCatching
+        }
+        val written = PiConfigFiles.withLock(file) {
+            if (WorkspacePiWrite.stampChanged(openedStamp, stampOf(file))) {
+                throw java.io.IOException(WorkspacePiWrite.staleStampSentence())
+            }
+            PiConfigFiles.write(file, body, mode600 = WorkspacePiWrite.restrictToOwner(relativePath, file))
         }
         if (!written) {
             throw java.io.IOException("写盘失败：${file.name}（原子替换没有成功，磁盘上的内容没有被改）")
@@ -436,11 +467,85 @@ internal object WorkspaceFiles {
     }
 
     /**
-     * `(size, mtime)` 指纹 —— 只用来发现「变过」，不追求唯一。
-     *
-     * 与 `PiFilesScreen` 的 `stampOf` 同一种判据（那边写在文件里，这里提出来给 [save] 的变更
-     * 检测用）：同一种形状换来的是两个界面不会对「这个文件变了吗」给出不同答案。
+     * 先写同目录的临时文件再改名替换：进程在写到一半被杀，原文件仍是完整的旧内容，
+     * 不会留下半个文件。目标是符号链接时写到真实文件上，不把链接替换成普通文件。
      */
+    private fun atomicWriteText(file: File, text: String) {
+        val target = if (java.nio.file.Files.isSymbolicLink(file.toPath())) file.canonicalFile else file
+        val parent = target.parentFile
+        parent?.mkdirs()
+        val tmp = File(parent, ".${target.name}.pi-save-${System.nanoTime()}")
+        try {
+            tmp.writeBytes(text.toByteArray(Charsets.UTF_8))
+            if (target.exists() && target.canExecute()) tmp.setExecutable(true, true)
+            try {
+                java.nio.file.Files.move(
+                    tmp.toPath(),
+                    target.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (ignored: java.io.IOException) {
+                // 个别文件系统不支持原子改名：退成普通替换；仍失败再退回直接写。
+                runCatching {
+                    java.nio.file.Files.move(
+                        tmp.toPath(),
+                        target.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    )
+                }.getOrElse { writeText(target, text).getOrThrow() }
+            } catch (ignored: UnsupportedOperationException) {
+                writeText(target, text).getOrThrow()
+            }
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** 编辑器能编辑的文件大小上限：整份放进一个文本框，再大打字就明显卡。 */
+    const val EDIT_MAX_BYTES = 400_000L
+
+    internal class EditableText(val text: String, val crlf: Boolean, val stamp: String)
+
+    /**
+     * 为编辑**从磁盘读原文**（不是查看器那份按行拆开的预览）：
+     *  - 末尾换行、行尾风格原样保留（CRLF 记下来，保存时还原）；
+     *  - 严格按 UTF-8 解码，遇到非法字节直接拒绝（否则保存会把别的编码的文件写坏）；
+     *  - 超过 [EDIT_MAX_BYTES] 拒绝；
+     *  - 返回读取**之前**的文件指纹，保存时用它检测「期间被改过」。
+     */
+    fun readForEdit(file: File): Result<EditableText> = runCatching {
+        if (!file.isFile) throw java.io.IOException("这个文件已经不在了。")
+        val size = file.length()
+        if (size > EDIT_MAX_BYTES) {
+            throw java.io.IOException(
+                "这个文件有 ${formatSize(size)}，超过 ${formatSize(EDIT_MAX_BYTES)}，只能查看（编辑会很卡）。" +
+                    "需要改的话用「用其他应用打开」。",
+            )
+        }
+        val stamp = stampOf(file)
+        val bytes = file.readBytes()
+        val decoded = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (ignored: java.nio.charset.CharacterCodingException) {
+            throw java.io.IOException("这个文件不是 UTF-8 编码，只能查看（保存会把其中的字节写坏）。")
+        }
+        var crlfCount = 0
+        var lfCount = 0
+        var i = 0
+        while (i < decoded.length) {
+            if (decoded[i] == '\n') {
+                if (i > 0 && decoded[i - 1] == '\r') crlfCount++ else lfCount++
+            }
+            i++
+        }
+        EditableText(decoded.replace("\r\n", "\n"), crlf = crlfCount > lfCount, stamp = stamp)
+    }
+
     fun stampOf(file: File): String = "${file.length()}:${file.lastModified()}"
 
     /**

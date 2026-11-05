@@ -153,8 +153,10 @@ internal class PiGuestImageTransformer(
             if (value == null) value = load(link, widthPx)
         }
         val image = bitmap ?: return null
+        // 动图：位图只是第一帧；有动图字节且解得出来就换成会动的 painter。
+        val animated = rememberAnimatedPainter(link, widthPx)
         return ImageData(
-            painter = BitmapPainter(image.asImageBitmap()),
+            painter = animated ?: BitmapPainter(image.asImageBitmap()),
             // 按可用宽度铺开，比例交给 `ContentScale.Fit`。不加这一条的话，库拿
             // `imageData.modifier`（默认是空 `Modifier`）直接量这张位图的本征尺寸
             // (`MarkdownImage.kt:20-29`)，一张 4000 px 宽的图就要一个 4000 px 的框：
@@ -248,6 +250,7 @@ internal class PiGuestImageTransformer(
             // 上界悄悄翻倍。它与 `GuestImageBytes` 那把"同时在开的连接"（3 许可）是两回事。
             piImageDecodeGate.withPermit { decode(loaded.bytes, key.widthPx) }
         } ?: return Result.failure(IllegalStateException("图片解码失败：${loaded.source}"))
+        if (PiAnimatedImages.isAnimated(loaded.bytes)) PiAnimatedImages.remember(key.link, loaded.bytes)
         store(key, decoded)
         return Result.success(decoded)
     }
@@ -273,29 +276,8 @@ internal class PiGuestImageTransformer(
      * SVG 图片（徽章、图表、`![](x.svg)`）：AndroidSVG 栅格化到容器宽。
      * 只做**静态**渲染：AndroidSVG 不执行脚本、不取外部资源；尺寸与像素数设上限。
      */
-    private fun decodeSvg(bytes: ByteArray, availableWidthPx: Int): Bitmap? = runCatching {
-        if (bytes.size > 2 * 1024 * 1024) return@runCatching null
-        val svg = com.caverock.androidsvg.SVG.getFromString(
-            String(bytes, Charsets.UTF_8).replace("auto-start-reverse", "auto"),
-        )
-        val viewBox = svg.documentViewBox
-        var w = svg.documentWidth.takeIf { it.isFinite() && it > 0f }
-            ?: viewBox?.width()?.takeIf { it > 0f } ?: 300f
-        var h = svg.documentHeight.takeIf { it.isFinite() && it > 0f }
-            ?: viewBox?.height()?.takeIf { it > 0f } ?: 150f
-        if (viewBox == null || viewBox.width() <= 0f || viewBox.height() <= 0f) svg.setDocumentViewBox(0f, 0f, w, h)
-        // 目标宽：容器宽（没有就用自身宽），小图（徽章）不放大超过 2 倍，整体不超过 2048。
-        val target = (if (availableWidthPx > 0) minOf(availableWidthPx.toFloat(), w * 2f) else w)
-            .coerceIn(16f, 2048f)
-        val scale = target / w
-        val outW = target.toInt().coerceAtLeast(1)
-        val outH = (h * scale).toInt().coerceIn(1, 4096)
-        svg.setDocumentWidth("100%")
-        svg.setDocumentHeight("100%")
-        val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-        svg.renderToCanvas(android.graphics.Canvas(bitmap), android.graphics.RectF(0f, 0f, outW.toFloat(), outH.toFloat()))
-        bitmap
-    }.getOrNull()
+    private fun decodeSvg(bytes: ByteArray, availableWidthPx: Int): Bitmap? =
+        rasterizeSvg(bytes, availableWidthPx)
 
     private fun decodeRaster(bytes: ByteArray, availableWidthPx: Int): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -67,7 +67,7 @@ private const val HOST_PAGE_URL = "https://appassets.androidplatform.net" + ASSE
 private val MATH_ASSET_FILES = setOf(HOST_PAGE, "tex-svg.js")
 
 /** 轮询间隔。只在有任务在飞的时候才发生，一次排版通常 1–10 次。 */
-private const val POLL_INTERVAL_MS = 64L
+private const val POLL_INTERVAL_MS = 16L
 
 /** 主题色只接受 `#RRGGBB`；`PiSvgTheme` 是纯字符串，契约不保证格式。 */
 private val HEX_COLOR = Regex("^#[0-9a-fA-F]{6}$")
@@ -197,7 +197,7 @@ internal object PiMathRenderEngine : PiSvgEngine {
     private const val MAX_SVG_BYTES = PiSvgSanitizer.MAX_BYTES
 
     /** 等待位（不含正在渲染的那个）。 */
-    private const val MAX_PENDING = 8
+    private const val MAX_PENDING = 64
 
     private const val MAX_CACHE_ENTRIES = 48
     private const val MAX_CACHE_BYTES = 4 * 1024 * 1024
@@ -352,7 +352,14 @@ internal object PiMathRenderEngine : PiSvgEngine {
     // ---------------------------------------------------------------- one task
 
     private suspend fun runTask(task: MathTask) {
-        val result = try {
+        // 宿主在这次渲染进行中被系统回收（内存紧张时主动释放）或崩了：这不是这条内容的错，
+        // 重建一次宿主再试一次；第二次还失效才报失败。以前直接报「宿主失效」，那一格就
+        // 一直停在源码上，直到滚出去再滚回来。
+        var retried = false
+        var result: PiSvgResult
+        while (true) {
+            var hostLost = false
+            result = try {
             val renderHost = ensureHost()
             val rawReply = withTimeout(RENDER_TIMEOUT_MS) {
                 renderHost.render { taskId -> renderScript(taskId, task.request, task.display) }
@@ -363,6 +370,7 @@ internal object PiMathRenderEngine : PiSvgEngine {
             PiSvgResult.Failure("公式渲染超时（${RENDER_TIMEOUT_MS} ms）")
         } catch (gone: MathHostLostException) {
             disposeHost("宿主失效：${gone.message}")
+            hostLost = true
             PiSvgResult.Failure("公式渲染宿主失效：${gone.message ?: "未知原因"}")
         } catch (unavailable: MathHostUnavailableException) {
             PiSvgResult.Failure(unavailable.message ?: "公式渲染宿主不可用")
@@ -370,6 +378,12 @@ internal object PiMathRenderEngine : PiSvgEngine {
             throw cancellation
         } catch (error: Throwable) {
             PiSvgResult.Failure("公式渲染失败：${error.message ?: error::class.java.simpleName}")
+        }
+            if (hostLost && !retried) {
+                retried = true
+                continue
+            }
+            break
         }
         finish(task, result)
     }

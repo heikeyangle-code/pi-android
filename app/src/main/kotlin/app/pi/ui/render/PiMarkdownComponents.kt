@@ -479,7 +479,7 @@ private fun PiHtmlBlock(model: MarkdownComponentModel) {
         PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
         return
     }
-    PiHtmlBlockView(source = text, settled = !LocalPiMarkdownStreaming.current)
+    PiHtmlSegments(text = text, settled = !LocalPiMarkdownStreaming.current)
 }
 
 /**
@@ -532,6 +532,14 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         )
         return
     }
+    // 整段只是一条音频/视频链接（裸 URL、[文字](URL)、![](URL)）：画播放卡片。
+    val mediaUrl = remember(bounds) { piMediaFromParagraph(bounds.second) }
+    if (mediaUrl != null && !(LocalPiMarkdownStreaming.current &&
+            content.substring(node.endOffset.coerceIn(0, content.length)).isBlank())
+    ) {
+        PiMediaCard(mediaUrl, piMediaKind(mediaUrl)!!)
+        return
+    }
     val info = remember(bounds) {
         val text = bounds.second
         if (text.length > BARE_URL_MAX_CHARS || text.any { it.isWhitespace() }) {
@@ -549,6 +557,22 @@ private fun PiParagraph(model: MarkdownComponentModel) {
     if (info == null || writingTail) {
         MarkdownParagraph(model.content, model.node)
         return
+    }
+    // 整段只是一条图片 URL（png/jpg/gif/webp/svg…）：直接画图（点开可全屏），
+    // 还没取到字节 / 取失败时退回链接卡片。
+    if (info.kind == app.pi.ui.render.rich.LinkKind.Image) {
+        val decoded = LocalPiImageTransformer.current.transform(info.url)
+        if (decoded != null) {
+            PiImageViewerTap(info.url) {
+                androidx.compose.foundation.Image(
+                    painter = decoded.painter,
+                    contentDescription = decoded.contentDescription,
+                    contentScale = decoded.contentScale,
+                    modifier = decoded.modifier.padding(vertical = 4.dp),
+                )
+            }
+            return
+        }
     }
     val uriHandler = LocalUriHandler.current
     PiLinkPreview(
@@ -672,6 +696,7 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
     val transformer = LocalPiImageTransformer.current
     val referenceHandler = LocalReferenceLinkHandler.current
     val link = remember(content, node) { node.resolveImageLink(content, referenceHandler) }
+    piMediaKind(link)?.let { kind -> PiMediaCard(link!!, kind); return }
     // Ask for the bytes before deciding, for the reason in the doc above: a `null`
     // result must fall through to the text fallback instead of handing the node to a
     // component that would draw nothing.
@@ -733,6 +758,7 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
 @Composable
 private fun PiInlineImage(model: MarkdownComponentModel) {
     val link = model.content
+    piMediaKind(link)?.let { kind -> PiMediaCard(link, kind); return }
     val transformer = LocalPiImageTransformer.current
     val decoded = if (link.isNotBlank()) transformer.transform(link) else null
     if (decoded != null) {
@@ -1505,7 +1531,21 @@ private fun PiCodeSurface(
     // `FENCE_LANG` 是完整 info string（包含 `title=...`），不是语言名。分类与高亮都
     // 只拿第一个有效词；`PiCodeLanguage.normalize` 的整串 lowercase 会把属性一起
     // 当成语言，见 `FenceInfo.kt` 的类注释。
-    val info = remember(language) { FenceInfo.parse(language) }
+    // 语言别名（mmd / latex / geojson / rss …）与「没写语言」的内容嗅探：
+    // 这两种情况以前都被当成普通代码，富渲染被围栏标签挡住。
+    val info = remember(language, code, settled) {
+        val parsed = FenceInfo.parse(language)
+        val effective = when {
+            parsed.language.isNotEmpty() -> app.pi.ui.render.rich.PiFenceSniff.alias(parsed.language)
+            settled -> app.pi.ui.render.rich.PiFenceSniff.sniff(code) { text ->
+                runCatching {
+                    if (text.startsWith("{")) org.json.JSONObject(text) else org.json.JSONArray(text)
+                }.isSuccess
+            }
+            else -> null
+        }
+        if (effective != null && effective != parsed.language) parsed.copy(language = effective) else parsed
+    }
     val normalized = info.language.takeIf { it.isNotEmpty() }
     val kind = remember(info, code, settled) { RichBlock.classify(info, code, settled) }
 
@@ -1548,6 +1588,15 @@ private fun PiCodeSurface(
         PiSvgFenceView(source = code, settled = settled)
         return
     }
+    if (normalized?.lowercase() == "math" && settled && code.isNotBlank()) {
+        // ```math / ```latex / ```tex：整块显示式公式。
+        val src = code.trim().removePrefix("$$").removeSuffix("$$").trim()
+        val fallback = remember(src) {
+            runCatching { PiLatex.toUnicode(src, display = true) }.getOrNull() ?: src
+        }
+        PiMathView(source = src, display = true, settled = true, fallbackText = fallback)
+        return
+    }
     // 结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。外框
     // （标题 + 复制）由 `PiRichCardFrame` 提供，树视图自己只有工具栏与树行。
     // 解析失败/超限时各视图自己回退源码。
@@ -1576,6 +1625,10 @@ private fun PiCodeSurface(
     // 1 dp 满不透明的灰边是一圈亮框，代码块比它包着的文字还抢眼。边线压到 28%，
     // 里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线（所有档位一致）。
     val classic = PiTheme.typography.isClassic
+    if (settled && code.isNotBlank() && (normalized?.lowercase() == "html" || normalized?.lowercase() == "htm")) {
+        PiHtmlFence(code, info, highlighted, style, palette, classic)
+        return
+    }
     PiRichCodeBlock(
         code = code,
         info = info,

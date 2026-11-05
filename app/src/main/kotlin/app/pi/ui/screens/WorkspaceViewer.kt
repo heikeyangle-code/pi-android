@@ -161,18 +161,8 @@ internal fun WorkspaceViewer(
     var reloadTick by remember(target.relativePath) { mutableIntStateOf(0) }
     // null = 正在读。它和「0 行」是两件事，所以不能用空表代替。
     var opened by remember(target.relativePath, reloadTick) { mutableStateOf<WorkspaceOpen?>(null) }
-    var mode by remember(target.relativePath) {
-        // `startInEdit` 也要过「这个 kind 能不能按文本改」那道判据（判据一处，见
-        // `WorkspaceFiles.editableAsText`）：菜单里的「编辑」与被写死的 `startInEdit` 都可能
-        // 落到图片/二进制上，而编辑态对着空草稿保存，就是拿 UTF-8 文本覆盖一张图片。
-        mutableStateOf(
-            if (target.startInEdit && WorkspaceFiles.editableAsText(target.kind)) {
-                ViewerMode.Edit
-            } else {
-                ViewerMode.View
-            },
-        )
-    }
+    // 永远从查看态开始：进编辑要先**从磁盘读原文**（见 [beginEdit]），读到之前不能让用户面对一个空编辑框。
+    var mode by remember(target.relativePath) { mutableStateOf(ViewerMode.View) }
     var draft by remember(target.relativePath) { mutableStateOf("") }
     var dirty by remember(target.relativePath) { mutableStateOf(false) }
     var saving by remember(target.relativePath) { mutableStateOf(false) }
@@ -180,6 +170,8 @@ internal fun WorkspaceViewer(
     // 打开（或上次保存后重读）时的 `(size, mtime)`：`.pi/` 里的文件保存前会比一次，发现被
     // pi 或别处改过就拒绝覆盖。null = 还没读到过内容，那时不做变更检测。
     var openedStamp by remember(target.relativePath) { mutableStateOf<String?>(null) }
+    var eolCrlf by remember(target.relativePath) { mutableStateOf(false) }
+    var editLoading by remember(target.relativePath) { mutableStateOf(false) }
     var askUnsaved by remember(target.relativePath) { mutableStateOf(false) }
     var htmlReload by remember(target.relativePath) { mutableIntStateOf(0) }
     // 一次导出还没落地时不再接第二次点按：`DeviceSystemActions.export` 的 `sanitizeName`
@@ -222,14 +214,53 @@ internal fun WorkspaceViewer(
             WorkspaceFiles.open(target.file, target.kind) to WorkspaceFiles.stampOf(target.file)
         }
         opened = loaded.first
-        openedStamp = loaded.second
+        // 编辑中不能被这次「查看用」的读覆盖：编辑用的指纹是 [beginEdit] 读原文时记的那一版。
+        if (mode != ViewerMode.Edit) openedStamp = loaded.second
     }
 
-    // 「编辑」可以直接从行菜单进来，那时文本还没读完：读完就把草稿铺上。
-    LaunchedEffect(opened, mode) {
-        val text = opened
-        if (mode == ViewerMode.Edit && text is WorkspaceOpen.Text && draft.isEmpty() && !dirty) {
-            draft = text.lines.joinToString("\n")
+    // 编辑入口：整份读原文（不是查看器那份按行拆开、最多 5000 行的预览），
+    // 保留末尾换行与 CRLF，记下读取时的文件指纹给保存做冲突检测，并恢复上次没保存的草稿。
+    fun beginEdit() {
+        if (editLoading || mode == ViewerMode.Edit) return
+        editLoading = true
+        scope.launch {
+            val read = withContext(Dispatchers.IO) { WorkspaceFiles.readForEdit(target.file) }
+            read.fold(
+                onSuccess = { e ->
+                    val restore = withContext(Dispatchers.IO) {
+                        WorkspaceDrafts.load(context, target.file, e.stamp)
+                    }
+                    val restored = (restore as? WorkspaceDrafts.Restore.Found)?.text
+                    draft = restored ?: e.text
+                    dirty = restored != null && restored != e.text
+                    eolCrlf = e.crlf
+                    openedStamp = e.stamp
+                    saveError = null
+                    mode = ViewerMode.Edit
+                    when {
+                        dirty -> onMessage("已恢复上次没保存的改动")
+                        restore is WorkspaceDrafts.Restore.Stale ->
+                            onMessage("文件在上次编辑之后被改过，那份没保存的草稿已丢弃")
+                    }
+                },
+                onFailure = { error -> onMessage(error.message ?: "这个文件现在不能编辑") },
+            )
+            editLoading = false
+        }
+    }
+
+    val canEditNow = target.editable && WorkspaceFiles.editableAsText(target.kind) &&
+        target.sizeBytes <= WorkspaceFiles.EDIT_MAX_BYTES
+
+    LaunchedEffect(target.relativePath) {
+        if (target.startInEdit && canEditNow) beginEdit()
+    }
+
+    // 草稿落盘：停手 1.5 s 后写一次（每次按键都会重启这个 effect，所以是防抖）。
+    LaunchedEffect(draft, dirty, mode) {
+        if (mode == ViewerMode.Edit && dirty) {
+            kotlinx.coroutines.delay(1_500)
+            withContext(Dispatchers.IO) { WorkspaceDrafts.save(context, target.file, openedStamp, draft) }
         }
     }
 
@@ -251,12 +282,13 @@ internal fun WorkspaceViewer(
             // content check) rather than a whole-file overwrite. The rule and the check live in
             // `WorkspacePiWrite`; the write itself is still `PiConfigFiles`'s one implementation.
             val result = withContext(Dispatchers.IO) {
-                WorkspaceFiles.save(target.file, target.relativePath, draft, openedStamp)
+                WorkspaceFiles.save(target.file, target.relativePath, draft, openedStamp, eolCrlf)
             }
             saving = false
             result.fold(
                 onSuccess = {
                     dirty = false
+                    WorkspaceDrafts.clear(context, target.file)
                     mode = ViewerMode.View
                     onSaved(target.relativePath)
                     onMessage("已保存 · ${target.file.name}")
@@ -290,14 +322,9 @@ internal fun WorkspaceViewer(
                     dirty = dirty,
                     saving = saving,
                     editing = mode == ViewerMode.Edit,
-                    canEdit = target.editable && WorkspaceFiles.editableAsText(target.kind),
+                    canEdit = canEditNow && !editLoading,
                     onBack = { leave() },
-                    onEdit = {
-                        val text = opened
-                        draft = if (text is WorkspaceOpen.Text) text.lines.joinToString("\n") else ""
-                        dirty = false
-                        mode = ViewerMode.Edit
-                    },
+                    onEdit = { beginEdit() },
                     onSave = { save() },
                     onMore = onMore,
                 )
@@ -321,6 +348,13 @@ internal fun WorkspaceViewer(
                                     detail = saveError?.detail,
                                     actions = {
                                         WsErrAction("重试") { save() }
+                                        if (saveError?.reason?.contains(WorkspacePiWrite.staleStampSentence()) == true) {
+                                            // 文件在打开之后被改过：默认不覆盖；用户明确要覆盖才以当前指纹重存。
+                                            WsErrAction("覆盖保存", tone = PiTheme.palette.error) {
+                                                openedStamp = WorkspaceFiles.stampOf(target.file)
+                                                save()
+                                            }
+                                        }
                                         WsErrAction("复制错误") {
                                             copyToClipboard(context, saveError?.detail.orEmpty())
                                             onMessage("已复制错误")
@@ -396,6 +430,7 @@ internal fun WorkspaceViewer(
                     onClick = {
                         askUnsaved = false
                         dirty = false
+                        WorkspaceDrafts.clear(context, target.file)
                         onClose()
                     },
                 )
@@ -985,9 +1020,36 @@ private fun HtmlPreview(
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = true
                     settings.allowContentAccess = false
+                    // 明确关掉：页面脚本不能借 file:// 读到工作区之外的文件（新系统默认就是关的，
+                    // 旧系统默认是开的）。
+                    @Suppress("DEPRECATION")
+                    settings.allowFileAccessFromFileURLs = false
+                    @Suppress("DEPRECATION")
+                    settings.allowUniversalAccessFromFileURLs = false
                     settings.builtInZoomControls = false
                     settings.displayZoomControls = false
                     webViewClient = object : WebViewClient() {
+                        // 主框架导航的去向：本地 file:// 页面（相对链接）留在预览里；网页链接交给系统
+                        // 浏览器，不在应用内带着脚本与存储直接打开外站；其余（javascript:、data: …）不放行。
+                        // 子框架（iframe）与子资源不走这里的拦截，about:blank 之类照常。
+                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                            if (!request.isForMainFrame) return false
+                            val uri = request.url
+                            return when (uri.scheme?.lowercase()) {
+                                "file" -> false
+                                "about" -> uri.toString() != "about:blank"
+                                "http", "https", "mailto", "tel" -> {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                        )
+                                    }
+                                    true
+                                }
+                                else -> true
+                            }
+                        }
+
                         override fun onPageFinished(view: WebView, url: String) {
                             state = HtmlState.Done
                         }
@@ -1006,6 +1068,13 @@ private fun HtmlPreview(
                         }
                     }
                 }
+            },
+            // 离开预览时销毁 WebView：它不会随组合自动释放，每打开一次预览就泄漏一个
+            // （渲染进程资源 + JS 堆），长期使用会涨内存。
+            onRelease = { view ->
+                view.stopLoading()
+                view.loadUrl("about:blank")
+                view.destroy()
             },
             update = { view ->
                 if (lastLoaded != reloadTick) {
