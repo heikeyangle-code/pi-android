@@ -558,6 +558,22 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         MarkdownParagraph(model.content, model.node)
         return
     }
+    // 整段只是一条图片 URL（png/jpg/gif/webp/svg…）：直接画图（点开可全屏），
+    // 还没取到字节 / 取失败时退回链接卡片。
+    if (info.kind == app.pi.ui.render.rich.LinkKind.Image) {
+        val decoded = LocalPiImageTransformer.current.transform(info.url)
+        if (decoded != null) {
+            PiImageViewerTap(info.url) {
+                androidx.compose.foundation.Image(
+                    painter = decoded.painter,
+                    contentDescription = decoded.contentDescription,
+                    contentScale = decoded.contentScale,
+                    modifier = decoded.modifier.padding(vertical = 4.dp),
+                )
+            }
+            return
+        }
+    }
     val uriHandler = LocalUriHandler.current
     PiLinkPreview(
         url = info.url,
@@ -1515,7 +1531,21 @@ private fun PiCodeSurface(
     // `FENCE_LANG` 是完整 info string（包含 `title=...`），不是语言名。分类与高亮都
     // 只拿第一个有效词；`PiCodeLanguage.normalize` 的整串 lowercase 会把属性一起
     // 当成语言，见 `FenceInfo.kt` 的类注释。
-    val info = remember(language) { FenceInfo.parse(language) }
+    // 语言别名（mmd / latex / geojson / rss …）与「没写语言」的内容嗅探：
+    // 这两种情况以前都被当成普通代码，富渲染被围栏标签挡住。
+    val info = remember(language, code, settled) {
+        val parsed = FenceInfo.parse(language)
+        val effective = when {
+            parsed.language.isNotEmpty() -> app.pi.ui.render.rich.PiFenceSniff.alias(parsed.language)
+            settled -> app.pi.ui.render.rich.PiFenceSniff.sniff(code) { text ->
+                runCatching {
+                    if (text.startsWith("{")) org.json.JSONObject(text) else org.json.JSONArray(text)
+                }.isSuccess
+            }
+            else -> null
+        }
+        if (effective != null && effective != parsed.language) parsed.copy(language = effective) else parsed
+    }
     val normalized = info.language.takeIf { it.isNotEmpty() }
     val kind = remember(info, code, settled) { RichBlock.classify(info, code, settled) }
 
@@ -1556,6 +1586,15 @@ private fun PiCodeSurface(
     // 尺寸/节点/深度上限都在那里），再交给 AndroidSVG 画；任何一步失败都回退源码。
     if (normalized?.lowercase() == SVG_LANGUAGE) {
         PiSvgFenceView(source = code, settled = settled)
+        return
+    }
+    if (normalized?.lowercase() == "math" && settled && code.isNotBlank()) {
+        // ```math / ```latex / ```tex：整块显示式公式。
+        val src = code.trim().removePrefix("$$").removeSuffix("$$").trim()
+        val fallback = remember(src) {
+            runCatching { PiLatex.toUnicode(src, display = true) }.getOrNull() ?: src
+        }
+        PiMathView(source = src, display = true, settled = true, fallbackText = fallback)
         return
     }
     // 结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。外框
