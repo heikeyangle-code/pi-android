@@ -42,8 +42,10 @@ private fun indexOfSvgOpen(s: String, from: Int): Int {
 private fun matchingSvgClose(s: String, start: Int): Int {
     var depth = 0
     var i = start
+    // 下一个 `<svg` 的位置只在被越过时才重算：否则每个 `</svg>` 迭代都会扫到文末，最坏 O(n²)。
+    var open = indexOfSvgOpen(s, i)
     while (i < s.length) {
-        val open = indexOfSvgOpen(s, i)
+        if (open in 0 until i) open = indexOfSvgOpen(s, i)
         val close = s.indexOf("</svg>", i, ignoreCase = true)
         if (close < 0) return -1
         if (open in 0 until close) {

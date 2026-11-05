@@ -24,6 +24,37 @@ import androidx.compose.ui.viewinterop.AndroidView
  *    脚本与外部资源，即使清理器漏了什么也执行不了；
  *  - 触摸被一层空的 `pointerInput` 兄弟盖住，所以列表仍可滚动（WebView 不抢手势）。
  */
+/**
+ * 同时在播的动画 SVG 上限。每个都是一个 WebView（几十 MB、独立渲染管线），长对话里十几个
+ * 动画图同时存在会直接顶爆内存；超出上限的显示静态图 + 「▶ 播放」，点了才抢一个名额
+ * （最早占用的那个退回静态）。滚出屏幕的卡片离开组合时自动归还名额。
+ */
+internal object PiSvgAnimationSlots {
+    private const val MAX_ACTIVE = 2
+    private val active = androidx.compose.runtime.mutableStateListOf<Any>()
+
+    fun isActive(key: Any): Boolean = active.any { it === key }
+
+    /** 有空位就占上并返回 true；没有空位返回 false（保持静态，等用户点）。 */
+    fun tryAcquire(key: Any): Boolean {
+        if (isActive(key)) return true
+        if (active.size >= MAX_ACTIVE) return false
+        active.add(key)
+        return true
+    }
+
+    /** 用户明确要播：必要时顶掉最早的那个。 */
+    fun steal(key: Any) {
+        if (isActive(key)) return
+        while (active.size >= MAX_ACTIVE) active.removeAt(0)
+        active.add(key)
+    }
+
+    fun release(key: Any) {
+        active.removeAll { it === key }
+    }
+}
+
 internal fun piSvgIsAnimated(svg: String): Boolean = ANIMATED.containsMatchIn(svg)
 
 private val ANIMATED = Regex(

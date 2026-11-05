@@ -248,7 +248,15 @@ fun PiSvgFenceView(
                 val shape = RoundedCornerShape(8.dp)
                 // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
                 // 这样不需要 `BoxWithConstraints`。
-                if (image.animatedSvg != null) {
+                val animKey = remember { Any() }
+                val isAnimatedSvg = image.animatedSvg != null
+                if (isAnimatedSvg) {
+                    androidx.compose.runtime.DisposableEffect(animKey) {
+                        PiSvgAnimationSlots.tryAcquire(animKey)
+                        onDispose { PiSvgAnimationSlots.release(animKey) }
+                    }
+                }
+                if (isAnimatedSvg && PiSvgAnimationSlots.isActive(animKey)) {
                     PiSvgAnimatedView(
                         svg = image.animatedSvg,
                         modifier = Modifier
@@ -262,7 +270,8 @@ fun PiSvgFenceView(
                             .clipToBounds()
                             .semantics { contentDescription = "动画 SVG" },
                     )
-                } else Canvas(
+                } else Box {
+                Canvas(
                     modifier = Modifier
                         .padding(8.dp)
                         .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
@@ -310,6 +319,22 @@ fun PiSvgFenceView(
                         native.drawPicture(image.picture)
                         native.restore()
                     }
+                }
+                if (isAnimatedSvg) {
+                    // 名额用完时的静态图：点一下才开始播（会顶掉最早在播的那个）。
+                    Text(
+                        text = "▶ 播放动画",
+                        style = PiTheme.text.monoSmall,
+                        color = palette.accent,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(14.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(palette.pageBg.copy(alpha = 0.85f))
+                            .clickable { PiSvgAnimationSlots.steal(animKey) }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
                 }
             } else if (draw == PiSvgDraw.Rendering && pinned != true) {
                 // 已在渲染、还没回答：固定高度占位，而不是先摊一整块源码再缩成图（行高突变、列表跳动）。

@@ -56,13 +56,26 @@ internal object PiAnimatedImages {
         return when {
             at(0, "GIF8") -> true
             at(0, "RIFF") && at(8, "WEBP") -> indexOf(b, "ANIM", 12, 256) >= 0
-            b[0] == 0x89.toByte() && at(1, "PNG") -> {
-                val idat = indexOf(b, "IDAT", 8, b.size)
-                val actl = indexOf(b, "acTL", 8, b.size)
-                actl >= 0 && (idat < 0 || actl < idat)
-            }
+            b[0] == 0x89.toByte() && at(1, "PNG") -> pngHasActl(b)
             else -> false
         }
+    }
+
+    /** 按 chunk 走：`acTL` 出现在第一个 `IDAT` 之前才是 APNG。O(chunk 数)，不逐字节扫。 */
+    private fun pngHasActl(b: ByteArray): Boolean {
+        var pos = 8
+        while (pos + 8 <= b.size) {
+            val len = ((b[pos].toInt() and 0xFF) shl 24) or ((b[pos + 1].toInt() and 0xFF) shl 16) or
+                ((b[pos + 2].toInt() and 0xFF) shl 8) or (b[pos + 3].toInt() and 0xFF)
+            if (len < 0) return false
+            val t = String(b, pos + 4, 4, Charsets.ISO_8859_1)
+            if (t == "acTL") return true
+            if (t == "IDAT" || t == "IEND") return false
+            val next = pos.toLong() + 12L + len
+            if (next > b.size) return false
+            pos = next.toInt()
+        }
+        return false
     }
 
     private fun indexOf(b: ByteArray, s: String, from: Int, to: Int): Int {
@@ -97,7 +110,24 @@ internal fun decodeAnimated(bytes: ByteArray, maxWidthPx: Int): AnimatedImageDra
 }
 
 /** 把 [AnimatedImageDrawable] 接进 Compose：每帧 `invalidateDrawable` → 状态自增 → 重画。 */
-internal class AnimatedDrawablePainter(private val drawable: AnimatedImageDrawable) : Painter() {
+internal class AnimatedDrawablePainter private constructor(private val drawable: AnimatedImageDrawable) : Painter() {
+    companion object {
+        /** 同时在动的动图上限：每个都是一条持续解码 + 每帧重画，长表格里几十张会把帧时间吃光。 */
+        private const val MAX_ACTIVE = 4
+        private val active = java.util.concurrent.atomic.AtomicInteger(0)
+
+        /** 超过上限返回 null（调用方回退静态首帧）。 */
+        fun tryCreate(drawable: AnimatedImageDrawable): AnimatedDrawablePainter? {
+            if (active.incrementAndGet() > MAX_ACTIVE) {
+                active.decrementAndGet()
+                return null
+            }
+            return AnimatedDrawablePainter(drawable)
+        }
+    }
+
+    private var released = false
+
     private var tick by mutableIntStateOf(0)
     private val handler = Handler(Looper.getMainLooper())
 
@@ -124,8 +154,11 @@ internal class AnimatedDrawablePainter(private val drawable: AnimatedImageDrawab
     }
 
     fun release() {
+        if (released) return
+        released = true
         stop()
         drawable.callback = null
+        active.decrementAndGet()
     }
 
     override fun DrawScope.onDraw() {
@@ -144,13 +177,10 @@ internal fun rememberAnimatedPainter(link: String, widthPx: Int): Painter? {
     if (Build.VERSION.SDK_INT < 28) return null
     val painter by produceState<AnimatedDrawablePainter?>(null, link, widthPx) {
         value = withContext(Dispatchers.Default) { decodeAnimated(bytes, widthPx) }
-            ?.let { AnimatedDrawablePainter(it) }
+            ?.let { AnimatedDrawablePainter.tryCreate(it) }
     }
     val p = painter
-    DisposableEffect(p) {
-        p?.start()
-        onDispose { p?.release() }
-    }
+    AnimatedPainterEffects(p)
     return p
 }
 
@@ -161,13 +191,32 @@ internal fun rememberAnimatedPainterFor(key: Any, widthPx: Int, loadBytes: () ->
     val painter by produceState<AnimatedDrawablePainter?>(null, key, widthPx) {
         value = withContext(Dispatchers.IO) {
             val bytes = loadBytes()?.takeIf { PiAnimatedImages.isAnimated(it) } ?: return@withContext null
-            decodeAnimated(bytes, widthPx)?.let { AnimatedDrawablePainter(it) }
+            decodeAnimated(bytes, widthPx)?.let { AnimatedDrawablePainter.tryCreate(it) }
         }
     }
     val p = painter
-    DisposableEffect(p) {
-        p?.start()
-        onDispose { p?.release() }
-    }
+    AnimatedPainterEffects(p)
     return p
+}
+
+/** 开始 / 释放，并跟随生命周期：切到后台暂停（不再空转解码与重画），回前台继续。 */
+@Composable
+private fun AnimatedPainterEffects(p: AnimatedDrawablePainter?) {
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(p, owner) {
+        if (p == null) return@DisposableEffect onDispose {}
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> p.start()
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> p.stop()
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        if (owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) p.start()
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            p.release()
+        }
+    }
 }
