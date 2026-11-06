@@ -918,21 +918,25 @@ internal fun WsSheet(
     // 里这是白送的），往上推时先把已经拉下来的 sheet 收回原位。
     val nested = remember {
         object : NestedScrollConnection {
+            // 手指往上推（available.y < 0）：先把已经拉下来的面板收回原位，再轮到列表滚。
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (dragOffset <= 0f || available.y <= 0f) return Offset.Zero
-                val taken = minOf(dragOffset, available.y)
+                if (dragOffset <= 0f || available.y >= 0f) return Offset.Zero
+                val taken = minOf(dragOffset, -available.y)
                 dragOffset -= taken
-                return Offset(0f, taken)
+                return Offset(0f, -taken)
             }
 
+            // 手指往下拉（available.y > 0）而列表已在顶、没消费完的余量：变成面板的下滑。
+            // 往上推到底的余量（< 0）什么也不做 —— 以前这里符号反了：列表一滑到底，
+            // 余量就把整个面板往下拉，松手即关闭（「往上一滑到底界面就退出」）。
             override fun onPostScroll(
                 consumed: Offset,
                 available: Offset,
                 source: NestedScrollSource,
             ): Offset {
-                if (available.y >= 0f) return Offset.Zero
+                if (available.y <= 0f) return Offset.Zero
                 dragging = true
-                dragOffset -= available.y
+                dragOffset += available.y
                 return Offset(0f, available.y)
             }
         }

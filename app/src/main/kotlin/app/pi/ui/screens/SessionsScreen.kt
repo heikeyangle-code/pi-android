@@ -234,7 +234,15 @@ fun SessionsScreen(
 
     // The directory only becomes meaningful once the runtime is unpacked, so
     // refresh when the screen appears rather than at construction.
-    LaunchedEffect(Unit) { session.refreshSessions() }
+    //
+    // 也跟着「现在在哪个会话/工作区」重读：切了工作区、新会话落盘（发出第一条消息后 pi 才写
+    // 文件）、会话换了，列表都要跟上，不能靠手动刷新。`messageCount` 只取到 2：每条消息都重
+    // 扫整个目录太贵，而「文件出现」只发生在最开头那一两条。
+    LaunchedEffect(
+        state.meta.sessionFile,
+        state.workspace.revision,
+        state.meta.messageCount.coerceAtMost(2),
+    ) { session.refreshSessions() }
 
     // `sessionFile` is the only wire field that says which session pi is on, and
     // it is a guest path — the file name is the part that matches the on-disk
@@ -290,20 +298,42 @@ fun SessionsScreen(
     // （`parentSession` 记的是一条路径），**不是 `id`** —— 所以同 `id` 两行不会让它去两半之间
     // 挑一行（见 `ui/chat/SessionForkLabel.kt`）；本屏再以 `file.absolutePath` 为键查一次，
     // 于是一行画一行自己的「来自谁」，劈开的两半各画各的，谁也不会替谁说话。
-    val listView = remember(sessions, query, byName, namedOnly, workspacesRoot, workspaceLabels) {
+    // 当前工作区在会话文件头里的 cwd 写法：自带工作区是 guest 路径，设备目录是它自己的路径。
+    val currentCwds = remember(state.workspace.relative, state.workspace.hostPath) {
+        listOfNotNull(
+            GuestWorkspacePath.GUEST_ROOT + "/" + state.workspace.relative,
+            state.workspace.hostPath,
+        ).map { it.trimEnd('/') }
+    }
+    val listView = remember(
+        sessions, query, byName, namedOnly, workspacesRoot, workspaceLabels, currentCwds, activeFile,
+    ) {
         val tokens = sessionQueryTokens(query)
         val visible = sessions
             .filter { summary -> sessionMatches(summary, tokens) && (!namedOnly || hasName(summary)) }
             .let { list ->
                 if (byName) list.sortedBy { it.displayName.lowercase() } else list
             }
-        SessionListView(
-            visible = visible,
-            groups = visible
-                .groupBy { it.cwd }
-                .toList()
-                .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } },
-        )
+        // 当前工作区的那一组永远排第一：换了工作区，它就顶到最前面；新会话还没落盘时
+        // 它还没有任何一行，就先放一个空组（下面画一行「新会话」占位），等文件出现再换成真行。
+        fun isCurrent(cwd: String, rows: List<PiSessionStore.Summary>) =
+            cwd.trimEnd('/') in currentCwds || (activeFile != null && rows.any { it.file.name == activeFile })
+        val grouped = visible
+            .groupBy { it.cwd }
+            .toList()
+            .let { list ->
+                val withCurrent =
+                    if (query.isBlank() && !namedOnly && list.none { (cwd, rows) -> isCurrent(cwd, rows) }) {
+                        currentCwds.firstOrNull()?.let { listOf(it to emptyList<PiSessionStore.Summary>()) }.orEmpty() + list
+                    } else {
+                        list
+                    }
+                withCurrent.sortedWith(
+                    compareByDescending<Pair<String, List<PiSessionStore.Summary>>> { (cwd, rows) -> isCurrent(cwd, rows) }
+                        .thenByDescending { (_, rows) -> rows.maxOfOrNull { it.lastActivityAt } ?: 0L },
+                )
+            }
+        SessionListView(visible = visible, groups = grouped)
     }
     val visible = listView.visible
 
@@ -613,6 +643,10 @@ fun SessionsScreen(
                                 )
                             }
                             if (collapsed) return@forEach
+                            if (rows.isEmpty()) {
+                                item(key = "empty:$cwd") { NewSessionPlaceholder() }
+                                return@forEach
+                            }
                             // 组内的行共用一张**卡片**（v2 的 `Card`：`surf-low` 底、圆角
                             // 10、`margin:0 14px`，行之间才有分隔线，且那条线在卡内再缩进
                             // 14）。旧实现是每行一条通栏横线、没有卡，一屏看下来就是一片
@@ -1153,6 +1187,50 @@ private fun SessionRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * 当前工作区还没有任何会话文件时的占位行：pi 要等发出第一条消息才写文件，在那之前
+ * 这个工作区在列表里没有行，用户会以为「切过去了却没反应」。占位行按「当前会话」的样子画
+ * （底色 + 左侧竖条），文件一出现就被真行替换。
+ */
+@Composable
+private fun NewSessionPlaceholder() {
+    val accent = MaterialTheme.colorScheme.primary
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(PiTheme.palette.selectedBg.copy(alpha = 0.35f))
+            .drawBehind {
+                val inset = PiSpacing.cardPadding.toPx()
+                val width = PiSpacing.stripe.toPx()
+                drawRoundRect(
+                    color = accent,
+                    topLeft = Offset(0f, inset),
+                    size = Size(width, (size.height - inset * 2).coerceAtLeast(0f)),
+                    cornerRadius = CornerRadius(width / 2f),
+                )
+            }
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+    ) {
+        Text(
+            "新会话",
+            style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            "发出第一条消息后，会话出现在这里。",
+            modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

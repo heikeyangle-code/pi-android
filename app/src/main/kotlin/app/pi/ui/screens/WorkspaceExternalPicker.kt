@@ -9,6 +9,15 @@ import android.os.storage.StorageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Button
+import androidx.compose.ui.Alignment
+import app.pi.ui.theme.PiSpacing
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -205,10 +214,6 @@ private fun WorkspaceExternalBrowser(
     var level by remember { mutableStateOf<ExternalLevel?>(null) }
     var loading by remember { mutableStateOf(false) }
 
-    // 上溯到卷根为止：卷根以上（`/storage`、`/`）是拒绝选的，所以面包屑到卷根就是顶。
-    val atVolumeRoot = current != null && volumes.any { it == current }
-    val parent = current?.let { File(it).parent }
-
     LaunchedEffect(current) {
         val path = current ?: return@LaunchedEffect
         loading = true
@@ -236,49 +241,79 @@ private fun WorkspaceExternalBrowser(
             }
     }
 
+    // 「选择」放在头里（✕ 旁边）：目录一深，列表往下滚，钉在头里的按钮始终够得着；
+    // 不能选时它灰着，原因在正文顶部那条提示里（每一次拒绝都有一句话）。
+    val volumeRoot = volumes.firstOrNull { here == it || here.startsWith(it.trimEnd('/') + "/") }
     WsSheet(
         title = "选择设备目录",
         onClose = onClose,
         subtitle = here,
         subtitleMono = true,
+        trailing = {
+            Button(onClick = { onPick(here) }, enabled = refusal == null) { Text("选择") }
+        },
         footer = "选中的目录会成为 pi 的现场目录：项目设置、技能、提示词都从它的 .pi 里读，" +
             "在里面写文件就是写到设备上这个目录。",
         maxBodyHeight = EXTERNAL_SHEET_BODY_MAX,
     ) {
-        // 当前目录的读数与「就选这个目录」。它在滚动区**顶部**：用户往上翻了一遍之后要能立刻
-        // 看到自己刚才是在哪一层做的决定。
-        WsCard {
-            WsRow(
-                title = "就选这个目录",
-                strong = true,
-                titleColor = if (refusal == null) PiTheme.palette.accent else PiTheme.palette.muted,
-                lead = { PickerFolderGlyph() },
-                badge = if (refusal != null) {
-                    { WsBadge(text = "不能选", tone = StateTone.Warning) }
-                } else {
-                    null
-                },
-                meta = refusal ?: "点一下把它登记成工作区；文件不会被移动或改动。",
-                onClick = if (refusal == null) {
-                    { onPick(here) }
-                } else {
-                    // 拒绝也要给一句话（`meta` 就是那句），所以这里留一个可点的壳，点一下把
-                    // 原因再念一遍 —— 静默不可点的按钮是这一屏最不该有的东西。
-                    null
-                },
-            )
+        // 多个存储卷（内置 + 存储卡）才出现：一键换卷。
+        if (volumes.size > 1) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(
+                        horizontal = PiSettingsMetrics.pageHorizontal,
+                        vertical = PiSettingsMetrics.groupGap,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+            ) {
+                volumes.forEachIndexed { index, root ->
+                    WsChip(
+                        text = if (index == 0) "内部存储" else root.substringAfterLast('/'),
+                        solid = root == volumeRoot,
+                        onClick = { current = root },
+                    )
+                }
+            }
         }
 
-        if (!atVolumeRoot && parent != null) {
-            WsCard {
-                WsRow(
-                    title = "上一级",
-                    lead = { PickerFolderGlyph() },
-                    meta = parent,
-                    metaMono = true,
-                    onClick = { current = parent },
-                )
+        // 面包屑：从卷根到这里，每一段都能点 —— 比一行「上一级」多出「直接跳回第 N 层」。
+        if (volumeRoot != null) {
+            val rootLabel = if (volumes.indexOf(volumeRoot) <= 0) "内部存储" else volumeRoot.substringAfterLast('/')
+            val segments = here.removePrefix(volumeRoot).trim('/').split('/').filter { it.isNotEmpty() }
+            val scroll = rememberScrollState()
+            LaunchedEffect(here) { scroll.animateScrollTo(scroll.maxValue) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(scroll)
+                    .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PickerCrumb(rootLabel, current = segments.isEmpty()) { current = volumeRoot }
+                var acc = volumeRoot.trimEnd('/')
+                segments.forEachIndexed { index, segment ->
+                    acc = "$acc/$segment"
+                    val target = acc
+                    Text(
+                        "›",
+                        modifier = Modifier.padding(horizontal = PiSpacing.tiny),
+                        style = PiTheme.text.monoSmall,
+                        color = PiTheme.palette.muted,
+                    )
+                    PickerCrumb(segment, current = index == segments.lastIndex) { current = target }
+                }
             }
+        }
+
+        // 不能选的原因：一句话，放在列表之前。读取中是中性色，真拒绝是警告色。
+        if (refusal != null) {
+            WsNotice(
+                text = refusal,
+                tone = if (levelHere == null) StateTone.Muted else StateTone.Warning,
+                glyph = if (levelHere == null) "·" else "!",
+            )
         }
 
         if (loading && levelHere == null) {
@@ -294,21 +329,10 @@ private fun WorkspaceExternalBrowser(
             )
         }
         if (children != null && children.isNotEmpty()) {
-            // 一张卡、`forEachIndexed` 的行 —— 与 `WorkspaceRootSheet` 同一形状，**不是**
-            // `LazyColumn`：`WsSheet` 的正文本身是 `verticalScroll` + 有上限的 `Column`，在它
-            // 里面再放一个纵向懒列表就是「无限高约束下测量可滚动组件」，那是崩溃不是慢。
-            // 子目录数上面有 `EXTERNAL_MAX_CHILDREN` 的封顶，所以这一列是有界的。
-            Text(
-                "子目录",
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSettingsMetrics.groupGap,
-                    bottom = PiSettingsMetrics.groupHeaderGap,
-                ),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            // 一张卡、`forEachIndexed` 的行，**不是** `LazyColumn`：`WsSheet` 的正文本身是
+            // `verticalScroll` + 有上限的 `Column`，里面再放纵向懒列表是「无限高约束下测量
+            // 可滚动组件」，那是崩溃不是慢。子目录数有 `EXTERNAL_MAX_CHILDREN` 封顶，列是有界的。
+            WsSectionHeader(label = "子目录", count = "${children.size}")
             WsCard {
                 children.forEachIndexed { index, child ->
                     if (index > 0) WsHairline(startInset = WsIconHairlineStart)
@@ -327,6 +351,18 @@ private fun WorkspaceExternalBrowser(
                             child.count == 0 -> "空目录"
                             else -> "${child.count} 个条目"
                         },
+                        trail = if (child.count == null) {
+                            null
+                        } else {
+                            {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                                    tint = PiTheme.palette.muted,
+                                )
+                            }
+                        },
                         onClick = if (child.count == null) null else {
                             { current = child.file.absolutePath }
                         },
@@ -337,12 +373,28 @@ private fun WorkspaceExternalBrowser(
         if (children != null && levelHere?.truncated == true) {
             WsNotice(
                 text = "这个目录里还有更多子目录，这里只列了前 $EXTERNAL_MAX_CHILDREN 个；" +
-                    "从上面逐级下去，或者用「上一级」换一条路。",
+                    "从上面逐级下去，或者点面包屑换一条路。",
                 tone = StateTone.Muted,
                 glyph = "·",
             )
         }
     }
+}
+
+/** 面包屑的一段：当前层加粗不可点，其余可点。 */
+@Composable
+private fun PickerCrumb(text: String, current: Boolean, onClick: () -> Unit) {
+    Text(
+        text,
+        modifier = Modifier
+            .then(if (current) Modifier else Modifier.clickable(onClick = onClick))
+            .padding(vertical = PiSpacing.inline),
+        style = PiTheme.text.monoSmall.let {
+            if (current) it.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) else it
+        },
+        color = if (current) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
+        maxLines = 1,
+    )
 }
 
 /** 数一个目录的子目录与可读性。IO 线程上调用。 */

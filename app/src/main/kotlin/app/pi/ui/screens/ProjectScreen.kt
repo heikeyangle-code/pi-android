@@ -2726,62 +2726,90 @@ private fun WorkspaceRootSheet(
         footer = "换工作区会新建一个 pi 会话，当前会话不会被删除。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
-        // 两个入口放在最上面：工作区一多，原来「新建」被挤到列表下面要滚很久才看得见。
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = PiSettingsMetrics.pageHorizontal,
-                    vertical = PiSettingsMetrics.groupGap,
-                ),
-            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-        ) {
-            WsChip(text = "新建工作区", glyphIcon = Icons.Filled.Add, solid = true, onClick = onNew)
-            WsChip(text = "选设备目录", glyphIcon = Icons.Filled.Folder, onClick = onPickExternal)
-        }
-        // 当前那一个排最前面（其余保持原来的顺序）。
-        val ordered = remember(entries) { entries.sortedBy { !it.isCurrent } }
+        // 两个入口放在最上面（工作区一多，「新建」会被挤到列表下面）：一张卡、两行，
+        // 每行一句话说清「它会做什么」，比两颗并排的小胶囊好点、也好读。
         WsCard {
-            ordered.forEachIndexed { index, item ->
-                if (index > 0) WsHairline(startInset = WsIconHairlineStart)
-                val renamed = item.label != item.name
-                WsRow(
-                    title = item.displayName,
-                    mono = false,
-                    strong = true,
-                    lead = { FolderGlyph() },
-                    leadBackground = if (item.isCurrent) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
-                    badge = if (renamed || item.isCurrent || item.external || !item.available) {
-                        {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
-                            ) {
-                                // 改过显示名之后，身份（目录名）还得看得见：pi 的会话与信任都挂在
-                                // 目录路径上，而不是这个名字上。
-                                if (renamed) {
-                                    WsBadge(text = "", tone = StateTone.Muted, mono = item.name)
-                                }
-                                // 外部工作区标出来：它的文件在设备上，删除只是取消登记。
-                                if (item.external) {
-                                    WsBadge(text = "设备", tone = StateTone.Muted)
-                                }
-                                if (!item.available) {
-                                    WsBadge(text = "读不到", tone = StateTone.Warning)
-                                }
-                                if (item.isCurrent) {
-                                    WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
-                                }
+            WsRow(
+                title = "新建工作区",
+                strong = true,
+                titleColor = PiTheme.palette.accent,
+                lead = {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                        tint = PiTheme.palette.accent,
+                    )
+                },
+                meta = "建在 App 私有目录里，建好可随时改名。",
+                onClick = onNew,
+            )
+            WsHairline(startInset = WsIconHairlineStart)
+            WsRow(
+                title = "选设备目录",
+                strong = true,
+                titleColor = PiTheme.palette.accent,
+                lead = { FolderGlyph() },
+                meta = "把手机上已有的文件夹当工作区，文件不会被复制。",
+                onClick = onPickExternal,
+            )
+        }
+
+        // 一行工作区：当前与其它共用同一份画法。
+        val entryRow: @Composable (WorkspaceStore.Entry) -> Unit = { item ->
+            val renamed = item.label != item.name
+            WsRow(
+                title = item.displayName,
+                mono = false,
+                strong = true,
+                lead = { FolderGlyph() },
+                leadBackground = if (item.isCurrent) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
+                badge = if (renamed || item.isCurrent || item.external || !item.available) {
+                    {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+                        ) {
+                            // 改过显示名之后，身份（目录名）还得看得见：pi 的会话与信任都挂在
+                            // 目录路径上，而不是这个名字上。
+                            if (renamed) {
+                                WsBadge(text = "", tone = StateTone.Muted, mono = item.name)
+                            }
+                            // 外部工作区标出来：它的文件在设备上，删除只是取消登记。
+                            if (item.external) {
+                                WsBadge(text = "设备", tone = StateTone.Muted)
+                            }
+                            if (!item.available) {
+                                WsBadge(text = "读不到", tone = StateTone.Warning)
+                            }
+                            if (item.isCurrent) {
+                                WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
                             }
                         }
-                    } else {
-                        null
-                    },
-                    meta = item.relative,
-                    metaMono = true,
-                    trail = { WsMoreButton(onClick = { onMenu(item) }) },
-                    onClick = { onPick(item) },
-                )
+                    }
+                } else {
+                    null
+                },
+                meta = item.relative,
+                metaMono = true,
+                trail = { WsMoreButton(onClick = { onMenu(item) }) },
+                onClick = { onPick(item) },
+            )
+        }
+        // 「当前」与「其它」分成两段：当前那一个单独成卡、不再混在列表里靠颜色认。
+        val current = remember(entries) { entries.firstOrNull { it.isCurrent } }
+        val others = remember(entries) { entries.filter { !it.isCurrent } }
+        if (current != null) {
+            WsSectionHeader(label = "当前")
+            WsCard { entryRow(current) }
+        }
+        if (others.isNotEmpty()) {
+            WsSectionHeader(label = "其它工作区", count = "${others.size}")
+            WsCard {
+                others.forEachIndexed { index, item ->
+                    if (index > 0) WsHairline(startInset = WsIconHairlineStart)
+                    entryRow(item)
+                }
             }
         }
         Text(
