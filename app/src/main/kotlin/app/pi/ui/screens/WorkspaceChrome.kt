@@ -563,6 +563,8 @@ internal fun WsRow(
      * 不是装饰。
      */
     leadSize: Dp = PiSpacing.glyphBox,
+    /** 前置图标底的颜色；默认是中性的 `surfaceContainerHigh`，目录用强调色的淡底。 */
+    leadBackground: Color? = null,
     mono: Boolean = false,
     strong: Boolean = false,
     titleColor: Color? = null,
@@ -589,7 +591,7 @@ internal fun WsRow(
                 modifier = Modifier
                     .size(leadSize)
                     .clip(PiShapes.tag)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    .background(leadBackground ?: MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
                 lead()
@@ -675,10 +677,11 @@ internal fun WsHairline(
 /** 一行里那个「更多」按钮（稿子的 `MoreBtn`：26×26 圆角 7）。 */
 @Composable
 internal fun WsMoreButton(onClick: () -> Unit) {
+    // 看起来仍是一颗小按钮，点击区放大到 40×40：26dp 在手机上很难一下点中。
     Box(
         Modifier
-            .size(26.dp)
-            .clip(RoundedCornerShape(7.dp))
+            .size(40.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

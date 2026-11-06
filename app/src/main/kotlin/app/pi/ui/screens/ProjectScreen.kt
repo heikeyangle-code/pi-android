@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
@@ -1059,8 +1060,15 @@ fun ProjectScreen(
                                         ),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(36.dp),
+                                        tint = PiTheme.palette.muted.copy(alpha = 0.45f),
+                                    )
                                     Text(
                                         "这个目录是空的",
+                                        modifier = Modifier.padding(top = 8.dp),
                                         style = PiTheme.text.meta,
                                         color = PiTheme.palette.muted,
                                     )
@@ -2277,6 +2285,7 @@ private fun WorkspaceEntryRow(
             strong = false,
             // 图标底由 `WsRow` 统一给（32dp 圆角方块），这里只画图标。
             lead = { EntryGlyph(entry.kind) },
+            leadBackground = if (entry.isDirectory) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
             badge = if (sessionChanged != null) {
                 {
                     WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
@@ -2306,6 +2315,16 @@ private fun WorkspaceEntryRow(
                             )
                         }
                     }
+                }
+            } else if (entry.isDirectory) {
+                // 目录行尾的 ›：告诉人「点一下是走进去」，与文件行（点一下是打开）区分。
+                {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = PiTheme.palette.muted,
+                    )
                 }
             } else {
                 null
