@@ -443,27 +443,6 @@ fun ModelProviderScreen(
                 }
                 note?.let { msg -> item { Note(msg) } }
 
-                // ---- 订阅账号：订阅登录写的是 auth.json 同一个键空间，登录完的模型就在
-                // 下面这张清单里，所以放在这一屏而不是另开一页。
-                item {
-                    SubscriptionCard(
-                        providers = subscriptionProviders,
-                        statuses = subscriptionStatuses,
-                        loading = subscriptionLoading,
-                        problem = subscriptionProblem,
-                        onLogin = { subscriptionLogin = it },
-                        onRetry = { subscriptionTick++ },
-                        onLogout = { provider ->
-                            scope.launch {
-                                val problem = withContext(Dispatchers.IO) { service.remove(provider.id) }
-                                note = problem ?: "已退出 ${provider.oauthName}。重启引擎后它的模型会从列表里消失。"
-                                reloadTick++
-                                onFilesWritten()
-                            }
-                        },
-                    )
-                }
-
                 // ---- 默认模型 / 默认厂商 / 循环模型：三行都是点开在清单里点选，不再手打。
                 // 原来这里的「当前与循环」节标题已删：设置面不再有节标题（统一口径）。
                 // 三个选择键收在一张卡里（原来三行各自独立，看着散）。
@@ -550,6 +529,27 @@ fun ModelProviderScreen(
                             }
                         },
                         oauth = provider.id in subscriptionStatuses.keys,
+                    )
+                }
+
+                // ---- 订阅账号：订阅登录写的是 auth.json 同一个键空间，登录完的模型就在
+                // 下面这张清单里，所以放在这一屏而不是另开一页。
+                item {
+                    SubscriptionCard(
+                        providers = subscriptionProviders,
+                        statuses = subscriptionStatuses,
+                        loading = subscriptionLoading,
+                        problem = subscriptionProblem,
+                        onLogin = { subscriptionLogin = it },
+                        onRetry = { subscriptionTick++ },
+                        onLogout = { provider ->
+                            scope.launch {
+                                val problem = withContext(Dispatchers.IO) { service.remove(provider.id) }
+                                note = problem ?: "已退出 ${provider.oauthName}。重启引擎后它的模型会从列表里消失。"
+                                reloadTick++
+                                onFilesWritten()
+                            }
+                        },
                     )
                 }
 
@@ -1983,19 +1983,30 @@ private fun RestartCard(
     /** 其余结果（有回合在跑 / 已经重启过 / 正在装包）只在列表顶部说一句。 */
     onNote: (String) -> Unit,
 ) {
-    PiSettingsCard(modifier = Modifier.padding(top = PiSpacing.small)) {
+    // 「要你动手」的一条：整卡染警示色淡底 + 实心按钮，不再是一行字加一个纯文字按钮。
+    PiSettingsCard(
+        modifier = Modifier.padding(top = PiSpacing.small),
+        border = BorderStroke(1.dp, PiTheme.palette.warning.copy(alpha = 0.45f)),
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .background(PiTheme.palette.warning.copy(alpha = 0.10f))
                 .padding(PiSettingsMetrics.cardPaddingLoose),
         ) {
             Text(
-                "刚改过模型或凭证的配置，pi 只在引擎启动时读它们 —— 重启一次才生效。",
-                style = PiTheme.text.prose,
-                color = PiTheme.palette.warning,
+                "配置改好了，还差一步：重启引擎",
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                "pi 只在引擎启动时读模型和凭证，重启一次，新的才会生效。",
+                modifier = Modifier.padding(top = 2.dp),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.gutter))
-            TextButton(
+            Button(
                 onClick = {
                     // 卡片本身就是"有改动等着"的证据，而状态机只认它自己的账：先把它
                     // 记进去，`requestRestart` 才会从 NeedsRestart 走到 NeedsConfirmation。

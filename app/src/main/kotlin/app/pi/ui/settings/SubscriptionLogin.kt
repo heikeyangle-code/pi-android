@@ -89,7 +89,13 @@ internal fun SubscriptionCard(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                if (expanded) "收起" else "${providers.size} 个可登录 · 展开",
+                // 不展开也看得见「登了几个」：这是用户最想知道的那个数。
+                if (expanded) {
+                    "收起"
+                } else {
+                    val loggedIn = providers.count { statuses[it.id] != null }
+                    if (loggedIn > 0) "已登录 $loggedIn 个 · 展开" else "${providers.size} 个可登录 · 展开"
+                },
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -122,7 +128,8 @@ internal fun SubscriptionCard(
                     PiSettingsChip(text = "重试", onClick = onRetry)
                 }
             }
-            providers.forEach { provider ->
+            providers.forEachIndexed { index, provider ->
+                if (index > 0) PiSettingsHairline()
                 SubscriptionRow(
                     provider = provider,
                     status = statuses[provider.id],
