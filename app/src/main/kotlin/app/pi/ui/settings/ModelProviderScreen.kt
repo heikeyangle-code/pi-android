@@ -901,12 +901,16 @@ private fun ImportSheet(
     // **基线是预设表，不是目录。** 目录整份读不到时（载荷换了依赖树布局、还没解包），
     // 原来这里只剩「App 自建」那三个，用户报的正是「已有厂商，再点导入模型，列表里
     // 只有三个，搜也搜不出来」；目录正常时它仍然排在前（41+），两边都成立。
-    val providerChoices = remember(officialProviders) {
+    val providerChoices = remember(officialProviders, knownProviders) {
         val fromCatalog = officialProviders.map { provider ->
             PiProviderPresets.byId(provider.id) ?: presetFromOfficial(provider)
         }
         val covered = fromCatalog.mapTo(HashSet()) { it.id }
-        fromCatalog + PiProviderPresets.all.filterNot { it.id in covered }
+        val base = fromCatalog + PiProviderPresets.all.filterNot { it.id in covered }
+        // 文件里已经有、但官方目录与预设表都不认识的厂商（自建的、手写的）也要出现在列表里，
+        // 否则它们只能从厂商卡进来，在这里「选厂商」时像是不存在。
+        val seen = base.mapTo(HashSet()) { it.id }
+        base + knownProviders.filter { it.id !in seen }.map { customPresetFromInventory(it) }
     }
     // **选中的那一档必须从同一张表里取。** 这里曾经是 `byId(presetId) ?: all.first()`：
     // 手写表只有 13 个 id，官方目录有 42 个，于是选中 `kimi-coding` 这类官方独有的厂商时
@@ -1446,9 +1450,8 @@ private fun ImportSheet(
                                 )
                             }
                             TextButton(
-                                // 编辑已有厂商时锁住：换一家保存会把块与凭证写到别人名下。
-                                // 「新建自定义厂商」还没有任何已存状态，随时可以换。
-                                enabled = !editingExisting || presetId == PiProviderPresets.NEW_CUSTOM_ID,
+                                // 不再锁：保存写到的是**当前选中**的厂商（换厂商会整表重载），
+                                // 以前「已配置就不能换」让人想再导入一个别的厂商时只能关掉重进。
                                 onClick = { step = 0 },
                             ) { Text(if (presetId.isEmpty()) "选厂商" else "更换") }
                         }
