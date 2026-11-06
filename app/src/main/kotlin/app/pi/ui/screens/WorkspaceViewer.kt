@@ -1110,7 +1110,8 @@ private fun EditorBody(
                         modifier = (if (wrap) Modifier.fillMaxWidth() else Modifier)
                             .focusRequester(editorFocus),
                         enabled = !saving,
-                        softWrap = wrap,
+                        // 不传 `softWrap`（这个重载没有这个参数）：不换行是靠外层
+                        // `Modifier.horizontalScroll` 给子项无限宽实现的。
                         onTextLayout = { layout = it },
                         textStyle = PiTheme.text.code.copy(color = MaterialTheme.colorScheme.onSurface),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),

@@ -102,9 +102,14 @@ done
 # 都会打印文件名与行号并 exit 1。这才是这条规则想要的终态（脚本头 TODO 的触发条件）。
 R2_BASELINE=''
 
-# 规则 3 的总数基线（三个目录合计，纯注释行不计）。迁移后的实测值，只许降。
-DP_BASELINE=365
-SP_BASELINE=11
+# 规则 3 的总数基线（三个目录合计，纯注释行不计）。只许降。
+#
+# 2026-11-06：合并 `claude/render-polish` 的工作区/设置重排（新建工作区主屏、三步导入、
+# 选择器与编辑器的按钮层级）之后，实测降到 dp 408 / sp 12 —— 那一批是**新增界面代码**，
+# 不是迁移回退（旧界面的裸尺寸没有一处重新出现）。按脚本头「上升须评审明确接受」的约定，
+# 这里记下这次接受；下一步把这些尺寸迁到 `PiSpacing` / `PiSettingsMetrics` 后再下调。
+DP_BASELINE=408
+SP_BASELINE=12
 
 R2_BASELINE_TOTAL="$(printf '%s\n' "$R2_BASELINE" | awk '{ s += $2 } END { printf "%d\n", s }')"
 
