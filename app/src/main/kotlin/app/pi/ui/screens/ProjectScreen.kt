@@ -36,7 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -157,7 +157,7 @@ fun ProjectScreen(
     /** 顶栏左侧的返回箭头：底栏拆掉之后，这一屏只能回到对话。 */
     onBack: () -> Unit,
 ) {
-    val state by session.state.collectAsState()
+    val state by session.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -272,14 +272,21 @@ fun ProjectScreen(
     } else {
         currentDir.absolutePath
     }
+    // 只有「换了目录」才清成加载态；同一目录里的刷新（agent 写了文件、自己新建/重命名之后）
+    // 保留旧列表直到新结果回来，列表不闪空、滚动位置不丢。
+    var listedDir by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
-        listing = null
+        if (listedDir != currentDir.absolutePath) listing = null
         listingError = null
         val result = withContext(Dispatchers.IO) { WorkspaceFiles.list(currentDir) }
         result.fold(
-            onSuccess = { listing = it },
+            onSuccess = {
+                listing = it
+                listedDir = currentDir.absolutePath
+            },
             onFailure = { error ->
                 listing = emptyList()
+                listedDir = currentDir.absolutePath
                 listingError = WorkspaceOpen.Failed(
                     reason = "这个目录读不到了，可能被重命名或删掉；工作区里别的地方不受影响。",
                     detail = "${error::class.java.name}: ${error.message}\n  ${currentDir.absolutePath}",
@@ -2826,7 +2833,22 @@ private fun WorkspaceNameDialog(
     onClose: () -> Unit,
     onSubmit: (String) -> Unit,
 ) {
-    var name by remember(dialog) { mutableStateOf(dialog.initial) }
+    // 重命名文件时预选「扩展名之前」的部分：改名最常见的是只换主名，不该先手动选一遍。
+    var field by remember(dialog) {
+        val dot = dialog.initial.lastIndexOf('.')
+        val end = if (dialog.kind == WorkspaceInputKind.Rename && dot > 0) dot else dialog.initial.length
+        mutableStateOf(
+            androidx.compose.ui.text.input.TextFieldValue(
+                dialog.initial,
+                if (dialog.kind == WorkspaceInputKind.RenameWorkspace || dialog.kind == WorkspaceInputKind.Rename) {
+                    androidx.compose.ui.text.TextRange(0, end)
+                } else {
+                    androidx.compose.ui.text.TextRange(dialog.initial.length)
+                },
+            ),
+        )
+    }
+    val name = field.text
     val focus = remember(dialog) { androidx.compose.ui.focus.FocusRequester() }
     PiAutoFocus(focus)
     PiDialog(onDismissRequest = onClose) {
@@ -2838,8 +2860,21 @@ private fun WorkspaceNameDialog(
         val problem = when (dialog.kind) {
             // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
             WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
-            else -> WorkspaceFiles.nameProblem(name)
+            else -> WorkspaceFiles.nameProblem(name) ?: run {
+                // 同名在输入时就说，而不是提交后才报「已存在」。重命名成自己原来的名字不算冲突
+                // （按「确定」会因没有变化而什么也不做）。
+                val parent = dialog.absoluteParent
+                if (parent != null && trimmed.isNotEmpty() &&
+                    !(dialog.kind == WorkspaceInputKind.Rename && trimmed == dialog.initial) &&
+                    java.io.File(parent, trimmed).exists()
+                ) {
+                    "这里已经有叫「$trimmed」的文件或文件夹了。"
+                } else {
+                    null
+                }
+            }
         }
+        val canSubmit = trimmed.isNotEmpty() && problem == null
         val showProblem = problem != null && name.isNotEmpty()
         Box(
             Modifier
@@ -2856,12 +2891,18 @@ private fun WorkspaceNameDialog(
             contentAlignment = Alignment.CenterStart,
         ) {
             androidx.compose.foundation.text.BasicTextField(
-                value = name,
-                onValueChange = { name = it },
+                value = field,
+                onValueChange = { field = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focus),
                 singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onDone = { if (canSubmit) onSubmit(trimmed) },
+                ),
                 textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
                 decorationBox = { innerTextField ->
@@ -2911,7 +2952,7 @@ private fun WorkspaceNameDialog(
             PiDialogAction(
                 label = "确定",
                 primary = true,
-                enabled = trimmed.isNotEmpty() && problem == null,
+                enabled = canSubmit,
                 onClick = { onSubmit(trimmed) },
             )
         }

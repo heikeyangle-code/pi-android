@@ -23,9 +23,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -489,8 +492,8 @@ private fun ViewerTopBar(
         ) {
             Box(
                 Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(PiSpacing.topBarHeight)
+                    .clip(RoundedCornerShape(12.dp))
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
@@ -554,31 +557,40 @@ private fun ViewerTopBar(
                     maxLines = 1,
                 )
 
-                editing -> Text(
-                    "保存",
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(enabled = dirty, onClick = onSave)
-                        .padding(horizontal = 9.dp, vertical = 5.dp),
-                    style = PiTheme.text.prose.copy(
-                        fontWeight = if (dirty) FontWeight.SemiBold else FontWeight.Normal,
-                    ),
-                    color = if (dirty) PiTheme.palette.accent else PiTheme.palette.muted,
-                    maxLines = 1,
-                )
+                editing -> Box(
+                    // 点击区拉到整条顶栏高（48）× 至少 56 宽；字本身不变大。
+                    Modifier
+                        .height(PiSpacing.topBarHeight)
+                        .widthIn(min = 56.dp)
+                        .clickable(enabled = dirty, onClick = onSave),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "保存",
+                        style = PiTheme.text.prose.copy(
+                            fontWeight = if (dirty) FontWeight.SemiBold else FontWeight.Normal,
+                        ),
+                        color = if (dirty) PiTheme.palette.accent else PiTheme.palette.muted,
+                        maxLines = 1,
+                    )
+                }
 
                 else -> {
                     if (canEdit) {
-                        Text(
-                            "编辑",
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(onClick = onEdit)
-                                .padding(horizontal = 9.dp, vertical = 5.dp),
-                            style = PiTheme.text.prose,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                        )
+                        Box(
+                            Modifier
+                                .height(PiSpacing.topBarHeight)
+                                .widthIn(min = 56.dp)
+                                .clickable(onClick = onEdit),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "编辑",
+                                style = PiTheme.text.prose,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                        }
                     }
                     WsMoreButton(onClick = onMore)
                 }
@@ -916,42 +928,196 @@ private fun EditorBody(
     onDraftChange: (String) -> Unit,
     saving: Boolean,
 ) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(
-                horizontal = PiSettingsMetrics.pageHorizontal,
-                vertical = PiSettingsMetrics.cardPadding,
-            ),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
-                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .border(
-                    PiSettingsMetrics.hairline,
-                    PiTheme.palette.borderAccent,
-                    RoundedCornerShape(PiSettingsMetrics.cardRadius),
-                )
-                .padding(PiSettingsMetrics.cardPadding),
+    var value by remember { mutableStateOf(TextFieldValue(draft)) }
+    val history = remember { EditorHistory() }
+    // 外面把稿子整个换掉（读原文 / 恢复草稿）时，跟着换，并丢掉撤销栈 —— 那是另一份文字了。
+    LaunchedEffect(draft) {
+        if (draft != value.text) {
+            value = TextFieldValue(draft)
+            history.clear()
+        }
+    }
+    fun apply(next: TextFieldValue) {
+        val old = value
+        if (next.text == old.text) {
+            value = next // 只动了光标/选区
+            return
+        }
+        var out = next
+        // 回车自动沿用上一行的缩进：只在「正好多了一个换行、光标在它后面」时介入，
+        // 粘贴/输入法一次进多个字符都不碰。
+        val c = next.selection.start
+        if (next.selection.collapsed && next.text.length == old.text.length + 1 &&
+            c > 0 && next.text[c - 1] == '\n'
         ) {
-            BasicTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !saving,
-                textStyle = PiTheme.text.code.copy(color = MaterialTheme.colorScheme.onSurface),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
+            var ls = c - 1
+            while (ls > 0 && next.text[ls - 1] != '\n') ls--
+            var e = ls
+            while (e < c - 1 && (next.text[e] == ' ' || next.text[e] == '\t')) e++
+            if (e > ls) {
+                val indent = next.text.substring(ls, e)
+                out = TextFieldValue(
+                    next.text.substring(0, c) + indent + next.text.substring(c),
+                    androidx.compose.ui.text.TextRange(c + indent.length),
+                )
+            }
+        }
+        history.record(old, android.os.SystemClock.uptimeMillis())
+        value = out
+        onDraftChange(out.text)
+    }
+    fun insert(open: String, close: String = "") {
+        if (saving) return
+        val t = value.text
+        val s = value.selection.min
+        val e = value.selection.max
+        val picked = t.substring(s, e)
+        val text = t.substring(0, s) + open + picked + close + t.substring(e)
+        val caret = if (picked.isEmpty()) s + open.length else s + open.length + picked.length + close.length
+        apply(TextFieldValue(text, androidx.compose.ui.text.TextRange(caret)))
+    }
+    fun applyHistory(next: TextFieldValue?) {
+        if (next != null) {
+            value = next
+            onDraftChange(next.text)
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    horizontal = PiSettingsMetrics.pageHorizontal,
+                    vertical = PiSettingsMetrics.cardPadding,
+                ),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .border(
+                        PiSettingsMetrics.hairline,
+                        PiTheme.palette.borderAccent,
+                        RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                    )
+                    .padding(PiSettingsMetrics.cardPadding),
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = { apply(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !saving,
+                    textStyle = PiTheme.text.code.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
+                )
+            }
+            Text(
+                if (saving) "正在把整份文件写回工作区。" else "返回时如果还没保存，会先问你一次。",
+                modifier = Modifier.padding(top = PiSpacing.inline),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
             )
         }
+        // 键盘上方的一排：手机键盘敲 Tab / 括号 / 引号很费劲，写配置与代码时最常用。
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceDim)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val canUndo = history.canUndo
+            val canRedo = history.canRedo
+            EditorKey("撤销", enabled = canUndo && !saving) { applyHistory(history.undo(value)) }
+            EditorKey("重做", enabled = canRedo && !saving) { applyHistory(history.redo(value)) }
+            EditorKey("Tab", enabled = !saving) { insert("  ") }
+            for ((o, c) in EDITOR_PAIRS) {
+                EditorKey(o + c, enabled = !saving) { insert(o, c) }
+            }
+            for (ch in EDITOR_SYMBOLS) {
+                EditorKey(ch, enabled = !saving) { insert(ch) }
+            }
+        }
+    }
+}
+
+private val EDITOR_PAIRS = listOf("(" to ")", "{" to "}", "[" to "]", "\"" to "\"", "'" to "'", "`" to "`")
+private val EDITOR_SYMBOLS = listOf(":", ";", "=", "<", ">", "/", "#", "-", "_", "$")
+
+@Composable
+private fun EditorKey(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .height(44.dp)
+            .widthIn(min = 44.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
-            if (saving) "正在把整份文件写回工作区。" else "返回时如果还没保存，会先问你一次。",
-            modifier = Modifier.padding(top = PiSpacing.inline),
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
+            label,
+            style = PiTheme.text.mono,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
+            maxLines = 1,
         )
+    }
+}
+
+/**
+ * 编辑器的撤销栈。连续输入按 0.7 秒合成一步；总字符数封顶（大文件每步都是整份快照，
+ * 不封顶会把 400KB 的文件乘成几十 MB），超了丢最旧的。
+ */
+private class EditorHistory {
+    private val undoStack = ArrayDeque<TextFieldValue>()
+    private val redoStack = ArrayDeque<TextFieldValue>()
+    private var chars = 0L
+    private var lastAt = 0L
+    private var version by mutableIntStateOf(0)
+
+    val canUndo: Boolean get() = version >= 0 && undoStack.isNotEmpty()
+    val canRedo: Boolean get() = version >= 0 && redoStack.isNotEmpty()
+
+    fun record(before: TextFieldValue, now: Long) {
+        if (undoStack.isEmpty() || now - lastAt > 700L) {
+            undoStack.addLast(before)
+            chars += before.text.length
+        }
+        lastAt = now
+        redoStack.clear()
+        while (chars > 6_000_000L && undoStack.size > 1) {
+            chars -= undoStack.removeFirst().text.length
+        }
+        version++
+    }
+
+    fun undo(current: TextFieldValue): TextFieldValue? {
+        val prev = undoStack.removeLastOrNull() ?: return null
+        chars -= prev.text.length
+        redoStack.addLast(current)
+        lastAt = 0L
+        version++
+        return prev
+    }
+
+    fun redo(current: TextFieldValue): TextFieldValue? {
+        val next = redoStack.removeLastOrNull() ?: return null
+        undoStack.addLast(current)
+        chars += current.text.length
+        lastAt = 0L
+        version++
+        return next
+    }
+
+    fun clear() {
+        undoStack.clear()
+        redoStack.clear()
+        chars = 0L
+        lastAt = 0L
+        version++
     }
 }
 
