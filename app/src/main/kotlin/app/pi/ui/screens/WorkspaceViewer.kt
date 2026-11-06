@@ -12,6 +12,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -1046,10 +1047,16 @@ private fun EditorBody(
         }
     }
     Column(Modifier.fillMaxSize()) {
+      // 编辑卡至少铺满一屏：新建的空文件以前只有一行高、点下面空白处没反应，
+      // 看上去就是「一点点」大的输入框。现在卡的最小高度 = 可视区高度，点卡里任何
+      // 位置都把光标交给输入框。
+      androidx.compose.foundation.layout.BoxWithConstraints(
+          Modifier.weight(1f).fillMaxWidth(),
+      ) {
+        val minCard = maxHeight * 0.9f
         Column(
             Modifier
-                .weight(1f)
-                .fillMaxWidth()
+                .fillMaxSize()
                 .verticalScroll(pageScroll)
                 .padding(
                     horizontal = PiSettingsMetrics.pageHorizontal,
@@ -1059,7 +1066,13 @@ private fun EditorBody(
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .heightIn(min = minCard)
                     .clip(RoundedCornerShape(WsShape.medium))
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        enabled = !saving,
+                    ) { runCatching { editorFocus.requestFocus() } }
                     .background(MaterialTheme.colorScheme.surfaceContainerLow)
                     .border(
                         PiSettingsMetrics.hairline,
@@ -1125,6 +1138,7 @@ private fun EditorBody(
                 color = PiTheme.palette.muted,
             )
         }
+      }
         if (findOpen) {
             Row(
                 Modifier

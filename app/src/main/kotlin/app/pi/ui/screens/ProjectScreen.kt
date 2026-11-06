@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Close
@@ -924,6 +925,7 @@ fun ProjectScreen(
                             running = if (engineDown) 0 else runs.size,
                             onSwitch = { rootSheet = true },
                             onHome = { crumbs = homeCrumbs },
+                            onUp = { crumbs = crumbs.dropLast(1) },
                             onGo = { index -> crumbs = crumbs.take(index) },
                         )
                     }
@@ -2393,6 +2395,7 @@ private fun WorkspacePathBar(
     running: Int,
     onSwitch: () -> Unit,
     onHome: () -> Unit,
+    onUp: () -> Unit,
     onGo: (Int) -> Unit,
 ) {
     val scroll = rememberScrollState()
@@ -2466,23 +2469,15 @@ private fun WorkspacePathBar(
                 maxLines = 1,
             )
         }
+        // 「上一级」：任何层都在（工作区根上也在）——否则一进工作区就没法再往上走，
+        // 工作区之外的路径、别的目录都够不着。走出工作区之后，药丸后面就是整条
+        // 「根 › workspace › … 」，每一段都能点。
+        if (crumbs.isNotEmpty()) {
+            PathBarIconButton(Icons.Filled.ArrowUpward, "上一级目录", onUp)
+        }
         // 不在工作区根上（进了子目录，或浏览到工作区之外）才出现：一键回到工作区根。
         if (!(inside && crumbs.size == homeSize)) {
-            Box(
-                Modifier
-                    .padding(start = 4.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onHome),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Filled.Home,
-                    contentDescription = "回到工作区根",
-                    modifier = Modifier.size(18.dp),
-                    tint = PiTheme.palette.muted,
-                )
-            }
+            PathBarIconButton(Icons.Filled.Home, "回到工作区根", onHome)
         }
         if (inside) {
             crumbs.drop(homeSize).forEachIndexed { i, segment ->
@@ -2520,6 +2515,20 @@ private fun WorkspacePathBar(
                 maxLines = 1,
             )
         }
+    }
+}
+
+@Composable
+private fun PathBarIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .padding(start = 4.dp)
+            .size(36.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = description, modifier = Modifier.size(18.dp), tint = PiTheme.palette.muted)
     }
 }
 
