@@ -339,6 +339,12 @@ fun SessionsScreen(
         SessionListView(visible = visible, groups = grouped)
     }
     val visible = listView.visible
+    // 绝大多数会话用的是同一个模型：每行都印一遍「deepseek-flash」只是噪音。只在某一行
+    // 和多数不同时才写出模型名。
+    val commonModel = remember(sessions) {
+        sessions.mapNotNull { it.model?.takeIf { m -> m.isNotBlank() } }
+            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+    }
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
         PiTopBar(
@@ -462,7 +468,7 @@ fun SessionsScreen(
                         onClick = { byName = !byName },
                     )
                     PiSettingsChip(
-                        text = if (namedOnly) "仅命名" else "全部",
+                        text = "仅命名",
                         glyph = if (namedOnly) "✓" else "○",
                         active = namedOnly,
                         onClick = { namedOnly = !namedOnly },
@@ -662,6 +668,7 @@ fun SessionsScreen(
                                     // 父会话的显示名，取不到就是 null（父不在列表里）。
                                     // 工作区名不在行里了 —— 上面的分组头已经说过这一组是哪个目录。
                                     forkedFrom = forkParentNames[summary.file.absolutePath],
+                                    commonModel = commonModel,
                                     onOpen = {
                                         session.switchSession(summary)
                                         onOpenChat()
@@ -1026,17 +1033,28 @@ private fun GroupHeading(label: String, count: Int, current: Boolean, collapsed:
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(SESSIONS_GROUP_HEADING_GAP),
     ) {
+        // 文件夹图标 + 名字 + 计数小药丸：一组的头要像一个「地方」，不是一行灰字。
+        Icon(
+            Icons.Filled.FolderOpen,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = if (current) PiTheme.palette.accent else PiTheme.palette.muted,
+        )
         Text(
             label,
-            style = PiTheme.text.meta.copy(
-                fontWeight = FontWeight.Medium,
-                letterSpacing = SESSIONS_GROUP_TRACKING,
-            ),
+            modifier = Modifier.weight(1f, fill = false),
+            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             "$count",
-            style = PiTheme.text.meta,
+            modifier = Modifier
+                .clip(PiShapes.tag)
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .padding(horizontal = PiSpacing.gutter, vertical = PiSpacing.tiny),
+            style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
             color = PiTheme.palette.muted,
         )
         if (current) {
@@ -1099,6 +1117,7 @@ private fun SessionRow(
      * 工作区，行里不必再说一遍。
      */
     forkedFrom: String?,
+    commonModel: String?,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -1160,53 +1179,40 @@ private fun SessionRow(
                     vertical = PiSettingsMetrics.rowPaddingVertical,
                 ),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(SESSIONS_ROW_LINE_GAP),
-            ) {
-                Text(
-                    summary.displayName,
-                    modifier = Modifier.weight(1f),
-                    // 15/500：v2 的 `t15 w5`，行标题那一档 —— `PiType.rowTitle`。
-                    // 当前会话升到 SemiBold（设计稿 §6），除了竖条之外的第二层标记。
-                    style = if (active) {
-                        PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold)
-                    } else {
-                        PiType.rowTitle
-                    },
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    relativeTime(summary.lastActivityAt),
-                    // 数字等宽：滚动时那一列不抖（`tnum`）。
-                    style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
-                    color = PiTheme.palette.muted,
-                )
-            }
+            // 标题独占一行，最多两行：以前它和右边的时间抢宽度，一句话只能看到前十几个字。
+            Text(
+                summary.displayName.ifBlank { "（无标题）" },
+                // 15/500：v2 的 `t15 w5`，行标题那一档 —— `PiType.rowTitle`。
+                // 当前会话升到 SemiBold（设计稿 §6），除了竖条之外的第二层标记。
+                style = if (active) {
+                    PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold)
+                } else {
+                    PiType.rowTitle
+                },
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
             Row(
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(SESSIONS_ROW_PROP_GAP),
             ) {
-                // 第二行左：**模型 · 条数**。工作区名不再重复 —— 分组头已经说过是哪一组，
-                // 每行再印一遍只是把同一个词印 N 次（设计稿 §6）。
+                // 第二行：时间 · 条数（· 少数派模型）。时间从右上角挪到这里，标题才有整行宽。
                 Text(
                     buildString {
-                        summary.model?.takeIf { it.isNotBlank() }?.let {
-                            append(it).append(" · ")
+                        append(relativeTime(summary.lastActivityAt))
+                        append(" · ").append(summary.messageCount).append(" 条")
+                        summary.model?.takeIf { it.isNotBlank() && it != commonModel }?.let {
+                            append(" · ").append(it)
                         }
-                        append(summary.messageCount).append(" 条")
                     },
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = PiTheme.palette.muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // 第二行右：只在存在时出现的小标签。两者都显示 12sp（App 的最小字号档），
-                // 不再借 11sp —— 那一档低于 v2 的 12 下限。
                 if (hasName(summary)) SessionTag("已命名")
                 if (forkedFrom != null) {
                     // 父会话名太长时只写「分支」：标签是 12sp、没有省略号的余地，而
