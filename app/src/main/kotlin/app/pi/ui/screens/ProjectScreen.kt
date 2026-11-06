@@ -290,6 +290,16 @@ fun ProjectScreen(
     // 保留旧列表直到新结果回来，列表不闪空、滚动位置不丢。
     var listedDir by remember { mutableStateOf<String?>(null) }
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
+    // 排序：目录永远在文件前面，只改各自内部的顺序。记在 rememberSaveable 里（只存序号）。
+    var sortIndex by rememberSaveable { mutableIntStateOf(0) }
+    var sortMenu by remember { mutableStateOf(false) }
+    val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
+    val sortedEntries = remember(listing, sortMode, filterText) {
+        val all = listing.orEmpty()
+        val q = filterText.trim()
+        val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
+        filtered.sortedWith(sortMode.comparator)
+    }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
         if (listedDir != currentDir.absolutePath) listing = null
         listingError = null
@@ -1019,7 +1029,44 @@ fun ProjectScreen(
                             aside = if (listingError != null) {
                                 null
                             } else {
-                                { WsSectionAction(label = "新建", onClick = { newSheet = true }) }
+                                {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable { sortMenu = true }
+                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Text(
+                                                    sortMode.label,
+                                                    style = PiTheme.text.meta,
+                                                    color = PiTheme.palette.muted,
+                                                    maxLines = 1,
+                                                )
+                                                Icon(
+                                                    Icons.Filled.KeyboardArrowDown,
+                                                    contentDescription = "排序方式",
+                                                    modifier = Modifier.size(14.dp),
+                                                    tint = PiTheme.palette.muted,
+                                                )
+                                            }
+                                            if (sortMenu) PiMenu(
+                                                expanded = true,
+                                                onDismiss = { sortMenu = false },
+                                                placement = PiMenuPlacement.Below,
+                                                items = WorkspaceSort.entries.map { mode ->
+                                                    PiMenuItem(mode.label) {
+                                                        sortIndex = mode.ordinal
+                                                        sortMenu = false
+                                                    }
+                                                },
+                                            )
+                                        }
+                                        WsSectionAction(label = "新建", onClick = { newSheet = true })
+                                    }
+                                }
                             },
                         )
                     }
@@ -1108,11 +1155,7 @@ fun ProjectScreen(
                                 )
                             }
                         }
-                        val shown = if (filterText.isBlank()) {
-                            entries
-                        } else {
-                            entries.filter { it.name.contains(filterText.trim(), ignoreCase = true) }
-                        }
+                        val shown = sortedEntries
                         if (shown.isEmpty()) {
                             item(key = "entry-filter-empty") {
                                 Text(
@@ -2333,6 +2376,23 @@ private fun WorkspaceEntryRow(
             onClick = onOpen,
         )
     }
+}
+
+/** 文件列表的排序方式。目录始终排在文件前面。 */
+private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparator<WorkspaceEntry>) {
+    Name("名称", { compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
+    Newest("最近修改", { compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.modifiedAt } }),
+    Largest("大小", { compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.sizeBytes } }),
+    Type("类型", {
+        compareBy<WorkspaceEntry>(
+            { !it.isDirectory },
+            { it.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) },
+            { it.name.lowercase(java.util.Locale.ROOT) },
+        )
+    }),
+    ;
+
+    val comparator: Comparator<WorkspaceEntry> by lazy(comparatorOf)
 }
 
 /** 一层里至少这么多项才出现筛选框；再少的目录一屏就看完了。 */
