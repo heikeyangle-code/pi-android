@@ -19,12 +19,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Close
@@ -912,6 +914,7 @@ fun ProjectScreen(
                             changed = if (engineDown) null else changed.size,
                             running = if (engineDown) 0 else runs.size,
                             onSwitch = { rootSheet = true },
+                            onHome = { crumbs = homeCrumbs },
                             onGo = { index -> crumbs = crumbs.take(index) },
                         )
                     }
@@ -2369,6 +2372,7 @@ private fun WorkspacePathBar(
     changed: Int?,
     running: Int,
     onSwitch: () -> Unit,
+    onHome: () -> Unit,
     onGo: (Int) -> Unit,
 ) {
     val scroll = rememberScrollState()
@@ -2398,9 +2402,7 @@ private fun WorkspacePathBar(
             Row(
                 modifier = Modifier
                     .height(PiSpacing.controlHeight)
-                    .clickable {
-                        if (inside && crumbs.size == homeSize) onSwitch() else onGo(homeSize)
-                    }
+                    .clickable(onClick = onSwitch)
                     .padding(start = PiSpacing.cardPadding, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
@@ -2443,6 +2445,24 @@ private fun WorkspacePathBar(
                 color = PiTheme.palette.muted,
                 maxLines = 1,
             )
+        }
+        // 不在工作区根上（进了子目录，或浏览到工作区之外）才出现：一键回到工作区根。
+        if (!(inside && crumbs.size == homeSize)) {
+            Box(
+                Modifier
+                    .padding(start = 4.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onHome),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Home,
+                    contentDescription = "回到工作区根",
+                    modifier = Modifier.size(18.dp),
+                    tint = PiTheme.palette.muted,
+                )
+            }
         }
         if (inside) {
             crumbs.drop(homeSize).forEachIndexed { i, segment ->
@@ -2673,33 +2693,35 @@ private fun WorkspaceRootSheet(
     WsSheet(
         title = "切换工作区",
         onClose = onClose,
-        subtitle = "工作区就是 pi 的现场目录；App 私有目录里的、设备目录里的都算。",
-        footer = "换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。",
+        subtitle = "App 私有目录和设备目录里的都可以当工作区。",
+        footer = "换工作区会新建一个 pi 会话，当前会话不会被删除。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
-        Text(
-            "现有工作区",
-            modifier = Modifier.padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.groupGap,
-                bottom = PiSettingsMetrics.groupHeaderGap,
-            ),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        // 两个入口放在最上面：工作区一多，原来「新建」被挤到列表下面要滚很久才看得见。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = PiSettingsMetrics.pageHorizontal,
+                    vertical = PiSettingsMetrics.groupGap,
+                ),
+            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+        ) {
+            WsChip(text = "新建工作区", glyphIcon = Icons.Filled.Add, solid = true, onClick = onNew)
+            WsChip(text = "选设备目录", glyphIcon = Icons.Filled.Folder, onClick = onPickExternal)
+        }
+        // 当前那一个排最前面（其余保持原来的顺序）。
+        val ordered = remember(entries) { entries.sortedBy { !it.isCurrent } }
         WsCard {
-            entries.forEachIndexed { index, item ->
+            ordered.forEachIndexed { index, item ->
                 if (index > 0) WsHairline(startInset = WsIconHairlineStart)
                 val renamed = item.label != item.name
                 WsRow(
-                    // 显示名是 label；它就是 `switchWorkspace` 里那条 notice 印的名字。
                     title = item.displayName,
-                    // 名字无衬线、等宽只留给路径：切换面板里这一行是**工作区的显示名**，
-                    // 目录名（身份）由下面那颗徽标用等宽给出。
                     mono = false,
                     strong = true,
                     lead = { FolderGlyph() },
+                    leadBackground = if (item.isCurrent) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
                     badge = if (renamed || item.isCurrent || item.external || !item.available) {
                         {
                             Row(
@@ -2734,55 +2756,7 @@ private fun WorkspaceRootSheet(
             }
         }
         Text(
-            "加一个",
-            modifier = Modifier.padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.groupGap,
-                bottom = PiSettingsMetrics.groupHeaderGap,
-            ),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        WsCard {
-            WsRow(
-                title = "新建工作区",
-                strong = true,
-                titleColor = PiTheme.palette.accent,
-                lead = {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                        tint = PiTheme.palette.accent,
-                    )
-                },
-                meta = "在 App 私有目录里建一个空目录，不需要任何权限。",
-                onClick = onNew,
-            )
-            WsHairline()
-            // 「从设备目录选择」：把设备上一个**真目录**登记成工作区。
-            //
-            // 它要的是「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`），**不是** SAF：工作区必须是
-            // 真实文件路径 —— 引擎把它 bind 进 guest 并当 cwd（`PiEngineHost.kt:407`、`:451`），
-            // 而文档选择器给的是内容 URI，绑不了。这一句在说明页里也印（`WorkspaceExternalIntro`），
-            // 免得用户以为随便给个授权就够了。
-            //
-            // 这条行没有「未接」徽标了：它现在是一条真能走的路。有没有权限是**点下去之后**才知道
-            // 的事（`WorkspaceExternalPicker` 自己判定并给出说明），所以这里不预判 —— 一行灰着的
-            // 徽标会让有权限的用户以为它还没做。
-            WsRow(
-                title = "从设备目录选择（需授权）",
-                strong = true,
-                titleColor = PiTheme.palette.accent,
-                lead = { FolderGlyph() },
-                meta = "选一个设备上的目录当工作区：文件留在原处，只有 .pi 项目资源会从那里读。",
-                onClick = onPickExternal,
-            )
-        }
-        Text(
-            "新建的工作区落在 App 私有目录里，不需要授权；「从设备目录选择」那一条要「所有文件访问」，" +
-                "选中的目录不会被复制也不会被移动 —— 取消登记只是不再列在这里，文件一直留在设备上。",
+            "设备目录不会被复制或移动；取消登记只是不再列在这里，文件留在设备上。设备目录需要「所有文件访问」授权。",
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
