@@ -5900,6 +5900,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 会话列表里长按「重命名」：当前正在用的会话走 RPC（引擎正往它的文件里追加，不能同时写），
+     * 其余会话直接往文件末尾追加一条 `session_info`（[PiSessionStore.rename]）。
+     */
+    fun renameSessionFromList(summary: PiSessionStore.Summary, name: String) {
+        val open = _state.value.meta.sessionFile?.substringAfterLast('/')
+        if (open != null && open == summary.file.name) {
+            renameSession(name)
+            return
+        }
+        viewModelScope.launch {
+            val ok = sessionStore.rename(summary.file, name)
+            if (ok) {
+                refreshSessions()
+            } else {
+                pushNotice("重命名失败：${summary.file.name}", Notice.Tone.Warning)
+            }
+        }
+    }
+
+    /**
      * `/export [path]`。
      *
      * **给了名字**（`/export 名字.xxx`）＝ **pi 的分派，1:1**：后缀决定写哪一种，

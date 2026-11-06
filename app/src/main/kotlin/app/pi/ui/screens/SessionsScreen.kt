@@ -81,6 +81,7 @@ import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.chat.RenameSessionDialog
 import app.pi.ui.chat.SessionFileRow
 import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.chat.forkParentNameOf
@@ -210,6 +211,8 @@ fun SessionsScreen(
     // selector; ours live here because a phone has no Ctrl+D and no `new_session`
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
     var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    // 长按菜单里的「重命名」：要改名的那一行。
+    var renaming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
     var viewIndex by rememberSaveable { mutableIntStateOf(initialView.ordinal) }
     // 顶栏「⋯」。它是屏内状态，不是覆盖层：菜单开着时按返回应该先关菜单（`Popup`
     // 自己吃掉那一下），而不是把整层会话列表关掉。
@@ -632,6 +635,9 @@ fun SessionsScreen(
                                 GroupHeading(
                                     label = groupLabel(cwd, workspacesRoot, workspaceLabels),
                                     count = rows.size,
+                                    // 当前工作区的那一组在标题上点明，「顶到最前面」才有个说法。
+                                    current = cwd.trimEnd('/') in currentCwds ||
+                                        (activeFile != null && rows.any { it.file.name == activeFile }),
                                     collapsed = collapsed,
                                     onToggle = {
                                         collapsedGroups = if (cwd in collapsedGroups) {
@@ -668,7 +674,7 @@ fun SessionsScreen(
                         // 而不是搜索框下面：它说的是行上的操作，读完列表才用得上。
                         item(key = "hint") {
                             Text(
-                                "长按一行可删除该会话；当前会话要切换后才能删除。",
+                                "长按一行：重命名、新建子会话、删除。当前会话要切换后才能删除。",
                                 modifier = Modifier.padding(
                                     start = PiSettingsMetrics.pageHorizontal,
                                     end = PiSettingsMetrics.pageHorizontal,
@@ -760,6 +766,13 @@ fun SessionsScreen(
                 )
             }
             SessionActionRow(
+                label = "重命名",
+                tone = MaterialTheme.colorScheme.onSurface,
+            ) {
+                actions = null
+                renaming = acting
+            }
+            SessionActionRow(
                 label = "新建子会话",
                 tone = MaterialTheme.colorScheme.onSurface,
             ) {
@@ -767,7 +780,7 @@ fun SessionsScreen(
                 session.newChildSession(acting)
             }
             SessionActionRow(
-                label = "✗ 删除",
+                label = "删除",
                 tone = PiTheme.palette.error,
             ) {
                 actions = null
@@ -778,6 +791,18 @@ fun SessionsScreen(
                 tone = MaterialTheme.colorScheme.onSurface,
             ) { actions = null }
         }
+    }
+
+    val renameTarget = renaming
+    if (renameTarget != null) {
+        RenameSessionDialog(
+            initial = renameTarget.name,
+            onConfirm = { name ->
+                session.renameSessionFromList(renameTarget, name)
+                renaming = null
+            },
+            onDismiss = { renaming = null },
+        )
     }
 
     // pi always confirms a delete (`docs/sessions.md:48`: "delete with Ctrl+D,
@@ -987,7 +1012,7 @@ private val SESSIONS_ROW_PROP_GAP = 8.dp
  * （[groupLabel]）。
  */
 @Composable
-private fun GroupHeading(label: String, count: Int, collapsed: Boolean, onToggle: () -> Unit) {
+private fun GroupHeading(label: String, count: Int, current: Boolean, collapsed: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1014,6 +1039,13 @@ private fun GroupHeading(label: String, count: Int, collapsed: Boolean, onToggle
             style = PiTheme.text.meta,
             color = PiTheme.palette.muted,
         )
+        if (current) {
+            Text(
+                "当前",
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.accent,
+            )
+        }
         Spacer(Modifier.weight(1f))
         // 小箭头：展开朝下，折叠朝右。
         Text(

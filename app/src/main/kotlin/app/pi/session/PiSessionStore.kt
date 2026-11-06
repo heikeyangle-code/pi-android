@@ -7,8 +7,11 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 
 /**
@@ -598,6 +601,60 @@ class PiSessionStore(
         if (!target.path.startsWith(root.path + File.separator)) return@withContext false
         if (!target.isFile || !target.name.endsWith(".jsonl")) return@withContext false
         runCatching { target.delete() }.getOrDefault(false)
+    }
+
+    /**
+     * 给一个**没有被引擎打开**的会话改名：照 pi 自己的做法，往文件**末尾追加**一条
+     * `session_info`（`appendSessionInfo`，`session-manager.ts:1304-1313`），`parentId` 指向
+     * 文件里最后一个条目；读的一侧（[list]）本来就是「最后一个 `session_info` 生效」。
+     *
+     * 当前正在用的会话**不要**走这里：引擎正往同一个文件里追加，改名要走 RPC
+     * `set_session_name`（`PiSessionViewModel.renameSession`）。路径守卫与 [delete] 一样：
+     * 只动 [sessionsRoot] 里的 `.jsonl`。读不出最后一个条目（最后一行超过 1 MiB 之类）就
+     * 返回 false、**什么也不写**，宁可改名失败也不写一条挂不上树的条目。
+     */
+    suspend fun rename(file: File, name: String): Boolean = withContext(Dispatchers.IO) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return@withContext false
+        val root = sessionsRoot.absoluteFile
+        val target = file.absoluteFile
+        if (!target.path.startsWith(root.path + File.separator)) return@withContext false
+        if (!target.isFile || !target.name.endsWith(".jsonl")) return@withContext false
+        runCatching {
+            java.io.RandomAccessFile(target, "rw").use { raf ->
+                val length = raf.length()
+                if (length == 0L) return@use false
+                val tail = minOf(length, 1L shl 20).toInt()
+                val bytes = ByteArray(tail)
+                raf.seek(length - tail)
+                raf.readFully(bytes)
+                val text = String(bytes, Charsets.UTF_8).trimEnd()
+                if (text.isEmpty()) return@use false
+                // 尾部没有换行、而文件比尾部长：最后一行超出读取窗口，读不全，放弃。
+                if (tail < length && !text.contains('\n')) return@use false
+                val last = text.substringAfterLast('\n')
+                val obj = Json.parseToJsonElement(last) as? JsonObject ?: return@use false
+                val lastId = (obj["id"] as? JsonPrimitive)?.contentOrNull
+                // 最后一行是会话头（还没有任何条目）时，第一个条目的 parentId 是 null。
+                val isHeader = (obj["type"] as? JsonPrimitive)?.contentOrNull == "session"
+                val id = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+                val entry = JsonObject(
+                    mapOf(
+                        "type" to JsonPrimitive("session_info"),
+                        "id" to JsonPrimitive(id),
+                        "parentId" to if (isHeader || lastId == null) JsonNull else JsonPrimitive(lastId),
+                        "timestamp" to JsonPrimitive(java.time.Instant.now().toString()),
+                        "name" to JsonPrimitive(trimmed),
+                    ),
+                )
+                // 文件末尾没有换行时先补一个，免得新条目接在上一行后面。
+                raf.seek(length - 1)
+                val endsWithNewline = raf.read() == '\n'.code
+                raf.seek(length)
+                raf.write(((if (endsWithNewline) "" else "\n") + entry.toString() + "\n").toByteArray(Charsets.UTF_8))
+                true
+            }
+        }.getOrDefault(false)
     }
 
     /** A session file is what pi looks for: a regular `.jsonl` (`session-manager.ts:825`). */
