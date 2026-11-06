@@ -10,6 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -89,7 +94,13 @@ internal fun SubscriptionCard(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                if (expanded) "收起" else if (statuses.isEmpty()) "${providers.size} 个可登录 · 展开" else "已登录 ${statuses.size} · 共 ${providers.size} 个 · 展开",
+                // 不展开也看得见「登了几个」：这是用户最想知道的那个数。
+                if (expanded) {
+                    "收起"
+                } else {
+                    val loggedIn = providers.count { statuses[it.id] != null }
+                    if (loggedIn > 0) "已登录 $loggedIn 个 · 展开" else "${providers.size} 个可登录 · 展开"
+                },
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -122,7 +133,8 @@ internal fun SubscriptionCard(
                     PiSettingsChip(text = "重试", onClick = onRetry)
                 }
             }
-            providers.forEach { provider ->
+            providers.forEachIndexed { index, provider ->
+                if (index > 0) PiSettingsHairline()
                 SubscriptionRow(
                     provider = provider,
                     status = statuses[provider.id],
@@ -301,6 +313,9 @@ internal fun SubscriptionLoginSheet(
         Column(
             Modifier
                 .fillMaxWidth()
+                // 设备码卡 + 浏览器按钮 + 粘贴框叠起来比小屏幕高：以前整块不能滚，
+                // 底部的「取消」会掉到屏外。
+                .verticalScroll(rememberScrollState())
                 .padding(
                     start = PiSettingsMetrics.pageHorizontal,
                     end = PiSettingsMetrics.pageHorizontal,
@@ -495,13 +510,18 @@ internal fun SubscriptionLoginSheet(
             when (val state = status) {
                 Step.Running -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(PiSpacing.inline))
                         Text("等待完成…", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.height(PiSpacing.small))
-                    TextButton(onClick = {
+                    androidx.compose.material3.OutlinedButton(onClick = {
                         session.cancel()
                         onDismiss()
-                    }) { Text("取消") }
+                    }) { Text("取消登录") }
                 }
 
                 Step.Done -> {
@@ -511,13 +531,13 @@ internal fun SubscriptionLoginSheet(
                         color = PiTheme.palette.success,
                     )
                     Spacer(Modifier.height(PiSpacing.small))
-                    TextButton(onClick = onDismiss) { Text("好") }
+                    Button(onClick = onDismiss) { Text("好") }
                 }
 
                 is Step.Failed -> {
                     Text("登录失败：${state.message}", style = PiTheme.text.meta, color = PiTheme.palette.warning)
                     Spacer(Modifier.height(PiSpacing.small))
-                    TextButton(onClick = {
+                    androidx.compose.material3.OutlinedButton(onClick = {
                         session.cancel()
                         onDismiss()
                     }) { Text("关闭") }

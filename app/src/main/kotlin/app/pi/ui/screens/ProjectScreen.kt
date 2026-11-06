@@ -7,8 +7,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,14 +19,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
@@ -36,7 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -157,7 +160,7 @@ fun ProjectScreen(
     /** 顶栏左侧的返回箭头：底栏拆掉之后，这一屏只能回到对话。 */
     onBack: () -> Unit,
 ) {
-    val state by session.state.collectAsState()
+    val state by session.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -251,16 +254,27 @@ fun ProjectScreen(
     // 在这里会相遇 —— `PiPaths` 用 `context.filesDir`，而 `workspace` 来自 `PtyLauncher`，
     // 前缀一旦对不上，`removePrefix` 什么也不删，crumbs 就变成整条绝对路径的第一段。
     // `DeviceWorkspace.canonicalize` 的 KDoc 记着同一个坑。
-    val homeCrumbs = remember(guestRootfs, workspace) {
+    //
+    // **浏览根跟着工作区走**：自带工作区在 rootfs 里（根 = rootfs，原样不变）；外部工作区
+    // （`/storage/emulated/0/…`）在 rootfs **之外**，它在 guest 里只是引擎启动时临时绑上去的
+    // 一条路径，宿主侧的 `<rootfs>/storage/emulated/0/…` 并不存在 —— 以前不管三七二十一都从
+    // rootfs 拼，于是一选手机本地目录就是「无法读取目录 …/rootfs/storage/emulated/0/…」。
+    // 外部工作区的浏览根改成宿主的 `/`，面包屑与路径都是真实路径。
+    val browseRoot = remember(guestRootfs, workspace) {
         val root = runCatching { guestRootfs.canonicalPath }.getOrNull() ?: guestRootfs.absolutePath
+        val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
+        if (here == root || here.startsWith(root.trimEnd('/') + "/")) guestRootfs else File("/")
+    }
+    val homeCrumbs = remember(browseRoot, workspace) {
+        val root = runCatching { browseRoot.canonicalPath }.getOrNull() ?: browseRoot.absolutePath
         val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
         here.removePrefix(root).trimStart('/').split('/').filter { it.isNotEmpty() }
     }
-    var crumbs by remember(workspace, guestRootfs) { mutableStateOf(homeCrumbs) }
+    var crumbs by remember(workspace, browseRoot) { mutableStateOf(homeCrumbs) }
     var listing by remember { mutableStateOf<List<WorkspaceEntry>?>(null) }
     var listingError by remember { mutableStateOf<WorkspaceOpen.Failed?>(null) }
-    val currentDir = remember(guestRootfs, crumbs) {
-        crumbs.fold(guestRootfs) { dir, segment -> File(dir, segment) }
+    val currentDir = remember(browseRoot, crumbs) {
+        crumbs.fold(browseRoot) { dir, segment -> File(dir, segment) }
     }
     // 面包屑是**从 rootfs 根算起**的，而 `relativeParent` 是给 `File(workspace, …)` 用的，
     // 只能相对**工作区**。两者混用会把 `workspace/pi/workspaces/<name>` 再拼到 workspace 后面，
@@ -272,14 +286,33 @@ fun ProjectScreen(
     } else {
         currentDir.absolutePath
     }
+    // 只有「换了目录」才清成加载态；同一目录里的刷新（agent 写了文件、自己新建/重命名之后）
+    // 保留旧列表直到新结果回来，列表不闪空、滚动位置不丢。
+    var listedDir by remember { mutableStateOf<String?>(null) }
+    var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
+    // 排序：默认最近修改在最上面；其余三种目录在文件前面。记在 rememberSaveable 里（只存序号）。
+    var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
+    var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
+    var sortMenu by remember { mutableStateOf(false) }
+    val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
+    val sortedEntries = remember(listing, sortMode, filterText) {
+        val all = listing.orEmpty()
+        val q = filterText.trim()
+        val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
+        filtered.sortedWith(sortMode.comparator)
+    }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
-        listing = null
+        if (listedDir != currentDir.absolutePath) listing = null
         listingError = null
         val result = withContext(Dispatchers.IO) { WorkspaceFiles.list(currentDir) }
         result.fold(
-            onSuccess = { listing = it },
+            onSuccess = {
+                listing = it
+                listedDir = currentDir.absolutePath
+            },
             onFailure = { error ->
                 listing = emptyList()
+                listedDir = currentDir.absolutePath
                 listingError = WorkspaceOpen.Failed(
                     reason = "这个目录读不到了，可能被重命名或删掉；工作区里别的地方不受影响。",
                     detail = "${error::class.java.name}: ${error.message}\n  ${currentDir.absolutePath}",
@@ -492,12 +525,21 @@ fun ProjectScreen(
      * 显示名（label），而那正是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
      * 搬进它是两个决定，`WorkspaceStore.create` 的 KDoc 把这条写死了。
      */
-    fun createNewWorkspace() {
+    fun createNewWorkspace(label: String = "") {
         scope.launch {
-            when (val result = withContext(Dispatchers.IO) { session.createWorkspace() }) {
+            when (val result = withContext(Dispatchers.IO) {
+                val created = session.createWorkspace()
+                // 起了名就顺手写上显示名（失败不影响建好的目录，名字之后还能在 ⋮ 里改）。
+                if (created is WorkspaceStore.Create.Ok && label.isNotBlank()) {
+                    session.renameWorkspace(created.entry.name, label.trim())
+                }
+                created
+            }) {
                 is WorkspaceStore.Create.Ok -> {
-                    say("已新建工作区 · ${result.entry.displayName}")
+                    say("已新建工作区 · ${label.trim().ifEmpty { result.entry.displayName }}")
                     refreshTick++
+                    // 新建不自动切过去（那是另一个决定）；把切换面板重新打开，新工作区就在眼前、一点即到。
+                    rootSheet = true
                 }
                 is WorkspaceStore.Create.Failed -> say(result.message, StateTone.Warning)
             }
@@ -760,7 +802,7 @@ fun ProjectScreen(
                                 Text(
                                     "来源按优先级排 ⓘ",
                                     modifier = Modifier
-                                        .clip(PiShapes.tag)
+                                        .clip(RoundedCornerShape(WsShape.small))
                                         .clickable { sourceNoteOpen = !sourceNoteOpen }
                                         .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                                     style = PiTheme.text.meta,
@@ -869,13 +911,20 @@ fun ProjectScreen(
                         item { WsNotice(text = note, tone = StateTone.Warning, glyph = "!") }
                     }
 
-                    // 工作区切换：原来那张大卡（名字 + 摘要 + 箭头）压成一颗芯片。
-                    item {
-                        WorkspaceChipRow(
-                            name = workspaceName,
+                    // 一条路径条同时回答「哪个工作区」「在第几层」：药丸 = 工作区（点名字回到工作区根，
+                    // 在根上时点它切换；右边 ⌄ 永远是切换），药丸后面接工作区内的子路径。
+                    item(key = "path-bar") {
+                        WorkspacePathBar(
+                            workspaceName = workspaceName,
+                            inside = insideWorkspace,
+                            homeSize = homeCrumbs.size,
+                            crumbs = crumbs,
+                            rootLabel = ROOTFS_CRUMB_LABEL,
                             changed = if (engineDown) null else changed.size,
                             running = if (engineDown) 0 else runs.size,
-                            onClick = { rootSheet = true },
+                            onSwitch = { rootSheet = true },
+                            onHome = { crumbs = homeCrumbs },
+                            onGo = { index -> crumbs = crumbs.take(index) },
                         )
                     }
 
@@ -890,6 +939,7 @@ fun ProjectScreen(
                         for (index in runs.indices) {
                             val run = runs[index]
                             item(key = "run:${run.key}") {
+                              Box(Modifier.animateItem()) {
                                 RunningCommandRow(
                                     run = run,
                                     sliceIndex = index,
@@ -897,6 +947,7 @@ fun ProjectScreen(
                                     nowMs = nowMs,
                                     hairlineStart = WsIconHairlineStart,
                                 )
+                              }
                             }
                         }
                     }
@@ -921,6 +972,7 @@ fun ProjectScreen(
                         val totalSlices = (if (pending != null) 1 else 0) + visibleChanged.size
                         if (pending != null) {
                             item(key = "pending:${pending.path}") {
+                              Box(Modifier.animateItem()) {
                                 WsCardSlice(
                                     index = 0,
                                     lastIndex = totalSlices - 1,
@@ -928,11 +980,13 @@ fun ProjectScreen(
                                 ) {
                                     PendingWriteRow(pending)
                                 }
+                              }
                             }
                         }
                         visibleChanged.forEachIndexed { index, file ->
                             val slice = (if (pending != null) 1 else 0) + index
                             item(key = "changed:${file.path}") {
+                              Box(Modifier.animateItem()) {
                                 WsCardSlice(
                                     index = slice,
                                     lastIndex = totalSlices - 1,
@@ -972,18 +1026,11 @@ fun ProjectScreen(
                                         },
                                     )
                                 }
+                              }
                             }
                         }
                     }
 
-                    // 面包屑在「全部文件」段头上面：它说的是下面这份列表在哪一层。
-                    item {
-                        BreadcrumbRow(
-                            rootLabel = ROOTFS_CRUMB_LABEL,
-                            crumbs = crumbs,
-                            onGo = { index -> crumbs = crumbs.take(index) },
-                        )
-                    }
                     item {
                         WsSectionHeader(
                             label = "全部文件",
@@ -991,7 +1038,70 @@ fun ProjectScreen(
                             aside = if (listingError != null) {
                                 null
                             } else {
-                                { WsSectionAction(label = "新建", onClick = { newSheet = true }) }
+                                {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(WsShape.small))
+                                                    .clickable { sortMenu = true }
+                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Text(
+                                                    sortMode.label,
+                                                    style = PiTheme.text.meta,
+                                                    color = PiTheme.palette.muted,
+                                                    maxLines = 1,
+                                                )
+                                                Icon(
+                                                    Icons.Filled.KeyboardArrowDown,
+                                                    contentDescription = "排序方式",
+                                                    modifier = Modifier.size(14.dp),
+                                                    tint = PiTheme.palette.muted,
+                                                )
+                                            }
+                                            if (sortMenu) PiMenu(
+                                                expanded = true,
+                                                onDismiss = { sortMenu = false },
+                                                placement = PiMenuPlacement.Below,
+                                                items = WorkspaceSort.entries.map { mode ->
+                                                    PiMenuItem(mode.label) {
+                                                        sortIndex = mode.ordinal
+                                                        sortMenu = false
+                                                    }
+                                                },
+                                            )
+                                        }
+                                        Box(
+                                            Modifier
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(WsShape.medium))
+                                                .clickable {
+                                                    filterOpen = !filterOpen
+                                                    if (!filterOpen) filterText = ""
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Search,
+                                                contentDescription = "筛选文件名",
+                                                modifier = Modifier.size(20.dp),
+                                                tint = if (filterOpen || filterText.isNotEmpty()) {
+                                                    PiTheme.palette.accent
+                                                } else {
+                                                    PiTheme.palette.muted
+                                                },
+                                            )
+                                        }
+                                        WsChip(
+                                            text = "新建",
+                                            glyphIcon = Icons.Filled.Add,
+                                            solid = true,
+                                            onClick = { newSheet = true },
+                                        )
+                                    }
+                                }
                             },
                         )
                     }
@@ -1032,8 +1142,15 @@ fun ProjectScreen(
                                         ),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(36.dp),
+                                        tint = PiTheme.palette.muted.copy(alpha = 0.45f),
+                                    )
                                     Text(
                                         "这个目录是空的",
+                                        modifier = Modifier.padding(top = 8.dp),
                                         style = PiTheme.text.meta,
                                         color = PiTheme.palette.muted,
                                     )
@@ -1063,8 +1180,33 @@ fun ProjectScreen(
                             }
                         }
                     } else {
-                        entries.forEachIndexed { index, entry ->
+                        // 目录里东西多的时候：一个就地筛选框（只筛当前这一层的名字）。
+                        val filtering = filterOpen || filterText.isNotEmpty()
+                        if (filtering) {
+                            item(key = "entry-filter") {
+                                WorkspaceFilterField(
+                                    value = filterText,
+                                    onChange = { filterText = it },
+                                )
+                            }
+                        }
+                        val shown = sortedEntries
+                        if (shown.isEmpty()) {
+                            item(key = "entry-filter-empty") {
+                                Text(
+                                    "没有名字里带「${filterText.trim()}」的项。",
+                                    modifier = Modifier.padding(
+                                        horizontal = PiSettingsMetrics.pageHorizontal,
+                                        vertical = 16.dp,
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                        }
+                        shown.forEachIndexed { index, entry ->
                             item(key = "entry:${entry.path}") {
+                              Box(Modifier.animateItem()) {
                                 // 这一行的**工作区相对**路径，与「本次会话」徽标比对用。
                                 val entryRelative = remember(currentDir, entry.name, workspace) {
                                     val root = workspace.canonicalFile
@@ -1091,7 +1233,7 @@ fun ProjectScreen(
                                 }
                                 WsCardSlice(
                                     index = index,
-                                    lastIndex = entries.lastIndex,
+                                    lastIndex = shown.lastIndex,
                                     hairlineStart = WsIconHairlineStart,
                                 ) {
                                     WorkspaceEntryRow(
@@ -1114,6 +1256,7 @@ fun ProjectScreen(
                                         },
                                     )
                                 }
+                              }
                             }
                         }
                     }
@@ -1194,7 +1337,14 @@ fun ProjectScreen(
             },
             onNew = {
                 rootSheet = false
-                createNewWorkspace()
+                inputDialog = WorkspaceInputDialog(
+                    kind = WorkspaceInputKind.NewWorkspace,
+                    title = "新建工作区",
+                    where = "App 私有目录",
+                    relativeParent = null,
+                    absoluteParent = null,
+                    initial = "",
+                )
             },
             onPickExternal = {
                 rootSheet = false
@@ -1427,7 +1577,9 @@ fun ProjectScreen(
                 // 工作区显示名不是文件名：它可以是带空格的一句话，`nameProblem` 那套规矩
                 // （不许 `/`、不许 `..`、不许为空…）在这里不适用，交给 `renameWorkspace`
                 // 裁决 —— 它的 `Failed.message` 就是给人看的那句话。
-                val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace) {
+                val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace ||
+                    dialog.kind == WorkspaceInputKind.NewWorkspace
+                ) {
                     null
                 } else {
                     WorkspaceFiles.nameProblem(typed)
@@ -1467,6 +1619,8 @@ fun ProjectScreen(
                         WorkspaceInputKind.RenameWorkspace -> dialog.workspaceName?.let { target ->
                             renameWorkspaceTo(target, typed)
                         }
+
+                        WorkspaceInputKind.NewWorkspace -> createNewWorkspace(typed)
                     }
                 } else {
                     say(problem, StateTone.Warning)
@@ -1532,79 +1686,7 @@ fun ProjectScreen(
     }
 }
 
-// ================================================================ 工作区芯片
-
-/**
- * 工作区切换：原来那张大卡（名字 + 摘要 + 切换徽标 + 箭头）压成**一颗芯片**
- * （设计稿：`workspace-1 ▾`），点它弹底部面板选工作区。
- *
- * 右端那句话**只在真有时出现**：改动数 0、没有命令在跑时什么都不画 —— 这一屏不需要
- * 一直挂着一行「改动 0 · 无命令运行」。
- */
-@Composable
-private fun WorkspaceChipRow(
-    name: String,
-    changed: Int?,
-    running: Int,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = WS_CHIP_TOP,
-                bottom = WS_CHIP_BOTTOM,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-    ) {
-        Row(
-            modifier = Modifier
-                .height(PiSpacing.controlHeight)
-                .clip(PiShapes.badge)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .clickable(onClick = onClick)
-                .padding(horizontal = PiSpacing.cardPadding),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-        ) {
-            Icon(
-                Icons.Filled.Folder,
-                contentDescription = null,
-                modifier = Modifier.size(PiSpacing.controlGlyph),
-                tint = PiTheme.palette.muted,
-            )
-            Text(
-                name,
-                style = PiTheme.text.mono,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Icon(
-                Icons.Filled.KeyboardArrowDown,
-                contentDescription = "切换工作区",
-                modifier = Modifier.size(PiSpacing.controlGlyph),
-                tint = PiTheme.palette.muted,
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        val parts = buildList {
-            if (changed != null && changed > 0) add("改动 $changed")
-            if (running > 0) add("$running 条命令在跑")
-        }
-        if (parts.isNotEmpty()) {
-            Text(
-                parts.joinToString(" · "),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
-            )
-        }
-    }
-}
+// ================================================================ 工作区路径条
 
 /** 芯片那一条的上下留白。 */
 private val WS_CHIP_TOP = 10.dp
@@ -2084,94 +2166,21 @@ private class WorkspaceSessionFile(val file: File, val displayPath: String)
 
 // ================================================================ ④ 全部文件
 
-/**
- * 面包屑：「工作区 / src / session」。
- *
- * 每一段可点回那一层（最后一段是当前目录，点了不动）；长名字中间省略（稿子的
- * `mid(n, 16)`）—— 省略中间而不是末尾，因为路径的两端才是有信息的那两端。
- *
- * ## 会换行，而且每一段是 `maxWidth` 而不是定宽
- *
- * 稿子这一行是 `className="rw w-crumb"` + `flexWrap:'wrap'`（`workspace-final.html:1500`），
- * 每一段是 `maxWidth:170`（`.w-crumb :189` 的 `min-width:0` 加 inline 的 `maxWidth`）。
- * 这一屏原来把每段钉成 `width(170dp)`：三段就是 534dp，一行的可用宽远小于它，于是**最后一段
- * （当前目录）被推出屏外** —— 一段也看不见当前在哪。这里改成 `widthIn(max = 170)` + `FlowRow`：
- * 名字短就按内容宽、长就截到 170，整行放不下就折到第二行。
- *
- * 选 [FlowRow] 而不是横向滚动：稿子写死的就是 `flexWrap`，而且「当前目录必须在屏内」这条要求
- * 只有换行能无条件满足 —— 横向滚动时最后一段仍然要先滑一下才看得见。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun BreadcrumbRow(rootLabel: String, crumbs: List<String>, onGo: (Int) -> Unit) {
-    val palette = PiTheme.palette
-    // **只显示最后三级，前面折成 `…`**（设计稿）：从 guest 根算起时，面包屑是
-    // `根 / workspace / pi / workspaces / workspace-1` 这么一长串，真正有用的只有最后两级。
-    // `…` 不是死链：点它往上退一级（退到可见窗口上面那一层）。
-    val hidden = (crumbs.size - WS_CRUMB_VISIBLE).coerceAtLeast(0)
-    val shown = crumbs.drop(hidden)
-    FlowRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                // 稿子这一行的 `padding:'0 14px 8px'`。
-                bottom = WS_CRUMB_BOTTOM,
-            ),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        if (hidden > 0) {
-            Crumb(
-                text = "…",
-                mono = true,
-                current = false,
-                onClick = { onGo(hidden) },
-            )
-        } else {
-            Crumb(
-                text = rootLabel,
-                mono = true,
-                current = crumbs.isEmpty(),
-                onClick = { onGo(0) },
-            )
-        }
-        shown.forEachIndexed { index, segment ->
-            Text(
-                "/",
-                modifier = Modifier.padding(horizontal = PiSpacing.tiny),
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                maxLines = 1,
-            )
-            Crumb(
-                text = segment,
-                mono = true,
-                current = hidden + index == crumbs.lastIndex,
-                onClick = { onGo(hidden + index + 1) },
-            )
-        }
-    }
-}
-
-/** 面包屑最多显示几级（当前目录 + 两级父目录）。 */
-private const val WS_CRUMB_VISIBLE = 3
-
-/** 稿子面包屑那一行的 `padding:'0 14px 8px'`。 */
-private val WS_CRUMB_BOTTOM = 8.dp
-
-
 @Composable
 private fun Crumb(text: String, mono: Boolean, current: Boolean, onClick: () -> Unit) {
     Text(
         text,
         modifier = Modifier
             .then(if (current) Modifier else Modifier.clickable(onClick = onClick))
+            // 面包屑原来只有字那么高，手指几乎点不中；上下补到约 32dp 的点击高度。
+            .padding(vertical = 8.dp)
             // `widthIn(max = …)`，不是 `width(…)`：稿子每一段是 `maxWidth:170`
             // （`workspace-final.html:1500` + `.w-crumb`）：短名字按内容宽排，一行放不下就折行。
             // 定宽 170 让「工作区 / src / session」恒占 534dp，当前目录必然被挤出屏外。
             .widthIn(max = CRUMB_MAX_WIDTH),
-        style = if (mono) PiTheme.text.monoSmall else PiTheme.text.meta,
+        style = (if (mono) PiTheme.text.monoSmall else PiTheme.text.meta).let {
+            if (current) it.copy(fontWeight = FontWeight.SemiBold) else it
+        },
         color = if (current) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -2203,7 +2212,27 @@ private fun WorkspaceEntryRow(
     onOpen: () -> Unit,
     onMenu: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth()) {
+    // 最近 10 分钟内动过的行：左缘一条 3dp 强调色细条（卡片圆角会把它裁成贴边的样子）。
+    val recent = remember(entry.modifiedAt) {
+        System.currentTimeMillis() - entry.modifiedAt in 0..RECENT_ROW_MS
+    }
+    val barColor = PiTheme.palette.accent
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(
+                if (recent) {
+                    Modifier.drawBehind {
+                        drawRect(
+                            barColor,
+                            size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height),
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
         WsRow(
             title = WorkspaceFiles.middleEllipsis(entry.name, ENTRY_NAME_MAX_CHARS),
             // **文件名用无衬线 15/Medium**（设计稿）：等宽只留给路径。原来这里是
@@ -2213,6 +2242,7 @@ private fun WorkspaceEntryRow(
             strong = false,
             // 图标底由 `WsRow` 统一给（32dp 圆角方块），这里只画图标。
             lead = { EntryGlyph(entry.kind) },
+            leadBackground = if (entry.isDirectory) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
             badge = if (sessionChanged != null) {
                 {
                     WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
@@ -2220,10 +2250,11 @@ private fun WorkspaceEntryRow(
             } else {
                 null
             },
+            // 相对时间（「3分钟前」）比绝对钟点好扫；大小挪到行尾。
             meta = if (entry.isDirectory) {
-                "${entry.childCount}项 · ${WorkspaceFiles.formatTime(entry.modifiedAt)}"
+                "${entry.childCount}项 · ${relativeTime(entry.modifiedAt)}"
             } else {
-                "${WorkspaceFiles.formatSize(entry.sizeBytes)} · ${WorkspaceFiles.formatTime(entry.modifiedAt)}"
+                relativeTime(entry.modifiedAt)
             },
             value = if (diff != null && (diff.added > 0 || diff.removed > 0)) {
                 {
@@ -2243,12 +2274,252 @@ private fun WorkspaceEntryRow(
                         }
                     }
                 }
+            } else if (entry.isDirectory) {
+                // 目录行尾的 ›：告诉人「点一下是走进去」，与文件行（点一下是打开）区分。
+                {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = PiTheme.palette.muted,
+                    )
+                }
             } else {
-                null
+                {
+                    Text(
+                        WorkspaceFiles.formatSize(entry.sizeBytes),
+                        style = PiTheme.text.monoSmall,
+                        color = PiTheme.palette.muted,
+                        maxLines = 1,
+                    )
+                }
             },
             trail = { WsMoreButton(onClick = onMenu) },
             onClick = onOpen,
         )
+    }
+}
+
+/** 文件列表的排序方式。除「最近修改」外，目录排在文件前面。 */
+private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparator<WorkspaceEntry>) {
+    Name("名称", { compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
+    // 最近修改：目录和文件混排，真正最近动过的在最上面（默认）。
+    Newest("最近修改", { compareByDescending<WorkspaceEntry> { it.modifiedAt }.thenBy { it.name.lowercase(java.util.Locale.ROOT) } }),
+    Largest("大小", { compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.sizeBytes } }),
+    Type("类型", {
+        compareBy<WorkspaceEntry>(
+            { !it.isDirectory },
+            { it.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) },
+            { it.name.lowercase(java.util.Locale.ROOT) },
+        )
+    }),
+    ;
+
+    val comparator: Comparator<WorkspaceEntry> by lazy(comparatorOf)
+}
+
+
+@Composable
+private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = 6.dp,
+            )
+            .height(44.dp)
+            .clip(RoundedCornerShape(WsShape.medium))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(start = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Filled.Search,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = PiTheme.palette.muted,
+        )
+        androidx.compose.foundation.text.BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) {
+                        Text("筛选这一层的文件名", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+                    }
+                    inner()
+                }
+            },
+        )
+        if (value.isNotEmpty()) {
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .clickable { onChange("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "清除筛选",
+                    modifier = Modifier.size(16.dp),
+                    tint = PiTheme.palette.muted,
+                )
+            }
+        }
+    }
+}
+
+/** 「最近动过」的判据：10 分钟。 */
+private const val RECENT_ROW_MS = 10 * 60 * 1000L
+
+/**
+ * 路径条：工作区药丸 + 工作区内的子路径，横向可滚，进到深处时自动滚到当前层。
+ * 工作区之外（根目录下别处）则是药丸 + 「根 / a / b」整条路径，点药丸回工作区。
+ */
+@Composable
+private fun WorkspacePathBar(
+    workspaceName: String,
+    inside: Boolean,
+    homeSize: Int,
+    crumbs: List<String>,
+    rootLabel: String,
+    changed: Int?,
+    running: Int,
+    onSwitch: () -> Unit,
+    onHome: () -> Unit,
+    onGo: (Int) -> Unit,
+) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(crumbs) {
+        delay(60)
+        scroll.animateScrollTo(scroll.maxValue)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scroll)
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = WS_CHIP_TOP,
+                bottom = WS_CHIP_BOTTOM,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(PiSpacing.controlHeight)
+                .clip(PiShapes.badge)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .height(PiSpacing.controlHeight)
+                    .clickable(onClick = onSwitch)
+                    .padding(start = PiSpacing.cardPadding, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+            ) {
+                Icon(
+                    Icons.Filled.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(PiSpacing.controlGlyph),
+                    tint = PiTheme.palette.accent,
+                )
+                Text(
+                    workspaceName,
+                    modifier = Modifier.widthIn(max = 200.dp),
+                    style = PiTheme.text.mono,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(
+                Modifier
+                    .height(PiSpacing.controlHeight)
+                    .widthIn(min = 36.dp)
+                    .clickable(onClick = onSwitch),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "切换工作区",
+                    modifier = Modifier.size(PiSpacing.controlGlyph),
+                    tint = PiTheme.palette.muted,
+                )
+            }
+        }
+        val sep: @Composable () -> Unit = {
+            Text(
+                "›",
+                modifier = Modifier.padding(horizontal = 6.dp),
+                style = PiTheme.text.monoSmall,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
+        }
+        // 不在工作区根上（进了子目录，或浏览到工作区之外）才出现：一键回到工作区根。
+        if (!(inside && crumbs.size == homeSize)) {
+            Box(
+                Modifier
+                    .padding(start = 4.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onHome),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Home,
+                    contentDescription = "回到工作区根",
+                    modifier = Modifier.size(18.dp),
+                    tint = PiTheme.palette.muted,
+                )
+            }
+        }
+        if (inside) {
+            crumbs.drop(homeSize).forEachIndexed { i, segment ->
+                sep()
+                Crumb(
+                    text = segment,
+                    mono = true,
+                    current = homeSize + i == crumbs.lastIndex,
+                    onClick = { onGo(homeSize + i + 1) },
+                )
+            }
+        } else {
+            sep()
+            Crumb(text = rootLabel, mono = true, current = crumbs.isEmpty(), onClick = { onGo(0) })
+            crumbs.forEachIndexed { i, segment ->
+                sep()
+                Crumb(
+                    text = segment,
+                    mono = true,
+                    current = i == crumbs.lastIndex,
+                    onClick = { onGo(i + 1) },
+                )
+            }
+        }
+        val parts = buildList {
+            if (changed != null && changed > 0) add("改动 $changed")
+            if (running > 0) add("$running 条命令在跑")
+        }
+        if (parts.isNotEmpty()) {
+            Text(
+                parts.joinToString(" · "),
+                modifier = Modifier.padding(start = 12.dp),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -2265,11 +2536,13 @@ private const val ENTRY_NAME_MAX_CHARS = 28
 @Composable
 private fun EntryGlyph(kind: WorkspaceEntryKind) {
     when (kind) {
+        // 目录用强调色：一屏文件里「能点进去的」一眼就和「只能打开的」分开，
+        // 不用再靠图标形状去认。
         WorkspaceEntryKind.Directory -> Icon(
             Icons.Filled.Folder,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            tint = PiTheme.palette.muted,
+            tint = PiTheme.palette.accent,
         )
 
         // 稿子给二进制**单加了一个图标态**（`workspace-final.html:311` 的 `Icon n="bin"`：
@@ -2351,7 +2624,7 @@ private fun ResourceRow(
                 Text(
                     "复制名字",
                     modifier = Modifier
-                        .clip(PiShapes.tag)
+                        .clip(RoundedCornerShape(WsShape.small))
                         .clickable(onClick = onUse)
                         .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                     style = PiTheme.text.meta,
@@ -2440,33 +2713,35 @@ private fun WorkspaceRootSheet(
     WsSheet(
         title = "切换工作区",
         onClose = onClose,
-        subtitle = "工作区就是 pi 的现场目录；App 私有目录里的、设备目录里的都算。",
-        footer = "换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。",
+        subtitle = "App 私有目录和设备目录里的都可以当工作区。",
+        footer = "换工作区会新建一个 pi 会话，当前会话不会被删除。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
-        Text(
-            "现有工作区",
-            modifier = Modifier.padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.groupGap,
-                bottom = PiSettingsMetrics.groupHeaderGap,
-            ),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        // 两个入口放在最上面：工作区一多，原来「新建」被挤到列表下面要滚很久才看得见。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = PiSettingsMetrics.pageHorizontal,
+                    vertical = PiSettingsMetrics.groupGap,
+                ),
+            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+        ) {
+            WsChip(text = "新建工作区", glyphIcon = Icons.Filled.Add, solid = true, onClick = onNew)
+            WsChip(text = "选设备目录", glyphIcon = Icons.Filled.Folder, onClick = onPickExternal)
+        }
+        // 当前那一个排最前面（其余保持原来的顺序）。
+        val ordered = remember(entries) { entries.sortedBy { !it.isCurrent } }
         WsCard {
-            entries.forEachIndexed { index, item ->
+            ordered.forEachIndexed { index, item ->
                 if (index > 0) WsHairline(startInset = WsIconHairlineStart)
                 val renamed = item.label != item.name
                 WsRow(
-                    // 显示名是 label；它就是 `switchWorkspace` 里那条 notice 印的名字。
                     title = item.displayName,
-                    // 名字无衬线、等宽只留给路径：切换面板里这一行是**工作区的显示名**，
-                    // 目录名（身份）由下面那颗徽标用等宽给出。
                     mono = false,
                     strong = true,
                     lead = { FolderGlyph() },
+                    leadBackground = if (item.isCurrent) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
                     badge = if (renamed || item.isCurrent || item.external || !item.available) {
                         {
                             Row(
@@ -2501,55 +2776,7 @@ private fun WorkspaceRootSheet(
             }
         }
         Text(
-            "加一个",
-            modifier = Modifier.padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.groupGap,
-                bottom = PiSettingsMetrics.groupHeaderGap,
-            ),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        WsCard {
-            WsRow(
-                title = "新建工作区",
-                strong = true,
-                titleColor = PiTheme.palette.accent,
-                lead = {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                        tint = PiTheme.palette.accent,
-                    )
-                },
-                meta = "在 App 私有目录里建一个空目录，不需要任何权限。",
-                onClick = onNew,
-            )
-            WsHairline()
-            // 「从设备目录选择」：把设备上一个**真目录**登记成工作区。
-            //
-            // 它要的是「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`），**不是** SAF：工作区必须是
-            // 真实文件路径 —— 引擎把它 bind 进 guest 并当 cwd（`PiEngineHost.kt:407`、`:451`），
-            // 而文档选择器给的是内容 URI，绑不了。这一句在说明页里也印（`WorkspaceExternalIntro`），
-            // 免得用户以为随便给个授权就够了。
-            //
-            // 这条行没有「未接」徽标了：它现在是一条真能走的路。有没有权限是**点下去之后**才知道
-            // 的事（`WorkspaceExternalPicker` 自己判定并给出说明），所以这里不预判 —— 一行灰着的
-            // 徽标会让有权限的用户以为它还没做。
-            WsRow(
-                title = "从设备目录选择（需授权）",
-                strong = true,
-                titleColor = PiTheme.palette.accent,
-                lead = { FolderGlyph() },
-                meta = "选一个设备上的目录当工作区：文件留在原处，只有 .pi 项目资源会从那里读。",
-                onClick = onPickExternal,
-            )
-        }
-        Text(
-            "新建的工作区落在 App 私有目录里，不需要授权；「从设备目录选择」那一条要「所有文件访问」，" +
-                "选中的目录不会被复制也不会被移动 —— 取消登记只是不再列在这里，文件一直留在设备上。",
+            "设备目录不会被复制或移动；取消登记只是不再列在这里，文件留在设备上。设备目录需要「所有文件访问」授权。",
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
@@ -2802,7 +3029,7 @@ private fun NewChoice(
 
 // ================================================================ 浮层：名字输入
 
-private enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace }
+private enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace, NewWorkspace }
 
 /** 新建文件 / 新建文件夹 / 重命名 / 重命名工作区共用的一支输入框（稿子就是这么复用的）。 */
 private data class WorkspaceInputDialog(
@@ -2826,7 +3053,22 @@ private fun WorkspaceNameDialog(
     onClose: () -> Unit,
     onSubmit: (String) -> Unit,
 ) {
-    var name by remember(dialog) { mutableStateOf(dialog.initial) }
+    // 重命名文件时预选「扩展名之前」的部分：改名最常见的是只换主名，不该先手动选一遍。
+    var field by remember(dialog) {
+        val dot = dialog.initial.lastIndexOf('.')
+        val end = if (dialog.kind == WorkspaceInputKind.Rename && dot > 0) dot else dialog.initial.length
+        mutableStateOf(
+            androidx.compose.ui.text.input.TextFieldValue(
+                dialog.initial,
+                if (dialog.kind == WorkspaceInputKind.RenameWorkspace || dialog.kind == WorkspaceInputKind.Rename) {
+                    androidx.compose.ui.text.TextRange(0, end)
+                } else {
+                    androidx.compose.ui.text.TextRange(dialog.initial.length)
+                },
+            ),
+        )
+    }
+    val name = field.text
     val focus = remember(dialog) { androidx.compose.ui.focus.FocusRequester() }
     PiAutoFocus(focus)
     PiDialog(onDismissRequest = onClose) {
@@ -2838,8 +3080,23 @@ private fun WorkspaceNameDialog(
         val problem = when (dialog.kind) {
             // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
             WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
-            else -> WorkspaceFiles.nameProblem(name)
+            // 新建工作区：名字可以不填（用默认的 workspace-N）。
+            WorkspaceInputKind.NewWorkspace -> null
+            else -> WorkspaceFiles.nameProblem(name) ?: run {
+                // 同名在输入时就说，而不是提交后才报「已存在」。重命名成自己原来的名字不算冲突
+                // （按「确定」会因没有变化而什么也不做）。
+                val parent = dialog.absoluteParent
+                if (parent != null && trimmed.isNotEmpty() &&
+                    !(dialog.kind == WorkspaceInputKind.Rename && trimmed == dialog.initial) &&
+                    java.io.File(parent, trimmed).exists()
+                ) {
+                    "这里已经有叫「$trimmed」的文件或文件夹了。"
+                } else {
+                    null
+                }
+            }
         }
+        val canSubmit = (trimmed.isNotEmpty() || dialog.kind == WorkspaceInputKind.NewWorkspace) && problem == null
         val showProblem = problem != null && name.isNotEmpty()
         Box(
             Modifier
@@ -2856,13 +3113,22 @@ private fun WorkspaceNameDialog(
             contentAlignment = Alignment.CenterStart,
         ) {
             androidx.compose.foundation.text.BasicTextField(
-                value = name,
-                onValueChange = { name = it },
+                value = field,
+                onValueChange = { field = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focus),
                 singleLine = true,
-                textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onDone = { if (canSubmit) onSubmit(trimmed) },
+                ),
+                textStyle = PiTheme.text.mono.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 17.sp,
+                ),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
                 decorationBox = { innerTextField ->
                     Box(
@@ -2878,8 +3144,9 @@ private fun WorkspaceNameDialog(
                                     WorkspaceInputKind.NewDir -> "文件夹名"
                                     WorkspaceInputKind.Rename -> "新名字"
                                     WorkspaceInputKind.RenameWorkspace -> "显示名"
+                                    WorkspaceInputKind.NewWorkspace -> "给它起个名字（可不填）"
                                 },
-                                style = PiTheme.text.mono,
+                                style = PiTheme.text.mono.copy(fontSize = 17.sp),
                                 color = PiTheme.palette.muted,
                                 maxLines = 1,
                             )
@@ -2898,6 +3165,7 @@ private fun WorkspaceNameDialog(
                     // 显示名（label）与目录名是两回事：改它不移动目录，所以 pi 的会话记录与
                     // 项目信任（都挂在目录路径上）一条都不会丢 —— 这是 `WorkspaceStore.rename`
                     // 特意选的做法，输入框旁边得把这件事说出来。
+                    WorkspaceInputKind.NewWorkspace -> "建在 App 私有目录里，不需要授权；建好后可以在列表里一点切过去。"
                     WorkspaceInputKind.RenameWorkspace -> "只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。"
                     else -> "建在当前目录下。"
                 }
@@ -2911,7 +3179,7 @@ private fun WorkspaceNameDialog(
             PiDialogAction(
                 label = "确定",
                 primary = true,
-                enabled = trimmed.isNotEmpty() && problem == null,
+                enabled = canSubmit,
                 onClick = { onSubmit(trimmed) },
             )
         }
@@ -2919,9 +3187,9 @@ private fun WorkspaceNameDialog(
 }
 
 /** 名字输入框：从 38 抬到 48（38 在手机上又矮又难戳），左右留 12 的内边距。 */
-private val NAME_FIELD_HEIGHT = 48.dp
-private val NAME_FIELD_RADIUS = 9.dp
-private val NAME_FIELD_PADDING = 12.dp
+private val NAME_FIELD_HEIGHT = 58.dp
+private val NAME_FIELD_RADIUS = WsShape.medium
+private val NAME_FIELD_PADDING = 16.dp
 
 // ================================================================ Snackbar
 

@@ -1,6 +1,11 @@
 package app.pi.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.Alignment
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.Button
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -109,6 +114,8 @@ internal data class ModelFields(
 internal fun ModelFieldsForm(
     initial: ModelFields,
     onChanged: (ModelFields) -> Unit,
+    /** 表单里有没有填不合法的数字；外面据此禁用「保存」。 */
+    onValidChange: (Boolean) -> Unit = {},
 ) {
     var contextText by remember { mutableStateOf(initial.contextWindow?.toString().orEmpty()) }
     var maxOutputText by remember { mutableStateOf(initial.maxTokens?.toString().orEmpty()) }
@@ -152,79 +159,76 @@ internal fun ModelFieldsForm(
         )
     }
 
+    val contextBad = contextText.isNotBlank() && parseToken(contextText) == null
+    val maxBad = maxOutputText.isNotBlank() && parseToken(maxOutputText) == null
+    val costBad = listOf(costInText, costOutText, cacheReadText, cacheWriteText).any {
+        it.isNotBlank() && parseCost(it) == null
+    }
+    // 把「现在能不能保存」交给外面：以前输错的数字被悄悄当成「留空」存下去。
+    val allValid = !contextBad && !maxBad && !costBad
+    LaunchedEffect(allValid) { onValidChange(allValid) }
+
     Column(Modifier.padding(horizontal = PiSettingsMetrics.cardPadding)) {
-        PiEditorField(
-            value = contextText,
-            onValueChange = { contextText = it; emit() },
-            label = "上下文窗口（token）",
-            placeholder = "留空 = pi 的默认（128000）",
-            height = 44.dp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (contextText.isNotBlank() && parseToken(contextText) == null) {
-            FieldProblem("要一个正整数（token 数），或留空。")
+        FormCaption("容量")
+        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
+            PiEditorField(
+                value = contextText,
+                onValueChange = { contextText = it; emit() },
+                label = "上下文窗口",
+                placeholder = "默认 128000",
+                height = 44.dp,
+                modifier = Modifier.weight(1f),
+            )
+            PiEditorField(
+                value = maxOutputText,
+                onValueChange = { maxOutputText = it; emit() },
+                label = "最大输出",
+                placeholder = "默认 16384",
+                height = 44.dp,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (contextBad || maxBad) FieldProblem("容量要填正整数（token 数），或留空交给 pi 的默认值。")
+
+        FormCaption("价格 · 美元 / 百万 token（留空 = 不写）")
+        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
+            PiEditorField(
+                value = costInText,
+                onValueChange = { costInText = it; emit() },
+                label = "输入价",
+                placeholder = "如 3",
+                height = 44.dp,
+                modifier = Modifier.weight(1f),
+            )
+            PiEditorField(
+                value = costOutText,
+                onValueChange = { costOutText = it; emit() },
+                label = "输出价",
+                placeholder = "如 15",
+                height = 44.dp,
+                modifier = Modifier.weight(1f),
+            )
         }
         Spacer(Modifier.height(PiSpacing.small))
-        PiEditorField(
-            value = maxOutputText,
-            onValueChange = { maxOutputText = it; emit() },
-            label = "最大输出（token）",
-            placeholder = "留空 = pi 的默认（16384）",
-            height = 44.dp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (maxOutputText.isNotBlank() && parseToken(maxOutputText) == null) {
-            FieldProblem("要一个正整数（token 数），或留空。")
+        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
+            PiEditorField(
+                value = cacheReadText,
+                onValueChange = { cacheReadText = it; emit() },
+                label = "缓存读价",
+                height = 44.dp,
+                modifier = Modifier.weight(1f),
+            )
+            PiEditorField(
+                value = cacheWriteText,
+                onValueChange = { cacheWriteText = it; emit() },
+                label = "缓存写价",
+                height = 44.dp,
+                modifier = Modifier.weight(1f),
+            )
         }
-        Spacer(Modifier.height(PiSpacing.small))
-        PiEditorField(
-            value = costInText,
-            onValueChange = { costInText = it; emit() },
-            label = "输入价（美元 / 百万 token）",
-            placeholder = "如 3；留空 = pi 的默认（0）",
-            height = 44.dp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (costInText.isNotBlank() && parseCost(costInText) == null) {
-            FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
-        }
-        Spacer(Modifier.height(PiSpacing.small))
-        PiEditorField(
-            value = costOutText,
-            onValueChange = { costOutText = it; emit() },
-            label = "输出价（美元 / 百万 token）",
-            placeholder = "如 15；留空 = pi 的默认（0）",
-            height = 44.dp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (costOutText.isNotBlank() && parseCost(costOutText) == null) {
-            FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
-        }
-        Spacer(Modifier.height(PiSpacing.small))
-        PiEditorField(
-            value = cacheReadText,
-            onValueChange = { cacheReadText = it; emit() },
-            label = "缓存读价（美元 / 百万 token）",
-            placeholder = "留空 = 不写（pi 的默认）",
-            height = 44.dp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (cacheReadText.isNotBlank() && parseCost(cacheReadText) == null) {
-            FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
-        }
-        Spacer(Modifier.height(PiSpacing.small))
-        PiEditorField(
-            value = cacheWriteText,
-            onValueChange = { cacheWriteText = it; emit() },
-            label = "缓存写价（美元 / 百万 token）",
-            placeholder = "留空 = 不写（pi 的默认）",
-            height = 44.dp,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (cacheWriteText.isNotBlank() && parseCost(cacheWriteText) == null) {
-            FieldProblem("要一个不小于 0 的数（美元 / 百万 token），或留空。")
-        }
-        Spacer(Modifier.height(PiSpacing.small))
+        if (costBad) FieldProblem("价格要填不小于 0 的数，或留空。")
+
+        FormCaption("能力")
         PiSettingsToggleRow(
             title = "支持图片",
             supporting = "勾上才写 input = text,image；不勾 = 纯文本",
@@ -247,6 +251,16 @@ internal fun ModelFieldsForm(
             },
         )
     }
+}
+
+@Composable
+private fun FormCaption(text: String) {
+    Text(
+        text,
+        modifier = Modifier.padding(top = PiSpacing.gutter, bottom = PiSpacing.small),
+        style = PiTheme.text.meta,
+        color = PiTheme.palette.muted,
+    )
 }
 
 @Composable
@@ -281,6 +295,7 @@ internal fun ModelEditSheet(
     onSave: (ModelFields) -> Unit,
 ) {
     var current by remember { mutableStateOf(initial) }
+    var valid by remember { mutableStateOf(true) }
     PiSheet(onDismiss = onClose) {
         Column(Modifier.fillMaxWidth()) {
             Text(
@@ -298,8 +313,21 @@ internal fun ModelEditSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding),
             )
-            Spacer(Modifier.height(PiSpacing.small))
-            ModelFieldsForm(initial = initial, onChanged = { current = it })
+            // 表单自己滚、底部按钮钉住：表单有七项，不滚的话小屏手机上「保存」在屏外，
+            // 也点不到（这个浮层以前整块不能滚）。
+            Column(
+                Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                ModelFieldsForm(
+                    initial = initial,
+                    onChanged = { current = it },
+                    onValidChange = { valid = it },
+                )
+                Spacer(Modifier.height(PiSpacing.small))
+            }
+            PiSettingsHairline(inset = 0.dp)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -308,16 +336,20 @@ internal fun ModelEditSheet(
                         vertical = PiSpacing.small,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { onSave(current) }) { Text("保存") }
+                // 次要动作靠左、做成文字按钮；危险的「删除」用警示色；主按钮在右，是实心的。
                 if (canReset && onReset != null) {
                     TextButton(onClick = onReset) { Text("恢复 pi 默认") }
                 }
                 if (canDelete && onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("删除这个模型") }
+                    TextButton(onClick = onDelete) {
+                        Text("删除", color = PiTheme.palette.warning)
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text("取消") }
+                Button(enabled = valid, onClick = { onSave(current) }) { Text("保存") }
             }
         }
     }

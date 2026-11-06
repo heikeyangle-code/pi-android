@@ -236,13 +236,15 @@ internal object WorkspaceFiles {
     }
 
     /**
-     * 这个条目能不能用**文本编辑器**改：只有 [WorkspaceEntryKind.Text]。
+     * 这个条目能不能用**文本编辑器**改：[WorkspaceEntryKind.Text] 与 [WorkspaceEntryKind.Html]
+     * （HTML 默认渲染预览，点「编辑」才进源码编辑态；新建的空 .html 之前因此既白屏又改不了）。
      *
      * 判据写在这里，因为查看器的顶栏与行菜单的「编辑」都问它；各判一次就会出现
      * 「菜单里有编辑、点开却没有编辑键」，或者更糟 —— 把图片/二进制当 UTF-8 文本写回去。
      * HTML 由 WebView 渲染，改它要走编辑态就绕开了渲染；目录根本不进查看器。
      */
-    fun editableAsText(kind: WorkspaceEntryKind): Boolean = kind == WorkspaceEntryKind.Text
+    fun editableAsText(kind: WorkspaceEntryKind): Boolean =
+        kind == WorkspaceEntryKind.Text || kind == WorkspaceEntryKind.Html
 
     /**
      * 读一个文本文件，按 design 稿的三档分流：整份 / 只预览前 25 行 / 二进制。

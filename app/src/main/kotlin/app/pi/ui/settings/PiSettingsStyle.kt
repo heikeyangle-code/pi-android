@@ -100,7 +100,7 @@ internal object PiSettingsMetrics {
     val dividerInset: Dp = 14.dp
 
     /** `06 §2`「分组容器：圆角 10」；卡片同值。 */
-    val cardRadius: Dp = 10.dp
+    val cardRadius: Dp = 12.dp
 
     /** `06 §2`「行内 10px gap」。 */
     val rowGap: Dp = 10.dp
