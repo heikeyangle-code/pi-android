@@ -2264,6 +2264,19 @@ private fun ProviderCard(
                         },
                         maxLines = 1,
                     )
+                    // 自建 / 非预设厂商再补一行「id · 主机」：自定义厂商可以建任意多个，
+                    // 名字可能相近，id 与端点主机才是能把它们分开的东西。
+                    if (!oauth && PiProviderPresets.byId(provider.id)?.builtInPi != true) {
+                        val host = runCatching {
+                            java.net.URI(provider.baseUrl.orEmpty().trim()).host
+                        }.getOrNull()?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+                        Text(
+                            listOfNotNull(provider.id, host).joinToString(" · "),
+                            style = PiTheme.text.monoSmall,
+                            color = PiTheme.palette.dim,
+                            maxLines = 1,
+                        )
+                    }
                 }
                 Icon(
                     Icons.Filled.KeyboardArrowRight,
