@@ -487,7 +487,24 @@ fun ModelProviderScreen(
                 // 下面每张卡的模型副行写的就是「pi 目录 / 手写申报 / 覆盖」这三个词，
                 // 解释跟着它们放在同一段（页尾不再堆说明）。
                 if (data.providers.isEmpty()) {
-                    item { Note("还没有配置任何厂商。点「导入模型」选一个厂商、粘上 Key。") }
+                    item {
+                        PiSettingsCard(modifier = Modifier.padding(top = PiSpacing.small)) {
+                            Column(Modifier.fillMaxWidth().padding(PiSettingsMetrics.cardPaddingLoose)) {
+                                Text(
+                                    "还没有可用的模型",
+                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    "官方厂商（OpenAI、Anthropic、DeepSeek…）选好后粘贴 Key 就行；" +
+                                        "用中转站或本地模型，选「自定义」或「Ollama」，填上地址。",
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                 }
 
                 item {
@@ -857,7 +874,7 @@ private fun ImportSheet(
     var pickerQuery by remember { mutableStateOf("") }
     // 已配置厂商的 Key 与「高级」（Base URL / api）都默认收起；换厂商即回到收起。
     var keyOpen by remember(presetId) { mutableStateOf(false) }
-    var advancedOpen by remember(presetId) { mutableStateOf(false) }
+    var advancedOpen by remember(presetId) { mutableStateOf(presetId in SELF_HOSTED_IDS) }
     // 「手动模型名」默认收起（大多数人从目录/扫描里勾）。
     var manualOpen by remember(presetId) { mutableStateOf(false) }
     var modelQuery by remember(presetId) { mutableStateOf("") }
@@ -1237,8 +1254,13 @@ private fun ImportSheet(
         mutableStateOf(if (initialPresetId.isNullOrEmpty()) 0 else 1)
     }
     val editingExisting = presetId.isNotEmpty() && credentialPresent
-    val (configuredChoices, otherChoices) = remember(shownChoices, configuredIds) {
+    val (configuredChoices, remainingChoices) = remember(shownChoices, configuredIds) {
         shownChoices.partition { it.id in configuredIds }
+    }
+    // 中转站 / 本地模型是很多人真正会用的路，却埋在四十几个官方厂商里：单独成一组放在最前，
+    // 「自定义」一眼可见。
+    val (selfHostedChoices, otherChoices) = remember(remainingChoices) {
+        remainingChoices.partition { it.id in SELF_HOSTED_IDS }
     }
     PiSheet(onDismiss = onClose, fullHeight = true) {
         Column(Modifier.fillMaxSize()) {
@@ -1311,11 +1333,28 @@ private fun ImportSheet(
                                 )
                             }
                         }
+                        if (selfHostedChoices.isNotEmpty()) {
+                            item(key = "h-selfhosted") { ImportGroupLabel("中转站 / 本地模型 · 填地址就能用") }
+                            items(selfHostedChoices, key = { "s:" + it.id }) { option ->
+                                ProviderChoiceRow(
+                                    option = option,
+                                    selected = option.id == presetId,
+                                    configured = false,
+                                    count = modelCounts[option.id],
+                                    enabled = !editingExisting || option.id == presetId,
+                                    onClick = {
+                                        presetId = option.id
+                                        pickerQuery = ""
+                                        step = 1
+                                        // 自建的端点地址是必填项，别让人去「高级」里找。
+                                        advancedOpen = true
+                                    },
+                                )
+                            }
+                        }
                         if (otherChoices.isNotEmpty()) {
                             item(key = "h-others") {
-                                ImportGroupLabel(
-                                    if (configuredChoices.isEmpty()) "全部厂商 · ${otherChoices.size}" else "其他厂商 · ${otherChoices.size}",
-                                )
+                                ImportGroupLabel("官方厂商 · ${otherChoices.size}（粘 Key 就行）")
                             }
                             items(otherChoices, key = { "o:" + it.id }) { option ->
                                 ProviderChoiceRow(
@@ -1444,6 +1483,18 @@ private fun ImportSheet(
                                             PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
                                     )
                                 }
+                            }
+                            // 自建的端点给个名字：不然第二个中转站只能叫「custom」，区分不开。
+                            if (!preset.builtInPi) {
+                                PiEditorField(
+                                    value = providerName,
+                                    onValueChange = { providerName = it },
+                                    label = "名字（可选，如「某某中转」）",
+                                    height = 44.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                                )
                             }
                             // 高级（Base URL / api）：对自建、中转站是必填项，所以不再藏在 Key 的
                             // 「else」分支里 —— 已配置的厂商也能直接展开它（上一版只有展开 Key 才看得见）。
@@ -1702,7 +1753,7 @@ private fun ImportSheet(
                     step == 2 && saveError != null ->
                         saveError.orEmpty().lineSequence().firstOrNull().orEmpty()
 
-                    step == 2 && savedOk -> "已保存 · 回上一屏重启引擎生效"
+                    step == 2 && savedOk -> "已保存 · 点「完成」，再点页面顶部的「重启引擎」就能用了"
                     step == 2 && selected.isNotEmpty() -> "已勾选 ${selected.size} 个"
                     // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
                     // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
@@ -1735,6 +1786,7 @@ private fun ImportSheet(
                         OutlinedButton(onClick = { step -= 1 }) { Text("上一步") }
                     }
                     Spacer(Modifier.weight(1f))
+                    val savedClean = savedOk && selected == initialChecked
                     when (step) {
                         0 -> Unit // 点一个厂商就自动进下一步，不放按钮
                         1 -> Button(
@@ -1742,7 +1794,10 @@ private fun ImportSheet(
                             onClick = { step = 2 },
                         ) { Text("下一步：选模型") }
 
-                        else -> Button(
+                        // 保存成功且没再改动：主按钮换成「完成」，把人送回页面顶部去重启。
+                        else -> if (savedClean) {
+                            Button(onClick = onClose) { Text("完成") }
+                        } else Button(
                             // `presetProblem` 非空 = 说不出这一档是谁：保存会写错厂商名下的块与凭证。
                             enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
                                 (selected.isNotEmpty() || preset.builtInPi || overrides.isNotEmpty()),
@@ -1754,6 +1809,9 @@ private fun ImportSheet(
         }
     }
 }
+
+/** 没有固定官方地址、要自己填 Base URL 的几档。 */
+private val SELF_HOSTED_IDS = setOf("custom", "ollama", "llama.cpp")
 
 /** 三步进度条：每一步一段细条 + 序号标签；走过的与当前的染强调色，点已可达的步骤直接跳。 */
 @Composable
