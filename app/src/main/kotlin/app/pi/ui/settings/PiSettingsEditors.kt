@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.rememberScrollState
@@ -200,8 +202,16 @@ fun PiOptionPickerSheet(
     customCheck: ((String) -> String?)? = null,
     clearLabel: String? = null,
     onClear: (() -> Unit)? = null,
+    /**
+     * 选项的标签是「分组 / 名字」（默认模型：`厂商 / 模型`）时按分组排版：组名一行小标题，
+     * 行里只写名字。搜索时不分组（命中的行要带着完整名字才读得懂）。
+     */
+    grouped: Boolean = false,
 ) {
     var custom by remember { mutableStateOf("") }
+    // 有选项可挑时，「手动输入」收在一行后面：九成的人只是点选，一个常驻的输入框 + 「使用」
+    // 按钮占着底部，还让人以为必须填。没有选项时直接展开。
+    var customOpen by remember { mutableStateOf(options.isEmpty()) }
     var query by remember { mutableStateOf("") }
     // 手输了清单里没有的值：先给一行警告 + 「仍然使用 / 取消」，点了才落盘（见 [customCheck]）。
     var pending by remember { mutableStateOf<String?>(null) }
@@ -265,8 +275,27 @@ fun PiOptionPickerSheet(
                 // v2 的选项行（`phone40` / HTML:2283-2293）：`padding:11px 14px`、
                 // 前导 `✓/○`（等宽 12，选中用正文色、未选中 muted）、标签 14、选中行
                 // 铺 `--selected-bg` + 右侧一枚「当前」徽标，**行间没有分隔线**。
+                var lastGroup: String? = null
                 visible.forEach { option ->
                     val selected = option.wire == currentWire
+                    val showGroups = grouped && query.isBlank() && option.label.contains(" / ")
+                    if (showGroups) {
+                        val group = option.label.substringBefore(" / ")
+                        if (group != lastGroup) {
+                            lastGroup = group
+                            Text(
+                                group,
+                                modifier = Modifier.padding(
+                                    start = PiSettingsMetrics.pageHorizontal,
+                                    end = PiSettingsMetrics.pageHorizontal,
+                                    top = PiSpacing.gutter,
+                                    bottom = 2.dp,
+                                ),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
+                            )
+                        }
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -297,7 +326,7 @@ fun PiOptionPickerSheet(
                         )
                         Column(Modifier.weight(1f)) {
                             Text(
-                                option.label,
+                                if (showGroups) option.label.substringAfter(" / ") else option.label,
                                 style = PiTheme.text.prose,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -329,7 +358,9 @@ fun PiOptionPickerSheet(
                     )
                 }
             }
-            if (allowCustom) {
+            if (allowCustom && !customOpen) {
+                TextButton(onClick = { customOpen = true }) { Text("手动输入其它值") }
+            } else if (allowCustom) {
                 Spacer(Modifier.height(PiSpacing.unit))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     PiEditorField(
@@ -345,10 +376,11 @@ fun PiOptionPickerSheet(
                         height = PiNumberFieldHeight,
                     )
                     Spacer(Modifier.width(PiSpacing.inline))
-                    TextButton(
+                    Button(
+                        enabled = custom.isNotBlank(),
                         onClick = {
                             val trimmed = custom.trim()
-                            if (trimmed.isEmpty()) return@TextButton
+                            if (trimmed.isEmpty()) return@Button
                             val message = customCheck?.invoke(trimmed)
                             if (message == null) {
                                 onPick(trimmed)
@@ -374,15 +406,16 @@ fun PiOptionPickerSheet(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 ) {
-                    TextButton(
+                    OutlinedButton(
                         onClick = {
                             pending = null
                             refusal = null
                         },
                     ) { Text("取消") }
-                    TextButton(
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    Button(
                         onClick = {
                             pending = null
                             refusal = null
@@ -395,7 +428,7 @@ fun PiOptionPickerSheet(
             if (clearLabel != null && onClear != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 ) {
                     TextButton(
                         onClick = {
@@ -569,7 +602,7 @@ fun PiNumberEditorSheet(
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
                 TextButton(
                     onClick = {
@@ -581,7 +614,7 @@ fun PiNumberEditorSheet(
                         onDismiss()
                     },
                 ) { Text("恢复默认") }
-                TextButton(
+                Button(
                     onClick = {
                         val text = typed.trim()
                         // 「留空」= remove（pi 里的 `undefined`），不是写 0：0 在 pi 侧是一个**值**
@@ -589,12 +622,12 @@ fun PiNumberEditorSheet(
                         if (text.isEmpty()) {
                             onSet(null)
                             onDismiss()
-                            return@TextButton
+                            return@Button
                         }
                         val next = parseEditedInt(text)
                         if (next == null) {
                             problem = "要一个整数：不接受小数、文字或超出整数范围的值。"
-                            return@TextButton
+                            return@Button
                         }
                         when (val verdict = piValueVerdict(setting.key, JsonPrimitive(next))) {
                             is PiValueVerdict.Rejected -> problem = verdict.message
@@ -727,7 +760,7 @@ fun PiTextEditorSheet(
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
                 TextButton(
                     onClick = {
@@ -736,7 +769,7 @@ fun PiTextEditorSheet(
                     },
                     enabled = !setting.readOnly,
                 ) { Text("清除") }
-                TextButton(
+                Button(
                     onClick = {
                         onSet(text)
                         onDismiss()
@@ -962,7 +995,7 @@ fun PiListEditorSheet(
             val toSave = PiQuickAdd.persist(entries, setting.presetBaseline)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
                 TextButton(
                     onClick = {
@@ -972,7 +1005,7 @@ fun PiListEditorSheet(
                         problem = null
                     },
                 ) { Text("清空") }
-                TextButton(
+                Button(
                     onClick = {
                         val rejected = validate(toSave)
                         if (rejected == null) {
@@ -1664,10 +1697,10 @@ fun PiModelThinkingLevelsSheet(
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(
+                OutlinedButton(onClick = onDismiss) { Text("取消") }
+                Button(
                     onClick = {
                         onSet(entries)
                         onDismiss()
@@ -1767,10 +1800,10 @@ fun PiThinkingBudgetsSheet(
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(
+                OutlinedButton(onClick = onDismiss) { Text("取消") }
+                Button(
                     enabled = !invalid,
                     onClick = {
                         // 只写有字的行；四行全空 = 空列表 = 删键（host 负责）。

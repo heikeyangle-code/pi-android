@@ -393,6 +393,7 @@ fun ModelProviderScreen(
                 pickerWarning = selectionMismatch,
                 pickerCustomCheck = if (edited == "defaultModel") unknownModelCheck else null,
                 pickerClearLabel = if (edited == "defaultModel") "跟随 pi 默认（清除）" else null,
+                pickerGrouped = edited == "defaultModel",
                 onWritten = { written ->
                     onSettingWritten(written.key)
                     // 默认模型那一行一次写两个键（`defaultProvider` 也跟着变）：宿主与这一屏的

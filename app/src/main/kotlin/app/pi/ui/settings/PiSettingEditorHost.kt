@@ -55,6 +55,8 @@ fun PiSettingEditorSheet(
     pickerCustomCheck: ((String) -> String?)? = null,
     /** 底部「清除 / 跟随默认」动作的文案；null = 没有这个动作。 */
     pickerClearLabel: String? = null,
+    /** 选项标签是「分组 / 名字」时按分组排版（默认模型）。 */
+    pickerGrouped: Boolean = false,
     onWritten: (PiSetting) -> Unit = {},
 ) {
     when (setting.kind) {
@@ -111,6 +113,7 @@ fun PiSettingEditorSheet(
                     warning = pickerWarning,
                     customCheck = pickerCustomCheck,
                     clearLabel = pickerClearLabel,
+                    grouped = pickerGrouped,
                     // 「清除」= `remove`（pi 的未设置），不是写空串：这一行在磁盘上要么是
                     // 一个字符串，要么不存在，`""` 会被 pi 当成一个模型 ID 去找。
                     onClear = if (pickerClearLabel != null) {
