@@ -291,6 +291,7 @@ fun ProjectScreen(
     var listedDir by remember { mutableStateOf<String?>(null) }
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
     // 排序：默认最近修改在最上面；其余三种目录在文件前面。记在 rememberSaveable 里（只存序号）。
+    var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
@@ -901,13 +902,19 @@ fun ProjectScreen(
                         item { WsNotice(text = note, tone = StateTone.Warning, glyph = "!") }
                     }
 
-                    // 工作区切换：原来那张大卡（名字 + 摘要 + 箭头）压成一颗芯片。
-                    item {
-                        WorkspaceChipRow(
-                            name = workspaceName,
+                    // 一条路径条同时回答「哪个工作区」「在第几层」：药丸 = 工作区（点名字回到工作区根，
+                    // 在根上时点它切换；右边 ⌄ 永远是切换），药丸后面接工作区内的子路径。
+                    item(key = "path-bar") {
+                        WorkspacePathBar(
+                            workspaceName = workspaceName,
+                            inside = insideWorkspace,
+                            homeSize = homeCrumbs.size,
+                            crumbs = crumbs,
+                            rootLabel = ROOTFS_CRUMB_LABEL,
                             changed = if (engineDown) null else changed.size,
                             running = if (engineDown) 0 else runs.size,
-                            onClick = { rootSheet = true },
+                            onSwitch = { rootSheet = true },
+                            onGo = { index -> crumbs = crumbs.take(index) },
                         )
                     }
 
@@ -1014,14 +1021,6 @@ fun ProjectScreen(
                         }
                     }
 
-                    // 面包屑在「全部文件」段头上面：它说的是下面这份列表在哪一层。
-                    item {
-                        BreadcrumbRow(
-                            rootLabel = ROOTFS_CRUMB_LABEL,
-                            crumbs = crumbs,
-                            onGo = { index -> crumbs = crumbs.take(index) },
-                        )
-                    }
                     item {
                         WsSectionHeader(
                             label = "全部文件",
@@ -1064,7 +1063,33 @@ fun ProjectScreen(
                                                 },
                                             )
                                         }
-                                        WsSectionAction(label = "新建", onClick = { newSheet = true })
+                                        Box(
+                                            Modifier
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    filterOpen = !filterOpen
+                                                    if (!filterOpen) filterText = ""
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Search,
+                                                contentDescription = "筛选文件名",
+                                                modifier = Modifier.size(20.dp),
+                                                tint = if (filterOpen || filterText.isNotEmpty()) {
+                                                    PiTheme.palette.accent
+                                                } else {
+                                                    PiTheme.palette.muted
+                                                },
+                                            )
+                                        }
+                                        WsChip(
+                                            text = "新建",
+                                            glyphIcon = Icons.Filled.Add,
+                                            solid = true,
+                                            onClick = { newSheet = true },
+                                        )
                                     }
                                 }
                             },
@@ -1146,7 +1171,7 @@ fun ProjectScreen(
                         }
                     } else {
                         // 目录里东西多的时候：一个就地筛选框（只筛当前这一层的名字）。
-                        val filtering = entries.size >= FILTER_MIN_ENTRIES || filterText.isNotEmpty()
+                        val filtering = filterOpen || filterText.isNotEmpty()
                         if (filtering) {
                             item(key = "entry-filter") {
                                 WorkspaceFilterField(
@@ -2318,7 +2343,27 @@ private fun WorkspaceEntryRow(
     onOpen: () -> Unit,
     onMenu: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth()) {
+    // 最近 10 分钟内动过的行：左缘一条 3dp 强调色细条（卡片圆角会把它裁成贴边的样子）。
+    val recent = remember(entry.modifiedAt) {
+        System.currentTimeMillis() - entry.modifiedAt in 0..RECENT_ROW_MS
+    }
+    val barColor = PiTheme.palette.accent
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(
+                if (recent) {
+                    Modifier.drawBehind {
+                        drawRect(
+                            barColor,
+                            size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height),
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
         WsRow(
             title = WorkspaceFiles.middleEllipsis(entry.name, ENTRY_NAME_MAX_CHARS),
             // **文件名用无衬线 15/Medium**（设计稿）：等宽只留给路径。原来这里是
@@ -2336,10 +2381,11 @@ private fun WorkspaceEntryRow(
             } else {
                 null
             },
+            // 相对时间（「3分钟前」）比绝对钟点好扫；大小挪到行尾。
             meta = if (entry.isDirectory) {
-                "${entry.childCount}项 · ${WorkspaceFiles.formatTime(entry.modifiedAt)}"
+                "${entry.childCount}项 · ${relativeTime(entry.modifiedAt)}"
             } else {
-                "${WorkspaceFiles.formatSize(entry.sizeBytes)} · ${WorkspaceFiles.formatTime(entry.modifiedAt)}"
+                relativeTime(entry.modifiedAt)
             },
             value = if (diff != null && (diff.added > 0 || diff.removed > 0)) {
                 {
@@ -2370,7 +2416,14 @@ private fun WorkspaceEntryRow(
                     )
                 }
             } else {
-                null
+                {
+                    Text(
+                        WorkspaceFiles.formatSize(entry.sizeBytes),
+                        style = PiTheme.text.monoSmall,
+                        color = PiTheme.palette.muted,
+                        maxLines = 1,
+                    )
+                }
             },
             trail = { WsMoreButton(onClick = onMenu) },
             onClick = onOpen,
@@ -2396,8 +2449,6 @@ private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparat
     val comparator: Comparator<WorkspaceEntry> by lazy(comparatorOf)
 }
 
-/** 一层里至少这么多项才出现筛选框；再少的目录一屏就看完了。 */
-private const val FILTER_MIN_ENTRIES = 10
 
 @Composable
 private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
@@ -2451,6 +2502,137 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
                     tint = PiTheme.palette.muted,
                 )
             }
+        }
+    }
+}
+
+/** 「最近动过」的判据：10 分钟。 */
+private const val RECENT_ROW_MS = 10 * 60 * 1000L
+
+/**
+ * 路径条：工作区药丸 + 工作区内的子路径，横向可滚，进到深处时自动滚到当前层。
+ * 工作区之外（根目录下别处）则是药丸 + 「根 / a / b」整条路径，点药丸回工作区。
+ */
+@Composable
+private fun WorkspacePathBar(
+    workspaceName: String,
+    inside: Boolean,
+    homeSize: Int,
+    crumbs: List<String>,
+    rootLabel: String,
+    changed: Int?,
+    running: Int,
+    onSwitch: () -> Unit,
+    onGo: (Int) -> Unit,
+) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(crumbs) {
+        delay(60)
+        scroll.animateScrollTo(scroll.maxValue)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scroll)
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = WS_CHIP_TOP,
+                bottom = WS_CHIP_BOTTOM,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(PiSpacing.controlHeight)
+                .clip(PiShapes.badge)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .height(PiSpacing.controlHeight)
+                    .clickable {
+                        if (inside && crumbs.size == homeSize) onSwitch() else onGo(homeSize)
+                    }
+                    .padding(start = PiSpacing.cardPadding, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+            ) {
+                Icon(
+                    Icons.Filled.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(PiSpacing.controlGlyph),
+                    tint = PiTheme.palette.accent,
+                )
+                Text(
+                    workspaceName,
+                    modifier = Modifier.widthIn(max = 200.dp),
+                    style = PiTheme.text.mono,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(
+                Modifier
+                    .height(PiSpacing.controlHeight)
+                    .widthIn(min = 36.dp)
+                    .clickable(onClick = onSwitch),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "切换工作区",
+                    modifier = Modifier.size(PiSpacing.controlGlyph),
+                    tint = PiTheme.palette.muted,
+                )
+            }
+        }
+        val sep: @Composable () -> Unit = {
+            Text(
+                "›",
+                modifier = Modifier.padding(horizontal = 6.dp),
+                style = PiTheme.text.monoSmall,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
+        }
+        if (inside) {
+            crumbs.drop(homeSize).forEachIndexed { i, segment ->
+                sep()
+                Crumb(
+                    text = segment,
+                    mono = true,
+                    current = homeSize + i == crumbs.lastIndex,
+                    onClick = { onGo(homeSize + i + 1) },
+                )
+            }
+        } else {
+            sep()
+            Crumb(text = rootLabel, mono = true, current = crumbs.isEmpty(), onClick = { onGo(0) })
+            crumbs.forEachIndexed { i, segment ->
+                sep()
+                Crumb(
+                    text = segment,
+                    mono = true,
+                    current = i == crumbs.lastIndex,
+                    onClick = { onGo(i + 1) },
+                )
+            }
+        }
+        val parts = buildList {
+            if (changed != null && changed > 0) add("改动 $changed")
+            if (running > 0) add("$running 条命令在跑")
+        }
+        if (parts.isNotEmpty()) {
+            Text(
+                parts.joinToString(" · "),
+                modifier = Modifier.padding(start = 12.dp),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
         }
     }
 }
