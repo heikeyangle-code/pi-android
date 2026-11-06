@@ -290,8 +290,8 @@ fun ProjectScreen(
     // 保留旧列表直到新结果回来，列表不闪空、滚动位置不丢。
     var listedDir by remember { mutableStateOf<String?>(null) }
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
-    // 排序：目录永远在文件前面，只改各自内部的顺序。记在 rememberSaveable 里（只存序号）。
-    var sortIndex by rememberSaveable { mutableIntStateOf(0) }
+    // 排序：默认最近修改在最上面；其余三种目录在文件前面。记在 rememberSaveable 里（只存序号）。
+    var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
     val sortedEntries = remember(listing, sortMode, filterText) {
@@ -2378,10 +2378,11 @@ private fun WorkspaceEntryRow(
     }
 }
 
-/** 文件列表的排序方式。目录始终排在文件前面。 */
+/** 文件列表的排序方式。除「最近修改」外，目录排在文件前面。 */
 private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparator<WorkspaceEntry>) {
     Name("名称", { compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
-    Newest("最近修改", { compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.modifiedAt } }),
+    // 最近修改：目录和文件混排，真正最近动过的在最上面（默认）。
+    Newest("最近修改", { compareByDescending<WorkspaceEntry> { it.modifiedAt }.thenBy { it.name.lowercase(java.util.Locale.ROOT) } }),
     Largest("大小", { compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.sizeBytes } }),
     Type("类型", {
         compareBy<WorkspaceEntry>(
