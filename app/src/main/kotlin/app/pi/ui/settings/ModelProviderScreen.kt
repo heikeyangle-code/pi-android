@@ -6,6 +6,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -1223,12 +1227,21 @@ private fun ImportSheet(
         }
     }
 
-    PiSheet(onDismiss = onClose) {
-        // 内容区自己滚，底部那行（保存 + 状态）固定 —— 用户不用滚过整张模型列表才能按保存。
-        Column(Modifier.fillMaxWidth()) {
-            // 同一个 sheet 两种身份：新导入 vs 改已有厂商。标题跟着变，别让人以为
-            // 点「换 Key」是在重新导入一遍。
-            val editingExisting = presetId.isNotEmpty() && credentialPresent
+    // ---- 三步走：① 厂商 → ② 连接 → ③ 模型。
+    //
+    // 以前是一张从上滚到下的长表（厂商列表 260dp 内滚 + Key + 扫描 + 模型列表 420dp 内滚，
+    // 外面还套着整页滚动），三层滚动叠在一起，手指落在哪一层要碰运气。现在一步只做一件事，
+    // 每一步独占整张 sheet 的高度、只有一层滚动；底部固定「上一步 / 下一步 / 保存」。
+    // 状态与写盘逻辑一个字没动，变的只是它们怎么摆。
+    var step by remember(initialPresetId) {
+        mutableStateOf(if (initialPresetId.isNullOrEmpty()) 0 else 1)
+    }
+    val editingExisting = presetId.isNotEmpty() && credentialPresent
+    val (configuredChoices, otherChoices) = remember(shownChoices, configuredIds) {
+        shownChoices.partition { it.id in configuredIds }
+    }
+    PiSheet(onDismiss = onClose, fullHeight = true) {
+        Column(Modifier.fillMaxSize()) {
             Text(
                 if (editingExisting) "${preset.displayName} · 凭证与模型" else "导入模型",
                 style = PiType.title,
@@ -1238,436 +1251,437 @@ private fun ImportSheet(
                     vertical = PiSpacing.small,
                 ),
             )
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    // `fill = false`：内容短时 sheet 就短，内容长时才撑到剩余高度再滚。
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                // ------------------------------------------------------ 1 选厂商
-                // （节标题已删，动作词并进下面这一行的标题。）
-                // **竖列表 + 搜索，不是横滑 chips**（用户："横选了啥时候也看不完"）：官方目录
-                // 正常时 41 档、目录读不到时预设表的 13 档，一屏能翻、能搜，长名字也不会被挤没。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            // 「1 选厂商」这个节标题已删，动作词并进这一行的标题。
-                            if (presetId.isEmpty()) "选厂商" else preset.displayName,
-                            style = PiTheme.text.prose,
-                            color = if (presetId.isEmpty()) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                        )
-                        Text(
-                            if (presetId.isEmpty()) {
-                                "点下面的一个厂商"
-                            } else {
-                                buildString {
-                                    append(preset.id)
-                                    modelCounts[preset.id]?.let { append(" · ").append(it).append(" 个模型") }
-                                    if (preset.id in configuredIds) append(" · 已配置")
-                                    append(if (preset.builtInPi) " · pi 官方" else " · App 自建")
-                                }
-                            },
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    TextButton(
-                        // 编辑已有厂商时锁住：换一家保存会把块与凭证写到别人名下。
-                        enabled = !(presetId.isNotEmpty() && credentialPresent),
-                        onClick = { pickerOpen = !pickerOpen },
-                    ) {
-                        Text(if (pickerOpen) "收起" else "更换")
-                    }
-                }
-                // 说不出选中的厂商时**先别让保存**：保存写的是 models.json 的厂商块与 auth.json
-                // 的凭证，写到猜出来的厂商名下就是覆盖别人的配置（这个 sheet 修的就是这种事故）。
-                presetProblem?.let { SheetNote(it) }
-                if (officialProblems.isNotEmpty()) {
-                    // 两种失败要分开说：目录整份读不到（载荷换了依赖树布局、还没解包）时列表
-                    // 只有预设表里的那些，一句话说清来源；只有某几份文件坏了时，逐份念出来才有用
-                    // —— problems 里那串候选路径是给诊断看的，不是屏幕文案。
-                    if (officialProviders.isEmpty()) {
-                        SheetNote("官方目录读不到，下面的厂商只有 App 自带的 ${providerChoices.size} 个。")
-                    } else {
-                        SheetNote(
-                            "官方目录有 ${officialProblems.size} 处读不出来，下面的厂商可能少几个：" +
-                                officialProblems.joinToString("；"),
-                        )
-                    }
-                }
-                if (modelsFileError != null) {
-                    SheetNote("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
-                }
-                if (authFileError != null) {
-                    SheetNote("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
-                }
-                if (pickerOpen) {
-                    PiEditorField(
-                        value = pickerQuery,
-                        onValueChange = { pickerQuery = it },
-                        label = "搜厂商（名字或 id）",
-                        height = 44.dp,
-                                                modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                    )
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 260.dp)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        shownChoices.forEach { option ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        presetId = option.id
-                                        pickerOpen = false
-                                        pickerQuery = ""
-                                    }
-                                    .padding(
-                                        horizontal = PiSettingsMetrics.cardPadding,
-                                        vertical = PiSpacing.small,
-                                    ),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    if (option.id == presetId) "✓" else "○",
-                                    style = PiTheme.text.monoSmall,
-                                    color = if (option.id == presetId) {
-                                        MaterialTheme.colorScheme.primary
+            ImportStepBar(
+                step = step,
+                labels = listOf("厂商", "连接", "模型"),
+                reachable = { index -> index == 0 || presetId.isNotEmpty() && presetProblem == null },
+                onGo = { step = it },
+            )
+            Column(Modifier.weight(1f).fillMaxWidth()) {
+                when (step) {
+                    // ------------------------------------------------------ ① 选厂商
+                    0 -> LazyColumn(Modifier.fillMaxSize()) {
+                        item {
+                            Column {
+                                presetProblem?.let { SheetNote(it) }
+                                if (officialProblems.isNotEmpty()) {
+                                    if (officialProviders.isEmpty()) {
+                                        SheetNote("官方目录读不到，下面的厂商只有 App 自带的 ${providerChoices.size} 个。")
                                     } else {
-                                        PiTheme.palette.muted
+                                        SheetNote(
+                                            "官方目录有 ${officialProblems.size} 处读不出来，下面的厂商可能少几个：" +
+                                                officialProblems.joinToString("；"),
+                                        )
+                                    }
+                                }
+                                if (modelsFileError != null) {
+                                    SheetNote("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
+                                }
+                                if (authFileError != null) {
+                                    SheetNote("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
+                                }
+                                if (editingExisting) {
+                                    SheetNote("正在改「${preset.displayName}」：换成别家要从列表上方的「导入模型」新开一次，免得把凭证写到别人名下。")
+                                }
+                                PiEditorField(
+                                    value = pickerQuery,
+                                    onValueChange = { pickerQuery = it },
+                                    label = "搜厂商（名字或 id）",
+                                    height = 44.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                                )
+                            }
+                        }
+                        if (configuredChoices.isNotEmpty()) {
+                            item(key = "h-configured") { ImportGroupLabel("已配置 · ${configuredChoices.size}") }
+                            items(configuredChoices, key = { "c:" + it.id }) { option ->
+                                ProviderChoiceRow(
+                                    option = option,
+                                    selected = option.id == presetId,
+                                    configured = true,
+                                    count = modelCounts[option.id],
+                                    enabled = !editingExisting || option.id == presetId,
+                                    onClick = {
+                                        presetId = option.id
+                                        pickerQuery = ""
+                                        step = 1
                                     },
                                 )
-                                Spacer(Modifier.width(PiSpacing.small))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        option.displayName,
-                                        style = PiTheme.text.prose,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Text(
-                                        // 「已配置」是这一屏最重要的一格：它决定下面的 Key/扫描
-                                        // 要不要填。机器 id 放最后。
-                                        buildList {
-                                            if (option.id in configuredIds) add("已配置")
-                                            modelCounts[option.id]?.let { add("$it 个模型") }
-                                            add(option.id)
-                                        }.joinToString(" · "),
-                                        style = PiTheme.text.meta,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
+                            }
+                        }
+                        if (otherChoices.isNotEmpty()) {
+                            item(key = "h-others") {
+                                ImportGroupLabel(
+                                    if (configuredChoices.isEmpty()) "全部厂商 · ${otherChoices.size}" else "其他厂商 · ${otherChoices.size}",
+                                )
+                            }
+                            items(otherChoices, key = { "o:" + it.id }) { option ->
+                                ProviderChoiceRow(
+                                    option = option,
+                                    selected = option.id == presetId,
+                                    configured = false,
+                                    count = modelCounts[option.id],
+                                    enabled = !editingExisting || option.id == presetId,
+                                    onClick = {
+                                        presetId = option.id
+                                        pickerQuery = ""
+                                        step = 1
+                                    },
+                                )
                             }
                         }
                         if (shownChoices.isEmpty()) {
-                            Text(
-                                "没有匹配的厂商",
-                                style = PiTheme.text.meta,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(
-                                    horizontal = PiSettingsMetrics.cardPadding,
-                                    vertical = PiSpacing.small,
-                                ),
-                            )
-                        }
-                    }
-                }
-
-                // 分节线（厂商 | 连接）：不加节标题，只用细线 + 留白分开三段。
-                PiSettingsHairline()
-                Spacer(Modifier.height(PiSpacing.small))
-                // 未选厂商时 2/3 两节都不出现：先让用户点一个厂商，而不是对着一个空表单。
-                if (presetId.isNotEmpty()) {
-                    // ------------------------------------------------------ 2 粘 Key
-                    // （节标题已删：下面的「API Key」输入框 / 已存凭证就是这一步。）
-                    if (credentialPresent && !keyOpen) {
-                        // 已配置的厂商：一行说清"凭证已经在文件里、留空就是沿用"，
-                        // 想看/换 Key 才展开（展开后与未配置时同一个表单）。
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    horizontal = PiSettingsMetrics.cardPadding,
-                                    vertical = PiSpacing.small,
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                buildString {
-                                    append(if (maskedKey != null) "已存凭证（$maskedKey）" else "已存凭证")
-                                    append(" · 留空＝沿用")
-                                },
-                                modifier = Modifier.weight(1f),
-                                style = PiTheme.text.monoSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            TextButton(onClick = { keyOpen = true }) { Text("更换") }
-                            TextButton(onClick = {
-                                sheetScope.launch {
-                                    val failure = withContext(Dispatchers.IO) { service.removeCredential(presetId) }
-                                    if (failure != null) {
-                                        saveError = failure
-                                    } else {
-                                        credentialPresent = false
-                                        maskedKey = null
-                                        onSaved()
-                                    }
-                                }
-                            }) {
-                                Text("移除", color = PiTheme.palette.warning)
-                            }
-                        }
-                    } else {
-                        PiEditorField(
-                            value = apiKey,
-                            onValueChange = { apiKey = it },
-                            label = "API Key",
-                            height = 44.dp,
-                                                        modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                        )
-                        if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
-                            SheetNote(
-                                "这个端点不校验鉴权，留空会写入占位值「" +
-                                    PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.padding(
-                                horizontal = PiSettingsMetrics.cardPadding,
-                                vertical = PiSpacing.unit,
-                            ),
-                        ) {
-                            TextButton(onClick = { advancedOpen = !advancedOpen }) {
-                                Text(if (advancedOpen) "收起高级" else "高级")
-                            }
-                        }
-                        if (advancedOpen) {
-                            PiEditorField(
-                                value = baseUrl,
-                                onValueChange = { baseUrl = it },
-                                label = "Base URL",
-                                height = 44.dp,
-                                                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        horizontal = PiSettingsMetrics.cardPadding,
-                                        vertical = PiSpacing.small,
-                                    ),
-                            )
-                            PiEditorField(
-                                value = api,
-                                onValueChange = { api = it },
-                                label = "api（协议实现）",
-                                height = 44.dp,
-                                                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        horizontal = PiSettingsMetrics.cardPadding,
-                                        vertical = PiSpacing.small,
-                                    ),
-                            )
-                        }
-                    }
-
-                    // ------------------------------------------------------ 扫描（一个按钮行）
-                    Row(
-                        modifier = Modifier.padding(
-                            horizontal = PiSettingsMetrics.cardPadding,
-                            vertical = PiSpacing.small,
-                        ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedButton(
-                            enabled = !scanning,
-                            onClick = {
-                                // 6 MB 的 models.dev 索引在扫描**之后**单独取，不占
-                                // 「正在扫描…」这段等待。
-                                var needDev = false
-                                sheetScope.launch {
-                                    scanning = true
-                                    scanError = null
-                                    scanNote = null
-                                    scanEndpoint = null
-                                    try {
-                                        // 已配置厂商的 Key 是收起的：留空时 `probe` 用
-                                        // `auth.json` 里那条去探测，否则"已配置"的厂商
-                                        // 反而扫描不了（见 `PiCredentialService.probe`）。
-                                        when (val result = service.probe(preset, apiKey, baseUrl.ifBlank { null })) {
-                                            is PiModelScanner.Result.Ok -> {
-                                                scanned = result.models
-                                                scanEndpoint = result.endpoint
-                                                scanNote = result.note
-                                                // 厂商只回了 id、或没说会不会思考的模型：补一次
-                                                // models.dev（缓存 7 天、失败就跳过）。
-                                                needDev = result.models.any {
-                                                    it.contextWindow == null || it.reasoning == null
-                                                }
-                                                // 扫描到的并入勾选、保留已做的勾选；默认模型一个都
-                                                // 不动（这张 sheet 本来也不写默认模型）。
-                                                selected = selected + result.models.map { it.id }
-                                            }
-
-                                            is PiModelScanner.Result.Failed -> {
-                                                // Failed.allowManual 恒为 true，失败永远不是死路。
-                                                scanError = result.message + "\n" + result.suggestion
-                                                scanEndpoint = result.endpoint
-                                            }
-                                        }
-                                    } finally {
-                                        // 按钮在扫描中禁用，但抛出的异常也必须把状态放回来。
-                                        scanning = false
-                                    }
-                                    if (needDev) {
-                                        devIndex = withContext(Dispatchers.IO) {
-                                            service.ensureModelsDevIndex()
-                                        }
-                                    }
-                                }
-                            },
-                        ) {
-                            Text(if (scanning) "正在扫描…" else "检测并扫描模型")
-                        }
-                        if (scanEndpoint != null) {
-                            Spacer(Modifier.width(PiSpacing.inline))
-                            Text(scanEndpoint.orEmpty(), style = PiTheme.text.monoSmall)
-                        }
-                    }
-                    if (scanNote != null) SheetNote(scanNote.orEmpty())
-                    if (scanError != null) SheetNote(scanError.orEmpty())
-
-                    // 分节线（连接 | 模型）。
-                    PiSettingsHairline()
-                    Spacer(Modifier.height(PiSpacing.small))
-                    // ------------------------------------------------------ 3 勾选模型
-                    // （节标题已删，动作词并进下面这一行的标题。）
-                    Row(
-                        modifier = Modifier.padding(
-                            horizontal = PiSettingsMetrics.cardPadding,
-                            vertical = PiSpacing.small,
-                        ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "勾选模型 · 已勾选 ${selected.size} / 共 ${candidates.size}",
-                            modifier = Modifier.weight(1f),
-                            style = PiTheme.text.prose,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        TextButton(onClick = { selected = selected + candidates }) { Text("全选") }
-                        TextButton(onClick = { selected = emptySet() }) { Text("清空") }
-                    }
-                    PiEditorField(
-                        value = modelQuery,
-                        onValueChange = { modelQuery = it },
-                        label = "搜模型（id 或名字）",
-                        height = 44.dp,
-                                                modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                    )
-                    // 手动模型名收在「手动添加」后面：大多数人只从目录/扫描里勾，
-                    // 两个输入框挨着会互相干扰。
-                    TextButton(
-                        onClick = { manualOpen = !manualOpen },
-                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding),
-                    ) { Text(if (manualOpen) "收起手动模型名" else "手动添加模型名") }
-                    if (manualOpen) {
-                        PiEditorField(
-                            value = manualIds,
-                            onValueChange = { manualIds = it },
-                            label = "模型名（逗号、空格或换行分隔）",
-                            height = 44.dp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
-                        )
-                    }
-                    SheetNote("没有元数据的模型用 pi 的默认值：上下文 128k、最大输出 16k、仅文本、价格 0。")
-                    // 一个端点可能有几百个模型（OpenRouter 规模）。候选列表放在一个**有界高度**
-                    // 的 LazyColumn 里：只组合屏幕内那几行，滚多少画多少，不再按上限截断。
-                    // 高度必须有界 —— 外层 Column 已经在纵向滚动，无界的 LazyColumn 会被
-                    // Compose 直接拒绝（infinity constraints）。
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 420.dp),
-                    ) {
-                        LazyColumn {
-                            items(shownCandidates, key = { id -> id }) { id ->
-                        val known = knownById[id]
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = PiSpacing.inline),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                checked = id in selected,
-                                onCheckedChange = { on ->
-                                    selected = if (on) selected + id else selected - id
-                                },
-                            )
-                            Column(Modifier.weight(1f)) {
-                                Text(id, style = PiTheme.text.mono)
+                            item {
                                 Text(
-                                    candidateMeta(
-                                        id = id,
-                                        known = known,
-                                        fromScan = id in scannedIds,
-                                        fromCatalog = id in catalogIds,
-                                        alreadySaved = id in existingIds,
-                                        builtInPi = preset.builtInPi,
+                                    "没有匹配的厂商",
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(
+                                        horizontal = PiSettingsMetrics.cardPadding,
+                                        vertical = PiSpacing.small,
                                     ),
+                                )
+                            }
+                        }
+                    }
+
+                    // ------------------------------------------------------ ② 连接
+                    1 -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        // 当前厂商一张小卡：名字、来源、模型数，右边「更换」回第一步。
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    if (presetId.isEmpty()) "还没选厂商" else preset.displayName,
+                                    style = PiTheme.text.prose,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    if (presetId.isEmpty()) {
+                                        "回第一步点一个厂商"
+                                    } else {
+                                        buildString {
+                                            append(preset.id)
+                                            modelCounts[preset.id]?.let { append(" · ").append(it).append(" 个模型") }
+                                            if (preset.id in configuredIds) append(" · 已配置")
+                                            append(if (preset.builtInPi) " · pi 官方" else " · App 自建")
+                                        }
+                                    },
                                     style = PiTheme.text.meta,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            PiSettingsChip(
-                                text = if (id in overrides) "已改" else "能力",
-                                onClick = { editId = if (editId == id) null else id },
-                                active = editId == id,
-                            )
+                            TextButton(
+                                // 编辑已有厂商时锁住：换一家保存会把块与凭证写到别人名下。
+                                enabled = !editingExisting,
+                                onClick = { step = 0 },
+                            ) { Text(if (presetId.isEmpty()) "选厂商" else "更换") }
                         }
-                        if (editId == id) {
-                            ModelFieldsForm(
-                                initial = overrides[id] ?: fieldsFromKnown(known),
-                                onChanged = { fields -> overrides = overrides + (id to fields) },
+                        presetProblem?.let { SheetNote(it) }
+                        if (modelsFileError != null) {
+                            SheetNote("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
+                        }
+                        if (authFileError != null) {
+                            SheetNote("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
+                        }
+                        if (presetId.isNotEmpty()) {
+                            PiSettingsHairline()
+                            if (credentialPresent && !keyOpen) {
+                                // 已配置的厂商：凭证已经在文件里、留空就是沿用；想换才展开。
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(
+                                            horizontal = PiSettingsMetrics.cardPadding,
+                                            vertical = PiSpacing.small,
+                                        ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        buildString {
+                                            append(if (maskedKey != null) "已存凭证（$maskedKey）" else "已存凭证")
+                                            append(" · 留空＝沿用")
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        style = PiTheme.text.monoSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    TextButton(onClick = { keyOpen = true }) { Text("更换") }
+                                    TextButton(onClick = {
+                                        sheetScope.launch {
+                                            val failure = withContext(Dispatchers.IO) { service.removeCredential(presetId) }
+                                            if (failure != null) {
+                                                saveError = failure
+                                            } else {
+                                                credentialPresent = false
+                                                maskedKey = null
+                                                onSaved()
+                                            }
+                                        }
+                                    }) {
+                                        Text("移除", color = PiTheme.palette.warning)
+                                    }
+                                }
+                            } else {
+                                PiEditorField(
+                                    value = apiKey,
+                                    onValueChange = { apiKey = it },
+                                    label = "API Key",
+                                    height = 44.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                                )
+                                if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
+                                    SheetNote(
+                                        "这个端点不校验鉴权，留空会写入占位值「" +
+                                            PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
+                                    )
+                                }
+                            }
+                            // 高级（Base URL / api）：对自建、中转站是必填项，所以不再藏在 Key 的
+                            // 「else」分支里 —— 已配置的厂商也能直接展开它（上一版只有展开 Key 才看得见）。
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSpacing.unit,
+                                ),
+                            ) {
+                                TextButton(onClick = { advancedOpen = !advancedOpen }) {
+                                    Text(if (advancedOpen) "收起高级" else "高级（Base URL / 协议）")
+                                }
+                            }
+                            if (advancedOpen) {
+                                PiEditorField(
+                                    value = baseUrl,
+                                    onValueChange = { baseUrl = it },
+                                    label = "Base URL",
+                                    height = 44.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(
+                                            horizontal = PiSettingsMetrics.cardPadding,
+                                            vertical = PiSpacing.small,
+                                        ),
+                                )
+                                PiEditorField(
+                                    value = api,
+                                    onValueChange = { api = it },
+                                    label = "api（协议实现）",
+                                    height = 44.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(
+                                            horizontal = PiSettingsMetrics.cardPadding,
+                                            vertical = PiSpacing.small,
+                                        ),
+                                )
+                            }
+
+                            PiSettingsHairline()
+                            // 扫描：独立一块，说明它做什么（原来只有一个孤零零的按钮）。
+                            Text(
+                                "不想翻目录？让 App 连上这个端点，把它实际提供的模型列出来。",
+                                modifier = Modifier.padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSpacing.small,
+                                ),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            if (id in overrides) {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSpacing.small,
+                                ),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                OutlinedButton(
+                                    enabled = !scanning,
+                                    onClick = {
+                                        // 6 MB 的 models.dev 索引在扫描**之后**单独取，不占
+                                        // 「正在扫描…」这段等待。
+                                        var needDev = false
+                                        sheetScope.launch {
+                                            scanning = true
+                                            scanError = null
+                                            scanNote = null
+                                            scanEndpoint = null
+                                            try {
+                                                // 已配置厂商的 Key 是收起的：留空时 `probe` 用
+                                                // `auth.json` 里那条去探测，否则"已配置"的厂商
+                                                // 反而扫描不了（见 `PiCredentialService.probe`）。
+                                                when (val result = service.probe(preset, apiKey, baseUrl.ifBlank { null })) {
+                                                    is PiModelScanner.Result.Ok -> {
+                                                        scanned = result.models
+                                                        scanEndpoint = result.endpoint
+                                                        scanNote = result.note
+                                                        needDev = result.models.any {
+                                                            it.contextWindow == null || it.reasoning == null
+                                                        }
+                                                        // 扫描到的并入勾选、保留已做的勾选；默认模型一个都
+                                                        // 不动（这张 sheet 本来也不写默认模型）。
+                                                        selected = selected + result.models.map { it.id }
+                                                    }
+
+                                                    is PiModelScanner.Result.Failed -> {
+                                                        // Failed.allowManual 恒为 true，失败永远不是死路。
+                                                        scanError = result.message + "\n" + result.suggestion
+                                                        scanEndpoint = result.endpoint
+                                                    }
+                                                }
+                                            } finally {
+                                                // 按钮在扫描中禁用，但抛出的异常也必须把状态放回来。
+                                                scanning = false
+                                            }
+                                            if (needDev) {
+                                                devIndex = withContext(Dispatchers.IO) {
+                                                    service.ensureModelsDevIndex()
+                                                }
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Text(if (scanning) "正在扫描…" else "检测并扫描模型")
+                                }
+                                if (scanEndpoint != null) {
+                                    Spacer(Modifier.width(PiSpacing.inline))
+                                    Text(scanEndpoint.orEmpty(), style = PiTheme.text.monoSmall)
+                                }
+                            }
+                            if (scanNote != null) SheetNote(scanNote.orEmpty())
+                            if (scanError != null) SheetNote(scanError.orEmpty())
+                            if (scanned.isNotEmpty()) {
+                                SheetNote("扫描到 ${scanned.size} 个模型，已并入下一步的候选。")
+                            }
+                        }
+                    }
+
+                    // ------------------------------------------------------ ③ 模型
+                    else -> LazyColumn(Modifier.fillMaxSize()) {
+                        item {
+                            Column {
+                                Row(
+                                    modifier = Modifier.padding(
+                                        horizontal = PiSettingsMetrics.cardPadding,
+                                        vertical = PiSpacing.small,
+                                    ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "已勾选 ${selected.size} / 共 ${candidates.size}",
+                                        modifier = Modifier.weight(1f),
+                                        style = PiTheme.text.prose,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    // 「全选」只动当前搜索结果可见的那些：搜了「gpt」再点全选，
+                                    // 不该把整份目录都勾上。
+                                    TextButton(onClick = { selected = selected + shownCandidates }) { Text("全选") }
+                                    TextButton(onClick = { selected = selected - shownCandidates.toSet() }) { Text("清空") }
+                                }
+                                PiEditorField(
+                                    value = modelQuery,
+                                    onValueChange = { modelQuery = it },
+                                    label = "搜模型（id 或名字）",
+                                    height = 44.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                                )
                                 TextButton(
-                                    onClick = { overrides = overrides - id },
-                                    modifier = Modifier.padding(horizontal = PiSpacing.inline),
-                                ) { Text("恢复导入时的值") }
+                                    onClick = { manualOpen = !manualOpen },
+                                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding),
+                                ) { Text(if (manualOpen) "收起手动模型名" else "手动添加模型名") }
+                                if (manualOpen) {
+                                    PiEditorField(
+                                        value = manualIds,
+                                        onValueChange = { manualIds = it },
+                                        label = "模型名（逗号、空格或换行分隔）",
+                                        height = 44.dp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                                    )
+                                }
+                                SheetNote("没有元数据的模型用 pi 的默认值：上下文 128k、最大输出 16k、仅文本、价格 0。")
+                                if (candidates.isEmpty()) {
+                                    SheetNote("pi 目录里还没有这个厂商的模型：回上一步扫描，或手动填一个模型名。")
+                                } else if (shownCandidates.isEmpty()) {
+                                    SheetNote("没有匹配的模型")
+                                }
                             }
-                            Spacer(Modifier.height(PiSpacing.small))
                         }
+                        items(shownCandidates, key = { id -> id }) { id ->
+                            val known = knownById[id]
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = PiSpacing.inline),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = id in selected,
+                                    onCheckedChange = { on ->
+                                        selected = if (on) selected + id else selected - id
+                                    },
+                                )
+                                // 整块文字也能点：只有 20dp 的勾选框太难点中。
+                                Column(
+                                    Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            selected = if (id in selected) selected - id else selected + id
+                                        }
+                                        .padding(vertical = PiSpacing.small),
+                                ) {
+                                    Text(id, style = PiTheme.text.mono)
+                                    Text(
+                                        candidateMeta(
+                                            id = id,
+                                            known = known,
+                                            fromScan = id in scannedIds,
+                                            fromCatalog = id in catalogIds,
+                                            alreadySaved = id in existingIds,
+                                            builtInPi = preset.builtInPi,
+                                        ),
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                PiSettingsChip(
+                                    text = if (id in overrides) "已改" else "能力",
+                                    onClick = { editId = if (editId == id) null else id },
+                                    active = editId == id,
+                                )
                             }
+                            if (editId == id) {
+                                ModelFieldsForm(
+                                    initial = overrides[id] ?: fieldsFromKnown(known),
+                                    onChanged = { fields -> overrides = overrides + (id to fields) },
+                                )
+                                if (id in overrides) {
+                                    TextButton(
+                                        onClick = { overrides = overrides - id },
+                                        modifier = Modifier.padding(horizontal = PiSpacing.inline),
+                                    ) { Text("恢复导入时的值") }
+                                }
+                                Spacer(Modifier.height(PiSpacing.small))
+                            }
+                        }
+                        item {
+                            Column { saveSteps.forEach { step -> SheetNote(step) } }
                         }
                     }
-                    if (candidates.isEmpty()) {
-                        SheetNote("pi 目录里还没有这个厂商的模型：点上面的扫描，或手动填一个模型名。")
-                    } else if (shownCandidates.isEmpty()) {
-                        SheetNote("没有匹配的模型")
-                    }
-                    saveSteps.forEach { step -> SheetNote(step) }
                 }
             }
-            // 底部固定在 sheet 上：保存按钮、本次会删除什么、结果/下一步，都在这几行里。
+            // 底部固定：状态一行 + 上一步 / 下一步 / 保存。
+            PiSettingsHairline(inset = 0.dp)
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1676,47 +1690,182 @@ private fun ImportSheet(
                         vertical = PiSpacing.small,
                     ),
             ) {
-                if (deletingCount > 0) {
+                if (step == 2 && deletingCount > 0) {
                     Text(
                         "这次会删除 $deletingCount 个模型定义",
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.warning,
                     )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        // `presetProblem` 非空 = 说不出这一档是谁：保存会写错厂商名下的块与凭证。
-                        enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
-                            (selected.isNotEmpty() || preset.builtInPi || overrides.isNotEmpty()),
-                        onClick = save,
-                    ) { Text(if (presetId.isNotEmpty() && credentialPresent) "保存修改" else "保存并导入") }
-                    Spacer(Modifier.width(PiSpacing.inline))
-                    Text(
-                        // 一行状态：没选厂商说下一步，有错报错，否则报勾选数与保存门槛。
-                        when {
-                            presetId.isEmpty() -> "先选一个厂商"
-                            saveError != null ->
-                                saveError.orEmpty().lineSequence().firstOrNull().orEmpty()
+                val statusText = when {
+                    presetId.isEmpty() -> "先选一个厂商"
+                    step == 2 && saveError != null ->
+                        saveError.orEmpty().lineSequence().firstOrNull().orEmpty()
 
-                            savedOk -> "已保存 · 回上一屏重启引擎生效"
-                            selected.isNotEmpty() -> "已勾选 ${selected.size} 个"
-                            // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
-                            // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
-                            // 被一个勾选门槛挡住（Bug②）。
-                            preset.builtInPi -> "不勾也能保存（不改循环列表）"
-                            overrides.isNotEmpty() -> "会保存 ${overrides.size} 条模型的能力"
-                            else -> "至少要勾选一个模型"
-                        },
+                    step == 2 && savedOk -> "已保存 · 回上一屏重启引擎生效"
+                    step == 2 && selected.isNotEmpty() -> "已勾选 ${selected.size} 个"
+                    // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
+                    // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
+                    // 被一个勾选门槛挡住（Bug②）。
+                    step == 2 && preset.builtInPi -> "不勾也能保存（不改循环列表）"
+                    step == 2 && overrides.isNotEmpty() -> "会保存 ${overrides.size} 条模型的能力"
+                    step == 2 -> "至少要勾选一个模型"
+                    step == 1 && credentialPresent -> "凭证已存在，可以直接下一步"
+                    step == 1 -> "填 Key（有些端点不需要），再点下一步"
+                    else -> ""
+                }
+                if (statusText.isNotEmpty()) {
+                    Text(
+                        statusText,
                         style = PiTheme.text.meta,
-                        color = if (saveError != null) {
+                        color = if (step == 2 && saveError != null) {
                             PiTheme.palette.error
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
                 }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = PiSpacing.small),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (step > 0) {
+                        OutlinedButton(onClick = { step -= 1 }) { Text("上一步") }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    when (step) {
+                        0 -> Unit // 点一个厂商就自动进下一步，不放按钮
+                        1 -> Button(
+                            enabled = presetId.isNotEmpty() && presetProblem == null,
+                            onClick = { step = 2 },
+                        ) { Text("下一步：选模型") }
+
+                        else -> Button(
+                            // `presetProblem` 非空 = 说不出这一档是谁：保存会写错厂商名下的块与凭证。
+                            enabled = presetId.isNotEmpty() && presetProblem == null && !scanning &&
+                                (selected.isNotEmpty() || preset.builtInPi || overrides.isNotEmpty()),
+                            onClick = save,
+                        ) { Text(if (editingExisting) "保存修改" else "保存并导入") }
+                    }
+                }
             }
         }
+    }
+}
+
+/** 三步进度条：每一步一段细条 + 序号标签；走过的与当前的染强调色，点已可达的步骤直接跳。 */
+@Composable
+private fun ImportStepBar(
+    step: Int,
+    labels: List<String>,
+    reachable: (Int) -> Boolean,
+    onGo: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        labels.forEachIndexed { index, label ->
+            val can = reachable(index)
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = can && index != step) { onGo(index) }
+                    .padding(bottom = 4.dp),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(
+                            if (index <= step) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant
+                            },
+                        ),
+                )
+                Text(
+                    "${index + 1} $label",
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = PiTheme.text.meta,
+                    fontWeight = if (index == step) FontWeight.SemiBold else FontWeight.Normal,
+                    color = when {
+                        index == step -> MaterialTheme.colorScheme.onSurface
+                        can -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> PiTheme.palette.muted.copy(alpha = 0.6f)
+                    },
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportGroupLabel(text: String) {
+    Text(
+        text,
+        modifier = Modifier.padding(
+            start = PiSettingsMetrics.cardPadding,
+            end = PiSettingsMetrics.cardPadding,
+            top = PiSpacing.small,
+            bottom = 2.dp,
+        ),
+        style = PiTheme.text.meta,
+        color = PiTheme.palette.muted,
+    )
+}
+
+/** 厂商列表里的一行：名字 + 「已配置 · N 个模型 · id」，右端勾（当前）或箭头。 */
+@Composable
+private fun ProviderChoiceRow(
+    option: PiProviderPresets.Preset,
+    selected: Boolean,
+    configured: Boolean,
+    count: Int?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(
+                horizontal = PiSettingsMetrics.cardPadding,
+                vertical = PiSpacing.small,
+            )
+            .then(if (enabled) Modifier else Modifier.alpha(0.4f)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                option.displayName,
+                style = PiTheme.text.prose,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                buildList {
+                    if (configured) add("已配置")
+                    count?.let { add("$it 个模型") }
+                    add(option.id)
+                }.joinToString(" · "),
+                style = PiTheme.text.meta,
+                color = if (configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        Text(
+            if (selected) "✓" else "›",
+            style = PiTheme.text.prose,
+            color = if (selected) MaterialTheme.colorScheme.primary else PiTheme.palette.muted,
+        )
     }
 }
 
@@ -1772,19 +1921,57 @@ private fun Summary(data: PiModelInventory.Inventory) {
             PiModelInventory.Origin.DECLARED in model.origins ||
             PiModelInventory.Origin.OVERRIDDEN in model.origins
     }
-    Text(
-        buildString {
-            append("${data.providers.size} 个厂商 · $configured 个模型 · 现在可用 $ready 个")
-            if (pending > 0) append(" · 等待重启 $pending 个")
-            if (noCredential > 0) append(" · 缺凭证 $noCredential 个")
-        },
-        modifier = Modifier.padding(
-            horizontal = PiSettingsMetrics.pageHorizontal,
-            vertical = PiSpacing.unit,
-        ),
-        style = PiTheme.text.prose,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
+    // 三格数字：一眼看出「配了几家、几个模型、现在几个能用」；要留意的（等重启 / 缺凭证）
+    // 单独一行警示色，不再和数字挤在同一句里。
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SummaryStat("厂商", data.providers.size, Modifier.weight(1f))
+            SummaryStat("模型", configured, Modifier.weight(1f))
+            SummaryStat("现在可用", ready, Modifier.weight(1f), highlight = ready > 0)
+        }
+        if (pending > 0 || noCredential > 0) {
+            Text(
+                buildString {
+                    if (pending > 0) append("等待重启 $pending 个")
+                    if (pending > 0 && noCredential > 0) append(" · ")
+                    if (noCredential > 0) append("缺凭证 $noCredential 个")
+                },
+                modifier = Modifier.padding(top = PiSpacing.small),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.warning,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryStat(label: String, value: Int, modifier: Modifier = Modifier, highlight: Boolean = false) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+    ) {
+        Text(
+            value.toString(),
+            style = PiTheme.text.prose.copy(
+                fontSize = androidx.compose.ui.unit.TextUnit(22f, androidx.compose.ui.unit.TextUnitType.Sp),
+                fontWeight = FontWeight.SemiBold,
+            ),
+            color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        Text(
+            label,
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable
@@ -2013,8 +2200,9 @@ private fun ProviderCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
+                                .heightIn(min = 44.dp)
                                 .clickable(onClick = onOpenCredentials)
-                                .padding(vertical = PiSettingsMetrics.notePaddingVertical),
+                                .wrapContentHeight(Alignment.CenterVertically),
                             style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -2024,12 +2212,10 @@ private fun ProviderCard(
                     Text(
                         "删除",
                         modifier = Modifier
+                            .heightIn(min = 44.dp)
                             .clickable(onClick = onDelete)
-                            .padding(
-                                start = PiSpacing.inline,
-                                top = PiSettingsMetrics.notePaddingVertical,
-                                bottom = PiSettingsMetrics.notePaddingVertical,
-                            ),
+                            .padding(start = PiSpacing.inline)
+                            .wrapContentHeight(Alignment.CenterVertically),
                         style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
                         color = PiTheme.palette.warning,
                     )
@@ -2080,7 +2266,11 @@ private fun StatusTag(status: PiModelInventory.Status) {
         PiModelInventory.Status.MISSING_CREDENTIAL -> MaterialTheme.colorScheme.onSurfaceVariant
         PiModelInventory.Status.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(statusText(status), style = PiTheme.text.meta, color = color)
+    Text(
+        (if (status == PiModelInventory.Status.READY) "● " else "") + statusText(status),
+        style = PiTheme.text.meta,
+        color = color,
+    )
 }
 
 /**
