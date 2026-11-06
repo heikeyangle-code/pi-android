@@ -251,16 +251,27 @@ fun ProjectScreen(
     // 在这里会相遇 —— `PiPaths` 用 `context.filesDir`，而 `workspace` 来自 `PtyLauncher`，
     // 前缀一旦对不上，`removePrefix` 什么也不删，crumbs 就变成整条绝对路径的第一段。
     // `DeviceWorkspace.canonicalize` 的 KDoc 记着同一个坑。
-    val homeCrumbs = remember(guestRootfs, workspace) {
+    //
+    // **浏览根跟着工作区走**：自带工作区在 rootfs 里（根 = rootfs，原样不变）；外部工作区
+    // （`/storage/emulated/0/…`）在 rootfs **之外**，它在 guest 里只是引擎启动时临时绑上去的
+    // 一条路径，宿主侧的 `<rootfs>/storage/emulated/0/…` 并不存在 —— 以前不管三七二十一都从
+    // rootfs 拼，于是一选手机本地目录就是「无法读取目录 …/rootfs/storage/emulated/0/…」。
+    // 外部工作区的浏览根改成宿主的 `/`，面包屑与路径都是真实路径。
+    val browseRoot = remember(guestRootfs, workspace) {
         val root = runCatching { guestRootfs.canonicalPath }.getOrNull() ?: guestRootfs.absolutePath
+        val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
+        if (here == root || here.startsWith(root.trimEnd('/') + "/")) guestRootfs else File("/")
+    }
+    val homeCrumbs = remember(browseRoot, workspace) {
+        val root = runCatching { browseRoot.canonicalPath }.getOrNull() ?: browseRoot.absolutePath
         val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
         here.removePrefix(root).trimStart('/').split('/').filter { it.isNotEmpty() }
     }
-    var crumbs by remember(workspace, guestRootfs) { mutableStateOf(homeCrumbs) }
+    var crumbs by remember(workspace, browseRoot) { mutableStateOf(homeCrumbs) }
     var listing by remember { mutableStateOf<List<WorkspaceEntry>?>(null) }
     var listingError by remember { mutableStateOf<WorkspaceOpen.Failed?>(null) }
-    val currentDir = remember(guestRootfs, crumbs) {
-        crumbs.fold(guestRootfs) { dir, segment -> File(dir, segment) }
+    val currentDir = remember(browseRoot, crumbs) {
+        crumbs.fold(browseRoot) { dir, segment -> File(dir, segment) }
     }
     // 面包屑是**从 rootfs 根算起**的，而 `relativeParent` 是给 `File(workspace, …)` 用的，
     // 只能相对**工作区**。两者混用会把 `workspace/pi/workspaces/<name>` 再拼到 workspace 后面，
