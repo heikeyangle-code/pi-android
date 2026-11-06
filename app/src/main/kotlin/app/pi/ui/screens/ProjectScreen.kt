@@ -28,7 +28,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
@@ -286,6 +288,7 @@ fun ProjectScreen(
     // 只有「换了目录」才清成加载态；同一目录里的刷新（agent 写了文件、自己新建/重命名之后）
     // 保留旧列表直到新结果回来，列表不闪空、滚动位置不丢。
     var listedDir by remember { mutableStateOf<String?>(null) }
+    var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
         if (listedDir != currentDir.absolutePath) listing = null
         listingError = null
@@ -1087,8 +1090,37 @@ fun ProjectScreen(
                             }
                         }
                     } else {
-                        entries.forEachIndexed { index, entry ->
+                        // 目录里东西多的时候：一个就地筛选框（只筛当前这一层的名字）。
+                        val filtering = entries.size >= FILTER_MIN_ENTRIES || filterText.isNotEmpty()
+                        if (filtering) {
+                            item(key = "entry-filter") {
+                                WorkspaceFilterField(
+                                    value = filterText,
+                                    onChange = { filterText = it },
+                                )
+                            }
+                        }
+                        val shown = if (filterText.isBlank()) {
+                            entries
+                        } else {
+                            entries.filter { it.name.contains(filterText.trim(), ignoreCase = true) }
+                        }
+                        if (shown.isEmpty()) {
+                            item(key = "entry-filter-empty") {
+                                Text(
+                                    "没有名字里带「${filterText.trim()}」的项。",
+                                    modifier = Modifier.padding(
+                                        horizontal = PiSettingsMetrics.pageHorizontal,
+                                        vertical = 16.dp,
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                        }
+                        shown.forEachIndexed { index, entry ->
                             item(key = "entry:${entry.path}") {
+                              Box(Modifier.animateItem()) {
                                 // 这一行的**工作区相对**路径，与「本次会话」徽标比对用。
                                 val entryRelative = remember(currentDir, entry.name, workspace) {
                                     val root = workspace.canonicalFile
@@ -1115,7 +1147,7 @@ fun ProjectScreen(
                                 }
                                 WsCardSlice(
                                     index = index,
-                                    lastIndex = entries.lastIndex,
+                                    lastIndex = shown.lastIndex,
                                     hairlineStart = WsIconHairlineStart,
                                 ) {
                                     WorkspaceEntryRow(
@@ -1138,6 +1170,7 @@ fun ProjectScreen(
                                         },
                                     )
                                 }
+                              }
                             }
                         }
                     }
@@ -1589,6 +1622,7 @@ private fun WorkspaceChipRow(
                 .height(PiSpacing.controlHeight)
                 .clip(PiShapes.badge)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .border(PiSettingsMetrics.hairline, PiTheme.palette.borderAccent.copy(alpha = 0.35f), PiShapes.badge)
                 .clickable(onClick = onClick)
                 .padding(horizontal = PiSpacing.cardPadding),
             verticalAlignment = Alignment.CenterVertically,
@@ -2163,7 +2197,9 @@ private fun BreadcrumbRow(rootLabel: String, crumbs: List<String>, onGo: (Int) -
         shown.forEachIndexed { index, segment ->
             Text(
                 "/",
-                modifier = Modifier.padding(horizontal = PiSpacing.tiny),
+                modifier = Modifier
+                    .padding(horizontal = PiSpacing.tiny)
+                    .padding(vertical = 8.dp),
                 style = PiTheme.text.monoSmall,
                 color = palette.muted,
                 maxLines = 1,
@@ -2191,11 +2227,15 @@ private fun Crumb(text: String, mono: Boolean, current: Boolean, onClick: () -> 
         text,
         modifier = Modifier
             .then(if (current) Modifier else Modifier.clickable(onClick = onClick))
+            // 面包屑原来只有字那么高，手指几乎点不中；上下补到约 32dp 的点击高度。
+            .padding(vertical = 8.dp)
             // `widthIn(max = …)`，不是 `width(…)`：稿子每一段是 `maxWidth:170`
             // （`workspace-final.html:1500` + `.w-crumb`）：短名字按内容宽排，一行放不下就折行。
             // 定宽 170 让「工作区 / src / session」恒占 534dp，当前目录必然被挤出屏外。
             .widthIn(max = CRUMB_MAX_WIDTH),
-        style = if (mono) PiTheme.text.monoSmall else PiTheme.text.meta,
+        style = (if (mono) PiTheme.text.monoSmall else PiTheme.text.meta).let {
+            if (current) it.copy(fontWeight = FontWeight.SemiBold) else it
+        },
         color = if (current) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -2276,6 +2316,65 @@ private fun WorkspaceEntryRow(
     }
 }
 
+/** 一层里至少这么多项才出现筛选框；再少的目录一屏就看完了。 */
+private const val FILTER_MIN_ENTRIES = 10
+
+@Composable
+private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = 6.dp,
+            )
+            .height(44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(start = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Filled.Search,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = PiTheme.palette.muted,
+        )
+        androidx.compose.foundation.text.BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) {
+                        Text("筛选这一层的文件名", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+                    }
+                    inner()
+                }
+            },
+        )
+        if (value.isNotEmpty()) {
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .clickable { onChange("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "清除筛选",
+                    modifier = Modifier.size(16.dp),
+                    tint = PiTheme.palette.muted,
+                )
+            }
+        }
+    }
+}
+
 /** 目录名太长时中间省略（与面包屑同一条规则）。 */
 private const val ENTRY_NAME_MAX_CHARS = 28
 
@@ -2289,11 +2388,13 @@ private const val ENTRY_NAME_MAX_CHARS = 28
 @Composable
 private fun EntryGlyph(kind: WorkspaceEntryKind) {
     when (kind) {
+        // 目录用强调色：一屏文件里「能点进去的」一眼就和「只能打开的」分开，
+        // 不用再靠图标形状去认。
         WorkspaceEntryKind.Directory -> Icon(
             Icons.Filled.Folder,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            tint = PiTheme.palette.muted,
+            tint = PiTheme.palette.accent,
         )
 
         // 稿子给二进制**单加了一个图标态**（`workspace-final.html:311` 的 `Icon n="bin"`：
