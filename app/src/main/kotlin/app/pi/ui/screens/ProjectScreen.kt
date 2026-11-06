@@ -7,8 +7,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1665,80 +1663,7 @@ fun ProjectScreen(
     }
 }
 
-// ================================================================ 工作区芯片
-
-/**
- * 工作区切换：原来那张大卡（名字 + 摘要 + 切换徽标 + 箭头）压成**一颗芯片**
- * （设计稿：`workspace-1 ▾`），点它弹底部面板选工作区。
- *
- * 右端那句话**只在真有时出现**：改动数 0、没有命令在跑时什么都不画 —— 这一屏不需要
- * 一直挂着一行「改动 0 · 无命令运行」。
- */
-@Composable
-private fun WorkspaceChipRow(
-    name: String,
-    changed: Int?,
-    running: Int,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = WS_CHIP_TOP,
-                bottom = WS_CHIP_BOTTOM,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-    ) {
-        Row(
-            modifier = Modifier
-                .height(PiSpacing.controlHeight)
-                .clip(PiShapes.badge)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .border(PiSettingsMetrics.hairline, PiTheme.palette.borderAccent.copy(alpha = 0.35f), PiShapes.badge)
-                .clickable(onClick = onClick)
-                .padding(horizontal = PiSpacing.cardPadding),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-        ) {
-            Icon(
-                Icons.Filled.Folder,
-                contentDescription = null,
-                modifier = Modifier.size(PiSpacing.controlGlyph),
-                tint = PiTheme.palette.muted,
-            )
-            Text(
-                name,
-                style = PiTheme.text.mono,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Icon(
-                Icons.Filled.KeyboardArrowDown,
-                contentDescription = "切换工作区",
-                modifier = Modifier.size(PiSpacing.controlGlyph),
-                tint = PiTheme.palette.muted,
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        val parts = buildList {
-            if (changed != null && changed > 0) add("改动 $changed")
-            if (running > 0) add("$running 条命令在跑")
-        }
-        if (parts.isNotEmpty()) {
-            Text(
-                parts.joinToString(" · "),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
-            )
-        }
-    }
-}
+// ================================================================ 工作区路径条
 
 /** 芯片那一条的上下留白。 */
 private val WS_CHIP_TOP = 10.dp
@@ -2217,85 +2142,6 @@ private fun diffFor(items: List<TranscriptItem>, path: String): ToolDiff? =
 private class WorkspaceSessionFile(val file: File, val displayPath: String)
 
 // ================================================================ ④ 全部文件
-
-/**
- * 面包屑：「工作区 / src / session」。
- *
- * 每一段可点回那一层（最后一段是当前目录，点了不动）；长名字中间省略（稿子的
- * `mid(n, 16)`）—— 省略中间而不是末尾，因为路径的两端才是有信息的那两端。
- *
- * ## 会换行，而且每一段是 `maxWidth` 而不是定宽
- *
- * 稿子这一行是 `className="rw w-crumb"` + `flexWrap:'wrap'`（`workspace-final.html:1500`），
- * 每一段是 `maxWidth:170`（`.w-crumb :189` 的 `min-width:0` 加 inline 的 `maxWidth`）。
- * 这一屏原来把每段钉成 `width(170dp)`：三段就是 534dp，一行的可用宽远小于它，于是**最后一段
- * （当前目录）被推出屏外** —— 一段也看不见当前在哪。这里改成 `widthIn(max = 170)` + `FlowRow`：
- * 名字短就按内容宽、长就截到 170，整行放不下就折到第二行。
- *
- * 选 [FlowRow] 而不是横向滚动：稿子写死的就是 `flexWrap`，而且「当前目录必须在屏内」这条要求
- * 只有换行能无条件满足 —— 横向滚动时最后一段仍然要先滑一下才看得见。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun BreadcrumbRow(rootLabel: String, crumbs: List<String>, onGo: (Int) -> Unit) {
-    val palette = PiTheme.palette
-    // **只显示最后三级，前面折成 `…`**（设计稿）：从 guest 根算起时，面包屑是
-    // `根 / workspace / pi / workspaces / workspace-1` 这么一长串，真正有用的只有最后两级。
-    // `…` 不是死链：点它往上退一级（退到可见窗口上面那一层）。
-    val hidden = (crumbs.size - WS_CRUMB_VISIBLE).coerceAtLeast(0)
-    val shown = crumbs.drop(hidden)
-    FlowRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                // 稿子这一行的 `padding:'0 14px 8px'`。
-                bottom = WS_CRUMB_BOTTOM,
-            ),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        if (hidden > 0) {
-            Crumb(
-                text = "…",
-                mono = true,
-                current = false,
-                onClick = { onGo(hidden) },
-            )
-        } else {
-            Crumb(
-                text = rootLabel,
-                mono = true,
-                current = crumbs.isEmpty(),
-                onClick = { onGo(0) },
-            )
-        }
-        shown.forEachIndexed { index, segment ->
-            Text(
-                "/",
-                modifier = Modifier
-                    .padding(horizontal = PiSpacing.tiny)
-                    .padding(vertical = 8.dp),
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                maxLines = 1,
-            )
-            Crumb(
-                text = segment,
-                mono = true,
-                current = hidden + index == crumbs.lastIndex,
-                onClick = { onGo(hidden + index + 1) },
-            )
-        }
-    }
-}
-
-/** 面包屑最多显示几级（当前目录 + 两级父目录）。 */
-private const val WS_CRUMB_VISIBLE = 3
-
-/** 稿子面包屑那一行的 `padding:'0 14px 8px'`。 */
-private val WS_CRUMB_BOTTOM = 8.dp
-
 
 @Composable
 private fun Crumb(text: String, mono: Boolean, current: Boolean, onClick: () -> Unit) {
