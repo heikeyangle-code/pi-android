@@ -1121,38 +1121,26 @@ private fun SessionRow(
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    // 不再是「一大张卡里挤一排行」：行直接铺在页面底色上，行与行之间只有一条两头留白的
+    // 发丝线；当前会话是一块圆角淡底 + 左侧竖条，像被「点亮」的那一条。圆角只出现在
+    // 「被点亮」或被按住的那一行上，整页因此不再是一坨同色的块。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal)
-            .clip(
-                RoundedCornerShape(
-                    topStart = if (first) PiSettingsMetrics.cardRadius else 0.dp,
-                    topEnd = if (first) PiSettingsMetrics.cardRadius else 0.dp,
-                    bottomStart = if (last) PiSettingsMetrics.cardRadius else 0.dp,
-                    bottomEnd = if (last) PiSettingsMetrics.cardRadius else 0.dp,
-                ),
-            )
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            .padding(horizontal = PiSpacing.gutter),
     ) {
         if (!first) {
-            // 卡内行间线：**0.5dp 的 `outlineVariant`（`borderMuted` 的 55%）**，左侧
-            // 缩进到文字列。它属于这一张卡，不是页面上的分栏线 —— 之前用 1dp 的不透明
-            // `outline`，在深色主题下读起来是一条压过卡片的黑线（用户：「顶满全宽的深色
-            // 分隔线」）。线只画在下一行的顶上：一组最后一行下面没有线。
             HorizontalDivider(
-                modifier = Modifier.padding(start = PiSettingsMetrics.dividerInset),
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
                 thickness = PiSpacing.hairlineThin,
                 color = MaterialTheme.colorScheme.outlineVariant,
             )
         }
-        // 当前会话：**行底色 + 左侧 3dp 主色竖条**，不再是描边胶囊。竖条用
-        // `drawBehind` 画在行自己的左缘、上下各内缩 12（设计稿 §6），这样它
-        // 不会把行撑高，也不会被 `combinedClickable` 的 ripple 盖住。
         val accent = MaterialTheme.colorScheme.primary
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
                 // 底色先画、竖条后画：modifier 链上**外层先画**，所以 `background` 写在
                 // `drawBehind` 前面，竖条才不会被那层 tint 盖住。
                 .then(
