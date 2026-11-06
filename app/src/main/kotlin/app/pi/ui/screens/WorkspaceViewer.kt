@@ -295,6 +295,7 @@ internal fun WorkspaceViewer(
                     mode = ViewerMode.View
                     onSaved(target.relativePath)
                     onMessage("已保存 · ${target.file.name}")
+                    htmlReload++
                     if (closeAfter) onClose() else reloadTick++
                 },
                 onFailure = { error ->
@@ -336,8 +337,25 @@ internal fun WorkspaceViewer(
                     color = MaterialTheme.colorScheme.outline,
                 )
                 Box(Modifier.fillMaxSize()) {
+                    // 空 .html 渲染出来是一整屏白，看不出是「空」还是「坏了」。
+                    val fileEmpty = remember(htmlReload, mode) { isHtml && target.file.length() == 0L }
+                    val htmlEmpty = fileEmpty && mode != ViewerMode.Edit
                     when {
-                        isHtml -> HtmlPreview(
+                        htmlEmpty -> Column(
+                            Modifier.fillMaxSize().padding(PiSettingsMetrics.pageHorizontal),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text("这个 HTML 文件是空的", style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                "点右上角「编辑」写点内容，保存后这里会渲染出来。",
+                                modifier = Modifier.padding(top = PiSpacing.inline),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
+                            )
+                        }
+
+                        mode != ViewerMode.Edit && isHtml -> HtmlPreview(
                             file = target.file,
                             reloadTick = htmlReload,
                             onRetry = { htmlReload++ },
