@@ -414,7 +414,6 @@ fun PiOptionPickerSheet(
                             refusal = null
                         },
                     ) { Text("取消") }
-                    Spacer(Modifier.width(PiSpacing.inline))
                     Button(
                         onClick = {
                             pending = null
