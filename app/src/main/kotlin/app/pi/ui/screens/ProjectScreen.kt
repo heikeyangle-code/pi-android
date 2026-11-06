@@ -897,6 +897,7 @@ fun ProjectScreen(
                         for (index in runs.indices) {
                             val run = runs[index]
                             item(key = "run:${run.key}") {
+                              Box(Modifier.animateItem()) {
                                 RunningCommandRow(
                                     run = run,
                                     sliceIndex = index,
@@ -904,6 +905,7 @@ fun ProjectScreen(
                                     nowMs = nowMs,
                                     hairlineStart = WsIconHairlineStart,
                                 )
+                              }
                             }
                         }
                     }
@@ -928,6 +930,7 @@ fun ProjectScreen(
                         val totalSlices = (if (pending != null) 1 else 0) + visibleChanged.size
                         if (pending != null) {
                             item(key = "pending:${pending.path}") {
+                              Box(Modifier.animateItem()) {
                                 WsCardSlice(
                                     index = 0,
                                     lastIndex = totalSlices - 1,
@@ -935,11 +938,13 @@ fun ProjectScreen(
                                 ) {
                                     PendingWriteRow(pending)
                                 }
+                              }
                             }
                         }
                         visibleChanged.forEachIndexed { index, file ->
                             val slice = (if (pending != null) 1 else 0) + index
                             item(key = "changed:${file.path}") {
+                              Box(Modifier.animateItem()) {
                                 WsCardSlice(
                                     index = slice,
                                     lastIndex = totalSlices - 1,
@@ -979,6 +984,7 @@ fun ProjectScreen(
                                         },
                                     )
                                 }
+                              }
                             }
                         }
                     }
@@ -2903,7 +2909,10 @@ private fun WorkspaceNameDialog(
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                     onDone = { if (canSubmit) onSubmit(trimmed) },
                 ),
-                textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
+                textStyle = PiTheme.text.mono.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 17.sp,
+                ),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
                 decorationBox = { innerTextField ->
                     Box(
@@ -2920,7 +2929,7 @@ private fun WorkspaceNameDialog(
                                     WorkspaceInputKind.Rename -> "新名字"
                                     WorkspaceInputKind.RenameWorkspace -> "显示名"
                                 },
-                                style = PiTheme.text.mono,
+                                style = PiTheme.text.mono.copy(fontSize = 17.sp),
                                 color = PiTheme.palette.muted,
                                 maxLines = 1,
                             )
@@ -2960,9 +2969,9 @@ private fun WorkspaceNameDialog(
 }
 
 /** 名字输入框：从 38 抬到 48（38 在手机上又矮又难戳），左右留 12 的内边距。 */
-private val NAME_FIELD_HEIGHT = 48.dp
-private val NAME_FIELD_RADIUS = 9.dp
-private val NAME_FIELD_PADDING = 12.dp
+private val NAME_FIELD_HEIGHT = 58.dp
+private val NAME_FIELD_RADIUS = 12.dp
+private val NAME_FIELD_PADDING = 16.dp
 
 // ================================================================ Snackbar
 
