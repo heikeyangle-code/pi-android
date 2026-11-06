@@ -5,23 +5,20 @@
 <h1 align="center">PI</h1>
 
 <p align="center">
-  <strong>把 pi coding agent 完整装进安卓手机。</strong>
+  <strong>手机上的 pi coding agent。本机运行，不要 root，不要 Termux。</strong>
 </p>
 
 <p align="center">
-  自带的 Ubuntu 与 Node 跑在本机 · 不需要 root · <b>扩展生态和电脑上完全一样</b>
+  Android 8.0+ · arm64 · MIT · 扩展生态和电脑上<b>完全一样</b>
 </p>
 
 <p align="center">
-  <a href="#它是什么">它是什么</a> ·
-  <a href="#能扩展成什么样">能扩展成什么样</a> ·
+  <a href="#亮点">亮点</a> ·
   <a href="#界面">界面</a> ·
-  <a href="#碰这台手机">碰这台手机</a> ·
-  <a href="#它不做什么">它不做什么</a> ·
-  <a href="#装上">装上</a> ·
-  <a href="#架构">架构</a> ·
-  <a href="#pi-升级">pi 升级</a> ·
-  <a href="#自己编译">自己编译</a>
+  <a href="#安装">安装</a> ·
+  <a href="#常见问题">常见问题</a> ·
+  <a href="#不做什么">不做什么</a> ·
+  <a href="#技术细节">技术细节</a>
 </p>
 
 <p align="center">
@@ -30,200 +27,132 @@
 
 ---
 
----
+PI 是 [pi](https://github.com/earendil-works/pi) 的安卓客户端：把 pi 整个装进手机，
+打开就能让它读代码、改文件、跑命令。引擎是官方那一份，一行没改；
+App 做的是**把终端里的一切画成手机上顺手的样子**。
 
-## 它是什么
+会话、文件、命令、凭证都留在本机，只有模型请求会发到**你自己配置的**服务。
 
-一个安卓 App，把 [pi](https://github.com/earendil-works/pi) 跑在手机本地。
+## 亮点
 
-pi 是终端里的 coding agent。它的能力几乎全部来自**可扩展性**——而这个 App 的第一件事，
-就是让这份可扩展性在手机上原样成立：
+- **开箱即用**　Ubuntu、Node、git、ripgrep、fd 全在 APK 里，第一次打开就能干活，不用先装别的 App。
+- **不需要 root**　Linux 用户态跑在 proot 里，普通手机直接用。
+- **扩展和电脑上一样**　扩展、技能、提示词、主题都是普通文件。电脑上能装的，这里也能装。
+- **让 AI 自己装、自己写**　对它说一句「找个能联网搜索的扩展装上」，它自己搜、装、验证，立刻生效。
+- **工具结果是卡片**　每次调用一行：耗时、行数、成败；`edit` 直接带 diff，`read` 读进来的图画在卡里。
+- **思考可折叠**　要看再展开，不要看就一行。
+- **生成中也能发消息**　消息排队，按 pi 自己的规则合并；停下时排队的内容回到输入框，不丢草稿。
+- **会话树**　分叉、回到任一节点继续，会话可导出。
+- **工作区是你手机上的任意目录**　内置文件浏览与编辑器：查找、撤销、行号，改动过的文件和 diff 收在一处。
+- **模型随便配**　内置厂商预设，自定义供应商（OpenAI 兼容）填地址和 Key，Ollama / llama.cpp / vLLM 都行。
+- **主题是一张 JSON**　换主题，界面、代码高亮、强调色一起换。
+- **引擎在后台活着**　前台服务加唤醒锁，长任务切到别的 App 也不会被杀。
+- **碰得到这台手机**（可选，默认全关）　读屏、点按、文件、剪贴板、通知，逐项授权，随时撤销。
 
-1. **整套扩展机制原样保留**——扩展、技能、提示词、主题都是普通文件，pi 启动时读它们。电脑上能装的扩展，这里也能装，而且可以**直接用自然语言让 AI 自己搜、自己写、自己装**。
-2. **一个真实的 Linux 用户态**——Ubuntu base、官方 Node、git / ripgrep / fd / CA 证书，全部打进 APK，第一次打开就能开工，不需要先装 Termux 或别的 App。
-3. **一块手机屏幕**——助手回复、工具调用、diff、图片、思考块都渲染成手机上该有的样子，全程不碰终端。
+## 为什么不一样
 
-**在这个基础上还多一层**：同一套扩展能伸手碰这台手机——读屏、点按、文件、剪贴板、通知。
-这是附带的，不是主打；每一项都要你单独授权，随时可以关（[碰这台手机](#碰这台手机)）。
+别的手机 agent 把能力焊死在 App 里，想要什么等作者发版。这里**没有「手机版功能」**：
+pi 的可扩展性全建立在文件上——扩展是一个 `.ts`，技能是一个 `SKILL.md`，主题是一张 JSON。
+引擎和约定都是同一份，所以电脑上有的，手机上就有；写那个扩展的人还可以是 AI 自己。
 
-会话、文件、命令、凭证都在本机。只有模型请求会发给你自己配置的服务。
-
----
-
-## 能扩展成什么样
-
-这是这个 App 和别的手机 agent 最不一样的地方：**没有「手机版功能」这一说。**
-
-pi 的全部可扩展性建立在**文件**上——扩展是一个 `.ts`，技能是一个 `SKILL.md`，主题是一张
-JSON 令牌表，提示词是一段 markdown。都是普通文件，放在普通目录里，pi 启动时读它们。
-引擎是同一份、约定也是同一份，所以**电脑上能装的，这里也能装**。
-
-**你只需要用自然语言说。**
-
-> 「找个能上网搜索的扩展装上」
->
-> 「写个技能：每次改完代码跑一遍测试，失败了把出错那几行贴出来」
->
 > 「换一套暗紫色的主题，晚上看着舒服点」
->
+> 「写个技能：每次改完代码跑一遍测试，失败了把出错那几行贴出来」
 > 「这个扩展的提示词太啰嗦了，精简一下再装上」
 
-它不会甩给你一个链接让你自己去装。agent 就在这台机器上，手里是真的 Linux shell
-（`pi` 命令本身就在 `PATH` 里），所以**搜、装、写、改、验证，它一趟自己做完，做完立刻生效**。
-
-| 它能做 | 落到哪 |
-| :--- | :--- |
-| **装现成的**：`pi install npm:pi-web-access@0.35.0`，或 `git:仓库@tag` | 生态里已有一万多个扩展——[awesome-pi-coding-agent](https://github.com/shaftoe/awesome-pi-coding-agent) 收录 **10430 个扩展、389 个主题** |
-| **写新的**：扩展 `.ts`、技能 `SKILL.md`、主题 JSON、提示词 | 你手机上的 agent 目录，下次启动即加载 |
-| **改现有的**：读一遍、改一行、再让它自己跑起来验证 | 同上 |
-
-别的手机 agent 把能力焊死在 App 里：想要什么，等作者发版。
-这里的能力是**现写现用**的——而写的那个人可以是 AI 自己。
-
-**大家都用它做什么**（下面每一条都是社区里真实存在的东西，不是设想）：
-
-| 方向 | 例子 |
-| :--- | :--- |
-| 多 agent 编排 | `pi-subagents`、把任务扇出到上百个子 agent 的动态工作流 |
-| 记忆与上下文 | `billion-context`——把上下文压到能跑月级长会话；`pi-memory` 语义记忆 |
-| 上网 | `pi-web-access`——搜索、抓网页、抓 PDF、看视频 |
-| 可观测 | Langfuse / Braintrust / Raindrop 的会话与工具调用追踪 |
-| 权限与安全 | `pi-permission-system`、`cc-safety-net`——拦危险命令与密钥文件访问 |
-| 工作流即技能 | `rpiv-pi` 把 30 个技能串成一条链；`bigpowers` 是 73 个技能 |
-| 长任务 | `/goal` 系列：持久目标 + 独立完成审计 + 自动续跑 |
-| 代码智能 | `pi-lens`——LSP、linter、格式化、类型检查 |
-
-**你缺的只是那块终端屏幕。** 上面这些全都在手机上跑；多出来的还有一层：同一套扩展能读屏、
-能点按、能读写这台手机上的文件。
-
-> 电脑上的 pi 能调的扩展，手机上能调；电脑上的 pi 碰不到的手机，手机上碰得到。
-
----
+生态里已有一万多个扩展——[awesome-pi-coding-agent](https://github.com/shaftoe/awesome-pi-coding-agent)
+收录 10430 个扩展、389 个主题：多 agent 编排、长期记忆、联网搜索、权限与安全、LSP 代码智能……都能直接装。
 
 ## 界面
 
-**pi 发出的 33 条 RPC 命令全部接入，9 种扩展界面方法每一种都有落点。** 下面几件是终端做不到、或做不好的：
-
-### 工具结果画成卡片，不是一坨等宽文本
+pi 的 33 条 RPC 命令全部接入，9 种扩展界面方法每一种都有落点。
 
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
   <a href="./docs/screenshots/chat-light-tool-cards.jpg"><img src="./docs/screenshots/chat-light-tool-cards.jpg" alt="浅色主题：read 工具卡里并排画着读进来的两张图" width="280" /></a><br />
-  <sub><b>读进来的图，就画在卡里。</b><br />一张 <code>read</code> 卡并排摊开 <code>raw</code> 与 <code>scaled</code>。</sub>
+  <sub><b>读进来的图，就画在卡里。</b></sub>
 </td>
 <td width="50%" valign="top" align="center">
   <a href="./docs/screenshots/chat-dark-tool-cards.jpg"><img src="./docs/screenshots/chat-dark-tool-cards.jpg" alt="暗色主题：带 +5/−4 diff 的 edit 卡" width="280" /></a><br />
-  <sub><b>思考可折叠，改动看得见。</b><br /><code>edit</code> 卡直接带 <code>+5/−4</code> 的 diff，改了哪几行一目了然。</sub>
+  <sub><b>改了哪几行，一目了然。</b></sub>
 </td>
 </tr>
-</table>
-
-每一次调用都是一行，耗时、行数、成败都摆在明面上：
-
-<table>
 <tr>
-<td width="50%" valign="top" align="center">
-  <a href="./docs/screenshots/chat-theme-slate.jpg"><img src="./docs/screenshots/chat-theme-slate.jpg" alt="深青主题：工作区里一串 bash / read / write 工具调用，每行带耗时与行数" width="280" /></a>
+<td valign="top" align="center">
+  <a href="./docs/screenshots/chat-theme-slate.jpg"><img src="./docs/screenshots/chat-theme-slate.jpg" alt="深青主题" width="280" /></a><br />
+  <sub><b>同一场对话……</b></sub>
 </td>
-<td width="50%" valign="top" align="center">
-  <a href="./docs/screenshots/chat-theme-purple.jpg"><img src="./docs/screenshots/chat-theme-purple.jpg" alt="暗紫主题：同一场对话、同一个位置，只换了主题文件" width="280" /></a>
+<td valign="top" align="center">
+  <a href="./docs/screenshots/chat-theme-purple.jpg"><img src="./docs/screenshots/chat-theme-purple.jpg" alt="暗紫主题" width="280" /></a><br />
+  <sub><b>……只换了主题文件。</b></sub>
 </td>
 </tr>
-</table>
-
-上面两张是**同一场对话、同一个滚动位置**，唯一不同的是主题文件：界面、代码高亮、强调色一起换。
-
-每条工具调用只占一行——`bash` 后面跟着 `0.5s · 32 行`，`read` 后面跟着 `7ms · 55 行`，`write` 后面跟着 `7ms · 117 行`。哪一步慢、哪一步读了多少，不用展开卡片就能看见；长命令在这里按宽度截断，点开才是全文。
-
-### 工作区
-
-<table>
 <tr>
-<td width="50%" valign="top" align="center">
-  <a href="./docs/screenshots/workspace-session-changes.jpg"><img src="./docs/screenshots/workspace-session-changes.jpg" alt="工作区：本次会话改过 1 个文件，下面是完整 diff" width="280" /></a><br />
-  <sub><b>这次会话动了哪儿。</b><br />会话碰过的文件与它们的 diff 收在一处。</sub>
+<td valign="top" align="center">
+  <a href="./docs/screenshots/workspace-session-changes.jpg"><img src="./docs/screenshots/workspace-session-changes.jpg" alt="工作区：本次会话改过的文件与 diff" width="280" /></a><br />
+  <sub><b>这次会话动了哪儿。</b></sub>
 </td>
-<td width="50%" valign="top" align="center">
-  <a href="./docs/screenshots/workspace-resources.jpg"><img src="./docs/screenshots/workspace-resources.jpg" alt="工作区：扩展标签下列出每个扩展的作用域与真实路径" width="280" /></a><br />
-  <sub><b>这个目录里有什么。</b><br />技能 / 提示词 / 扩展 / 主题，按 pi 的优先级发现出来，每一类都带真实路径。</sub>
+<td valign="top" align="center">
+  <a href="./docs/screenshots/workspace-resources.jpg"><img src="./docs/screenshots/workspace-resources.jpg" alt="工作区：技能、提示词、扩展、主题及其真实路径" width="280" /></a><br />
+  <sub><b>这个目录里有什么。</b></sub>
 </td>
 </tr>
 </table>
 
-### 内置扩展（pi 0.99.0 起）
+pi 自带的四个扩展也直接可用：`mcp`（连 MCP 服务器）、`codemode`（沙箱里并行调工具，纯 WASM，arm64 直接跑）、
+`tool-search`（工具多时按需声明）、`llama.cpp`（本地/局域网模型）。
 
-pi 现在自带四个扩展，这个 App 直接可用：
+## 安装
 
-| 扩展 | 做什么 | 怎么用 |
+**要求**
+
+| | |
+| :--- | :--- |
+| 系统 | Android 8.0（API 26）及以上，**仅 arm64** |
+| 空间 | APK 约 136 MB；首次启动解包约 64 MiB 运行时，之后只在载荷变化时重解 |
+| 网络 | 调模型、装扩展要联网 |
+| 模型 | **自备**：App 不含任何模型权重，也不代售 |
+
+**三步上手**
+
+1. 下载 APK 安装（见下），打开等它解包完。
+2. 设置 → 模型与供应商：选一个厂商粘上 Key；不在列表里就用「自定义供应商」填地址和 Key。
+3. 选一个工作区目录，开聊。
+
+**下载**　目前没有正式 release、也没有商店版本，从 CI 产物取，或[自己编译](#技术细节)。有两个变体：
+
+| 变体 | targetSdk | 什么时候用 |
 | :--- | :--- | :--- |
-| `mcp` | 连接 MCP 服务器（stdio 或 HTTP），把它们的工具交给模型 | 编辑 `mcp.json`（设置里的「Pi 文件」屏可以直接改），用 `/mcp` 看连接状态、登录、改 exposure |
-| `codemode` | 让模型写 JavaScript，在沙箱里并行调用 pi 的工具 | 有 `codemode` exposure 的服务器连上时自动启用；或 `defaultTools` 里写 `["+codemode"]` |
-| `tool-search` | 把「没直接声明给模型」的工具搜出来再声明，避免工具太多撑爆上下文 | 有 `deferred` 服务器时自动启用 |
-| `llama.cpp` | 本地/局域网模型 | 设置里配 |
+| `…-sideload28-arm64.apk` | 28 | **默认选这个。** 系统权限最少，行为最可预期 |
+| `…-modern36-arm64.apk` | 36 | 面向新系统行为变更，**还没在真机上验完**；只在 28 装不上或行为异常时试 |
 
-其中 `codemode` 的沙箱是纯 WASM（QuickJS），不带按架构编译的二进制，所以 arm64 上直接可用。
+两个包同一套密钥签名，可互相覆盖安装，升级不丢数据。
 
----
+## 常见问题
 
-## 碰这台手机
+**要 root 吗？要 Termux 吗？**　都不要。运行时全在 APK 里。
 
-**附带能力，不是主打。** 通过同一个扩展机制，agent 还能伸手碰这台手机——30 个端点，
-**默认全部关闭**，按类授权，随时可以单独撤：
+**数据放哪？**　会话、文件、命令、凭证都在本机。App 不另存凭证，写的就是 pi 自己的 `auth.json`、`models.json`、`settings.json`。
 
-<table>
-<tr>
-<td width="33%" valign="top"><strong>看得见</strong><br /><sub>读屏、截屏、列出已装应用、读当前界面结构</sub></td>
-<td width="33%" valign="top"><strong>碰得到</strong><br /><sub>点按、输入、按键、滑动——操作的是这台手机的真实屏幕</sub></td>
-<td width="33%" valign="top"><strong>喊得动</strong><br /><sub>通知、Toast、震动、分享、开链接</sub></td>
-</tr>
-<tr>
-<td valign="top"><strong>拿得到</strong><br /><sub>剪贴板、位置、传感器、电池、手电</sub></td>
-<td valign="top"><strong>够得着文件</strong><br /><sub>导出、导入、列目录、读、写（走系统目录授权）</sub></td>
-<td valign="top"><strong>说得上话</strong><br /><sub>设备 shell：默认就是 App 自己的身份；要用更高身份，得你去设置里开</sub></td>
-</tr>
-</table>
+**能用本地模型吗？**　App 本身不做离线推理，但能连局域网里的 Ollama / llama.cpp / vLLM。
 
-这几项之所以做得成，恰恰是因为前面那件事：**设备层就是一个普通的 pi 扩展**
-（`app/src/main/assets/pi-extensions/pi-android-bridge/`），用公开的扩展 API 写的，
-没有任何私有通道。你可以读它、改它，也可以照它的样子给自己写一个。
+**扩展安全吗？**　扩展就是你自己的代码，在 guest 里能做 pi 能做的一切，包括读你的凭证文件。装之前问一句它是干什么的，跟在电脑上装 npm 包是同一件事。
 
----
+**装多了会慢吗？**　会。pi 启动时要加载每个扩展，发 TypeScript 源码的尤其贵，实测单个最多能吃掉 9 秒。想快就少装或按需停用。
 
-## 它不做什么
+**手机能力默认开着吗？**　全关。读屏、点按、设备 shell 各自授权；要更高身份（root / Shizuku）得设备本身支持，并去「设置 → 设备能力授权」里开。这一层是个普通的 pi 扩展（[`pi-android-bridge`](app/src/main/assets/pi-extensions/pi-android-bridge/)），公开 API 写的，没有私有通道，你可以读、改、照着写自己的。
 
-写在前面，省得你装完才发现：
+## 不做什么
 
-- **扩展要你自己装。** App 自带的是 pi 的四个内置扩展（`mcp`、`codemode`、`tool-search`、`llama.cpp`）加一个设备层；生态里那一万多个，得你说一句让它装，或者自己写。
-- **扩展就是你自己的代码。** 从 npm / git 装进来的扩展，在 guest 里能做 pi 能做的一切——包括读你的凭证文件。**装之前问一句它是干什么的**；这跟在自己电脑上装 npm 包是同一件事（另外，装包需要联网）。
-- **装多了启动会变慢。** pi 启动时要加载每一个扩展，发 TypeScript 源码的尤其贵——实测单个扩展最多能吃掉 9 秒。想快就少装，或按需停用。
-- **不做离线推理。** 本地执行不等于本地模型——要么连你自己的服务，要么用局域网里的 Ollama / llama.cpp / vLLM。App 不含任何模型权重。
-- **设备能力默认全关。** 读屏、点按、设备 shell 都是独立授权；要用更高身份（root / Shizuku）得设备本身支持，并去「设置 → 设备能力授权」里开。短信是单独一项，只读、只限当前 Android 用户。
-- **`modern36` 变体还没在真机上验完。** 想稳就用 `sideload28`。
-- **APK 大。** 约 136 MB，因为里面是一整个 Linux 用户态加 Node；这不是可以随手优化掉的东西。
-- **没有 release、没有商店版本。** 目前只能从 CI 产物取或自己编译。
+- 不做离线推理，不含模型权重。
+- 不替你挑扩展：生态里那一万多个，要你说一句让它装，或自己写。
+- 不 fork 引擎、不打补丁、不在中间加转换层。
+- 不压缩体积：APK 大，因为里面是一整个 Linux 用户态加 Node。
 
----
+## 技术细节
 
-## 装上
-
-从 **[最新 release](https://github.com/heikeyangle-code/pi-android/releases/latest)** 下载对应的 APK 直接安装（arm64，Android 8.0 / API 26 以上）：
-
-| 下载 | targetSdk | 什么时候用 |
-| :--- | :--- | :--- |
-| `…-sideload28-arm64.apk` | 28 | **默认选这个。** 用 Android 10 以前那套沙箱规则，系统权限最少，行为最可预期 |
-| `…-modern36-arm64.apk` | 36 | 面向新系统行为变更的版本，需要真机验证；只在 28 那个装不上或行为异常时才试 |
-
-两个包用同一套密钥签名，**可以互相覆盖安装，升级不丢数据**。
-
-想自己编译、或想拿 CI 的中间产物，见下面的[自己编译](#自己编译)。
-
-> [!NOTE]
-> 首次启动会解包约 64 MiB 的运行时（APK 本身约 136 MB，大部分是这部分），比之后每次启动慢。之后只在载荷真的变化时才重新解包。
-
----
-
-## 架构
+<details>
+<summary><b>架构</b>：引擎 · 协议 · 运行时 · 配置</summary>
 
 **引擎。** pi 以官方 npm 包的形式随 APK 分发，App 用 pi 自己的 `--mode rpc` 驱动它（JSONL over stdio），不 fork、不打补丁、不在中间做转换层。会话内核、工具、扩展加载器、provider 工厂全部是上游那一份。
 
@@ -242,9 +171,10 @@ pi 现在自带四个扩展，这个 App 直接可用：
 
 **配置。** 写下去的都是 pi 自己的配置文件——`models.json`、`auth.json`、`settings.json`、`mcp.json`。App 不另存凭证，也不自己维护一套模型名单：pi 怎么读，这里就怎么读。13 条 provider 预设里，10 条的 `baseUrl` 与 `api` 逐条照抄 pi 的 provider 工厂（填错会注册成功、第一条消息才失败，正是导入页要挡掉的那类错）。
 
----
+</details>
 
-## pi 升级
+<details>
+<summary><b>pi 升级</b>：只换版本号，三道检查兜底</summary>
 
 上游 pi 平均不到五天发一个版本，这个仓库的应对方式是：**不改引擎，只换版本号。**
 
@@ -258,9 +188,10 @@ pi 现在自带四个扩展，这个 App 直接可用：
 
 当前钉的是 **pi 1.1.0**。
 
----
+</details>
 
-## 自己编译
+<details>
+<summary><b>自己编译</b></summary>
 
 ```bash
 ./gradlew :rpc:test                    # 协议核心，不需要设备
@@ -279,6 +210,8 @@ bash tools/run-app-pure-checks.sh      # 纯逻辑 harness（不需要设备）
 ```
 
 `docs/` 下有更细的东西：[pi 契约](docs/pi-contract.md)、[RPC 覆盖](docs/rpc-coverage.md)、[界面规格](docs/pi-android-ui-spec.md)。
+
+</details>
 
 ---
 
