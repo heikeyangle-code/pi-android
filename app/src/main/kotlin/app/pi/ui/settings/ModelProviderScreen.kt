@@ -496,8 +496,7 @@ fun ModelProviderScreen(
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
-                                    "官方厂商（OpenAI、Anthropic、DeepSeek…）选好后粘贴 Key 就行；" +
-                                        "用中转站或本地模型，选「自定义」或「Ollama」，填上地址。",
+                                    "选一个厂商粘上 Key 就行；不在列表里的，用「自定义供应商」填地址和 Key。",
                                     modifier = Modifier.padding(top = 4.dp),
                                     style = PiTheme.text.meta,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1257,8 +1256,7 @@ private fun ImportSheet(
     val (configuredChoices, remainingChoices) = remember(shownChoices, configuredIds) {
         shownChoices.partition { it.id in configuredIds }
     }
-    // 中转站 / 本地模型是很多人真正会用的路，却埋在四十几个官方厂商里：单独成一组放在最前，
-    // 「自定义」一眼可见。
+    // 「自定义供应商」是很多人真正会用的路，却埋在四十几个厂商里：单独放在最前，一眼可见。
     val (selfHostedChoices, otherChoices) = remember(remainingChoices) {
         remainingChoices.partition { it.id in SELF_HOSTED_IDS }
     }
@@ -1334,7 +1332,7 @@ private fun ImportSheet(
                             }
                         }
                         if (selfHostedChoices.isNotEmpty()) {
-                            item(key = "h-selfhosted") { ImportGroupLabel("中转站 / 本地模型 · 填地址就能用") }
+                            item(key = "h-selfhosted") { ImportGroupLabel("自定义供应商") }
                             items(selfHostedChoices, key = { "s:" + it.id }) { option ->
                                 ProviderChoiceRow(
                                     option = option,
@@ -1354,7 +1352,7 @@ private fun ImportSheet(
                         }
                         if (otherChoices.isNotEmpty()) {
                             item(key = "h-others") {
-                                ImportGroupLabel("官方厂商 · ${otherChoices.size}（粘 Key 就行）")
+                                ImportGroupLabel("全部厂商 · ${otherChoices.size}")
                             }
                             items(otherChoices, key = { "o:" + it.id }) { option ->
                                 ProviderChoiceRow(
@@ -1810,8 +1808,8 @@ private fun ImportSheet(
     }
 }
 
-/** 没有固定官方地址、要自己填 Base URL 的几档。 */
-private val SELF_HOSTED_IDS = setOf("custom", "ollama", "llama.cpp")
+/** 要自己填 Base URL 的那一档：自定义供应商。 */
+private val SELF_HOSTED_IDS = setOf("custom")
 
 /** 三步进度条：每一步一段细条 + 序号标签；走过的与当前的染强调色，点已可达的步骤直接跳。 */
 @Composable
