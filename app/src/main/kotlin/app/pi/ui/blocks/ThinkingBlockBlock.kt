@@ -1,11 +1,24 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,7 +73,22 @@ fun ThinkingBlockBlock(
                 // take from spec §7.4 — the frozen board draws the stripe shorter than
                 // the line so it reads as a pen stroke beside the words rather than a
                 // band around them (`direction-b-v2.html:905`).
-                AccentStripe(pen, THINK_STRIPE_HEIGHT)
+                // 思考中：笔画轻轻呼吸，一眼看出「还在想」；结束后静止。
+                val pulse: State<Float>? = if (item.streaming) {
+                    rememberInfiniteTransition(label = "think-pulse").animateFloat(
+                        initialValue = 0.4f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                        label = "think-pulse-alpha",
+                    )
+                } else {
+                    null
+                }
+                AccentStripe(
+                    pen,
+                    THINK_STRIPE_HEIGHT,
+                    Modifier.graphicsLayer { alpha = pulse?.value ?: 1f },
+                )
                 Spacer(Modifier.width(THINK_ROW_GAP))
                 Text(
                     text = headline,
@@ -101,6 +129,14 @@ fun ThinkingBlockBlock(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                // 右侧小 ›，展开时转 90°：只负责告诉人「这一行能点」，状态仍由文字承担。
+                val turn by animateFloatAsState(if (expanded) 90f else 0f, label = "think-chevron")
+                Text(
+                    text = "›",
+                    modifier = Modifier.rotate(turn).padding(horizontal = THINK_ROW_GAP / 2),
+                    style = PiTheme.text.prose,
+                    color = palette.muted,
+                )
             }
             if (expanded) {
                 // One scope around the body: the thinking text is model prose like any
@@ -111,7 +147,18 @@ fun ThinkingBlockBlock(
                         text = item.text.ifEmpty { "（无思考内容）" },
                         // v2: `t14`, italic, in the tool-body grey, indented past the stripe
                         // (`paddingLeft:11`) and one 6 dp step below the headline row.
-                        modifier = Modifier.padding(start = THINK_BODY_INDENT, top = PiSpacing.gutter),
+                        modifier = Modifier
+                            // 展开后笔画沿正文一路向下：淡一档的同色竖线，和标题行的笔画
+                            // 连成一笔，一眼看出这段正文属于哪一次思考。
+                            .drawBehind {
+                                drawRoundRect(
+                                    color = pen.copy(alpha = 0.35f),
+                                    topLeft = Offset(0f, 0f),
+                                    size = Size(THINK_STRIPE_WIDTH.toPx(), size.height),
+                                    cornerRadius = CornerRadius(THINK_STRIPE_WIDTH.toPx() / 2f),
+                                )
+                            }
+                            .padding(start = THINK_BODY_INDENT, top = PiSpacing.gutter),
                         // 不再用斜体：系统字没有中文斜体，Android 会把汉字硬斜 12°，字形发虚；
                         // 思考与回答的区分已经由「小一号 + 淡色 + 左缩进」承担。
                         style = PiTheme.text.prose.let {
@@ -127,6 +174,9 @@ fun ThinkingBlockBlock(
 
 /** v2's `ThinkRow` stripe: `width:3,height:18`. */
 private val THINK_STRIPE_HEIGHT = 18.dp
+
+/** 展开后正文左侧竖线的宽度：和标题行的笔画同宽。 */
+private val THINK_STRIPE_WIDTH = PiSpacing.stripe
 
 /** v2's `ThinkRow` `gap:8` — between the stripe, the headline and the level word. */
 private val THINK_ROW_GAP = 8.dp

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -59,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -214,6 +216,8 @@ fun SessionsScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // 搜索框默认收起。收起时清掉查询 —— 否则列表会被一个看不见的过滤条件筛着。
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    // 点组标题折叠/展开那一组。搜索时不折叠（命中的行不能被藏起来）。
+    var collapsedGroups by remember { mutableStateOf(emptySet<String>()) }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
     // The host can ask for a different view *after* this screen is already composed
     // (a second `/tree` while the overlay is open): the overlay stays mounted across
@@ -593,9 +597,22 @@ fun SessionsScreen(
                         contentPadding = PaddingValues(bottom = SESSIONS_LIST_BOTTOM_RESERVE),
                     ) {
                         groups.forEach { (cwd, rows) ->
+                            val collapsed = cwd in collapsedGroups && query.isBlank()
                             item(key = "hdr:$cwd") {
-                                GroupHeading(groupLabel(cwd, workspacesRoot, workspaceLabels), rows.size)
+                                GroupHeading(
+                                    label = groupLabel(cwd, workspacesRoot, workspaceLabels),
+                                    count = rows.size,
+                                    collapsed = collapsed,
+                                    onToggle = {
+                                        collapsedGroups = if (cwd in collapsedGroups) {
+                                            collapsedGroups - cwd
+                                        } else {
+                                            collapsedGroups + cwd
+                                        }
+                                    },
+                                )
                             }
+                            if (collapsed) return@forEach
                             // 组内的行共用一张**卡片**（v2 的 `Card`：`surf-low` 底、圆角
                             // 10、`margin:0 14px`，行之间才有分隔线，且那条线在卡内再缩进
                             // 14）。旧实现是每行一条通栏横线、没有卡，一屏看下来就是一片
@@ -940,10 +957,11 @@ private val SESSIONS_ROW_PROP_GAP = 8.dp
  * （[groupLabel]）。
  */
 @Composable
-private fun GroupHeading(label: String, count: Int) {
+private fun GroupHeading(label: String, count: Int, collapsed: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onToggle)
             .padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
@@ -964,6 +982,14 @@ private fun GroupHeading(label: String, count: Int) {
         Text(
             "$count",
             style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+        )
+        Spacer(Modifier.weight(1f))
+        // 小箭头：展开朝下，折叠朝右。
+        Text(
+            "›",
+            modifier = Modifier.rotate(if (collapsed) 0f else 90f),
+            style = PiTheme.text.prose,
             color = PiTheme.palette.muted,
         )
     }
@@ -1183,7 +1209,9 @@ private fun relativeTime(epochMillis: Long): String {
         minutes < 60 -> "${minutes}分钟前"
         minutes < 60 * 24 -> "${minutes / 60}小时前"
         minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}天前"
-        else -> "${minutes / (60 * 24 * 7)}周前"
+        minutes < 60 * 24 * 30 -> "${minutes / (60 * 24 * 7)}周前"
+        minutes < 60 * 24 * 365 -> "${minutes / (60 * 24 * 30)}个月前"
+        else -> "${minutes / (60 * 24 * 365)}年前"
     }
 }
 
