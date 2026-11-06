@@ -315,7 +315,7 @@ fun SessionsScreen(
                 if (byName) list.sortedBy { it.displayName.lowercase() } else list
             }
         // 当前工作区的那一组永远排第一：换了工作区，它就顶到最前面；新会话还没落盘时
-        // 它还没有任何一行，就先放一个空组（下面画一行「新会话」占位），等文件出现再换成真行。
+        // 它还没有任何一行，就先放一个空组：只有组标题，没有占位行，等文件出现再长出真行。
         fun isCurrent(cwd: String, rows: List<PiSessionStore.Summary>) =
             cwd.trimEnd('/') in currentCwds || (activeFile != null && rows.any { it.file.name == activeFile })
         val grouped = visible
@@ -643,10 +643,6 @@ fun SessionsScreen(
                                 )
                             }
                             if (collapsed) return@forEach
-                            if (rows.isEmpty()) {
-                                item(key = "empty:$cwd") { NewSessionPlaceholder() }
-                                return@forEach
-                            }
                             // 组内的行共用一张**卡片**（v2 的 `Card`：`surf-low` 底、圆角
                             // 10、`margin:0 14px`，行之间才有分隔线，且那条线在卡内再缩进
                             // 14）。旧实现是每行一条通栏横线、没有卡，一屏看下来就是一片
@@ -1187,50 +1183,6 @@ private fun SessionRow(
                 }
             }
         }
-    }
-}
-
-/**
- * 当前工作区还没有任何会话文件时的占位行：pi 要等发出第一条消息才写文件，在那之前
- * 这个工作区在列表里没有行，用户会以为「切过去了却没反应」。占位行按「当前会话」的样子画
- * （底色 + 左侧竖条），文件一出现就被真行替换。
- */
-@Composable
-private fun NewSessionPlaceholder() {
-    val accent = MaterialTheme.colorScheme.primary
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal)
-            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .background(PiTheme.palette.selectedBg.copy(alpha = 0.35f))
-            .drawBehind {
-                val inset = PiSpacing.cardPadding.toPx()
-                val width = PiSpacing.stripe.toPx()
-                drawRoundRect(
-                    color = accent,
-                    topLeft = Offset(0f, inset),
-                    size = Size(width, (size.height - inset * 2).coerceAtLeast(0f)),
-                    cornerRadius = CornerRadius(width / 2f),
-                )
-            }
-            .padding(
-                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
-            ),
-    ) {
-        Text(
-            "新会话",
-            style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            "发出第一条消息后，会话出现在这里。",
-            modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
