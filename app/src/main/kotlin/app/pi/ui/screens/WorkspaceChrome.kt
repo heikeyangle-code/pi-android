@@ -436,12 +436,12 @@ internal fun WsErrBlock(
                 horizontal = PiSettingsMetrics.pageHorizontal,
                 vertical = PiSettingsMetrics.notePaddingVertical,
             )
-            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+            .clip(RoundedCornerShape(WsShape.medium))
             .background(palette.toolErrorBg)
             .border(
                 PiSettingsMetrics.hairline,
                 palette.error.copy(alpha = 0.45f),
-                RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                RoundedCornerShape(WsShape.medium),
             )
             // 竖条要**撑满整块**（稿子 `:1052-1054` 的 `display:flex` + `width:3` 让那条
             // flex 子项拉伸到内容高度）。原来给它一个固定的 78dp，展开「详情」之后错误块
@@ -527,7 +527,7 @@ internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit
     Text(
         label,
         modifier = Modifier
-            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+            .clip(RoundedCornerShape(WsShape.medium))
             .clickable(onClick = onClick)
             .padding(horizontal = 2.dp, vertical = 2.dp),
         // 稿子的动作是 `t13 c-accent`（`workspace-final.html:1063-1068`）。同 `WsNotice`
@@ -536,6 +536,15 @@ internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit
         style = PiTheme.text.meta,
         color = tone ?: PiTheme.palette.accent,
     )
+}
+
+/**
+ * 工作区这一屏只用三档圆角：小 8（图标底、按压高亮、小按钮）、中 12（卡片、输入框、
+ * 菜单、提示条、点击区）、胶囊（芯片与主按钮）。新写的东西从这里取，不再各写各的数字。
+ */
+internal object WsShape {
+    val small = 8.dp
+    val medium = 12.dp
 }
 
 // ------------------------------------------------------------------ 行 ----
@@ -590,7 +599,7 @@ internal fun WsRow(
             Box(
                 modifier = Modifier
                     .size(leadSize)
-                    .clip(PiShapes.tag)
+                    .clip(RoundedCornerShape(WsShape.small))
                     .background(leadBackground ?: MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
@@ -681,7 +690,7 @@ internal fun WsMoreButton(onClick: () -> Unit) {
     Box(
         Modifier
             .size(40.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(WsShape.medium))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -753,7 +762,7 @@ internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Un
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-        shape = RoundedCornerShape(PiSettingsMetrics.cardRadius),
+        shape = RoundedCornerShape(WsShape.medium),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column { content() }
@@ -784,7 +793,7 @@ internal fun WsCardSlice(
     hairlineStart: Dp = PiSettingsMetrics.rowPaddingHorizontal,
     content: @Composable () -> Unit,
 ) {
-    val radius = PiSettingsMetrics.cardRadius
+    val radius = WsShape.medium
     Surface(
         modifier = modifier
             .fillMaxWidth()

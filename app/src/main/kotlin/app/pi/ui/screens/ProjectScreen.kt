@@ -802,7 +802,7 @@ fun ProjectScreen(
                                 Text(
                                     "来源按优先级排 ⓘ",
                                     modifier = Modifier
-                                        .clip(PiShapes.tag)
+                                        .clip(RoundedCornerShape(WsShape.small))
                                         .clickable { sourceNoteOpen = !sourceNoteOpen }
                                         .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                                     style = PiTheme.text.meta,
@@ -1043,7 +1043,7 @@ fun ProjectScreen(
                                         Box {
                                             Row(
                                                 modifier = Modifier
-                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clip(RoundedCornerShape(WsShape.small))
                                                     .clickable { sortMenu = true }
                                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -1076,7 +1076,7 @@ fun ProjectScreen(
                                         Box(
                                             Modifier
                                                 .size(40.dp)
-                                                .clip(RoundedCornerShape(12.dp))
+                                                .clip(RoundedCornerShape(WsShape.medium))
                                                 .clickable {
                                                     filterOpen = !filterOpen
                                                     if (!filterOpen) filterText = ""
@@ -2329,7 +2329,7 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
                 vertical = 6.dp,
             )
             .height(44.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(WsShape.medium))
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .padding(start = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2624,7 +2624,7 @@ private fun ResourceRow(
                 Text(
                     "复制名字",
                     modifier = Modifier
-                        .clip(PiShapes.tag)
+                        .clip(RoundedCornerShape(WsShape.small))
                         .clickable(onClick = onUse)
                         .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                     style = PiTheme.text.meta,
@@ -3188,7 +3188,7 @@ private fun WorkspaceNameDialog(
 
 /** 名字输入框：从 38 抬到 48（38 在手机上又矮又难戳），左右留 12 的内边距。 */
 private val NAME_FIELD_HEIGHT = 58.dp
-private val NAME_FIELD_RADIUS = 12.dp
+private val NAME_FIELD_RADIUS = WsShape.medium
 private val NAME_FIELD_PADDING = 16.dp
 
 // ================================================================ Snackbar

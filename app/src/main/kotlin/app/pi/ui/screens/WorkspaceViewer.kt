@@ -513,7 +513,7 @@ private fun ViewerTopBar(
             Box(
                 Modifier
                     .size(PiSpacing.topBarHeight)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(WsShape.medium))
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1059,12 +1059,12 @@ private fun EditorBody(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                    .clip(RoundedCornerShape(WsShape.medium))
                     .background(MaterialTheme.colorScheme.surfaceContainerLow)
                     .border(
                         PiSettingsMetrics.hairline,
                         PiTheme.palette.borderAccent,
-                        RoundedCornerShape(PiSettingsMetrics.cardRadius),
+                        RoundedCornerShape(WsShape.medium),
                     )
                     .padding(PiSettingsMetrics.cardPadding),
             ) {
