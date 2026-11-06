@@ -525,12 +525,21 @@ fun ProjectScreen(
      * 显示名（label），而那正是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
      * 搬进它是两个决定，`WorkspaceStore.create` 的 KDoc 把这条写死了。
      */
-    fun createNewWorkspace() {
+    fun createNewWorkspace(label: String = "") {
         scope.launch {
-            when (val result = withContext(Dispatchers.IO) { session.createWorkspace() }) {
+            when (val result = withContext(Dispatchers.IO) {
+                val created = session.createWorkspace()
+                // 起了名就顺手写上显示名（失败不影响建好的目录，名字之后还能在 ⋮ 里改）。
+                if (created is WorkspaceStore.Create.Ok && label.isNotBlank()) {
+                    session.renameWorkspace(created.entry.name, label.trim())
+                }
+                created
+            }) {
                 is WorkspaceStore.Create.Ok -> {
-                    say("已新建工作区 · ${result.entry.displayName}")
+                    say("已新建工作区 · ${label.trim().ifEmpty { result.entry.displayName }}")
                     refreshTick++
+                    // 新建不自动切过去（那是另一个决定）；把切换面板重新打开，新工作区就在眼前、一点即到。
+                    rootSheet = true
                 }
                 is WorkspaceStore.Create.Failed -> say(result.message, StateTone.Warning)
             }
@@ -1328,7 +1337,14 @@ fun ProjectScreen(
             },
             onNew = {
                 rootSheet = false
-                createNewWorkspace()
+                inputDialog = WorkspaceInputDialog(
+                    kind = WorkspaceInputKind.NewWorkspace,
+                    title = "新建工作区",
+                    where = "App 私有目录",
+                    relativeParent = null,
+                    absoluteParent = null,
+                    initial = "",
+                )
             },
             onPickExternal = {
                 rootSheet = false
@@ -1561,7 +1577,9 @@ fun ProjectScreen(
                 // 工作区显示名不是文件名：它可以是带空格的一句话，`nameProblem` 那套规矩
                 // （不许 `/`、不许 `..`、不许为空…）在这里不适用，交给 `renameWorkspace`
                 // 裁决 —— 它的 `Failed.message` 就是给人看的那句话。
-                val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace) {
+                val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace ||
+                    dialog.kind == WorkspaceInputKind.NewWorkspace
+                ) {
                     null
                 } else {
                     WorkspaceFiles.nameProblem(typed)
@@ -1601,6 +1619,8 @@ fun ProjectScreen(
                         WorkspaceInputKind.RenameWorkspace -> dialog.workspaceName?.let { target ->
                             renameWorkspaceTo(target, typed)
                         }
+
+                        WorkspaceInputKind.NewWorkspace -> createNewWorkspace(typed)
                     }
                 } else {
                     say(problem, StateTone.Warning)
@@ -3009,7 +3029,7 @@ private fun NewChoice(
 
 // ================================================================ 浮层：名字输入
 
-private enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace }
+private enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace, NewWorkspace }
 
 /** 新建文件 / 新建文件夹 / 重命名 / 重命名工作区共用的一支输入框（稿子就是这么复用的）。 */
 private data class WorkspaceInputDialog(
@@ -3060,6 +3080,8 @@ private fun WorkspaceNameDialog(
         val problem = when (dialog.kind) {
             // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
             WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
+            // 新建工作区：名字可以不填（用默认的 workspace-N）。
+            WorkspaceInputKind.NewWorkspace -> null
             else -> WorkspaceFiles.nameProblem(name) ?: run {
                 // 同名在输入时就说，而不是提交后才报「已存在」。重命名成自己原来的名字不算冲突
                 // （按「确定」会因没有变化而什么也不做）。
@@ -3074,7 +3096,7 @@ private fun WorkspaceNameDialog(
                 }
             }
         }
-        val canSubmit = trimmed.isNotEmpty() && problem == null
+        val canSubmit = (trimmed.isNotEmpty() || dialog.kind == WorkspaceInputKind.NewWorkspace) && problem == null
         val showProblem = problem != null && name.isNotEmpty()
         Box(
             Modifier
@@ -3122,6 +3144,7 @@ private fun WorkspaceNameDialog(
                                     WorkspaceInputKind.NewDir -> "文件夹名"
                                     WorkspaceInputKind.Rename -> "新名字"
                                     WorkspaceInputKind.RenameWorkspace -> "显示名"
+                                    WorkspaceInputKind.NewWorkspace -> "给它起个名字（可不填）"
                                 },
                                 style = PiTheme.text.mono.copy(fontSize = 17.sp),
                                 color = PiTheme.palette.muted,
@@ -3142,6 +3165,7 @@ private fun WorkspaceNameDialog(
                     // 显示名（label）与目录名是两回事：改它不移动目录，所以 pi 的会话记录与
                     // 项目信任（都挂在目录路径上）一条都不会丢 —— 这是 `WorkspaceStore.rename`
                     // 特意选的做法，输入框旁边得把这件事说出来。
+                    WorkspaceInputKind.NewWorkspace -> "建在 App 私有目录里，不需要授权；建好后可以在列表里一点切过去。"
                     WorkspaceInputKind.RenameWorkspace -> "只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。"
                     else -> "建在当前目录下。"
                 }
