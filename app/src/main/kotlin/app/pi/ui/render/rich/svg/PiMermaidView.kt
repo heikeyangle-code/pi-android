@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.Box
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -261,15 +263,29 @@ fun PiMermaidView(
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_MERMAID_FALLBACK_ASPECT
-                // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
-                // 这样不需要 `BoxWithConstraints`。
+                // 画布高度在这里一次算死：宽 ÷ 宽高比，夹进 [最小, 最大]。以前是
+                // `heightIn + fillMaxWidth + aspectRatio` 三个约束互相较劲，高度被夹住时
+                // 画布比图矮，图的位置和卡片边线就对不上。
+                BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
+                    // 上限跟着屏幕走（屏高的 70%，不低于固定上限）：竖长的流程图以前被固定的
+                    // 460dp 压成窄窄一条，字小得看不清；现在在大屏上能画得更高。
+                    val heightCap = maxOf(
+                        PI_MERMAID_MAX_IMAGE_HEIGHT,
+                        (configuration.screenHeightDp * 0.7f).dp,
+                    )
+                    val canvasHeight = (maxWidth / aspect.coerceIn(0.05f, 60f))
+                        .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
                 Canvas(
                     modifier = Modifier
-                        .padding(horizontal = 8.dp, vertical = 8.dp)
-                        .heightIn(min = PI_MERMAID_MIN_IMAGE_HEIGHT, max = PI_MERMAID_MAX_IMAGE_HEIGHT)
                         .fillMaxWidth()
-                        .aspectRatio(aspect.coerceIn(0.05f, 60f))
-                        .clipToBounds()
+                        .height(canvasHeight)
+                        // 画布自己是一层**离屏图层**：图画在这块缓冲里，超出画布边界的部分根本
+                        // 不会被合成到卡片上。以前只有 `clipRect`——`Picture` 回放在部分机型的
+                        // 硬件画布上不守当前裁剪，放大的图会盖住卡片标题、画到边线外面。
+                        .graphicsLayer {
+                            clip = true
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
                         .pointerInput(image) {
                             piMermaidTransformGestures(
                                 image = image,
@@ -306,6 +322,7 @@ fun PiMermaidView(
                         native.drawPicture(image.picture)
                         native.restore()
                     }
+                }
                 }
             } else if (draw == PiMermaidDraw.Rendering && pinned != true) {
                 // 已问管线、还没回答：固定高度的占位，而不是先摊一整块源码再缩成图 —— 后者让行高
