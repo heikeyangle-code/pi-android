@@ -1462,11 +1462,11 @@ private val PiFieldShape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadiu
 
 /** 单行框 `padding:0 12px`；多行框 / 列表框 `padding:10px 12px`。 */
 private val PiFieldPaddingSingleLine = PaddingValues(horizontal = 12.dp)
-private val PiFieldPaddingBlock = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+internal val PiFieldPaddingBlock = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
 
 /** 数字框 `height:44`；文本多行框 `minHeight:80`。 */
-private val PiNumberFieldHeight = 44.dp
-private val PiTextFieldMinHeight = 80.dp
+internal val PiNumberFieldHeight = 44.dp
+internal val PiTextFieldMinHeight = 80.dp
 
 /**
  * 多行文本框最多显示多少行，超出部分由框自己滚（见 `PiEditorField` 的 `maxLines`）。

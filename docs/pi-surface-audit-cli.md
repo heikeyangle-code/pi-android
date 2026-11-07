@@ -90,6 +90,10 @@ grep -o '"--[a-z-]*"' <pkg>/dist/cli/args.js | sort -u
    **裁定：不新增 MCP 相关的任何东西。** 事实是：MCP 的**运行时**一直是好的 —— 读 `mcp.json`、连服务器、
    注册并在会话里调用 `mcp__<server>__<tool>`；pi 只是把**管理**做成了 CLI 子命令。
    App 不提供 MCP 管理界面，配置走 `mcp.json`（文件屏可改）。详见 §13 的对应行。
+   **【2026-11-08 改判】用户明确要求 App 里做 MCP 管理（「我啥操作也不会」），此条「不做」作废：**
+   设置首页新增「MCP 服务器」（`McpServersScreen` + 纯逻辑 `PiMcpConfig`），写的仍是 pi 自己的
+   `mcp.json`，语义逐条照 `docs/mcp.md`；运行时依旧不动，只是把 `pi mcp add/remove`、`/mcp` 的启用/暴露
+   这几件事做成表单。仍不做的：OAuth 登录流程本身（pi 在无终端的 RPC 下没有界面，走终端 `pi mcp login`）。
 2. **`--no-tools`（连扩展工具一起关）—— 裁定：不做。** `defaultTools: []` 关的是**内置**工具，
    扩展工具因 `includeAllExtensionTools: true` 仍在，而"连扩展工具一起关"没有实际使用场景。详见 §13。
 3. **`--no-mcp`（一次运行关掉内置 MCP 扩展）—— 裁定：不做。** 理由同上一条的裁定：**MCP 一律不动，

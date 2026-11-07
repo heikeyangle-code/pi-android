@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -114,6 +115,12 @@ fun SettingsHome(
     freshness: Int = 0,
     /** 「其他」这一屏的入口；`null` 时整张卡不画（预览与测试用）。 */
     onOpenOther: (() -> Unit)? = null,
+    /**
+     * 「MCP 服务器」（[McpServersScreen]）：pi 的 `mcp.json` 的点选式编辑器。与「模型与供应商」
+     * 同类 —— 都是这台设备上 pi 配置文件的编辑器而不是 pi 的某个设置键，所以紧跟在它下面。
+     * `null` 隐藏入口（预览与测试用）。
+     */
+    onOpenMcp: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 退路用的自托管状态。放在早退之前，所以两个分支都走同一份 remember。
@@ -152,6 +159,18 @@ fun SettingsHome(
                             supporting = "厂商、模型、凭证与导入——官方配置文件的编辑器",
                             onClick = onOpenModels,
                             leadingIcon = Icons.Filled.Timeline,
+                        )
+                    }
+                }
+            }
+            if (onOpenMcp != null) {
+                item {
+                    PiSettingsCard {
+                        PiSettingsEntryRow(
+                            title = "MCP 服务器",
+                            supporting = "给 pi 接外部工具：开关、添加、编辑，不用手写配置",
+                            onClick = onOpenMcp,
+                            leadingIcon = Icons.Filled.Build,
                         )
                     }
                 }

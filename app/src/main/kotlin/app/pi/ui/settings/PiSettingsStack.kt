@@ -201,6 +201,9 @@ fun PiSettingsStack(
     // 返回语义与 `rememberSaveable` 都归这里（自托管那条退路只在没有宿主时用，见
     // `SettingsHome` 的 `onOpenPiFiles`）。
     var piFiles by rememberSaveable { mutableStateOf(false) }
+    // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器，与「模型与供应商」
+    // 同类，是这个栈里的一个层级，返回语义与状态恢复和别的层级一致。
+    var mcp by rememberSaveable { mutableStateOf(false) }
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -529,6 +532,8 @@ fun PiSettingsStack(
         // 上一级目录**、到根才是 `onBack()`；这一支是它不在组合里时的兜底。
         if (piFiles) {
             piFiles = false
+        } else if (mcp) {
+            mcp = false
         } else if (licenses) {
             licenses = false
         } else if (diagnostics) {
@@ -570,6 +575,15 @@ fun PiSettingsStack(
             piFiles -> PiFilesScreen(
                 contentPadding = contentPadding,
                 onBack = { piFiles = false },
+            )
+
+            mcp -> McpServersScreen(
+                contentPadding = contentPadding,
+                onBack = { mcp = false },
+                userFile = File(paths.agentDir, "mcp.json"),
+                projectFile = File(PiProjectConfig.root(workspace), "mcp.json"),
+                onRestartEngine = { restartPrompt = true },
+                onFilesWritten = onExternalSettingsWrite,
             )
 
             licenses -> LicensesScreen(
@@ -718,6 +732,7 @@ fun PiSettingsStack(
                 // 语义与状态恢复与上面几页完全一致；`SettingsHome` 只是把点击转上来。
                 onOpenPiFiles = { piFiles = true },
                 onOpenOther = { other = true },
+                onOpenMcp = { mcp = true },
             )
         }
     }
@@ -788,6 +803,7 @@ private val SETTINGS_WATCHED = listOf(
     "auth.json",
     "models-store.json",
     "trust.json",
+    "mcp.json",
     "SYSTEM.md",
     "APPEND_SYSTEM.md",
     "extensions",

@@ -289,6 +289,13 @@ run_harness pi-package-update \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt"
 
+# app.pi.packages: pi 的 mcp.json 编辑（`PiMcpConfig`）—— 校验规则、保留未知键、损坏文件不覆盖、
+# 项目覆盖、令牌/OAuth 互斥、从别的客户端导入的转换。Android/Compose-free。
+run_harness pi-mcp-config \
+  app.pi.packages.PiMcpConfigCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiMcpConfigCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiMcpConfig.kt"
+
 # app.pi.bridge: the A3 guest→host candidate order. Pure string arithmetic, no
 # Android and no filesystem — see the file header.
 run_harness guest-paths \

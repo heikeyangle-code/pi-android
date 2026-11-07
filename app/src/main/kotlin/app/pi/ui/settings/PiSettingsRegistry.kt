@@ -651,8 +651,10 @@ object PiSettingsCatalog {
         ),
         PiSetting(
             key = "compaction.reserveTokens",
-            title = "保留 token",
-            description = "为回复预留 token；0 = 无余量。",
+            title = "压缩触发余量",
+            description = "剩余上下文低于它就自动压缩；0 = 用到上限才压缩。",
+            editorNote = "pi 1.5.0 起它只决定「什么时候开始压缩」；做摘要时的输出长度用模型自己的输出上限，" +
+                "必要时自动缩短以保证输入加输出放得进上下文，不再由这个数决定。",
             kind = PiRowKind.Number,
             group = G_COMPACTION,
             section = "压缩",
