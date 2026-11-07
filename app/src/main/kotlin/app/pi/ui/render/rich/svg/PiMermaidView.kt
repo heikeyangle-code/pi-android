@@ -180,7 +180,7 @@ fun PiMermaidView(
                 ?: if (settled) PiMermaidDraw.Rendering else PiMermaidDraw.Streaming,
         )
     }
-    var scale by remember(source) { mutableStateOf(PI_MERMAID_MIN_ZOOM) }
+    var scale by remember(source) { mutableStateOf(PI_MERMAID_FIT_ZOOM) }
     var offset by remember(source) { mutableStateOf(Offset.Zero) }
 
     Box(modifier.fillMaxWidth()) {
@@ -246,7 +246,7 @@ fun PiMermaidView(
                 if (image != null) {
                     add(
                         PiCardMenuItem("适应屏幕") {
-                            scale = PI_MERMAID_MIN_ZOOM
+                            scale = PI_MERMAID_FIT_ZOOM
                             offset = Offset.Zero
                         },
                     )
@@ -434,7 +434,15 @@ private fun piMermaidDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiM
     } catch (error: Exception) {
         return PiMermaidDraw.Unavailable("SVG 解析失败：${error.message ?: error::class.java.simpleName}")
     }
-    PiSvgFit.fill(svg, result.widthPx, result.heightPx, margin = 16f)
+    // 留白随图大小走：量字宽的字体（WebView）和最终画字的字体（AndroidSVG）不同，大图的
+    // 偏差绝对值更大，固定 16 单位在大图上不够，右/下边缘的节点会被视口直接裁掉。
+    val rawBox = try { svg.documentViewBox } catch (_: Exception) { null }
+    val margin = if (rawBox != null && rawBox.width() > 0f && rawBox.height() > 0f) {
+        maxOf(16f, maxOf(rawBox.width(), rawBox.height()) * 0.06f)
+    } else {
+        24f
+    }
+    PiSvgFit.fill(svg, result.widthPx, result.heightPx, margin = margin)
 
     val aspect = piMermaidAspect(svg, result)
     // Base viewport: the block's own width, bounded. Recording larger than the
@@ -529,7 +537,7 @@ private suspend fun PointerInputScope.piMermaidTransformGestures(
             if (zoomChange.isFinite() && zoomChange > 0f && zoomChange != 1f) {
                 nextScale = (scale * zoomChange).coerceIn(PI_MERMAID_MIN_ZOOM, PI_MERMAID_MAX_ZOOM)
             }
-            val panAllowed = panChange != Offset.Zero && (nextScale > PI_MERMAID_MIN_ZOOM)
+            val panAllowed = panChange != Offset.Zero && (nextScale > PI_MERMAID_FIT_ZOOM)
             if (nextScale != scale || panAllowed) {
                 val viewWidth = size.width.toFloat()
                 val viewHeight = size.height.toFloat()
@@ -718,7 +726,10 @@ private const val PI_MERMAID_MIN_WIDTH_PX = 240
 /** Unbounded parent (horizontal scroller): lay out at a phone width rather than fail. */
 private val PI_MERMAID_FALLBACK_WIDTH = 360.dp
 
-private const val PI_MERMAID_MIN_ZOOM = 1f
+// 允许缩到 0.5×：图在默认视图里被裁/偏大时，用户能自己缩小看全，而不是卡死在 1×。
+private const val PI_MERMAID_MIN_ZOOM = 0.5f
+// 「适应屏幕」的缩放值；平移只在大于它时才吃手势，保证 1× 时列表照常滚动。
+private const val PI_MERMAID_FIT_ZOOM = 1f
 private const val PI_MERMAID_MAX_ZOOM = 8f
 
 private val PI_MERMAID_MIN_IMAGE_HEIGHT = 120.dp
