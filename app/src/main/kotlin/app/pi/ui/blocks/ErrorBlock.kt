@@ -1,6 +1,7 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -45,93 +46,74 @@ fun ErrorBlock(
     var expanded by rememberSaveable { mutableStateOf(false) }
     val detail = item.detail
 
+    // 紧凑版：一行标题（✗ 出错了 … 展开）+ 最多三行正文，不再有一行空的「展开」条。
+    // 点卡片任何位置都能展开/收起（pi 的规则：内容区就是开关）；没有更多可看时不画「展开」。
+    val expandable = !detail.isNullOrBlank() || item.message.length > ERROR_PREVIEW_CHARS ||
+        item.message.count { it == '\n' } >= ERROR_PREVIEW_LINES
     BlockColumn(modifier) {
         BlockCard(
             color = palette.toolErrorBg,
+            padding = PaddingValues(horizontal = PiSpacing.cardPadding, vertical = PiSpacing.inline),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // F28: unified onto the titled-card stripe height. The 36dp this
-                // used matched no spec row and no pi value (pi draws no stripe at
-                // all), while the three other titled cards drew 20dp.
-                AccentStripe(palette.error, PiSpacing.accentStripe)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "✗",
-                            style = PiTheme.text.mono,
-                            color = palette.error,
-                            maxLines = 1,
-                        )
-                        Spacer(Modifier.width(PiSpacing.gutter))
-                        Text(
-                            text = "出错了",
-                            style = PiTheme.text.meta,
-                            color = palette.error,
-                            maxLines = 1,
-                        )
-                    }
-                    Spacer(Modifier.height(PiSpacing.tiny))
-                    // The header above already says 出错了, so an empty message is left
-                    // out rather than repeated: pi prints the sentence it was given, and
-                    // nothing when there is none.
-                    //
-                    // `error`, because every error **sentence** pi prints carries that token and
-                    // none of them uses the body colour: the assistant-side error is
-                    // `theme.fg("error", `Error: ${errorMsg}`)`
-                    // (`components/assistant-message.js:153`), and the same token paints pi's
-                    // three chat-level error texts (`interactive-mode.js:2232`, `:2795`, `:3522`)
-                    // as well as the tool renderers' own error branches
-                    // (`renderers/edit.js:67`, `write.js:122`). This sentence used to be the one
-                    // error text in the app painted `text`.
-                    if (item.message.isNotBlank()) {
+            ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }, enabled = expandable) {
+                Row(verticalAlignment = Alignment.Top) {
+                    // 红条只跟标题行一样高，不再伸到正文底下。
+                    AccentStripe(palette.error, PiSpacing.accentStripe)
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "✗",
+                                style = PiTheme.text.mono,
+                                color = palette.error,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.width(PiSpacing.gutter))
+                            Text(
+                                text = "出错了",
+                                style = PiTheme.text.meta,
+                                color = palette.error,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            if (expandable) {
+                                // 展开提示放在标题行右端，颜色是卡片自己的 error。
+                                Text(
+                                    text = if (expanded) "收起" else "展开",
+                                    style = PiTheme.text.meta,
+                                    color = palette.error,
+                                )
+                            }
+                        }
                         // 标题与红条已经说明这是错误；整段报错正文再染成红色，长报错
                         // 读起来很累。正文用工具卡的正文色，错误色只留给标题和红条。
-                        ProseText(
-                            text = item.message,
-                            color = palette.bodyOnTool,
-                        )
+                        if (item.message.isNotBlank()) {
+                            ProseText(
+                                text = item.message,
+                                modifier = Modifier.padding(top = PiSpacing.tiny),
+                                color = palette.bodyOnTool,
+                                maxLines = if (expanded) Int.MAX_VALUE else ERROR_PREVIEW_LINES,
+                            )
+                        }
+                        if (expanded && !detail.isNullOrBlank()) {
+                            MonoText(
+                                text = detail,
+                                // F13 (`docs/rendering-review.md`): raw error detail is body
+                                // text on a tool-error surface, so it takes the variant that
+                                // clears §9's 4.5:1 floor.
+                                color = palette.bodyOnTool,
+                                modifier = Modifier.padding(top = PiSpacing.gutter),
+                            )
+                        }
                     }
                 }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!detail.isNullOrBlank()) {
-                    Row(
-                        // F28: the content region toggles (pi's rule); this row is
-                        // inside the card's region, so the tap still means the same
-                        // thing wherever on the card it lands.
-                        modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (expanded) "收起" else "展开",
-                            style = MaterialTheme.typography.labelMedium,
-                            // v2 paints the error card's disclosure in the card's own
-                            // colour (`c-err`), not in the accent: the label belongs to
-                            // the state it reveals.
-                            color = palette.error,
-                        )
-                        Spacer(Modifier.width(PiSpacing.small))
-                        ExpandLabel(expanded, expandText = "", collapseText = "", color = palette.error)
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                // F19 (`docs/rendering-review.md`): the 重试 button lived behind an
-                // `onRetry` no host ever passed — the app has no retry action (spec
-                // §7.4/§4.9 still ask for one; that is new UI, recorded in the
-                // review's F19 row), so the parameter and the button are gone rather
-                // than showing a control that does nothing.
-            }
-            if (expanded && !detail.isNullOrBlank()) {
-                MonoText(
-                    text = detail,
-                    // F13 (`docs/rendering-review.md`): raw error detail is body
-                    // text on a tool-error surface, so it takes the variant that
-                    // clears §9's 4.5:1 floor.
-                    color = palette.bodyOnTool,
-                    modifier = Modifier.padding(top = PiSpacing.tiny),
-                )
             }
         }
     }
 }
+
+/** 折叠时最多显示几行正文。 */
+private const val ERROR_PREVIEW_LINES = 3
+
+/** 超过这么多字（即使没有换行）也认为折叠态看不全，给「展开」。 */
+private const val ERROR_PREVIEW_CHARS = 140

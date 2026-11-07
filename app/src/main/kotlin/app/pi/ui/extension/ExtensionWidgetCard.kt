@@ -150,16 +150,28 @@ fun ExtensionWidgetStack(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         caption?.let { text ->
-                            Text(
-                                text = text,
-                                style = PiTheme.text.monoSmall,
-                                color = PiTheme.palette.dim,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            // 展开提示并进标题行右端：以前它单独占底下一整行，像一句多余的话。
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = text,
+                                    modifier = Modifier.weight(1f),
+                                    style = PiTheme.text.monoSmall,
+                                    color = PiTheme.palette.dim,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (hint) {
+                                    Text(
+                                        text = if (expanded.value) "收起" else "展开",
+                                        style = PiTheme.text.monoSmall,
+                                        color = PiTheme.palette.dim,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
                         }
                         rows.forEach { row -> WidgetRowView(row, expanded.value) }
-                        if (hint) {
+                        if (hint && caption == null) {
                             // v2's 提示条 shape (`· 前缀 + 文本`, 12–13): a dim sentence rather
                             // than a button, because the whole card is the hit target.
                             Text(

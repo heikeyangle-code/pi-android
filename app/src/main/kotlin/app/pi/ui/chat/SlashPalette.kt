@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -17,6 +17,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiShapes
@@ -73,7 +79,15 @@ fun SlashPalette(
         LazyColumn(
             modifier = Modifier.heightIn(max = 260.dp).padding(vertical = 4.dp),
         ) {
-            items(matches, key = { it.source.name + ":" + it.name }) { command ->
+            itemsIndexed(matches, key = { _, it -> it.source.name + ":" + it.name }) { index, command ->
+                // 行与行之间一条两头留白的发丝线：几十条命令挤在一起时，靠它分出「一条」。
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
+                        thickness = PiSpacing.hairlineThin,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
                 SlashPaletteRow(command, onClick = { onPick(command) })
             }
         }
@@ -86,13 +100,25 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = PiSpacing.inline),
+        // 来源徽标对齐第一行（命令名那一行），描述折成两行时它不再漂在中间。
+        verticalAlignment = Alignment.Top,
     ) {
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // 斜杠退一档（强调色、淡），名字用正文色加粗：一眼先读到「是哪条命令」，
+                // 而不是先读到一排整齐的 `/`。
+                val invocation = command.invocation
+                val slash = invocation.startsWith("/")
                 Text(
-                    command.invocation,
+                    text = buildAnnotatedString {
+                        if (slash) {
+                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))) { append("/") }
+                        }
+                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                            append(if (slash) invocation.drop(1) else invocation)
+                        }
+                    },
                     style = PiTheme.text.mono,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -122,7 +148,7 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
             }
         }
         Spacer(Modifier.width(10.dp))
-        SourceBadge(command)
+        Box(Modifier.padding(top = PiSpacing.tiny)) { SourceBadge(command) }
     }
 }
 
