@@ -5244,6 +5244,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             fail("找不到会话文件：${summary.file.name}")
             return
         }
+        // 认领工作区用的「代」号：每点一次会话 +1，认领跑完发现号变了就丢弃。
+        // 以前拿 `meta.sessionFile` 与我们自己拼的 guest 路径做字符串相等判断，pi 报回来的路径
+        // 拼法只要有一点不同（符号链接、`//`、挂载点前缀），认领就会**静默**放弃 ——
+        // 用户看到的就是「点了别的工作区的对话，芯片不跟着变」。
+        val generation = ++sessionOpenGeneration
         call("切换会话") { api ->
             // The file is known here and nowhere else on this path: pi's `get_state`
             // only reports it after the switch has been answered, and waiting for
@@ -5267,7 +5272,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`）——也就是说引擎
             // 已经在那段会话的工作区里干活了，而工作区芯片、终端、`@` 补全、包命令还停在
             // 原来的工作区：两个真相。这里把 App 那一半对齐，**不重启引擎**（pi 已经切好）。
-            viewModelScope.launch { adoptSessionWorkspace(summary) }
+            viewModelScope.launch { adoptSessionWorkspace(summary, generation) }
         }
     }
 
@@ -5290,7 +5295,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
      * 宁可保持现状，也不要猜一个工作区。
      */
-    private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary) {
+    private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary, generation: Long) {
         // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
         //
         // `Summary.cwd` 本来就是**从会话文件头里读出来的**（`PiSessionStore` 的第 622/744 行
@@ -5306,14 +5311,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 过期的认领会把工作区改回上一段会话的那个 —— 芯片指错，文件/终端跟着错。
         // 以"引擎现在打开的是哪一段"为准判一次：`meta.sessionFile` 已经是另一段就丢弃。
         // 它还没到（`get_state` 在路上）时为 null，按"可能是这一段"处理。
-        val guestPath = guestSessionPath(summary.file) ?: return
-        val open = _state.value.meta.sessionFile
-        if (open != null && open != guestPath) return
+        if (generation != sessionOpenGeneration) return
         if (_state.value.workspace.name == name) return
         val app = getApplication<Application>()
         // `existing` 同时校验「这个名字现在真的是一个工作区目录」；拿不到就越过。
         val entry = withContext(Dispatchers.IO) { WorkspaceStore.existing(app, name) } ?: return
+        if (generation != sessionOpenGeneration) return
+        val before = _state.value.workspace.name
         val saved = withContext(Dispatchers.IO) { WorkspaceStore.setCurrent(app, name) }
+        if (generation != sessionOpenGeneration) {
+            // 写盘期间用户又点了别的会话：不发布（免得芯片闪到一个马上要变走的工作区），
+            // 并把刚写的设置退回去 —— 新一次点击若映射到的正是 `before`，它会因「已是当前」
+            // 而提前返回，设置里就会留着这一次的中间值。
+            withContext(Dispatchers.IO) { WorkspaceStore.setCurrent(app, before) }
+            return
+        }
         rebuildWorkspaceScopedCaches()
         publishWorkspaceState(name, note = null, bumped = true)
         refreshPrefs()
@@ -6385,6 +6397,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * pi disagree about where sessions live — better to refuse than to hand pi a
      * path it will fail to open.
      */
+    @Volatile private var sessionOpenGeneration = 0L
+
     private fun guestSessionPath(file: File): String? {
         val sessionsRoot = File(host.paths().agentDir, "sessions").absolutePath
         val path = file.absolutePath

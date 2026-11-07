@@ -144,13 +144,21 @@ class GuestCommand(private val layout: AgentLayout) {
         cwd: String = layout.guestWorkspace,
         timeoutMs: Long = INSTALL_TIMEOUT_MS,
         extraEnv: Map<String, String> = emptyMap(),
+        /**
+         * 子进程每吐出一块 stdout/stderr 就同步回调一次（在读管道的线程上，不在调用线程）。
+         *
+         * 为什么需要：`pi mcp login` 在打印授权网址之后**一直等**浏览器回调，调用方要在命令
+         * 还没结束时就拿到那个网址去打开浏览器；一次性的 [Outcome] 只有结束后才有。其余调用方
+         * 不传，行为与之前完全一致。proroot→proot 重试时回调会再收到一遍重试进程的输出。
+         */
+        onOutput: ((String) -> Unit)? = null,
     ): Outcome {
         val selection = RuntimeSelection.of(layout.paths)
         val binds = bindList()
         val env = ENV + agentDirEnv() + extraEnv
         val storage = Environment.getExternalStorageDirectory()
         val plan = selection.plan(guestCommand, cwd, storage, binds, env)
-        val first = execute(plan, guestCommand, timeoutMs)
+        val first = execute(plan, guestCommand, timeoutMs, onOutput)
         val failure = first.failure
         if (plan.usingProroot && failure != null) {
             // Layer ②: count it, then run the same command on proot so the user's
@@ -159,7 +167,7 @@ class GuestCommand(private val layout: AgentLayout) {
             // and could pick proroot again for a command that just failed on it.
             selection.recordProrootFailure(failure)
             val retryPlan = selection.plan(guestCommand, cwd, storage, binds, env, allowProroot = false)
-            val second = execute(retryPlan, guestCommand, timeoutMs)
+            val second = execute(retryPlan, guestCommand, timeoutMs, onOutput)
             // The retry plan's own notes are deliberately *not* included: it is
             // built with `allowProroot = false`, whose reason is "the install/maintenance
             // path", and that would be a lie about why this run is on proot. The
@@ -186,6 +194,7 @@ class GuestCommand(private val layout: AgentLayout) {
         plan: RuntimeSelection.Plan,
         guestCommand: String,
         timeoutMs: Long,
+        onOutput: ((String) -> Unit)? = null,
     ): Attempt {
         // Armed **before** the process starts: the handle identifies this launch by
         // the config table that appears after this moment, which is the only pid the
@@ -231,8 +240,8 @@ class GuestCommand(private val layout: AgentLayout) {
         // facts for whoever reads the outcome; both are reported.
         val outOverflow = AtomicBoolean(false)
         val errOverflow = AtomicBoolean(false)
-        val outThread = pump(process.inputStream, out, outOverflow)
-        val errThread = pump(process.errorStream, err, errOverflow)
+        val outThread = pump(process.inputStream, out, outOverflow, onOutput)
+        val errThread = pump(process.errorStream, err, errOverflow, onOutput)
 
         // The launcher's pid, from its own config table plus this launch's token. Null
         // when it never appeared; see [ProrootLaunchHandle] for why nothing is guessed
@@ -350,7 +359,12 @@ class GuestCommand(private val layout: AgentLayout) {
      * says so: a silent truncation would let the UI present a partial npm log as the
      * whole one.
      */
-    private fun pump(stream: InputStream, into: StringBuilder, overflow: AtomicBoolean): Thread {
+    private fun pump(
+        stream: InputStream,
+        into: StringBuilder,
+        overflow: AtomicBoolean,
+        listener: ((String) -> Unit)? = null,
+    ): Thread {
         val thread = Thread {
             runCatching {
                 stream.bufferedReader().use { reader ->
@@ -358,6 +372,7 @@ class GuestCommand(private val layout: AgentLayout) {
                     while (true) {
                         val read = reader.read(buffer)
                         if (read < 0) break
+                        if (listener != null) runCatching { listener(String(buffer, 0, read)) }
                         synchronized(into) {
                             if (into.length >= MAX_STREAM_CHARS) {
                                 overflow.set(true)

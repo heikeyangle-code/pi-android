@@ -650,3 +650,40 @@ class PiMcpFile(val file: File) {
         val COUNTER = AtomicLong()
     }
 }
+
+/**
+ * `pi mcp login` / `logout` 的输出解析（纯字符串，不碰进程）。
+ *
+ * pi 在非 TTY 下（我们就是）登录时打印
+ * `Sign in to MCP server "<name>" in your browser:\n<授权网址>`，然后一直等浏览器回调到它自己
+ * 监听的 `127.0.0.1:<端口>/callback`；成功打印 `Signed in to MCP server "<name>" (N tools).`，
+ * 已登录则 `Already signed in to MCP server ...`（`dist/extensions/mcp/cli.js` 的 `login`）。
+ * 这些句子是引擎的实现细节，所以这里只**认**它们、不依赖它们：认不出网址就把原输出交给用户。
+ */
+object PiMcpLoginText {
+    private val URL = Regex("""https?://[^\s"'<>]+""")
+
+    /** 输出里的授权网址：「in your browser:」之后的第一个 http(s) 地址；没有标记就取第一个。 */
+    fun authorizationUrl(output: String): String? {
+        val marker = output.indexOf("in your browser:")
+        val tail = if (marker >= 0) output.substring(marker) else output
+        return URL.find(tail)?.value?.trimEnd('.', ',', ')')
+    }
+
+    /** 已经登录过（pi 直接连上了，不需要浏览器）。 */
+    fun alreadySignedIn(output: String): Boolean = output.contains("Already signed in to MCP server")
+
+    /** 成功行（含 `Already signed in`）。 */
+    fun signedIn(output: String): Boolean =
+        alreadySignedIn(output) || output.contains("Signed in to MCP server")
+
+    /** 失败时给用户看的一句：优先 pi 自己的 `Sign-in … failed/cancelled`，否则最后一行非空输出。 */
+    fun failureLine(output: String): String? {
+        val lines = output.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        return lines.lastOrNull { it.startsWith("Sign-in to MCP server") || it.contains("failed to connect") }
+            ?: lines.lastOrNull()
+    }
+}
+
+/** 服务器名能不能安全地交给 shell（pi 自己限定为字母/数字/_/-；这里再挡一次）。 */
+fun isSafeMcpServerName(name: String): Boolean = name.isNotEmpty() && name.all { it.isLetterOrDigit() && it.code < 128 || it == '_' || it == '-' }

@@ -208,7 +208,7 @@ fun SettingsHome(
                     PiSettingsCard {
                         PiSettingsEntryRow(
                             title = "其他",
-                            supporting = "终端、Pi 文件、设备能力、扩展包与信任、安全与隐私、开源许可",
+                            supporting = "终端、Pi 文件、设备能力、安全与隐私、开源许可",
                             onClick = onOpenOther,
                             leadingIcon = Icons.Filled.MoreVert,
                         )

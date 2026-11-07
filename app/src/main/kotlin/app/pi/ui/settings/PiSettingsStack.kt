@@ -654,10 +654,9 @@ fun PiSettingsStack(
                     other = false
                     deviceCapabilities = true
                 },
-                onOpenPackages = {
-                    other = false
-                    packages = true
-                },
+                // 扩展包与项目信任的入口只留在「扩展与资源」那一组里（`packages` 行）：
+                // 以前这里再放一个同名入口，用户就有两处在管同一件事。
+                onOpenPackages = null,
                 onOpenSecurity = {
                     other = false
                     groupId = "security"

@@ -78,6 +78,7 @@ import app.pi.runtime.PtyLauncher
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.ui.BashRun
+import app.pi.ui.NavRequest
 import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
@@ -755,9 +756,22 @@ fun ProjectScreen(
                         item {
                             WsNotice(
                                 text = "项目未受信任：pi 不会加载这个项目里的 .pi 资源。" +
-                                    "要改就去「设置 → 扩展包与项目信任」。",
+                                    "要改就去「设置 → 扩展与资源 → 扩展包与项目信任」。",
                                 tone = StateTone.Warning,
                                 glyph = "!",
+                            )
+                        }
+                    }
+                    item {
+                        // 这一段只负责「看」：逐条资源、来源、状态。装包、筛选、信任、启动参数
+                        // 都在设置里的同一处，这里给一个直达入口，免得用户在三个页面里找管理入口。
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "管理扩展包与信任",
+                                meta = "安装、更新、筛选、项目信任、扩展启动参数",
+                                onClick = {
+                                    session.requestNav(NavRequest.SettingsFocus("packages"))
+                                },
                             )
                         }
                     }

@@ -26,7 +26,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import app.pi.packages.AgentLayout
+import app.pi.packages.GuestCommand
+import app.pi.packages.PiMcpLogin
+import app.pi.runtime.PtyLauncher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,8 +60,8 @@ import java.io.File
  * 本项目页还能给**全局**服务器写一条只含 `enabled` 的覆盖 —— 「只在这个项目里关掉它」。
  *
  * 服务器是在**会话开始时**连接的（文档：改完要新会话或 `/reload`），所以保存之后这一屏给出
- * 「重启引擎」入口，而不是假装改动已经生效。需要 OAuth 登录的网址服务器，登录这一步 pi 在 RPC
- * 下没有界面，这里不负责。
+ * 「重启引擎」入口，而不是假装改动已经生效。需要 OAuth 登录的网址服务器：编辑页里的「登录」会在 guest 里
+ * 跑 pi 自己的 `pi mcp login`，把授权网址交给浏览器（[PiMcpLogin]）；OAuth 本身一行都不是 App 写的。
  *
  * @param userFile `<agentDir>/mcp.json`
  * @param projectFile `<工作区>/.pi/mcp.json`
@@ -68,6 +78,16 @@ internal fun McpServersScreen(
     onRestartEngine: () -> Unit,
     onFilesWritten: () -> Unit,
 ) {
+    // 登录 / 退出登录：跑 pi 自己的 `pi mcp login|logout`（见 [PiMcpLogin]）。
+    val context = LocalContext.current
+    val hostWorkspace = PtyLauncher.workspaceHost(context)
+    val mcpLogin = remember(context, hostWorkspace.absolutePath) {
+        val layout = AgentLayout(context = context.applicationContext, hostWorkspace = hostWorkspace)
+        PiMcpLogin(layout, GuestCommand(layout))
+    }
+    val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
+    var loginUi by remember { mutableStateOf<LoginUi?>(null) }
     val userStore = remember(userFile) { PiMcpFile(userFile) }
     val projectStore = remember(projectFile) { PiMcpFile(projectFile) }
     // 每次写盘后 +1：文件不是快照状态，靠这个让界面重读（与 `PiSettingsStack.writeEpoch` 同理）。
@@ -200,14 +220,6 @@ internal fun McpServersScreen(
                     )
                 }
             }
-            if (userDoc.servers.any { it.kind == PiMcpConfig.Kind.Http }) {
-                item {
-                    PiInfoNote(
-                        "需要登录（OAuth）的网址服务器：到「其他 → 终端」里运行 pi mcp login 服务器名，登录一次即可；" +
-                            "凭证由 pi 保存在 mcp-auth.json。已有访问令牌的不需要。",
-                    )
-                }
-            }
             if (project) {
                 // 全局服务器在这个项目里的开关：写一条只含 enabled 的覆盖。
                 val inherited = userDoc.servers.filter { global ->
@@ -272,6 +284,36 @@ internal fun McpServersScreen(
         )
     }
 
+    loginUi?.let { ui ->
+        val waiting = ui.phase == LoginUi.Phase.Waiting
+        PiSettingsDialog(
+            onDismissRequest = { if (!waiting) loginUi = null },
+            title = when (ui.kind) {
+                LoginUi.Kind.Login -> "登录「${ui.server}」"
+                LoginUi.Kind.Logout -> "退出登录「${ui.server}」"
+            },
+            body = when (ui.phase) {
+                LoginUi.Phase.Waiting -> if (ui.url == null) {
+                    "正在连接服务器…"
+                } else {
+                    "已在浏览器里打开授权页，授权后回到这里即可，最长等 3 分钟。\n\n${ui.url}"
+                }
+                LoginUi.Phase.Done -> ui.message
+                LoginUi.Phase.Failed -> ui.message
+            },
+            confirmationLabel = when {
+                waiting && ui.url != null -> "再打开一次"
+                waiting -> null
+                else -> "知道了"
+            },
+            onConfirm = {
+                if (waiting) ui.url?.let { uriHandler.openUri(it) } else loginUi = null
+            },
+            dismissalLabel = if (waiting) "不等了" else null,
+            onDismissButton = { loginUi = null },
+        )
+    }
+
     if (importing) {
         McpImportSheet(
             onDismiss = { importing = false },
@@ -306,6 +348,39 @@ internal fun McpServersScreen(
                 write { PiMcpConfig.upsert(it, current.oldName, draft.name.trim(), config) }
                 editing = null
             },
+            onLogin = current.oldName?.takeIf { current.draft.http }?.let { name ->
+                {
+                    editing = null
+                    loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, "")
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            mcpLogin.login(name) { url ->
+                                loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, url, "")
+                                scope.launch { runCatching { uriHandler.openUri(url) } }
+                            }
+                        }
+                        loginUi = when (result) {
+                            is PiMcpLogin.Result.Ok -> LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Done, null,
+                                if (result.alreadySignedIn) "已经是登录状态，无需再登录。" else "登录成功。新会话里就能用它的工具了。")
+                            is PiMcpLogin.Result.Failed -> LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Failed, null, result.message)
+                        }
+                        if (result is PiMcpLogin.Result.Ok) pendingRestart = true
+                    }
+                }
+            },
+            onLogout = current.oldName?.takeIf { current.draft.http }?.let { name ->
+                {
+                    editing = null
+                    loginUi = LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Waiting, null, "")
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { mcpLogin.logout(name) }
+                        loginUi = when (result) {
+                            is PiMcpLogin.Result.Ok -> LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Done, null, result.message)
+                            is PiMcpLogin.Result.Failed -> LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Failed, null, result.message)
+                        }
+                    }
+                }
+            },
             onDelete = current.oldName?.let { name ->
                 {
                     write { PiMcpConfig.remove(it, name) }
@@ -317,6 +392,17 @@ internal fun McpServersScreen(
 }
 
 private data class Editing(val oldName: String?, val draft: PiMcpConfig.Draft)
+
+private data class LoginUi(
+    val kind: Kind,
+    val server: String,
+    val phase: Phase,
+    val url: String?,
+    val message: String,
+) {
+    enum class Kind { Login, Logout }
+    enum class Phase { Waiting, Done, Failed }
+}
 
 /** 一行：名字 + 一行小字（命令或网址 · 暴露方式）+ 开关；点行进编辑。 */
 @Composable
@@ -441,6 +527,8 @@ private fun McpEditSheet(
     otherNames: List<String>,
     onDismiss: () -> Unit,
     onSave: (PiMcpConfig.Draft) -> Unit,
+    onLogin: (() -> Unit)?,
+    onLogout: (() -> Unit)?,
     onDelete: (() -> Unit)?,
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
@@ -597,6 +685,18 @@ private fun McpEditSheet(
                 minHeight = PiTextFieldMinHeight,
                 contentPadding = PiFieldPaddingBlock,
             )
+            if (onLogin != null && onLogout != null) {
+                Text(
+                    "登录（OAuth）：服务器需要账号授权时点这里，会在浏览器里完成；已填访问令牌的不需要。" +
+                        "登录用的是已保存的配置，改了网址请先保存。",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
+                    PiSettingsChip(text = "登录 / 重新登录", active = true, onClick = onLogin)
+                    PiSettingsChip(text = "退出登录", onClick = onLogout)
+                }
+            }
             if (showProblem && problem != null) {
                 Text(problem, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error)
             }
