@@ -2473,7 +2473,25 @@ private fun WorkspacePathBar(
         // 工作区之外的路径、别的目录都够不着。走出工作区之后，药丸后面就是整条
         // 「根 › workspace › … 」，每一段都能点。
         if (crumbs.isNotEmpty()) {
-            PathBarIconButton(Icons.Filled.ArrowUpward, "上一级目录", onUp)
+            // 点一下展开「所有上层目录」：最近的在最上面，一直到根，点哪个直接跳到哪个——
+            // 原来的面包屑一整条都能点，现在工作区里它收成一个按钮，换成这个菜单，
+            // 够得着最顶层，也不用一层层连点。
+            var upMenu by remember { mutableStateOf(false) }
+            Box {
+                PathBarIconButton(Icons.Filled.ArrowUpward, "上层目录", { upMenu = true })
+                if (upMenu) PiMenu(
+                    expanded = true,
+                    onDismiss = { upMenu = false },
+                    placement = PiMenuPlacement.Below,
+                    items = (crumbs.size - 1 downTo 0).map { keep ->
+                        val label = if (keep == 0) rootLabel else crumbs[keep - 1]
+                        PiMenuItem(if (keep == crumbs.size - 1) "$label（上一级）" else label) {
+                            upMenu = false
+                            onGo(keep)
+                        }
+                    },
+                )
+            }
         }
         // 不在工作区根上（进了子目录，或浏览到工作区之外）才出现：一键回到工作区根。
         if (!(inside && crumbs.size == homeSize)) {
