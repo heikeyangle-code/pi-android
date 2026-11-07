@@ -73,13 +73,7 @@ fun SkillInvocationBlock(
             // the header row is not a separate hit target.
             ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
-                    Spacer(Modifier.width(PiSpacing.inner))
-                    Text(
-                        text = "技能",
-                        style = PiTheme.text.monoSmall,
-                        color = palette.customMessageLabel,
-                    )
+                    CardChip(text = "技能", color = palette.customMessageLabel)
                     Spacer(Modifier.width(PiSpacing.inline))
                     Text(
                         text = "/skill:" + item.skillName.ifEmpty { "未知技能" },

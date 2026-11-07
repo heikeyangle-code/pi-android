@@ -85,17 +85,17 @@ fun CompactionBlock(
             modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
-                Spacer(Modifier.width(PiSpacing.inner))
-                Text(
+                // 失败用错误色、中止用警告色：状态一眼看出，不必读字。
+                CardChip(
                     text = label,
-                    // The custom card's label slot is the machine face — `06 §3` 构件 9
-                    //「左 3px customLabel 条 + **等宽标签**」, which is the rule the other three
-                    // cards' labels already follow (`BranchSummaryBlock.kt`, `SkillInvocationBlock.kt`,
-                    // `HookMessageBlock.kt`). pi's own label is `customMessageLabel` + bold.
-                    style = PiTheme.text.monoSmall,
-                    color = palette.customMessageLabel,
+                    color = when (item.status) {
+                        CompactionMarker.Status.Failed -> palette.error
+                        CompactionMarker.Status.Aborted -> palette.warning
+                        else -> palette.customMessageLabel
+                    },
                 )
+                Spacer(Modifier.weight(1f))
+                if (item.summary.isNotEmpty()) ExpandLabel(expanded)
             }
             if (caption.isNotEmpty()) {
                 Text(

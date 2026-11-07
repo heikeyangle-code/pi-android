@@ -52,16 +52,12 @@ fun HookMessageBlock(
                 enabled = collapsible,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
-                    Spacer(Modifier.width(PiSpacing.inner))
-                    Text(
+                    CardChip(
                         text = item.customType.ifEmpty { "extension" },
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.monoSmall,
                         color = palette.customMessageLabel,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    Spacer(Modifier.weight(1f))
                     if (collapsible) ExpandLabel(expanded)
                 }
                 if (expanded || !collapsible) {

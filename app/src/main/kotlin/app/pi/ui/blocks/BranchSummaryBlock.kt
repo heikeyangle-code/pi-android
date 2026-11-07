@@ -64,23 +64,9 @@ fun BranchSummaryBlock(
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
-                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "分支摘要",
-                        // The custom card's label slot is the machine face, which is what makes
-                        // this card family read as one thing: `06 §3` 构件 9 says the 自定义消息卡
-                        // （分支摘要 / 技能 / 扩展条目共用）carries a 「左 3px customLabel 条 + **等宽
-                        // 标签**」, and v2's `CustomHead` renders that label `mono t12` for both of
-                        // the Chinese ones it draws (`direction-b-v2.html:943-951`, used at
-                        // `:2601` 「分支摘要」 and `:2622` 「技能」). The two siblings already did
-                        // this — `SkillInvocationBlock.kt:78` and `HookMessageBlock.kt:57` both use
-                        // `monoSmall`. `labelLarge` was the only UI-face label in the family, so
-                        // the same slot had two voices depending on which card you looked at.
-                        style = PiTheme.text.monoSmall,
-                        color = palette.customMessageLabel,
-                    )
+                    // 身份药丸取代细竖条（见 [CardChip]）；药丸占一行，下面是那句解释。
+                    CardChip(text = "分支摘要", color = palette.customMessageLabel)
                     // 一句话说清这张卡是什么 —— 用户的原话是「不知道那是干啥的」，而且把它和
                     // 「分叉」记混了（「那分叉分支啊，有时候都搞不清」）。两句都是真话，且都有 pi
                     // 的依据：这张卡由 `branchWithSummary` 在**离开一条分支**时写下

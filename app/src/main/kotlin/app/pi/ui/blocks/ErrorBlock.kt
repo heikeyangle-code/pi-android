@@ -78,11 +78,7 @@ fun ErrorBlock(
                             Spacer(Modifier.weight(1f))
                             if (expandable) {
                                 // 展开提示放在标题行右端，颜色是卡片自己的 error。
-                                Text(
-                                    text = if (expanded) "收起" else "展开",
-                                    style = PiTheme.text.meta,
-                                    color = palette.error,
-                                )
+                                ExpandLabel(expanded, color = palette.error)
                             }
                         }
                         // 标题与红条已经说明这是错误；整段报错正文再染成红色，长报错

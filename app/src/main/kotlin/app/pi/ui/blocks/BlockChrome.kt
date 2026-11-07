@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import app.pi.ui.theme.PiProseFamily
+import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.time.Instant
@@ -356,6 +357,28 @@ internal fun AccentStripe(
  *
  * @param color the label and chevron colour; `muted` by default, as v2 draws it.
  */
+/**
+ * 标题小药丸：一张「消息类」卡（扩展消息 / 技能 / 压缩 / 分支摘要）的身份。
+ *
+ * 以前这四张卡都是「竖条 + 一行等宽小字」，竖条在卡左边缘细细一道，和工具卡、思考卡的
+ * 竖条混在一起，一眼分不出「这是哪一类」。现在身份写进一枚淡底药丸里（同色 16% 底 +
+ * 同色字），和文字内容一起被读到；竖条留给真正需要拉警觉的卡（错误、警告）。
+ */
+@Composable
+internal fun CardChip(text: String, color: Color, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        modifier = modifier
+            .clip(PiShapes.badge)
+            .background(color.copy(alpha = 0.16f))
+            .padding(horizontal = PiSpacing.inline, vertical = PiSpacing.tiny),
+        style = PiTheme.text.monoSmall,
+        color = color,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
 @Composable
 internal fun ExpandLabel(
     expanded: Boolean,
