@@ -90,7 +90,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -1648,6 +1648,91 @@ function settingsSchemaPaths(text) {
 	return { topLevel, paths };
 }
 
+/**
+ * **Values**, not just keys: the registry's default, enum options and minimum for every
+ * pi-owned row against the pinned engine's `SETTINGS_DEFAULTS` and `SettingsSchema`.
+ *
+ * `checkAppTables` pins that a key *exists*. A row can keep existing while its default
+ * drifts (pi changes `retry.maxRetries` 3 → 5 and the row still says 3, so "reset to
+ * default" writes the old number and the user's "default" differs from what pi does with
+ * no key at all) or while pi adds an enum member the row never offers. Both are silent in
+ * the same way a renamed key is. The reader takes `key = "…"`, `defaultValue =`, `min =`
+ * and `PiOption("value"` out of each `PiSetting(` block.
+ */
+async function checkSettingsValues(piDir) {
+	const core = join(piDir, "dist", "core");
+	const { SETTINGS_DEFAULTS } = await import(pathToFileURL(join(core, "settings-defaults.js")).href);
+	const { SettingsSchema } = await import(pathToFileURL(join(core, "settings-schema.js")).href);
+	const flatten = (node, path, out) => {
+		if (node && node.type === "object" && node.properties) {
+			for (const [key, child] of Object.entries(node.properties)) flatten(child, path ? `${path}.${key}` : key, out);
+		} else out[path] = node;
+		return out;
+	};
+	const schema = flatten(SettingsSchema, "", {});
+	const defaults = flatten({ type: "object", properties: Object.fromEntries(Object.entries(SETTINGS_DEFAULTS).map(([k, v]) => [k, toNode(v)])) }, "", {});
+	function toNode(value) {
+		if (value && typeof value === "object" && !Array.isArray(value)) {
+			return { type: "object", properties: Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toNode(v)])) };
+		}
+		return { value };
+	}
+	const text = readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt"), "utf8");
+	const rows = [];
+	for (let at = text.indexOf("PiSetting(\n"); at >= 0; at = text.indexOf("PiSetting(\n", at + 1)) {
+		let depth = 1;
+		let end = at + "PiSetting(".length;
+		while (depth > 0 && end < text.length) {
+			if (text[end] === "(") depth++;
+			else if (text[end] === ")") depth--;
+			end++;
+		}
+		const block = text.slice(at, end);
+		const key = /key = "([^"]+)"/.exec(block)?.[1];
+		if (!key || key.startsWith("app.")) continue;
+		rows.push({
+			key,
+			default: /defaultValue = ([^\n,]+)/.exec(block)?.[1] ?? null,
+			min: /\bmin = ([^\n,]+)/.exec(block)?.[1] ?? null,
+			options: [...block.matchAll(/PiOption\(\s*"([^"]*)"/g)].map((m) => m[1]),
+		});
+	}
+	check("the value reader still finds the registry's pi-owned rows (>= 35)", rows.length >= 35, `read ${rows.length}`);
+	// The registry spells defaults through three helpers: `bool(false)`, `str("x")`, `num(3)`.
+	const unwrap = (v) => String(v).replace(/^\s*(?:bool|str|num|int|JsonPrimitive)\((.*)\)\s*$/, "$1");
+	const norm = (v) => unwrap(v).toLowerCase().replace(/_/g, "").replace(/"/g, "").trim();
+	for (const row of rows) {
+		const piDefault = defaults[row.key]?.value;
+		if (piDefault !== undefined && row.default !== null) {
+			check(
+				`default of ${row.key} matches the engine (${JSON.stringify(piDefault)})`,
+				norm(row.default) === norm(piDefault),
+				`ui/settings/PiSettingsRegistry.kt says ${row.default}; pinned SETTINGS_DEFAULTS says ${JSON.stringify(piDefault)}. ` +
+					`Update the row (and anything that reads it as "what pi does with the key absent").`,
+			);
+		}
+		const node = schema[row.key];
+		const members = node?.enum ?? (node?.anyOf?.every((a) => a.const !== undefined) ? node.anyOf.map((a) => a.const) : null);
+		if (members && row.options.length > 0) {
+			const missing = members.filter((m) => !row.options.includes(String(m)));
+			const extra = row.options.filter((o) => !members.map(String).includes(o));
+			check(
+				`options of ${row.key} are exactly pi's enum`,
+				missing.length === 0 && extra.length === 0,
+				`row offers [${row.options.join(", ")}], pi accepts [${members.join(", ")}] ` +
+					`(missing: ${missing.join(", ") || "-"}; not accepted by pi: ${extra.join(", ") || "-"}).`,
+			);
+		}
+		if (node?.minimum !== undefined && row.min !== null) {
+			check(
+				`minimum of ${row.key} is not below pi's (${node.minimum})`,
+				Number(row.min.replace(/_/g, "")) >= node.minimum,
+				`row min ${row.min} < pi's minimum ${node.minimum}: the editor would accept a value pi's schema rejects.`,
+			);
+		}
+	}
+}
+
 function checkAppTables(piDir) {
 	const read = (file) => readFileSync(join(ROOT, file), "utf8");
 	const engine = (file) => readFileSync(join(piDir, "dist", file), "utf8");
@@ -2169,6 +2254,7 @@ if (runs("theme")) {
 if (runs("tables")) {
 	console.log("\n--- app transcription tables ---");
 	checkAppTables(piDir);
+	await checkSettingsValues(piDir);
 }
 if (runs("tooltext")) {
 	console.log("\n--- tool-result text ---");
