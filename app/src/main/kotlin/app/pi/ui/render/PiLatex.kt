@@ -1264,7 +1264,10 @@ internal object PiLatex {
                 } else {
                     bracket.trim()
                 }
-                val rendered = if (body.isEmpty()) null else displayRendered(body)
+                // pi 1.5.0（`markdown.js` 的 `containsTableStart`，上游 #11159）：显示数学**不跨表格**。
+                // 一个没闭合的 `$$` / `\[` 会和后面的开栏配成对、把中间整张表吞进公式里；pi 现在
+                // 在 body 里看到表头 + 分隔行就整段不当公式，原文照排。App 同样让这一段保持原样。
+                val rendered = if (body.isEmpty() || containsTableStart(body)) null else displayRendered(body)
                 // **只有渲染结果本身是多行**才算网格：`$$x^2$$` 画出来是一行，独占一段
                 // 的 `\n` 包裹是 App 的形状、不是网格（见 prepare 的注释）。
                 if (rendered != null && rendered.contains('\n')) grid[0] = true
@@ -1318,6 +1321,23 @@ internal object PiLatex {
     }
 
     /**
+     * pi 1.5.0 的 `containsTableStart(source)`：有没有「表头行 + 分隔行」。分隔行形如 `|---|---|` 或
+     * `| --- |`；表头与分隔行至少一行带 `|`（两行都不带 `|` 的 `---` 是分隔线，不是表）。
+     */
+    private fun containsTableStart(source: String): Boolean {
+        val lines = source.split('\n')
+        for (index in 0 until lines.size - 1) {
+            val delimiterRow = lines[index + 1]
+            if ((delimiterRow.contains('|') || lines[index].contains('|')) &&
+                TABLE_DELIMITER_ROW.matches(delimiterRow)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
      * 这个位置是不是"行首（允许 ≤3 个空格/制表符）"。
      *
      * 与 pi 的 `tokenizeBlockLatex` 的 `^ {0,3}` 同义，用在行内那一趟里把行首的
@@ -1333,6 +1353,10 @@ internal object PiLatex {
         }
         return back == 0 || text[back - 1] == '\n'
     }
+
+    /** pi 1.5.0 `TABLE_DELIMITER_ROW_REGEX`（`markdown.js`），逐字移植。 */
+    private val TABLE_DELIMITER_ROW =
+        Regex("""^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$""")
 
     /**
      * 块级 Math 的两条分支**共用一次替换**，与 pi 的 block tokenizer 同序：

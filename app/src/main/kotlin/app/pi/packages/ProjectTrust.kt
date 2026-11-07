@@ -194,6 +194,13 @@ object ProjectTrust {
             return Resolution(it, Rationale.CliOverride, if (it) null else skipNote(inputs.cwd, Rationale.CliOverride))
         }
         if (!inputs.hasTrustRequiringResources) {
+            // pi 1.5.0（`core/project-trust.js:23`：`trustStore.get(cwd) ?? true`）：没有需要信任的
+            // 资源时，**已保存的决定优先**；只有没存过才自动信任。1.3.0 是无条件 true，于是只有
+            // `AGENTS.md` 的目录里保存的「不信任」被无视，`ctx.isProjectTrusted()` 与包命令照样当
+            // 受信任项目处理 —— 1.5.0 修了这一点，App 的裁决必须跟着，否则这里说「已信任」而引擎说「不信任」。
+            inputs.savedDecision?.let {
+                return Resolution(it, Rationale.SavedDecision, if (it) null else skipNote(inputs.cwd, Rationale.SavedDecision))
+            }
             return Resolution(true, Rationale.NoTrustRequiringResources, null)
         }
         inputs.savedDecision?.let {

@@ -174,7 +174,7 @@ def verify_engine_payload_versions() -> None:
 #   lru-cache   BlueOak-1.0.0
 #   minimatch   BlueOak-1.0.0  (ships its own LICENSE.md, so no entry here)
 NPM_LICENCE_FILES = [
-    ("0BSD.txt", "tslib", "2.8.1", "LICENSE.txt"),
+    ("0BSD.txt", "tslib", "2.9.1", "LICENSE.txt"),
     ("BlueOak-1.0.0.txt", "lru-cache", "11.4.0", "LICENSE.md"),
 ]
 
@@ -322,6 +322,15 @@ PROROOT_FILES = [
 # `verify_engine_payload_versions()` also reads the shipped payload, so a *stale
 # archive* cannot be described with a current label.
 #
+# 1.3.0 → 1.5.0: `@earendil-works/pi-schema` joined (tool-argument validation; it ships
+# `LICENSES/typebox-LICENSE` like `pi-mcp`, so it is not one of the packages below),
+# `@isaacs/nonrecursive-glob-match` and `marked-cjk-friendly` joined (both ship a licence
+# file), `minimatch` 10.2.6 → 11.0.3, `tslib` 2.8.1 → 2.9.1, and the three hand-copied
+# `@aws-sdk/*` versions moved to 3.972.84 / 3.972.89 / 3.998.1. **Not regenerated in the
+# sandbox that made this edit** (no network route to the artifacts this script reads):
+# run `node tools/fetch-runtime.mjs && python3 tools/build-license-assets.py --fetch-missing`
+# and commit the four files under `app/src/main/assets/licenses/` it rewrites.
+#
 # 1.1.0 → 1.2.0: `@earendil-works/chord` left the list **and the payload**. Upstream
 # removed the dependency (`pi-coding-agent`'s `package.json`), and `chord` was its only
 # requirer in the 1.1.0 lock, so `chord` plus the whole `esbuild@0.28.2` fan-out it
@@ -341,9 +350,9 @@ PI_ENGINE_NO_LICENCE_TEXT = [
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
-    ("@aws-sdk/credential-provider-http", "3.972.76", "Apache-2.0"),
-    ("@aws-sdk/credential-provider-login", "3.972.81", "Apache-2.0"),
-    ("@aws-sdk/nested-clients", "3.997.48", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-http", "3.972.84", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.89", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.998.1", "Apache-2.0"),
 ]
 
 # Where the notice for each of those packages can actually be found, and what was
@@ -1354,8 +1363,8 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("pi 引擎", engine_version(), "MIT", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
     ("pi 引擎的依赖包", f"见 pi {engine_version()} 的依赖锁定", "MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
     ("highlight.js", "10.7.3", "BSD-3-Clause", "Linux 运行时（首次启动解包）", "https://highlightjs.org/"),
-    ("tslib", "2.8.1", "0BSD", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/tslib"),
-    ("lru-cache / minimatch", "11.4.0 / 10.2.6", "BlueOak-1.0.0", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/lru-cache"),
+    ("tslib", "2.9.1", "0BSD", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/tslib"),
+    ("lru-cache / minimatch", "11.4.0 / 11.0.3", "BlueOak-1.0.0", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/lru-cache"),
     # JVM side
     (
         "AndroidX / Jetpack Compose（core-ktx、activity-compose、lifecycle、compose-ui、"

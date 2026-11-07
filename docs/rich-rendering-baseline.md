@@ -13,7 +13,7 @@
 | `[源码]` | 本仓库 `c636c86` 的源码，行号以 `git show HEAD:<path>` 为准（工作树有并发改动，见 §4.1） |
 | `[解析器]` | `org.jetbrains:markdown-jvm:0.7.9` 的 sources jar（Maven Central，`markdown-0.7.9-sources.jar`） |
 | `[渲染库]` | `com.mikepenz:multiplatform-markdown-renderer:0.45.0` 的 sources jar |
-| `[引擎锁]` | `tools/pi-engine.lock.json` + 对应 npm 包（pi 1.3.0、grok-mermaid 0.2.3、highlight.js 10.7.3） |
+| `[引擎锁]` | `tools/pi-engine.lock.json` + 对应 npm 包（pi 1.5.0、grok-mermaid 0.2.3、highlight.js 10.7.3） |
 | `[真机待验]` | 只能由实体设备证明（视觉、手势、滚动、跟随、字体、性能），列在 §5 |
 
 本文**没有**任何 `[真机待验]` 项被写成已确认结论。凡是「看起来会怎样」的句子，都标了它是
@@ -165,7 +165,7 @@ App 只覆盖 15 个槽（`codeFence`/`codeBlock`/`heading1..6`/`setext1..2`/`ho
     来自文件型 settings store，按 settings 文档的 mtime+size 失效（`:1249-1312`）。
   - 引擎：guest 的 `grok-mermaid`，走本地回环 `/mermaid`，返回**ASCII 框线图**（按语义
     class 着色），不是 Android WebView。
-  - `grok-mermaid 0.2.3`（pi 1.3.0 钉住）只支持 **flowchart/graph、state、class、ER、sequence**
+  - `grok-mermaid 0.2.3`（pi 1.5.0 钉住，1.3.0→1.5.0 版本未变）只支持 **flowchart/graph、state、class、ER、sequence**
     五类；其余类型返回 `null`（= `PiMermaidReply.NoArt`，定论、进缓存）→ 界面显示**源码块**。
   - `warnings` 非空时**不画图**：显示源码 + 一行「Mermaid 图未完整渲染：…」（`PiMermaid.kt:153-157`，
     `PiMarkdownComponents.kt:928-934`、`:991-997`）。
@@ -359,7 +359,7 @@ Phase 1，列表**在核对过程中仍在增长**，以下是交付时观察到
 | F10 | 数学解析器只认 `DOLLAR`：`$`→`INLINE_MATH`、`$$`→`BLOCK_MATH` | `[解析器]` `parser/sequentialparsers/impl/MathParser.kt:14-30`、`GFMFlavourDescriptor.kt:112-113` | `\(…\)`/`\[…\]` 只能由 `PiLatex` 预处理；升级后的 annotator/占位方案也要自己认这两种 |
 | F11 | 库的 fence body 经过 `replaceIndent()` | `[渲染库]` `MarkdownCode.kt:85` | 复制语义（§4.1-2）与「内容不丢」判定 |
 | F12 | `svg` 在 highlight.js 里是 `xml` 的别名；`patch` 是 `diff` 的别名；`yml` 是 `yaml` 的别名；**没有** `csv`/`tsv` | `[源码]` `aliases.ts:172`、`:136`、`:198`；`[引擎锁]` hljs 10.7.3 | §2.10–§2.12 的「今天是什么颜色」 |
-| F13 | `grok-mermaid 0.2.3` 只支持 flowchart/graph（含 subgraph）、state、class、ER、sequence | `[引擎锁]` pi 1.3.0 → grok-mermaid 0.2.3，其 `dist/index.js` KDoc 明列；`pi-engine.lock.json` | 7 类图今天必然源码；Phase 2 的 12 类目标不能拿今天的 ASCII 当对照 |
+| F13 | `grok-mermaid 0.2.3` 只支持 flowchart/graph（含 subgraph）、state、class、ER、sequence | `[引擎锁]` pi 1.5.0 → grok-mermaid 0.2.3，其 `dist/index.js` KDoc 明列；`pi-engine.lock.json` | 7 类图今天必然源码；Phase 2 的 12 类目标不能拿今天的 ASCII 当对照 |
 | F14 | GFM Alerts 有 `ALERT_TITLE` token 且库有 `alert` 槽 | `[解析器]` `GFMElementTypes.kt:33`；`[渲染库]` `MarkdownExtension.kt:91` | 已有能力，升级不得退步 |
 | F15 | 未闭合围栏被解析成开放代码块，直到 EOF | `[源码]` `PiMarkdown.kt:128-133`（KDoc）；`[真机待验]` 视觉 | 流式验收的第一条 |
 
@@ -438,6 +438,6 @@ CI 能证明的范围。下表是必须在设备上留证据的项。
 | `markdown-jvm-0.7.9-sources.jar` | Maven Central | F1/F4/F5/F7/F9/F10 的行号 |
 | `multiplatform-markdown-renderer(-m3)-0.45.0` sources | Maven Central（已在本机 `/tmp/jbmd`） | F2/F6/F11 的行号 |
 | `grok-mermaid-0.2.3.tgz` | npm registry | F13 的支持类型清单 |
-| `pi-engine.lock.json` | 本仓库 | `pi 1.3.0` → `grok-mermaid 0.2.3` |
+| `pi-engine.lock.json` | 本仓库 | `pi 1.5.0` → `grok-mermaid 0.2.3` |
 
 这些都是**只读核对**，没有写进仓库，也没有参与任何构建。

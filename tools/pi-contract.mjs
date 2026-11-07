@@ -1727,6 +1727,12 @@ function checkAppTables(piDir) {
 			"pi 为 ChatGPT 登录生成的安装标识（0.99.0 新键）：只写全局设置、从 bug report 排除。" +
 			"App 不展示也不删（写入路径是锁内重读整份文档再改目标键）",
 		lastChangelogVersion: "pi 自己记录的已读 changelog 版本",
+		extensionChangelogVersions:
+			"pi 自己记录的每个扩展包已读 changelog 版本（1.5.0 新键）：只在 TUI 下次全新启动时用来决定显示哪些「Extension Updates」；" +
+			"App 不展示也不删（写入路径锁内重读整份文档再改目标键）",
+		selfUpdateCommand:
+			"`pi update` 更新 pi 自己时运行的命令（1.5.0 新键，argv 数组）：引擎是随 App 载荷固定版本、由 App 升级的，" +
+			"RPC 里没有 `pi update`，所以没有入口；已有值照旧保留",
 		trackingId: "随 enableAnalytics 生成的匿名标识",
 		enableAnalytics: "匿名分析开关：本应用不发遥测，所以没有这个入口",
 		// 1.2.0 published generated JSON Schemas and put a `$schema` pointer in the

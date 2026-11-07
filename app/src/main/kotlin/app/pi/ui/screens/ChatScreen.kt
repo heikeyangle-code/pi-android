@@ -4712,11 +4712,36 @@ private fun compressAttachment(
         // 候选顺序不看源：pi 对每一个进循环的源都先推 PNG，装不下再走 JPEG 阶梯
         // （`AttachmentBudget.encodings`，两笔价钱写在那里的类 KDoc 里）。所以这里不再传 MIME，
         // 也不再问 `source.hasAlpha()` —— 解码配置仍是 ARGB_8888，那是 PNG 编码要保留 alpha。
+        // pi 1.5.0（`image-resize-core.ts:137-141`）：同一尺寸下 PNG 和第一档 JPEG **都编码出来**，
+        // 谁小先试谁（JPEG 严格更小才排前面），两个都装不下才往下走更低的 JPEG 质量。所以 PNG 那一次
+        // 编码不能直接返回，要等第一档 JPEG 出来再裁决 —— 每个尺寸的第一档 JPEG 就是裁决点。
+        var pngAtSize: PiImage? = null
+        var verdictPending = false
         for (attempt in AttachmentBudget.attemptPlan(width, height, limits)) {
             val scaled = scaleForAttachment(oriented, attempt.width, attempt.height) ?: continue
             try {
-                val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue
-                // pi's own test is strict (`encodedSize < maxBytes`).
+                val encoded = encodeForAttachment(scaled, attempt.encoding)
+                if (attempt.encoding is AttachmentBudget.Encoding.Png) {
+                    pngAtSize = encoded
+                    verdictPending = true
+                    continue
+                }
+                if (verdictPending) {
+                    verdictPending = false
+                    val png = pngAtSize
+                    pngAtSize = null
+                    val ordered = if (AttachmentBudget.jpegBeforePng(png?.base64?.length, encoded?.base64?.length)) {
+                        listOf(encoded, png)
+                    } else {
+                        listOf(png, encoded)
+                    }
+                    // pi's own test is strict (`encodedSize < maxBytes`).
+                    for (candidate in ordered) {
+                        if (candidate != null && candidate.base64.length < limits.maxBase64Chars) return candidate
+                    }
+                    continue
+                }
+                if (encoded == null) continue
                 if (encoded.base64.length < limits.maxBase64Chars) return encoded
             } finally {
                 // `scaleForAttachment` 在目标就是自己的尺寸时原样返回，那份由外层 finally 负责。

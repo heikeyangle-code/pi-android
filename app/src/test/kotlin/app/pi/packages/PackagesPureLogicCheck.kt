@@ -196,6 +196,10 @@ fun main() {
     )
 
     check("no trigger is trusted with no prompt", resolve(trigger = false).rationale, ProjectTrust.Rationale.NoTrustRequiringResources)
+    // pi 1.5.0 (`project-trust.js:23`): a saved decision beats the no-resources auto-trust.
+    check("no trigger + saved false is untrusted (pi 1.5.0)", resolve(trigger = false, saved = false).trusted, false)
+    check("no trigger + saved true stays trusted", resolve(trigger = false, saved = true).trusted, true)
+    check("no trigger + saved false names the saved decision", resolve(trigger = false, saved = false).rationale, ProjectTrust.Rationale.SavedDecision)
     check("cli override wins", resolve(override = true, saved = false).rationale, ProjectTrust.Rationale.CliOverride)
     check("saved true is honoured", resolve(saved = true).rationale, ProjectTrust.Rationale.SavedDecision)
     check("saved false is surfaced, not silent", resolve(saved = false).explanation?.isEmpty(), false)

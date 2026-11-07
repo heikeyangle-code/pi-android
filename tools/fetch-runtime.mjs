@@ -584,8 +584,27 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *     （devDependency 里 `shx` 降了一档，不进载荷）。
  *  8. **许可证资产**：`v1.0.4` / `v1.1.0` 标签的根 `LICENSE` 与之前八个标签逐字节相同
  *     （sha256 `0457f5bc…`），所以只改标签清单、不加正文；三个手写的 `@aws-sdk/*` 版本按新锁复核。
+ *
+ * ## pi 1.3.0 → 1.5.0（升级评审，可复现做法同上：装两版、`diff -r dist`、`pi-contract.mjs` 九组）
+ *
+ *  1. **契约面没动**：`modes/rpc/rpc-types.d.ts`、`rpc-mode.js`、`jsonl.js` 与 1.3.0 逐字节相同；
+ *     主题、工具结果文本、会话条目、模型目录形状（仍 schemaVersion 6）、`models.json` 语义、打包的
+ *     rpc 入口、随 App 发的扩展加载，九组里八组原样通过。
+ *  2. **唯一一条契约失败是新设置键**：`selfUpdateCommand`（`pi update` 的自更新命令）与
+ *     `extensionChangelogVersions`（每个扩展包已读的 changelog 版本）。两者都不是用户在手机上要决定的
+ *     值，已按「不暴露」写进 `pi-contract.mjs` 的 `UNEXPOSED_SETTINGS_DECISIONS`（App 的写入路径锁内
+ *     重读整份文档再改目标键，不会顺手删掉它们）。
+ *  3. **项目信任语义变了一处**（`core/project-trust.js:23`）：没有需信任资源的目录以前无条件信任，
+ *     现在 `trustStore.get(cwd) ?? true` —— 已保存的「不信任」优先。`packages/ProjectTrust.resolve`
+ *     已跟（并有 `PackagesPureLogicCheck` 的新断言），否则 App 说「已信任」而引擎说「不信任」。
+ *  4. **新增 `@earendil-works/pi-schema`** 接管工具参数校验（TypeBox 之外的特性不再生效；校验失败的
+ *     文案换成 pi-schema 的）。App 不解析这些文案（grep 过），随载荷发的三个扩展由 `extensions` 组
+ *     真装进引擎验证过。许可证资产清单因此多一个包，需重新生成。
+ *  5. 其余：默认模型（OpenAI/Copilot/NVIDIA/Xiaomi）换了、模型目录升到 models.dev v2（非 chat 条目
+ *     100 → 120）、`grep` 工具加 `--no-config`、缩放图片先试更小的编码、会话写盘失败时回滚内存条目、
+ *     路径比较在 Windows 上不分大小写（Linux guest 无影响）。读取器都不用动。
  */
-const PI_VERSION = "1.3.0";
+const PI_VERSION = "1.5.0";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

@@ -1,5 +1,5 @@
 {
-	"piTui": "1.3.0",
+	"piTui": "1.5.0",
 	"generatedBy": "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
 	"cases": [
 		{
@@ -2301,6 +2301,20 @@
 			]
 		},
 		{
+			"name": "block-dollar-spans-table",
+			"source": "$$\n| a | b |\n|---|---|\n| 1 | 2 |\n$$",
+			"expected": "$$\n| a | b |\n|---|---|\n| 1 | 2 |\n$$",
+			"tokens": []
+		},
+		{
+			"name": "block-dollar-no-table-still-math",
+			"source": "$$\nx^2\n$$",
+			"expected": "\nx²\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
 			"name": "dollar-inline-in-text",
 			"source": "a $x$ and $y$",
 			"expected": "a x and y",
@@ -2556,6 +2570,15 @@
 			"tokens": [
 				"latex"
 			]
+		},
+		{
+			"name": "block-dollar-unclosed-before-table",
+			"source": "$$\nx\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n$$\ny\n$$",
+			"inline": "$$\nx\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n\ny\n",
+			"display": "$$\nx\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n\ny\n",
+			"tokens": [
+				"latexBlock"
+			]
 		}
 	],
 	"dollarProse": [
@@ -2657,43 +2680,43 @@
 		},
 		{
 			"source": "| 8 | `export_html` `outputPath` (re-rooted) | PARTIAL | CLOSED | — | `ui/PiSessionViewModel.kt:1374` `val guestPath = \"${guestWorkspace()}/$name\"`. Verdict: deliberate — the file must land where the ",
-			"provenance": "docs/gap-disposition.md:111",
+			"provenance": "docs/gap-disposition.md:117",
 			"piVisible": "| 8 | `export_html` `outputPath` (re-rooted) | PARTIAL | CLOSED | — | `ui/PiSessionViewModel.kt:1374` `val guestPath = \"${guestWorkspace()}/$name\"`. Verdict: deliberate — the file must land where the ",
 			"piRenders": false
 		},
 		{
 			"source": "                    contentDescription = \"第 ${index + 1} 张图片\",",
-			"provenance": "docs/gap-disposition.md:390",
+			"provenance": "docs/gap-disposition.md:396",
 			"piVisible": "                    contentDescription = \"第 ${index + 1} 张图片\",",
 			"piRenders": false
 		},
 		{
 			"source": "            ?: \"pi-session-${System.currentTimeMillis()}.html\"",
-			"provenance": "docs/gap-disposition.md:452",
+			"provenance": "docs/gap-disposition.md:458",
 			"piVisible": "            ?: \"pi-session-${System.currentTimeMillis()}.html\"",
 			"piRenders": false
 		},
 		{
 			"source": "                pushNotice(\"已删除：${summary.displayName}\", Notice.Tone.Info)",
-			"provenance": "docs/gap-disposition.md:624",
+			"provenance": "docs/gap-disposition.md:630",
 			"piVisible": "                pushNotice(\"已删除：${summary.displayName}\", Notice.Tone.Info)",
 			"piRenders": false
 		},
 		{
 			"source": "                pushNotice(\"删除失败：${summary.file.name}\", Notice.Tone.Warning)",
-			"provenance": "docs/gap-disposition.md:627",
+			"provenance": "docs/gap-disposition.md:633",
 			"piVisible": "                pushNotice(\"删除失败：${summary.file.name}\", Notice.Tone.Warning)",
 			"piRenders": false
 		},
 		{
 			"source": "                item(key = \"hdr:$cwd\") { PiSectionHeader(shortenPath(cwd)) }",
-			"provenance": "docs/gap-disposition.md:689",
+			"provenance": "docs/gap-disposition.md:695",
 			"piVisible": "                item(key = \"hdr:$cwd\") { PiSectionHeader(shortenPath(cwd)) }",
 			"piRenders": false
 		},
 		{
 			"source": "| **A2** LaTeX | `PiLatex.kt` ports pi's symbol/command tables and the text-level half of `LatexParser`; `piMarkdownSource` rewrites `$…$` / `$$…$$` before the parser sees them (code fences and code s",
-			"provenance": "docs/gap-disposition.md:860",
+			"provenance": "docs/gap-disposition.md:866",
 			"piVisible": "| **A2** LaTeX | `PiLatex.kt` ports pi's symbol/command tables and the text-level half of `LatexParser`; `piMarkdownSource` rewrites `$…$` / `$$…$$` before the parser sees them (code fences and code s",
 			"piRenders": false
 		},
@@ -2717,188 +2740,236 @@
 		},
 		{
 			"source": "### A2. LaTeX 渲染（四种定界符 + `renderLatex` 全量移植，含竖直排版）—— **已完成（layout 于 Phase B 落地）；`$` 的 4 种形状与行中定位是两类有意的偏差，全部由夹具钉住**",
-			"provenance": "docs/known-gaps.md:25",
+			"provenance": "docs/known-gaps.md:32",
 			"piVisible": "### A2. LaTeX 渲染（四种定界符 + `renderLatex` 全量移植，含竖直排版）—— **已完成（layout 于 Phase B 落地）；`$` 的 4 种形状与行中定位是两类有意的偏差，全部由夹具钉住**",
 			"piRenders": false
 		},
 		{
 			"source": "> **2. 四种定界符都在了。** `$…$`、`$$…$$`、`\\(…\\)`、`\\[…\\]`（pi 的 `tokenizeInlineLatex` / `tokenizeBlockLatex`）。后两种在上一轮**整类走不到数学分支**（`piMarkdownSource` 第一行 `contains('$')` 直接返回），本轮补齐；同时把预处理逻辑搬进 `PiLatex.preproces",
-			"provenance": "docs/known-gaps.md:30",
+			"provenance": "docs/known-gaps.md:37",
 			"piVisible": "> **2. 四种定界符都在了。** `$…$`、`$$…$$`、`\\(…\\)`、`\\[…\\]`（pi 的 `tokenizeInlineLatex` / `tokenizeBlockLatex`）。后两种在上一轮**整类走不到数学分支**（`piMarkdownSource` 第一行 `contains('$')` 直接返回），本轮补齐；同时把预处理逻辑搬进 `PiLatex.preproces",
 			"piRenders": false
 		},
 		{
 			"source": "> ① **`$` 那条正则仍然比 pi 的 tokenizer 保守，但原因现在只剩一个：收尾的 `(?![\\p{L}\\p{N}])`。** pi 的规则（`components/markdown.ts:52-99`）只拒绝四种情形（body 以空白结尾、收尾 `$` 之后紧跟数字、body 像常量名而后面紧跟标识符、body 含反引号），开定界符前面是什么、body 是不是数字开头都**不**",
-			"provenance": "docs/known-gaps.md:33",
+			"provenance": "docs/known-gaps.md:40",
 			"piVisible": "> ① **`$` 那条正则仍然比 pi 的 tokenizer 保守，但原因现在只剩一个：收尾的 `(?![\\p{L}\\p{N}])`。** pi 的规则（`components/markdown.ts:52-99`）只拒绝四种情形（body 以空白结尾、收尾 `$` 之后紧跟数字、body 像常量名而后面紧跟标识符、body 含反引号），开定界符前面是什么、body 是不是数字开头都**不**",
 			"piRenders": false
 		},
 		{
 			"source": "> ② **行中 `\\[`/`$$` 的位置判定。** App 只认\"行首（≤3 空格）+ 收尾到行尾\"是块级；pi 的 marked 还会在\"段落剩余部分的第 2 个字符起\"尝试块级（`startBlock` 用的是 `e.slice(1)`），于是 `a \\[x\\] b`、`a\\[x\\]b` 这类输入 pi 显示原文而 App 画成公式；行中 `$$x$$` 反过来（pi 当行内公式，App ",
-			"provenance": "docs/known-gaps.md:34",
+			"provenance": "docs/known-gaps.md:41",
 			"piVisible": "> ② **行中 `\\[`/`$$` 的位置判定。** App 只认\"行首（≤3 空格）+ 收尾到行尾\"是块级；pi 的 marked 还会在\"段落剩余部分的第 2 个字符起\"尝试块级（`startBlock` 用的是 `e.slice(1)`），于是 `a \\[x\\] b`、`a\\[x\\]b` 这类输入 pi 显示原文而 App 画成公式；行中 `$$x$$` 反过来（pi 当行内公式，App ",
 			"piRenders": false
 		},
 		{
 			"source": "> **4b. 保行通道（候选 B，已落地；作用域收紧到\"这条消息里有显示式网格\"）。** `eolAsNewLine` 与等宽段落只在 `PiLatex.prepare` 报告 `hasDisplayGrid` 时为真：判据是**这次替换的渲染结果本身含换行**（`$$x^2$$` 只有一行、不打开；矩阵/`cases`/堆叠分数/上下限/多行脚本、**以及行内的环境**都会打开）。`PiLat",
-			"provenance": "docs/known-gaps.md:39",
+			"provenance": "docs/known-gaps.md:46",
 			"piVisible": "> **4b. 保行通道（候选 B，已落地；作用域收紧到\"这条消息里有显示式网格\"）。** `eolAsNewLine` 与等宽段落只在 `PiLatex.prepare` 报告 `hasDisplayGrid` 时为真：判据是**这次替换的渲染结果本身含换行**（`$$x^2$$` 只有一行、不打开；矩阵/`cases`/堆叠分数/上下限/多行脚本、**以及行内的环境**都会打开）。`PiLat",
 			"piRenders": false
 		},
 		{
 			"source": "  - 失败一律原样上报：pi 的错误在 stderr（`console.error(chalk.red(\\`Error: ${message}\\`))`，`package-manager-cli.ts:1096-1100`），成功行的 `Warning:`（`:255-263`、`:737-741`）也保留。超时与「启动失败」是 App 自己的状态，不会被伪装成包错误。",
-			"provenance": "docs/known-gaps.md:149",
+			"provenance": "docs/known-gaps.md:156",
 			"piVisible": "  - 失败一律原样上报：pi 的错误在 stderr（`console.error(chalk.red(\\`Error: ${message}\\`))`，`package-manager-cli.ts:1096-1100`），成功行的 `Warning:`（`:255-263`、`:737-741`）也保留。超时与「启动失败」是 App 自己的状态，不会被伪装成包错误。",
 			"piRenders": false
 		},
 		{
 			"source": "    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo \"EXIT=$?\" >> /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:300",
+			"provenance": "docs/known-gaps.md:307",
 			"piVisible": "    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo \"EXIT=$?\" >> /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    $ cat /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:301",
+			"provenance": "docs/known-gaps.md:308",
 			"piVisible": "    $ cat /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    $ grep -cE '\\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:304",
+			"provenance": "docs/known-gaps.md:311",
 			"piVisible": "    $ grep -cE '\\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    1. `set -uo pipefail` + `if echo \"$APP_DIAG\" | grep -qE \"\\.kt:...: error:\"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typec",
-			"provenance": "docs/known-gaps.md:310",
+			"provenance": "docs/known-gaps.md:317",
 			"piVisible": "    1. `set -uo pipefail` + `if echo \"$APP_DIAG\" | grep -qE \"\\.kt:...: error:\"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typec",
 			"piRenders": false
 		},
 		{
 			"source": "  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not imp",
-			"provenance": "docs/known-gaps.md:313",
+			"provenance": "docs/known-gaps.md:320",
 			"piVisible": "  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not imp",
 			"piRenders": false
 		},
 		{
 			"source": "| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 e",
-			"provenance": "docs/known-gaps.md:876",
+			"provenance": "docs/known-gaps.md:883",
 			"piVisible": "| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 e",
 			"piRenders": false
 		},
 		{
 			"source": "$ npm install --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@latest",
-			"provenance": "docs/pi-android-app-design.md:45",
+			"provenance": "docs/pi-android-app-design.md:50",
 			"piVisible": "$ npm install --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@latest",
 			"piRenders": false
 		},
 		{
 			"source": "$ printf '%s\\n' '{\"id\":\"1\",\"type\":\"get_state\"}' '{\"id\":\"2\",\"type\":\"get_available_models\"}' \\",
-			"provenance": "docs/pi-android-app-design.md:48",
+			"provenance": "docs/pi-android-app-design.md:53",
 			"piVisible": "$ printf '%s\\n' '{\"id\":\"1\",\"type\":\"get_state\"}' '{\"id\":\"2\",\"type\":\"get_available_models\"}' \\",
 			"piRenders": false
 		},
 		{
 			"source": "baseUrl, apiKey（支持 \"$ENV\" 与 \"!cmd\"）, api, headers, authHeader,",
-			"provenance": "docs/pi-android-app-design.md:437",
+			"provenance": "docs/pi-android-app-design.md:442",
 			"piVisible": "baseUrl, apiKey（支持 \"$ENV\" 与 \"!cmd\"）, api, headers, authHeader,",
 			"piRenders": false
 		},
 		{
 			"source": "- **prompt 模板**：`~/.pi/agent/prompts/*.md`（不递归）、`.pi/prompts/*.md`、包内 `prompts/`、settings `prompts[]`、`--prompt-template`；frontmatter `description`/`argument-hint`；参数 `$1`、`$@`/`$ARGUMENTS`、`${1:-def}",
-			"provenance": "docs/pi-android-app-design.md:458",
+			"provenance": "docs/pi-android-app-design.md:463",
 			"piVisible": "- **prompt 模板**：`~/.pi/agent/prompts/*.md`（不递归）、`.pi/prompts/*.md`、包内 `prompts/`、settings `prompts[]`、`--prompt-template`；frontmatter `description`/`argument-hint`；参数 `$1`、`$@`/`$ARGUMENTS`、`${1:-def}",
 			"piRenders": false
 		},
 		{
 			"source": "| `bash` | `command`；`timeout`(秒，无默认，最大 2147483.647) | `/bin/bash -c`（回退 `sh -c`），detached 进程组，stdout+stderr 合并，中断/超时树杀，非零退出→错误。尾部截断 2000 行/50 KB，溢出写到 `$TMPDIR/pi-bash-*.log`；节流的流式更新。注入 `PI_SESSION_ID",
-			"provenance": "docs/pi-android-app-design.md:591",
+			"provenance": "docs/pi-android-app-design.md:596",
 			"piVisible": "| `bash` | `command`；`timeout`(秒，无默认，最大 2147483.647) | `/bin/bash -c`（回退 `sh -c`），detached 进程组，stdout+stderr 合并，中断/超时树杀，非零退出→错误。尾部截断 2000 行/50 KB，溢出写到 `$TMPDIR/pi-bash-*.log`；节流的流式更新。注入 `PI_SESSION_ID",
 			"piRenders": false
 		},
 		{
 			"source": "| [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) | 指南 + 集成层（无 APK） | Termux | 记录了真实陷阱：`/tmp` 不可写 → `proot -b $PREFIX/tmp:/tmp claude`；裸 `claude` 静默失败；32 位机跑不了 arm64；",
-			"provenance": "docs/pi-android-app-design.md:1200",
+			"provenance": "docs/pi-android-app-design.md:1203",
 			"piVisible": "| [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) | 指南 + 集成层（无 APK） | Termux | 记录了真实陷阱：`/tmp` 不可写 → `proot -b $PREFIX/tmp:/tmp claude`；裸 `claude` 静默失败；32 位机跑不了 arm64；",
 			"piRenders": false
 		},
 		{
 			"source": "- **提示模板**：列表 + 参数提示（`$1`、`$@`、`${1:-def}`）",
-			"provenance": "docs/pi-android-ui-spec.md:609",
+			"provenance": "docs/pi-android-ui-spec.md:615",
 			"piVisible": "- **提示模板**：列表 + 参数提示（`$1`、`$@`、`${1:-def}`）",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt\" \\",
-			"provenance": "docs/pi-surface-audit-cli.md:546",
+			"provenance": "docs/pi-surface-audit-cli.md:690",
 			"piVisible": "  \"$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt\" \\",
-			"provenance": "docs/pi-surface-audit-cli.md:547",
+			"provenance": "docs/pi-surface-audit-cli.md:691",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt\" \\",
-			"provenance": "docs/pi-surface-audit-cli.md:548",
+			"provenance": "docs/pi-surface-audit-cli.md:692",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt\" \\",
-			"provenance": "docs/pi-surface-audit-cli.md:549",
+			"provenance": "docs/pi-surface-audit-cli.md:693",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt\" \\",
-			"provenance": "docs/pi-surface-audit-cli.md:550",
+			"provenance": "docs/pi-surface-audit-cli.md:694",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt\"",
-			"provenance": "docs/pi-surface-audit-cli.md:551",
+			"provenance": "docs/pi-surface-audit-cli.md:695",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt\"",
 			"piRenders": false
 		},
 		{
 			"source": "KOTLINC_CP=\"$(find -L build/typecheck/kotlinc -name '*.jar' | tr '",
-			"provenance": "docs/pi-surface-audit-tools.md:387",
+			"provenance": "docs/pi-surface-audit-tools.md:393",
 			"piVisible": "KOTLINC_CP=\"$(find -L build/typecheck/kotlinc -name '*.jar' | tr '",
 			"piRenders": false
 		},
 		{
 			"source": "LIB_CP=\"$(find -L build/pure-checks/lib -name '*.jar' | tr '",
-			"provenance": "docs/pi-surface-audit-tools.md:389",
+			"provenance": "docs/pi-surface-audit-tools.md:395",
 			"piVisible": "LIB_CP=\"$(find -L build/pure-checks/lib -name '*.jar' | tr '",
 			"piRenders": false
 		},
 		{
 			"source": "java -Xmx1100m -cp \"${KOTLINC_CP%:}:${LIB_CP%:}\" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler   -no-stdlib -jvm-target 17 -classpath \"${LIB_CP%:}\" -d /tmp/tree-nav-out   app/src/test/kotlin/app/pi/ui/ch",
-			"provenance": "docs/pi-surface-audit-tools.md:391",
+			"provenance": "docs/pi-surface-audit-tools.md:397",
 			"piVisible": "java -Xmx1100m -cp \"KOTLINC_CP%::{LIB_CP%:}\" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler   -no-stdlib -jvm-target 17 -classpath \"${LIB_CP%:}\" -d /tmp/tree-nav-out   app/src/test/kotlin/app/pi/ui/ch",
 			"piRenders": true
 		},
 		{
 			"source": "java -cp \"/tmp/tree-nav-out:${LIB_CP%:}\" app.pi.ui.chat.PiTreeNavigationCheckKt",
-			"provenance": "docs/pi-surface-audit-tools.md:392",
+			"provenance": "docs/pi-surface-audit-tools.md:398",
 			"piVisible": "java -cp \"/tmp/tree-nav-out:${LIB_CP%:}\" app.pi.ui.chat.PiTreeNavigationCheckKt",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt\" \\",
-			"provenance": "docs/pi-surface-audit-tools.md:405",
+			"provenance": "docs/pi-surface-audit-tools.md:411",
 			"piVisible": "  \"$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt\"",
-			"provenance": "docs/pi-surface-audit-tools.md:406",
+			"provenance": "docs/pi-surface-audit-tools.md:412",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt\"",
+			"piRenders": false
+		},
+		{
+			"source": "| D 中文与混排 | 5 | `$E=mc^2$ 是质能方程`、`\\text{当 } x>0`、中英混排长句、全角标点、中文字体回退 | **最容易翻车**，必须真机看 |",
+			"provenance": "docs/plans/rich-rendering-engine-eval.md:325",
+			"piVisible": "| D 中文与混排 | 5 | `$E=mc^2$ 是质能方程`、`\\text{当 } x>0`、中英混排长句、全角标点、中文字体回退 | **最容易翻车**，必须真机看 |",
+			"piRenders": false
+		},
+		{
+			"source": "| E 反例/回退 | 10 | 未闭合 `$`、`\\begin{matrix}` 不闭合、`\\undefinedcmd`、超长公式（>64 KiB）、极深嵌套、`\\href{javascript:...}` | 判\"失败不丢内容\" |",
+			"provenance": "docs/plans/rich-rendering-engine-eval.md:326",
+			"piVisible": "| E 反例/回退 | 10 | 未闭合 `$`、`\\begin{matrix}` 不闭合、`\\undefinedcmd`、超长公式（>64 KiB）、极深嵌套、`\\href{javascript:...}` | 判\"失败不丢内容\" |",
+			"piRenders": false
+		},
+		{
+			"source": "- `$...$`",
+			"provenance": "docs/plans/rich-rendering-upgrade.md:112",
+			"piVisible": "- `$...$`",
+			"piRenders": false
+		},
+		{
+			"source": "- `$$...$$`",
+			"provenance": "docs/plans/rich-rendering-upgrade.md:113",
+			"piVisible": "- `$$...$$`",
+			"piRenders": false
+		},
+		{
+			"source": "爱因斯坦质能方程是 $E=mc^2$。",
+			"provenance": "docs/plans/rich-rendering-upgrade.md:428",
+			"piVisible": "爱因斯坦质能方程是 E = mc²。",
+			"piRenders": true
+		},
+		{
+			"source": "$$",
+			"provenance": "docs/plans/rich-rendering-upgrade.md:436",
+			"piVisible": "$$",
+			"piRenders": false
+		},
+		{
+			"source": "| LaTeX | `PiLatex.kt` 支持 `$`、`$$`、`\\(...\\)`、`\\[...\\]`，矩阵和 aligned 能排 Unicode 网格 | 保留，增加真正排版 |",
+			"provenance": "docs/plans/rich-rendering-upgrade.md:1177",
+			"piVisible": "| LaTeX | `PiLatex.kt` 支持 `$`、`$$`、`\\(...\\)`、`\\[...\\]`，矩阵和 aligned 能排 Unicode 网格 | 保留，增加真正排版 |",
+			"piRenders": false
+		},
+		{
+			"source": "- 公式只认 `$`/`$$`；`\\(...\\)`、`\\[...\\]` 没有节点。",
+			"provenance": "docs/plans/rich-rendering-upgrade.md:1190",
+			"piVisible": "- 公式只认 `$`/`$$`；`\\(...\\)`、`\\[...\\]` 没有节点。",
 			"piRenders": false
 		},
 		{
@@ -3059,7 +3130,7 @@
 		},
 		{
 			"source": "| §1 skill 调用投影不出来 | `rpc/SkillBlock.kt:34-43`（照抄 pi `parseSkillBlock` 的正则，含 `(?:\\n\\n([\\s\\S]+))?$` 尾随用户消息） |",
-			"provenance": "docs/remaining-work.md:134",
+			"provenance": "docs/remaining-work.md:140",
 			"piVisible": "| §1 skill 调用投影不出来 | `rpc/SkillBlock.kt:34-43`（照抄 pi `parseSkillBlock` 的正则，含 `(?:\\n\\n([\\s\\S]+))?$` 尾随用户消息） |",
 			"piRenders": false
 		},
@@ -3151,6 +3222,60 @@
 			"source": "   `toolCallId` and diffs use `\"$callId-diff\"`. No collision found, and a session",
 			"provenance": "docs/rendering-review.md:915",
 			"piVisible": "   `toolCallId` and diffs use `\"$callId-diff\"`. No collision found, and a session",
+			"piRenders": false
+		},
+		{
+			"source": "  - 四种定界符都在：`\\(…\\)`、`\\[…\\]`、`$…$`、`$$…$$`。`\\(`/`\\[` **解析器不认**（0.7.9 的",
+			"provenance": "docs/rich-rendering-baseline.md:138",
+			"piVisible": "  - 四种定界符都在：`\\(…\\)`、`\\[…\\]`、`$…$`、`$$…$$`。`\\(`/`\\[` **解析器不认**（0.7.9 的",
+			"piRenders": false
+		},
+		{
+			"source": "  - 顺序与边界：先块级后行内；`FENCE`/`INLINE_CODE` 状态跳过代码，所以代码里的 `$` 不变公式",
+			"provenance": "docs/rich-rendering-baseline.md:140",
+			"piVisible": "  - 顺序与边界：先块级后行内；`FENCE`/`INLINE_CODE` 状态跳过代码，所以代码里的 `$` 不变公式",
+			"piRenders": false
+		},
+		{
+			"source": "  - 块级正则 `$$…$$` 或行首 `\\[…\\]`（`PiLatex.kt:1313-1318`）；行内三条分支",
+			"provenance": "docs/rich-rendering-baseline.md:142",
+			"piVisible": "  - 块级正则 `$$…$$` 或行首 `\\[…\\]`（`PiLatex.kt:1313-1318`）；行内三条分支",
+			"piRenders": false
+		},
+		{
+			"source": "    `\\(…\\)`、`\\[…\\]`、`$…$`（`:1337-1342`）。",
+			"provenance": "docs/rich-rendering-baseline.md:143",
+			"piVisible": "    `\\(…\\)`、`\\[…\\]`、`$…$`（`:1337-1342`）。",
+			"piRenders": false
+		},
+		{
+			"source": "  - 归约失败 → **原文保留**（`applyMath` 返回 `match.value`）；文档行内 `$` 规则保守",
+			"provenance": "docs/rich-rendering-baseline.md:148",
+			"piVisible": "  - 归约失败 → **原文保留**（`applyMath` 返回 `match.value`）；文档行内 `$` 规则保守",
+			"piRenders": false
+		},
+		{
+			"source": "  - 已知偏差：行中的 `$$x$$` 会变成独占一段的显示式（`$$` 分支没有行首锚点，`PiLatex.kt:1094-1097` 记着，正则见 `:1313-1318`）。",
+			"provenance": "docs/rich-rendering-baseline.md:150",
+			"piVisible": "  - 已知偏差：行中的 `$$x$$` 会变成独占一段的显示式（`$$` 分支没有行首锚点，`PiLatex.kt:1094-1097` 记着，正则见 `:1313-1318`）。",
+			"piRenders": false
+		},
+		{
+			"source": "  5. 公式：未闭合的 `$$`/`$` 不匹配 → 原文留在正文。",
+			"provenance": "docs/rich-rendering-baseline.md:236",
+			"piVisible": "  5. 公式：未闭合的 `$$`/`$` 不匹配 → 原文留在正文。",
+			"piRenders": false
+		},
+		{
+			"source": "| F10 | 数学解析器只认 `DOLLAR`：`$`→`INLINE_MATH`、`$$`→`BLOCK_MATH` | `[解析器]` `parser/sequentialparsers/impl/MathParser.kt:14-30`、`GFMFlavourDescriptor.kt:112-113` | `\\(…\\)`/`\\[…\\]` 只能由 `PiLatex` 预处理；升级后的 an",
+			"provenance": "docs/rich-rendering-baseline.md:359",
+			"piVisible": "| F10 | 数学解析器只认 `DOLLAR`：`$`→`INLINE_MATH`、`$$`→`BLOCK_MATH` | `[解析器]` `parser/sequentialparsers/impl/MathParser.kt:14-30`、`GFMFlavourDescriptor.kt:112-113` | `\\(…\\)`/`\\[…\\]` 只能由 `PiLatex` 预处理；升级后的 an",
+			"piRenders": false
+		},
+		{
+			"source": "| 3 | 行中 `$$x$$` 当显示式（`lx-midline-display`） | 既有偏差，pi 只在行首才当块级；修它影响面比补定界符大 | 保持现状并在升级说明里登记；不要顺手「修」 |",
+			"provenance": "docs/rich-rendering-baseline.md:421",
+			"piVisible": "| 3 | 行中 `$$x$$` 当显示式（`lx-midline-display`） | 既有偏差，pi 只在行首才当块级；修它影响面比补定界符大 | 保持现状并在升级说明里登记；不要顺手「修」 |",
 			"piRenders": false
 		},
 		{
@@ -3347,67 +3472,67 @@
 		},
 		{
 			"source": "  \"$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt\" \\",
-			"provenance": "docs/settings-audit-impl.md:606",
+			"provenance": "docs/settings-audit-impl.md:613",
 			"piVisible": "  \"$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt\" \\",
 			"piRenders": false
 		},
 		{
 			"source": "  \"$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt\"",
-			"provenance": "docs/settings-audit-impl.md:607",
+			"provenance": "docs/settings-audit-impl.md:614",
 			"piVisible": "  \"$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt\"",
 			"piRenders": false
 		},
 		{
 			"source": "| 25 | `externalEditor` | string；回退 `$VISUAL`→`$EDITOR`→`nano`（`core/settings-manager.ts:969-979`） | — | global | `:969` → `interactive-mode.ts:2628/4247` | 否（TUI） |",
-			"provenance": "docs/settings-audit-pi-gap.md:227",
+			"provenance": "docs/settings-audit-pi-gap.md:234",
 			"piVisible": "| 25 | `externalEditor` | string；回退 `$VISUAL`→`$EDITOR`→`nano`（`core/settings-manager.ts:969-979`） | — | global | `:969` → `interactive-mode.ts:2628/4247` | 否（TUI） |",
 			"piRenders": false
 		},
 		{
 			"source": "| `externalEditor` | **手机不可达** | pi 的回退链是 `$VISUAL`→`$EDITOR`→`nano`（`core/settings-manager.ts:969-979`）；guest 载荷里没有 `nano`/`vim`（`tools/fetch-runtime.mjs`：Ubuntu base + Node + ripgrep + fd + git，无编辑器",
-			"provenance": "docs/settings-audit-pi-gap.md:382",
+			"provenance": "docs/settings-audit-pi-gap.md:389",
 			"piVisible": "| `externalEditor` | **手机不可达** | pi 的回退链是 `$VISUAL`→`$EDITOR`→`nano`（`core/settings-manager.ts:969-979`）；guest 载荷里没有 `nano`/`vim`（`tools/fetch-runtime.mjs`：Ubuntu base + Node + ripgrep + fd + git，无编辑器",
 			"piRenders": false
 		},
 		{
 			"source": "`agent dir` = `getAgentDir()`（`config.ts:528-535`）= `$PI_CODING_AGENT_DIR` 或 `~/.pi/agent`；",
-			"provenance": "docs/settings-audit-pi-gap.md:580",
+			"provenance": "docs/settings-audit-pi-gap.md:587",
 			"piVisible": "`agent dir` = `getAgentDir()`（`config.ts:528-535`）= `$PI_CODING_AGENT_DIR` 或 `~/.pi/agent`；",
 			"piRenders": false
 		},
 		{
 			"source": "| `<agentDir>/prompts/**.md`、`<cwd>/.pi/prompts/**.md` | 提示模板，支持 `$1`/`$@`/`${1:-default}` | 默认 | 否 | 否 | `core/prompt-templates.ts:203` |",
-			"provenance": "docs/settings-audit-pi-gap.md:600",
+			"provenance": "docs/settings-audit-pi-gap.md:607",
 			"piVisible": "| `<agentDir>/prompts/**.md`、`<cwd>/.pi/prompts/**.md` | 提示模板，支持 `$1`/`$@`/`${1:-default}` | 默认 | 否 | 否 | `core/prompt-templates.ts:203` |",
 			"piRenders": false
 		},
 		{
 			"source": "运行环境由脚本统一传入 `-Dpi.repo.root=\"$ROOT\"`，这样审计的判据不取决于\"恰好从哪个目录跑了脚本\"。",
-			"provenance": "docs/settings-review.md:325",
+			"provenance": "docs/settings-review.md:331",
 			"piVisible": "运行环境由脚本统一传入 `-Dpi.repo.root=\"$ROOT\"`，这样审计的判据不取决于\"恰好从哪个目录跑了脚本\"。",
 			"piRenders": false
 		},
 		{
 			"source": "  它是一条**外部命令字符串**（`SM:969` `getExternalEditorCommand`，回退 `$VISUAL`/`$EDITOR`）。",
-			"provenance": "docs/settings-review.md:445",
+			"provenance": "docs/settings-review.md:451",
 			"piVisible": "  它是一条**外部命令字符串**（`SM:969` `getExternalEditorCommand`，回退 `$VISUAL`/`$EDITOR`）。",
 			"piRenders": false
 		},
 		{
 			"source": "| 引擎的额外键之一：`PI_ANDROID_BRIDGE_FILE=/root/.pi/device-bridge.json` | 我们的扩展读它（`assets/pi-extensions/pi-android-bridge/client.ts:63-70`） | **`pi 无对应物`** | 一致（**不必改**）：扩展自己会回退到 `$PI_CODING_AGENT_DIR/device",
-			"provenance": "docs/surfaces-terminal-workbench-device.md:33",
+			"provenance": "docs/surfaces-terminal-workbench-device.md:38",
 			"piVisible": "| 引擎的额外键之一：`PI_ANDROID_BRIDGE_FILE=/root/.pi/device-bridge.json` | 我们的扩展读它（`assets/pi-extensions/pi-android-bridge/client.ts:63-70`） | **`pi 无对应物`** | 一致（**不必改**）：扩展自己会回退到 `$PI_CODING_AGENT_DIR/device",
 			"piRenders": false
 		},
 		{
 			"source": "   其它转义是它保护的那个**字面字符**（`\\/` 是斜杠，`\\.` 是点）。于是 `\\bmount\\b` 与 `(^|[\\s;&|()])mount(\\s|$)` 都归约成 `mount`，",
-			"provenance": "docs/surfaces-terminal-workbench-device.md:182",
+			"provenance": "docs/surfaces-terminal-workbench-device.md:187",
 			"piVisible": "   其它转义是它保护的那个**字面字符**（`\\/` 是斜杠，`\\.` 是点）。于是 `\\bmount\\b` 与 `(^|[\\s;&|()])mount(\\s|$)` 都归约成 `mount`，",
 			"piRenders": false
 		},
 		{
 			"source": "| `shellPath` 只作用于 pi 的工具 | 设成 `/bin/sh` → 新会话让模型 `echo $0`；终端里 `echo $0` 仍应是 `bash`（①-2） |",
-			"provenance": "docs/surfaces-terminal-workbench-device.md:254",
+			"provenance": "docs/surfaces-terminal-workbench-device.md:259",
 			"piVisible": "| `shellPath` 只作用于 pi 的工具 | 设成 `/bin/sh` → 新会话让模型 `echo $0`；终端里 `echo $0` 仍应是 `bash`（①-2） |",
 			"piRenders": false
 		},
@@ -3823,12 +3948,6 @@
 			"source": "$",
 			"provenance": "手写语料：只有一个 `$`",
 			"piVisible": "$",
-			"piRenders": false
-		},
-		{
-			"source": "$$",
-			"provenance": "手写语料：两个 `$`",
-			"piVisible": "$$",
 			"piRenders": false
 		},
 		{

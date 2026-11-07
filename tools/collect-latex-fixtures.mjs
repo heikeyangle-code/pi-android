@@ -373,6 +373,12 @@ function piTokenizers() {
 		"tokenizeInlineLatex",
 		"tokenizeBlockLatex",
 	];
+	// pi 1.5.0（#11159）：显示数学不跨表格，`tokenizeBlockLatex` 因此多依赖一个函数和一个正则常量。
+	// 1.3.0 及更早没有它们，所以只在引擎里存在时才一起抽出来。
+	if (source.includes("function containsTableStart(")) names.unshift("containsTableStart");
+	const constLines = [];
+	const delimiterConst = /^const TABLE_DELIMITER_ROW_REGEX = .*;$/m.exec(source);
+	if (delimiterConst) constLines.push(delimiterConst[0]);
 	const bodies = names.map((name) => {
 		const at = source.indexOf(`function ${name}(`);
 		if (at < 0) throw new Error(`markdown.js 里找不到 function ${name}(`);
@@ -389,7 +395,7 @@ function piTokenizers() {
 		}
 		throw new Error(`function ${name}( 没有配平`);
 	});
-	return new Function(`${bodies.join("\n")}; return { tokenizeInlineLatex, tokenizeBlockLatex };`)();
+	return new Function(`${[...constLines, ...bodies].join("\n")}; return { tokenizeInlineLatex, tokenizeBlockLatex };`)();
 }
 
 /** pi 的 `LATEX_MARKDOWN_EXTENSIONS`（`markdown.ts:123-172`），逐字接线。 */
@@ -512,6 +518,9 @@ const DELIMITERS = [
 	["bracket-line-start-indented", "   " + String.raw`\[\frac{a}{b}\]` + "\n"],
 	["bracket-alone-in-line", "text\n" + String.raw`\[\frac{a}{b}\]` + "\ntext"],
 	["dollar-wrapping-paren", String.raw`$\(x\)$`],
+	// pi 1.5.0（#11159）：显示数学不跨表格。没闭合的 `$$` 不许把后面整张表吞进公式。
+	["block-dollar-spans-table", "$$\n| a | b |\n|---|---|\n| 1 | 2 |\n$$"],
+	["block-dollar-no-table-still-math", "$$\nx^2\n$$"],
 	["dollar-inline-in-text", String.raw`a $x$ and $y$`],
 	["dollar-escaped", String.raw`\$x\$`],
 	["dollar-only", "$$"],
@@ -562,6 +571,10 @@ const DELIMITER_DEVIATIONS = [
 	["inflated-bracket-glued", String.raw`a\[x\]b`],
 	["inflated-dollar-mid-line", String.raw`a $$x$$ b`],
 	["inflated-dollar-in-text", String.raw`pre $$x$$ post`],
+	// ③ pi 1.5.0 的表格保护之后重新配对：pi 拒绝「`$$` … 表 … `$$`」后只吃掉**开栏**，从开栏之后继续找，
+	//   所以后面的 `$$y$$` 仍是公式；App 的 `BLOCK_MATH` 一个正则配一对，拒绝时整对原样保留，后面那个
+	//   `$$` 就成了孤儿。方向是保守的（多留原文、不会多画公式），要追平得把 `BLOCK_MATH` 改成手写扫描。
+	["block-dollar-unclosed-before-table", "$$\nx\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n$$\ny\n$$"],
 ];
 
 // ---------------------------------------------------------------------------

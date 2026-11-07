@@ -23,11 +23,11 @@ import app.pi.rpc.PiResponses
  * `core/agent-session.ts:2027-2049` 每一轮 prompt 调它一次（档案取自 `:2037`）。`resizeImage()`
  * 把活交给 worker 线程里的 `resizeImageInProcess`，worker 加载不起来时**回落**到同进程
  * （`:104-108`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
- * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.3.0**
- * （`tools/pi-engine.lock.json`；1.2.0→1.3.0 这份 `image-resize-core.ts` 逐字节未变，所以下面这些
- * 行号仍然成立；上面 `agent-session.ts` 的两处引用这次整体 **+5**（1.1.0→1.2.0 那次是 +85，
+ * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.5.0**
+ * （`tools/pi-engine.lock.json`；1.3.0→1.5.0 这份文件只在 `:137-141` 改了候选裁决（见下面第 2 步），
+ * `:137` 之前的锚点不动，之后的 +2；上面 `agent-session.ts` 的两处引用这次整体 **+5**（1.1.0→1.2.0 那次是 +85，
  * 两次位移都不动本文件的锚点））里的位置，
- * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:156-160` 逐条对过 1.3.0 的源码：
+ * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:158-162` 逐条对过 1.5.0 的源码：
  *
  *  0. **EXIF 方向先摆正**（`:84-86` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
  *     取自摆正**之后**的图（`:88-89`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。
@@ -38,7 +38,9 @@ import app.pi.rpc.PiResponses
  *     `ceil(bytes / 3) * 4` base64 is under `maxBytes`, pi sends the original bytes
  *     unchanged — no re-encode at all (`:92-103`);
  *  2. otherwise it clamps the long edge to [PI_MAX_DIMENSION] (`:105-116`), then loops:
- *     encode at the current size and take the first candidate under `maxBytes`, else
+ *     encode PNG and the first-quality JPEG at the current size and take the smaller of the two
+ *     if it is under `maxBytes` (else the other; pi 1.5.0 — before that PNG was always first), then
+ *     the lower JPEG qualities, else
  *     shrink both axes by three quarters ([SHRINK_NUMERATOR]/[SHRINK_DENOMINATOR],
  *     `:156-160`) and try again, down to 1×1.
  *
@@ -46,10 +48,11 @@ import app.pi.rpc.PiResponses
  * （`image-process.ts:86-118`，归一化那一步照跑），App 侧同样
  * （`ChatScreen.withAutoResizeOff`）—— 那时本文件的 [attemptPlan] 根本不参与。
  *
- * The candidate order at one size is pi's, for **every** source that reaches the loop: PNG
- * first, then JPEG at [PI_JPEG_QUALITIES] (`:122-125`, `:132`). There is no exception for an
- * opaque camera JPEG — pi pushes that PNG candidate unconditionally and the App now does the
- * same.
+ * The candidates at one size are pi's, for **every** source that reaches the loop: PNG, then
+ * JPEG at [PI_JPEG_QUALITIES] (`:122-125`, `:132`), tried in the order [jpegBeforePng] gives
+ * (pi 1.5.0, `:137-141`: the first JPEG goes first when it is strictly smaller than the PNG).
+ * There is no exception for an opaque camera JPEG — pi encodes that PNG candidate
+ * unconditionally and the App does the same.
  *
  * **这里曾经是 App 的「唯一刻意差异」，现在已经没有了。** 旧实现在「源是 `image/png`」或
  * 「解码后的位图带 alpha」时才推 PNG，理由是 Android 编码一张 2000×2000 的 PNG 又慢又大，
@@ -397,9 +400,11 @@ internal object AttachmentBudget {
         if (axis <= 1) 1 else maxOf(1, axis * SHRINK_NUMERATOR / SHRINK_DENOMINATOR)
 
     /**
-     * The candidate encodings at one size, in pi's order (`image-resize-core.ts:122-132`):
-     * **PNG first for every source**, then JPEG at each quality step of [jpegQualities] for
-     * the profile's first quality (pi's default 80 unless a model published its own).
+     * The candidate encodings at one size, in pi's *encoding* order (`image-resize-core.ts:122-132`):
+     * PNG, then JPEG at each quality step of [jpegQualities] for the profile's first quality
+     * (pi's default 80 unless a model published its own). Since pi 1.5.0 the order they are
+     * *tried* in is not this one: the first JPEG goes before the PNG when it is smaller —
+     * see [jpegBeforePng].
      *
      * pi 对每一个进循环的源都先推 PNG 候选，不看 MIME、也不看位图有没有 alpha；这里照抄，
      * 类 KDoc 写了随之而来的两笔体积/时间代价。
@@ -411,6 +416,17 @@ internal object AttachmentBudget {
         for (quality in qualities) out += Encoding.Jpeg(quality)
         return out
     }
+
+    /**
+     * pi 1.5.0 的候选裁决（`image-resize-core.ts:137-141`）：同一尺寸下，第一档 JPEG **严格小于**
+     * PNG 时 JPEG 排在 PNG 前面，否则 PNG 在前；更低的 JPEG 质量永远排在这两个之后。
+     * 1.3.0 及更早是固定的 PNG 优先 —— 同一张图在新旧版本下可能选到不同的编码。
+     *
+     * 两个参数是各自编码后的 base64 长度，`null` = 这个候选没编出来（pi 里 PNG 总是有的，App 的
+     * 编码可能失败）：PNG 缺席时 JPEG 排前面，JPEG 缺席时 PNG 排前面。
+     */
+    fun jpegBeforePng(pngChars: Int?, jpegChars: Int?): Boolean =
+        jpegChars != null && (pngChars == null || jpegChars < pngChars)
 
     /**
      * Every attempt pi's loop would make for a [width]×[height] source, in order: all

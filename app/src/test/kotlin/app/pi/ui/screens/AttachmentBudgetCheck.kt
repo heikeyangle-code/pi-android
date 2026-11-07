@@ -174,6 +174,12 @@ fun main() {
         },
         listOf(listOf(42, 85, 70, 55, 40), listOf(80, 85, 70, 55, 40), listOf(70, 85, 55, 40)),
     )
+    // pi 1.5.0（`image-resize-core.ts:137-141`）：同一尺寸下第一档 JPEG 严格更小才排到 PNG 前面。
+    check("jpegBeforePng: JPEG 严格更小 → JPEG 先", AttachmentBudget.jpegBeforePng(pngChars = 900, jpegChars = 400), true)
+    check("jpegBeforePng: 一样大 → PNG 先（严格小于）", AttachmentBudget.jpegBeforePng(pngChars = 500, jpegChars = 500), false)
+    check("jpegBeforePng: JPEG 更大 → PNG 先", AttachmentBudget.jpegBeforePng(pngChars = 400, jpegChars = 900), false)
+    check("jpegBeforePng: PNG 没编出来 → JPEG 先", AttachmentBudget.jpegBeforePng(pngChars = null, jpegChars = 900), true)
+    check("jpegBeforePng: JPEG 没编出来 → PNG 先", AttachmentBudget.jpegBeforePng(pngChars = 900, jpegChars = null), false)
     // 「唯一刻意差异」必须真的不在代码里了 —— 只改注释不删代码等于差异还在，所以这两条读源文本
     // （`budgetText` 在 main 开头读了一次）。`ChatScreen` 那条分流调用点由下面的 (e) 节按新形状钉住。
     check("AttachmentBudget.kt 读得到（源文本断言的前提）", budgetText.isNotEmpty(), true)
