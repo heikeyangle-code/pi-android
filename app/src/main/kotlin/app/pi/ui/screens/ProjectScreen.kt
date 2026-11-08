@@ -67,6 +67,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
 import app.pi.packages.AgentLayout
+import app.pi.packages.GuestCommand
+import app.pi.packages.PiResources
 import app.pi.packages.ProjectTrust
 import app.pi.packages.TrustRepository
 import app.pi.rpc.ToolCall
@@ -324,22 +326,21 @@ fun ProjectScreen(
     }
 
     // ------------------------------------------------------------ ⑤ 资源扫描
-    var resources by remember { mutableStateOf<List<WorkspaceResource>>(emptyList()) }
-    var resourceKind by remember { mutableStateOf(WorkspaceResourceKind.Skill) }
+    val resourceManager = remember(layout) {
+        ResourceManager(PiResources(context, layout, GuestCommand(layout)), layout, scope)
+    }
     // 文件 / 资源两个分段：这一屏原来把两者摞在一条列表里，往下滚才看到资源，
     // 像两个功能硬拼在一起。
     var showResources by rememberSaveable { mutableStateOf(false) }
-    // 「来源按优先级排」那句话默认收起，点 ⓘ 才看 —— 它是一句解释，不是内容。
-    var sourceNoteOpen by rememberSaveable { mutableStateOf(false) }
     // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
     var overflow by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
     var projectUntrusted by remember { mutableStateOf(false) }
+    LaunchedEffect(refreshTick, workspace, projectUntrusted, showResources) {
+        if (showResources) resourceManager.refresh(!projectUntrusted)
+    }
     LaunchedEffect(refreshTick, workspace, agentDir) {
         withContext(Dispatchers.IO) {
-            resources = runCatching {
-                WorkspaceResourceScan.scan(workspace, configDir, agentDir)
-            }.getOrDefault(emptyList())
             // 信任：pi 只加载**受信任**项目的 `.pi` 资源（`interactive-mode.ts:3877`、
             // `:3888-3907`），未受信任时它照旧启动但忽略这些目录 —— 而这一段照常把它们
             // 列出来，所以必须说清哪些不会生效。
@@ -686,18 +687,6 @@ fun ProjectScreen(
         }
     }
 
-    // **派生值必须算在 `LazyColumn` 外面。** `LazyColumn` 的 content 是
-    // `LazyListScope.() -> Unit`，**不是** `@Composable` 作用域 —— 在那里写
-    // `remember { }` 编译不过（`@Composable invocations can only happen from the
-    // context of a @Composable function`）。这两个只取决于 `resources` / `resourceKind`。
-    val groupedResources = remember(resources, resourceKind) {
-        resources
-            .filter { it.kind == resourceKind }
-            .groupBy { it.source }
-            .toList()
-            .sortedBy { (source, _) -> source.rank }
-    }
-
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
             PiTopBar(
@@ -752,164 +741,26 @@ fun ProjectScreen(
             ) {
                 if (showResources) {
                     // ---------------------------------------------------- 资源
-                    if (projectUntrusted) {
-                        item {
-                            WsNotice(
-                                text = "项目未受信任：pi 不会加载这个项目里的 .pi 资源。" +
-                                    "要改就去「设置 → 扩展与资源 → 扩展包与项目信任」。",
-                                tone = StateTone.Warning,
-                                glyph = "!",
+                    // 清单是 pi 自己算的（装的包、内置扩展、各层目录），逐条开关也由 pi 的
+                    // 逻辑写；这里不再扫目录去猜。
+                    resourceManagerItems(
+                        manager = resourceManager,
+                        projectUntrusted = projectUntrusted,
+                        onManagePackages = {
+                            session.requestNav(NavRequest.SettingsFocus("packages"))
+                        },
+                        onOpen = { item, file ->
+                            viewer = WorkspaceViewerTarget(
+                                relativePath = item.name,
+                                file = file,
+                                kind = WorkspaceFiles.kindOf(file),
+                                sizeBytes = file.length(),
+                                modifiedAt = file.lastModified(),
+                                editable = false,
+                                startInEdit = false,
                             )
-                        }
-                    }
-                    item {
-                        // 这一段只负责「看」：逐条资源、来源、状态。装包、筛选、信任、启动参数
-                        // 都在设置里的同一处，这里给一个直达入口，免得用户在三个页面里找管理入口。
-                        WsCardSlice(index = 0, lastIndex = 0) {
-                            WsRow(
-                                title = "管理扩展包与信任",
-                                meta = "安装、更新、筛选、项目信任、扩展启动参数",
-                                onClick = {
-                                    session.requestNav(NavRequest.SettingsFocus("packages"))
-                                },
-                            )
-                        }
-                    }
-                    item {
-                        val counts = remember(resources) {
-                            WorkspaceResourceKind.order.associateWith { kind ->
-                                resources.count { it.kind == kind }
-                            }
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    start = PiSettingsMetrics.pageHorizontal,
-                                    end = PiSettingsMetrics.pageHorizontal,
-                                    top = WS_SEGMENT_TOP,
-                                    bottom = WS_SEGMENT_BOTTOM,
-                                )
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-                        ) {
-                            WorkspaceResourceKind.order.forEach { kind ->
-                                PiSettingsChip(
-                                    text = "${kind.label} ${counts[kind] ?: 0}",
-                                    active = kind == resourceKind,
-                                    onClick = { resourceKind = kind },
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        // 优先级那句话默认收起：它是一句解释，不是内容。点 ⓘ 才看。
-                        Column(Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        start = PiSettingsMetrics.pageHorizontal,
-                                        end = PiSettingsMetrics.pageHorizontal,
-                                    ),
-                                horizontalArrangement = Arrangement.End,
-                            ) {
-                                Text(
-                                    "来源按优先级排 ⓘ",
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(WsShape.small))
-                                        .clickable { sourceNoteOpen = !sourceNoteOpen }
-                                        .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
-                                    style = PiTheme.text.meta,
-                                    color = PiTheme.palette.muted,
-                                )
-                            }
-                            if (sourceNoteOpen) {
-                                Text(
-                                    "项目 .pi → .agents → 全局 → 扩展贡献 → 包；同名时排在前面的那份赢。",
-                                    modifier = Modifier.padding(
-                                        start = PiSettingsMetrics.pageHorizontal,
-                                        end = PiSettingsMetrics.pageHorizontal,
-                                        bottom = PiSettingsMetrics.supportingGap,
-                                    ),
-                                    style = PiTheme.text.meta,
-                                    color = PiTheme.palette.muted,
-                                )
-                            }
-                        }
-                    }
-                    if (groupedResources.isEmpty()) {
-                        item {
-                            WsCardSlice(index = 0, lastIndex = 0) {
-                                WsRow(
-                                    title = "这一类还没有资源",
-                                    lead = { FileGlyph() },
-                                    meta = "把「${resourceKind.label}」放进 .pi、.agents 或全局目录之后，" +
-                                        "点顶栏的刷新键就能看到它。",
-                                )
-                            }
-                        }
-                    }
-                    groupedResources.forEach { (source, rows) ->
-                        item(key = "rg:${source.name}") {
-                            WsSectionHeader(
-                                label = sourceGroupLabel(source),
-                                count = "${rows.size}",
-                            )
-                        }
-                        item(key = "rr:${source.name}") {
-                            WsCard {
-                                rows.forEachIndexed { index, resource ->
-                                    // 资源行没有图标列，线从行内边距处开始。
-                                    if (index > 0) {
-                                        WsHairline(startInset = PiSettingsMetrics.rowPaddingHorizontal)
-                                    }
-                                    Box(
-                                        // 只压暗「项目 .pi」那一族：受信任决定影响的只有从
-                                        // 这个项目里读来的 .pi 资源。
-                                        Modifier.alpha(
-                                            if (projectUntrusted && resource.source == WorkspaceSource.ProjectPi) {
-                                                0.5f
-                                            } else {
-                                                1f
-                                            },
-                                        ),
-                                    ) {
-                                        ResourceRow(
-                                            resource = resource,
-                                            untrusted = projectUntrusted,
-                                            onOpen = {
-                                                viewer = WorkspaceViewerTarget(
-                                                    relativePath = resource.displayPath,
-                                                    file = resource.file,
-                                                    kind = WorkspaceFiles.kindOf(resource.file),
-                                                    sizeBytes = if (resource.file.isFile) {
-                                                        resource.file.length()
-                                                    } else {
-                                                        0L
-                                                    },
-                                                    modifiedAt = resource.file.lastModified(),
-                                                    editable = false,
-                                                    startInEdit = false,
-                                                )
-                                            },
-                                            onUse = {
-                                                val copied = copyToClipboard(context, resource.name)
-                                                say(
-                                                    if (copied) {
-                                                        "已复制 ${resource.name}"
-                                                    } else {
-                                                        "剪贴板不可用；${resource.name} 可以手打"
-                                                    },
-                                                    if (copied) StateTone.Muted else StateTone.Warning,
-                                                )
-                                            },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                        },
+                    )
                 } else {
                     // ---------------------------------------------------- 文件
                     if (engineDown) {
@@ -1714,15 +1565,6 @@ private val WS_SEGMENT_BOTTOM = 10.dp
 
 private const val WS_SEGMENT_FILES = "文件"
 private const val WS_SEGMENT_RESOURCES = "资源"
-
-/** 资源分组的标题：pi 的来源族（顺序即优先级）。 */
-private fun sourceGroupLabel(source: WorkspaceSource): String = when (source) {
-    WorkspaceSource.ProjectPi -> "项目 .pi"
-    WorkspaceSource.Agents -> ".agents"
-    WorkspaceSource.Global -> "全局"
-    WorkspaceSource.Extension -> "扩展贡献"
-    WorkspaceSource.Package -> "包"
-}
 
 @Composable
 private fun FolderGlyph() {
@@ -2609,109 +2451,6 @@ private fun EntryGlyph(kind: WorkspaceEntryKind) {
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
             tint = PiTheme.palette.muted,
         )
-    }
-}
-
-// ================================================================ ⑤ 资源
-
-/**
- * 一行资源：名字 + 描述（最多两行）+ 异常状态。
- *
- * 来源**不在行里重复**：资源页按来源分组，分组头已经说过一次「全局」「包」，每行再挂
- * 一枚来源徽标只会把同一个词印 N 次。所以这个组件没有 badge、没有图标列。
- *
- * 四种异常状态仍是三重编码（`!` 同名 / `✗` 解析失败 / `⊘` 已禁用），正常什么都不加。
- * 行尾的字面动作是「复制名字」——它把资源名放进剪贴板，不再是「在对话里用」那种
- * 名不副实的说法。
- */
-@Composable
-private fun ResourceRow(
-    resource: WorkspaceResource,
-    untrusted: Boolean,
-    onOpen: () -> Unit,
-    onUse: () -> Unit,
-) {
-    val piRow = resource.source == WorkspaceSource.ProjectPi
-    WsRow(
-        title = resource.name,
-        // 名字 15/Medium，与文件行同一档；等宽只留给路径（描述里那条路径仍走 fallback）。
-        mono = false,
-        strong = false,
-        meta = resourceMeta(resource, untrusted = untrusted, piRow = piRow),
-        value = {
-            when (resource.status) {
-                WorkspaceResourceStatus.Normal -> Unit
-                WorkspaceResourceStatus.Conflict -> StatusWord(
-                    glyph = "!",
-                    text = "与「${resource.conflictWith.orEmpty()}」同名",
-                    color = PiTheme.palette.warning,
-                )
-
-                WorkspaceResourceStatus.ParseFail -> StatusWord(
-                    glyph = "✗",
-                    text = "解析失败",
-                    color = PiTheme.palette.error,
-                )
-
-                WorkspaceResourceStatus.Disabled -> StatusWord(
-                    glyph = "⊘",
-                    text = "已禁用",
-                    color = PiTheme.palette.muted,
-                )
-            }
-        },
-        trail = if (resource.usableInChat) {
-            {
-                Text(
-                    "复制名字",
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(WsShape.small))
-                        .clickable(onClick = onUse)
-                        .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
-                    style = PiTheme.text.meta,
-                    color = PiTheme.palette.accent,
-                    maxLines = 1,
-                )
-            }
-        } else {
-            null
-        },
-        onClick = { if (resource.openable) onOpen() },
-    )
-}
-
-/**
- * 资源行的副行。
- *
- *  - **解析失败**：副行换成原因 —— 解析不了的时候 `description` 本身就没读到。
- *  - **其余状态**：副行是 `description`，不追加原因（「已禁用」已经把结论说了）。
- *  - **没有描述就不画第二行**（用户裁决）：原来兜底印 `displayPath`，于是每一行都拖着
- *    一条路径，和技能名一长一短地混在一起。
- *
- * [untrusted] 只标「项目 .pi」那一族：只有从这个项目读来的资源才受项目信任决定影响。
- */
-private fun resourceMeta(resource: WorkspaceResource, untrusted: Boolean, piRow: Boolean): String? {
-    val parts = buildList {
-        if (resource.status == WorkspaceResourceStatus.ParseFail) {
-            (resource.reason ?: resource.description)?.takeIf { it.isNotBlank() }?.let { add(it) }
-        } else {
-            resource.description?.takeIf { it.isNotBlank() }?.let { add(it) }
-        }
-        if (untrusted && piRow) add("不会加载（项目未受信任）")
-    }
-    // 没有描述就不画第二行；只有信任提示时也照常显示那一句。
-    return parts.joinToString(" · ").ifEmpty { null }
-}
-
-/** 状态那半格：符号 + 词，同一个字色。 */
-@Composable
-private fun StatusWord(glyph: String, text: String, color: androidx.compose.ui.graphics.Color) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
-    ) {
-        Text(glyph, style = PiTheme.text.monoSmall, color = color, maxLines = 1)
-        Text(text, style = PiTheme.text.meta, color = color, maxLines = 1)
     }
 }
 

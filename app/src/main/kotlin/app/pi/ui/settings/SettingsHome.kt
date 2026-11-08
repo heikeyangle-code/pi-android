@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiTheme
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
@@ -135,6 +139,16 @@ fun SettingsHome(
     val openPiFiles: () -> Unit = onOpenPiFiles ?: { piFilesOpen = true }
     // 手绘 `PiTopBar` 不吃状态栏 inset，而这一屏只消费 `contentPadding` 的底边 ——
     // 顶边在这里补一次（见 `settingsPageTopInset`）。
+    var query by remember { mutableStateOf("") }
+    val q = query.trim()
+    val hits = remember(q) {
+        if (q.isEmpty()) emptyList() else PiSettingsCatalog.settings.filter {
+            it.group != "security" && (
+                it.title.contains(q, ignoreCase = true) || it.description.contains(q, ignoreCase = true) ||
+                    it.key.contains(q, ignoreCase = true)
+                )
+        }.take(40)
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "设置", onBack = onBack)
         // 卡与卡之间**必须有间距**：`PiSettingsCard` 自己不带上下留白（行自带 10 纵向），
@@ -151,61 +165,88 @@ fun SettingsHome(
         ) {
             // 模型与供应商：首页最顶栏的第一扇门（用户拍板的位置）——取代原来那张
             // 「当前模型」卡（卡已按用户裁定删除：同一个东西两处显示，就是"乱"）。
-            if (onOpenModels != null) {
-                item {
+            item(key = "search") {
+                PiEditorField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                    placeholder = "搜索设置：名称、说明或键名",
+                    height = PiSettingsMetrics.searchFieldHeight,
+                )
+            }
+            if (q.isNotEmpty()) {
+                if (hits.isEmpty()) {
+                    item(key = "no-hits") {
+                        PiSettingsCard { PiSettingsEntryRow(title = "没有匹配的设置", supporting = "换个词，或清空搜索看分组。") }
+                    }
+                } else {
+                    item(key = "hits") {
+                        PiSettingsCard {
+                            hits.forEachIndexed { index, hit ->
+                                if (index > 0) PiSettingsHairline()
+                                PiSettingsEntryRow(
+                                    title = hit.title,
+                                    supporting = PiSettingsCatalog.groupTitle(hit.group) + " · " + hit.description,
+                                    onClick = {
+                                        if (hit.group == G_MODEL && onOpenModels != null) onOpenModels() else onOpenGroup(hit.group)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                return@LazyColumn
+            }
+            // 分区：先「接什么」（模型、工具、资源），再「怎么跑」（对话行为），再外观与系统。
+            // 原来是一条 12 项不分段的长列表，找东西只能一屏屏翻。
+            fun groupCards(label: String, ids: List<String>, lead: List<HomeEntry> = emptyList()) {
+                val groups = ids.mapNotNull { id -> PiSettingsCatalog.groups.firstOrNull { it.id == id } }
+                if (groups.isEmpty() && lead.isEmpty()) return
+                item(key = "label:$label") { HomeSectionLabel(label) }
+                item(key = "card:$label") {
                     PiSettingsCard {
-                        PiSettingsEntryRow(
-                            title = "模型与供应商",
-                            supporting = "厂商、模型、凭证与导入——官方配置文件的编辑器",
-                            onClick = onOpenModels,
-                            leadingIcon = Icons.Filled.Timeline,
-                        )
+                        var first = true
+                        lead.forEach { entry ->
+                            if (!first) PiSettingsHairline()
+                            first = false
+                            PiSettingsEntryRow(
+                                title = entry.title,
+                                supporting = entry.supporting,
+                                onClick = entry.onClick,
+                                leadingIcon = entry.icon,
+                            )
+                        }
+                        groups.forEach { group ->
+                            if (!first) PiSettingsHairline()
+                            first = false
+                            GroupEntry(group, store, freshness) { onOpenGroup(group.id) }
+                        }
                     }
                 }
             }
-            if (onOpenMcp != null) {
-                item {
-                    PiSettingsCard {
-                        PiSettingsEntryRow(
-                            title = "MCP 服务器",
-                            supporting = "给 pi 接外部工具：开关、添加、编辑，不用手写配置",
-                            onClick = onOpenMcp,
-                            leadingIcon = Icons.Filled.Build,
-                        )
-                    }
-                }
-            }
-            // 分组一张卡一行（用户裁定：不要全塞进一张大卡，像「模型与供应商」那样一卡一扇门）。
-            // 顺序见下面的 `order`：高频在上，扩展与资源垫底。
-            //
-            // 「模型与推理」的入口仍删掉（组里的行都在「模型与供应商」屏里）。
-            val order = listOf(
-                "appearance", "sessions", "messages", "prompts", "tools",
-                "compaction", "retry", "runtime", "resources",
+            groupCards(
+                "模型与能力",
+                listOf("tools", "resources"),
+                lead = listOfNotNull(
+                    onOpenModels?.let { HomeEntry("模型与供应商", "厂商、模型、凭证与导入", Icons.Filled.Timeline, it) },
+                    onOpenMcp?.let { HomeEntry("MCP 服务器", "给 pi 接外部工具：开关、添加、编辑", Icons.Filled.Build, it) },
+                ),
             )
-            val listedGroups = PiSettingsCatalog.groups
-                .filterNot { it.id == G_MODEL || it.id == "security" }
-                .sortedBy {
-                    order.indexOf(it.id).let { index -> if (index < 0) order.size else index }
-                }
-            listedGroups.forEach { group ->
-                item {
-                    PiSettingsCard {
-                        GroupEntry(
-                            group = group,
-                            store = store,
-                            freshness = freshness,
-                            onClick = { onOpenGroup(group.id) },
-                        )
-                    }
-                }
-            }
-            // 「其他」：一张卡、一行。里面那些与 pi 设置无关的门（终端 / Pi 文件 /
-            // 设备能力 / 扩展包与信任 / 安全与隐私 / 开源许可）收进这一屏，点进去再看 ——
-            // 用户裁定：首页只留「模型」「分组」「其他」三张卡。
-            if (onOpenOther != null) {
-                item {
-                    PiSettingsCard {
+            groupCards("对话行为", listOf("prompts", "sessions", "messages", "compaction", "retry"))
+            groupCards("外观", listOf("appearance"))
+            item(key = "label:系统") { HomeSectionLabel("系统") }
+            item(key = "card:系统") {
+                PiSettingsCard {
+                    PiSettingsEntryRow(
+                        title = PiSettingsCatalog.groupTitle("runtime"),
+                        supporting = PiSettingsCatalog.groups.firstOrNull { it.id == "runtime" }?.summary?.invoke(store),
+                        onClick = { onOpenGroup("runtime") },
+                        leadingIcon = Icons.Filled.Build,
+                    )
+                    if (onOpenOther != null) {
+                        PiSettingsHairline()
                         PiSettingsEntryRow(
                             title = "其他",
                             supporting = "终端、Pi 文件、设备能力、安全与隐私、开源许可",
@@ -219,10 +260,26 @@ fun SettingsHome(
     }
 }
 
-/**
- * 分组入口行：标题 15/500 + 动态摘要 + chevron（v2 的首页分组行没有前置图标，
- * 前置图标留给设备/扩展/关于三行，见 `06 §2` 的 Row `lead` 槽）。
- */
+private class HomeEntry(
+    val title: String,
+    val supporting: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val onClick: () -> Unit,
+)
+
+@Composable
+private fun HomeSectionLabel(text: String) {
+    androidx.compose.material3.Text(
+        text,
+        modifier = Modifier.padding(
+            start = PiSettingsMetrics.pageHorizontal + PiSpacing.small,
+            end = PiSettingsMetrics.pageHorizontal,
+        ),
+        style = PiTheme.text.meta,
+        color = PiTheme.palette.muted,
+    )
+}
+
 @Composable
 private fun GroupEntry(
     group: PiSettingsGroup,

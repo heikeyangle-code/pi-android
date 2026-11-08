@@ -235,8 +235,6 @@ fun PiPackagesScreen(
     // 长列表的收敛状态。一屏里的一类东西可能有十几行（实机：主题 14 个），整段铺出来会把
     // 下面所有分区推到屏外。与「模型」屏的厂商卡同一个手法（`remember { mutableStateMapOf }`），
     // 阈值也共用同一个数字（`PiSettingsCollapseAbove`）。
-    var extensionsExpanded by remember { mutableStateOf(false) }
-    val expandedKinds = remember { mutableStateMapOf<PiResourceDiscovery.Kind, Boolean>() }
     // v2 的页面节奏（06 §2）：卡片自带左右 14px 页边（`PiSettingsCard`），卡与卡之间留
     // `groupGap`。**没有分区头**：统一后的设置面只有一张接一张的卡，原来每个分区头上
     // 那句标题与「N 个 / N 项」都删掉了（与「设备能力」页同一套）。
@@ -254,44 +252,8 @@ fun PiPackagesScreen(
         item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
         item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
 
-        // 扩展：**一节**。随 App 自带的那几个与磁盘 `extensions/` 里发现的那几个是同一类东西
-        // （都是 pi 会加载的扩展），差别在**每一行的来源徽标**上（`App 自带` / `全局`），不在
-        // 标题上。原来它们是两张卡、两个标题，其中一个标题写着「其他扩展（不是随 App 安装的）」
-        // —— 标题本身就在说这些是次要的东西，而它们每一个都是 pi 会加载的扩展。见
-        // `PackageStrings` 里 built in vs installed 那一段。
-        item(key = "extensions") {
-            // 节标题与「N 个」已删（统一口径：卡片直接堆叠，卡间 groupGap）。
-            ExtensionsCard(
-                builtins = state.builtins,
-                discovered = state.discovered,
-                expanded = extensionsExpanded,
-                onToggle = { extensionsExpanded = !extensionsExpanded },
-            )
-            // 徽标说得下结论（在哪儿、是不是应用带的），说不下的那条事实留在这里：
-            // 自带的那几个 pi 卸载不了。
-            PiInfoNote(PackageStrings.EXTENSIONS_NOTE)
-        }
-
-        // 技能 / 提示模板 / 主题：**三类各一节**，各带自己的标题与数量。原来是三段挤在同一张
-        // 卡里、卡内各画一行 12 号小字（`技能（2）`），外面再套一个「其他资源（不是随 App 安装的）」
-        // 的标题 —— 三件不同的事共用一个「其他」，读者看不出这是三类资源还是三类杂项。
-        //
-        // 四类的先后是 **pi 自己的加载顺序**：扩展在上一节，然后 skills → prompts → themes
-        // （`core/package-manager.ts:203-204` 的 `RESOURCE_TYPES`；`resource-loader.ts` 的 reload
-        // 照它走：extensions `:456` → skills `:468` → prompts `:483` → themes `:502`）。
-        // 组页的「实际发现」那四个只读事实行用的是同一个顺序（`PiResourceFacts.DiscoveredKind`）。
-        PiResourceDiscovery.Kind.entries.forEach { kind ->
-            val rows = state.resources.filter { it.kind == kind }
-            item(key = "resources:${kind.name}") {
-                ResourceKindCard(
-                    kind = kind,
-                    rows = rows,
-                    expanded = expandedKinds[kind] ?: false,
-                    onToggle = { expandedKinds[kind] = !(expandedKinds[kind] ?: false) },
-                )
-            }
-        }
-
+        // 逐条资源（扩展 / 技能 / 提示 / 主题）与开关不在这里：它们在 工作区 → 资源，
+        // 那一页的清单是 pi 自己的包管理器给的，这一页只管包本身（装 / 更新 / 移除 / 信任）。
         item {
             if (state.projectPackagesHidden) {
                 PiInfoNote(PackageStrings.PROJECT_PACKAGES_HIDDEN, tone = palette.warning)
@@ -344,16 +306,6 @@ fun PiPackagesScreen(
                     }
                 }
                 if (canUpdate) PiInfoNote(PackageStrings.UPDATE_NOTE)
-            }
-        }
-
-        // 每个**已安装资源包**内部的资源。`pi list` 只报 spec 与安装路径，包里的
-        // extensions / skills / prompts / themes 不在任何 RPC 载荷里，所以这一区是
-        // 本应用自己扫安装目录的结果 —— 标题和说明都写明这一点（见 PackageStrings）。
-        if (state.packageScans.isNotEmpty()) {
-            item { PiInfoNote(PackageStrings.PACKAGE_RESOURCES_NOTE) }
-            state.packageScans.forEach { scan ->
-                item(key = "pkgscan:${scan.label}") { PackageResourcesCard(scan) }
             }
         }
 

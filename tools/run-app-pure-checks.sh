@@ -296,6 +296,13 @@ run_harness pi-mcp-config \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiMcpConfigCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiMcpConfig.kt"
 
+# app.pi.packages: pi 资源清单（`PiResourceCatalog`）—— 解析 pi-resources.mjs 的输出：分组来源、
+# 项目三态、安装失败、报错与噪音行。Android/Compose-free。
+run_harness pi-resource-catalog \
+  app.pi.packages.PiResourceCatalogCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiResourceCatalogCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceCatalog.kt"
+
 # app.pi.bridge: the A3 guest→host candidate order. Pure string arithmetic, no
 # Android and no filesystem — see the file header.
 run_harness guest-paths \

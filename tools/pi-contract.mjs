@@ -1684,6 +1684,23 @@ function checkGlobalOnlyKeys(piDir) {
 	);
 }
 
+/**
+ * `assets/guest/pi-resources.mjs` 用的 pi 内部接口还在不在：它按文件 URL 导入 dist 里的
+ * `ConfigSelectorComponent`、`DefaultPackageManager`、`SettingsManager`，并调用 ResourceList 的
+ * 一组方法。pi 改名或挪文件，这里先变红，而不是用户点开「资源」才看到报错。
+ */
+async function checkResourcesScript(piDir) {
+	const script = readFileSync(join(ROOT, "app/src/main/assets/guest/pi-resources.mjs"), "utf8");
+	const imports = [...script.matchAll(/dist\/([A-Za-z0-9_./-]+\.js)/g)].map((m) => m[1]);
+	for (const rel of new Set(imports)) {
+		check(`pi-resources.mjs imports dist/${rel}`, existsSync(join(piDir, "dist", rel)), "file is missing in the pinned engine");
+	}
+	const selector = readFileSync(join(piDir, "dist/modes/interactive/components/config-selector.js"), "utf8");
+	for (const name of ["getResourceList", "setWriteScope", "toggleResource", "getProjectOverrideState", "isInheritedGlobalItem", "getInheritedEnabled", "getItemScope"]) {
+		check(`ConfigSelector exposes ${name}`, selector.includes(name), "pi renamed it; pi-resources.mjs must follow");
+	}
+}
+
 async function checkSettingsValues(piDir) {
 	const core = join(piDir, "dist", "core");
 	const { SETTINGS_DEFAULTS } = await import(pathToFileURL(join(core, "settings-defaults.js")).href);
@@ -2281,6 +2298,7 @@ if (runs("tables")) {
 	checkAppTables(piDir);
 	await checkSettingsValues(piDir);
 	checkGlobalOnlyKeys(piDir);
+	await checkResourcesScript(piDir);
 }
 if (runs("tooltext")) {
 	console.log("\n--- tool-result text ---");
