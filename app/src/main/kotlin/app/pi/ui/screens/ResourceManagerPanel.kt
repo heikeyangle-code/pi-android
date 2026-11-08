@@ -68,14 +68,25 @@ internal class ResourceManager(
 
     private var trusted = true
 
+    private fun cacheKey(trusted: Boolean) = layout.hostWorkspace.absolutePath + if (trusted) "#t" else "#u"
+
+    private companion object {
+        /** 进程内、按工作区+信任态记住上次的清单；不落盘，进程没了就没了。 */
+        val cache = HashMap<String, PiResourceCatalog.Snapshot>()
+    }
+
     fun refresh(projectTrusted: Boolean) {
         trusted = projectTrusted
         loading = true
+        // 先拿上次读到的清单顶上：每次读都要冷启动一遍引擎（几秒），没必要让人对着空白等。
+        // 读完再换成新的；换的只是内容，开关位置不变。
+        if (snapshot == null) cache[cacheKey(projectTrusted)]?.let { snapshot = it }
         scope.launch {
             val result = withContext(Dispatchers.IO) { service.list(projectTrusted) }
             when (result) {
                 is Parsed.Ok -> {
                     snapshot = result.value
+                    cache[cacheKey(projectTrusted)] = result.value
                     error = null
                 }
                 is Parsed.Error -> error = result.message
@@ -95,8 +106,13 @@ internal class ResourceManager(
                 is Parsed.Ok -> {
                     changed = true
                     error = null
-                    val fresh = withContext(Dispatchers.IO) { service.list(trusted) }
-                    if (fresh is Parsed.Ok) snapshot = fresh.value
+                    // 同一个进程写完盘后已经重读了一遍；老脚本没带才再列一次。
+                    val fresh = result.value.snapshot?.let { Parsed.Ok(it) }
+                        ?: withContext(Dispatchers.IO) { service.list(trusted) }
+                    if (fresh is Parsed.Ok) {
+                        snapshot = fresh.value
+                        cache[cacheKey(trusted)] = fresh.value
+                    }
                 }
                 is Parsed.Error -> error = result.message
             }

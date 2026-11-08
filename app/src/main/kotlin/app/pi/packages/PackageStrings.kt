@@ -85,8 +85,7 @@ object PackageStrings {
     /** What the update command really does, and the question it cannot answer. */
     const val UPDATE_NOTE =
         "更新由 pi 自己执行：非精确版本的 npm 包只在新版本时才重新安装，精确版本会被跳过，" +
-            "git 来源会重新检出。无论有没有真的改动，pi 都只回答一句「已更新」，" +
-            "它不报告有没有新版本，本应用也查不到。"
+            "git 来源会重新检出。点「检查更新」可以先问 pi 哪些包有新版本（要联网，只查不装）。"
 
     /** Shown instead of the button when nothing installed can be changed. */
     const val UPDATE_NOTHING_TO_UPDATE =

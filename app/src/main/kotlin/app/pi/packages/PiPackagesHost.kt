@@ -119,6 +119,7 @@ fun PiPackagesHost(
     }
     val guest = remember(layout) { GuestCommand(layout) }
     val service = remember(layout) { PiPackageService(layout, guest) }
+    val resourceService = remember(layout) { PiResources(context, layout, guest) }
     val trustRepository = remember(layout) { TrustRepository(layout, guest) }
     // The filters live in `settings.json`, not in `pi list`'s output, so they are
     // read through the app's settings store (which owns the merge rules and the
@@ -173,6 +174,7 @@ fun PiPackagesHost(
                 onRemove = { entry -> scope.launch { controller.remove(entry) } },
                 onUpdate = { entry -> scope.launch { controller.update(entry) } },
                 onUpdateAll = { scope.launch { controller.updateAll() } },
+                onCheckUpdates = { scope.launch { controller.checkUpdates(resourceService) } },
                 onFilterAdd = { entry, type, pattern ->
                     scope.launch { controller.addFilter(entry, type, pattern) }
                 },
@@ -274,7 +276,36 @@ class PiPackagesController(
         log = log,
         trust = panel?.copy(promptVisible = promptVisible),
         trustInvalid = trustInvalid,
+        updates = updates,
+        checkingUpdates = checkingUpdates,
+        updateCheckError = updateCheckError,
     )
+
+    private var updates by mutableStateOf<List<PiResourceCatalog.Update>?>(null)
+    private var checkingUpdates by mutableStateOf(false)
+    private var updateCheckError by mutableStateOf<String?>(null)
+
+    /**
+     * pi 自己的 `checkForAvailableUpdates()`（终端界面启动时问的那个）：只查不装，要联网，
+     * 所以只在用户点了才跑。装/更新/移除之后结果就过期了，由 [refresh] 清掉。
+     */
+    suspend fun checkUpdates(resources: PiResources) {
+        if (checkingUpdates) return
+        checkingUpdates = true
+        updateCheckError = null
+        try {
+            val facts = readTrust()
+            when (val result = io { resources.updates(facts.trusted) }) {
+                is PiResourceCatalog.Parsed.Ok -> updates = result.value
+                is PiResourceCatalog.Parsed.Error -> {
+                    updates = null
+                    updateCheckError = result.message
+                }
+            }
+        } finally {
+            checkingUpdates = false
+        }
+    }
 
     // Named `chooseScope`, not `setScope`: `var scope` already generates a
     // `setScope(PiPackageScope)` accessor, and a function with the same name and
@@ -289,6 +320,8 @@ class PiPackagesController(
 
     suspend fun refresh() {
         busy = true
+        updates = null
+        updateCheckError = null
         try {
             val facts = readTrust()
             builtins = io { readBuiltins() }

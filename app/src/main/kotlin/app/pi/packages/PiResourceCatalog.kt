@@ -86,7 +86,11 @@ object PiResourceCatalog {
         val total: Int get() = global.sumOf { it.items.size }
     }
 
-    data class Toggled(val enabled: Boolean?, val override: Override)
+    /** [snapshot]：开关写盘后同一个进程里重读的完整清单；老输出没有它，调用方要自己再列一次。 */
+    data class Toggled(val enabled: Boolean?, val override: Override, val snapshot: Snapshot? = null)
+
+    /** `checkForAvailableUpdates()` 的一条：这个来源有新版本。 */
+    data class Update(val source: String, val name: String, val type: String, val scope: String)
 
     sealed interface Parsed<out T> {
         data class Ok<T>(val value: T) : Parsed<T>
@@ -168,7 +172,21 @@ object PiResourceCatalog {
             Toggled(
                 enabled = (root["enabled"] as? JsonPrimitive)?.booleanOrNull,
                 override = Override.of(root.str("override")),
+                snapshot = if (root["global"] != null) (parseSnapshot(text) as? Parsed.Ok)?.value else null,
             ),
+        )
+    }
+
+    fun parseUpdates(text: String): Parsed<List<Update>> {
+        val root = payload(text) ?: return Parsed.Error("pi 没有返回更新检查的结果。")
+        root.errorOrNull()?.let { return Parsed.Error(it) }
+        val list = (root["updates"] as? JsonArray) ?: return Parsed.Error("pi 没有返回更新检查的结果。")
+        return Parsed.Ok(
+            list.mapNotNull { element ->
+                val o = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
+                val source = o.str("source") ?: return@mapNotNull null
+                Update(source, o.str("name") ?: source, o.str("type") ?: "", o.str("scope") ?: "")
+            },
         )
     }
 

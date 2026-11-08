@@ -46,6 +46,12 @@ fun main() {
     check("没有 JSON", PiResourceCatalog.parseSnapshot("garbage") is PiResourceCatalog.Parsed.Error, true)
     val t = PiResourceCatalog.parseToggle("""{"ok":true,"enabled":null,"override":"load"}""") as PiResourceCatalog.Parsed.Ok
     check("开关结果", t.value, PiResourceCatalog.Toggled(null, PiResourceCatalog.Override.Load))
+    val t2 = PiResourceCatalog.parseToggle("""{"ok":true,"enabled":false,"override":null,"trusted":true,"global":[{"key":"k","label":"L","origin":"top-level","scope":"user","source":"builtin","subgroups":[{"type":"extensions","items":[{"path":"builtin:mcp","name":"mcp","enabled":false,"baseDir":null}]}]}],"project":[],"installFailures":[]}""") as PiResourceCatalog.Parsed.Ok
+    check("开关结果带新清单", t2.value.snapshot?.global?.single()?.items?.single()?.enabled, false)
+    val u = PiResourceCatalog.parseUpdates("""noise
+{"updates":[{"source":"npm:foo","name":"foo","type":"npm","scope":"user"}]}""") as PiResourceCatalog.Parsed.Ok
+    check("可更新", u.value, listOf(PiResourceCatalog.Update("npm:foo", "foo", "npm", "user")))
+    check("无更新", (PiResourceCatalog.parseUpdates("""{"updates":[]}""") as PiResourceCatalog.Parsed.Ok).value, emptyList<PiResourceCatalog.Update>())
     if (failures > 0) {
         println("$failures FAILED")
         kotlin.system.exitProcess(1)

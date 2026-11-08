@@ -119,7 +119,21 @@ data class PiPackagesUiState(
     val trust: TrustPanel? = null,
     /** Non-null when a trust record is invalid and pi would refuse to start. */
     val trustInvalid: String? = null,
+    /**
+     * pi's own `checkForAvailableUpdates()` answer (the same query its terminal UI asks at
+     * startup). Null = not asked yet or the last ask failed ([updateCheckError]).
+     */
+    val updates: List<PiResourceCatalog.Update>? = null,
+    val checkingUpdates: Boolean = false,
+    val updateCheckError: String? = null,
 ) {
+
+    /** 这条包有没有被 pi 报告有新版本。 */
+    fun hasUpdate(entry: PiPackageEntry): Boolean = updates.orEmpty().any { update ->
+        update.source == entry.source.raw ||
+            ((entry.source as? PiPackageSource.Npm)?.let { it.name == update.name } ?: false)
+    }
+
 
     /**
      * One shipped extension as the app could verify it. The presence is what the row
@@ -197,6 +211,8 @@ fun PiPackagesScreen(
     onUpdate: (PiPackageEntry) -> Unit,
     /** `pi update --extensions` — every configured package. */
     onUpdateAll: () -> Unit,
+    /** `checkForAvailableUpdates()` — read-only, needs the network. */
+    onCheckUpdates: () -> Unit = {},
     /**
      * Edit one of the four glob arrays of a package's object form. pi stores them
      * in `settings.json` (`core/settings-manager.ts:95-104`) and reads them when
@@ -292,6 +308,9 @@ fun PiPackagesScreen(
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
+                        TextButton(onClick = onCheckUpdates, enabled = !state.busy && !state.checkingUpdates) {
+                            Text(if (state.checkingUpdates) "检查中…" else "检查更新")
+                        }
                         if (canUpdate) {
                             TextButton(onClick = onUpdateAll, enabled = !state.busy) {
                                 Text(if (state.busy) PackageStrings.RUNNING else PackageStrings.UPDATE_ALL_LABEL)
@@ -301,8 +320,18 @@ fun PiPackagesScreen(
                     PiSettingsHairline()
                     state.entries.forEachIndexed { index, entry ->
                         if (index > 0) PiSettingsHairline()
-                        PackageRow(entry, state.busy, onRemove, onUpdate, onFilterAdd, onFilterRemove)
+                        PackageRow(entry, state.busy, state.hasUpdate(entry), onRemove, onUpdate, onFilterAdd, onFilterRemove)
                     }
+                }
+                state.updateCheckError?.let { PiInfoNote(it, tone = palette.warning) }
+                state.updates?.let { found ->
+                    PiInfoNote(
+                        if (found.isEmpty()) {
+                            "都是最新：pi 没有发现可更新的包（精确版本和本地路径不在检查之列）。"
+                        } else {
+                            "有新版本：" + found.joinToString("、") { it.name } + "。点对应包的「更新」。"
+                        },
+                    )
                 }
                 if (canUpdate) PiInfoNote(PackageStrings.UPDATE_NOTE)
             }
@@ -1167,6 +1196,7 @@ private fun InstallCard(
 private fun PackageRow(
     entry: PiPackageEntry,
     busy: Boolean,
+    updateAvailable: Boolean,
     onRemove: (PiPackageEntry) -> Unit,
     onUpdate: (PiPackageEntry) -> Unit,
     onFilterAdd: (PiPackageEntry, String, String) -> Unit,
@@ -1227,6 +1257,9 @@ private fun PackageRow(
                     )
                 }
             }
+            if (updateAvailable) {
+                Text(text = "有新版本", style = PiTheme.text.monoSmall, color = palette.accent)
+            }
             Text(
                 text = if (entry.scope == PiPackageScope.User) {
                     PackageStrings.SCOPE_USER
@@ -1277,7 +1310,10 @@ private fun PackageRow(
                 val skip = PiPackageUpdate.skipReason(entry.source)
                 if (skip == null) {
                     TextButton(onClick = { onUpdate(entry) }, enabled = !busy) {
-                        Text(PackageStrings.UPDATE_LABEL, color = palette.accent)
+                        Text(
+                        if (updateAvailable) "更新到新版本" else PackageStrings.UPDATE_LABEL,
+                        color = palette.accent,
+                    )
                     }
                 } else {
                     Text(text = skip, style = PiTheme.text.meta, color = palette.dim)

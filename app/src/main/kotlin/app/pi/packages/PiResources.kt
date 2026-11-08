@@ -26,6 +26,7 @@ class PiResources(
     private fun installScript() {
         val target = File(layout.paths.rootfs, "opt/pi/pi-resources.mjs")
         val bytes = context.assets.open(SCRIPT_ASSET).use { it.readBytes() }
+        if (target.isFile && target.length() == bytes.size.toLong() && target.readBytes().contentEquals(bytes)) return
         target.parentFile?.mkdirs()
         val staging = File(target.parentFile, target.name + ".partial")
         staging.writeBytes(bytes)
@@ -76,6 +77,10 @@ class PiResources(
         trusted: Boolean,
     ): PiResourceCatalog.Parsed<PiResourceCatalog.Toggled> =
         run(trusted, "toggle", layer.key, item.type.key, item.path, parse = PiResourceCatalog::parseToggle)
+
+    /** pi 终端界面启动时问的那个检查：只查哪些包有新版本，不安装任何东西。要联网，所以只在用户点了才跑。 */
+    fun updates(trusted: Boolean): PiResourceCatalog.Parsed<List<PiResourceCatalog.Update>> =
+        run(trusted, "updates", parse = PiResourceCatalog::parseUpdates)
 
     private companion object {
         const val SCRIPT_ASSET = "guest/pi-resources.mjs"
