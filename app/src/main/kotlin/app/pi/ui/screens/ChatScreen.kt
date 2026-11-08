@@ -2212,10 +2212,18 @@ private fun ChatBody(
                     // common case — and no row's fate is decided by its character count.
                     val streamingRow = (item as? AssistantText)?.streaming == true ||
                         (item as? ThinkingBlock)?.streaming == true
+                    // A row entering from ABOVE the first visible one (fast upward fling over
+                    // rows never measured: a long user bubble with code blocks, say) must be
+                    // parsed before its first layout and is exempt from the frame budget.
+                    // Otherwise it is laid out at zero height, the fling runs through it, and
+                    // when the parse lands it grows by its own height and the viewport jumps
+                    // by that much. Read without subscribing: the list state moves every frame.
+                    val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
+                        .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
                     val immediateMarkdown = !streamingRow &&
                         RowHeightCache.shared.of(item.key) == null &&
-                        (item.key in freshRowKeys || restoring) &&
-                        piMarkdownParseBudget.allow(System.nanoTime())
+                        (item.key in freshRowKeys || restoring || enteringFromAbove) &&
+                        (enteringFromAbove || piMarkdownParseBudget.allow(System.nanoTime()))
                     // The row's own place in the list, for a card that is about to change
                     // its height (see `TranscriptRowAnchor`). `following` is handed over as
                     // a lambda: an armed follow re-pins to the end on every height change
