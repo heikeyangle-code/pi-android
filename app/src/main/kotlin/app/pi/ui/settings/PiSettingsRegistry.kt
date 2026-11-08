@@ -291,6 +291,11 @@ private val trustOptions = choices(
 /**
  * The names offered as chips on the 内建工具 row: **only the ones that are not already on.**
  *
+ * Besides the three built-ins that are off by default, the list names `codemode` and
+ * `tool_search`: pi's docs (`docs/settings.md` Tools, `docs/cli.md`) say `defaultTools` can name
+ * both — they are registered inactive by built-in extensions — and without them the
+ * `codemode.*` rows below had no way to take effect from this app.
+ *
  * pi's built-in set is eight names (`core/tools/index.ts:95` — the `ToolName` union) and the
  * four it enables by default are `read`, `bash`, `edit`, `write` (`defaultActiveToolNames`).
  * So the chips are the three *optional* ones — `grep`, `find`, `ls` — because a "快捷添加"
@@ -306,7 +311,7 @@ private val trustOptions = choices(
  * and this app's guest is a Linux rootfs with no `pwsh`. Offering it would let the user pick a
  * tool that fails the first time the model calls it.
  */
-private val optionalTools = listOf("grep", "find", "ls")
+private val optionalTools = listOf("grep", "find", "ls", "codemode", "tool_search")
 
 object PiSettingsCatalog {
 
@@ -819,7 +824,7 @@ object PiSettingsCatalog {
 
         PiSetting(
             key = "defaultTools",
-            title = "内建工具",
+            title = "启用的工具",
             // 短。用户对这条的裁定：「写这么多描述文字干鸡巴毛呀？」——默认值是哪 4 个、
             // 快捷添加那 3 个是什么、清空等于什么，三件事说完即可；powershell 为什么不出现
             // 写在 `optionalTools` 的 KDoc 里，`defaultTools: []` 那种极端写法由 `Pi 文件` 屏负责。
@@ -834,7 +839,7 @@ object PiSettingsCatalog {
             // 解析再展示与写回，不能把原数组当成生效集合 —— `["+codemode"]` 长度 1、生效 5 个。
             // 另：`getDefaultTools()` 在 0.99.2 也变成返回解析后的列表（`:1429-1435`），
             // 0.87.1 的「原样返回」不再成立。见 `PiQuickAdd`。
-            description = "默认 read/bash/edit/write。",
+            description = "默认 read/bash/edit/write；可加 grep、find、ls，以及 codemode（脚本里批量调工具）、tool_search（按需检索工具）。",
             kind = PiRowKind.List,
             group = G_TOOLS,
             section = "工具",
@@ -846,7 +851,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "codemode.mode",
             title = "Codemode 方式",
-            description = "on 附调用方式，only 只列 codemode。",
+            description = "仅在启用 codemode 后有效。on：工具附调用方式；only：只列 codemode，其余工具经它调用。",
             kind = PiRowKind.Value,
             group = G_TOOLS,
             section = "工具",
@@ -862,7 +867,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "codemode.inlineBudget",
             title = "Codemode 声明预算",
-            description = "工具声明可花的估算 token（字符数 / 4）。",
+            description = "仅在启用 codemode 后有效。工具声明可花的估算 token（字符数 / 4），放不下的用 searchTools() 找。",
             kind = PiRowKind.Number,
             group = G_TOOLS,
             section = "工具",

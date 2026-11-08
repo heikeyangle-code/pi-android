@@ -584,8 +584,8 @@ fun main() {
     check("the optional-tool preset list was found", presets != null)
     val presetNames = presets?.split(",")?.map { it.trim().trim('"') }?.filter { it.isNotEmpty() }.orEmpty()
     check(
-        "the chips offer exactly the three optional tools",
-        presetNames == listOf("grep", "find", "ls"),
+        "the chips offer exactly the optional tools (three built-ins + codemode + tool_search)",
+        presetNames == listOf("grep", "find", "ls", "codemode", "tool_search"),
         "presets: $presets",
     )
     check(

@@ -1963,7 +1963,12 @@ function checkAppTables(piDir) {
 	// ------------------------------------------------------------------ tool names
 	const quickAdd = read("app/src/main/kotlin/app/pi/ui/settings/PiQuickAdd.kt");
 	const baseline = kotlinListOf(quickAdd, "builtinToolDefaults");
-	const optional = kotlinListOf(registryText, "optionalTools");
+	const optionalAll = kotlinListOf(registryText, "optionalTools");
+	// `codemode` / `tool_search` are not in the ToolName union: they are tools the built-in
+	// extensions register inactive, and \`defaultTools\` may name them (docs/settings.md, Tools).
+	const EXTENSION_TOOLS = ["codemode", "tool_search"];
+	const optional = optionalAll?.filter((t) => !EXTENSION_TOOLS.includes(t));
+	const extensionChips = optionalAll?.filter((t) => EXTENSION_TOOLS.includes(t)) ?? [];
 	const piTools = [...engine("core/tools/index.js").matchAll(/^\s+"([a-z]+)",$/gm)].map((m) => m[1]);
 	const toolNames = new Set(piTools);
 	check(
@@ -1974,6 +1979,14 @@ function checkAppTables(piDir) {
 			`(${toolNames.size}) are what the 内建工具 row's chips write into settings.json. Re-point ` +
 			`this reader if a list moved.`,
 	);
+	const settingsDoc = readFileSync(join(piDir, "docs", "settings.md"), "utf8");
+	for (const tool of extensionChips) {
+		check(
+			`pi's settings docs still say defaultTools can name ${tool}`,
+			new RegExp("`defaultTools`[^\\n]*`" + tool + "`|can also name[^\\n]*`" + tool + "`").test(settingsDoc),
+			`the 启用的工具 row offers ${tool} as a chip; re-read docs/settings.md (Tools).`,
+		);
+	}
 	for (const tool of [...(baseline ?? []), ...(optional ?? [])]) {
 		check(
 			`pi still has a built-in tool named ${tool}`,
