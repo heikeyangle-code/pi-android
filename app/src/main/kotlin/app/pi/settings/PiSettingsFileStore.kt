@@ -116,39 +116,6 @@ class PiSettingsFileStore(
 
     fun appLocal(): JsonObject = appLocal.load()
 
-    // ------------------------------------------------------------------ scoped access
-
-    /** 有没有「本项目」这一层可写（构造时给了项目文件路径）。文件本身可以还不存在。 */
-    fun hasProjectScope(): Boolean = project != null
-
-    /**
-     * 本项目的文件**现在**是否写着 [key]。问文件系统而不是缓存：工作区在应用私有存储里，
-     * 可能被清掉，缓存里的旧覆盖不能再算数（与 [write] 里的同一条理由）。
-     */
-    fun projectDefines(key: String): Boolean =
-        project != null && projectFile?.isFile == true && lookup(project.load(), key) != null
-
-    /** 用户明确选了层级的写：[SettingsScope.Project] 会在需要时建出 `<工作区>/.pi/settings.json`。 */
-    fun writeIn(scope: SettingsScope, key: String, value: JsonElement) {
-        if (isAppLocalKey(key)) return write(key, value)
-        val target = if (scope == SettingsScope.Project) project ?: return else global
-        update(target) { SettingsDocument.setPath(it, key, value) }
-    }
-
-    /**
-     * 从指定层级删掉 [key]：删本项目的覆盖 = 回到「继承全局」，pi 自己的语义
-     * （见 [remove] 的说明）。项目文件不存在时什么都不做，不会为了删一个键把文件建出来。
-     */
-    fun removeIn(scope: SettingsScope, key: String) {
-        if (isAppLocalKey(key)) return remove(key)
-        if (scope == SettingsScope.Project) {
-            if (project == null || projectFile?.isFile != true) return
-            update(project) { SettingsDocument.removePath(it, key) }
-        } else {
-            update(global) { SettingsDocument.removePath(it, key) }
-        }
-    }
-
     // ------------------------------------------------------------------ writing
 
     override fun write(key: String, value: JsonElement) {
@@ -446,27 +413,3 @@ fun PiSettingsStore.readString(key: String): String? = (read(key) as? JsonPrimit
 
 fun PiSettingsStore.readBoolean(key: String): Boolean? =
     (read(key) as? JsonPrimitive)?.content?.toBooleanStrictOrNull()
-
-
-/** pi 的两层设置文件：全局（`<agentDir>/settings.json`）与本项目（`<工作区>/.pi/settings.json`）。 */
-enum class SettingsScope { Global, Project }
-
-/**
- * 哪些键**不能**按项目覆盖 —— 照 `docs/settings.md` 里写着「Global setting only」或
- * 「Can only be set in agent-directory settings」的那几项（pi 的 getter 只读全局文档：
- * `core/settings-manager.js` 的 `getCacheWarmingMode` / `getDefaultProjectTrust` 等）。
- * 列表有 `tools/pi-contract.mjs` 的 `checkGlobalOnlyKeys` 对着文档守着，pi 加了新的会红。
- *
- * 数组型的资源键（`packages`、`extensions`、`skills`、`prompts`、`themes`）pi 是**合并**而不是覆盖，
- * 「本项目」里的那份由扩展包页按项目写，所以也不在这里按「覆盖」处理。
- */
-object PiSettingsScopes {
-    val GLOBAL_ONLY: Set<String> = setOf("cacheWarming", "defaultProjectTrust", "httpProxy", "selfUpdateCommand")
-
-    private val COMBINED = setOf("packages", "extensions", "skills", "prompts", "themes")
-
-    /** 这一项能不能在「本项目」里设（也就是界面上要不要在项目视图里出现）。 */
-    fun overridableInProject(key: String): Boolean =
-        !key.startsWith("app.") && !key.contains("[]") &&
-            key.substringBefore('.') !in GLOBAL_ONLY && key !in COMBINED
-}

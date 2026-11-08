@@ -563,44 +563,6 @@ fun main() {
         )
     }
 
-
-    // ---- 两层设置：显式写全局 / 本项目（设置页「全局 | 本项目」） -----------------------------------
-    run {
-        val dir = tempDir("scope")
-        val projectDir = File(dir, "ws/.pi")
-        val projectFile = File(projectDir, "settings.json")
-        val s = store(dir, projectFile)
-        check("本项目文件不存在时 projectDefines 为 false", !s.projectDefines("theme"))
-        s.removeIn(SettingsScope.Project, "theme")
-        check("在不存在的项目文件上删键不会把它建出来", !projectFile.exists() && !projectDir.exists())
-        s.writeIn(SettingsScope.Project, "theme", JsonPrimitive("light"))
-        check("显式写本项目会建出 .pi/settings.json 并写入", lookup(projectFile.readJsonOrNull(), "theme") != null)
-        check("显式写本项目不动全局", File(dir, "settings.json").readJsonOrNull()?.containsKey("theme") != true)
-        check("projectDefines 随之为 true", s.projectDefines("theme"))
-        s.writeIn(SettingsScope.Global, "theme", JsonPrimitive("dark"))
-        check(
-            "本项目有同名覆盖时显式写全局只落全局，项目那份原样",
-            (lookup(File(dir, "settings.json").readJsonOrNull(), "theme") as? JsonPrimitive)?.content == "dark" &&
-                (lookup(projectFile.readJsonOrNull(), "theme") as? JsonPrimitive)?.content == "light",
-        )
-        check("读到的是 pi 看到的合并值（项目压过全局）", (s.read("theme") as? JsonPrimitive)?.content == "light")
-        s.writeIn(SettingsScope.Project, "quietStartup", JsonPrimitive(true))
-        s.removeIn(SettingsScope.Project, "theme")
-        check(
-            "删本项目的覆盖 = 回到全局的值，项目文件里别的键还在",
-            (s.read("theme") as? JsonPrimitive)?.content == "dark" &&
-                lookup(projectFile.readJsonOrNull(), "quietStartup") != null &&
-                lookup(projectFile.readJsonOrNull(), "theme") == null,
-        )
-        check("全局独有键不能按项目覆盖", !PiSettingsScopes.overridableInProject("defaultProjectTrust") &&
-            !PiSettingsScopes.overridableInProject("cacheWarming"))
-        check("资源数组与 app.* 不按「覆盖」处理", !PiSettingsScopes.overridableInProject("packages") &&
-            !PiSettingsScopes.overridableInProject("app.appearance.typography"))
-        check("普通键与嵌套键可按项目覆盖", PiSettingsScopes.overridableInProject("theme") &&
-            PiSettingsScopes.overridableInProject("compaction.enabled"))
-        dir.deleteRecursively()
-    }
-
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) exitProcess(1)
 }

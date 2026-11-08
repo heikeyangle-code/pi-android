@@ -19,13 +19,11 @@ import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.ExtensionLifecycle
 import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
-import app.pi.settings.PiSettingsFileStore
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
-import app.pi.runtime.WorkspaceStore
 import app.pi.ui.PromptFileFacts
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.screens.PiFilesScreen
@@ -436,14 +434,8 @@ fun PiSettingsStack(
     val promptDetailOverrides = promptReading?.let { PromptFileFacts.detail(it) }
         ?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()
 
-    val appStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
+    val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
         AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
-    }
-    // 设置页「全局 / 本项目」。选择记在这一栈里（旋转/回台不丢），不落盘：它是「我现在在
-    // 看/改哪一层」，不是一项设置。`effectiveStore` 在两层之间只差「写落在哪」，读完全一致。
-    var scopeProject by rememberSaveable { mutableStateOf(false) }
-    val effectiveStore = remember(appStore, activeStore, scopeProject) {
-        ScopedSettingsStore(appStore, activeStore as? PiSettingsFileStore, scopeProject)
     }
     // Turning the switch must refresh the status row in the same breath; an app-only
     // write touches no pi document, so nothing else in the stack would notice, and the
@@ -713,9 +705,6 @@ fun PiSettingsStack(
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
-                scopeProject = scopeProject,
-                onScopeChange = { scopeProject = it },
-                projectLabel = remember(context, workspacePath) { WorkspaceStore.currentName(context) },
             )
 
             else -> SettingsHome(

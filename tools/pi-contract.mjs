@@ -1660,31 +1660,6 @@ function settingsSchemaPaths(text) {
  * and `PiOption("value"` out of each `PiSetting(` block.
  */
 /**
- * 「本项目」设置层的守卫：哪些键只能在全局设置里设，App 的 `PiSettingsScopes.GLOBAL_ONLY` 是照
- * `docs/settings.md` 里 "Global setting only" / "Can only be set in agent-directory settings" 抄的。
- * pi 往文档里再标一个，App 的项目视图就会让用户设一个 pi 根本不读的值 —— 这里让它变红。
- */
-function checkGlobalOnlyKeys(piDir) {
-	const doc = readFileSync(join(piDir, "docs", "settings.md"), "utf8");
-	const documented = new Set();
-	for (const line of doc.split("\n")) {
-		if (!/Global setting only|Can only be set in agent-directory settings/.test(line)) continue;
-		const match = line.match(/^\|\s*`([^`]+)`/);
-		if (match) documented.add(match[1]);
-	}
-	const kt = readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt"), "utf8");
-	const block = kt.match(/val GLOBAL_ONLY: Set<String> = setOf\(([^)]*)\)/);
-	const inApp = new Set(block ? [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
-	const missing = [...documented].filter((k) => !inApp.has(k));
-	const extra = [...inApp].filter((k) => !documented.has(k));
-	check(
-		"the global-only settings list matches the engine's docs",
-		missing.length === 0 && extra.length === 0,
-		`docs say global-only but the app lets a project override: ${missing.join(", ") || "-"}; the app lists but docs do not: ${extra.join(", ") || "-"}`,
-	);
-}
-
-/**
  * `assets/guest/pi-resources.mjs` 用的 pi 内部接口还在不在：它按文件 URL 导入 dist 里的
  * `ConfigSelectorComponent`、`DefaultPackageManager`、`SettingsManager`，并调用 ResourceList 的
  * 一组方法。pi 改名或挪文件，这里先变红，而不是用户点开「资源」才看到报错。
@@ -2297,7 +2272,6 @@ if (runs("tables")) {
 	console.log("\n--- app transcription tables ---");
 	checkAppTables(piDir);
 	await checkSettingsValues(piDir);
-	checkGlobalOnlyKeys(piDir);
 	await checkResourcesScript(piDir);
 }
 if (runs("tooltext")) {
