@@ -1319,7 +1319,7 @@ def write(path: str, text: str) -> None:
 COMPONENTS: list[tuple[str, str, str, str, str]] = [
     # Android native libraries
     ("proot", proot_version(), "GPL-2.0", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/proot"),
-    ("libtalloc", "2.4.3", "LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）", "Android 原生库（随 App 二进制安装）", "https://www.samba.org/ftp/talloc/"),
+    ("libtalloc", "2.5.0", "LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）", "Android 原生库（随 App 二进制安装）", "https://www.samba.org/ftp/talloc/"),
     ("libandroid-shmem", "0.7", "BSD-3-Clause", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/libandroid-shmem"),
     # Not open source, and therefore also the one row here whose licence is not a standard
     # text: the terms are upstream's own LICENSE, shipped verbatim as proroot-license.txt,

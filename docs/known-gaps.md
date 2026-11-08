@@ -1032,8 +1032,8 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
 
 | 进包位置 | 组件 | 许可证（读自包内 `copyright`） | 包内是否带许可全文 |
 |---|---|---|---|
-| `jniLibs/arm64-v8a/`（伪装成 `lib*.so`） | proot 5.1.107.92 | **GPL-2.0**（Termux 打包元数据） | **否**（Termux deb 不带 `usr/share/doc`） |
-| 同上 | libtalloc 2.4.3 | **GPL-3.0**（Termux 元数据；上游 talloc 为 LGPL-3.0） | **否** |
+| `jniLibs/arm64-v8a/`（伪装成 `lib*.so`） | proot 5.1.107.102 | **GPL-2.0**（Termux 打包元数据） | **否**（Termux deb 不带 `usr/share/doc`） |
+| 同上 | libtalloc 2.5.0 | **GPL-3.0**（Termux 元数据；上游 talloc 为 LGPL-3.0） | **否** |
 | 同上 | libandroid-shmem 0.7 | **BSD-3-Clause**（Termux 元数据 + 上游 LICENSE） | **否** |
 | `assets/runtime/ubuntu-base.tgz` | Ubuntu 24.04.3 基础系统，**91 个软件包** | 各自许可，共 88 份 `copyright`（GPL-2+/GPL-3+/LGPL-2.1+/BSD/MIT/Expat…） | **是**（88 份随载荷走）+ 18 份 `/usr/share/common-licenses` |
 | `assets/runtime/git.tgz` | git 2.43.0 + **16 个库包** + CA bundle | git **GPL-2.0**；闭包内混合（LGPL-2.1+、MIT、BSD、Expat、OpenLDAP-2.8、curl…） | **否**（重建时只取 `usr/lib/git-core`、`usr/lib/aarch64-linux-gnu`、`usr/share/git-core`，**没取 `usr/share/doc`**） |

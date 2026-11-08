@@ -113,15 +113,15 @@ const TERMUX = "https://packages.termux.dev/apt/termux-main";
 /**
  * Termux's build of `proot`, the user-space syscall translator the guest runs under.
  *
- * The `5.1.107.<n>` suffix is **Termux's build number**, not an upstream release: `.92`
- * and `.95` are the same upstream `5.1.107` packaged again. The number is a named
+ * The `5.1.107.<n>` suffix is **Termux's build number**, not an upstream release: `.95`
+ * and `.102` are the same upstream `5.1.107` packaged again. The number is a named
  * constant rather than a literal inside the URL because two other places need to agree
  * with it — `runtime.lock.json` (which records the digest per URL) and
  * `tools/build-license-assets.py`'s component list (which prints the version), and a
  * literal repeated in the second one is exactly how a licence notice ends up describing
  * a release the app no longer ships. `pinned_constant()` in that script reads this name.
  */
-const PROOT_VERSION = "5.1.107.95";
+const PROOT_VERSION = "5.1.107.102";
 
 /**
  * The name suffix every payload archive in `assets/runtime/` is written with.
@@ -703,13 +703,19 @@ const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/downloa
 const ARTIFACTS = {
   proot: {
     // Termux's own build of proot, and the `5.1.107.<n>` suffix is **Termux's build number**,
-    // not an upstream release: `.92` and `.95` are the same upstream `5.1.107` packaged
+    // not an upstream release: `.95` and `.102` are the same upstream `5.1.107` packaged
     // again. Termux purges superseded builds from the mirror, so this pin rots on its own —
     // which is exactly what happened between 0.87.1 and 0.99.2 (`.92` began answering 404
-    // while `.95` was the served build). There is no changelog in the deb to read, so the
-    // rule is: pin the version the mirror currently serves, and re-verify the extracted
-    // paths still match `JNI_PAYLOAD` when it moves (they did for `.95`:
-    // `usr/bin/proot` and `usr/libexec/proot/loader`).
+    // while `.95` was the served build), and again on 2026-11-01, when `.95` went 404 and
+    // `.102` appeared. That rebuild moved **together with** `libtalloc` 2.4.3 → 2.5.0 (the
+    // 2.5.0 deb was published the same day), so the two pins are bumped as a pair: keeping
+    // `.95` against a 2.5.0 talloc would ship a proot built against a package that is no
+    // longer on the mirror. There is no changelog in the deb to read, so the rule is: pin
+    // the version the mirror currently serves, and re-verify the extracted paths still
+    // match `JNI_PAYLOAD` when it moves (they did for `.102`: `usr/bin/proot` and
+    // `usr/libexec/proot/loader`, the former still carrying `/system/bin/linker64` as
+    // `PT_INTERP`; `libtalloc`'s soname chain is still `libtalloc.so → .2 → 2.5.0`, which
+    // is what the app's `libtalloc.so.2` alias depends on).
     //
     // The digest lives in `runtime.lock.json` and is recorded on first fetch; a moved URL
     // with a stale digest is a hard stop, and `--resolve-only` re-records it after the
@@ -719,7 +725,7 @@ const ARTIFACTS = {
     why: "user-space syscall translator; no root needed",
   },
   libtalloc: {
-    url: `${TERMUX}/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb`,
+    url: `${TERMUX}/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb`,
     kind: "deb",
     why: "proot's only non-Bionic dependency",
   },
@@ -949,7 +955,7 @@ const GIT_USR_BIN = [
 const JNI_PAYLOAD = [
   { from: "usr/bin/proot", to: "libproot.so", interpreter: "/system/bin/linker64" },
   { from: "usr/libexec/proot/loader", to: "libprootloader.so", interpreter: null },
-  { from: "usr/lib/libtalloc.so.2.4.3", to: "libtalloc.so", interpreter: null },
+  { from: "usr/lib/libtalloc.so.2.5.0", to: "libtalloc.so", interpreter: null },
   { from: "usr/lib/libandroid-shmem.so", to: "libandroid-shmem.so", interpreter: null },
 ];
 
@@ -1428,7 +1434,7 @@ function main() {
     // real deb and listing it:
     //   ./data/data/com.termux/files/usr/bin/proot
     //   ./data/data/com.termux/files/usr/libexec/proot/loader
-    //   ./data/data/com.termux/files/usr/lib/libtalloc.so.2.4.3
+    //   ./data/data/com.termux/files/usr/lib/libtalloc.so.2.5.0
     //   ./data/data/com.termux/files/usr/lib/libandroid-shmem.so
     const candidates = ["proot", "libtalloc", "libandroidShmem"].map((name) =>
       join(prootStage, name, "data", "data", "com.termux", "files", item.from),

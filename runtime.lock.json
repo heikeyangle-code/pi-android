@@ -1,13 +1,13 @@
 {
 	"artifacts": {
 		"proot": {
-			"url": "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.95_aarch64.deb",
-			"sha256": "0a1b3d0f6ef76436c5ed924cd8e8f5a6b7186e99e1650eb2d9bc734e218a74cb",
+			"url": "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.102_aarch64.deb",
+			"sha256": "10a394b585c2fc2b2c8502544f4e5f1be581dc8bfff79e8ba62f16207423e030",
 			"why": "user-space syscall translator; no root needed"
 		},
 		"libtalloc": {
-			"url": "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb",
-			"sha256": "ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da",
+			"url": "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb",
+			"sha256": "556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7",
 			"why": "proot's only non-Bionic dependency"
 		},
 		"libandroidShmem": {
