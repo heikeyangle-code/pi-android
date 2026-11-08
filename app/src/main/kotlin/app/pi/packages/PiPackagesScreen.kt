@@ -1190,13 +1190,14 @@ private fun PackageRow(
                 ),
         ) {
             if (entry.filtered) {
+                // 筛选规则（`pi config` 与这里写的都是同一份 `packages[].skills/...` 数组）不在这页
+                // 手写；逐条的开关在 工作区 → 资源，改的就是这些数组，所以这里只提示有筛选。
                 Text(
-                    text = "settings 里是对象形式：只加载显式列出的资源（可能只加载一部分）。",
+                    text = "这个包按资源筛选过：只加载被打开的那些。逐条开关在 工作区 → 资源。",
                     style = PiTheme.text.meta,
                     color = palette.warning,
                 )
             }
-            FilterEditor(entry, busy, onFilterAdd, onFilterRemove)
             entry.installedPath?.let { path ->
                 Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Text(path, style = PiTheme.text.monoSmall, color = palette.dim)
@@ -1227,111 +1228,6 @@ private fun PackageRow(
             }
         }
     }
-}
-
-/**
- * The four glob arrays of a package's object form.
- *
- * pi stores them in `settings.json` (`core/settings-manager.ts:95-104`) and reads
- * them when the engine starts; the leading `+`/`-`/`!` decides whether a pattern
- * force-includes, force-excludes or excludes (`core/package-manager.ts:709-716`).
- * The app edits the strings verbatim, so a pattern written in pi's own TUI stays
- * visible and removable rather than being re-derived from a checkbox.
- *
- * Shown read-only until 编辑 is tapped: a package that pi filtered must not look
- * plain here, but four text fields on every package would drown the common case
- * (no filters at all).
- */
-@Composable
-private fun FilterEditor(
-    entry: PiPackageEntry,
-    busy: Boolean,
-    onAdd: (PiPackageEntry, String, String) -> Unit,
-    onRemove: (PiPackageEntry, String, String) -> Unit,
-) {
-    val palette = PiTheme.palette
-    var editing by remember(entry.source.raw) { mutableStateOf(false) }
-
-    Spacer(Modifier.height(PiSpacing.gutter))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("过滤规则", style = PiTheme.text.meta, color = palette.muted)
-        Spacer(Modifier.weight(1f))
-        TextButton(onClick = { editing = !editing }, enabled = !busy) {
-            Text(if (editing) "完成" else "编辑", color = palette.accent)
-        }
-    }
-
-    if (entry.filters.isEmpty() && !editing) {
-        Text(
-            text = "没有过滤规则：这个资源包里的资源全部加载。",
-            style = PiTheme.text.meta,
-            color = palette.dim,
-        )
-        return
-    }
-
-    PiPackageFilters.RESOURCE_TYPES.forEach { type ->
-        val patterns = entry.filters[type].orEmpty()
-        if (patterns.isEmpty() && !editing) return@forEach
-        Text(
-            text = filterTypeLabel(type),
-            style = PiTheme.text.meta,
-            color = palette.muted,
-        )
-        patterns.forEach { pattern ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = pattern,
-                    style = PiTheme.text.monoSmall,
-                    color = palette.text,
-                    modifier = Modifier.weight(1f),
-                )
-                if (editing) {
-                    TextButton(onClick = { onRemove(entry, type, pattern) }, enabled = !busy) {
-                        Text("删除", color = palette.error)
-                    }
-                }
-            }
-        }
-        if (editing) {
-            FilterAddRow(busy) { pattern -> onAdd(entry, type, pattern) }
-        }
-    }
-}
-
-/** One add field per resource type, so the target array is never ambiguous. */
-@Composable
-private fun FilterAddRow(busy: Boolean, onAdd: (String) -> Unit) {
-    var draft by remember { mutableStateOf("") }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        PiEditorField(
-            value = draft,
-            onValueChange = { draft = it },
-            placeholder = "如 skills/legacy* 或 +src/ext/**",
-            height = 44.dp,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            onClick = {
-                onAdd(draft)
-                draft = ""
-            },
-            enabled = !busy && draft.isNotBlank(),
-        ) { Text("添加") }
-    }
-}
-
-/** pi's own resource names (`config-selector.ts:31-36`), labelled the way the settings rows name them. */
-private fun filterTypeLabel(type: String): String = when (type) {
-    "extensions" -> "扩展"
-    "skills" -> "技能"
-    "prompts" -> "提示模板"
-    "themes" -> "主题"
-    else -> type
 }
 
 // ------------------------------------------------------------------- raw cards

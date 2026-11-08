@@ -957,59 +957,6 @@ object PiSettingsCatalog {
         // 8 扩展与资源
         // ------------------------------------------------------------------
 
-        // 这一节回答的是"我到底有什么"：数字来自**真实扫描**（`WorkspaceResourceScan`，项目页
-        // 资源段用的同一个），由 `PiResourceFacts.kt` 做纯计算、由 `PiSettingsStack` 在 IO 上
-        // 跑并把文本塞进 `valueOverrides`。它不是设置行：四个键都没有写入方，`readOnly = true`。
-        //
-        // 为什么这一节必须存在：删掉下面那四条"额外搜索路径"之后，如果这一屏只剩开关与资源包，
-        // 用户看到的仍然是"空"——而真相是 pi 一直在自动发现 `~/.pi/agent/<kind>`、工作区
-        // `.pi/<kind>`、`.agents/<kind>` 与已装包自带的资源。数字是**读数**，不是承诺。
-        // 顺序 = pi 自己的加载顺序（`core/package-manager.ts:203-204` 的 `RESOURCE_TYPES`：
-        // extensions / skills / prompts / themes；`resource-loader.ts` 的 reload 照它走，
-        // extensions `:456` → skills `:468` → prompts `:483` → themes `:502`）。
-        // 「扩展包与项目信任」页的四节与分组摘要里的"已发现 …"都是这一个顺序 —— 不按我们自己的
-        // 习惯排。
-
-        PiSetting(
-            key = "app.resources.discovered.extensions",
-            title = "已发现的扩展",
-            description = "pi 发现的扩展。",
-            kind = PiRowKind.Text,
-            group = G_RESOURCES,
-            section = "实际发现（逐条明细在 工作区 → 资源）",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
-        PiSetting(
-            key = "app.resources.discovered.skills",
-            title = "已发现的技能",
-            description = "pi 发现的技能；加新技能放一个 SKILL.md。",
-            kind = PiRowKind.Text,
-            group = G_RESOURCES,
-            section = "实际发现（逐条明细在 工作区 → 资源）",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
-        PiSetting(
-            key = "app.resources.discovered.prompts",
-            title = "已发现的提示模板",
-            description = "pi 发现的提示模板；用 /名字 调用，支持 $1。",
-            kind = PiRowKind.Text,
-            group = G_RESOURCES,
-            section = "实际发现（逐条明细在 工作区 → 资源）",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
-        PiSetting(
-            key = "app.resources.discovered.themes",
-            title = "已发现的主题",
-            description = "pi 发现的主题；在「外观」里选。",
-            kind = PiRowKind.Text,
-            group = G_RESOURCES,
-            section = "实际发现（逐条明细在 工作区 → 资源）",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
         PiSetting(
             key = "app.extensions.args",
             title = "扩展启动参数",
@@ -1058,24 +1005,13 @@ object PiSettingsCatalog {
         PiSetting(
             key = "packages",
             title = "扩展包与项目信任",
-            description = "安装、更新、筛选资源包与项目信任都在这里；手改易失效。",
+            description = "安装、更新、移除资源包与项目信任；逐条开关在 工作区 → 资源。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "扩展包",
             defaultValue = list(),
             effective = EffectiveKind.RestartEngine,
             readOnly = true,
-        ),
-        // 出口：这一节报的是"发现了什么"，而看/改它们的地方是「Pi 文件」屏（`PiFilesScreen`，
-        // 本栈已有的层级 `piFiles`，不新造导航）。它同时替掉被删掉的那四条手填路径：想加资源
-        // 就是往标准目录里放文件，标准目录本来就自动发现，不需要在设置里登记路径。
-        PiSetting(
-            key = "app.resources.openFiles",
-            title = "查看资源文件",
-            description = "打开 Pi 文件查看与编辑资源。",
-            kind = PiRowKind.Action,
-            group = G_RESOURCES,
-            section = "动作",
         ),
         // ------------------------------------------------------------------
         // 9 外观
@@ -1684,15 +1620,9 @@ object PiSettingsCatalog {
             "由本应用固定（与 pi 共用）· 续接：${summaryText(store, "app.sessions.resumeLast")}"
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
-            // 只报**真实存在**的两个数，一个都不编：
-            //  - 资源包条数来自 store（`packages`），它确实在设置文件里；
-            //  - 已发现的数量来自上一次真实扫描（`PiResourceFactsCache`，写入方是设置栈里那次
-            //    IO 扫描）。**没有扫描过就不提这一句** —— 摘要是首页画的，那时可能还没扫过；
-            //    写一个恒为 0 的"已发现 0 个"就是拿假读数冒充事实，这一批要删掉的正是这种东西。
-            // 手填的"额外路径"四条已从设置页删除，所以这里不再有 `extensions` 计数。
-            val packages = byKey["packages"]?.countIn(store) ?: 0
-            val discovered = discoveredSummaryLine(PiResourceFactsCache.lastScan())
-            if (discovered == null) "$packages 个资源包" else "$packages 个资源包 · $discovered"
+            // 只报 settings.json 里真实存在的包条数；逐条资源的清单是 pi 自己算的，
+            // 在 工作区 → 资源，这里不再放一份扫描出来的数字。
+            "${byKey["packages"]?.countIn(store) ?: 0} 个资源包"
         },
         PiSettingsGroup(G_APPEARANCE, "外观", Icons.Filled.ColorLens) { store ->
             val themeValue = summaryText(store, "theme")
