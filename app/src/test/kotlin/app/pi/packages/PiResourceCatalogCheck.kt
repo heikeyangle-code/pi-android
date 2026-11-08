@@ -15,15 +15,7 @@ fun check(name: String, actual: Any?, expected: Any?) {
 
 private const val LIST = """
 (node:1) ExperimentalWarning: noise
-{"trusted":true,"global":[
- {"key":"k1","label":"npm:foo (user)","origin":"package","scope":"user","source":"npm:foo","subgroups":[
-   {"type":"extensions","items":[{"path":"/p/a.ts","name":"a.ts","enabled":false,"baseDir":"/p"}]},
-   {"type":"skills","items":[{"path":"/p/s/SKILL.md","name":"s","enabled":true,"baseDir":"/p"}]}]},
- {"key":"k2","label":"Built-in","origin":"top-level","scope":"user","source":"builtin","subgroups":[
-   {"type":"extensions","items":[{"path":"builtin:mcp","name":"mcp","enabled":true,"baseDir":null}]}]}],
- "project":[{"key":"k3","label":"Project (.pi/)","origin":"top-level","scope":"project","source":"auto","subgroups":[
-   {"type":"prompts","items":[{"path":"/w/.pi/prompts/x.md","name":"x.md","enabled":true,"baseDir":"/w/.pi","override":"unload","inherited":false,"inheritedEnabled":null}]}]}],
- "installFailures":["npm:bad: 404"]}
+{"trusted":true,"global":[{"key":"k1","label":"npm:foo (user)","origin":"package","scope":"user","source":"npm:foo","subgroups":[{"type":"extensions","items":[{"path":"/p/a.ts","name":"a.ts","enabled":false,"baseDir":"/p"}]},{"type":"skills","items":[{"path":"/p/s/SKILL.md","name":"s","enabled":true,"baseDir":"/p"}]}]},{"key":"k2","label":"Built-in","origin":"top-level","scope":"user","source":"builtin","subgroups":[{"type":"extensions","items":[{"path":"builtin:mcp","name":"mcp","enabled":true,"baseDir":null}]}]}],"project":[{"key":"k3","label":"Project (.pi/)","origin":"top-level","scope":"project","source":"auto","subgroups":[{"type":"prompts","items":[{"path":"/w/.pi/prompts/x.md","name":"x.md","enabled":true,"baseDir":"/w/.pi","override":"unload","inherited":false,"inheritedEnabled":null}]}]}],"installFailures":["npm:bad: 404"]}
 """
 
 fun main() {

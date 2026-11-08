@@ -8,7 +8,6 @@ import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
@@ -189,7 +188,6 @@ private const val G_MESSAGES = "messages"
 private const val G_COMPACTION = "compaction"
 private const val G_RETRY = "retry"
 private const val G_TOOLS = "tools"
-private const val G_SESSIONS = "sessions"
 private const val G_RESOURCES = "resources"
 private const val G_APPEARANCE = "appearance"
 private const val G_SECURITY = "security"
@@ -558,7 +556,7 @@ object PiSettingsCatalog {
             description = "流式中发送的消息怎么送达：逐条，或全部一起给。",
             kind = PiRowKind.Value,
             group = G_MESSAGES,
-            section = "送达",
+            section = "会话",
             defaultValue = str("one-at-a-time"),
             options = deliveryOptions,
         ),
@@ -568,7 +566,7 @@ object PiSettingsCatalog {
             description = "本轮结束后再发的消息怎么送达：逐条，或全部一起给。",
             kind = PiRowKind.Value,
             group = G_MESSAGES,
-            section = "送达",
+            section = "会话",
             defaultValue = str("one-at-a-time"),
             options = deliveryOptions,
         ),
@@ -1617,7 +1615,7 @@ object PiSettingsCatalog {
     )
 
     /**
-     * The app's 11 groups, in order, each with a live summary: spec §6.4's 12 minus
+     * The app's 10 groups, in order, each with a live summary: spec §6.4's 12 minus
      * 「终端与 Shell」 (its five rows were deleted on purpose — the terminal itself is
      * retired, and `images.*` moved to 消息与网络), plus 提示词 — a group this app needs
      * because the two system-prompt rows are pi's own files
@@ -1676,12 +1674,6 @@ object PiSettingsCatalog {
                 val enabled = PiQuickAdd.resolveDefaultTools(entries, PiQuickAdd.builtinToolDefaults)
                 if (enabled.isEmpty()) "一个都不启用" else "${enabled.size} 个已启用"
             }
-        },
-        PiSettingsGroup(G_SESSIONS, "会话", Icons.Filled.Folder) { store ->
-            // Deliberately not derived from a `sessionDir` row: this app pins the
-            // session root on pi's command line and in its environment, so there is
-            // no setting to read here (see the comment above this group's rows).
-            "由本应用固定（与 pi 共用）· 续接：${summaryText(store, "app.sessions.resumeLast")}"
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
             // 只报**真实存在**的两个数，一个都不编：
