@@ -6,12 +6,12 @@
 ■ Android 原生库（随 App 二进制安装）
 --------------------------
   proot
-      版本      5.1.107.95
+      版本      5.1.107.102
       许可证    GPL-2.0
       上游      https://github.com/termux/proot
 
   libtalloc
-      版本      2.4.3
+      版本      2.5.0
       许可证    LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）
       上游      https://www.samba.org/ftp/talloc/
 
@@ -118,12 +118,12 @@
       上游      https://www.openldap.org/
 
   pi 引擎
-      版本      1.3.0
+      版本      1.5.0
       许可证    MIT
       上游      https://www.npmjs.com/package/@earendil-works/pi-coding-agent
 
   pi 引擎的依赖包
-      版本      见 pi 1.3.0 的依赖锁定
+      版本      见 pi 1.5.0 的依赖锁定
       许可证    MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）
       上游      https://www.npmjs.com/package/@earendil-works/pi-coding-agent
 
@@ -133,12 +133,12 @@
       上游      https://highlightjs.org/
 
   tslib
-      版本      2.8.1
+      版本      2.9.1
       许可证    0BSD
       上游      https://www.npmjs.com/package/tslib
 
   lru-cache / minimatch
-      版本      11.4.0 / 10.2.6
+      版本      11.4.0 / 11.0.3
       许可证    BlueOak-1.0.0
       上游      https://www.npmjs.com/package/lru-cache
 
