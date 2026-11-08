@@ -2,6 +2,7 @@ package app.pi.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -68,14 +69,49 @@ internal class ResourceManager(
 
     private var trusted = true
 
+    /** pi 的 `checkForAvailableUpdates()` 结果；null = 还没查过。要联网，所以只在点了才查。 */
+    var updates by mutableStateOf<List<PiResourceCatalog.Update>?>(null)
+        private set
+    var checkingUpdates by mutableStateOf(false)
+        private set
+    var updateError by mutableStateOf<String?>(null)
+        private set
+
+    fun checkUpdates() {
+        if (checkingUpdates) return
+        checkingUpdates = true
+        updateError = null
+        scope.launch {
+            when (val result = withContext(Dispatchers.IO) { service.updates(trusted) }) {
+                is Parsed.Ok -> updates = result.value
+                is Parsed.Error -> {
+                    updates = null
+                    updateError = result.message
+                }
+            }
+            checkingUpdates = false
+        }
+    }
+
+    private fun cacheKey(trusted: Boolean) = layout.hostWorkspace.absolutePath + if (trusted) "#t" else "#u"
+
+    private companion object {
+        /** 进程内、按工作区+信任态记住上次的清单；不落盘，进程没了就没了。 */
+        val cache = HashMap<String, PiResourceCatalog.Snapshot>()
+    }
+
     fun refresh(projectTrusted: Boolean) {
         trusted = projectTrusted
         loading = true
+        // 先拿上次读到的清单顶上：每次读都要冷启动一遍引擎（几秒），没必要让人对着空白等。
+        // 读完再换成新的；换的只是内容，开关位置不变。
+        if (snapshot == null) cache[cacheKey(projectTrusted)]?.let { snapshot = it }
         scope.launch {
             val result = withContext(Dispatchers.IO) { service.list(projectTrusted) }
             when (result) {
                 is Parsed.Ok -> {
                     snapshot = result.value
+                    cache[cacheKey(projectTrusted)] = result.value
                     error = null
                 }
                 is Parsed.Error -> error = result.message
@@ -95,8 +131,13 @@ internal class ResourceManager(
                 is Parsed.Ok -> {
                     changed = true
                     error = null
-                    val fresh = withContext(Dispatchers.IO) { service.list(trusted) }
-                    if (fresh is Parsed.Ok) snapshot = fresh.value
+                    // 同一个进程写完盘后已经重读了一遍；老脚本没带才再列一次。
+                    val fresh = result.value.snapshot?.let { Parsed.Ok(it) }
+                        ?: withContext(Dispatchers.IO) { service.list(trusted) }
+                    if (fresh is Parsed.Ok) {
+                        snapshot = fresh.value
+                        cache[cacheKey(trusted)] = fresh.value
+                    }
                 }
                 is Parsed.Error -> error = result.message
             }
@@ -146,6 +187,27 @@ internal fun LazyListScope.resourceManagerItems(
             )
         }
     }
+    item(key = "rm:updates") {
+        WsCardSlice(index = 0, lastIndex = 0) {
+            WsRow(
+                title = if (manager.checkingUpdates) "检查中…" else "检查扩展包更新",
+                meta = manager.updates?.let { found ->
+                    if (found.isEmpty()) "都是最新" else "有新版本：" + found.joinToString("、") { it.name }
+                } ?: manager.updateError ?: "问 pi 哪些包有新版本（要联网，只查不装）",
+                trail = {
+                    val found = manager.updates
+                    if (found != null && found.isNotEmpty()) {
+                        Text("去更新", style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                    } else if (!manager.checkingUpdates) {
+                        Text("检查", style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                    }
+                },
+                onClick = {
+                    if (manager.updates?.isNotEmpty() == true) onManagePackages() else manager.checkUpdates()
+                },
+            )
+        }
+    }
     item(key = "rm:layer") {
         PiSeg(
             options = listOf("全局", "本项目"),
@@ -172,11 +234,21 @@ internal fun LazyListScope.resourceManagerItems(
     }
     snapshot?.failures?.takeIf { it.isNotEmpty() }?.let { failures ->
         item(key = "rm:failures") {
-            WsNotice(
-                text = "有包没装上：" + failures.joinToString("；"),
-                tone = StateTone.Warning,
-                glyph = "!",
-            )
+            Column {
+                WsNotice(
+                    text = "有包没装上：" + failures.joinToString("；") +
+                        "。常见原因：安装时没网、重装过运行时清掉了安装目录、或配置是从别处拷来的。pi 自己开会话时会补装；这里只读，不会偷偷联网装。",
+                    tone = StateTone.Warning,
+                    glyph = "!",
+                )
+                WsCardSlice(index = 0, lastIndex = 0) {
+                    WsRow(
+                        title = "去扩展包页重装或移除",
+                        trail = { Text("打开", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                        onClick = onManagePackages,
+                    )
+                }
+            }
         }
     }
     if (manager.changed) {
@@ -244,7 +316,8 @@ internal fun LazyListScope.resourceManagerItems(
         val inheritedGroup = layer == Layer.Project && !group.projectScoped
         item(key = "rm:h:${group.key}") {
             WsSectionHeader(
-                label = group.label + if (inheritedGroup) " · 继承自全局" else "",
+                label = group.label + (if (inheritedGroup) " · 继承自全局" else "") +
+                    (if (group.kind == SourceKind.Package && manager.updates.orEmpty().any { it.source == group.source }) " · 有新版本" else ""),
                 count = "${rows.size}",
             )
         }

@@ -1472,23 +1472,31 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 val content = delta.content
                 val index = thinkingIndexByContentIndex[delta.contentIndex]
                 val current = if (index == null) null else items.getOrNull(index) as? ThinkingBlock
-                if (content == null || (current == null && content.isEmpty())) {
+                if (current != null) {
+                    // `thinking_end` is where **thinking** ends — not the message. The row used
+                    // to stay "思考中…" with its clock running until `message_end`
+                    // ([finishStreaming]), i.e. through the whole answer text that follows, so the
+                    // reported time included the reply and the state never matched what the model
+                    // was doing. Close it here and stamp the duration at this moment.
+                    items[index!!] = current.copy(
+                        text = content ?: current.text,
+                        streaming = false,
+                        elapsedMs = current.elapsedMs ?: (now() - current.ts).coerceAtLeast(0),
+                    )
+                    TranscriptChange.Updated(index)
+                } else if (content.isNullOrEmpty()) {
                     TranscriptChange.None
-                } else if (current != null) {
-                    if (current.text == content) {
-                        TranscriptChange.None
-                    } else {
-                        items[index!!] = current.copy(text = content)
-                        TranscriptChange.Updated(index)
-                    }
                 } else {
+                    // Redacted thinking can be complete at start with no deltas: this event is the
+                    // only thing that carries it, and it is already finished, so no running state
+                    // and no duration (nothing was measured).
                     thinkingIndexByContentIndex[delta.contentIndex] = items.size
                     append(
                         ThinkingBlock(
                             key = nextKey("thinking"),
                             ts = now(),
                             text = content,
-                            streaming = true,
+                            streaming = false,
                             level = thinkingLevel,
                         ),
                     )

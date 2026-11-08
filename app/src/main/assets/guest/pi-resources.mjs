@@ -10,6 +10,9 @@
 // 用法（由 App 通过 guest 的 node 调用）：
 //   node pi-resources.mjs <引擎目录> <cwd> <agentDir> <trusted:0|1> list
 //   node pi-resources.mjs <引擎目录> <cwd> <agentDir> <trusted:0|1> toggle <global|project> <类型> <路径>
+//   node pi-resources.mjs <引擎目录> <cwd> <agentDir> <trusted:0|1> updates
+// `toggle` 成功后同一个进程里直接再给一份完整清单（与 `list` 同形），App 不必再冷启动一次引擎。
+// `updates` 就是 pi 终端界面启动时问的那个 `checkForAvailableUpdates()`：只查、不装。
 // 输出：最后一行是一个 JSON 对象（前面的噪音行忽略）。出错：{"error": "..."}，退出码 1。
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -34,26 +37,46 @@ try {
 		// 内置扩展名单取不到就用写死的这四个（pi 1.5.0）；取到的始终以引擎为准。
 	}
 
-	const globalSettings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-	const projectSettings = trusted ? SettingsManager.create(cwd, agentDir, { projectTrusted: true }) : globalSettings;
+	const missing = new Set();
+	const skipMissing = async (source) => {
+		missing.add(String(source));
+		return "skip";
+	};
 	const make = (settings) => new DefaultPackageManager({ cwd, agentDir, settingsManager: settings, builtinExtensions: builtinNames });
-	const globalResolved = await make(globalSettings).resolve();
-	const projectResolved = trusted ? await make(projectSettings).resolve() : globalResolved;
 
-	const noop = () => {};
-	const selector = new ConfigSelectorComponent(
-		{ global: globalResolved, project: projectResolved },
-		projectSettings,
-		cwd,
-		agentDir,
-		noop,
-		noop,
-		noop,
-		24,
-		"global",
-		trusted,
-	);
-	const list = selector.getResourceList();
+	if (command === "updates") {
+		const found = await make(SettingsManager.create(cwd, agentDir, { projectTrusted: trusted })).checkForAvailableUpdates();
+		out({ updates: found.map((u) => ({ source: u.source, name: u.displayName, type: u.type, scope: u.scope })) });
+	}
+
+	// 关键：`resolve()` 不带 onMissing 时，遇到没装好的包会**当场 npm install / git clone**，
+	// 没网或包坏了就是每次进来都卡到超时、还重试。列清单只该读，不该装；缺的记下来告诉用户。
+	// 每次 `load()` 都是全新的设置管理器：开关写盘之后再 `load()` 一次，读到的就是写完的状态
+	// （`ConfigSelector` 的内存副本不会跟着更新内置扩展那类条目，实测）。
+	const load = async () => {
+		missing.clear();
+		const globalSettings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+		const projectSettings = trusted ? SettingsManager.create(cwd, agentDir, { projectTrusted: true }) : globalSettings;
+		const resolveWith = (settings) => make(settings).resolve(skipMissing);
+		const [globalResolved, projectResolved] = trusted
+			? await Promise.all([resolveWith(globalSettings), resolveWith(projectSettings)])
+			: await resolveWith(globalSettings).then((r) => [r, r]);
+		const noop = () => {};
+		const selector = new ConfigSelectorComponent(
+			{ global: globalResolved, project: projectResolved },
+			projectSettings,
+			cwd,
+			agentDir,
+			noop,
+			noop,
+			noop,
+			24,
+			"global",
+			trusted,
+		);
+		return { globalSettings, projectSettings, globalResolved, projectResolved, list: selector.getResourceList() };
+	};
+	let { globalSettings, projectSettings, globalResolved, projectResolved, list } = await load();
 
 	const snapshot = (scope) => {
 		list.setWriteScope(scope);
@@ -79,10 +102,16 @@ try {
 		}));
 	};
 
-	const failures = [...new Set([...(globalResolved.installFailures ?? []), ...(projectResolved.installFailures ?? [])].map((f) => String(f?.message ?? f?.source ?? f)))];
+	const failures = () => [
+		...new Set([
+			...[...missing].map((source) => `${source}（没装好，在「扩展包」里重装）`),
+			...[...(globalResolved.installFailures ?? []), ...(projectResolved.installFailures ?? [])].map((f) => String(f?.message ?? f?.source ?? f)),
+		]),
+	];
+	const full = () => ({ trusted, global: snapshot("global"), project: trusted ? snapshot("project") : [], installFailures: failures() });
 
 	if (command === "list") {
-		out({ trusted, global: snapshot("global"), project: trusted ? snapshot("project") : [], installFailures: failures });
+		out(full());
 	} else if (command === "toggle") {
 		const [scope, type, path] = rest;
 		if (scope !== "global" && scope !== "project") out({ error: `未知层级：${scope}` }, 1);
@@ -100,7 +129,9 @@ try {
 		const enabled = list.toggleResource(item);
 		await projectSettings.flush();
 		if (projectSettings !== globalSettings) await globalSettings.flush();
-		out({ ok: true, enabled: enabled ?? null, override: scope === "project" ? list.getProjectOverrideState(item) : null });
+		const result = { enabled: enabled ?? null, override: scope === "project" ? list.getProjectOverrideState(item) : null };
+		({ globalSettings, projectSettings, globalResolved, projectResolved, list } = await load());
+		out({ ok: true, ...result, ...full() });
 	} else {
 		out({ error: `未知命令：${command}` }, 1);
 	}

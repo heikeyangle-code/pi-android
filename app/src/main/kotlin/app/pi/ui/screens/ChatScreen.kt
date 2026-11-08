@@ -66,6 +66,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -2211,10 +2212,18 @@ private fun ChatBody(
                     // common case — and no row's fate is decided by its character count.
                     val streamingRow = (item as? AssistantText)?.streaming == true ||
                         (item as? ThinkingBlock)?.streaming == true
+                    // A row entering from ABOVE the first visible one (fast upward fling over
+                    // rows never measured: a long user bubble with code blocks, say) must be
+                    // parsed before its first layout and is exempt from the frame budget.
+                    // Otherwise it is laid out at zero height, the fling runs through it, and
+                    // when the parse lands it grows by its own height and the viewport jumps
+                    // by that much. Read without subscribing: the list state moves every frame.
+                    val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
+                        .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
                     val immediateMarkdown = !streamingRow &&
                         RowHeightCache.shared.of(item.key) == null &&
-                        (item.key in freshRowKeys || restoring) &&
-                        piMarkdownParseBudget.allow(System.nanoTime())
+                        (item.key in freshRowKeys || restoring || enteringFromAbove) &&
+                        (enteringFromAbove || piMarkdownParseBudget.allow(System.nanoTime()))
                     // The row's own place in the list, for a card that is about to change
                     // its height (see `TranscriptRowAnchor`). `following` is handed over as
                     // a lambda: an armed follow re-pins to the end on every height change
@@ -2608,9 +2617,11 @@ private fun ChatBody(
         }
 
         if (attachments.isNotEmpty()) {
+            // 一条消息能带的图片没有张数上限（只受合计体积限制），所以这一排要能横向滑。
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(androidx.compose.foundation.rememberScrollState())
                     .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2623,28 +2634,6 @@ private fun ChatBody(
                         },
                     )
                 }
-                Spacer(Modifier.width(8.dp))
-                // The consequence is stated where the user acts, not after the send:
-                // these bytes travel inside the message and count against the model — and
-                // the **count and the running total** are what the message's limit is made
-                // of, so both are shown. The total is the bytes the staged base64 encodes,
-                // the same unit the downgrade sentence uses, so "合计 X MB / 上限 Y MB" and
-                // "已用 Z MB" are one arithmetic rather than two.
-                //
-                // 「内联」 is in the sentence because this limit is only about what travels
-                // **inside** the record: a file that goes into the workspace is handed over
-                // as a path and is not bounded by it at all (see `AttachmentBudget`'s
-                // `workspaceSpace`). Without that word the row reads as "attachments are
-                // limited to 24 MB", which is the misunderstanding the copy of the refusal
-                // sentence below used to confirm.
-                val stagedBytes = AttachmentBudget.base64CharsToBytes(attachments.sumOf { it.base64.length })
-                Text(
-                    "随消息一起内联：${attachments.size} 张，合计 ${mibLabel(stagedBytes)} MB" +
-                        "（内联上限 ${mibLabel(AttachmentBudget.MESSAGE_BYTES)} MB）" +
-                        "；其它文件复制进工作区后只给路径，不受这个上限约束。",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
@@ -4820,13 +4809,35 @@ private fun applyOrientation(source: Bitmap, transform: PiExifOrientation.Transf
     }.getOrNull()
 }
 
-/** One resize step; the source itself when the target is already its size. */
-private fun scaleForAttachment(source: Bitmap, width: Int, height: Int): Bitmap? =
-    if (width == source.width && height == source.height) {
-        source
-    } else {
-        runCatching { Bitmap.createScaledBitmap(source, width, height, true) }.getOrNull()
+/**
+ * One resize step; the source itself when the target is already its size.
+ *
+ * 缩得比 2 倍多时分步减半：`createScaledBitmap(filter = true)` 是双线性，只看相邻 2×2 个像素，
+ * 一步缩 4000→1500 会直接漏掉中间的像素（锯齿、细线断掉、小字发糊）。pi 用的是 Lanczos3，
+ * 看的是整片邻域；每步 ≤ 2 倍的双线性恰好等于 2×2 均值，连着做就是面积平均，细节保留得
+ * 接近 Lanczos，且只改**像素怎么来**、不改尺寸与候选顺序（那些仍与 pi 一致）。
+ */
+private fun scaleForAttachment(source: Bitmap, width: Int, height: Int): Bitmap? {
+    if (width == source.width && height == source.height) return source
+    var current = source
+    return runCatching {
+        while (current.width >= width * 2 && current.height >= height * 2) {
+            val next = Bitmap.createScaledBitmap(current, current.width / 2, current.height / 2, true)
+            if (current !== source) current.recycle()
+            current = next
+        }
+        val result = if (current.width == width && current.height == height) {
+            current
+        } else {
+            Bitmap.createScaledBitmap(current, width, height, true)
+        }
+        if (result !== current && current !== source) current.recycle()
+        result
+    }.getOrElse {
+        if (current !== source) current.recycle()
+        null
     }
+}
 
 /** One encode step, as the wire value it becomes — the base64 the budget counts. */
 private fun encodeForAttachment(bitmap: Bitmap, encoding: AttachmentBudget.Encoding): PiImage? {

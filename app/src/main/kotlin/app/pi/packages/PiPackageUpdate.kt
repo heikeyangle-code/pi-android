@@ -36,7 +36,10 @@ package app.pi.packages
  *    "no packages configured", and even for offline mode (`:1092` returns before
  *    doing anything). The screen says exactly that instead of translating pi's
  *    sentence into a claim pi did not make.
- * 2. **Whether a newer version exists.** pi *can* answer this — `checkForAvailableUpdates`
+ * 2. **Whether a newer version exists.** (Now answered: `PiResources.updates` runs pi's own
+ *    `checkForAvailableUpdates` in the guest, on demand, and the packages screen marks the
+ *    rows. The paragraph below is the original reasoning for why `pi update` itself cannot.)
+ *    pi *can* answer this — `checkForAvailableUpdates`
  *    (`package-manager.ts:1186-1250`) — but nothing on the CLI path calls it; its only
  *    caller is pi's own terminal UI (`modes/interactive/interactive-mode.ts:1054`,
  *    `:1143`). There is therefore no honest way to show "N updates available" here,

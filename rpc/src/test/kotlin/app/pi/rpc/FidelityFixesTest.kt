@@ -780,6 +780,25 @@ class FidelityFixesTest {
         assertEquals("let me think", (r.transcript.single() as ThinkingBlock).text)
     }
 
+    @Test
+    fun `thinking_end closes the row at that moment, not at message end`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"hm"}}""",
+            ),
+        )
+        assertTrue((r.transcript.single() as ThinkingBlock).streaming)
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"hm"}}""",
+            ),
+        )
+        val block = r.transcript.single() as ThinkingBlock
+        assertFalse(block.streaming)
+        assertTrue(block.elapsedMs != null)
+    }
+
     /**
      * The case `text_end` cannot have: pi documents that "Redacted thinking may be
      * complete at start and emit no deltas" (`ai/src/types.ts:542-543`), and the
@@ -804,8 +823,8 @@ class FidelityFixesTest {
         )
         val block = r.transcript.single() as ThinkingBlock
         assertEquals("redacted summary", block.text)
-        // No turn boundary has passed yet, so the row is still open.
-        assertTrue(block.streaming)
+        // Already complete when it arrives: no running state.
+        assertFalse(block.streaming)
     }
 
     @Test

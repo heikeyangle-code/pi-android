@@ -571,43 +571,33 @@ object PiMcpConfig {
 
     // ------------------------------------------------------------------ 常用模板
 
-    /** 一键添加用的模板：都是 npx 能直接跑的官方参考服务器，运行环境（Node）App 自带。 */
+    /**
+     * 一键添加用的模板。只放 pi 自己的 `docs/mcp.md` 里写明的远程服务器：不依赖 Node 包下载，
+     * 也不重复 pi 已经有的能力（读写文件、分步思考 pi 自带，所以不再给「文件系统」「逐步思考」这类模板）。
+     */
     data class Template(val title: String, val note: String, val draft: Draft)
 
     val TEMPLATES: List<Template> = listOf(
         Template(
-            "文件系统",
-            "让模型读写指定目录里的文件（官方参考实现）",
-            Draft(
-                name = "filesystem",
-                command = "npx",
-                args = "-y\n@modelcontextprotocol/server-filesystem\n.",
-                description = "读写文件系统里的文件",
-            ),
+            "Sentry",
+            "查错误与性能问题；添加后在列表里点「登录」，在浏览器授权（pi 文档示例）",
+            Draft(name = "sentry", http = true, url = "https://mcp.sentry.dev/mcp", description = "Sentry 错误与性能数据"),
         ),
         Template(
-            "记忆图谱",
-            "把重要事实存成知识图谱，跨会话记住",
+            "GitHub",
+            "查仓库、Issue、PR；需要一个 GitHub 令牌，填访问令牌那一栏，例如 \${GITHUB_TOKEN}（pi 文档示例）",
             Draft(
-                name = "memory",
-                command = "npx",
-                args = "-y\n@modelcontextprotocol/server-memory",
-                description = "持久化的知识图谱记忆",
-            ),
-        ),
-        Template(
-            "逐步思考",
-            "给复杂问题一个分步推理的草稿本",
-            Draft(
-                name = "sequential-thinking",
-                command = "npx",
-                args = "-y\n@modelcontextprotocol/server-sequential-thinking",
-                description = "分步骤思考与修正",
+                name = "github",
+                http = true,
+                url = "https://api.githubcopilot.com/mcp/",
+                bearer = "\${GITHUB_TOKEN}",
+                exposure = "deferred",
+                description = "GitHub 仓库、Issue 与 PR",
             ),
         ),
         Template(
             "网址服务器",
-            "已经有现成的 MCP 网址（https://…/mcp），填进去即可",
+            "已经有现成的 MCP 网址（https://…/mcp）：填进去，需要账号的再点登录",
             Draft(name = "", http = true, url = "https://"),
         ),
     )
