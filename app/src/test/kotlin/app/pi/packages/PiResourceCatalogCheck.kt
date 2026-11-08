@@ -38,8 +38,8 @@ fun main() {
     check("没有 JSON", PiResourceCatalog.parseSnapshot("garbage") is PiResourceCatalog.Parsed.Error, true)
     val t = PiResourceCatalog.parseToggle("""{"ok":true,"enabled":null,"override":"load"}""") as PiResourceCatalog.Parsed.Ok
     check("开关结果", t.value, PiResourceCatalog.Toggled(null, PiResourceCatalog.Override.Load))
-    if (failures > 0) {
-        println("$failures FAILED")
-        kotlin.system.exitProcess(1)
-    }
+    // 与其它 harness 同一条收尾行：`tools/run-app-pure-checks.sh` 认的是
+    // `harness: OK`，没有它就算 exit 0 也判失败（第一次合并这里就只印了 PASS 行）。
+    println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
+    if (failures != 0) kotlin.system.exitProcess(1)
 }
