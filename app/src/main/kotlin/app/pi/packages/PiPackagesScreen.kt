@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -244,13 +245,11 @@ fun PiPackagesScreen(
             .background(palette.pageBg),
     ) {
         trust?.let { panel ->
-            item { TrustCard(panel, state.busy, onOpenTrustPrompt) }
+            item { TrustCard(panel, state.busy, onTrustChoose) }
         }
         state.trustInvalid?.let { message ->
             item { InvalidTrustCard(message, state.busy, onTrustRepair) }
         }
-        item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
-        item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
 
         // 逐条资源（扩展 / 技能 / 提示 / 主题）与开关不在这里：它们在 工作区 → 资源，
         // 那一页的清单是 pi 自己的包管理器给的，这一页只管包本身（装 / 更新 / 移除 / 信任）。
@@ -308,6 +307,11 @@ fun PiPackagesScreen(
                 if (canUpdate) PiInfoNote(PackageStrings.UPDATE_NOTE)
             }
         }
+
+        // 顺序照 pi 的包管理：先看信任（决定项目级的包与资源读不读），再看装了什么，
+        // 再装新的，最后是引擎状态与操作日志。
+        item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
+        item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
 
         if (state.listUnparsed && state.listRaw.isNotBlank()) {
             item {
@@ -723,7 +727,7 @@ private fun OriginBadgeView(badge: PackageStrings.OriginBadge) {
 private fun TrustCard(
     trust: PiPackagesUiState.TrustPanel,
     busy: Boolean,
-    onOpenPrompt: () -> Unit,
+    onChoose: (ProjectTrust.Option) -> Unit,
 ) {
     val palette = PiTheme.palette
     val decisionText = when (trust.decision) {
@@ -736,13 +740,23 @@ private fun TrustCard(
         false -> palette.error
         null -> palette.warning
     }
-    // 状态三重编码（06 §4）：符号 + 字 + 颜色。分区名由页面分区头承担，卡内不重复；
-    // 这一行的「值」就是本工作区当前的信任决定。
     val decisionGlyph = when (trust.decision) {
         true -> "✓"
         false -> "⊘"
         null -> "◌"
     }
+    // 照 pi 的信任提示（`trust-manager.ts:66-96`）：五个选项就摆在这里，点一下就生效，不再藏在
+    // 「更改…」后面的对话框里 —— 那个小按钮是用户反映的「点不了」。已有记录时多一个「忘掉」，
+    // 把这个项目退回到默认（`defaultProjectTrust`）。
+    val forget = trust.promptOptions.firstOrNull()?.savedPath?.takeIf { trust.decision != null }?.let { path ->
+        ProjectTrust.Option(
+            label = "Forget saved decision",
+            trusted = false,
+            updates = listOf(path to null),
+            savedPath = path,
+        )
+    }
+    val options = trust.promptOptions + listOfNotNull(forget)
     PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
         Column(
             Modifier
@@ -762,21 +776,18 @@ private fun TrustCard(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(decisionGlyph, style = PiTheme.text.monoSmall, color = decisionColor)
-                Text(
-                    decisionText,
-                    style = PiTheme.text.monoSmall,
-                    color = decisionColor,
-                )
-                TextButton(onClick = onOpenPrompt, enabled = !busy) { Text("更改…") }
+                Text(decisionText, style = PiTheme.text.monoSmall, color = decisionColor)
             }
+            Spacer(Modifier.height(PiSpacing.inline))
+            Text(
+                text = "决定 pi 读不读这个工作区 .pi/ 里的扩展、技能、提示模板、主题和项目包。",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (trust.decision != true || trust.skippingResources || trust.blocksProjectPackages) {
-                Spacer(Modifier.height(PiSpacing.gutter))
+                Spacer(Modifier.height(PiSpacing.inline))
                 Text(
-                    text = if (trust.blocksProjectPackages) {
-                        PackageStrings.SCOPE_PROJECT_LOCKED
-                    } else {
-                        trust.explanation
-                    },
+                    text = if (trust.blocksProjectPackages) PackageStrings.SCOPE_PROJECT_LOCKED else trust.explanation,
                     style = PiTheme.text.meta,
                     color = if (trust.skippingResources || trust.blocksProjectPackages) {
                         palette.warning
@@ -784,6 +795,52 @@ private fun TrustCard(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
+            }
+        }
+        options.forEach { option ->
+            PiSettingsHairline()
+            val tone = if (option.trusted) palette.success else palette.error
+            val current = option.updates.size == 1 && option.savedPath != null &&
+                option.updates.first().second == trust.decision
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !busy) { onChoose(option) }
+                    .padding(
+                        horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                        vertical = PiSettingsMetrics.rowPaddingVertical,
+                    ),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+                ) {
+                    Text(
+                        text = if (option === forget) "↺" else if (option.trusted) "✓" else "⊘",
+                        style = PiTheme.text.monoSmall,
+                        color = if (option === forget) palette.muted else tone,
+                    )
+                    Text(
+                        text = if (option === forget) "忘掉这个项目的记录" else option.label,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (option === forget) MaterialTheme.colorScheme.onSurface else tone,
+                    )
+                    if (current) Text("当前", style = PiTheme.text.monoSmall, color = palette.muted)
+                }
+                val subtitle = if (option === forget) {
+                    "删掉保存的决定，下次按「默认项目信任」重新询问。"
+                } else {
+                    PackageStrings.trustSubtitle(option.label)
+                }
+                if (subtitle.isNotEmpty()) {
+                    Text(
+                        text = subtitle,
+                        modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
             }
         }
     }
