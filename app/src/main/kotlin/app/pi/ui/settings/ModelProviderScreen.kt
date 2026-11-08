@@ -1844,7 +1844,7 @@ private fun ImportSheet(
 }
 
 /** 要自己填 Base URL 的那一档：自定义供应商。 */
-private val SELF_HOSTED_IDS = setOf("custom")
+private val SELF_HOSTED_IDS = setOf("custom", PiProviderPresets.NEW_CUSTOM_ID)
 
 /** 三步进度条：每一步一段细条 + 序号标签；走过的与当前的染强调色，点已可达的步骤直接跳。 */
 @Composable
@@ -1948,7 +1948,8 @@ private fun ProviderChoiceRow(
                     } else {
                         if (configured) add("已配置")
                         count?.let { add("$it 个模型") }
-                        add(option.id)
+                        // 自建厂商的显示名往往就是 id，同一个词不印两遍。
+                        if (option.id != option.displayName) add(option.id)
                     }
                 }.joinToString(" · "),
                 style = PiTheme.text.meta,
@@ -2270,12 +2271,17 @@ private fun ProviderCard(
                         val host = runCatching {
                             java.net.URI(provider.baseUrl.orEmpty().trim()).host
                         }.getOrNull()?.removePrefix("www.")?.takeIf { it.isNotBlank() }
-                        Text(
-                            listOfNotNull(provider.id, host).joinToString(" · "),
-                            style = PiTheme.text.monoSmall,
-                            color = PiTheme.palette.dim,
-                            maxLines = 1,
-                        )
+                        // 名字没改过时标题本身就是主机名（`suggestedProviderName`），再印一遍
+                        // 同一个词就是用户看到的「名字重复」；与标题相同的部分不再重复。
+                        val detail = listOfNotNull(provider.id, host).filter { it != title }.distinct()
+                        if (detail.isNotEmpty()) {
+                            Text(
+                                detail.joinToString(" · "),
+                                style = PiTheme.text.monoSmall,
+                                color = PiTheme.palette.dim,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
                 Icon(
@@ -2694,7 +2700,7 @@ private fun customPresetFromInventory(provider: PiModelInventory.Provider): PiPr
     val scanStyle = scanStyleFor(api)
     return PiProviderPresets.Preset(
         id = provider.id,
-        displayName = provider.id,
+        displayName = provider.name?.takeIf { it.isNotBlank() } ?: provider.id,
         baseUrl = provider.baseUrl.orEmpty(),
         api = api,
         scanStyle = scanStyle,
