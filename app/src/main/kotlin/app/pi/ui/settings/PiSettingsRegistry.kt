@@ -572,8 +572,8 @@ object PiSettingsCatalog {
             title = "传输方式",
             description = "多传输厂商优先用哪一种。",
             kind = PiRowKind.Value,
-            group = G_MESSAGES,
-            section = "网络",
+            group = G_RETRY,
+            section = "连接",
             defaultValue = str("auto"),
             effective = EffectiveKind.NewSession,
             options = transportOptions,
@@ -583,8 +583,8 @@ object PiSettingsCatalog {
             title = "HTTP 空闲超时",
             description = "HTTP 头/体的空闲超时（毫秒）；0 = 不超时。",
             kind = PiRowKind.Number,
-            group = G_MESSAGES,
-            section = "网络",
+            group = G_RETRY,
+            section = "连接",
             defaultValue = num(300000),
             effective = EffectiveKind.RestartEngine,
             min = 0,
@@ -597,8 +597,8 @@ object PiSettingsCatalog {
             title = "WebSocket 连接超时",
             description = "握手超时（毫秒，0 不限）。",
             kind = PiRowKind.Number,
-            group = G_MESSAGES,
-            section = "网络",
+            group = G_RETRY,
+            section = "连接",
             defaultValue = num(15000),
             effective = EffectiveKind.NewSession,
             min = 0,
@@ -611,8 +611,8 @@ object PiSettingsCatalog {
             title = "HTTP 代理",
             description = "代理地址，对 pi 自己发起的请求生效。",
             kind = PiRowKind.Text,
-            group = G_MESSAGES,
-            section = "网络",
+            group = G_RETRY,
+            section = "连接",
             defaultValue = str(""),
             effective = EffectiveKind.RestartEngine,
         ),
@@ -943,8 +943,8 @@ object PiSettingsCatalog {
             title = "启动续接最近会话",
             description = "启动 App 时自动切到最近一次会话。",
             kind = PiRowKind.Switch,
-            group = G_SESSIONS,
-            section = "存储",
+            group = G_MESSAGES,
+            section = "会话",
             defaultValue = bool(true),
             effective = EffectiveKind.RestartApp,
         ),
@@ -1642,8 +1642,8 @@ object PiSettingsCatalog {
             }
             if (parts.isEmpty()) "用 pi 自带的提示词" else parts.joinToString(" · ")
         },
-        PiSettingsGroup(G_MESSAGES, "消息与网络", Icons.Filled.CompareArrows) { store ->
-            "引导：${summaryText(store, "steeringMode")} · 后续：${summaryText(store, "followUpMode")}"
+        PiSettingsGroup(G_MESSAGES, "对话与消息", Icons.Filled.CompareArrows) { store ->
+            "引导：${summaryText(store, "steeringMode")} · 后续：${summaryText(store, "followUpMode")} · 续接：${summaryText(store, "app.sessions.resumeLast")}"
         },
         PiSettingsGroup(G_COMPACTION, "上下文与压缩", Icons.Filled.Compress) { store ->
             val enabled = summaryText(store, "compaction.enabled")
@@ -1651,11 +1651,11 @@ object PiSettingsCatalog {
             val keep = summaryText(store, "compaction.keepRecentTokens")
             "$enabled · $reserve / $keep"
         },
-        PiSettingsGroup(G_RETRY, "重试", Icons.Filled.Refresh) { store ->
+        PiSettingsGroup(G_RETRY, "网络与重试", Icons.Filled.Refresh) { store ->
             val retries = summaryText(store, "retry.maxRetries")
             // `retries` 已经不是裸数字：`summaryText` 对 Number 行带单位，再补一个「次」
             // 就成了「开 · 3 次 次」。
-            "${summaryText(store, "retry.enabled")} · $retries"
+            "${summaryText(store, "transport")} · 重试 ${summaryText(store, "retry.enabled")} · $retries"
         },
         PiSettingsGroup(G_TOOLS, "工具", Icons.Filled.Build) { store ->
             val raw = store.read("defaultTools")

@@ -234,7 +234,8 @@ fun SettingsHome(
                     onOpenMcp?.let { HomeEntry("MCP 服务器", "给 pi 接外部工具：开关、添加、编辑", Icons.Filled.Build, it) },
                 ),
             )
-            groupCards("对话行为", listOf("prompts", "sessions", "messages", "compaction", "retry"))
+            groupCards("对话", listOf("prompts", "messages"))
+            groupCards("上下文与网络", listOf("compaction", "retry"))
             groupCards("外观", listOf("appearance"))
             item(key = "label:系统") { HomeSectionLabel("系统") }
             item(key = "card:系统") {
