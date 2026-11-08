@@ -1,6 +1,8 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -17,8 +19,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.settings.PiSettingsScopes
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.EffectiveKind
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
@@ -110,9 +114,30 @@ fun SettingsGroupScreen(
      * `PiEffectiveDialog` call.
      */
     onRestartEngine: (() -> Unit)? = null,
+    /**
+     * 「全局 / 本项目」切换（pi 的两层设置文件，见 [ScopedSettingsStore]）。[onScopeChange]
+     * 为 null = 这个调用方没有项目层（预览/测试），不画切换，页面与以前完全一样。
+     * [scopeProject] 为 true 时只列**能按项目覆盖**的行（[PiSettingsScopes.overridableInProject]），
+     * 因为 pi 的全局独有键、动作行、只读读数在项目里设了也不会被读。
+     */
+    scopeProject: Boolean = false,
+    onScopeChange: ((Boolean) -> Unit)? = null,
+    /** 项目的名字，显示在切换上（「本项目：工作区 1」）。 */
+    projectLabel: String? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
-    val sections = remember(groupId, freshness) { buildGroupSections(groupId) }
+    val allSections = remember(groupId, freshness) { buildGroupSections(groupId) }
+    val sections = if (scopeProject && onScopeChange != null) {
+        allSections.mapNotNull { section ->
+            val rows = section.settings.filter {
+                PiSettingsScopes.overridableInProject(it.key) && !it.readOnly && it.kind != PiRowKind.Action
+            }
+            if (rows.isEmpty()) null else GroupSection(rows)
+        }
+    } else {
+        allSections
+    }
+    val scopedStore = store as? ScopedSettingsStore
     val listState = rememberLazyListState()
 
     var editing by remember { mutableStateOf<PiSetting?>(null) }
@@ -175,6 +200,32 @@ fun SettingsGroupScreen(
                 bottom = contentPadding.calculateBottomPadding(),
             ),
         ) {
+            if (onScopeChange != null && scopedStore?.hasProject() == true) {
+                item {
+                    Column(Modifier.padding(bottom = PiSettingsMetrics.groupGap)) {
+                        Row(
+                            Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        ) {
+                            PiSettingsChip(text = "全局", active = !scopeProject, onClick = { onScopeChange(false) })
+                            PiSettingsChip(
+                                text = if (projectLabel.isNullOrBlank()) "本项目" else "本项目：$projectLabel",
+                                active = scopeProject,
+                                onClick = { onScopeChange(true) },
+                            )
+                        }
+                        PiInfoNote(
+                            if (scopeProject) {
+                                "这里改的只对当前工作区生效（写入它的 .pi/settings.json，项目被信任时 pi 才读）；" +
+                                    "行上点「恢复默认」= 删掉本项目的覆盖，回到全局的值。只列能按项目覆盖的项。"
+                            } else {
+                                "这里改的对所有工作区生效。带「本项目」标记的行，当前工作区另有覆盖，pi 用的是那个值。"
+                            },
+                            modifier = Modifier.padding(top = PiSpacing.inline),
+                        )
+                    }
+                }
+            }
             items(sections) { section ->
                 // 一张接一张的卡，**没有节标题、没有「N 项」、卡内不分组**：
                 // 与「设备能力」页同一套（用户裁定的统一口径）。卡间留 `groupGap`。
@@ -187,6 +238,8 @@ fun SettingsGroupScreen(
                             valueOverrides = valueOverrides,
                             detailOverrides = detailOverrides,
                             highlighted = setting.key == highlightKey,
+                            projectOverrides = scopedStore != null && onScopeChange != null &&
+                                !scopeProject && scopedStore.projectDefines(setting.key),
                             onToggle = toggleRow,
                             onOpen = openRow,
                             onExplain = { explaining = it },
@@ -292,6 +345,7 @@ private fun SettingSlot(
     valueOverrides: Map<String, String>,
     detailOverrides: Map<String, String>,
     highlighted: Boolean,
+    projectOverrides: Boolean,
     onToggle: (PiSetting, Boolean) -> Unit,
     onOpen: (PiSetting) -> Unit,
     onExplain: (PiSetting) -> Unit,
@@ -300,7 +354,8 @@ private fun SettingSlot(
     Column {
         PiSettingRow(
             setting = setting,
-            valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
+            valueText = (valueOverrides[setting.key] ?: setting.display(setting.current(store))) +
+                if (projectOverrides) "  · 本项目" else "",
             checked = setting.boolIn(store, false),
             highlighted = highlighted,
             onToggle = { next -> onToggle(setting, next) },
