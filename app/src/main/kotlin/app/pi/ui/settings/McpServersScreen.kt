@@ -127,6 +127,43 @@ internal fun McpServersScreen(
         epoch++
     }
 
+    fun runCheck() {
+        if (checking) return
+        checking = true
+        checkFailure = null
+        scope.launch {
+            when (val result = withContext(Dispatchers.IO) { mcpCheck.run() }) {
+                is PiMcpCheck.Result.Ok -> status = result.report
+                is PiMcpCheck.Result.Failed -> checkFailure = result.message
+            }
+            checking = false
+        }
+    }
+
+    // 登录入口有两处：列表行上的「登录」（检测出需要登录时才出现）和编辑页里的「登录 / 重新登录」。
+    fun startLogin(name: String) {
+        loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, "")
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                mcpLogin.login(name) { url ->
+                    loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, url, "")
+                    scope.launch { runCatching { uriHandler.openUri(url) } }
+                }
+            }
+            loginUi = when (result) {
+                is PiMcpLogin.Result.Ok -> LoginUi(
+                    LoginUi.Kind.Login, name, LoginUi.Phase.Done, null,
+                    if (result.alreadySignedIn) "已经是登录状态，无需再登录。" else "登录成功。新会话里就能用它的工具了。",
+                )
+                is PiMcpLogin.Result.Failed -> LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Failed, null, result.message)
+            }
+            if (result is PiMcpLogin.Result.Ok) {
+                status = null
+                pendingRestart = true
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = "MCP 服务器",
@@ -194,20 +231,7 @@ internal fun McpServersScreen(
                     PiSettingsEntryRow(
                         title = if (checking) "正在检测…" else "检测连接",
                         supporting = "真的去连每个已启用的服务器（等同 pi mcp list），看连没连上、有哪些工具、失败原因",
-                        onClick = {
-                            if (!checking) {
-                                checking = true
-                                checkFailure = null
-                                scope.launch {
-                                    val result = withContext(Dispatchers.IO) { mcpCheck.run() }
-                                    when (result) {
-                                        is PiMcpCheck.Result.Ok -> status = result.report
-                                        is PiMcpCheck.Result.Failed -> checkFailure = result.message
-                                    }
-                                    checking = false
-                                }
-                            }
-                        },
+                        onClick = { runCheck() },
                     )
                 }
             }
@@ -229,7 +253,7 @@ internal fun McpServersScreen(
                     PiSettingsCard {
                         PiSettingsEntryRow(
                             title = "还没有服务器",
-                            supporting = "点右上角 ＋，选一个常用的，或填自己的",
+                            supporting = "点右上角 ＋：选 Sentry / GitHub，或填自己的网址、命令",
                             onClick = { picking = true },
                         )
                     }
@@ -240,6 +264,7 @@ internal fun McpServersScreen(
                             McpServerRow(
                                 server = server,
                                 state = status?.of(server.name),
+                                onLogin = { startLogin(server.name) },
                                 onOpen = {
                                     editing = Editing(server.name, PiMcpConfig.toDraft(server))
                                 },
@@ -393,25 +418,13 @@ internal fun McpServersScreen(
                 val config = PiMcpConfig.toConfig(draft, base)
                 write { PiMcpConfig.upsert(it, current.oldName, draft.name.trim(), config) }
                 editing = null
+                // 新加的网址式服务器：马上检测一次，要登录的话列表行上直接出现「登录」。
+                if (current.oldName == null && draft.http && !activeStore.read().corrupt) runCheck()
             },
             onLogin = current.oldName?.takeIf { current.draft.http }?.let { name ->
                 {
                     editing = null
-                    loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, "")
-                    scope.launch {
-                        val result = withContext(Dispatchers.IO) {
-                            mcpLogin.login(name) { url ->
-                                loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, url, "")
-                                scope.launch { runCatching { uriHandler.openUri(url) } }
-                            }
-                        }
-                        loginUi = when (result) {
-                            is PiMcpLogin.Result.Ok -> LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Done, null,
-                                if (result.alreadySignedIn) "已经是登录状态，无需再登录。" else "登录成功。新会话里就能用它的工具了。")
-                            is PiMcpLogin.Result.Failed -> LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Failed, null, result.message)
-                        }
-                        if (result is PiMcpLogin.Result.Ok) pendingRestart = true
-                    }
+                    startLogin(name)
                 }
             },
             onLogout = current.oldName?.takeIf { current.draft.http }?.let { name ->
@@ -455,6 +468,7 @@ private data class LoginUi(
 private fun McpServerRow(
     server: PiMcpConfig.Server,
     state: PiMcpStatus.Server?,
+    onLogin: () -> Unit,
     onOpen: () -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
@@ -494,6 +508,9 @@ private fun McpServerRow(
                     color = if (state.connected || !state.enabled) PiTheme.palette.muted else MaterialTheme.colorScheme.error,
                 )
             }
+        }
+        if (state?.needsAuth == true && server.enabled) {
+            TextButton(onClick = onLogin) { Text("登录") }
         }
         PiSettingsSwitch(checked = server.enabled, onCheckedChange = onToggle)
     }
@@ -537,7 +554,7 @@ private fun McpTemplateSheet(
                 modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
             )
             Text(
-                "选一个常用的，名字和参数都可以在下一步改。这些用 npx 启动，需要设备能联网下载。",
+                "名字和参数都可以在下一步改。远程服务器需要设备能联网；要账号的，添加后在列表里点「登录」。",
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(
