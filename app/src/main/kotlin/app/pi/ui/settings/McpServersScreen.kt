@@ -42,6 +42,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.packages.PiMcpConfig
 import app.pi.packages.PiMcpFile
+import app.pi.packages.PiMcpCheck
+import app.pi.packages.PiMcpStatus
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiType
@@ -85,6 +87,14 @@ internal fun McpServersScreen(
         val layout = AgentLayout(context = context.applicationContext, hostWorkspace = hostWorkspace)
         PiMcpLogin(layout, GuestCommand(layout))
     }
+    val mcpCheck = remember(context, hostWorkspace.absolutePath) {
+        val layout = AgentLayout(context = context.applicationContext, hostWorkspace = hostWorkspace)
+        PiMcpCheck(layout, GuestCommand(layout))
+    }
+    // 「检测连接」的结果：只在用户点了才去连服务器；改过配置后它就过期了，会被清掉。
+    var status by remember { mutableStateOf<PiMcpStatus.Report?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    var checkFailure by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
     var loginUi by remember { mutableStateOf<LoginUi?>(null) }
@@ -110,6 +120,7 @@ internal fun McpServersScreen(
         val failure = activeStore.update(transform)
         error = failure
         if (failure == null) {
+            status = null
             pendingRestart = true
             onFilesWritten()
         }
@@ -178,6 +189,39 @@ internal fun McpServersScreen(
                 }
             }
 
+            item {
+                PiSettingsCard {
+                    PiSettingsEntryRow(
+                        title = if (checking) "正在检测…" else "检测连接",
+                        supporting = "真的去连每个已启用的服务器（等同 pi mcp list），看连没连上、有哪些工具、失败原因",
+                        onClick = {
+                            if (!checking) {
+                                checking = true
+                                checkFailure = null
+                                scope.launch {
+                                    val result = withContext(Dispatchers.IO) { mcpCheck.run() }
+                                    when (result) {
+                                        is PiMcpCheck.Result.Ok -> status = result.report
+                                        is PiMcpCheck.Result.Failed -> checkFailure = result.message
+                                    }
+                                    checking = false
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+            checkFailure?.let { message -> item { PiInfoNote(message, tone = MaterialTheme.colorScheme.error) } }
+            status?.let { report ->
+                if (report.errors.isNotEmpty() || report.note != null) {
+                    item {
+                        PiInfoNote(
+                            (report.errors + listOfNotNull(report.note)).joinToString("\n"),
+                            tone = if (report.errors.isNotEmpty()) MaterialTheme.colorScheme.error else null,
+                        )
+                    }
+                }
+            }
             // 本项目页里的服务器是「完整定义」；覆盖条目（只含 enabled/exposure）单独显示在下面。
             val definitions = doc.servers.filter { !project || it.kind != PiMcpConfig.Kind.Override }
             item {
@@ -195,6 +239,7 @@ internal fun McpServersScreen(
                             if (index > 0) PiSettingsHairline()
                             McpServerRow(
                                 server = server,
+                                state = status?.of(server.name),
                                 onOpen = {
                                     editing = Editing(server.name, PiMcpConfig.toDraft(server))
                                 },
@@ -339,6 +384,7 @@ internal fun McpServersScreen(
     editing?.let { current ->
         McpEditSheet(
             initial = current.draft,
+            state = current.oldName?.let { status?.of(it) },
             isNew = current.oldName == null,
             otherNames = doc.servers.map { it.name }.filter { it != current.oldName },
             onDismiss = { editing = null },
@@ -408,6 +454,7 @@ private data class LoginUi(
 @Composable
 private fun McpServerRow(
     server: PiMcpConfig.Server,
+    state: PiMcpStatus.Server?,
     onOpen: () -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
@@ -439,6 +486,14 @@ private fun McpServerRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (state != null) {
+                Text(
+                    PiMcpStatus.stateLabel(state),
+                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                    style = PiTheme.text.meta,
+                    color = if (state.connected || !state.enabled) PiTheme.palette.muted else MaterialTheme.colorScheme.error,
+                )
+            }
         }
         PiSettingsSwitch(checked = server.enabled, onCheckedChange = onToggle)
     }
@@ -523,6 +578,7 @@ private fun McpTemplateSheet(
 @Composable
 private fun McpEditSheet(
     initial: PiMcpConfig.Draft,
+    state: PiMcpStatus.Server?,
     isNew: Boolean,
     otherNames: List<String>,
     onDismiss: () -> Unit,
@@ -673,6 +729,19 @@ private fun McpEditSheet(
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.muted,
                 )
+            }
+            if (state != null) {
+                state.error?.let { Text(it, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error) }
+                if (state.tools.isNotEmpty()) {
+                    Text(
+                        "这个服务器的工具（${state.tools.size}）：" +
+                            state.tools.joinToString("、") { tool ->
+                                state.toolExposure[tool]?.let { "$tool［${exposureLabel(it).substringBefore('（')}］" } ?: tool
+                            } + "\n要单独设置某个工具，把名字抄到下面。",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.muted,
+                    )
+                }
             }
             PiEditorField(
                 value = draft.toolExposure,

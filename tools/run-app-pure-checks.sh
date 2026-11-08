@@ -303,6 +303,12 @@ run_harness pi-resource-catalog \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiResourceCatalogCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceCatalog.kt"
 
+# app.pi.packages: `pi mcp list --json` 的解析（`PiMcpStatus`）。Android-free。
+run_harness pi-mcp-status \
+  app.pi.packages.PiMcpStatusCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiMcpStatusCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiMcpStatus.kt"
+
 # app.pi.bridge: the A3 guest→host candidate order. Pure string arithmetic, no
 # Android and no filesystem — see the file header.
 run_harness guest-paths \
