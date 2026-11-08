@@ -2,6 +2,8 @@ package app.pi.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -182,16 +184,15 @@ internal fun McpServersScreen(
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
             item {
-                Row(
-                    Modifier.padding(
+                app.pi.ui.PiSeg(
+                    options = listOf("全局", "本项目"),
+                    selectedIndex = if (project) 1 else 0,
+                    onSelect = { project = it == 1 },
+                    modifier = Modifier.padding(
                         horizontal = PiSettingsMetrics.pageHorizontal,
                         vertical = PiSpacing.inline,
                     ),
-                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
-                ) {
-                    PiSettingsChip(text = "全局", active = !project, onClick = { project = false })
-                    PiSettingsChip(text = "本项目", active = project, onClick = { project = true })
-                }
+                )
             }
             item {
                 PiInfoNote(
@@ -230,7 +231,12 @@ internal fun McpServersScreen(
                 PiSettingsCard {
                     PiSettingsEntryRow(
                         title = if (checking) "正在检测…" else "检测连接",
-                        supporting = "真的去连每个已启用的服务器（等同 pi mcp list），看连没连上、有哪些工具、失败原因",
+                        supporting = status?.let { report ->
+                            val enabled = report.servers.filter { it.enabled }
+                            val ok = enabled.count { it.connected }
+                            val auth = enabled.count { it.needsAuth }
+                            "上次检测：$ok/${enabled.size} 已连接" + if (auth > 0) "，$auth 个需要登录" else ""
+                        } ?: "真的去连每个已启用的服务器，看连没连上、有哪些工具、失败原因",
                         onClick = { runCheck() },
                     )
                 }
@@ -591,7 +597,7 @@ private fun McpTemplateSheet(
 }
 
 /** 编辑 / 新增表单。字段、校验、写盘形状全在 [PiMcpConfig]；这里只收集输入。 */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun McpEditSheet(
     initial: PiMcpConfig.Draft,
@@ -666,15 +672,6 @@ private fun McpEditSheet(
                     label = "访问令牌（可选：直接粘贴，或写 \${变量}；留空且服务器要登录则走 OAuth）",
                     height = PiNumberFieldHeight,
                 )
-                var oauthOpen by remember { mutableStateOf(draft.hasOauth()) }
-                PiSettingsChip(
-                    text = if (oauthOpen) "收起 OAuth 高级项" else "OAuth 高级项（一般不用填）",
-                    active = oauthOpen,
-                    onClick = { oauthOpen = !oauthOpen },
-                )
-                if (oauthOpen) {
-                    McpOauthFields(draft) { draft = it }
-                }
             } else {
                 PiEditorField(
                     value = draft.command,
@@ -706,30 +703,7 @@ private fun McpEditSheet(
                     minHeight = PiTextFieldMinHeight,
                     contentPadding = PiFieldPaddingBlock,
                 )
-                PiEditorField(
-                    value = draft.cwd,
-                    onValueChange = { draft = draft.copy(cwd = it) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = "工作目录（可选；相对路径按会话目录，~/ 是家目录）",
-                    height = PiNumberFieldHeight,
-                )
             }
-            PiEditorField(
-                value = draft.description,
-                onValueChange = { draft = draft.copy(description = it) },
-                modifier = Modifier.fillMaxWidth(),
-                label = "说明（可选，给你自己看）",
-                height = PiNumberFieldHeight,
-                textStyle = PiTheme.text.meta,
-            )
-            PiEditorField(
-                value = draft.timeoutSeconds,
-                onValueChange = { draft = draft.copy(timeoutSeconds = it) },
-                modifier = Modifier.fillMaxWidth(),
-                label = "超时（秒，留空 = 60）",
-                placeholder = "60",
-                height = PiNumberFieldHeight,
-            )
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
                 Text("暴露方式", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
@@ -747,19 +721,87 @@ private fun McpEditSheet(
                     color = PiTheme.palette.muted,
                 )
             }
+            // —— 这个服务器现在怎么样：只有「检测连接」跑过才有。
             if (state != null) {
+                Text(
+                    PiMcpStatus.stateLabel(state),
+                    style = PiTheme.text.meta,
+                    color = if (state.connected || !state.enabled) PiTheme.palette.muted else MaterialTheme.colorScheme.error,
+                )
                 state.error?.let { Text(it, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error) }
-                if (state.tools.isNotEmpty()) {
+            }
+            if (onLogin != null && onLogout != null) {
+                Text(
+                    "要账号授权的服务器：在浏览器里登录，令牌由 pi 保存。已经填了访问令牌的不需要。登录用的是已保存的配置，改了网址请先保存。",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
+                    PiSettingsChip(text = "登录 / 重新登录", active = state?.needsAuth == true, onClick = onLogin)
+                    PiSettingsChip(text = "退出登录", onClick = onLogout)
+                }
+            }
+            // —— 高级：默认折起，一般用不到。
+            var advanced by remember { mutableStateOf(draft.hasAdvanced()) }
+            PiSettingsChip(
+                text = if (advanced) "收起高级选项" else "高级选项（说明、超时、单个工具、OAuth…）",
+                active = advanced,
+                onClick = { advanced = !advanced },
+            )
+            if (advanced) {
+                PiEditorField(
+                    value = draft.description,
+                    onValueChange = { draft = draft.copy(description = it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "说明（可选，给你自己看）",
+                    height = PiNumberFieldHeight,
+                    textStyle = PiTheme.text.meta,
+                )
+                PiEditorField(
+                    value = draft.timeoutSeconds,
+                    onValueChange = { draft = draft.copy(timeoutSeconds = it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "超时（秒，留空 = 60）",
+                    placeholder = "60",
+                    height = PiNumberFieldHeight,
+                )
+                if (!draft.http) {
+                PiEditorField(
+                    value = draft.cwd,
+                    onValueChange = { draft = draft.copy(cwd = it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "工作目录（可选；相对路径按会话目录，~/ 是家目录）",
+                    height = PiNumberFieldHeight,
+                )
+                }
+                if (draft.http) {
+                    McpOauthFields(draft) { draft = it }
+                }
+                if (state != null && state.tools.isNotEmpty()) {
                     Text(
-                        "这个服务器的工具（${state.tools.size}）：" +
-                            state.tools.joinToString("、") { tool ->
-                                state.toolExposure[tool]?.let { "$tool［${exposureLabel(it).substringBefore('（')}］" } ?: tool
-                            } + "\n要单独设置某个工具，把名字抄到下面。",
+                        "这个服务器的工具（${state.tools.size}）。点一个，会在下面加一行（默认 direct），可改成 codemode / deferred / hidden：",
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.muted,
                     )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                    ) {
+                        state.tools.forEach { tool ->
+                            val current = state.toolExposure[tool]
+                            PiSettingsChip(
+                                text = if (current == null) tool else "$tool · ${exposureLabel(current).substringBefore('（')}",
+                                active = current != null,
+                                onClick = {
+                                    if (!draft.toolExposure.lines().any { it.substringBefore('=').trim() == tool }) {
+                                        val prefix = draft.toolExposure.trimEnd().let { if (it.isEmpty()) "" else it + "\n" }
+                                        draft = draft.copy(toolExposure = prefix + tool + "=direct")
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
-            }
             PiEditorField(
                 value = draft.toolExposure,
                 onValueChange = { draft = draft.copy(toolExposure = it) },
@@ -771,17 +813,6 @@ private fun McpEditSheet(
                 minHeight = PiTextFieldMinHeight,
                 contentPadding = PiFieldPaddingBlock,
             )
-            if (onLogin != null && onLogout != null) {
-                Text(
-                    "登录（OAuth）：服务器需要账号授权时点这里，会在浏览器里完成；已填访问令牌的不需要。" +
-                        "登录用的是已保存的配置，改了网址请先保存。",
-                    style = PiTheme.text.meta,
-                    color = PiTheme.palette.muted,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                    PiSettingsChip(text = "登录 / 重新登录", active = true, onClick = onLogin)
-                    PiSettingsChip(text = "退出登录", onClick = onLogout)
-                }
             }
             if (showProblem && problem != null) {
                 Text(problem, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.error)
@@ -824,6 +855,10 @@ private fun McpEditSheet(
         )
     }
 }
+
+private fun PiMcpConfig.Draft.hasAdvanced(): Boolean =
+    description.isNotBlank() || timeoutSeconds.isNotBlank() || cwd.isNotBlank() ||
+        toolExposure.isNotBlank() || hasOauth()
 
 private fun PiMcpConfig.Draft.hasOauth(): Boolean =
     oauthCimd || listOf(
