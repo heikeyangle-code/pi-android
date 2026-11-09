@@ -17,7 +17,11 @@ on:
     #
     # 这里故意不写 `branches: ['**']`：一次性的分支不值得每次都花掉两个 targetSdk
     # 变体的完整构建（含 ~65 MB 运行时装配），而 PR 那一侧本来就覆盖了评审场景。
-    branches: [main, 'proroot-*']
+    #
+    # `feat/sdk-host` 是**长期存在的迁移线**（把引擎宿主从 `pi --mode rpc` 换成官方 SDK），
+    # 它改的是 Kotlin 侧的引擎边界，分支上没有 CI 就等于盲改 —— 所以按 `proroot-*`
+    # 的同样理由给它开构建。合并/放弃这条线时，把这一项删掉。
+    branches: [main, 'proroot-*', 'feat/sdk-host']
     # 纯文案 / 纯截图 / 纯标志图改动不进构建。一次 main 上的 push 会跑两个 targetSdk
     # 变体的完整构建（含 ~65 MB 运行时装配），而改一个字的 README 不可能让它们变红。
     # 注意只列「构建不可能读」的东西：`docs/` 里目前全是 markdown 与截图，
