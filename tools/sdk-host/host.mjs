@@ -26,17 +26,20 @@
 
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  createEventBus,
-} from "@earendil-works/pi-coding-agent";
+// 引擎整包 import 很重（本机实测 ~7 s，手机上更久），所以**先握手、后加载**：
+// `ready` 立刻发出，模块用 dynamic import 在后台加载，`open` 时再等它。
+let sdk;
+async function loadSdk() {
+  if (!sdk) {
+    const t = Date.now();
+    sdk = await import("@earendil-works/pi-coding-agent");
+    if (process.env.PI_HOST_DEBUG === "1") process.stderr.write(`[host] sdk loaded in ${Date.now() - t}ms\n`);
+  }
+  return sdk;
+}
 
 // --------------------------------------------------------------------------- args
 
@@ -61,7 +64,21 @@ const trustProject = process.argv.includes("--trust-project");
 
 // --------------------------------------------------------------------------- io
 
-const out = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+const DEBUG = process.env.PI_HOST_DEBUG === "1";
+const T0 = Date.now();
+const mark = (label) => {
+  if (DEBUG) process.stderr.write(`[host +${Date.now() - T0}ms] ${label}\n`);
+};
+
+const out = (obj) => {
+  // 同步写 fd 1：`process.stdout.write` 在这个进程里会被推迟近 9 秒才真正落到管道上
+  // （实测：日志说 140 ms 已写、客户端 8.8 s 才收到）。消息都很小，同步写代价可忽略；
+  // 将来做流式增量时要换成带背压的原始写。
+  writeSync(1, `${JSON.stringify(obj)}\n`);
+  if (process.env.PI_HOST_DEBUG === "1" && obj.type === "response") {
+    process.stderr.write(`[host write] response id=${String(obj.id)} at ${Date.now() - T0}ms\n`);
+  }
+};
 
 const pendingResponses = new Map();
 const pendingUi = new Map();
@@ -262,23 +279,39 @@ const footerDataStub = {
 // --------------------------------------------------------------------------- session
 
 let session;
-let events;
+let events = null;
+
+async function ensureEvents() {
+  if (!events) {
+    const { createEventBus } = await loadSdk();
+    events = createEventBus();
+  }
+  return events;
+}
+
 
 async function open() {
+  mark("open:start");
+  const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = await loadSdk();
+  const bus = await ensureEvents();
+  mark("sdk");
   const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: trustProject });
+  mark("settings");
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
-    eventBus: events,
+    eventBus: bus,
     additionalExtensionPaths: extraExtensions,
   });
   await resourceLoader.reload();
+  mark("resources");
 
   const modelRuntime = await ModelRuntime.create({
     authPath: `${agentDir}/auth.json`,
     modelsPath: `${agentDir}/models.json`,
   });
+  mark("modelRuntime");
 
   const created = await createAgentSession({
     cwd,
@@ -289,6 +322,7 @@ async function open() {
     sessionManager: SessionManager.create(cwd, sessionDir ?? `${agentDir}/sessions`),
   });
 
+  mark("session");
   session = created.session;
   session.subscribe((event) => out({ type: "event", event }));
 
@@ -296,10 +330,18 @@ async function open() {
   // `await ctx.ui.select(...)` 这种会阻塞到用户作答的调用。把它放在 `open` 的应答之前，
   // 一个扩展就能把整个会话建立拖死（冒烟测试踩到的就是这个）。所以这里先回 `open`，
   // 再后台绑定，绑完单独发一条事件。
-  void session
-    .bindExtensions({ uiContext, mode: "tui" })
-    .then(() => out({ type: "extensions", bound: true }))
-    .catch((error) => out({ type: "extensions", bound: false, error: String(error) }));
+  // 必须 `setImmediate` 再绑：`bindExtensions` 的**同步段**会加载扩展并执行
+  // `session_start`（实测把 `open` 的应答推迟了 8 秒）。先让应答写出去，再开始绑。
+  setImmediate(() => {
+    mark("bind:start");
+    session
+      .bindExtensions({ uiContext, mode: "tui" })
+      .then(() => {
+        mark("bind:done");
+        out({ type: "extensions", bound: true });
+      })
+      .catch((error) => out({ type: "extensions", bound: false, error: String(error) }));
+  });
 
   return {
     sessionId: session.getSessionStats?.().sessionId ?? null,
@@ -312,10 +354,11 @@ async function open() {
 }
 
 /** 进程内子代理 RPC：pi-subagents 自己在事件总线上监听这个频道。 */
-function subagentRpc(method, params, timeoutMs = 30000) {
+async function subagentRpc(method, params, timeoutMs = 30000) {
+  const bus = await ensureEvents();
   return new Promise((resolvePromise, reject) => {
     const requestId = randomUUID();
-    const off = events.on(`subagents:rpc:v1:reply:${requestId}`, (reply) => {
+    const off = bus.on(`subagents:rpc:v1:reply:${requestId}`, (reply) => {
       off();
       clearTimeout(timer);
       if (reply?.success) resolvePromise(reply.data);
@@ -325,13 +368,11 @@ function subagentRpc(method, params, timeoutMs = 30000) {
       off();
       reject(new Error("subagent rpc timed out"));
     }, timeoutMs);
-    events.emit("subagents:rpc:v1:request", { version: 1, requestId, method, params });
+    bus.emit("subagents:rpc:v1:request", { version: 1, requestId, method, params });
   });
 }
 
 // --------------------------------------------------------------------------- loop
-
-events = createEventBus();
 
 const rl = createInterface({ input: process.stdin });
 rl.on("line", async (line) => {
@@ -376,6 +417,70 @@ rl.on("line", async (line) => {
           model: session.model ? { provider: session.model.provider, id: session.model.id } : null,
         });
         break;
+      // ---- 会话 -----------------------------------------------------------------
+      case "session.stats":
+        respond(id, true, {
+          stats: session.getSessionStats(),
+          usage: session.getContextUsage() ?? null,
+          model: session.model ? { provider: session.model.provider, id: session.model.id } : null,
+          thinking: session.thinkingLevel ?? null,
+        });
+        break;
+      case "session.tree":
+        respond(id, true, session.sessionManager.getTree());
+        break;
+      case "session.name":
+        if (msg.name !== undefined) session.setSessionName(String(msg.name));
+        respond(id, true, { name: session.sessionManager.getSessionName?.() ?? null });
+        break;
+      case "session.steer":
+        session.steer(String(msg.text));
+        respond(id, true, {});
+        break;
+      case "session.followUp":
+        session.followUp(String(msg.text));
+        respond(id, true, {});
+        break;
+      case "session.compact":
+        respond(id, true, await session.compact(msg.instructions));
+        break;
+      case "session.thinking":
+        if (msg.level) session.setThinkingLevel(msg.level);
+        respond(id, true, { level: session.thinkingLevel });
+        break;
+      case "session.tools":
+        if (Array.isArray(msg.names)) session.setActiveToolsByName(msg.names.map(String));
+        respond(id, true, {
+          active: session.getActiveToolNames(),
+          all: session.getAllTools().map((tool) => ({ name: tool.name, description: tool.description })),
+        });
+        break;
+      case "session.retry":
+        if (msg.enabled !== undefined) session.setAutoRetryEnabled(Boolean(msg.enabled));
+        if (msg.abort) session.abortRetry();
+        respond(id, true, {});
+        break;
+      case "session.export":
+        respond(id, true, { path: session.exportToJsonl(msg.path) });
+        break;
+      case "session.reload":
+        await session.reload();
+        respond(id, true, {});
+        break;
+
+      // ---- 渲染器：扩展注册的自定义消息渲染 --------------------------------
+      // 这是 RPC 模式永远做不到的一条：渲染器注册在进程里，只有 TUI 会去调。
+      // 宿主直接取 accessor、调它、把 `Component.render(width)` 的行发回 App。
+      case "render.message": {
+        const renderer = session.extensionRunner.getMessageRenderer(String(msg.customType));
+        if (!renderer) {
+          respond(id, true, { lines: null, reason: "no renderer" });
+          break;
+        }
+        const component = renderer(msg.message, { expanded: Boolean(msg.expanded), outputPad: 0 }, themeStub);
+        respond(id, true, component ? { lines: component.render(Number(msg.width) || 40) } : { lines: null });
+        break;
+      }
       case "subagent":
         respond(id, true, await subagentRpc(msg.method, msg.params));
         break;

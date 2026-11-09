@@ -9,6 +9,12 @@
  *   - `custom()` → 整屏组件，`handleInput` 收到回车后 `done()`
  */
 export default function probe(pi) {
+  // 自定义消息渲染器：只有 TUI 会去调它，这里注册给宿主的 `render.message` 命令用。
+  pi.registerMessageRenderer?.("probe", (message, options, theme) => ({
+    render: (width) => [`renderer<${JSON.stringify(message?.content ?? null).slice(0, 40)}> width=${width}`],
+    dispose: () => {},
+  }));
+
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setStatus("probe", "ready");
     ctx.ui.setTitle("probe session");

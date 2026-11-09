@@ -41,3 +41,25 @@ harness: OK (sdk-host)
 ```
 
 `fixtures/probe-extension.mjs` 是把 `ExtensionUIContext` 每一面都碰一遍的探针扩展。
+
+## 命令面（已接）
+
+| 命令 | 作用 |
+|---|---|
+| `hello` | 协议版本 + 能力表 |
+| `open` | 建 session（先应答，SDK 慢慢加载；绑扩展在后台） |
+| `prompt` / `abort` / `session.steer` / `session.followUp` | 对话控制 |
+| `session.stats` / `session.tree` / `session.name` | 会话状态 |
+| `session.thinking` / `session.tools` | 推理等级、工具开关 |
+| `session.compact` / `session.retry` / `session.reload` / `session.export` | 维护操作 |
+| `session.new` / `session.fork` / `session.switch` | **待接**（需要 AgentSessionRuntime） |
+| `render.message` | 调扩展注册的 `MessageRenderer`，把 `render(width)` 的行发回 |
+| `subagent` | 转发到 `pi-subagents` 的进程内 RPC |
+
+UI 请求：`ui.select/confirm/input/editor` 等 App 回值；`ui.surface` 发组件渲染结果；
+App 用 `ui.input` 把按键喂回 `handleInput`，用 `ui.resize` 改宽度。
+
+## 启动耗时（实测，本机）
+
+- 握手 `ready`：**115 ms**（SDK 改为 dynamic import 之后；之前要等整包加载完，约 7 s）；
+- `open`：约 5.6 s（SDK 导入 + session 创建），App 应显示「引擎启动中」而不是白屏。
