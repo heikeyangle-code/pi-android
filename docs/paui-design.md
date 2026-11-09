@@ -215,12 +215,16 @@ EXT=../ext3.ts CMD=/rr     node drv.mjs $PI     # 实验 3
 | 2 | 在 guest 里用真 pi-tui（`Container/Text/SelectList`）无头渲染，发方向键，再渲染；结果放进 `setStatus` | "TUI 组件能脱离终端渲染并接收按键；输出可被 App 消费" | 两次 `render(40)` 不同（选中项移动）且只含 SGR | **通过**：只有 `\x1b[38;5;Nm…\x1b[39m`，选中项从 Alpha 移到 Beta；`setStatus` 带整屏 JSON 无问题 |
 | 3 | 扩展导入 `ExtensionRunner`，包装 `setUIContext`：抓 `this`、整体替换宿主 ui；再用 runner 调另一处注册的 message renderer | "不改 pi 就能抓到 runner、替换整个 UI 上下文、调用别人注册的渲染器" | `custom()` 返回我们的实现；`getMessageRenderer("demo")` 能渲染 | **通过**：`custom: "from-richer-host"`，渲染出 `RENDERED:hi`，`getAllThemes` 也被替换 |
 
+**实验 5 目前发现的词表缺口**（只来自"对着真实页面还原"，不是猜的）：资源页有"全局｜本项目"分段切换和项目覆盖的三态
+（继承/加载/不加载），v1 词表里没有对应节点。需要补 `segmented`（单选分段，事件 `select`）和 `chips`（可多选/三态的一行标签）——
+这两个应当进 v1，而不是"后补"。
+
 **下一步要补的实验（每个 1–2 天，都能在 CI/真机以外大部分用 node 完成）：**
 
 | # | 实验 | 证伪什么 | 判据 |
 |---|---|---|---|
 | 4 | **用打包后的引擎入口重跑实验 3**（App 实际使用的 `rpc-entry`） | "`ExtensionRunner` 在打包入口里和扩展 import 到的是同一个实例" | 实验 3 的 `haveRunner:true`；不通过则退回"自建 SDK 宿主"路线，设计其余部分不变 |
-| 5 | **把一个真实页面用协议重画**：选 App 里现成的"工作区 → 资源"的一个列表，写成 PAUI 节点 JSON，由一个最小 Compose 渲染器画出（先只做 `column/row/text/button/list/toggle`） | "词表 v1 足够表达真实页面；事件回传延迟可接受" | 用不超过 18 个节点类型还原页面；点按到状态更新的往返 < 200 ms（真机，proot 内） |
+| 5 | **把一个真实页面用协议重画**：选 App 里现成的"工作区 → 资源"页，写成 PAUI 节点 JSON，由最小 Compose 渲染器画出 | "词表 v1 足够表达真实页面；事件回传延迟可接受" | 用不超过 18 个节点类型还原页面；点按到状态更新的往返 < 200 ms（真机，proot 内） | **进行中，一半**：guest 侧生产者 `tools/paui-experiments/resources-page.mjs` 已用真实资源清单跑通（12 个节点、7 种类型、深度 3、0 个未知类型）；App 侧 `PauiCodec`（解析/降级/限额/ANSI 清洗，带单测）和 `PauiView`（Compose 渲染器）已写，**没编译、没接到页面、没测延迟** |
 | 6 | **翻译一个真实第三方 TUI 扩展**：挑 pi 生态里用 `custom()` 的向导/选择器（先找一个只用 SelectList + Text 的），走适配器 | "适配器能让不改源码的第三方扩展自动出界面" | 该扩展的整条流程（打开 → 选择 → done）在 `ansi` 兜底下走通；识别成 SelectList 后变成原生列表 |
 
 ## 5. 未解决的问题与需要产品拍板的点
