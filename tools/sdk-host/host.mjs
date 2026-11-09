@@ -324,7 +324,10 @@ async function open() {
 
   mark("session");
   session = created.session;
-  session.subscribe((event) => out({ type: "event", event }));
+  session.subscribe((event) => {
+    out({ type: "event", event });
+    if (STATE_EVENTS.has(event?.type)) pushState(event.type);
+  });
 
   // `bindExtensions` 会**等待**每个扩展的 `session_start` 处理器；而处理器里常见的正是
   // `await ctx.ui.select(...)` 这种会阻塞到用户作答的调用。把它放在 `open` 的应答之前，
@@ -338,7 +341,9 @@ async function open() {
       .bindExtensions({ uiContext, mode: "tui" })
       .then(() => {
         mark("bind:done");
+        extensionsBound = true;
         out({ type: "extensions", bound: true });
+        pushState("extensions");
       })
       .catch((error) => out({ type: "extensions", bound: false, error: String(error) }));
   });
@@ -351,6 +356,56 @@ async function open() {
     extensions: created.extensionsResult?.extensions?.map((e) => e.path ?? e.name) ?? [],
     warnings: created.extensionsResult?.errors ?? [],
   };
+}
+
+/**
+ * 宿主持有的状态快照。
+ *
+ * 这是与 RPC 的分界线：RPC 让 App 反复 `get_xxx`；这里由宿主拼好一份**完整视图**，
+ * 变了就推。App 的 UI 直接吃这份快照，不自己攒字段、不来回问。
+ */
+function snapshot() {
+  if (!session) return { ready: false };
+  const stats = session.getSessionStats();
+  return {
+    ready: true,
+    sessionId: stats.sessionId,
+    sessionFile: stats.sessionFile ?? null,
+    cwd,
+    agentDir,
+    model: session.model ? { provider: session.model.provider, id: session.model.id } : null,
+    thinking: session.thinkingLevel ?? null,
+    tools: {
+      active: session.getActiveToolNames(),
+      all: session.getAllTools().map((tool) => ({ name: tool.name, description: tool.description })),
+    },
+    usage: session.getContextUsage() ?? null,
+    tokens: stats.tokens,
+    cost: stats.cost,
+    messages: {
+      user: stats.userMessages,
+      assistant: stats.assistantMessages,
+      tools: stats.toolCalls,
+      total: stats.totalMessages,
+    },
+    extensions: {
+      bound: extensionsBound,
+      paths: loadedExtensions,
+    },
+  };
+}
+
+let extensionsBound = false;
+let loadedExtensions = [];
+let stateTimer = null;
+
+/** 事件驱动地推状态：合并同一批事件，避免每个 token 都推一次。 */
+function pushState(reason) {
+  if (stateTimer) return;
+  stateTimer = setTimeout(() => {
+    stateTimer = null;
+    out({ type: "state", reason, state: snapshot() });
+  }, 100);
 }
 
 /** 进程内子代理 RPC：pi-subagents 自己在事件总线上监听这个频道。 */
@@ -373,6 +428,13 @@ async function subagentRpc(method, params, timeoutMs = 30000) {
 }
 
 // --------------------------------------------------------------------------- loop
+
+/** 会改变快照的事件（其余事件只转发，不触发推送）。 */
+const STATE_EVENTS = new Set([
+  "agent_start", "agent_end", "agent_settled", "turn_end",
+  "message_end", "tool_execution_end", "model_change", "thinking_level_change",
+  "session_compact", "session_info_changed", "queue_update",
+]);
 
 const rl = createInterface({ input: process.stdin });
 rl.on("line", async (line) => {
@@ -399,18 +461,35 @@ rl.on("line", async (line) => {
           ],
         });
         break;
-      case "open":
-        respond(id, true, await open());
+      case "open": {
+        const info = await open();
+        respond(id, true, info);
+        pushState("open");
+        break;
+      }
+      // 粗粒度：App 说“发一条”，宿主负责入队/触发/回状态，不需要 App 拼命令序列。
+      case "chat.send":
+        session.prompt(String(msg.text ?? ""), { images: msg.images }).catch((error) =>
+          out({ type: "error", channel: "chat.send", error: String(error) }),
+        );
+        respond(id, true, { accepted: true, state: snapshot() });
+        break;
+      case "chat.stop":
+        await session.abort();
+        respond(id, true, { state: snapshot() });
         break;
       case "prompt":
         session.prompt(msg.text, { images: msg.images }).catch((error) => out({ type: "error", error: String(error) }));
-        respond(id, true, { accepted: true });
+        respond(id, true, { accepted: true, state: snapshot() });
         break;
       case "abort":
         await session.abort();
-        respond(id, true, {});
+        respond(id, true, { state: snapshot() });
         break;
       case "state":
+        respond(id, true, snapshot());
+        break;
+      case "state.legacy":
         respond(id, true, {
           stats: session.getSessionStats?.(),
           usage: session.getContextUsage?.(),
@@ -431,7 +510,7 @@ rl.on("line", async (line) => {
         break;
       case "session.name":
         if (msg.name !== undefined) session.setSessionName(String(msg.name));
-        respond(id, true, { name: session.sessionManager.getSessionName?.() ?? null });
+        respond(id, true, { name: session.sessionManager.getSessionName?.() ?? null, state: snapshot() });
         break;
       case "session.steer":
         session.steer(String(msg.text));
@@ -446,14 +525,11 @@ rl.on("line", async (line) => {
         break;
       case "session.thinking":
         if (msg.level) session.setThinkingLevel(msg.level);
-        respond(id, true, { level: session.thinkingLevel });
+        respond(id, true, { state: snapshot() });
         break;
       case "session.tools":
         if (Array.isArray(msg.names)) session.setActiveToolsByName(msg.names.map(String));
-        respond(id, true, {
-          active: session.getActiveToolNames(),
-          all: session.getAllTools().map((tool) => ({ name: tool.name, description: tool.description })),
-        });
+        respond(id, true, { state: snapshot() });
         break;
       case "session.retry":
         if (msg.enabled !== undefined) session.setAutoRetryEnabled(Boolean(msg.enabled));

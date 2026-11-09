@@ -113,6 +113,10 @@ send({ type: "ui.input", surfaceId: custom.surfaceId, data: "\r" });
 const done = await waitFor((m) => m.type === "ui.notify" && String(m.message).startsWith("custom="));
 expect("custom() 由组件自己 done()", done.message === "custom=entered");
 
+// 宿主推状态：RPC 模式里 App 得自己 get_state 拼，这里是宿主主动推完整快照。
+const state = await waitFor((m) => m.type === "state" && m.state?.ready);
+expect("宿主推状态快照", Array.isArray(state.state.tools.active) && state.state.sessionId.length > 0);
+
 send({ type: "shutdown" });
 host.kill();
 rmSync(root, { recursive: true, force: true });
