@@ -1529,6 +1529,19 @@ run_harness sdk-host-install \
   "$ROOT/app/src/main/kotlin/app/pi/engine/SdkHostLaunch.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
+# app.pi.host.HostEngineApi: 旧的响应读取器（`PiResponses.*`）读得懂新宿主的**真**应答吗？
+# 把 record.mjs 录下的真宿主应答按命令名排队，调 API 的每一个方法并断言字段。形状对不上在界面
+# 上是安静的错（模型列表空、统计全 0），所以在这里钉死。需要整个 :rpc 的源码（读取器在里面）。
+run_harness host-api \
+  app.pi.host.HostApiCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/host/HostApiCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

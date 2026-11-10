@@ -50,6 +50,15 @@ try {
   const r = await call("chat.send", { message: "hello" });
   // 没有凭据：预检通过后整轮会失败，宿主应发 agent 事件与/或 agent.error，等到空闲即可
   await h.waitFor((f) => f.t === "evt" && (f.name === "agent.error" || (f.name === "agent" && f.data?.type === "agent_settled")), 30000).catch(() => {});
+  // —— 与 PiEngineApi 一一对应的读写命令（HostApiCheck 回放，验证 Responses.kt 的读取器吃得下真数据）——
+  for (const [cmd, args] of [
+    ["session.messages", {}], ["session.entries", {}], ["session.tree", {}], ["session.stats", {}],
+    ["session.lastText", {}], ["session.forkMessages", {}], ["thinking.levels", {}], ["catalog.commands", {}],
+    ["thinking.set", { level: "low" }], ["thinking.cycle", {}], ["queue.steeringMode", { mode: "all" }], ["queue.followUpMode", { mode: "one-at-a-time" }],
+    ["session.autoCompaction", { enabled: false }], ["session.retry", { enabled: false }], ["session.clearQueue", {}],
+    ["session.name", { name: "录制会话" }], ["session.bash", { command: "echo hi" }], ["model.cycle", {}],
+    ["session.export", {}], ["session.compact", {}],
+  ]) await call(cmd, args);
   await call("session.new");
   await call("session.snapshot");
   await call("no.such.command"); // 错误应答的真样本

@@ -111,7 +111,7 @@ export function register(reg, { controller }) {
     return { tree: sm.getTree(), leafId: sm.getLeafId() };
   });
   reg.add("session.stats", () => controller.requireSession().getSessionStats());
-  reg.add("session.lastText", () => ({ text: controller.requireSession().getLastAssistantText() }));
+  reg.add("session.lastText", () => ({ text: controller.requireSession().getLastAssistantText() ?? null }));
   reg.add("session.forkMessages", () => ({ messages: controller.requireSession().getUserMessagesForForking() }));
   reg.add("session.list", async (args) => {
     // 列会话：直接用 SessionManager，不再让 App 去读目录。
