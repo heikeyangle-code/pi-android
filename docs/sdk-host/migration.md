@@ -57,6 +57,7 @@ epoch 过滤、seq 跳号、res/req 配对、超时清理、未知帧忽略。
 **保留**：`Transcript.kt`（对话还原）、`Events.kt` 的事件解析、`Messages.kt`、`SessionEntries.kt`、`Ansi.kt`。
 
 **任务要点**
+0. **状态来源统一为 `state` 事件**：ViewModel 里模型、思考等级、工具、用量、成本、队列这些字段不再各自 `getXxx`，全部由最近一份 `state` 派生；命令应答里的 `state` 也喂进同一个入口（按 `seq` 取新）。
 1. 启动序列：spawn → 等 `host.ready` → `host.hello`（核对 `protocol == 1`，不符报「宿主版本不兼容」）→ `session.open`（把原来命令行标志换成 JSON 参数）→ 显示 ui-design §6 的启动状态。
 2. `reload`：改成 `session.reload`，不重启进程。
 3. 对话框：接 `req` + `ui.cancel`（ui-design §4）；`session.bound` 清空队列。

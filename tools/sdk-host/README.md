@@ -5,7 +5,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `test.mjs` | 起真宿主 + 真 pi SDK + 探针扩展，按 App 的方式驱动，52 项检查 |
+| `test.mjs` | 起真宿主 + 真 pi SDK + 探针扩展，按 App 的方式驱动，56 项检查 |
 | `contract.mjs` | 宿主依赖的 SDK 导出/方法逐项断言（升级 pi 时先跑它） |
 | `client.mjs` | 「App 侧最小实现」：帧配对、事件等待。写 Kotlin 客户端时的行为参照 |
 | `fixtures/probe-extension.mjs` | 探针扩展：把 `ExtensionUIContext` 每一面都碰一遍 |

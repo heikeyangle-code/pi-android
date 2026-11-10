@@ -22,9 +22,10 @@ pi 的 RPC 协议、RPC 响应类型、RPC 的残缺 UI 桩，**全部废弃**�
 1. **宿主只做适配，不重写 pi 的功能。** 凡是 pi 已经有的逻辑（压缩、分支、重试、MCP、技能、包解析……）一行不复制。
 2. **官方能力第一版接全。** 清单见 [capabilities.md](capabilities.md)，每一项标了「已接 / 通用口可达 / 待接」。
 3. **升级 pi 时，已接的能力随引擎更新。** 靠两条：事件流**原样透传**；新 API 通过**通用调用口** `sdk.call` / `sdk.get` / `bus.*` 不改宿主就能用。
-4. **协议由我们定，且带序号 / 会话代号 / 错误码。** 见 [protocol.md](protocol.md)。
-5. **UI 全由 App 原生画。** 终端组件只能拿到「带颜色的文本行」，要原生就走 PAUI（[ui-design.md](ui-design.md)）。
-6. **proot 与 proroot 两个运行时共用同一个宿主。** 见 [runtimes.md](runtimes.md)。
+4. **宿主持状态并主动推送，不是换了信封的 RPC。** `state` 事件 + 变更命令应答带 `state` + 粗粒度命令 `chat.send/stop`。
+5. **协议由我们定，且带序号 / 会话代号 / 错误码。** 见 [protocol.md](protocol.md)。
+6. **UI 全由 App 原生画。** 终端组件只能拿到「带颜色的文本行」，要原生就走 PAUI（[ui-design.md](ui-design.md)）。
+7. **proot 与 proroot 两个运行时共用同一个宿主。** 见 [runtimes.md](runtimes.md)。
 
 ## 文档地图
 
@@ -45,7 +46,7 @@ pi 的 RPC 协议、RPC 响应类型、RPC 的残缺 UI 桩，**全部废弃**�
 - 官方内置扩展装进来了：**MCP、Code Mode、Tool Search**（SDK 会话默认没有，CLI 才内置）。
 - 官方默认工具、全部会话操作（new / switch / fork / clone / tree / compact / retry / bash / export）。
 - 通用调用口 `sdk.call` / `sdk.get`，扩展事件总线桥 `bus.*`。
-- 测试：`tools/sdk-host/test.mjs`（51 项，真引擎）+ `contract.mjs`（SDK 依赖面）+ CI 三种环境。
+- 测试：`tools/sdk-host/test.mjs`（56 项，真引擎）+ `contract.mjs`（SDK 依赖面）+ CI 三种环境。
 
 ## 没做的（按优先级）
 
