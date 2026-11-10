@@ -17,6 +17,7 @@
 import { join } from "node:path";
 import { loadSdk, sdkVia } from "./sdk.mjs";
 import { ERR, HostError } from "./protocol.mjs";
+import { STATE_EVENTS, createStatePusher } from "./state.mjs";
 
 /** 去掉 message_update 里每个增量都带着的整条 partial（pi 的 `modes/json-event.js` 同款，体积差一个数量级）。 */
 export function toJsonEvent(event) {
@@ -64,6 +65,8 @@ export class Controller {
     this.unsubscribe = null;
     this.unsubscribeBackpressure = null;
     this.firstBind = true;
+    this.extensionsBound = false;
+    this.pushState = createStatePusher(this);
     this.trustOverride = undefined;
     this.lastOpenArgs = null;
   }
@@ -138,6 +141,7 @@ export class Controller {
     });
 
     this.#bind({ background: true }); // 同步段：订阅 + epoch；扩展绑定在后台
+    setImmediate(() => this.pushState("open")); // 应答先出去，状态紧随其后
 
     const session = this.session;
     return {
@@ -186,12 +190,14 @@ export class Controller {
 
     this.unsubscribe?.();
     this.unsubscribeBackpressure?.();
+    this.extensionsBound = false;
     this.ui.reset();
     hub.bumpEpoch();
     hub.emit("session.bound", { sessionId: session.sessionId, sessionFile: session.sessionFile ?? null, first: this.firstBind });
 
     this.unsubscribe = session.subscribe((event) => {
       hub.emit("agent", toJsonEvent(event));
+      if (STATE_EVENTS.has(event.type)) this.pushState(event.type);
       if (event.type === "agent_settled" && this.shutdownRequested) void this.shutdown(0);
     });
     // 事件产生得比管道消化得快时，让 agent 停一停，而不是在内存里堆帧。
@@ -214,13 +220,19 @@ export class Controller {
 
     if (!background) {
       await bind();
+      this.extensionsBound = true;
+      this.pushState("rebind");
       return;
     }
     // `setImmediate`：`bindExtensions` 的同步段会加载扩展并跑 `session_start`，实测能把
     // 紧随其后的应答推迟 8 秒。让 `open` 的应答先写出去。
     setImmediate(() => {
       bind()
-        .then(() => hub.emit("ext.bound", { ok: true, first: wasFirst }))
+        .then(() => {
+          this.extensionsBound = true;
+          hub.emit("ext.bound", { ok: true, first: wasFirst });
+          this.pushState("extensions");
+        })
         .catch((error) => hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) }));
     });
   }

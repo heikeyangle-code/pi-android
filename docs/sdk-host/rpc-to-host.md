@@ -7,12 +7,12 @@ Kotlin 改造时逐行对。左列是旧代码里的名字（`rpc/src/main/kotli
 
 | 旧（`PiCommands.*` / `PiEngineApi.*`） | 新 | 差异 |
 |---|---|---|
-| `prompt` | `session.prompt` | 应答语义不变（预检通过即回）；失败码 `rejected`；整轮后的错误走 `agent.error` 事件 |
+| `prompt`（含流式中的 steer/followUp 分支） | **`chat.send`**（推荐）/ `session.prompt` | 应答语义不变（预检通过即回）；失败码 `rejected`；整轮后的错误走 `agent.error` 事件 |
 | `steer` / `follow_up` | `session.steer` / `session.followUp` | 返回 `{disposition}` |
-| `abort` | `session.abort` | |
+| `abort` | **`chat.stop`**（推荐）/ `session.abort` | |
 | `clear_queue` | `session.clearQueue` | |
 | `new_session` | `session.new` | |
-| `get_state` | `session.snapshot` | 超集，带 `epoch`/`seq`/`contextUsage` |
+| `get_state` + 各种 `get_xxx` 轮询 | **`state` 事件（主动推）** / `session.snapshot`（对账） | 宿主持状态，App 不再轮询 |
 | `get_messages` | `session.messages`（或 snapshot `messages:true`） | |
 | `set_model` / `cycle_model` / `get_available_models` | `model.set` / `model.cycle` / `model.list` | |
 | `set_thinking_level` / `cycle_thinking_level` / `get_available_thinking_levels` | `thinking.set` / `thinking.cycle` / `thinking.levels` | |

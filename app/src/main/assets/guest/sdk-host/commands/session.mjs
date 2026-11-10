@@ -5,29 +5,7 @@
 
 import { DEFERRED } from "./registry.mjs";
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
-
-/** `get_state` 的超集：App 对账只需要这一条。 */
-export function snapshotOf(controller, { messages = false } = {}) {
-  const s = controller.requireSession();
-  return {
-    epoch: controller.hub.epoch,
-    seq: controller.hub.seq,
-    sessionId: s.sessionId,
-    sessionFile: s.sessionFile ?? null,
-    sessionName: s.sessionName ?? null,
-    model: s.model ?? null,
-    thinkingLevel: s.thinkingLevel,
-    isStreaming: s.isStreaming,
-    isCompacting: s.isCompacting,
-    steeringMode: s.steeringMode,
-    followUpMode: s.followUpMode,
-    autoCompactionEnabled: s.autoCompactionEnabled,
-    messageCount: s.messages.length,
-    pendingMessageCount: s.pendingMessageCount,
-    contextUsage: s.getContextUsage?.() ?? null,
-    ...(messages ? { messages: s.messages } : {}),
-  };
-}
+import { snapshotOf, withState } from "../state.mjs";
 
 export function register(reg, { controller }) {
   reg.add("session.open", (args) => controller.open(args));
@@ -47,7 +25,7 @@ export function register(reg, { controller }) {
       source: "rpc",
       preflightResult: (disposition) => {
         preflighted = true;
-        reply.ok({ disposition });
+        reply.ok(withState(controller, { disposition }));
       },
     }).catch((error) => {
       if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
@@ -55,32 +33,64 @@ export function register(reg, { controller }) {
     });
     return DEFERRED;
   });
-  reg.add("session.steer", async (args) => ({
-    disposition: await controller.requireSession().steer(str(args, "message"), args.images, { source: "rpc" }),
-  }));
-  reg.add("session.followUp", async (args) => ({
-    disposition: await controller.requireSession().followUp(str(args, "message"), args.images, { source: "rpc" }),
-  }));
+  reg.add("session.steer", async (args) =>
+    withState(controller, { disposition: await controller.requireSession().steer(str(args, "message"), args.images, { source: "rpc" }) }),
+  );
+  reg.add("session.followUp", async (args) =>
+    withState(controller, { disposition: await controller.requireSession().followUp(str(args, "message"), args.images, { source: "rpc" }) }),
+  );
   reg.add("session.abort", async () => {
     await controller.requireSession().abort();
+    return withState(controller);
   });
-  reg.add("session.clearQueue", () => controller.requireSession().clearQueue());
+  reg.add("session.clearQueue", () => withState(controller, controller.requireSession().clearQueue()));
+
+  // ---- 粗粒度：App 说「发一条 / 停下」，宿主决定是新开一轮还是排队 ------------------
+  // 流式中：按 `behavior`（steer | followUp，默认 steer）排队；空闲：开新一轮。
+  // 应答规则与 session.prompt 相同（预检通过即回），并带最新状态。App 的发送按钮只需要这一条。
+  reg.add("chat.send", (args, call) => {
+    const s = controller.requireSession();
+    const message = str(args, "message");
+    const behavior = optStr(args, "behavior") ?? "steer";
+    if (behavior !== "steer" && behavior !== "followUp") throw bad("behavior 必须是 steer 或 followUp");
+    const reply = call.defer();
+    let preflighted = false;
+    s.prompt(message, {
+      images: args.images,
+      streamingBehavior: behavior,
+      source: "rpc",
+      preflightResult: (disposition) => {
+        preflighted = true;
+        reply.ok(withState(controller, { disposition }));
+      },
+    }).catch((error) => {
+      if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
+      else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });
+    });
+    return DEFERRED;
+  });
+  reg.add("chat.stop", async (args) => {
+    const s = controller.requireSession();
+    if (bool(args, "clearQueue", false)) s.clearQueue();
+    await s.abort();
+    return withState(controller);
+  });
 
   // ---- 会话替换（运行时会回调 rebind，epoch 自动 +1）---------------------
   reg.add("session.new", async (args) => {
     const options = optStr(args, "parentSession") ? { parentSession: args.parentSession } : undefined;
-    return controller.runtime.newSession(options);
+    return withState(controller, await controller.runtime.newSession(options));
   });
-  reg.add("session.switch", async (args) => controller.runtime.switchSession(str(args, "sessionPath")));
+  reg.add("session.switch", async (args) => withState(controller, await controller.runtime.switchSession(str(args, "sessionPath"))));
   reg.add("session.fork", async (args) => {
     const result = await controller.runtime.fork(str(args, "entryId"));
-    return { text: result.selectedText, cancelled: result.cancelled };
+    return withState(controller, { text: result.selectedText, cancelled: result.cancelled });
   });
   reg.add("session.clone", async () => {
     const leafId = controller.requireSession().sessionManager.getLeafId();
     if (!leafId) throw new HostError(ERR.BUSY, "没有当前条目，无法克隆");
     const result = await controller.runtime.fork(leafId, { position: "at" });
-    return { cancelled: result.cancelled };
+    return withState(controller, { cancelled: result.cancelled });
   });
 
   // ---- 读 -----------------------------------------------------------------
@@ -124,7 +134,7 @@ export function register(reg, { controller }) {
       replaceInstructions: args.replaceInstructions,
       label: args.label,
     });
-    return { cancelled: result.cancelled === true, ...(result.editorText !== undefined ? { editorText: result.editorText } : {}) };
+    return withState(controller, { cancelled: result.cancelled === true, ...(result.editorText !== undefined ? { editorText: result.editorText } : {}) });
   });
   reg.add("session.import", async (args) => controller.runtime.importFromJsonl(str(args, "path"), optStr(args, "cwd")));
 
@@ -132,11 +142,13 @@ export function register(reg, { controller }) {
     const name = str(args, "name").trim();
     if (!name) throw bad("会话名不能为空");
     controller.requireSession().setSessionName(name);
+    return withState(controller);
   });
-  reg.add("session.compact", (args) => controller.requireSession().compact(optStr(args, "customInstructions")));
+  reg.add("session.compact", async (args) => withState(controller, await controller.requireSession().compact(optStr(args, "customInstructions"))));
   reg.add("session.export", async (args) => ({ path: await controller.requireSession().exportToHtml(optStr(args, "outputPath")) }));
   reg.add("session.reload", async () => {
     await controller.requireSession().reload();
+    return withState(controller);
   });
 
   // ---- 重试 / 压缩开关 -----------------------------------------------------
@@ -144,9 +156,11 @@ export function register(reg, { controller }) {
     const s = controller.requireSession();
     if (args.enabled !== undefined) s.setAutoRetryEnabled(bool(args, "enabled"));
     if (args.abort === true) s.abortRetry();
+    return withState(controller);
   });
   reg.add("session.autoCompaction", (args) => {
     controller.requireSession().setAutoCompactionEnabled(bool(args, "enabled"));
+    return withState(controller);
   });
 
   // ---- 用户 bash（`!cmd`）--------------------------------------------------

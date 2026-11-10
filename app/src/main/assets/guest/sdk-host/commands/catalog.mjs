@@ -1,6 +1,7 @@
 /** 可调用的东西：斜杠命令（扩展 / 提示模板 / 技能）和工具。 */
 
 import { str } from "../protocol.mjs";
+import { withState } from "../state.mjs";
 
 export function register(reg, { controller }) {
   // `get_commands` 的同款拼装；多带 sourceInfo 以外的 invocationName，App 不必再猜前缀。
@@ -30,7 +31,7 @@ export function register(reg, { controller }) {
     const s = controller.requireSession();
     if (!Array.isArray(args.names)) throw new Error("names 必须是数组");
     s.setActiveToolsByName(args.names.map(String));
-    return { active: s.getActiveToolNames() };
+    return withState(controller, { active: s.getActiveToolNames() });
   });
 
   // 扩展注册的消息渲染器（TUI 才会调）：宿主取出来调，把 `render(width)` 的行发回 App。

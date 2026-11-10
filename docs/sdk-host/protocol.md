@@ -44,7 +44,9 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | 命令 | 参数 | 返回 | 备注 |
 |---|---|---|---|
 | `session.open` | `session?:{file\|id\|continue}`, `sessionDir?`, `flags?`, `resources?:{noExtensions,noSkills,noPromptTemplates,noThemes,noContextFiles}`, `builtins?:{mcp,codemode,tool-search:false}`, `trust?:boolean` | 会话信息 + `epoch` | 只能调一次。先应答，扩展在后台绑 |
-| `session.snapshot` | `messages?:boolean` | 状态超集（model、thinking、streaming、compacting、queue、contextUsage…） | 对账用；`get_state` 的超集 |
+| `session.snapshot` | `messages?:boolean` | 与 `state` 事件同形的完整快照 | 对账用（`seq` 跳号、重连时调一次）；`get_state` 的超集 |
+| `chat.send` | `message`, `images?`, `behavior?: steer\|followUp`（默认 steer） | `{disposition, state}` | **App 发送按钮用这一条**：空闲时开新一轮，流式中按 `behavior` 排队；应答规则同 `session.prompt` |
+| `chat.stop` | `clearQueue?` | `{state}` | 中止（可同时清队列） |
 | `session.prompt` | `message`, `images?`, `streamingBehavior?` | `{disposition: started\|queued\|handled}` | **预检通过即应答**，不等整轮；整轮后的失败走 `agent.error` 事件 |
 | `session.steer` / `session.followUp` | `message`, `images?` | `{disposition}` | |
 | `session.abort` · `session.clearQueue` | | | |
@@ -54,6 +56,8 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | `session.retry` · `session.autoCompaction` | `enabled?`, `abort?` / `enabled` | | |
 | `session.bash` · `session.abortBash` | `command`, `excludeFromContext?` | bash 结果 | 用户 `!cmd`，先走扩展的 `user_bash` |
 | `project.trust` | `trusted` | | 写 pi 的信任库并重载 |
+
+> **变更类命令的应答都带 `state`**（`session.abort/steer/followUp/clearQueue/new/switch/fork/clone/navigate/name/compact/reload/retry/autoCompaction`、`model.set/cycle`、`thinking.set/cycle`、`queue.*Mode`、`catalog.setTools`、`chat.*`），App 不必再追问一次。
 
 ### model / thinking / queue
 `model.list` · `model.set {provider,modelId}` · `model.cycle` · `thinking.levels` · `thinking.set {level}` · `thinking.cycle` · `queue.steeringMode {mode}` · `queue.followUpMode {mode}`
@@ -92,6 +96,7 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | `session.bound` | `{sessionId,sessionFile,first}` | 会话绑定（epoch 已 +1，这条事件带着新 epoch） |
 | `ext.bound` | `{ok,first,error?}` | 扩展绑定完成（含所有 `session_start` 处理器） |
 | `ext.error` | `{extensionPath,event,error}` | 扩展处理器抛错 |
+| `state` | `{reason, state}` | **宿主持有的完整状态快照**（会话、模型、思考等级、工具、上下文用量、token、成本、消息计数、扩展绑定）。会改变快照的 agent 事件触发，100 ms 合并推送；`open` 后、扩展绑定完成后、会话替换后也推。**App 的 UI 状态直接吃它，不要自己攒字段** |
 | `agent` | **pi 的 `AgentSessionEvent` 原样**（`message_update` 去掉 `partial`） | 对话、工具执行、队列、压缩、重试、`agent_settled`… |
 | `agent.error` | `{message}` | `prompt` 整轮跑完后的失败 |
 | `project.trust.required` | `{cwd}` | 项目里有需要信任才加载的资源，且没有决定。宿主已按「不信任」启动，App 应弹窗并发 `project.trust` |

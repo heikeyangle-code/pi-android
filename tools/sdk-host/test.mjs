@@ -147,6 +147,16 @@ try {
   const rendered = await h.call("render.message", { customType: "probe", message: { content: "hi" }, width: 50 });
   expect("render.message 调到了扩展的渲染器", rendered.ok && rendered.data.lines?.[0]?.includes("width=50"), JSON.stringify(rendered));
 
+  // 宿主持状态：open 之后主动推一份完整快照，变更类命令的应答里带最新状态（App 不用再 get_xxx）。
+  const pushed = await h.waitFor(h.evt("state", (d) => d.state?.sessionId), 5000);
+  expect("宿主主动推 state 快照", pushed.data.state.tools.active.includes("read") && "tokens" in pushed.data.state && "cost" in pushed.data.state);
+  const th = await h.call("thinking.set", { level: "off" });
+  expect("变更类命令应答带最新 state", th.ok && th.data.state?.thinkingLevel === "off", JSON.stringify(th).slice(0, 200));
+  const stateFrames = h.frames.filter(h.evt("state")).length;
+  await h.call("session.name", { name: "推送测试" });
+  await h.waitFor(h.evt("state", (d) => d.state?.sessionName === "推送测试"), 3000).catch(() => {});
+  expect("改名后推送 state（session_info_changed）", h.frames.filter(h.evt("state")).length > stateFrames || h.frames.some(h.evt("state", (d) => d.state?.sessionName === "推送测试")));
+
   // 无凭据时 pi 的 prompt 预检**通过**（disposition=started），失败发生在之后，以 agent 事件报告。
   // 宿主必须：预检通过就应答（不等整轮），并把后续事件原样推出来。
   const mark = h.frames.length;
@@ -157,6 +167,8 @@ try {
   await h.waitFor((f) => h.frames.indexOf(f) >= mark && h.evt("agent", (d) => d.type === "agent_settled")(f), 30000).catch(() => {});
   const noPartial = h.frames.filter(h.evt("agent", (d) => d.type === "message_update")).every((f) => !("partial" in f.data.assistantMessageEvent));
   expect("message_update 不带整条 partial（体积）", noPartial);
+  const chat = await h.call("chat.stop", { clearQueue: true });
+  expect("chat.stop 返回 state", chat.ok && chat.data.state && typeof chat.data.state.isStreaming === "boolean");
   const badPrompt = await h.call("session.prompt", {});
   expect("prompt 缺 message → bad_args", !badPrompt.ok && badPrompt.error.code === "bad_args");
 
