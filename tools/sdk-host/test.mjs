@@ -10,7 +10,7 @@
  */
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { startHost } from "./client.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +44,7 @@ const h = startHost({
 
 // App 的最小行为：select 自动回第一个，其余对话框不回答。
 h.onRequest((req) => {
+  if (req.method === "auth.prompt") h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: globalThis.__authAnswer ?? "CODE1" } });
   if (req.method === "ui.select") h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: req.params.options[0] } });
 });
 
@@ -205,6 +206,51 @@ try {
   expect("bus 事件原样转发给 App", busEvt?.data.data.n === 1, JSON.stringify(busEvt));
   const sr = await h.call("subagent.rpc", { method: "ping", timeoutMs: 300 });
   expect("subagent.rpc 在 pi-subagents 未装时返回可识别的错误而不是挂死", !sr.ok && sr.error.code === "busy", JSON.stringify(sr));
+
+  // ---- 7b. 认证：供应商 / API Key / OAuth 登录 ----------------------------
+  const provs = await h.call("auth.providers");
+  const sso = provs.data?.providers?.find((p) => p.id === "probe-sso");
+  expect("auth.providers 列出内置与扩展供应商（含认证方式）", provs.ok && provs.data.providers.length > 20 && sso?.methods.some((m) => m.type === "oauth" && m.name === "Probe SSO"), JSON.stringify(provs.error ?? sso));
+  const anth = provs.data.providers.find((p) => p.id === "anthropic");
+  expect("内置供应商带 api_key 方式", anth?.methods.some((m) => m.type === "api_key"));
+
+  const setKey = await h.call("auth.setApiKey", { providerId: "openai", apiKey: "sk-test-123" });
+  expect("auth.setApiKey", setKey.ok && setKey.data.provider.configured === true, JSON.stringify(setKey.error ?? setKey.data));
+  const creds = await h.call("auth.credentials");
+  expect("凭据列表里有它", creds.ok && creds.data.credentials.some((c) => c.providerId === "openai" && c.type === "api_key"));
+  const authFile = join(h.root, "agent", "auth.json");
+  expect("API Key 落盘到 auth.json（不是仅本次运行）", existsSync(authFile) && readFileSync(authFile, "utf8").includes("sk-test-123"));
+  const rmKey = await h.call("auth.removeApiKey", { providerId: "openai" });
+  expect("auth.removeApiKey", rmKey.ok && !(await h.call("auth.credentials")).data.credentials.some((c) => c.providerId === "openai"));
+  const badKey = await h.call("auth.setApiKey", { providerId: "no-such", apiKey: "x" });
+  expect("未知供应商 → not_found", !badKey.ok && badKey.error.code === "not_found");
+  const noOauth = await h.call("auth.login", { providerId: "deepseek", type: "oauth" });
+  expect("供应商不支持的登录方式 → unsupported", !noOauth.ok && noOauth.error.code === "unsupported", JSON.stringify(noOauth));
+
+  // OAuth 全流程：事件（链接/进度）→ 向 App 提问 → 完成
+  const loginP = h.call("auth.login", { providerId: "probe-sso", loginId: "L1" }, 20000);
+  const authEvt = await h.waitFor(h.evt("auth.event", (d) => d.event.type === "auth_url"), 10000);
+  expect("auth.event 带授权链接", authEvt.data.loginId === "L1" && authEvt.data.event.url === "https://probe.invalid/authorize");
+  const login = await loginP;
+  expect("auth.login 完成并返回新状态", login.ok && login.data.credentialType === "oauth" && login.data.provider.configured === true, JSON.stringify(login.error ?? login.data));
+  expect("OAuth 凭据在凭据列表里", (await h.call("auth.credentials")).data.credentials.some((c) => c.providerId === "probe-sso" && c.type === "oauth"));
+  await h.waitFor(h.evt("auth.changed", (d) => d.action === "login"), 3000);
+  expect("登录后发 auth.changed", true);
+
+  // 取消：登录卡在 prompt 之后的等待里，auth.cancel 能中止
+  globalThis.__authAnswer = "never";
+  await h.call("auth.logout", { providerId: "probe-sso" });
+  const loginC = h.call("auth.login", { providerId: "probe-sso", loginId: "L2" }, 20000);
+  await h.waitFor(h.evt("auth.event", (d) => d.loginId === "L2"), 10000);
+  await new Promise((r) => setTimeout(r, 200));
+  const dup = await h.call("auth.login", { providerId: "probe-sso", loginId: "L3" });
+  expect("同一供应商同时只允许一个登录 → busy", !dup.ok && dup.error.code === "busy", JSON.stringify(dup));
+  const cancel = await h.call("auth.cancel", { loginId: "L2" });
+  const cancelled = await loginC;
+  expect("auth.cancel 中止进行中的登录", cancel.data.cancelled === true && !cancelled.ok && cancelled.error.message.includes("取消"), JSON.stringify(cancelled));
+  const out = await h.call("auth.logout", { providerId: "probe-sso" });
+  expect("auth.logout", out.ok && !(await h.call("auth.credentials")).data.credentials.some((c) => c.providerId === "probe-sso"));
+  globalThis.__authAnswer = undefined;
 
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");

@@ -8,6 +8,26 @@ export default function probe(pi) {
     dispose: () => {},
   }));
 
+  // 假 OAuth 供应商：测 auth.login 把 SDK 的登录回调译成「事件 + 向 App 提问」。
+  pi.registerProvider?.("probe-sso", {
+    name: "Probe SSO",
+    baseUrl: "https://probe.invalid",
+    api: "openai-completions",
+    models: [{ id: "probe-model", name: "Probe", input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, reasoning: false, contextWindow: 8000, maxTokens: 1000 }],
+    oauth: {
+      name: "Probe SSO",
+      async login(cb) {
+        cb.onAuth({ url: "https://probe.invalid/authorize", instructions: "open it" });
+        cb.onProgress?.("waiting");
+        const code = await cb.onPrompt({ message: "paste the code" });
+        if (code === "never") await new Promise((_r, rej) => cb.signal?.addEventListener("abort", () => rej(new Error("aborted"))));
+        return { refresh: "r-" + code, access: "a-" + code, expires: Date.now() + 3600_000 };
+      },
+      async refreshToken(c) { return c; },
+      getApiKey: (c) => c.access,
+    },
+  });
+
   pi.registerCommand?.("probe-ping", {
     description: "probe command",
     handler: async (_args, ctx) => ctx.ui.notify("pong"),

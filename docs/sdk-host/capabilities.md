@@ -77,10 +77,10 @@
 | 思考等级 | 已接 | `thinking.levels/set/cycle` |
 | 范围模型（scoped models） | 通用口 | `sdk.call session setScopedModels` |
 | 虚拟模型、自定义 Provider（`models.json`） | 已接 | SDK 内部；`modelRuntime` 目标可读 |
-| Provider 认证状态 | 通用口 | `sdk.call modelRuntime getProviderAuthStatus / listCredentials / hasConfiguredAuth` |
-| API Key 设置 / 删除 | 通用口 | `sdk.call modelRuntime setRuntimeApiKey / removeRuntimeApiKey`（注意：命名是 *runtime* key，是否持久化要看 SDK 语义，接之前读 `model-runtime.d.ts` 注释） |
-| OAuth 登录 / 退出 | **待接** | `modelRuntime.login(providerId, type, interaction, options)`；`interaction`（打开 URL、让用户粘贴 code）映射成宿主的 `req`/`evt`。现在靠 `pi-oauth.mjs` |
-| 模型列表刷新 | 通用口 | `sdk.call modelRuntime refresh` |
+| Provider 认证状态 | **已接** | `auth.providers`（含每个供应商支持的认证方式）/`auth.credentials`。以下为旧说明： `sdk.call modelRuntime getProviderAuthStatus / listCredentials / hasConfiguredAuth` |
+| API Key 设置 / 删除 | **已接** | `auth.setApiKey`/`auth.removeApiKey`（走 `login("api_key")` / `logout`，写 auth.json）。**不要用** `setRuntimeApiKey`：实测只改内存，重启即失。以下为旧说明： `sdk.call modelRuntime setRuntimeApiKey / removeRuntimeApiKey`（注意：命名是 *runtime* key，是否持久化要看 SDK 语义，接之前读 `model-runtime.d.ts` 注释） |
+| OAuth 登录 / 退出 | **已接** | `auth.login`/`auth.cancel`/`auth.logout`：`interaction.prompt`→`req auth.prompt`，`notify`→`auth.event`；必须带 `getDeviceId`（ChatGPT 订阅登录没有它直接报错，宿主已按官方 TUI 传 `settings.getOrCreateDeviceId()`）。以下为旧说明： `modelRuntime.login(providerId, type, interaction, options)`；`interaction`（打开 URL、让用户粘贴 code）映射成宿主的 `req`/`evt`。现在靠 `pi-oauth.mjs` |
+| 模型列表刷新 | **已接** | `auth.refreshModels`。以下为旧说明： `sdk.call modelRuntime refresh` |
 
 ## 6. 设置、主题、其他
 
