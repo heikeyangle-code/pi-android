@@ -13,7 +13,7 @@
 |---|---|---|
 | RuntimeManager / CodingAgentAdapter / DurableAdapter / SessionRegistry / EventDispatcher / StorageRouter / RuntimeCapabilities 七个类 | **只留 4 个概念**：`EngineHost`（进程）、`EngineClient`（协议客户端）、`SessionRef`（会话身份）、`Capabilities`（能力表）。EventDispatcher、StorageRouter 不单独成类 | EventDispatcher 在现有代码里就是 `PiEngineSession.handle → TranscriptReducer → publish`，再抽一层只会多一跳；StorageRouter 只是"路径约定"，没有逻辑可路由，写成类是空壳 |
 | Durable 当 sdk-host 里的第二个模块 | **Durable 是另一个入口 `durable-host`，另一个 Node 进程**，共用 `io/protocol/hub` 底座 | 见 §3：Node ≥22.19、单写者存储、崩溃隔离、版本错位（durable 1.5.1 vs coding-agent 1.5.0）。同进程等于把两个引擎的崩溃与升级绑在一起 |
-| "统一事件格式" | **不统一事件，统一"视图模型"**（行 + 状态），每个引擎一个 reducer | 两边事件形状本来就不同：Coding Agent 是事件流；Durable 是 state-view `watch()` + Chord 操作，不是事件流。硬统一必丢信息 |
+| "统一事件格式" | **不统一事件，也不强求统一行类型**：每个引擎自己的 reducer + 自己的专属渲染；只共享最底层组件，行类型开放（见 §2.4） | 两边事件形状本来就不同：Coding Agent 是事件流；Durable 是 state-view `watch()` + Chord 操作。`Transcript.kt` 里全是 pi 概念（thinking/tool/bash/compaction/分支摘要），Durable 的 Task/Commit/Document 没有对应物，硬统一必丢信息 |
 | SessionRegistry 存会话 | **App 只存一张薄索引**（引擎+原生 id+workspace+标题缓存），真相永远在各引擎自己的存储里 | 现有 `PiSessionStore` 已是这个哲学："文件就是真相，索引只是缓存，读不出来就全量扫描" |
 
 ## 1. 现状审计（对照代码，不是猜的）
@@ -23,7 +23,7 @@
 | workspace | `runtime/WorkspaceStore.kt`：`<files>/pi/workspaces/workspace-N`，**路径即身份**，当前选择存 `app.workspace.current` | 直接复用。"默认引擎"加一个 `app.workspace.engine.<name>` 设置即可 |
 | 会话列表 | `session/PiSessionStore.kt`（1048 行）扫 `sessions/` 下 jsonl，按 header 的 `cwd` 过滤，带 `PiSessionIndex` 缓存 | **只认 pi 的 jsonl**。要加引擎维度：每行 `Summary` 增 `engine` |
 | 引擎进程 | `engine/PiEngineHost.kt`（启动，单一 `guestCommand` 缝）、`PiEngineSession.kt`（一个进程的会话，含 reducer） | 一进程一活动会话。已经是"一个 EngineHost 对应一个进程"的形状，可直接复用 |
-| 事件→UI | `rpc/Transcript.kt`（2771 行 `TranscriptReducer`）→ `PiEngineSession.publish` → `TranscriptPublication`（只发变化的行） | 这就是"共享渲染核心"。**行模型本身是引擎中立的**，只有"谁喂它"是 pi 事件 |
+| 事件→UI | `rpc/Transcript.kt`（2771 行 `TranscriptReducer`）→ `PiEngineSession.publish` → `TranscriptPublication`（只发变化的行） | 这就是"共享渲染核心"。**只有最底层组件（Markdown/代码块/diff/图片/卡片外壳）是引擎中立的**；行类型本身带 pi 概念，不能假定 Durable 通用 |
 | 后台/杀进程 | `service/PiEngineService` + `PiEngineLifecyclePolicy` + `engine/EngineCrashRecovery` | 已有；Coding Agent 恢复 = 重开 session 文件 |
 | Durable | 无 | 全新 |
 
@@ -85,6 +85,19 @@ interface EngineClient {
   <files>/pi/registry.json                  App 薄索引（可丢，丢了就重扫）
   ```
 - **SessionRegistry = `PiSessionStore` 加 engine 维度**：CA 行仍由扫 jsonl 得到；Durable 行由 `durable-host` 的 `session.list` 得到（或扫其 JSONL 存储）。两路合并按更新时间排序即"统一列表"。
+
+### 2.4 渲染分层（行类型开放，专属渲染各管各的）
+
+```
+各引擎自己的 reducer          (CA: Transcript.kt 不动；Durable: 新写)
+   ↓ 产出
+行 = 通用行（文本/代码/图片/错误）｜引擎专属行（engine + kind + raw 原样保留）
+   ↓ 渲染
+通用行 → 共享组件；专属行 → 各引擎自己的 Composable；未知 kind → 兜底"原始 JSON 折叠卡"
+```
+
+聊天页只依赖"行列表 + 能力表"，不 import 引擎类型。兜底渲染保证引擎升级出新事件时先能显示、不崩、不吞内容。
+Durable 的真实输出形状未实测，专属行的具体 kind 等 durable-host 实现时按真实输出定。
 
 ### 2.2 不热切换引擎
 
