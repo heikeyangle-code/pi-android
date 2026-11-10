@@ -1,38 +1,54 @@
 /**
- * 探针扩展：只做一件事——把 `ExtensionUIContext` 的每一面都碰一遍，验证宿主真的实现了它。
- *
- * 被 `tools/sdk-host/smoke.mjs` 加载。它打印的每条结果都应该能在 App 侧对上：
- *   - `setStatus` / `notify` / `setTitle` → 单向消息
- *   - `setWidget(字符串数组)` → 行数组
- *   - `setWidget(工厂)` → 一个可重渲染、可收按键的 surface
- *   - `select` → 阻塞对话框，等 App 回值
- *   - `custom()` → 整屏组件，`handleInput` 收到回车后 `done()`
+ * 探针扩展：把 `ExtensionUIContext` 的每一面都碰一遍，验证宿主真的实现了它。
+ * 被 tools/sdk-host/test.mjs 加载；它发出的每个效果都能在 App 侧一一对上。
  */
 export default function probe(pi) {
-  // 自定义消息渲染器：只有 TUI 会去调它，这里注册给宿主的 `render.message` 命令用。
-  pi.registerMessageRenderer?.("probe", (message, options, theme) => ({
-    render: (width) => [`renderer<${JSON.stringify(message?.content ?? null).slice(0, 40)}> width=${width}`],
+  pi.registerMessageRenderer?.("probe", (message, _options, theme) => ({
+    render: (width) => [theme.fg("accent", `renderer<${JSON.stringify(message?.content ?? null).slice(0, 40)}> width=${width}`)],
     dispose: () => {},
   }));
 
-  pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.setStatus("probe", "ready");
+  pi.registerCommand?.("probe-ping", {
+    description: "probe command",
+    handler: async (_args, ctx) => ctx.ui.notify("pong"),
+  });
+
+  pi.on("session_start", async (event, ctx) => {
+    // 噪声：扩展里随手一行 console.log，不应该污染协议流。
+    console.log("NOISE-from-extension {not json");
+    process.stdout.write("NOISE-raw-write\n");
+
+    ctx.ui.setStatus("probe", `ready:${event.reason ?? "start"}`);
     ctx.ui.setTitle("probe session");
     ctx.ui.setWidget("probe-lines", ["alpha", "beta"]);
-    ctx.ui.setWidget("probe-factory", (tui, theme) => ({
-      render: (width) => [`factory width=${width}`, `theme=${theme.name}`],
-      handleInput: (data) => {
-        ctx.ui.notify(`factory key=${JSON.stringify(data)}`);
-      },
-      invalidate: () => {},
-      dispose: () => {},
-    }));
+
+    // 会自己动的组件：靠 tui.requestRender() 触发重绘。
+    ctx.ui.setWidget("probe-factory", (tui, theme) => {
+      let ticks = 0;
+      const timer = setInterval(() => {
+        ticks += 1;
+        tui.requestRender();
+      }, 30);
+      return {
+        render: (width) => [`factory width=${width} ticks=${ticks}`, theme.fg("accent", "colored"), `theme=${theme.name}`],
+        handleInput: (data) => ctx.ui.notify(`factory key=${JSON.stringify(data)}`),
+        invalidate: () => {},
+        dispose: () => {
+          clearInterval(timer);
+          console.error("PROBE-FACTORY-DISPOSED"); // 旧会话的 ctx 已失效，不能再 notify，走 stderr 留证
+        },
+      };
+    });
 
     const picked = await ctx.ui.select("pick one", ["a", "b"]);
     ctx.ui.notify(`picked=${picked}`);
 
-    const done = await ctx.ui.custom((tui, theme, keybindings, resolve) => ({
-      render: (width) => [`custom width=${width}`, `press enter`],
+    // 故意没人回答：宿主应在超时后收回并通知 App。
+    const confirmed = await ctx.ui.confirm("slow", "no one answers", { timeout: 150 });
+    ctx.ui.notify(`confirm=${confirmed}`);
+
+    const done = await ctx.ui.custom((_tui, _theme, _keys, resolve) => ({
+      render: (width) => [`custom width=${width}`, "press enter"],
       handleInput: (data) => {
         if (data === "\r" || data === "\n") resolve("entered");
       },

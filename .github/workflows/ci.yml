@@ -427,6 +427,17 @@ jobs:
           key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
       - name: Assert the app's assumptions about the pinned engine
         run: node tools/pi-contract.mjs
+      # sdk-host（feat/sdk-host 迁移线）：先断言宿主依赖的 SDK 面还在，再用真引擎驱动一遍，
+      # 分别在「打包入口 / 包名回退 / 模拟 proroot 的 scandir 补丁」三种条件下。
+      # 升级 pi 时这三步红了，按 docs/sdk-host/upgrading.md 处理。
+      - name: sdk-host contract (SDK surface the host depends on)
+        run: node tools/sdk-host/contract.mjs
+      - name: sdk-host behaviour (bundle entry)
+        run: node tools/sdk-host/test.mjs
+      - name: sdk-host behaviour (package fallback)
+        run: node tools/sdk-host/test.mjs --no-bundle
+      - name: sdk-host behaviour (proroot scandir patch)
+        run: node tools/sdk-host/test.mjs --scandir-fix
       # The other half of the tool-output check. The `pure-checks` job asserts the App still
       # parses the committed fixture; this asserts the fixture is still what the pinned
       # engine produces, by running pi's own tool implementations against a fixed workspace
