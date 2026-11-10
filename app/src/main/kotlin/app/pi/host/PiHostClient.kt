@@ -183,6 +183,15 @@ class PiHostClient(
         for (id in pending.keys.toList()) pending.remove(id)?.completeExceptionally(cause)
     }
 
+    /**
+     * 让**当前在等**的命令失败，但不关闭客户端（之后的命令照常）。用于「有一行被成帧器丢掉了」：
+     * 丢掉的行里可能正是某个应答，对不上号，与其让它们等满超时，不如立刻告诉真相。
+     */
+    fun failPending(reason: String, code: String = HostException.IO) {
+        val cause = HostException(code, reason)
+        for (id in pending.keys.toList()) pending.remove(id)?.completeExceptionally(cause)
+    }
+
     val isClosed: Boolean get() = closedCause != null
 
     /** 当前还在等应答的命令数（测试与诊断用）。 */

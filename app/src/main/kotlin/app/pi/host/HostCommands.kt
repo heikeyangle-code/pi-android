@@ -198,6 +198,13 @@ class HostCommands(
         (this[k] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty()
 
     companion object {
+        /** 附件 → `images` 参数（SDK 的 `ImageContent`：`{type:"image", data(base64), mimeType}`）。 */
+        fun imagesJson(images: List<app.pi.rpc.PiImage>): JsonArray = JsonArray(
+            images.map {
+                JsonObject(mapOf("type" to JsonPrimitive("image"), "data" to JsonPrimitive(it.base64), "mimeType" to JsonPrimitive(it.mimeType)))
+            },
+        )
+
         /** `session.open` 要加载 SDK、读配置、建会话，手机上比普通命令慢得多。 */
         const val OPEN_TIMEOUT_MS = 120_000L
         /** compact / reload 会调模型或重载全部资源。 */

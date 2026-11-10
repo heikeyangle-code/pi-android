@@ -57,7 +57,14 @@ epoch 过滤、seq 跳号、res/req 配对、超时清理、未知帧忽略。
 
 **验收**：harness 通过；录制 fixture 回放得到的命令结果与 node 侧断言一致。
 
-## 步骤 3 [ ]：ViewModel 切换并删除旧 RPC 层
+## 步骤 3 [~]：ViewModel 切换并删除旧 RPC 层
+
+> **进度（诚实版）**：`PiEngineSession` 已就地改接宿主协议（`startHost`/`commands`/`api`/`respondUi`/`fire`），
+> 用 `host-session` harness 对**真宿主 + 真 pi 1.5.0** 端到端验证过（握手后才 Ready、协议不符→Failed、
+> 发后不管的失败→`Response(success=false)`、进程死时等待中的命令立刻失败）。该测试同时揪出并修掉
+> `session.open` 应答缺 `state`。**还没做**：`PiEngineHost`（调 `startHost`、`guestCommand` 换成
+> `SdkHostLaunch.command`）、ViewModel 调用点（`engine.send`→`respondUi`/`fire`、`PiEngineApi`→`HostEngineApi`、
+> `PiRpcException`→`HostCommandException`）、删旧 RPC 层。没过 Gradle、没上机跑过。
 
 **目标**：聊天主路径（发送、流式、工具卡、队列、中止、模型/思考、会话列表/切换/分叉/树）全部走新客户端，旧 RPC 代码删除。
 

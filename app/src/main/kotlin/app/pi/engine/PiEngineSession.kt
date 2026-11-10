@@ -1,12 +1,18 @@
 package app.pi.engine
 
+import app.pi.host.HostCommands
+import app.pi.host.HostEngineApi
+import app.pi.host.HostException
+import app.pi.host.HostRequest
+import app.pi.host.HostSignal
+import app.pi.host.HostUiBridge
+import app.pi.host.OpenArgs
+import app.pi.host.PiHostClient
 import app.pi.packages.PendingModelRestart
 import app.pi.rpc.JsonlFramer
-import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
 import app.pi.rpc.PiEvents
 import app.pi.rpc.PiImage
-import app.pi.rpc.PiResponses
 import app.pi.rpc.StreamingBehavior
 import app.pi.rpc.TranscriptChange
 import app.pi.rpc.TranscriptItem
@@ -28,16 +34,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.io.BufferedWriter
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.RejectedExecutionException
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.InputStream
 import java.io.OutputStreamWriter
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -148,8 +154,25 @@ class PiEngineSession(
      */
     val transcript: TranscriptReducer get() = reducer
 
-    private val ids = AtomicLong(0)
-    private val pending = ConcurrentHashMap<String, CompletableDeferred<PiEvent.Response>>()
+    /**
+     * 宿主线协议客户端（docs/sdk-host/protocol.md）。命令 / 应答配对、epoch 过滤、seq 对账都在它里面；
+     * 本类只负责：把字节送进去、把信号折成 transcript 与状态。
+     */
+    val client = PiHostClient(sendLine = ::writeLine)
+
+    /** 具名命令 + `stateStore`（宿主持有的会话状态，界面状态的唯一来源）。 */
+    val commands = HostCommands(client)
+
+    /** 聊天界面用的 API：与旧 `PiEngineApi` 同名同类型，底下是宿主命令。 */
+    val api = HostEngineApi(commands)
+
+    /** 宿主的**全部**事件，原样不丢（`ui.*`、`auth.*`、`packages.progress`、`mcp.*`、`bus` …）。新界面订阅这条。 */
+    private val _hostEvents = MutableSharedFlow<HostSignal.Event>(extraBufferCapacity = EVENT_BUFFER)
+    val hostEvents: SharedFlow<HostSignal.Event> = _hostEvents.asSharedFlow()
+
+    /** 宿主的提问（含 `auth.prompt` 等旧对话框不认识的）。旧对话框走 [events] 里的 `ExtensionUiRequest`。 */
+    private val _hostRequests = MutableSharedFlow<HostRequest>(extraBufferCapacity = 64)
+    val hostRequests: SharedFlow<HostRequest> = _hostRequests.asSharedFlow()
     private val writer: BufferedWriter =
         BufferedWriter(OutputStreamWriter(process.outputStream, Charsets.UTF_8))
 
@@ -348,6 +371,8 @@ class PiEngineSession(
         private set
 
     private var readerJob: Job? = null
+    private var signalJob: Job? = null
+    private var requestJob: Job? = null
     private var stderrJob: Job? = null
     private var waitJob: Job? = null
 
@@ -426,9 +451,11 @@ class PiEngineSession(
         val streaming: Boolean,
     )
 
-    private fun nextId(): String = "req-${ids.incrementAndGet()}"
 
     fun start() {
+        // 先订阅、后开读：`host.ready` 是第一条事件，信号流没有 replay（PiHostClient 文档）。
+        signalJob = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { client.signals.collect(::onSignal) }
+        requestJob = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { client.requests.collect(::onHostRequest) }
         readerJob = scope.launch { readLoop(process.inputStream) }
         // The overflow drain for the events that must not be lost. Started with the
         // session and cancelled by `close`, so a restart cannot leave the previous
@@ -480,8 +507,7 @@ class PiEngineSession(
                 val tail = stderrTail()
                 if (tail.isNotEmpty()) append("；stderr：").append(tail)
             }
-            pending.values.forEach { it.complete(failure(reason)) }
-            pending.clear()
+            client.close(reason)
         }
     }
 
@@ -504,54 +530,58 @@ class PiEngineSession(
     }.replace('\n', ' ')
 
     /**
-     * Ask pi for its state, so [state] can leave [EngineState.Starting].
+     * 握手并打开会话：`host.hello` → `session.open`，成功后 [state] 才离开 [EngineState.Starting]。
      *
-     * ## Why a command and not "wait for the first byte"
+     * ## 为什么是「命令」而不是「等第一个字节」
+     * `session.open` 的应答证明宿主的读取端已就绪、SDK 已加载、会话已建好 —— 界面说「就绪」要的正是这个。
+     * 它先应答、扩展在后台绑（`ext.bound` 事件），所以扩展对话框卡住不会让这里超时。
      *
-     * pi writes nothing on stdout until its startup is over, so a first-byte signal
-     * would work today — but it is an accident of pi's current output, not a
-     * contract. `get_state` is a contract: pi answers it from its stdin reader, so
-     * the reply proves the reader is attached, which is the exact thing the UI needs
-     * to be allowed to say 就绪 (`handle`).
+     * ## 为什么超时不等于失败
+     * 超时只是留在 [EngineState.Starting]：手机上冷启动要三分钟是慢，不是坏；为了让计时器满意而说「就绪」
+     * 正是这个方法要消灭的谎。进程真死了由 [waitJob] 报 `Failed`。
+     * 但宿主**明确拒绝**（协议版本不对、设置非法、会话文件打不开）是另一回事：进程活着却用不了，记为
+     * `Failed` 并把原话留在 [lastOpenError]，否则界面会永远转圈。
      *
-     * ## Why a timeout is not a failure
-     *
-     * The state deliberately stays [EngineState.Starting] when the probe times out:
-     * a phone that needs three minutes is slow, not broken, and calling it 就绪 to
-     * satisfy a timer is the lie this method exists to remove. A process that
-     * actually dies is reported by [waitJob] (`EngineState.Failed`), which is a
-     * different answer.
-     *
-     * Nothing is mutated here: flipping the state is [handle]'s job when the reply
-     * arrives, because that is also where `agent_start`/`agent_settled` write it —
-     * one place decides what [state] means.
-     *
-     * It also records how long the wait actually was ([lastServingMs]). That number
-     * is the only way to tell "the phone is slow" from "we asked pi for something
-     * expensive before it could read its stdin", and it is the user's whole
-     * complaint measured rather than described (docs/known-gaps.md §M1).
+     * 状态的改写只在这里和 [handleAgent]：一处决定 [state] 的含义。
+     * 同时记录这次等了多久（[lastServingMs]）—— 区分「手机慢」和「我们在宿主能读之前就要了昂贵的东西」
+     * 的唯一办法（docs/known-gaps.md §M1）。
      */
-    fun probeServing(timeoutMs: Long = SERVING_PROBE_TIMEOUT_MS) {
+    fun startHost(open: OpenArgs, timeoutMs: Long = SERVING_PROBE_TIMEOUT_MS) {
         scope.launch {
             val startedAt = System.nanoTime()
-            runCatching {
-                request(build = { id -> PiCommands.getState(id) }, timeoutMs = timeoutMs)
-            }.onSuccess { response ->
-                // Only a real answer is recorded. `request` also answers with a
-                // synthetic failure when it times out, and that one means the
-                // opposite of "serving" — it is the case this whole method exists to
-                // keep visible, so counting it would erase the evidence.
-                if (response.success) {
-                    lastServingMs = (System.nanoTime() - startedAt) / 1_000_000
-                    // 引擎从这里开始服务，也就是它已经读过磁盘上现在的 `models.json` /
-                    // `auth.json` / 选择键了。App 那本「改完还没重启」的账（写入在
-                    // `PiCredentialService`，卡片在「模型与供应商」）到这里就还清：重启
-                    // 成功也会走到这一行，于是卡片自己消失。没有标记时是空操作。
-                    PendingModelRestart.clear()
+            try {
+                val hello = commands.hello()
+                if (hello.protocol != SUPPORTED_PROTOCOL) {
+                    throw HostException("protocol", "宿主协议 v${hello.protocol}，App 只认 v$SUPPORTED_PROTOCOL（App 与 guest 里的宿主版本不一致）")
+                }
+                hostHello = hello
+                commands.open(open, timeoutMs)
+                lastServingMs = (System.nanoTime() - startedAt) / 1_000_000
+                if (_state.value == EngineState.Starting) _state.value = EngineState.Ready
+                PendingModelRestart.clear()
+            } catch (e: HostException) {
+                when (e.code) {
+                    HostException.TIMEOUT -> Unit // 慢，不是坏：留在 Starting
+                    HostException.CLOSED -> Unit // 进程退出由 waitJob 报
+                    else -> {
+                        lastOpenError = e.message
+                        _state.value = EngineState.Failed
+                        reportProblem("宿主拒绝打开会话：${e.message}", rateLimited = false)
+                    }
                 }
             }
         }
     }
+
+    /** 握手结果（命令表与能力表）；`startHost` 成功前为 null。界面按能力点亮入口，不判断引擎版本。 */
+    @Volatile
+    var hostHello: app.pi.host.HostHello? = null
+        private set
+
+    /** 宿主明确拒绝打开会话时的原话；否则 null。 */
+    @Volatile
+    var lastOpenError: String? = null
+        private set
 
     private suspend fun readLoop(input: InputStream) {
         val framer = JsonlFramer()
@@ -593,14 +623,14 @@ class PiEngineSession(
                     dropped = framer.droppedRecords
                     onRecordDropped()
                 }
-                for (record in records) handle(record)
+                for (record in records) client.onLine(record)
             }
         }
         // A partial sequence at EOF is genuinely truncated input, so this is where it
         // becomes a replacement character — and the framer gets one last chance to
         // complete the record that was in flight.
-        for (record in framer.feed(decoder.flush())) handle(record)
-        for (record in framer.flush()) handle(record)
+        for (record in framer.feed(decoder.flush())) client.onLine(record)
+        for (record in framer.flush()) client.onLine(record)
         if (framer.droppedRecords != dropped) onRecordDropped()
     }
 
@@ -630,8 +660,7 @@ class PiEngineSession(
      * only fail identically. See [recordTooLargeReason] for what replaced it.
      */
     private fun onRecordDropped() {
-        pending.values.forEach { it.complete(failure(recordTooLargeReason())) }
-        pending.clear()
+        client.failPending(recordTooLargeReason())
     }
 
     /**
@@ -661,89 +690,52 @@ class PiEngineSession(
             "重新打开这个会话会改为直接读会话文件，通常就能正常显示；" +
             "如果仍然失败，说明这条消息本身异常大，可以把会话文件导出后再处理。"
 
-    private fun handle(record: String) {
-        val event = PiEvents.parse(record)
-        if (event is PiEvent.Response) {
-            // A response is the only proof that pi is *serving* this session. pi can
-            // answer a command only after `runRpcMode` has attached its stdin reader,
-            // and that is the last thing its startup does: node booting, the resource
-            // loader compiling the extensions and `bindExtensions` emitting
-            // `session_start` all happen with the pipe already open but unread. Until
-            // then the process exists and is healthy while every command written to it
-            // sits in the pipe. That gap is what the UI called 就绪 the instant
-            // `ProcessBuilder.start()` returned, and under proot on a phone it is tens
-            // of seconds (docs/known-gaps.md §M1).
-            if (_state.value == EngineState.Starting) _state.value = EngineState.Ready
-            // `id` is optional on pi's wire: the stdin parse-failure path emits
-            // `error(undefined, "parse", …)` (`modes/rpc/rpc-mode.ts:750-764`) and
-            // `JSON.stringify` drops the undefined key, so there is no request to
-            // complete — and `remove(null)` on a `ConcurrentHashMap` throws.
-            event.id?.let { id -> pending.remove(id)?.complete(event) }
+    /**
+     * 宿主的一条事件。`agent` 事件的 data 就是 SDK 的 `AgentSessionEvent`，与旧 RPC 事件行同形，
+     * 所以直接交给既有的解析器与 transcript reducer；其余事件原样走 [hostEvents]。
+     * （epoch 过滤与 seq 跳号检测已在 [PiHostClient] 里做完。）
+     */
+    private fun onSignal(signal: HostSignal) {
+        when (signal) {
+            is HostSignal.Resync -> {
+                reportProblem("事件流不连续（${signal.reason}），正在向宿主对账", rateLimited = true)
+                scope.launch { runCatching { commands.snapshot() } }
+            }
+            is HostSignal.Event -> {
+                _hostEvents.tryEmit(signal)
+                when (signal.name) {
+                    "agent" -> signal.data?.let { handleAgent(PiEvents.parse(it.toString())) }
+                    "state" -> commands.stateStore.offerEvent(signal.data)
+                    else -> HostUiBridge.eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
+                }
+            }
         }
+    }
+
+    private fun handleAgent(event: PiEvent) {
         when (event) {
             is PiEvent.AgentStart -> _state.value = EngineState.Busy
             is PiEvent.AgentSettled, is PiEvent.AgentEnd -> _state.value = EngineState.Ready
             else -> Unit
         }
-        // The reader thread's critical section: [seedHistory] may be swapping the
-        // reducer (and the published snapshot) from the caller's thread while this
-        // event arrives, and [publish] is a read-modify-write over [publishedRows]
-        // and [revision].
-        //
-        // **Isolated on purpose.** This is the process's only reader of pi's stdout,
-        // and it runs in a `SupervisorJob` child whose failure nobody observes: one
-        // exception out of the reducer would end the loop, after which the app never
-        // reads another byte of pi's output. pi keeps writing until the ~64 KB pipe
-        // buffer is full and then blocks in `write` — so the engine freezes mid-turn
-        // (no further event ever arrives, `state` stays `Busy`, the wake lock stays
-        // held), and every later `request` waits out its own full timeout because the
-        // response that would have completed it is sitting unread in the pipe. That
-        // is "the app hangs and nothing ever comes back", produced by one malformed
-        // event. `TranscriptReducer.onEvent` documents "never throws", and this is the
-        // second line of defence for the day that claim is wrong.
-        //
-        // `Exception`, not `Throwable`: an `Error` (an OOM while projecting a huge
-        // row, a `StackOverflowError` in a deep diff) is a statement about the host,
-        // and dressing it up as "one record was skipped" would hide the only evidence
-        // of it behind a stalled engine.
         try {
             synchronized(transcriptLock) { foldEvent(event) }
         } catch (error: Exception) {
-            // Swallowed per record so the reader keeps running (see above), but no
-            // longer *silently*: the count and the last message are readable from the
-            // diagnostic report, and the host logs them. A reducer that throws on
-            // every event is a broken transcript that otherwise looks like pi sending
-            // nothing.
             val total = reducerFailureCount.incrementAndGet()
             reportProblem(
                 "事件投影失败（第 $total 次）：${event.type} ${error::class.java.simpleName}: ${error.message}",
                 rateLimited = false,
             )
         }
-        // Outside the lock: `emitEvent` touches no reducer state, and keeping it out
-        // shortens the section the reader thread holds.
         emitEvent(event)
     }
 
-    /**
-     * A rescued event that [RESCUE_DELIVERY_TIMEOUT_MS] could not get into [events].
-     *
-     * Two outcomes, and the difference matters:
-     *
-     *  - a **blocking extension dialogue** (`select` / `confirm` / `input` / `editor`)
-     *    is answered here, on the App's behalf, so the extension stops waiting. The
-     *    answer is pi's own documented timeout resolution — `confirm()` resolves to
-     *    `false`, the other three to "cancelled" — which is the same thing pi would
-     *    have produced had the request timed out on its side. Declining is a visible
-     *    (and truthful) outcome for the user; a turn that hangs forever is not.
-     *  - anything else is dropped. Every other kind of rescued event is informational
-     *    or state-carrying but never *awaited* by pi, and holding the drain open would
-     *    starve the dialogue behind it — i.e. reintroduce the hang this path exists to
-     *    prevent.
-     *
-     * Both are reported, so the diagnostic report says the App lost an event rather
-     * than leaving the user to infer it from a cancelled dialogue.
-     */
+    /** 宿主的提问：旧对话框认识的走旧事件，其余只在 [hostRequests] 上。 */
+    private fun onHostRequest(request: HostRequest) {
+        _hostRequests.tryEmit(request)
+        HostUiBridge.requestToLegacy(request)?.let { emitEvent(it) }
+    }
+
     private fun undeliverable(event: PiEvent) {
         val dialogue = event as? PiEvent.ExtensionUiRequest
             ?: return reportProblem(
@@ -756,16 +748,10 @@ class PiEngineSession(
                 rateLimited = false,
             )
         }
-        val answered = if (dialogue.uiId.isEmpty()) {
-            false
+        val answered = if (dialogue.method == "confirm") {
+            respondUi(dialogue.uiId, confirmed = false)
         } else {
-            send(
-                if (dialogue.method == "confirm") {
-                    PiCommands.extensionUiConfirmed(dialogue.uiId, false)
-                } else {
-                    PiCommands.extensionUiCancelled(dialogue.uiId)
-                },
-            )
+            respondUi(dialogue.uiId, cancelled = true)
         }
         reportProblem(
             "扩展对话框「${dialogue.method}」${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒内没能送到界面，" +
@@ -962,57 +948,63 @@ class PiEngineSession(
     // --------------------------------------------------------------- sending
 
     /**
-     * Queue a command for the writer thread; use [request] when the reply matters.
-     *
-     * @return false when the command could not be handed to the writer at all — the
-     *   engine already failed a write, or [close] has shut the queue down. Nothing
-     *   here blocks the caller: the write, the flush and the JSON encoding all happen
-     *   on [writeQueue] (see its KDoc for why that matters on the frame thread). That
-     *   also means a `true` is "queued", not "delivered" — the same distinction the
-     *   old KDoc drew for a successful write, since a successful write was never
-     *   evidence of a live engine either. Callers that must know whether an engine is
-     *   reachable read [state] (driven by the process itself) or, in the app,
-     *   `UiState.engine`.
+     * 写一行到宿主的 stdin。**不阻塞调用方**：写与 flush 都在 [writeQueue] 上（界面线程一次写满管道
+     * 就是一次 ANR，附件几 MB 时尤其）。写失败 → [writeBroken]，并让所有在等的命令立刻以 `closed` 失败，
+     * 之后的 [writeLine] 直接抛 —— 与旧 `send` 的「入队即 true，失败看进程状态」是同一个取舍。
      */
-    fun send(command: JsonObject): Boolean {
-        if (writeBroken.get()) return false
-        return runCatching {
+    private fun writeLine(line: String) {
+        if (writeBroken.get()) throw IOException("引擎 stdin 已断开")
+        try {
             writeQueue.execute {
                 runCatching {
-                    writer.write(PiCommands.encode(command))
+                    writer.write(line)
+                    writer.write("\n")
                     writer.flush()
-                }.onFailure { writeBroken.set(true) }
+                }.onFailure {
+                    writeBroken.set(true)
+                    client.close("写入引擎失败：${it.message}")
+                }
             }
-            true
-        }.getOrDefault(false)
-    }
-
-    /** Send and await pi's `response`. */
-    suspend fun request(command: JsonObject, timeoutMs: Long = 120_000): PiEvent.Response {
-        val id = command["id"]?.toString()?.trim('"') ?: nextId()
-        val deferred = CompletableDeferred<PiEvent.Response>()
-        pending[id] = deferred
-        send(command)
-        return try {
-            withTimeout(timeoutMs) { deferred.await() }
-        } catch (_: TimeoutCancellationException) {
-            pending.remove(id)
-            failure("timed out after ${timeoutMs}ms waiting for $id")
+        } catch (_: RejectedExecutionException) {
+            throw IOException("会话已关闭")
         }
     }
 
     /**
-     * Send a command built from a fresh correlation id, and await its `response`.
+     * 回答宿主的对话框（`ui.respond`）。[confirmed] 用于 confirm 的是/否；[cancelled] 表示用户取消
+     * （宿主按 pi 的语义给扩展 `undefined` / `false`）。发后不管；迟到的回答宿主答 `matched:false`，不是错误。
      *
-     * The id belongs to this class, not to callers, but a command builder needs
-     * one to put in the JSON it returns. Handing the id to the builder keeps both
-     * true: [PiEngineApi] writes `PiCommands.getState(id)` and this class keeps
-     * allocating and matching ids.
+     * @return false 表示没发出去（没有 id、或会话已关）。
      */
-    suspend fun request(build: (String) -> JsonObject, timeoutMs: Long = 120_000): PiEvent.Response =
-        request(build(nextId()), timeoutMs)
+    fun respondUi(uiId: String, value: String? = null, confirmed: Boolean? = null, cancelled: Boolean = false): Boolean {
+        if (uiId.isEmpty() || client.isClosed) return false
+        val answer = when {
+            confirmed != null -> JsonPrimitive(confirmed)
+            value != null -> JsonPrimitive(value)
+            else -> null
+        }
+        scope.launch { runCatching { client.respond(uiId, answer, cancelled) } }
+        return true
+    }
 
-    // ------------------------------------------------------- typed operations
+    /**
+     * 发后不管的宿主命令（`session.steer` / `session.followUp` / 不回显的 `session.prompt` 等）。
+     * 失败**不是**吞掉：变成一条 `PiEvent.Response(success=false)` 事件，界面沿用原来的 `lastError` 路径。
+     * 需要结果的命令用 [api] / [commands]。
+     */
+    fun fire(cmd: String, args: JsonObject = JsonObject(emptyMap())): Boolean {
+        if (client.isClosed) return false
+        scope.launch {
+            try {
+                commands.call(cmd, args)
+            } catch (e: HostException) {
+                if (e.code != HostException.CLOSED) {
+                    emitEvent(PiEvent.Response(id = null, command = cmd, success = false, error = e.message ?: e.code, data = null))
+                }
+            }
+        }
+        return true
+    }
 
     /**
      * Send a prompt, and mirror it into the local transcript before the wire call
@@ -1073,7 +1065,16 @@ class PiEngineSession(
         queued: Boolean = false,
     ) {
         if (!queued) echoUserPrompt(message, images)
-        send(PiCommands.prompt(nextId(), message, images, streamingBehavior))
+        fire(
+            "session.prompt",
+            JsonObject(
+                buildMap {
+                    put("message", JsonPrimitive(message))
+                    if (images.isNotEmpty()) put("images", HostCommands.imagesJson(images))
+                    put("streamingBehavior", JsonPrimitive(streamingBehavior.wire))
+                },
+            ),
+        )
     }
 
     /**
@@ -1210,10 +1211,8 @@ class PiEngineSession(
      * had queued.
      */
     suspend fun drainQueue(): List<String> {
-        val cleared = request(PiCommands.clearQueue(nextId()))
-        val steering = queuedText(cleared, "steering")
-        val followUp = queuedText(cleared, "followUp")
-        return steering + followUp
+        val cleared = api.clearQueue()
+        return cleared.steering + cleared.followUp
     }
 
     /**
@@ -1229,14 +1228,8 @@ class PiEngineSession(
      */
     suspend fun stopAndDrainQueue(): List<String> {
         val restored = drainQueue()
-        request(PiCommands.abort(nextId()))
+        api.abort()
         return restored
-    }
-
-    private fun queuedText(response: PiEvent.Response, key: String): List<String> {
-        val data = response.data as? JsonObject ?: return emptyList()
-        val array = data[key] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
-        return array.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
     }
 
     /**
@@ -1283,10 +1276,11 @@ class PiEngineSession(
             return
         }
         runCatching {
-            val state = request(PiCommands.getState(nextId()), timeoutMs)
-            val snapshot = PiResponses.sessionState(state)
-            if (snapshot != null && (snapshot.isStreaming || snapshot.isCompacting)) {
-                request(PiCommands.abort(nextId()), timeoutMs)
+            val snapshot = commands.snapshot()
+            val streaming = (snapshot["isStreaming"] as? JsonPrimitive)?.content == "true"
+            val compacting = (snapshot["isCompacting"] as? JsonPrimitive)?.content == "true"
+            if (streaming || compacting) {
+                withTimeout(timeoutMs) { commands.call("session.abort", timeoutMs = timeoutMs) }
             }
         }
         close()
@@ -1316,7 +1310,10 @@ class PiEngineSession(
             writeQueue.awaitTermination(WRITER_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         }
         runCatching { process.destroy() }
+        client.close("会话已关闭")
         readerJob?.cancel()
+        signalJob?.cancel()
+        requestJob?.cancel()
         stderrJob?.cancel()
         waitJob?.cancel()
         // The rescue drain belongs to this session, not to the scope it was launched
@@ -1327,9 +1324,6 @@ class PiEngineSession(
         rescueJob?.cancel()
         _state.value = EngineState.Stopped
     }
-
-    private fun failure(message: String): PiEvent.Response =
-        PiEvent.Response(id = null, command = null, success = false, error = message, data = null)
 
     companion object {
         /** Keep diagnostics bounded; the settings screen shows the tail. */
@@ -1443,6 +1437,9 @@ class PiEngineSession(
          * cannot be left.
          */
         private const val SETTLE_TIMEOUT_MS = 30_000L
+
+        /** 本 App 讲的线协议版本（docs/sdk-host/protocol.md）。 */
+        private const val SUPPORTED_PROTOCOL = 1
 
         /**
          * How long [close] waits for the writer thread to finish what it was given.

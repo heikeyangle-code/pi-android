@@ -8,7 +8,8 @@ import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { snapshotOf, withState } from "../state.mjs";
 
 export function register(reg, { controller }) {
-  reg.add("session.open", (args) => controller.open(args));
+  // 应答附 state：打开后状态仓立刻有值，不用等下一条 state 事件。
+  reg.add("session.open", async (args) => withState(controller, await controller.open(args)));
   reg.add("session.snapshot", (args) => snapshotOf(controller, { messages: bool(args, "messages", false) }));
 
   // ---- 对话 ---------------------------------------------------------------
@@ -22,7 +23,7 @@ export function register(reg, { controller }) {
     s.prompt(message, {
       images: args.images,
       streamingBehavior: args.streamingBehavior,
-      source: "rpc",
+      source: "interactive",
       preflightResult: (disposition) => {
         preflighted = true;
         reply.ok(withState(controller, { disposition }));
@@ -34,10 +35,10 @@ export function register(reg, { controller }) {
     return DEFERRED;
   });
   reg.add("session.steer", async (args) =>
-    withState(controller, { disposition: await controller.requireSession().steer(str(args, "message"), args.images, { source: "rpc" }) }),
+    withState(controller, { disposition: await controller.requireSession().steer(str(args, "message"), args.images, { source: "interactive" }) }),
   );
   reg.add("session.followUp", async (args) =>
-    withState(controller, { disposition: await controller.requireSession().followUp(str(args, "message"), args.images, { source: "rpc" }) }),
+    withState(controller, { disposition: await controller.requireSession().followUp(str(args, "message"), args.images, { source: "interactive" }) }),
   );
   reg.add("session.abort", async () => {
     await controller.requireSession().abort();
@@ -58,7 +59,7 @@ export function register(reg, { controller }) {
     s.prompt(message, {
       images: args.images,
       streamingBehavior: behavior,
-      source: "rpc",
+      source: "interactive",
       preflightResult: (disposition) => {
         preflighted = true;
         reply.ok(withState(controller, { disposition }));

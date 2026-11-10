@@ -1516,8 +1516,8 @@ run_harness host-client \
   "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 
 # app.pi.engine: sdk-host 怎么进 rootfs、怎么被启动。安装器是「同步」而不是「复制」：内容相同不写、
 # 源里没了的目标里删（改名后的宿主不能留旧模块）、半个文件不交给 node；再用**真 assets**装一遍并用
@@ -1540,6 +1540,22 @@ run_harness host-api \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+
+# app.pi.engine.PiEngineSession 接**真宿主 + 真 pi**：真进程、真管道、真状态机。握手后才 Ready、
+# 宿主拒绝变 Failed（不是永远转圈）、发后不管的命令失败变成 Response(success=false)、进程死时在等的
+# 命令立刻失败。缺 node 或 build/pi-contract 时 SKIP。PendingModelRestart 要 Android，这里换成空桩。
+run_harness host-session \
+  app.pi.engine.HostSessionCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/HostSessionCheck.kt" \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/PendingModelRestartStub.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/PiEngineSession.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 
 # --- 4. verdict ---------------------------------------------------------------

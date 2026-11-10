@@ -259,10 +259,10 @@ try {
   writeFileSync(join(pkgDir, "ext.mjs"), "export default function () {}\n");
   const inst = await h.call("packages.install", { source: pkgDir, opId: "P1" }, 120000);
   expect("packages.install（本地目录包）", inst.ok && inst.data.packages.some((p) => p.installedPath === pkgDir), JSON.stringify(inst.error ?? inst.data));
-  const busyOp = h.call("packages.update", { opId: "P2" }, 60000);
-  const busyOp2 = await h.call("packages.update", { opId: "P3" }, 60000);
-  expect("包操作互斥：并发第二个 → busy", !busyOp2.ok && busyOp2.error.code === "busy", JSON.stringify(busyOp2));
-  await busyOp;
+  // 同一拍发出多个，至少有一个得到 busy（单发第二个会和第一个的完成赛跑，本地包的 update 几乎瞬间结束）。
+  const ops = await Promise.all(["P2", "P3", "P4", "P5"].map((opId) => h.call("packages.update", { opId }, 60000)));
+  const busyOp2 = ops.find((r) => !r.ok) ?? ops[ops.length - 1];
+  expect("包操作互斥：并发的后来者 → busy", !busyOp2.ok && busyOp2.error.code === "busy", JSON.stringify(ops));
 
   const res = await h.call("resources.list", {}, 120000);
   const extItems = (res.data?.global ?? []).flatMap((g) => g.subgroups).filter((s) => s.type === "extensions").flatMap((s) => s.items);
