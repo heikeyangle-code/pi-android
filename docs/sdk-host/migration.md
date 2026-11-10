@@ -14,7 +14,11 @@
 
 `app/src/main/assets/guest/sdk-host/**`、`tools/sdk-host/{test,contract,client}.mjs`、CI。见 README「已经做完的」。
 
-## 步骤 1 [ ]：把宿主装进 guest 并能启动
+## 步骤 1 [~]：把宿主装进 guest 并能启动
+
+> **已做**：`engine/SdkHostInstaller.kt`（同步安装：相同不写、源里没了的删、先 `.partial` 再改名；harness 用真 assets 装一遍并用 node 起一次，见 `sdk-host-install`）、`engine/SdkHostLaunch.kt`（启动命令，含引用转义）、`PiEngineHost` 每次启动调用安装（`lastSdkHostInstall`，非致命）。
+> **没做**：`guestCommand` 仍是旧入口 —— 它必须和读取端（`PiEngineSession`）一起换，放在步骤 3；真机 proot / proroot 各起一次还没验。
+> 没编译（Gradle 此处连不上 Maven）；`PiEngineHost` 的改动只有 ~20 行，等 CI。
 
 **目标**：App 能用新命令行启动宿主，收到 `host.ready`，`host.hello` 能应答。还不接 UI。
 
@@ -28,7 +32,12 @@
 
 **验收**：真机 proot 和 proroot 各启动一次，logcat 里看到 `host.ready` 与 `host.hello` 应答；runtimes.md 验证清单前两项勾上。
 
-## 步骤 2 [ ]：Kotlin 客户端 `PiHostClient`
+## 步骤 2 [x]：Kotlin 客户端 `PiHostClient`
+
+> **已做**（`app/pi/host/`）：`HostFrame`（解析，未知帧忽略）、`PiHostClient`（epoch 过滤、seq 跳号 → `Resync`、配对/超时/取消/退出清理）、`HostState`+`HostStateStore`（按 (epoch,seq) 取最新）、`HostCommands`（具名命令 + `sdkCall` 通用口）。
+> harness `host-client`（84 条）含**回放真宿主录下的会话**（`node tools/sdk-host/record.mjs` 生成 `app/src/test/resources/sdk-host/session.jsonl`；宿主协议变了就重录）。
+> **没做**：`AgentEventAdapter`（等步骤 3 接 `Events.kt`）；`HostSignal` 没有 replay，**调用方必须先订阅再开读**。
+> 本地用 JSON 替身编译、跑通，真 kotlinx-serialization 的 API 差异等 CI。
 
 **目标**：类型化的命令调用 + 事件流，规则按 protocol.md。
 

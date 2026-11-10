@@ -1504,6 +1504,31 @@ run_harness streaming-cursor \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/StreamingCursorCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/StreamingCursor.kt"
 
+# app.pi.host: sdk-host 线协议 v1 的 Kotlin 客户端 —— epoch 过滤（旧会话的尾巴不许画进新会话）、
+# seq 跳号对账、命令/应答配对与超时/取消清理、状态按 (epoch,seq) 取最新、帧容错。另外**回放**
+# `tools/sdk-host/record.mjs` 从真宿主 + 真 pi 录下的一整段会话（app/src/test/resources/sdk-host/
+# session.jsonl），证明 Kotlin 解析的和 node 宿主真发的是同一种东西。宿主协议变了：重录 fixture。
+# 需要 :rpc 的 PiJson（严格 JSON 入口）；客户端本身不碰 Android。
+run_harness host-client \
+  app.pi.host.HostClientCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/host/HostClientCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
+# app.pi.engine: sdk-host 怎么进 rootfs、怎么被启动。安装器是「同步」而不是「复制」：内容相同不写、
+# 源里没了的目标里删（改名后的宿主不能留旧模块）、半个文件不交给 node；再用**真 assets**装一遍并用
+# node 把装出来的那份起一次，看它发 host.ready。启动命令的引用/转义也在这里钉。
+run_harness sdk-host-install \
+  app.pi.engine.SdkHostInstallerCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/SdkHostInstallerCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/SdkHostInstaller.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/SdkHostLaunch.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

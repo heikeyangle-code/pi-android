@@ -272,6 +272,15 @@ class PiEngineHost(private val appContext: Context) {
      */
     @Volatile
     var lastScandirFix: String? = null
+
+    /**
+     * 上一次把 sdk-host 装进 rootfs 的结果：`null` 成功，否则是一句话（装不上不致命 —— 现在
+     * 引擎入口还是旧的；**切到 sdk-host 之后（migration.md 步骤 3）它就是致命的**，那时这句话要进
+     * 启动失败卡片）。每次启动都装，理由与 [installScandirFix] 相同：目标在易失树里。
+     */
+    @Volatile
+    var lastSdkHostInstall: String? = null
+        private set
         private set
 
     /**
@@ -558,6 +567,12 @@ class PiEngineHost(private val appContext: Context) {
             //     its failure must be visible rather than silent: a missing module is not a
             //     degraded proroot, it is the same broken proroot as before.
             lastScandirFix = installScandirFix()
+
+            // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。**这一步只把文件放进 rootfs，
+            //     还不启动它** —— 下面的启动命令仍是旧入口，切换要和读取端（PiEngineSession）
+            //     一起换（migration.md 步骤 3），单换一边会让引擎起得来、界面却读不懂它。
+            //     先装上，是为了让真机能手动验证「proot / proroot 下宿主起得来」（runtimes.md 清单）。
+            lastSdkHostInstall = installSdkHost()
 
             // 4. Spawn pi inside the guest.
             val workspace = workspaceProvider()
@@ -1032,6 +1047,15 @@ class PiEngineHost(private val appContext: Context) {
             "scandir 兜底模块未能写入 ${target.absolutePath}：" +
                 "${error::class.java.simpleName}: ${error.message ?: "无消息"}"
         }
+    }
+
+    /** 把 `assets/guest/sdk-host/` 同步进 `<rootfs>/opt/pi/sdk-host/`；返回 `null` 或一句失败原因。 */
+    private fun installSdkHost(): String? = runCatching {
+        SdkHostInstaller(AndroidHostAssetSource(appContext.assets))
+            .install(File(paths.rootfs, SdkHostLaunch.GUEST_DIR.removePrefix("/")))
+        null
+    }.getOrElse { error ->
+        "sdk-host 未能写入 ${SdkHostLaunch.GUEST_DIR}：${error::class.java.simpleName}: ${error.message ?: "无消息"}"
     }
 
     /**
