@@ -36,5 +36,7 @@ fun main() {
     check("errors/note", r.errors to r.note, listOf("entry x invalid") to "project untrusted")
     check("garbage", PiMcpStatus.parse("boom"), null)
     check("scope default", r.of("bad")!!.scope, "global")
-    if (failures > 0) { println("$failures failure(s)"); kotlin.system.exitProcess(1) }
+    // `tools/run-app-pure-checks.sh` 认的是这一行：没有它，exit 0 也会判失败。
+    println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
+    if (failures != 0) kotlin.system.exitProcess(1)
 }
