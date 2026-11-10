@@ -5,6 +5,9 @@ import { PROTOCOL_VERSION } from "../protocol.mjs";
 export function register(reg, { controller, hub, reg: registry }) {
   reg.add("host.hello", () => ({
     protocol: PROTOCOL_VERSION,
+    // 引擎标识：预留给双引擎（docs/sdk-host/dual-engine.md）。本宿主恒为 coding-agent；
+    // Durable 将是另一个入口（durable-host），握手里报 "durable"，App 据此选适配器。
+    engine: "coding-agent",
     pid: process.pid,
     node: process.version,
     commands: registry.names(),

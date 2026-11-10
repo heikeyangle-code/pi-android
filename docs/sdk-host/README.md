@@ -38,6 +38,7 @@ pi 的 RPC 协议、RPC 响应类型、RPC 的残缺 UI 桩，**全部废弃**�
 | [ui-design.md](ui-design.md) | 新增 UI 面的设计（表面、弹层、信任弹窗、子代理…） |
 | [runtimes.md](runtimes.md) | proot / proroot 的启动接入点和验证清单 |
 | [migration.md](migration.md) | **分步任务单**：谁、改哪些文件、验收标准 |
+| [dual-engine.md](dual-engine.md) | **双引擎预留**：Coding Agent + Durable 的架构、接口草图、阶段（SDK 优先，Durable 不实现） |
 | [upgrading.md](upgrading.md) | 升级 pi 版本的流程 |
 
 ## 已经做完的（本分支）

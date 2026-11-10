@@ -54,7 +54,7 @@ try {
   expect("host.ready 先于 SDK 加载", ready.data.pid > 0 && Date.now() - t0 < 2000, `${Date.now() - t0}ms`);
 
   const hello = await h.call("host.hello");
-  expect("host.hello 协议版本与命令表", hello.ok && hello.data.protocol === 1 && hello.data.commands.includes("session.prompt"));
+  expect("host.hello 协议版本与命令表", hello.ok && hello.data.protocol === 1 && hello.data.engine === "coding-agent" && hello.data.commands.includes("session.prompt"));
 
   const unknown = await h.call("nope.nope");
   expect("未知命令返回 unknown_cmd", !unknown.ok && unknown.error.code === "unknown_cmd");
