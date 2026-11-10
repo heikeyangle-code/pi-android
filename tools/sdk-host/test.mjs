@@ -10,7 +10,7 @@
  */
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { startHost } from "./client.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -251,6 +251,68 @@ try {
   const out = await h.call("auth.logout", { providerId: "probe-sso" });
   expect("auth.logout", out.ok && !(await h.call("auth.credentials")).data.credentials.some((c) => c.providerId === "probe-sso"));
   globalThis.__authAnswer = undefined;
+
+  // ---- 7c. 包：装 / 资源清单 / 开关 / 卸 --------------------------------------
+  const pkgDir = join(h.root, "probe-pkg");
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "probe-pkg", version: "1.0.0", pi: { extensions: ["./ext.mjs"] } }));
+  writeFileSync(join(pkgDir, "ext.mjs"), "export default function () {}\n");
+  const inst = await h.call("packages.install", { source: pkgDir, opId: "P1" }, 120000);
+  expect("packages.install（本地目录包）", inst.ok && inst.data.packages.some((p) => p.installedPath === pkgDir), JSON.stringify(inst.error ?? inst.data));
+  const busyOp = h.call("packages.update", { opId: "P2" }, 60000);
+  const busyOp2 = await h.call("packages.update", { opId: "P3" }, 60000);
+  expect("包操作互斥：并发第二个 → busy", !busyOp2.ok && busyOp2.error.code === "busy", JSON.stringify(busyOp2));
+  await busyOp;
+
+  const res = await h.call("resources.list", {}, 120000);
+  const extItems = (res.data?.global ?? []).flatMap((g) => g.subgroups).filter((s) => s.type === "extensions").flatMap((s) => s.items);
+  const pkgExt = extItems.find((i) => i.path.endsWith("probe-pkg/ext.mjs"));
+  expect("resources.list 列出包里的扩展且默认启用", res.ok && pkgExt?.enabled === true, JSON.stringify(res.error ?? extItems.map((i) => i.path)));
+  expect("resources.list 带内置扩展（mcp 等）", extItems.some((i) => /builtin:mcp|mcp/.test(i.path)));
+  const tog = await h.call("resources.toggle", { scope: "global", type: "extensions", path: pkgExt.path }, 120000);
+  const afterTog = tog.data?.global?.flatMap((g) => g.subgroups).flatMap((s) => s.items).find((i) => i.path === pkgExt.path);
+  expect("resources.toggle 关掉，并返回写完之后的清单", tog.ok && tog.data.enabled === false && afterTog?.enabled === false, JSON.stringify(tog.error ?? tog.data?.enabled));
+  expect("开关写进了 settings.json（pi config 同款规则）", readFileSync(join(h.agentDir, "settings.json"), "utf8").includes("-"));
+  const togBad = await h.call("resources.toggle", { scope: "global", type: "extensions", path: "/no/such" }, 60000);
+  expect("toggle 不存在的资源 → not_found", !togBad.ok && togBad.error.code === "not_found");
+
+  const rm = await h.call("packages.remove", { source: inst.data.packages.find((p) => p.installedPath === pkgDir).source }, 120000);
+  expect("packages.remove", rm.ok && !rm.data.packages.some((p) => p.installedPath === pkgDir), JSON.stringify(rm.error ?? rm.data));
+
+  // ---- 7d. MCP：增 / 检测 / 启停 / 删 / 登录的拒绝路径 ----------------------
+  const mcpAdd = await h.call("mcp.add", { name: "echo", command: "node", args: [join(here, "fixtures/mcp-echo.mjs")] }, 60000);
+  expect("mcp.add（stdio）写进 mcp.json", mcpAdd.ok && readFileSync(join(h.agentDir, "mcp.json"), "utf8").includes('"echo"'), JSON.stringify(mcpAdd.error ?? mcpAdd.data));
+  const addBoth = await h.call("mcp.add", { name: "x", command: "a", url: "http://b" });
+  expect("mcp.add 同时给 url 和 command → bad_args", !addBoth.ok && addBoth.error.code === "bad_args");
+  const mcpList = await h.call("mcp.list", {}, 120000);
+  const echo = mcpList.data?.servers?.find((s) => s.name === "echo");
+  expect("mcp.list 真连上了服务器并列出工具", mcpList.ok && echo?.state === "connected" && echo.tools.includes("echo"), JSON.stringify(mcpList.error ?? mcpList.data));
+  const mcpOff = await h.call("mcp.update", { name: "echo", enabled: false });
+  expect("mcp.update 停用", mcpOff.ok);
+  expect("停用后 mcp.list 不再连它", (await h.call("mcp.list", {}, 60000)).data.servers.find((s) => s.name === "echo")?.state === "disabled");
+  const mcpExp = await h.call("mcp.update", { name: "echo", enabled: true, exposure: "direct" });
+  expect("mcp.update 改暴露方式", mcpExp.ok && readFileSync(join(h.agentDir, "mcp.json"), "utf8").includes("direct"));
+  const mcpBadExp = await h.call("mcp.update", { name: "echo", exposure: "nope" });
+  expect("非法暴露方式 → bad_args", !mcpBadExp.ok && mcpBadExp.error.code === "bad_args");
+  const mcpLogin = await h.call("mcp.login", { name: "echo" }, 30000);
+  expect("stdio 服务器没有 OAuth → unsupported", !mcpLogin.ok && mcpLogin.error.code === "unsupported", JSON.stringify(mcpLogin));
+  const mcpMissing = await h.call("mcp.update", { name: "ghost", enabled: false });
+  expect("未知服务器 → not_found", !mcpMissing.ok && mcpMissing.error.code === "not_found");
+  const mcpRm = await h.call("mcp.remove", { name: "echo" }, 60000);
+  expect("mcp.remove", mcpRm.ok && !readFileSync(join(h.agentDir, "mcp.json"), "utf8").includes('"echo"'));
+
+  // ---- 7e. 设置 ---------------------------------------------------------------
+  const st0 = await h.call("settings.get");
+  expect("settings.get 给有效 / 全局 / 项目三份", st0.ok && typeof st0.data.effective === "object" && "global" in st0.data && "project" in st0.data, JSON.stringify(st0.error));
+  const st1 = await h.call("settings.set", { method: "setDefaultThinkingLevel", params: ["high"] });
+  expect("settings.set 调的是 SDK 的 setter，立刻反映在有效设置里", st1.ok && st1.data.effective.defaultThinkingLevel === "high", JSON.stringify(st1.error ?? st1.data?.effective));
+  expect("并落盘到 settings.json", readFileSync(join(h.agentDir, "settings.json"), "utf8").includes('"high"'));
+  const st2 = await h.call("settings.set", { method: "setCompactionEnabled", params: [false] });
+  expect("嵌套设置（compaction.enabled）也能写", st2.ok && st2.data.effective.compaction?.enabled === false, JSON.stringify(st2.data?.effective?.compaction));
+  const stBad = await h.call("settings.set", { method: "flush", params: [] });
+  expect("非 set 开头的方法被拒（不是任意调用口）", !stBad.ok && stBad.error.code === "bad_args");
+  const stGhost = await h.call("settings.set", { method: "setNoSuchThing", params: [] });
+  expect("不存在的设置方法 → bad_args", !stGhost.ok && stGhost.error.code === "bad_args");
 
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");

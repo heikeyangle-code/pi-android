@@ -1,12 +1,11 @@
 /**
  * 进程内服务：以前要另起 `pi` 命令行或 `pi-resources.mjs` 才能做的事，现在直接调 SDK。
  *
- * **这里只是骨架**：packages.list / packages.updates 已接通，作为「新增一项服务该怎么写」的样板。
- * 其余（装 / 卸 / 更新、资源开关、MCP 检测与登录、设置读写、OAuth）按 docs/sdk-host/migration.md
- * 的阶段 2 逐项迁入，每项一个 `services.<域>.<动作>` 命令。
+ * 包：列出 / 检查更新 / 装 / 卸 / 更新（带进度）。资源开关在 resources.mjs，认证在 auth.mjs，
+ * MCP 在 mcp.mjs，设置在 settings.mjs。
  */
 
-import { ERR, HostError, str } from "../protocol.mjs";
+import { ERR, HostError, optStr, str } from "../protocol.mjs";
 import { toWire } from "./generic.mjs";
 
 /** 一个 cwd 绑定的 PackageManager。设置读的是会话当前的 SettingsManager，所以和 pi 本身一致。 */
@@ -25,6 +24,39 @@ export function register(reg, { controller, bus }) {
 
   // 以前：`pi` 子进程 + 解析输出；现在：一次函数调用。
   reg.add("packages.updates", async () => ({ updates: await packageManager(controller).checkForAvailableUpdates() }));
+
+  // ---- 装 / 卸 / 更新 ----------------------------------------------------------
+  // 官方 `PackageManager` 的 `installAndPersist / removeAndPersist / update`，进度来自
+  // `setProgressCallback`，原样转成 `packages.progress` 事件（start / progress / complete / error）。
+  // 进度回调是**每个 PackageManager 一个**，所以这三条命令各用一个新实例，互不串线；同一时刻只允许
+  // 一个装卸操作（npm / git 并发写同一个目录只会互相踩）。
+  // 装完**不会**自动重载：App 在用户确认后调 `session.reload`，新扩展才进当前会话。
+  let packageOpBusy = false;
+  async function packageOp(args, run) {
+    if (packageOpBusy) throw new HostError(ERR.BUSY, "另一个包操作还在进行");
+    packageOpBusy = true;
+    const opId = optStr(args, "opId") ?? `p${Math.random().toString(36).slice(2, 8)}`;
+    const pm = packageManager(controller);
+    pm.setProgressCallback((event) => controller.hub.emit("packages.progress", { opId, ...event }));
+    try {
+      const result = await run(pm, { local: optStr(args, "scope") === "project" });
+      return { opId, ...(result ?? {}), packages: pm.listConfiguredPackages() };
+    } catch (error) {
+      if (error instanceof HostError) throw error;
+      throw new HostError(ERR.INTERNAL, String(error?.message ?? error));
+    } finally {
+      pm.setProgressCallback(undefined);
+      packageOpBusy = false;
+    }
+  }
+
+  reg.add("packages.install", (args) => packageOp(args, async (pm, opts) => {
+    await pm.installAndPersist(str(args, "source"), opts);
+  }));
+  reg.add("packages.remove", (args) => packageOp(args, async (pm, opts) => ({ removed: await pm.removeAndPersist(str(args, "source"), opts) })));
+  reg.add("packages.update", (args) => packageOp(args, async (pm) => {
+    await pm.update(optStr(args, "source"));
+  }));
 
   // 进程内子代理 RPC：pi-subagents 在共享事件总线上监听 `subagents:rpc:v1:*`。
   reg.add("subagent.rpc", async (args) => {

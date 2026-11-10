@@ -30,7 +30,7 @@
 | Code Mode（`codemode` 工具） | 已接 | 同上；默认**未激活**，用 `defaultTools: ["+codemode"]` 或 MCP 服务器的 `codemode` 暴露方式激活（与 CLI 一致） |
 | Tool Search（`tool_search`） | 已接 | 同上；`deferred` 暴露的 MCP 服务器会激活它 |
 | MCP 状态变化事件 | 通用口 | `bus.subscribe` 订阅 MCP 扩展发的事件（事件名见 MCP 扩展源码 `McpServersChangeEvent`） |
-| MCP 服务器管理的 App 界面（检测、登录、重连、启停、暴露方式） | **待接** | 现在靠 `pi mcp list --json` 子进程。迁移：读 MCP 扩展状态（先查它暴露的事件/方法；没有就走 `/mcp` 命令 + `ctx.ui` 对话框，由 `ui.*` 回路承接）。OAuth 登录需要打开浏览器：宿主发 `ui.openUrl` 请求（新增）由 App 用系统浏览器打开 |
+| MCP 服务器管理（检测、增删、启停、暴露方式、OAuth 登录退出） | **宿主已接，App 界面待重做** | `mcp.list/add/remove/update/login/cancel/logout`：官方把 `pi mcp …` 做成了可直接调用的函数（`runMcpCommand` 等，在 `dist/extensions/mcp/`，非公开导出，contract 测试把守）；登录的授权链接走 `mcp.auth` 事件，浏览器到不了本机回调时 `mcp.redirect` 让用户贴回重定向 URL（官方非交互 CLI 没有这条兜底）。测试用一个真 stdio MCP 服务器跑通。以下为旧说明： 现在靠 `pi mcp list --json` 子进程。迁移：读 MCP 扩展状态（先查它暴露的事件/方法；没有就走 `/mcp` 命令 + `ctx.ui` 对话框，由 `ui.*` 回路承接）。OAuth 登录需要打开浏览器：宿主发 `ui.openUrl` 请求（新增）由 App 用系统浏览器打开 |
 
 ## 3. Skills、Prompt Templates、Extensions
 
@@ -44,8 +44,8 @@
 | 扩展事件总线 | 已接 | `bus.*` |
 | 扩展注册的消息渲染器 | 已接 | `render.message` |
 | 包：列出 / 检查更新 | 已接 | `packages.list` / `packages.updates` |
-| 包：安装 / 卸载 / 更新 | 通用口 | `sdk.call packageManager install/remove/update`；进度回调（`setProgressCallback`）没映射，**待接**一条 `packages.install` 命令带进度事件 |
-| 资源开关（启用/停用某个扩展、技能、模板、主题） | **待接** | 现在靠 `pi-resources.mjs`。迁移：`packageManager.resolve()` + 设置的 `extensions/skills/prompts/themes` 过滤项，逻辑照抄 `pi-resources.mjs` 但改成直接调 SDK |
+| 包：安装 / 卸载 / 更新 | **已接** | `packages.install/remove/update`，进度 `packages.progress`，同时只允许一个操作；装完不自动重载，由 App 调 `session.reload`。以下为旧说明： `sdk.call packageManager install/remove/update`；进度回调（`setProgressCallback`）没映射，**待接**一条 `packages.install` 命令带进度事件 |
+| 资源开关（启用/停用某个扩展、技能、模板、主题） | **已接** | `resources.list/toggle`（原 `pi-resources.mjs` 的逻辑进了宿主；清单 `resolve(onMissing→skip)`，开关复用 `pi config` 的 `ConfigSelectorComponent`，写出的规则与终端一致）。以下为旧说明： 现在靠 `pi-resources.mjs`。迁移：`packageManager.resolve()` + 设置的 `extensions/skills/prompts/themes` 过滤项，逻辑照抄 `pi-resources.mjs` 但改成直接调 SDK |
 | 扩展里自己的 `registerProvider` / 虚拟模型 | 已接 | 在 SDK 内部生效，`model.list` 能看到 |
 
 ## 4. 会话、分叉、分支、压缩
@@ -86,7 +86,7 @@
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
-| 设置读写 | 通用口 | `sdk.call settings …`。App 现在直接读写 `settings.json`，**迁移期两边并存没问题**（同一文件），之后逐页改成走宿主，好处是 pi 的校验和 `projectTrusted` 过滤一致 |
+| 设置读写 | **已接** | `settings.get/set/reload`：`set{method,params}` 调会话正在用的 `SettingsManager.setXxx` 并落盘，当前会话立即生效；只放行真实存在且以 `set` 开头的方法。以下为旧说明： `sdk.call settings …`。App 现在直接读写 `settings.json`，**迁移期两边并存没问题**（同一文件），之后逐页改成走宿主，好处是 pi 的校验和 `projectTrusted` 过滤一致 |
 | 主题 | 不适用 | pi 的主题是终端配色；App 自己的主题通过 `ui.palette` 喂给扩展组件 |
 | 快捷键、`/hotkeys` | 不适用 | |
 | `/changelog` `/bug` `/quit` | 不适用 / 待评估 | App 有自己的版本说明；`/bug` 会上传，同 `/share` |

@@ -170,6 +170,11 @@ export class Controller {
     return needs ? { value: false, undecided: true } : { value: true, undecided: false };
   }
 
+  /** 当前项目是否被信任（含 App 已表态的覆盖）。资源 / 包命令按它决定读不读项目层设置。 */
+  isProjectTrusted() {
+    return this.#projectTrusted(this.cfg.cwd).value;
+  }
+
   #pickSessionManager(sdk, cwd, sessionDir, sel) {
     const { SessionManager } = sdk;
     if (typeof sel.file === "string") return SessionManager.open(sel.file, sessionDir);
