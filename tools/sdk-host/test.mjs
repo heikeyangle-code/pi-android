@@ -194,6 +194,44 @@ try {
   await h.waitFor(h.evt("ui.close", (d) => d.surfaceId === surf.data.surfaceId), 5000);
   expect("旧会话的工厂 widget 被收（dispose 已调用）", h.stderrLines.join("").includes("PROBE-FACTORY-DISPOSED"));
 
+  // ---- 6b. 会话库：搜索 / 只读预览 / 改名 / 标签 / 删除 -----------------------
+  // 现成的会话文件：header + 一问一答 + 一条分支。直接写进当前会话所在目录（宿主只认这个目录内的路径）。
+  const curFile = after.data.sessionFile;
+  const dir = dirname(curFile);
+  const mkEntry = (id, parentId, role, text) => ({ type: "message", id, parentId, timestamp: new Date().toISOString(), message: { role, content: [{ type: "text", text }], timestamp: Date.now(), ...(role === "assistant" ? { api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop" } : {}) } });
+  const libFile = join(dir, "2026-01-01T00-00-00-000Z_lib-fixture-1.jsonl");
+  writeFileSync(libFile, [
+    { type: "session", version: 3, id: "lib-fixture-1", timestamp: new Date().toISOString(), cwd: after.data.cwd },
+    mkEntry("e1", null, "user", "独一无二的搜索词 zebra-quartz 怎么用"),
+    mkEntry("e2", "e1", "assistant", "这样用"),
+    mkEntry("e3", "e2", "user", "再来一个分支问题"),
+  ].map((x) => JSON.stringify(x)).join("\n") + "\n");
+  const listed = await h.call("session.list", { all: true });
+  const row = listed.data.sessions?.find((x) => x.id === "lib-fixture-1");
+  expect("session.list 能列出（宿主用 SessionManager，不靠 App 扫盘）且默认不带全文", !!row && !("allMessagesText" in row), JSON.stringify(listed.error ?? listed.data).slice(0, 200));
+  const found = await h.call("session.search", { query: "ZEBRA-quartz", all: true });
+  expect("session.search 全文命中（大小写不敏感）并带片段", found.ok && found.data.matches.some((m) => m.session.id === "lib-fixture-1" && m.snippet.includes("zebra-quartz")), JSON.stringify(found.error ?? found.data).slice(0, 200));
+  expect("session.search 空词 → bad_args", (await h.call("session.search", { query: " " })).error?.code === "bad_args");
+  const sum = await h.call("session.read", { path: libFile });
+  expect("session.read 摘要（不切换会话）", sum.ok && sum.data.entryCount === 3 && sum.data.leafId === "e3", JSON.stringify(sum.error ?? sum.data).slice(0, 200));
+  const br = await h.call("session.read", { path: libFile, mode: "branch", fromId: "e2" });
+  expect("session.read 分支（叶到根）", br.ok && br.data.entries.map((e) => e.id).join() === "e1,e2" || br.data.entries.map((e) => e.id).join() === "e2,e1", JSON.stringify(br.data?.entries?.map((e) => e.id)));
+  const pg = await h.call("session.read", { path: libFile, mode: "entries", offset: 1, limit: 1 });
+  expect("session.read 条目分页", pg.ok && pg.data.entries.length === 1 && pg.data.hasMore === true);
+  expect("session.read 拒绝会话目录外的路径", (await h.call("session.read", { path: "/etc/passwd" })).error?.code === "bad_args");
+  expect("session.read 拒绝 .. 逃逸", (await h.call("session.read", { path: join(dir, "..", "..", "auth.json") })).error?.code === "bad_args");
+  const rn = await h.call("session.rename", { path: libFile, name: "库里改的名" });
+  const row2 = (await h.call("session.list", { all: true })).data.sessions.find((x) => x.id === "lib-fixture-1");
+  expect("session.rename 非当前会话", rn.ok && row2?.name === "库里改的名", JSON.stringify(row2));
+  expect("session.delete 不许删当前会话", (await h.call("session.delete", { path: curFile })).error?.code === "busy");
+  const del = await h.call("session.delete", { path: libFile });
+  expect("session.delete", del.ok && !existsSync(libFile));
+  expect("session.delete 不存在 → not_found", (await h.call("session.delete", { path: libFile })).error?.code === "not_found");
+  expect("session.label 条目不存在 → not_found", (await h.call("session.label", { entryId: "nope", label: "x" })).error?.code === "not_found");
+  const pathNow = await h.call("session.path");
+  expect("session.path 空会话也可调", pathNow.ok && Array.isArray(pathNow.data.entries));
+  expect("session.contextEdit 条目不存在 → not_found", (await h.call("session.contextEdit", { targetId: "nope", replacement: null })).error?.code === "not_found");
+
   // ---- 7. 进程内服务 ----------------------------------------------------
   const pk = await h.call("packages.list");
   expect("packages.list（进程内，不起子进程）", pk.ok && Array.isArray(pk.data.packages), JSON.stringify(pk.error));

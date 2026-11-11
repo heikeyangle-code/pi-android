@@ -6,6 +6,7 @@
 import { DEFERRED } from "./registry.mjs";
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { snapshotOf, withState } from "../state.mjs";
+import { listInfos } from "./library.mjs";
 
 export function register(reg, { controller }) {
   // 应答附 state：打开后状态仓立刻有值，不用等下一条 state 事件。
@@ -118,11 +119,9 @@ export function register(reg, { controller }) {
     // 列会话：直接用 SessionManager，不再让 App 去读目录。
     const sdk = controller.sdk;
     if (!sdk) throw new HostError(ERR.NOT_OPEN, "先 session.open");
-    const all = bool(args, "all", false);
-    const infos = all
-      ? await sdk.SessionManager.listAll(controller.cfg.sessionDir)
-      : await sdk.SessionManager.list(controller.cfg.cwd, controller.cfg.sessionDir);
-    return { sessions: infos };
+    const infos = await listInfos(sdk, controller, bool(args, "all", false));
+    // 默认不带 allMessagesText（整段对话文本，列表行用不上；全文搜索走 session.search）。
+    return { sessions: bool(args, "text", false) ? infos : infos.map(({ allMessagesText, ...rest }) => rest) };
   });
 
   // ---- 写 -----------------------------------------------------------------

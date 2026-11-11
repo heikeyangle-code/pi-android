@@ -24,6 +24,7 @@ import { createUiContext } from "./ui/context.mjs";
 import { Controller } from "./controller.mjs";
 import * as hostCmds from "./commands/host.mjs";
 import * as sessionCmds from "./commands/session.mjs";
+import * as libraryCmds from "./commands/library.mjs";
 import * as modelCmds from "./commands/model.mjs";
 import * as catalogCmds from "./commands/catalog.mjs";
 import * as uiCmds from "./commands/ui.mjs";
@@ -80,7 +81,7 @@ controller.theme = themeHandle.theme;
 
 const reg = new Registry();
 const deps = { controller, hub, surfaces, ui, themeHandle, reg, bus: () => controller.bus };
-for (const mod of [hostCmds, sessionCmds, modelCmds, catalogCmds, uiCmds, serviceCmds, authCmds, resourceCmds, mcpCmds, settingsCmds, genericCmds]) mod.register(reg, deps);
+for (const mod of [hostCmds, sessionCmds, libraryCmds, modelCmds, catalogCmds, uiCmds, serviceCmds, authCmds, resourceCmds, mcpCmds, settingsCmds, genericCmds]) mod.register(reg, deps);
 
 hub.emit("host.ready", { pid: process.pid, node: process.version, cwd: cfg.cwd });
 

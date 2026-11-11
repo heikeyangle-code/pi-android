@@ -90,6 +90,8 @@ export class Controller {
     const sdk = (this.sdk = await loadSdk(this.cfg.piDir));
     const { cwd, agentDir } = this.cfg;
     const sessionDir = args.sessionDir ?? this.cfg.sessionDir ?? join(agentDir, "sessions");
+    /** 实际生效的会话目录（平铺：会话文件直接放在里面）。列表、搜索、路径校验都以它为准。 */
+    this.sessionDir = sessionDir;
 
     this.bus = sdk.createEventBus();
     const modelRuntime = await sdk.ModelRuntime.create({

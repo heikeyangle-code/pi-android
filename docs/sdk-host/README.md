@@ -62,3 +62,4 @@ pi 的 RPC 协议、RPC 响应类型、RPC 的残缺 UI 桩，**全部废弃**�
 - 没有在真机的 proot / proroot 里跑过宿主。本机只模拟了 proroot 的 `scandir` 补丁。真机验证清单在 runtimes.md。
 - Kotlin 侧一行没改，所以没编译。
 - 宿主的**启动耗时**在手机上未测；本机 node22：握手 <100 ms，SDK 打包入口加载 ≈ 250 ms（冷缓存下 1 s 量级）。
+- [`sessions.md`](sessions.md) —— 会话管理整块按 SDK 重做：审计、覆盖对照、UI、删除顺序

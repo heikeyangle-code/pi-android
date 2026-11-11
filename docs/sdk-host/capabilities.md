@@ -17,6 +17,7 @@
 | 官方默认工具 `read/bash/edit/write` | 已接 | 创建会话即带（测试断言） |
 | 其余官方工具 `grep/find/ls` | 已接 | `catalog.tools` 看全集，`catalog.setTools` 启用 |
 | `powershell` 工具 | 不适用 | 仅 Windows |
+| 会话库：搜索 / 只读预览 / 任意会话改名 / 删除 / 书签 / 当前分支 / 上下文编辑 | 已接（宿主） | `session.search/read/rename/delete/label/path/contextEdit`；设计见 `sessions.md` |
 | 提示图片 | 已接 | `session.prompt.images` |
 | 排队：steer / follow-up、两种模式 | 已接 | `session.steer/followUp`、`queue.*Mode`、`session.clearQueue` |
 | 用户 bash（`!cmd`）+ 扩展 `user_bash` 钩子 | 已接 | `session.bash` / `session.abortBash` |

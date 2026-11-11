@@ -56,6 +56,7 @@
 bash 工具输出等宽、可折叠到 N 行；超长输出显示「已截断 · 查看完整」（`session.bash` 的 `truncated` 标志）。
 
 ### 2.4 会话面板（底部抽屉，上滑或「⋯」）
+> 会话库（列表/搜索/预览）与树的详细方案、删除清单见 [`sessions.md`](sessions.md)，以它为准。
 一个抽屉，**分段**切换，取代现在的「会话浮层 + 树浮层 + 分叉弹窗」三套：
 - **树**：`session.tree`，当前叶子高亮；点节点 = `session.navigate`（树导航），弹窗问「是否摘要被离开的分支」
   （`summarize` / `customInstructions` / `label`）。**这是官方 `/tree`，不再靠 `pi-android-bridge` 绕路。**
