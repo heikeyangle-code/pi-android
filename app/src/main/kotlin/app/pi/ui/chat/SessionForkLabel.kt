@@ -8,7 +8,7 @@ package app.pi.ui.chat
  * 它要能被 `tools/run-app-pure-checks.sh` 编译（本机没有 Android、没有 Compose），所以它
  * **不许** import `android.*` / `androidx.*` / `app.pi.ui.*` 里的任何 Compose 东西。这就是它
  * 不写在 `SessionsScreen.kt` 里的原因 —— 那一屏是 Compose，本机编译不了，判定也就无从被跑
- * 到。它也**不依赖 `PiSessionStore.Summary`**：那个类型住在 `session` 目录（本机 harness 同样
+ * 到。它也**不依赖 `SessionSummary`**：那个类型住在 `session` 目录（本机 harness 同样
  * 不编译它），而这条判定要的只有两个字段，投影成 [SessionFileRow] 就够了 —— 代价是它
  * **看不见会话 `id`**，好处也正是这一点：`list()` 里同一个 `id` 两行（劈开的两半，
  * [PiSessionStore.mergeSameIdRow] 的 `PrefixRelation.Disjoint`）对它没有任何影响（见下）。

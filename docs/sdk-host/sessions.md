@@ -1,7 +1,14 @@
 # 会话管理：整块按官方 SDK 重做
 
-状态：宿主侧已做完并有测试（110 条）；Kotlin/UI 侧**还没动**，本文是它的施工图。
-没编译 Gradle、没上机。
+状态：
+- 宿主侧已做完并有测试（110 条）。
+- Kotlin 数据层已换：`SessionLibrary`（`app/pi/session/SessionLibrary.kt`）经宿主命令做列表/搜索/改名/删除，
+  `PiSessionViewModel` 的 `refreshSessions/deleteSession/renameSessionFromList` 已改用它；用真宿主端到端测过
+  （`host-session` harness，含路径换算、越界拒绝、改名、删除、搜索）。引擎一就绪会补读一次列表。
+- **还没做**：新会话库页/树页的界面；转录加载仍走 `SessionFileReader`（§3.3）；旧扫盘层（`PiSessionStore` 等）
+  还在、尚未删除（它们的 harness 要先逐个核对）。列表的 `model` 字段现在恒为 null（SDK 的 `SessionInfo` 不带模型），
+  `SessionsScreen` 上的「模型」徽标会消失 —— 新设计本来就不显示它。
+- 没过 Gradle、没上机。
 
 ## 1. 现状审计：这一整块是为 RPC 的缺口写的
 

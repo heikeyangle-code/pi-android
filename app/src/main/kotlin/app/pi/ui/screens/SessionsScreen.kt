@@ -76,7 +76,7 @@ import androidx.compose.ui.unit.sp
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
-import app.pi.session.PiSessionStore
+import app.pi.session.SessionSummary
 import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
@@ -206,13 +206,13 @@ fun SessionsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var byName by rememberSaveable { mutableStateOf(false) }
     var namedOnly by rememberSaveable { mutableStateOf(false) }
-    var confirming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    var confirming by remember { mutableStateOf<SessionSummary?>(null) }
     // Long-press opens pi's two per-session actions. Both exist in pi's session
     // selector; ours live here because a phone has no Ctrl+D and no `new_session`
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
-    var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    var actions by remember { mutableStateOf<SessionSummary?>(null) }
     // 长按菜单里的「重命名」：要改名的那一行。
-    var renaming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    var renaming by remember { mutableStateOf<SessionSummary?>(null) }
     var viewIndex by rememberSaveable { mutableIntStateOf(initialView.ordinal) }
     // 顶栏「⋯」。它是屏内状态，不是覆盖层：菜单开着时按返回应该先关菜单（`Popup`
     // 自己吃掉那一下），而不是把整层会话列表关掉。
@@ -260,7 +260,7 @@ fun SessionsScreen(
     // 就是这条判定，纯函数，只认 pi 记在文件头里的那个字符串。
     val forkParentNames = remember(sessions) {
         // 判定要的只有两个字段，所以这里先投影一次：`SessionForkLabel.kt` 是纯文件
-        // （一个 import 都没有），不认识 `PiSessionStore.Summary`，也正因如此它能在没有
+        // （一个 import 都没有），不认识 `SessionSummary`，也正因如此它能在没有
         // Android 的机器上被 harness 真跑一遍。
         val rows = sessions.map { SessionFileRow(it.file.name, it.displayName) }
         sessions.associate { it.file.absolutePath to forkParentNameOf(it.parentSession, rows) }
@@ -319,7 +319,7 @@ fun SessionsScreen(
             }
         // 当前工作区的那一组永远排第一：换了工作区，它就顶到最前面；新会话还没落盘时
         // 它还没有任何一行，就先放一个空组：只有组标题，没有占位行，等文件出现再长出真行。
-        fun isCurrent(cwd: String, rows: List<PiSessionStore.Summary>) =
+        fun isCurrent(cwd: String, rows: List<SessionSummary>) =
             cwd.trimEnd('/') in currentCwds || (activeFile != null && rows.any { it.file.name == activeFile })
         val grouped = visible
             .groupBy { it.cwd }
@@ -327,12 +327,12 @@ fun SessionsScreen(
             .let { list ->
                 val withCurrent =
                     if (query.isBlank() && !namedOnly && list.none { (cwd, rows) -> isCurrent(cwd, rows) }) {
-                        currentCwds.firstOrNull()?.let { listOf(it to emptyList<PiSessionStore.Summary>()) }.orEmpty() + list
+                        currentCwds.firstOrNull()?.let { listOf(it to emptyList<SessionSummary>()) }.orEmpty() + list
                     } else {
                         list
                     }
                 withCurrent.sortedWith(
-                    compareByDescending<Pair<String, List<PiSessionStore.Summary>>> { (cwd, rows) -> isCurrent(cwd, rows) }
+                    compareByDescending<Pair<String, List<SessionSummary>>> { (cwd, rows) -> isCurrent(cwd, rows) }
                         .thenByDescending { (_, rows) -> rows.maxOfOrNull { it.lastActivityAt } ?: 0L },
                 )
             }
@@ -1105,7 +1105,7 @@ private fun GroupHeading(label: String, count: Int, current: Boolean, collapsed:
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
-    summary: PiSessionStore.Summary,
+    summary: SessionSummary,
     active: Boolean,
     first: Boolean,
     last: Boolean,
@@ -1272,7 +1272,7 @@ private fun relativeTime(epochMillis: Long): String {
 }
 
 /** pi's `hasSessionName` (`session-selector-search.ts:36-38`): a *trimmed* non-empty name. */
-private fun hasName(summary: PiSessionStore.Summary): Boolean = !summary.name.isNullOrBlank()
+private fun hasName(summary: SessionSummary): Boolean = !summary.name.isNullOrBlank()
 
 /** `\s+` — pi's own tokenizer, both here and in the tree selector. */
 private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
@@ -1291,7 +1291,7 @@ private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
  *
  * The text searched is pi's too, as far as this app can see it: pi matches
  * `id + name + allMessagesText + cwd` (`:31-33`). `allMessagesText` does not come over
- * the wire — [PiSessionStore.Summary] carries no such field, and the store deliberately
+ * the wire — [SessionSummary] carries no such field, and the store deliberately
  * stops scanning at 1 MiB per file rather than streaming every message — so this
  * searches the fields that *are* here: the name pi recorded, the first-message title
  * behind it (pi searches both; the app used to search only the display name, so a
@@ -1313,7 +1313,7 @@ private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
  * string as lowercasing their concatenation (the JVM's `lowercase()` is context-sensitive:
  * a final capital sigma lowercases differently at the end of a word).
  */
-private fun sessionMatches(summary: PiSessionStore.Summary, tokens: List<String>): Boolean {
+private fun sessionMatches(summary: SessionSummary, tokens: List<String>): Boolean {
     if (tokens.isEmpty()) return true
     val text = buildString {
         append(summary.name.orEmpty()).append('\n')
@@ -1337,7 +1337,7 @@ private fun sessionQueryTokens(query: String): List<String> =
     query.lowercase().split(SESSION_SEARCH_WHITESPACE).filter { it.isNotEmpty() }
 
 /**
- * This screen's two derived readings of [PiSessionStore.Summary], computed together so that
+ * This screen's two derived readings of [SessionSummary], computed together so that
  * one key set (and therefore one O(n) `remember` comparison) covers both.
  *
  * @param visible the rows after the search box and the two filter chips, and after the
@@ -1346,6 +1346,6 @@ private fun sessionQueryTokens(query: String): List<String> =
  *   keeping [visible]'s order inside it.
  */
 private data class SessionListView(
-    val visible: List<PiSessionStore.Summary>,
-    val groups: List<Pair<String, List<PiSessionStore.Summary>>>,
+    val visible: List<SessionSummary>,
+    val groups: List<Pair<String, List<SessionSummary>>>,
 )

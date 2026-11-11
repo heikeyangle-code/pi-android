@@ -1549,6 +1549,7 @@ run_harness host-session \
   app.pi.engine.HostSessionCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/engine/HostSessionCheck.kt" \
   "$ROOT/app/src/test/kotlin/app/pi/engine/PendingModelRestartStub.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionLibrary.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/engine/PiEngineSession.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \

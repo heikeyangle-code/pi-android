@@ -45,7 +45,8 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.WorkspaceStore
-import app.pi.session.PiSessionStore
+import app.pi.session.SessionLibrary
+import app.pi.session.SessionSummary
 import app.pi.session.ResumeTarget
 import app.pi.session.SessionExportNaming
 import app.pi.session.SessionFileReader
@@ -110,6 +111,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -1108,14 +1110,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val promptFileStore: PromptFileStore by lazy { PromptFileStore(host.paths().agentDir) }
 
     /**
-     * pi's session index, read straight off disk.
-     *
-     * pi's RPC surface has no list-sessions command — it can only switch to a path
-     * you already know — so the list has to come from the files, exactly as the
-     * desktop picker does.
+     * 会话库：列表 / 搜索 / 改名 / 删除，全部经宿主命令（SDK 的 `SessionManager`）。
+     * 不再自己扫目录、解析 JSONL（docs/sdk-host/sessions.md）。需要引擎已打开。
      */
-    private val sessionStore: PiSessionStore by lazy {
-        PiSessionStore(File(host.paths().agentDir, "sessions"), host.paths().sessionIndexFile())
+    private val sessionLibrary: SessionLibrary by lazy {
+        SessionLibrary(File(host.paths().agentDir), host.guestAgentDir) { session?.commands }
     }
 
     /**
@@ -1156,8 +1155,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var lastMentionFailure: String? = null
 
-    private val _sessions = MutableStateFlow<List<PiSessionStore.Summary>>(emptyList())
-    val sessions: StateFlow<List<PiSessionStore.Summary>> = _sessions.asStateFlow()
+    private val _sessions = MutableStateFlow<List<SessionSummary>>(emptyList())
+    val sessions: StateFlow<List<SessionSummary>> = _sessions.asStateFlow()
 
     /**
      * Whether a [refreshSessions] scan is in flight **and has nothing to show yet**.
@@ -1177,7 +1176,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 最近一次会话列表读取**失败**了。
      *
-     * 为什么要有这个状态：旧写法是 `runCatching { sessionStore.list() }.getOrDefault(emptyList())`
+     * 为什么要有这个状态：旧写法是 `runCatching { sessionLibrary.list() }.getOrDefault(emptyList())`
      * —— 读不到就把列表**换成空**，而 `sessionsLoading` 那一刻已经是 false，于是 `SessionsScreen`
      * 落到「还没有会话」那一支：**一句关于用户数据、却没有校验过的断言**。会话屏本来已经区分了
      * 「正在读取」，缺的就是这第三种状态。
@@ -1208,7 +1207,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _sessionsLoading.value = _sessions.value.isEmpty()
             try {
-                val read = runCatching { sessionStore.list() }
+                val read = runCatching { sessionLibrary.list() }
                 // 协程被取消不是「读取失败」：照旧抛出去（`finally` 仍然会清 loading），否则一次
                 // 正常的取消会被写成一条「读不到会话列表」。
                 read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
@@ -2649,6 +2648,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         session = engine
         api = engine.api
+        // 会话列表要宿主已 `session.open` 才读得到：引擎一就绪就补读一次（此前的读取会失败并保留旧列表）。
+        viewModelScope.launch {
+            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
+            if (session === engine) refreshSessions()
+        }
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
@@ -4002,7 +4006,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *     left — reading its file would replay the wrong history, which is worse than
      *     the slow open this path replaces.
      *  2. [SessionHints.file] is set by the one caller that already knows the answer
-     *     from disk ([switchSession] holds the `PiSessionStore.Summary` the user
+     *     from disk ([switchSession] holds the `SessionSummary` the user
      *     tapped, and [importSession] the file it just copied), so the common case —
      *     opening a conversation from the list — needs no round trip at all.
      */
@@ -5133,7 +5137,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * of an existing session file, written verbatim into the new session's header as
      * `parentSession` (`session-manager.ts:938` in `SessionManager.new`). pi does
      * nothing else with it — its session selector rebuilds a tree from that field
-     * (`components/session-selector.ts:206-231`), and our own [PiSessionStore.Summary]
+     * (`components/session-selector.ts:206-231`), and our own [SessionSummary]
      * already reads it back (`parentSession`), which is why a child session shows up
      * with the 「来自〈父会话名〉」 line. No grouping or tag of our own is involved.
      *
@@ -5176,7 +5180,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * pi resolves `parentSession` inside the guest, so handing it a host path would
      * record a parent that does not exist from pi's side.
      */
-    fun newChildSession(summary: PiSessionStore.Summary) {
+    fun newChildSession(summary: SessionSummary) {
         val path = guestSessionPath(summary.file)
         if (path == null) {
             fail("找不到会话文件：${summary.file.name}")
@@ -5194,16 +5198,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * active session before ever calling this: pi is appending to that file, and
      * unlinking it under the engine would keep it writing to a removed inode.
      *
-     * The unlink itself goes through [PiSessionStore.delete] rather than
-     * `summary.file.delete()` so the store's containment guard
-     * (`PiSessionStore.kt:161-167` — only a regular `.jsonl` directly inside the
-     * session root) is the one that runs; a `Summary` is data, and data must not be
-     * able to name an arbitrary path to unlink.
+     * 删除走宿主的 `session.delete`（[SessionLibrary.delete]）：宿主只认会话目录之内的路径、
+     * 拒绝删当前会话；[SessionSummary] 是数据，数据不能指名任意路径去 unlink。
      */
-    fun deleteSession(summary: PiSessionStore.Summary) {
+    fun deleteSession(summary: SessionSummary) {
         viewModelScope.launch {
             val removed = withContext(Dispatchers.IO) {
-                sessionStore.delete(summary.file)
+                sessionLibrary.delete(summary.file)
             }
             if (removed) {
                 pushNotice("已删除：${summary.displayName}", Notice.Tone.Info)
@@ -5224,7 +5225,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * under pi is what lets a `session_before_switch` extension veto it
      * (audit §6.9).
      */
-    fun switchSession(summary: PiSessionStore.Summary) {
+    fun switchSession(summary: SessionSummary) {
         val path = guestSessionPath(summary.file)
         if (path == null) {
             fail("找不到会话文件：${summary.file.name}")
@@ -5281,7 +5282,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
      * 宁可保持现状，也不要猜一个工作区。
      */
-    private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary, generation: Long) {
+    private suspend fun adoptSessionWorkspace(summary: SessionSummary, generation: Long) {
         // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
         //
         // `Summary.cwd` 本来就是**从会话文件头里读出来的**（`PiSessionStore` 的第 622/744 行
@@ -5884,14 +5885,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 会话列表里长按「重命名」：当前正在用的会话走 RPC（引擎正往它的文件里追加，不能同时写），
      * 其余会话直接往文件末尾追加一条 `session_info`（[PiSessionStore.rename]）。
      */
-    fun renameSessionFromList(summary: PiSessionStore.Summary, name: String) {
+    fun renameSessionFromList(summary: SessionSummary, name: String) {
         val open = _state.value.meta.sessionFile?.substringAfterLast('/')
         if (open != null && open == summary.file.name) {
             renameSession(name)
             return
         }
         viewModelScope.launch {
-            val ok = sessionStore.rename(summary.file, name)
+            val ok = sessionLibrary.rename(summary.file, name)
             if (ok) {
                 refreshSessions()
             } else {

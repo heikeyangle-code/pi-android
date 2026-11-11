@@ -1,6 +1,7 @@
 package app.pi.engine
 
 import app.pi.host.OpenArgs
+import app.pi.session.SessionLibrary
 import app.pi.rpc.PiEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,19 +87,44 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
     check("api.getState 与 store 同一会话", api.sessionId, st?.sessionId)
     flag("api.getAvailableModels 非空", session.api.getAvailableModels().isNotEmpty())
 
+    // —— 会话库：宿主机路径 ↔ guest 路径；这里 guest 与宿主机是同一棵目录，所以换算是恒等的，
+    //    但越界拒绝、改名、删除、搜索都是真的在跑宿主命令。
+    val agentDir = tmp.resolve("a/agent")
+    val lib = SessionLibrary(agentDir, agentDir.path) { session.commands }
+    val sdir = agentDir.resolve("sessions").also { it.mkdirs() }
+    val fx = sdir.resolve("2026-01-01T00-00-00-000Z_lib-1.jsonl")
+    fx.writeText(
+        listOf(
+            """{"type":"session","version":3,"id":"lib-1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"${tmp.resolve("a/work").path}"}""",
+            """{"type":"message","id":"e1","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"独特词 quokka-lime 怎么用\n第二行"}],"timestamp":1767225601000}}""",
+        ).joinToString("\n") + "\n",
+    )
+    val libRows = lib.list()
+    val row = libRows.firstOrNull { it.id == "lib-1" }
+    flag("SessionLibrary.list 读到宿主给的行", row != null, libRows.toString())
+    check("行的字段：文件/标题取首行/条数", Triple(row?.file?.name, row?.title, row?.messageCount), Triple(fx.name, "独特词 quokka-lime 怎么用", 1))
+    flag("行的时间来自 ISO 字符串", (row?.startedAt ?: 0L) > 1_700_000_000_000L)
+    val libHits = lib.search("QUOKKA-lime")
+    flag("SessionLibrary.search 命中且带片段", libHits.any { it.session.id == "lib-1" && it.snippet.contains("quokka-lime") })
+    check("改名成功", lib.rename(fx, "库改名"), true)
+    check("改名后列表里是新名字", lib.list().firstOrNull { it.id == "lib-1" }?.displayName, "库改名")
+    check("会话根之外的路径换不出来 → 改名/删除返回 false", lib.rename(File("/etc/passwd"), "x") to lib.delete(File("/etc/passwd")), false to false)
+    check("删除成功且文件没了", lib.delete(fx) to fx.exists(), true to false)
+    check("删不存在的 → false", lib.delete(fx), false)
+
     // 发后不管：没有凭据的 prompt 预检通过、整轮失败 → 状态机 Busy/Ready 来回，不是卡死
     val events = java.util.Collections.synchronizedList(mutableListOf<PiEvent>())
     val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { session.events.collect { events.add(it) } }
     session.prompt("你好")
     val rows = within(30_000) { session.publication.first { p -> p.rows.isNotEmpty() } }
     flag("prompt 的用户气泡进了 transcript（本地回显）", rows != null)
-    delay(1500)
+    within(20_000) { while (events.none { it is PiEvent.AgentStart || it is PiEvent.AgentEnd || it is PiEvent.AgentSettled }) delay(50) }
     flag("agent 事件到了界面事件流", events.any { it is PiEvent.AgentStart || it is PiEvent.AgentEnd || it is PiEvent.AgentSettled }, events.map { it.type }.toString())
 
     // 发后不管的命令失败 → Response(success=false)
     events.clear()
     session.fire("no.such.command")
-    delay(800)
+    within(10_000) { while (events.none { it is PiEvent.Response }) delay(50) }
     val failed = events.filterIsInstance<PiEvent.Response>().firstOrNull()
     check("fire 失败变成 Response(success=false)", failed?.success to failed?.command, false to "no.such.command")
 
@@ -107,7 +133,7 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
 
     // 收尾：等本轮结束再关，进程真的退出
     session.closeAfterSettling(timeoutMs = 30_000)
-    delay(500)
+    within(10_000) { while (session.state.value != PiEngineSession.EngineState.Stopped && session.state.value != PiEngineSession.EngineState.Failed) delay(50) }
     flag("closeAfterSettling 之后进程退出", session.state.value == PiEngineSession.EngineState.Stopped || session.state.value == PiEngineSession.EngineState.Failed, session.state.value.toString())
     collector.cancel()
 
@@ -132,8 +158,9 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
     // —— 进程退出：在等的命令以 closed 失败，而不是等满超时 ——
     val dying = spawn(node, hostMain, piDir, tmp, "b")
     delay(800)
+    // 用 session.open：加载 SDK 要好几秒，保证进程被收掉时命令还在途中（ping 太快，会赢过 close）。
     val pendingCall = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-        val ex = runCatching { dying.commands.call("host.ping", timeoutMs = 20_000) }.exceptionOrNull()
+        val ex = runCatching { dying.commands.open(OpenArgs(), timeoutMs = 60_000) }.exceptionOrNull()
         flag("进程被杀时在等的命令立刻失败", ex != null)
     }
     runCatching { dying.close() }
