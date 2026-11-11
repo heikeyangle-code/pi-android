@@ -232,6 +232,70 @@ try {
   expect("session.path 空会话也可调", pathNow.ok && Array.isArray(pathNow.data.entries));
   expect("session.contextEdit 条目不存在 → not_found", (await h.call("session.contextEdit", { targetId: "nope", replacement: null })).error?.code === "not_found");
 
+  // ---- 6c. AgentSession 补齐项：作用域模型 / 缓存预热 / 中止 / 系统提示词 / 导出 / 队列 ----
+  const ml = await h.call("model.list");
+  const mods = ml.data?.models ?? ml.data?.available ?? [];
+  expect("model.list 有可选模型（假凭据下也应有内置目录）", Array.isArray(mods) && mods.length >= 2, JSON.stringify(ml.error ?? Object.keys(ml.data ?? {})));
+  if (mods.length >= 2) {
+    const two = mods.slice(0, 2).map((m) => ({ provider: m.provider, id: m.id }));
+    const set = await h.call("models.setScoped", { models: two });
+    expect("models.setScoped 设两个", set.ok && set.data.count === 2 && set.data.state.scopedModelCount === 2, JSON.stringify(set.error ?? set.data?.count));
+    const got = await h.call("models.scoped");
+    expect("models.scoped 读回同两个", got.ok && got.data.models.map((m) => m.id).join() === two.map((m) => m.id).join(), JSON.stringify(got.data));
+    expect("models.setScoped 不存在的模型 → not_found", (await h.call("models.setScoped", { models: [{ provider: "nope", id: "nope" }] })).error?.code === "not_found");
+    expect("models.setScoped 缺字段 → bad_args", (await h.call("models.setScoped", { models: [{ id: "x" }] })).error?.code === "bad_args");
+    expect("models.setScoped 非数组 → bad_args", (await h.call("models.setScoped", { models: "x" })).error?.code === "bad_args");
+    const clr = await h.call("models.setScoped", { models: [] });
+    expect("models.setScoped 空数组 = 取消作用域", clr.ok && clr.data.state.scopedModelCount === 0);
+  }
+  const cs = await h.call("cache.status");
+  expect("cache.status 有 mode 与 status 字段", cs.ok && typeof cs.data.mode === "string" && "status" in cs.data, JSON.stringify(cs.error ?? cs.data));
+  const cm = await h.call("cache.setMode", { mode: cs.data?.mode ?? "off" });
+  expect("cache.setMode 设回原值", cm.ok && cm.data.mode === cs.data.mode, JSON.stringify(cm.error ?? cm.data));
+  expect("cache.setMode 非法值被拒绝（SDK 自己不校验）", (await h.call("cache.setMode", { mode: "definitely-not-a-mode" })).error?.code === "bad_args");
+  expect("非法值没有落进设置", (await h.call("cache.status")).data.mode === cs.data.mode);
+  const ac = await h.call("session.abortCompaction");
+  expect("session.abortCompaction 没在压缩时也不报错", ac.ok && ac.data.wasCompacting === false);
+  expect("session.abortBranchSummary 无事可做不报错", (await h.call("session.abortBranchSummary")).ok);
+  const sp = await h.call("session.systemPrompt");
+  expect("session.systemPrompt 返回非空文本", sp.ok && typeof sp.data.text === "string" && sp.data.text.length > 50);
+  const ct = await h.call("tools.callable");
+  expect("tools.callable 是名字数组", ct.ok && Array.isArray(ct.data.names));
+  const qm = await h.call("queue.messages");
+  expect("queue.messages 空队列", qm.ok && qm.data.steering.length === 0 && qm.data.followUp.length === 0);
+  const ej = await h.call("session.exportJsonl", {});
+  expect("session.exportJsonl 默认路径（工作目录）", ej.ok && existsSync(ej.data.path), JSON.stringify(ej.error ?? ej.data));
+  expect("session.exportJsonl 拒绝工作目录之外", (await h.call("session.exportJsonl", { path: "/tmp/escape.jsonl" })).error?.code === "bad_args");
+  expect("session.bugReportCancel 没有在跑时返回 wasRunning:false", (await h.call("session.bugReportCancel")).data?.wasRunning === false);
+  const snap2 = await h.call("session.snapshot");
+  expect("快照带 routedModel（无虚拟选择为 null）与 scopedModelCount", snap2.ok && snap2.data.routedModel === null && snap2.data.scopedModelCount === 0, JSON.stringify(snap2.data).slice(0, 160));
+
+  // ---- 6d. models.json 事务：增改删 / 非法回滚（SDK 自己当校验器） ----
+  const mc0 = await h.call("models.config.get");
+  expect("models.config.get 初始无文件", mc0.ok && mc0.data.exists === false && mc0.data.error === null, JSON.stringify(mc0.error ?? mc0.data));
+  const good = { baseUrl: "http://127.0.0.1:1/v1", apiKey: "k", api: "openai-completions", models: [{ id: "m1", name: "M1" }] };
+  const mcSet = await h.call("models.config.setProvider", { id: "mine", provider: good });
+  expect("models.config.setProvider 新增", mcSet.ok && mcSet.data.providers.includes("mine"), JSON.stringify(mcSet.error ?? mcSet.data));
+  const ml2 = await h.call("model.list");
+  expect("新增的自定义模型立刻出现在 model.list", JSON.stringify(ml2.data).includes('"m1"'), JSON.stringify(ml2.error ?? ml2.data).slice(0, 120));
+  const fileOnDisk = () => readFileSync(join(h.agentDir, "models.json"), "utf8");
+  const okText = fileOnDisk();
+  const badSet = await h.call("models.config.setProvider", { id: "mine", provider: { baseUrl: 5 } });
+  expect("非法配置被拒绝，且原话来自 SDK 校验（精确到字段）", badSet.error?.code === "rejected" && /providers\.mine\.baseUrl.*must be string/.test(badSet.error.message), JSON.stringify(badSet.error));
+  expect("非法保存后磁盘上仍是上一份能用的配置", fileOnDisk() === okText);
+  expect("回滚之后自定义模型仍可用", JSON.stringify((await h.call("model.list")).data).includes('"m1"'));
+  const keep = JSON.parse(okText);
+  writeFileSync(join(h.agentDir, "models.json"), JSON.stringify({ ...keep, futureField: { x: 1 } }));
+  await h.call("models.config.setProvider", { id: "other", provider: { ...good, models: [{ id: "m2" }] } });
+  expect("文件里其他顶层字段原样保留", JSON.parse(fileOnDisk()).futureField?.x === 1);
+  expect("models.config.removeProvider", (await h.call("models.config.removeProvider", { id: "other" })).ok && !("other" in JSON.parse(fileOnDisk()).providers));
+  expect("删不存在的 → not_found", (await h.call("models.config.removeProvider", { id: "ghost" })).error?.code === "not_found");
+  writeFileSync(join(h.agentDir, "models.json"), "{ broken");
+  expect("文件损坏时 setProvider 拒绝叠加", (await h.call("models.config.setProvider", { id: "z", provider: good })).error?.code === "rejected");
+  expect("models.config.get 报出 SDK 的解析错误", /Failed to parse models.json/.test((await h.call("models.config.get")).data.error ?? ""));
+  expect("整份 set 可以修好损坏的文件", (await h.call("models.config.set", { config: { providers: {} } })).ok);
+  expect("models.config.setProvider 缺 id → bad_args", (await h.call("models.config.setProvider", { provider: good })).error?.code === "bad_args");
+
   // ---- 7. 进程内服务 ----------------------------------------------------
   const pk = await h.call("packages.list");
   expect("packages.list（进程内，不起子进程）", pk.ok && Array.isArray(pk.data.packages), JSON.stringify(pk.error));
