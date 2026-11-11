@@ -126,6 +126,15 @@ class HostCommands(
 
     suspend fun fork(entryId: String): HostReply = reply("session.fork", obj { put("entryId", JsonPrimitive(entryId)) })
     suspend fun clone(): HostReply = reply("session.clone")
+    /** 会话树内跳转（官方 `/tree`，`navigateTree`）：叶子移到更早的条目，可选为被离开的分支写摘要。 */
+    suspend fun navigate(targetId: String, summarize: Boolean = false, customInstructions: String? = null, replaceInstructions: Boolean? = null, label: String? = null): HostReply =
+        reply("session.navigate", obj {
+            put("targetId", JsonPrimitive(targetId))
+            if (summarize) put("summarize", JsonPrimitive(true))
+            customInstructions?.let { put("customInstructions", JsonPrimitive(it)) }
+            replaceInstructions?.let { put("replaceInstructions", JsonPrimitive(it)) }
+            label?.let { put("label", JsonPrimitive(it)) }
+        }, LONG_TIMEOUT_MS)
     suspend fun compact(): HostReply = reply("session.compact", timeoutMs = LONG_TIMEOUT_MS)
     suspend fun reload(): HostReply = reply("session.reload", timeoutMs = LONG_TIMEOUT_MS)
     suspend fun setName(name: String): HostReply = reply("session.name", obj { put("name", JsonPrimitive(name)) })
@@ -215,3 +224,10 @@ class HostCommands(
 private inline fun obj(build: MutableMap<String, JsonElement>.() -> Unit): JsonObject =
     JsonObject(LinkedHashMap<String, JsonElement>().apply(build))
 
+/** `session.prompt` / `session.steer` / `session.followUp` 的参数：`{message, images?}`。 */
+fun sendArgs(message: String, images: List<app.pi.rpc.PiImage>): JsonObject = JsonObject(
+    buildMap {
+        put("message", JsonPrimitive(message))
+        if (images.isNotEmpty()) put("images", HostCommands.imagesJson(images))
+    },
+)

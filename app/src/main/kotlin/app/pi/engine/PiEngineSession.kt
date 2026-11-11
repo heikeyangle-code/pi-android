@@ -184,7 +184,7 @@ class PiEngineSession(
      * (`prompt`, `sendFollowUp`, `runPromptCommand`, `send`), and a pipe write is
      * **not** a bounded operation: it blocks once the kernel's ~64 KB buffer is full,
      * i.e. exactly while pi is not reading its stdin. pi does not read stdin until its
-     * startup is over (that gap is the reason [probeServing] exists at all), and it
+     * startup is over (that gap is the reason [startHost] exists at all), and it
      * also stops draining while it is busy parsing a huge record. So a large command —
      * an attachment travels inline as base64, several megabytes of it — written from
      * the frame thread is a main-thread block, and a phone's pi cold start is long
@@ -1408,7 +1408,7 @@ class PiEngineSession(
          * Process-wide rather than per-session because the reader is 设置 →
          * 运行时与诊断, which has no `PiEngineSession` to ask — the same shape as
          * `PiEngineService.isWakeLockHeld()`, which the runtime rows already read for
-         * exactly this reason. Written only by [probeServing], which is the boot path
+         * exactly this reason. Written only by [startHost], which is the boot path
          * every engine goes through (`PiEngineHost.bootLocked`).
          */
         @Volatile
@@ -1416,12 +1416,12 @@ class PiEngineSession(
             private set
 
         /**
-         * How long [probeServing] waits for pi's first answer.
+         * How long [startHost] waits for pi's first answer.
          *
          * Generous on purpose, and deliberately longer than [request]'s own default:
          * the probe is measuring a cold start under proot on a phone, which is the
          * slowest path in this app, and a timeout here is not an error — it only
-         * leaves the UI saying 启动中 (see [probeServing]).
+         * leaves the UI saying 启动中 (see [startHost]).
          */
         private const val SERVING_PROBE_TIMEOUT_MS = 300_000L
 

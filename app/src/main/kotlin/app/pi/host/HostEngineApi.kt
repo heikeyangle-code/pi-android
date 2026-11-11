@@ -174,8 +174,14 @@ class HostEngineApi(private val commands: HostCommands) {
         throw HostCommandException(cmd, e.message ?: e.code, e.code)
     }
 
-    private companion object {
-        val EMPTY = JsonObject(emptyMap())
+    companion object {
+        private val EMPTY = JsonObject(emptyMap())
+
+        /** 普通命令的时限。 */
+        const val DEFAULT_TIMEOUT_MS = 120_000L
+
+        /** 会跑 LLM 摘要、或可能卡在扩展对话框等用户回答的命令。 */
+        const val SLOW_TIMEOUT_MS = 600_000L
     }
 }
 

@@ -1558,6 +1558,18 @@ run_harness host-session \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 
+# app.pi.host.OpenArgsFactory: 启动前设置（PiLaunchOptions）→ session.open 参数。旧路径拼命令行 flag，
+# 现在是结构化参数；钉住资源开关、扩展 flag、以及「路径优先于 id 优先于 continue」的会话选择。
+run_harness host-launch \
+  app.pi.host.OpenArgsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/host/OpenArgsCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/OpenArgsFactory.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

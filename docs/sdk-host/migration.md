@@ -59,12 +59,15 @@ epoch 过滤、seq 跳号、res/req 配对、超时清理、未知帧忽略。
 
 ## 步骤 3 [~]：ViewModel 切换并删除旧 RPC 层
 
-> **进度（诚实版）**：`PiEngineSession` 已就地改接宿主协议（`startHost`/`commands`/`api`/`respondUi`/`fire`），
-> 用 `host-session` harness 对**真宿主 + 真 pi 1.5.0** 端到端验证过（握手后才 Ready、协议不符→Failed、
-> 发后不管的失败→`Response(success=false)`、进程死时等待中的命令立刻失败）。该测试同时揪出并修掉
-> `session.open` 应答缺 `state`。**还没做**：`PiEngineHost`（调 `startHost`、`guestCommand` 换成
-> `SdkHostLaunch.command`）、ViewModel 调用点（`engine.send`→`respondUi`/`fire`、`PiEngineApi`→`HostEngineApi`、
-> `PiRpcException`→`HostCommandException`）、删旧 RPC 层。没过 Gradle、没上机跑过。
+> **进度（诚实版）**：
+> - 已做：`PiEngineSession` 接宿主协议（真宿主端到端 harness 验过）；`PiEngineHost` 用 `SdkHostLaunch.command` 起宿主、
+>   握手后 `startHost(launch.toOpenArgs())`（启动前设置变成结构化参数，`host-launch` harness 钉住）；
+>   `PiSessionViewModel` 的 `send/request` 全部改成 `respondUi/fire/api`；树导航改直接调 `session.navigate`
+>   （不再绕 `pi-android-bridge` 扩展命令）；`PiEngineApi.kt` 已删，VM 用 `HostEngineApi`/`HostCommandException`。
+> - **没验证**：整个 App 没过 Gradle（环境没有 android.jar，只能编纯逻辑部分），VM/Host 的改动靠逐处核对 +
+>   「VM 用到的 engine 成员都存在」的检查，**不能当作编译通过**；没上机跑 proot/proroot。
+> - 还没做：删旧 RPC 层剩余（`PiCommands` 的 `extensionUi*` 仍被 VM 用来拼回答再翻译、`rpc` 模块里旧 Events 解析
+>   仍是转录的输入、`pi-oauth.mjs` / `pi-resources.mjs` / `PiMcpCheck`）；会话库整块见 `sessions.md`。
 
 **目标**：聊天主路径（发送、流式、工具卡、队列、中止、模型/思考、会话列表/切换/分叉/树）全部走新客户端，旧 RPC 代码删除。
 

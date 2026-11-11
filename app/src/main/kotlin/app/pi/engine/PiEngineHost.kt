@@ -15,6 +15,7 @@ import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.RuntimeSelfCheck
 import app.pi.runtime.RuntimeTreeAudit
 import app.pi.runtime.WorkspaceStore
+import app.pi.host.toOpenArgs
 import app.pi.rpc.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -623,20 +624,20 @@ class PiEngineHost(private val appContext: Context) {
             // while the engine is running (not only at the exit it captures). Written before
             // the process exists, so a run that dies immediately still names its entry.
             lastEngineEntry = entry
-            // Only the unpacked entry needs the flag; `rpc-entry.js` injects it.
-            val needsModeFlag = entry == EngineEntry.Unpacked
 
             launchOptions = launch
 
-            val guestCommand = buildString {
-                append("exec /opt/node/bin/node ").append(cli)
-                if (needsModeFlag) append(" --mode rpc")
-                append(" --session-dir ").append(guestAgentDir).append("/sessions")
-                // pi's pre-spawn flags. The suffix is already shell-quoted because
-                // the argv builder hands this string to `bash -c` inside the
-                // rootfs; empty when no option is set.
-                append(launch.commandLineSuffix())
-            }
+            // 启动 sdk-host（不再是 pi 的 RPC 入口）。proot 与 proroot 共用这一条命令
+            // （docs/sdk-host/runtimes.md）；用户的启动前设置不再拼成命令行 flag，而是在握手后
+            // 以结构化参数交给 `session.open`（见下面的 `startHost`、`PiLaunchOptions.toOpenArgs`）。
+            // `entry`（打包版/解包版）只用来确认引擎已安装：宿主自己的 `loadSdk` 优先用 bundle、
+            // 缺了回退 dist（`sdkVia`），不需要 App 再替它挑。
+            val guestCommand = SdkHostLaunch.command(
+                cwd = guestWorkspace,
+                agentDir = guestAgentDir,
+                sessionDir = "$guestAgentDir/sessions",
+                piDir = engineRoot,
+            )
 
             // The engine is the largest and most latency-sensitive guest process —
             // Node plus pi, and the thing the user waits for on every cold start — so
@@ -845,7 +846,7 @@ class PiEngineHost(private val appContext: Context) {
                     // caller gets the session now and the UI reports 启动中 until the
                     // answer arrives, which is also what lets a first message be typed
                     // during the wait instead of being rejected.
-                    session.probeServing()
+                    session.startHost(launch.toOpenArgs(sessionDir = "$guestAgentDir/sessions"))
                     Boot.Ready(session)
                 },
                 onFailure = { error ->

@@ -16,10 +16,10 @@ import app.pi.engine.EngineFailure
 import app.pi.engine.EngineFailureClassify
 import app.pi.engine.RetryMode
 import app.pi.engine.EngineExitCause
-import app.pi.engine.PiEngineApi
+import app.pi.host.HostEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
-import app.pi.engine.PiRpcException
+import app.pi.host.HostCommandException
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.asOutcome
 import app.pi.rpc.Notice
@@ -70,7 +70,6 @@ import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
 import app.pi.ui.chat.activeBranch
 import app.pi.ui.chat.appendTailBounded
-import app.pi.ui.chat.navigateCommandArgs
 import app.pi.ui.chat.navigateOutcome
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.wantsSummary
@@ -593,7 +592,7 @@ class ComposerDraft {
  * Note what this class does **not** do: it never re-derives conversation state.
  * pi owns the session; the transcript here is a projection, and re-attaching
  * replays pi's own records from `get_entries`. Every RPC call goes through
- * [PiEngineApi] — the typed façade over pi's command surface — so a command pi
+ * [HostEngineApi] — the typed façade over pi's command surface — so a command pi
  * can answer is never a hand-built `JsonObject` here.
  *
  * It *is* the owner of the extension UI protocol, because that protocol is a
@@ -978,7 +977,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * attached. Null exactly when there is no engine to talk to, which is what
      * every action below checks before doing anything.
      */
-    private var api: PiEngineApi? = null
+    private var api: HostEngineApi? = null
 
     /**
      * The engine's own teardown, handed to the foreground service.
@@ -2649,7 +2648,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         clearExtensionChrome()
 
         session = engine
-        api = PiEngineApi(engine)
+        api = engine.api
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
@@ -3680,7 +3679,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // silently dropped (`rpc-mode.ts` input handler) — so a late reply cannot
         // corrupt the stream, and an early one resolves to the same documented
         // default pi would have chosen.
-        runCatching { engine.send(command) }
+        runCatching {
+            val id = (command["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@runCatching
+            val cancelled = (command["cancelled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+            val confirmed = (command["confirmed"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull()
+            val value = (command["value"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            engine.respondUi(id, value = value, confirmed = confirmed, cancelled = cancelled)
+        }
     }
 
     /**
@@ -3799,14 +3804,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         /**
          * Optional translation of a failure into something the user can act on.
          *
-         * The default is [Throwable.message], which for a [PiRpcException] is pi's
+         * The default is [Throwable.message], which for a [HostCommandException] is pi's
          * own English sentence prefixed with the command name — correct, but it
          * names the *symptom* and not one thing to do next. A command whose
          * failures have a small, knowable set of causes passes a mapper here
          * instead; pi's own text is kept inside the sentence, never replaced.
          */
         errorText: ((Throwable) -> String)? = null,
-        block: suspend (PiEngineApi) -> Unit,
+        block: suspend (HostEngineApi) -> Unit,
     ) {
         val api = this.api
         if (api == null) {
@@ -4030,27 +4035,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * the *second* choice is written down next to it.
      */
     private suspend fun replayHistoryOverRpc(engine: PiEngineSession) {
-        val response = runCatching {
-            engine.request({ PiCommands.getEntries(it) })
-        }.getOrNull() ?: run {
-            fail("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。")
+        val page = try {
+            engine.api.getEntries()
+        } catch (e: HostCommandException) {
+            // `reason` 是宿主/pi 自己的原话（例如超大记录的那句），原样带给用户。
+            fail("读取会话内容失败：${e.reason}。")
             return
-        }
-        if (!response.success) {
-            // A brand-new in-memory session answers with an empty page, not an
-            // error (that is the success branch below); a real error means the
-            // transcript cannot be rebuilt — and `response.error` already carries
-            // the engine's own reason, e.g. the oversized-record sentence.
-            fail("读取会话内容失败：${response.error ?: "原因未知"}。")
+        } catch (e: Exception) {
+            fail("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。")
             return
         }
         // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
         // the rows without publishing, and a publication is what carries the new
-        // list (and its `replaced` flag) to this consumer. It **suspends**: the
-        // projection runs on `Dispatchers.Default` and takes over the engine's
-        // reducer under its transcript lock, so this await is where the frame thread
-        // is released.
-        val entries = PiResponses.entries(response)
+        // list (and its `replaced` flag) to this consumer. It **suspends**.
+        val entries = page.entries
         // This path is a **whole session** in one answer (`get_entries` has no
         // pagination), so the retained-size accounting is the largest of the three
         // callers and the one that used to be worst on the frame thread. See
@@ -4380,11 +4378,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * replay）都必须先 await 这一句。失败不抛：`get_state` 拿不到时 replay 会走
      * `get_entries` 回落，而 `call` 版本的报错行为一点没变。
      */
-    private suspend fun refreshStateNow(api: PiEngineApi) {
+    private suspend fun refreshStateNow(api: HostEngineApi) {
         runCatching { loadState(api) }
     }
 
-    private suspend fun loadState(api: PiEngineApi) {
+    private suspend fun loadState(api: HostEngineApi) {
         val remote = api.getState()
         val current = _state.value.meta
         val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
@@ -4680,13 +4678,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // delivery, not to this submission (see `PiEngineSession.prompt`). The
         // pending row is what shows the message in the meantime.
         if (_state.value.meta.compacting) {
-            engine.send(
-                PiCommands.steer(
-                    id = "steer-${System.nanoTime()}",
-                    message = trimmed,
-                    images = images,
-                ),
-            )
+            engine.fire("session.steer", app.pi.host.sendArgs(trimmed, images))
             syncTranscript(engine, engine.publication.value)
             // pi answers this window with its own status line — `Queued message for
             // after compaction` (`interactive-mode.js:3916`, in
@@ -4764,7 +4756,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             //
             // `send`, not `prompt`: only `PiEngineSession.prompt` echoes, and this
             // is the one `/` path that must not.
-            engine.send(PiCommands.prompt("cmd-${System.nanoTime()}", text))
+            engine.fire("session.prompt", app.pi.host.sendArgs(text, emptyList()))
         } else {
             // Templates and skills are expanded inside pi into a real user message
             // (`core/agent-session.js:1631-1632`), so the optimistic echo is confirmed
@@ -4826,13 +4818,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // text instead (`_queueUserInput`, `:1722-1740`, no compaction check). Same
         // trade, same worst case. No echo, for the same reason as [send].
         if (_state.value.meta.compacting) {
-            engine.send(
-                PiCommands.followUp(
-                    id = "follow-${System.nanoTime()}",
-                    message = trimmed,
-                    images = images,
-                ),
-            )
+            engine.fire("session.followUp", app.pi.host.sendArgs(trimmed, images))
             syncTranscript(engine, engine.publication.value)
             // Same status line as [send]'s compaction branch, and pi's own wording
             // for it (`interactive-mode.js:3916`).
@@ -4988,12 +4974,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call("压缩上下文") { api ->
             val result = try {
                 api.compact(customInstructions?.takeIf { it.isNotBlank() })
-            } catch (error: PiRpcException) {
+            } catch (error: HostCommandException) {
                 // pi 用英文原文说明「没什么可压」的两种情形
                 // (`core/agent-session.ts:1985-1992`)，原样弹出来就是中文界面里的一句
                 // 英文。只映射这两条**已知**原因，其余 reason 一字不改地透出：这里不是
                 // 一个把 pi 的话吞掉的翻译层，用户拿它去搜/去报错仍然要对得上。
-                throw PiRpcException(error.command, compactReasonInChinese(error.reason))
+                throw HostCommandException(error.command, compactReasonInChinese(error.reason))
             }
             val before = result.tokensBefore
             val after = result.estimatedTokensAfter
@@ -5400,7 +5386,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             } catch (error: Throwable) {
                 // pi's raw text is not echoed: two of its three shapes carry a
                 // filesystem path, and user-visible copy here never shows one.
-                fail(SessionImport.failureSentence((error as? PiRpcException)?.reason ?: error.message))
+                fail(SessionImport.failureSentence((error as? HostCommandException)?.reason ?: error.message))
             } finally {
                 releaseBusy(importToken)
             }
@@ -5548,7 +5534,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * it is deterministic, keyed on which of the two paths produced the row.
      *
      * The fix does not need a new wire field. pi already publishes the complete,
-     * authoritative list of forkable points ([PiEngineApi.getForkMessages] →
+     * authoritative list of forkable points ([HostEngineApi.getForkMessages] →
      * `session.getUserMessagesForForking()`, `core/agent-session.ts:3309-3327`),
      * so the row is resolved against that list — see [resolveForkPoint].
      *
@@ -5760,37 +5746,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (entryId.isBlank()) return
         call(NAVIGATE_BUSY_LABEL, errorText = ::navigateFailureText) { api ->
-            if (api.getCommands().none { it.name == NAVIGATE_COMMAND }) {
-                pushNotice(
-                    "设备扩展没有提供「$NAVIGATE_COMMAND」命令，所以没有跳转。" +
-                        "它是随包扩展：到「包」里确认 pi-android-bridge 已启用，再重启引擎。",
-                    Notice.Tone.Warning,
-                )
-                return@call
-            }
-
             val before = api.getTree().leafId
-            val text = "/$NAVIGATE_COMMAND " + navigateCommandArgs(
+            // 官方 `navigateTree`（宿主 `session.navigate`）：直接方法，不再绕 pi-android-bridge 扩展命令，
+            // 也就没有「命令不存在时文字被当成用户消息发给模型」那条风险。
+            val result = engine.commands.navigate(
                 targetId = entryId,
                 summarize = wantsSummary(choice, branchSummarySkipPrompt()),
                 customInstructions = customInstructions,
             )
-            // Straight to the session rather than through [PiEngineSession.prompt]: that
-            // one mirrors the message into the transcript before sending it, and a command
-            // line is not something the user said. `SLOW_TIMEOUT_MS` because this can run a
-            // full summarization before it answers.
-            val response = engine.request(
-                { PiCommands.prompt(it, text) },
-                PiEngineApi.SLOW_TIMEOUT_MS,
-            )
-            if (!response.success) {
-                throw PiRpcException("prompt", response.error ?: "pi 拒绝了这次跳转")
-            }
+            val refused = (result.data["cancelled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
 
             // The only authoritative "did it move": both `get_tree` and `get_entries`
             // report pi's **in-memory** leaf (`rpc-mode.ts:653`, `:648`), which is what
             // `branch()`/`branchWithSummary()` just changed.
-            when (navigateOutcome(before, api.getTree().leafId, refused = false)) {
+            when (navigateOutcome(before, api.getTree().leafId, refused = refused)) {
                 NavigateOutcome.Moved -> {
                     replayActiveBranch(engine)
                     // The tree's own view is a second surface of the same fact, and the
@@ -5828,16 +5797,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * onto the new context.
      */
     private suspend fun replayActiveBranch(engine: PiEngineSession) {
-        val response = runCatching { engine.request({ PiCommands.getEntries(it) }) }.getOrNull() ?: run {
+        val page = try {
+            engine.api.getEntries()
+        } catch (e: HostCommandException) {
+            fail("跳转成功，但读回会话内容失败：${e.reason}。重新打开会话即可看到新的位置。")
+            return
+        } catch (e: Exception) {
             fail("跳转成功，但没能读回这个会话的内容；重新打开会话即可看到新的位置。")
             return
         }
-        if (!response.success) {
-            fail("跳转成功，但读回会话内容失败：${response.error ?: "原因未知"}。重新打开会话即可看到新的位置。")
-            return
-        }
-        val entries = PiResponses.entries(response)
-        val branch = activeBranch(entries, PiResponses.sessionEntries(response)?.leafId)
+        val branch = activeBranch(page.entries, page.leafId)
         val chars = withContext(Dispatchers.IO) { retainedChars(branch) }
         engine.seedHistory(branch)
         loadedHistoryChars = chars
@@ -6522,7 +6491,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
  * is the only way in. Not a user-facing name: it never appears in the composer, because it
  * is dispatched straight to the session rather than through the prompt path that echoes.
  */
-private const val NAVIGATE_COMMAND = "pi-android-navigate"
 
 /**
  * What the status line says while a navigation is in flight.

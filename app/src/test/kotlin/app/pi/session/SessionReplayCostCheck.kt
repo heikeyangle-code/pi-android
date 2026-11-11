@@ -1379,8 +1379,8 @@ fun main() {
     )
     checkTrue(
         "可等待的版本真的在等 RPC（`loadState` 是 suspend 且被 await，不是又一次 launch）",
-        viewModelText.contains("private suspend fun refreshStateNow(api: PiEngineApi)") &&
-            viewModelText.contains("private suspend fun loadState(api: PiEngineApi)"),
+        viewModelText.contains("private suspend fun refreshStateNow(api: HostEngineApi)") &&
+            viewModelText.contains("private suspend fun loadState(api: HostEngineApi)"),
     )
 
     println()
