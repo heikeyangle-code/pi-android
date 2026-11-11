@@ -1571,6 +1571,14 @@ run_harness host-launch \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 
+# app.pi.session.tree.TreeModel: 会话树视图模型（脊线 + 侧枝、三种过滤、搜索、活动路径、上下文编辑标记）。
+# 纯函数；5000 条直线不爆栈、不缩进。
+run_harness tree-model \
+  app.pi.session.tree.TreeModelCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/tree/TreeModelCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/tree/TreeModel.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

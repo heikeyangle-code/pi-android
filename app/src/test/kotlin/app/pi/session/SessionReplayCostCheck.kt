@@ -1537,6 +1537,8 @@ private fun entryRetainedChars(entry: SessionEntry): Int = when (entry) {
     is SessionEntry.SessionInfo -> (entry.name?.length ?: 0) + 40
     is SessionEntry.ModelChange -> 40
     is SessionEntry.ThinkingLevelChange -> 40
+    is SessionEntry.Usage -> 40
+    is SessionEntry.ContextEdit -> 40
     is SessionEntry.Unknown -> (entry.raw["message"]?.toString()?.length ?: 0) + 40
 }
 
