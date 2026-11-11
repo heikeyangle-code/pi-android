@@ -121,6 +121,33 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
     within(20_000) { while (events.none { it is PiEvent.AgentStart || it is PiEvent.AgentEnd || it is PiEvent.AgentSettled }) delay(50) }
     flag("agent 事件到了界面事件流", events.any { it is PiEvent.AgentStart || it is PiEvent.AgentEnd || it is PiEvent.AgentSettled }, events.map { it.type }.toString())
 
+    // —— 标签 / 上下文编辑 / 分支路径：用刚才那轮留下的真条目 ——
+    within(60_000) { session.state.first { it == PiEngineSession.EngineState.Ready } }
+    val firstId = session.api.getEntries().entries.firstOrNull()?.id
+    flag("会话里有条目可操作", firstId != null)
+    if (firstId != null) {
+        session.commands.setLabel(firstId, "书签A")
+        val tree = session.api.getTree()
+        fun labelOf(nodes: List<app.pi.rpc.SessionTreeNode>): String? = nodes.firstNotNullOfOrNull { n -> if (n.entry.id == firstId) n.label else labelOf(n.children) }
+        check("session.label 之后树节点带标签", labelOf(tree.tree), "书签A")
+        session.commands.setLabel(firstId, null)
+        check("清除标签", labelOf(session.api.getTree().tree), null)
+        val path = session.commands.branchPath()
+        flag("session.path 返回当前分支", (path["entries"] as? kotlinx.serialization.json.JsonArray)?.isNotEmpty() == true)
+        // 第一条常是 model_change 之类的状态条目 —— SDK 明确拒绝编辑它们（原话原样透出）；要隐藏的是用户消息。
+        val refused = runCatching { session.commands.hideFromContext(firstId) }.exceptionOrNull()
+        flag("不可编辑的条目被 SDK 拒绝，原因原话透出", refused == null || refused.message?.contains("editable") == true, refused?.message ?: "")
+        val userId = (path["entries"] as kotlinx.serialization.json.JsonArray).mapNotNull { it as? kotlinx.serialization.json.JsonObject }
+            .firstOrNull { e -> (e["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "message" && ((e["message"] as? kotlinx.serialization.json.JsonObject)?.get("role") as? kotlinx.serialization.json.JsonPrimitive)?.content == "user" }
+            ?.get("id")?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+        flag("找到用户消息条目", userId != null)
+        if (userId != null) {
+            val hid = runCatching { session.commands.hideFromContext(userId) }
+            flag("session.contextEdit 隐藏用户消息（只追加条目，不删记录）", hid.isSuccess, hid.exceptionOrNull()?.message ?: "")
+            flag("隐藏之后原条目仍在记录里", session.api.getEntries().entries.any { it.id == userId })
+        }
+    }
+
     // 发后不管的命令失败 → Response(success=false)
     events.clear()
     session.fire("no.such.command")

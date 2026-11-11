@@ -2,6 +2,7 @@ package app.pi.host
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -135,6 +136,27 @@ class HostCommands(
             replaceInstructions?.let { put("replaceInstructions", JsonPrimitive(it)) }
             label?.let { put("label", JsonPrimitive(it)) }
         }, LONG_TIMEOUT_MS)
+    /** 给条目打标签（会话树书签）；`label` 为空 = 清除。 */
+    suspend fun setLabel(entryId: String, label: String?): HostReply =
+        reply("session.label", obj {
+            put("entryId", JsonPrimitive(entryId))
+            label?.let { put("label", JsonPrimitive(it)) }
+        })
+
+    /** 把更早的条目从模型上下文里隐藏（只影响模型看到的，不删记录）。替换内容用 [replaceInContext]。 */
+    suspend fun hideFromContext(targetId: String): HostReply =
+        reply("session.contextEdit", obj { put("targetId", JsonPrimitive(targetId)); put("replacement", JsonNull) })
+
+    suspend fun replaceInContext(targetId: String, text: String): HostReply =
+        reply("session.contextEdit", obj {
+            put("targetId", JsonPrimitive(targetId))
+            put("replacement", JsonObject(mapOf("content" to JsonArray(listOf(JsonObject(mapOf("type" to JsonPrimitive("text"), "text" to JsonPrimitive(text))))))))
+        })
+
+    /** 当前分支（叶到根的条目，原始 JSON）。 */
+    suspend fun branchPath(fromId: String? = null): JsonObject =
+        client.callObject("session.path", obj { fromId?.let { put("fromId", JsonPrimitive(it)) } })
+
     suspend fun compact(): HostReply = reply("session.compact", timeoutMs = LONG_TIMEOUT_MS)
     suspend fun reload(): HostReply = reply("session.reload", timeoutMs = LONG_TIMEOUT_MS)
     suspend fun setName(name: String): HostReply = reply("session.name", obj { put("name", JsonPrimitive(name)) })
