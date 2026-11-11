@@ -28,6 +28,9 @@ export default function probe(pi) {
     },
   });
 
+  pi.registerFlag?.("probe-mode", { description: "probe flag", type: "string", default: "fast" });
+  pi.registerFlag?.("probe-loud", { type: "boolean", default: false });
+
   pi.registerCommand?.("probe-ping", {
     description: "probe command",
     handler: async (_args, ctx) => ctx.ui.notify("pong"),

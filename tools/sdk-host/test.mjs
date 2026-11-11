@@ -296,6 +296,19 @@ try {
   expect("整份 set 可以修好损坏的文件", (await h.call("models.config.set", { config: { providers: {} } })).ok);
   expect("models.config.setProvider 缺 id → bad_args", (await h.call("models.config.setProvider", { provider: good })).error?.code === "bad_args");
 
+  // ---- 6e. 扩展 flag / 诊断 / 工具详情 ----
+  const fl = await h.call("catalog.flags");
+  const fm = fl.data?.flags?.find((f) => f.name === "probe-mode");
+  expect("catalog.flags 列出扩展注册的 flag（类型/默认值/当前值）", fl.ok && fm?.type === "string" && fm.default === "fast" && fm.value === "fast", JSON.stringify(fl.error ?? fl.data));
+  expect("catalog.setFlag 改字符串 flag", (await h.call("catalog.setFlag", { name: "probe-mode", value: "slow" })).ok && (await h.call("catalog.flags")).data.flags.find((f) => f.name === "probe-mode").value === "slow");
+  expect("catalog.setFlag 类型不符 → bad_args", (await h.call("catalog.setFlag", { name: "probe-loud", value: "yes" })).error?.code === "bad_args");
+  expect("catalog.setFlag 不存在 → not_found", (await h.call("catalog.setFlag", { name: "ghost", value: true })).error?.code === "not_found");
+  const dg = await h.call("catalog.diagnostics");
+  expect("catalog.diagnostics 三个数组", dg.ok && Array.isArray(dg.data.commands) && Array.isArray(dg.data.shortcuts) && Array.isArray(dg.data.resources), JSON.stringify(dg.error ?? Object.keys(dg.data ?? {})));
+  const ctl = await h.call("catalog.tools");
+  const tool0 = ctl.data?.all?.[0];
+  expect("catalog.tools 带 exposure / sourceInfo / parameters", ctl.ok && tool0 && "exposure" in tool0 && tool0.sourceInfo && "parameters" in tool0 && Array.isArray(ctl.data.callable), JSON.stringify(tool0)?.slice(0, 160));
+
   // ---- 7. 进程内服务 ----------------------------------------------------
   const pk = await h.call("packages.list");
   expect("packages.list（进程内，不起子进程）", pk.ok && Array.isArray(pk.data.packages), JSON.stringify(pk.error));
