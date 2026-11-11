@@ -202,6 +202,7 @@ fun SessionsScreen(
     // 「还没有会话」——那句断言在旧代码里来自一个被吞掉的异常。
     val sessionsFailed by session.sessionsFailed.collectAsState()
     val state by session.state.collectAsState()
+    val searchHits by session.searchHits.collectAsState()
 
     var query by rememberSaveable { mutableStateOf("") }
     var byName by rememberSaveable { mutableStateOf(false) }
@@ -222,6 +223,8 @@ fun SessionsScreen(
     // 点组标题折叠/展开那一组。搜索时不折叠（命中的行不能被藏起来）。
     var collapsedGroups by remember { mutableStateOf(emptySet<String>()) }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
+    // 正文搜索：查询变了就让 ViewModel 去搜（它自己防抖、并取消上一次）。
+    LaunchedEffect(query) { session.searchSessionText(query) }
     // The host can ask for a different view *after* this screen is already composed
     // (a second `/tree` while the overlay is open): the overlay stays mounted across
     // requests, so `rememberSaveable`'s initial value would never be consulted again.
@@ -339,6 +342,13 @@ fun SessionsScreen(
         SessionListView(visible = visible, groups = grouped)
     }
     val visible = listView.visible
+    // 正文命中里、上面的名字/目录筛选**没有**列出的那些（同一个会话不出现两次）。
+    val hitsOutside = remember(searchHits, visible, query) {
+        if (query.isBlank()) emptyList() else {
+            val shown = visible.mapTo(HashSet()) { it.file.absolutePath }
+            searchHits.filter { it.session.file.absolutePath !in shown && (!namedOnly || hasName(it.session)) }
+        }
+    }
     // 绝大多数会话用的是同一个模型：每行都印一遍「deepseek-flash」只是噪音。只在某一行
     // 和多数不同时才写出模型名。
     val commonModel = remember(sessions) {
@@ -503,6 +513,8 @@ fun SessionsScreen(
                     session.navigateTo(entryId, choice, instructions)
                 },
                 skipSummaryPrompt = { session.branchSummarySkipPrompt() },
+                onLabel = { entryId, label -> session.setEntryLabel(entryId, label) },
+                onHideFromContext = { entryId -> session.hideEntryFromContext(entryId) },
                 onRefresh = { session.refreshTree() },
                 onClose = onBack,
                 embedded = true,
@@ -616,7 +628,7 @@ fun SessionsScreen(
                         body = "会话按工作目录分组，这里会列出每一个目录的对话。",
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else if (visible.isEmpty()) {
+                } else if (visible.isEmpty() && hitsOutside.isEmpty()) {
                     PiEmptyStateTopAnchored(
                         icon = Icons.Filled.Search,
                         title = "没有匹配的会话",
@@ -674,6 +686,33 @@ fun SessionsScreen(
                                         onOpenChat()
                                     },
                                     onLongPress = { actions = summary },
+                                )
+                            }
+                        }
+                        // 正文命中：标题/名字没命中、但对话里出现了这个词的会话。放在分组之后，
+                        // 不和上面的筛选结果混排 —— 上面是「名字像」，这里是「内容里有」。
+                        if (hitsOutside.isNotEmpty()) {
+                            item(key = "hits-hdr") {
+                                Text(
+                                    "正文里出现（${hitsOutside.size}）",
+                                    modifier = Modifier.padding(
+                                        start = PiSettingsMetrics.pageHorizontal,
+                                        end = PiSettingsMetrics.pageHorizontal,
+                                        top = SESSIONS_GROUP_HEADING_TOP,
+                                        bottom = SESSIONS_GROUP_HEADING_BOTTOM,
+                                    ),
+                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            itemsIndexed(hitsOutside, key = { _, h -> "hit:" + h.session.file.absolutePath }) { _, hit ->
+                                SearchHitRow(
+                                    hit = hit,
+                                    onOpen = {
+                                        session.switchSession(hit.session)
+                                        onOpenChat()
+                                    },
+                                    onLongPress = { actions = hit.session },
                                 )
                             }
                         }
@@ -1102,6 +1141,39 @@ private fun GroupHeading(label: String, count: Int, current: Boolean, collapsed:
  * 相对时间用 `meta` + `tnum`（12 档 + 等宽数字）：v2 是 `mono t12 c-muted`，等宽保证
  * 滚动时那一列数字不抖；单位与数字之间**不留空格**（`11分钟前`）。
  */
+/**
+ * 正文命中的一行：会话名 + 命中片段。比 [SessionRow] 朴素 —— 它回答的是「这段对话里哪儿提到了它」，
+ * 片段才是主角；时间、条数、来源这些细节点进去以后在对话页里看。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SearchHitRow(hit: app.pi.session.SessionHit, onOpen: () -> Unit, onLongPress: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            hit.session.displayName,
+            style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (hit.snippet.isNotBlank()) {
+            Text(
+                hit.snippet,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(

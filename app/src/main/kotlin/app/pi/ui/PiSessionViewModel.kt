@@ -45,6 +45,7 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.WorkspaceStore
+import app.pi.session.SessionHit
 import app.pi.session.SessionLibrary
 import app.pi.session.SessionSummary
 import app.pi.session.ResumeTarget
@@ -1197,6 +1198,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // 会话树时的「疯狂刷新好几秒」里有一半是它；飞行中的要求折叠成一次补扫。
     private var sessionsRefreshInFlight = false
     private var sessionsRefreshQueued = false
+
+    /**
+     * 会话正文的全文搜索结果（宿主 `session.search`，SDK 的 `SessionInfo.allMessagesText`）。
+     * 只含用户与助手的文字，**不含工具结果**（与桌面 pi 一致）。查询少于 2 个字符不搜。
+     */
+    private val _searchHits = MutableStateFlow<List<SessionHit>>(emptyList())
+    val searchHits: StateFlow<List<SessionHit>> = _searchHits.asStateFlow()
+    private var searchJob: kotlinx.coroutines.Job? = null
+
+    fun searchSessionText(query: String) {
+        searchJob?.cancel()
+        val q = query.trim()
+        if (q.length < 2) {
+            _searchHits.value = emptyList()
+            return
+        }
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(250) // 防抖：边打字边搜会让宿主读几百个文件
+            val read = runCatching { sessionLibrary.search(q) }
+            read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            // 失败（引擎没开等）就当没有命中：本地标题/名字筛选照常工作，不弹错。
+            _searchHits.value = read.getOrDefault(emptyList())
+        }
+    }
 
     fun refreshSessions() {
         if (sessionsRefreshInFlight) {
@@ -4487,6 +4512,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // 标志在这里释放。
     private var treeRefreshInFlight = false
     private var treeRefreshQueued = false
+
+    /**
+     * 给会话树上的条目打标签（书签）；`label` 为 null/空 = 清除。SDK 的 `appendLabelChange`：
+     * 只追加一条 `label` 条目，不改写已有记录。树随后重读，标签就出现在那一行上。
+     */
+    fun setEntryLabel(entryId: String, label: String?) {
+        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，标签没有保存。")
+        call("保存标签") { _ ->
+            engine.commands.setLabel(entryId, label)
+            refreshTree()
+        }
+    }
+
+    /**
+     * 把一条用户消息从**模型上下文**里隐藏（SDK 的 `appendContextEdit`）：对话页仍然看得见、记录一个字不少，
+     * 只是之后发给模型的上下文里不再有它。宿主在流式生成中会拒绝，原话经 [call] 的失败通道告诉用户。
+     */
+    fun hideEntryFromContext(entryId: String) {
+        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")
+        call("从上下文隐藏") { _ ->
+            engine.commands.hideFromContext(entryId)
+            refreshTree()
+            refreshStats()
+        }
+    }
 
     fun refreshTree() {
         if (treeRefreshInFlight) {

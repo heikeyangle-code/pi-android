@@ -3,6 +3,7 @@ package app.pi.ui.chat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -98,9 +99,8 @@ import app.pi.ui.theme.PiTheme
  *  - **分叉** is `fork`: it writes a **new session file**
  *    (`agent-session-runtime.ts:262-350`), leaving the original untouched.
  *
- * 跳转 reaches pi through the shipped bridge extension's `pi-android-navigate` command,
- * because RPC exposes no navigate command (`rpc-types.ts:20-74`) while `rpc-mode.ts` does
- * wire `ctx.navigateTree` for extensions (`:329-335`).
+ * 跳转 calls the SDK's `navigateTree` directly through the host's `session.navigate`
+ * (`PiSessionViewModel.navigateTo`); the old bridge-extension detour is gone.
  *
  * The filter modes are pi's own (`interactive-mode.ts`'s tree selector,
  * `FilterMode` in `components/tree-selector.ts:95`): default, no-tools,
@@ -144,6 +144,10 @@ fun SessionTreeScreen(
      * first and hands the answer over.
      */
     onNavigate: (String, BranchSummaryChoice, String?) -> Unit = { _, _, _ -> },
+    /** 给条目打标签（空 = 清除）。会话树书签，写进会话文件的 `label` 条目。 */
+    onLabel: (String, String?) -> Unit = { _, _ -> },
+    /** 把条目从模型上下文里隐藏（只影响模型看到的，不删记录）。 */
+    onHideFromContext: (String) -> Unit = {},
     /**
      * `branchSummary.skipPrompt`. Read lazily at tap time rather than passed as a value:
      * it is a pi setting, the ViewModel owns the settings document, and a copy in this
@@ -172,6 +176,8 @@ fun SessionTreeScreen(
             onQueryChange = { query = it },
             onFork = onFork,
             onNavigate = onNavigate,
+            onLabel = onLabel,
+            onHideFromContext = onHideFromContext,
             skipSummaryPrompt = skipSummaryPrompt,
             modifier = modifier,
         )
@@ -200,6 +206,8 @@ fun SessionTreeScreen(
                     onQueryChange = { query = it },
                     onFork = onFork,
                     onNavigate = onNavigate,
+                    onLabel = onLabel,
+                    onHideFromContext = onHideFromContext,
                     skipSummaryPrompt = skipSummaryPrompt,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -239,6 +247,8 @@ private fun TreeContent(
     onQueryChange: (String) -> Unit,
     onFork: (String) -> Unit,
     onNavigate: (String, BranchSummaryChoice, String?) -> Unit,
+    onLabel: (String, String?) -> Unit,
+    onHideFromContext: (String) -> Unit,
     skipSummaryPrompt: () -> Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -343,6 +353,8 @@ private fun TreeContent(
                 filter = filter,
                 query = query,
                 onFork = onFork,
+                onLabel = onLabel,
+                onHide = onHideFromContext,
                 onJump = { entryId ->
                     // pi's `/tree` answers a pick on the current leaf with "Already at this
                     // point" and does nothing (`interactive-mode.ts:5508-5513`), so the
@@ -510,7 +522,7 @@ private fun NavigateSummaryDialog(
  * 的账不用重算。
  */
 private const val TREE_FORK_HINT =
-    "点一行是跳转：在同一个会话文件里回到那一点继续。分叉会新建一个会话文件，原会话保持不变。"
+    "点一行是跳转：在同一个会话文件里回到那一点继续。分叉会新建一个会话文件，原会话保持不变。长按一行：打标签、或不再发给模型。"
 
 /**
  * 说明句在列表里的 key：**常量**，不随筛选档位、查询词或会话变化。
@@ -543,8 +555,12 @@ private fun BranchTab(
     query: String,
     onFork: (String) -> Unit,
     onJump: (String) -> Unit,
+    onLabel: (String, String?) -> Unit,
+    onHide: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 长按一行：标签 / 从上下文隐藏。
+    var actionRow by remember { mutableStateOf<TreeRow?>(null) }
     val tree = state.tree?.tree.orEmpty()
     val leafId = state.tree?.leafId
     val rows = remember(tree, leafId, filter, query) {
@@ -624,9 +640,76 @@ private fun BranchTab(
                 isLeaf = row.node.entry.id != null && row.node.entry.id == state.tree?.leafId,
                 onFork = onFork,
                 onJump = onJump,
+                onLongPress = { if (row.node.entry.id != null) actionRow = row },
             )
         }
     }
+
+    actionRow?.let { row ->
+        val id = row.node.entry.id
+        if (id == null) {
+            actionRow = null
+        } else {
+            TreeEntryActionsDialog(
+                summary = entrySummary(row.node.entry),
+                currentLabel = row.node.label,
+                canHide = row.node.entry is SessionEntry.Message,
+                onDismiss = { actionRow = null },
+                onLabel = { label -> actionRow = null; onLabel(id, label) },
+                onHide = { actionRow = null; onHide(id) },
+            )
+        }
+    }
+}
+
+/**
+ * 长按树上一行：打标签（书签）/ 从模型上下文里隐藏。
+ *
+ * 两件事都是 SDK 的**追加**操作（`appendLabelChange` / `appendContextEdit`），不改写、不删除任何已有记录：
+ * 标签只是给条目起个名字，方便「仅有标签」筛选与跳转；「隐藏」只让这一条**不再被发给模型**，对话页上
+ * 它仍然在。说明文字里把这一点写明，免得用户把它当成删除。
+ */
+@Composable
+private fun TreeEntryActionsDialog(
+    summary: String,
+    currentLabel: String?,
+    canHide: Boolean,
+    onDismiss: () -> Unit,
+    onLabel: (String?) -> Unit,
+    onHide: () -> Unit,
+) {
+    var label by remember { mutableStateOf(currentLabel.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("这一条") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.inner)) {
+                Text(
+                    summary,
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text("标签（书签）", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                BasicTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = PiTheme.text.monoSmall.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(PiTheme.palette.accent),
+                )
+                if (canHide) {
+                    TextButton(onClick = onHide) { Text("不再发给模型（对话页仍保留）") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onLabel(label.trim().ifEmpty { null }) }) { Text(if (label.isBlank()) "清除标签" else "保存标签") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /** One tree node with its depth and a stable path, for a flat list. */
@@ -892,12 +975,14 @@ internal fun treeRowIndent(depth: Int): Dp {
     return TREE_INDENT_STEP * full + TREE_INDENT_TAIL_STEP * tail
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun BranchRow(
     row: TreeRow,
     isLeaf: Boolean,
     onFork: (String) -> Unit,
     onJump: (String) -> Unit,
+    onLongPress: () -> Unit,
 ) {
     val entry = row.node.entry
     val id = entry.id
@@ -916,7 +1001,7 @@ private fun BranchRow(
             // (`agent-session.ts:4040-4053`), so unlike 分叉 this is offered everywhere —
             // and a row whose entry has no id cannot be named to pi at all, so it is not
             // clickable.
-            .clickable(enabled = id != null) { id?.let(onJump) },
+            .combinedClickable(enabled = id != null, onClick = { id?.let(onJump) }, onLongClick = onLongPress),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A thin rule instead of box-drawing characters: it survives the phone's
