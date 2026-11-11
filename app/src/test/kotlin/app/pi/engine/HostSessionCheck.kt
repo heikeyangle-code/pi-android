@@ -1,5 +1,6 @@
 package app.pi.engine
 
+import app.pi.host.HostAdvanced
 import app.pi.host.OpenArgs
 import app.pi.session.SessionLibrary
 import app.pi.rpc.PiEvent
@@ -147,6 +148,34 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
             flag("隐藏之后原条目仍在记录里", session.api.getEntries().entries.any { it.id == userId })
         }
     }
+
+    // —— HostAdvanced：类型化的高级命令（真宿主） ——
+    val adv = HostAdvanced(session.commands)
+    val allModels = session.api.getAvailableModels()
+    if (allModels.size >= 2) {
+        val refs = allModels.take(2).map { HostAdvanced.ModelRef(it.provider.orEmpty(), it.id.orEmpty()) }
+        check("scoped 设置返回个数", adv.setScopedModels(refs), 2)
+        check("scoped 读回", adv.scopedModels().map { it.id }, refs.map { it.id })
+        check("scoped 清空", adv.setScopedModels(emptyList()), 0)
+    }
+    check("cache 模式往返", adv.setCacheMode("idle").mode to adv.cacheStatus().mode, "idle" to "idle")
+    adv.setCacheMode("off")
+    flag("systemPrompt 非空", adv.systemPrompt().length > 50)
+    flag("tools 带详情与 callable", adv.tools().let { t -> t.isNotEmpty() && t.any { it.active } && t.all { it.name.isNotEmpty() } })
+    check("queueMessages 空", adv.queueMessages().let { it.steering.isEmpty() && it.followUp.isEmpty() }, true)
+    val jsonlPath = adv.exportJsonl()
+    flag("exportJsonl 写出文件", java.io.File(jsonlPath).isFile, jsonlPath)
+    val badProv = runCatching { adv.setProvider("x", kotlinx.serialization.json.JsonObject(mapOf("baseUrl" to kotlinx.serialization.json.JsonPrimitive(5)))) }.exceptionOrNull()
+    flag("setProvider 非法 → SDK 原话", badProv?.message?.contains("must be string") == true, badProv?.message.orEmpty())
+    val okProv = kotlinx.serialization.json.JsonObject(mapOf(
+        "baseUrl" to kotlinx.serialization.json.JsonPrimitive("http://127.0.0.1:1/v1"), "apiKey" to kotlinx.serialization.json.JsonPrimitive("k"),
+        "api" to kotlinx.serialization.json.JsonPrimitive("openai-completions"),
+        "models" to kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonObject(mapOf("id" to kotlinx.serialization.json.JsonPrimitive("m1"))))),
+    ))
+    adv.setProvider("mine", okProv)
+    check("modelsConfig 读到刚保存的供应商", adv.modelsConfig().providers.keys, setOf("mine"))
+    adv.removeProvider("mine")
+    check("删除后没有", adv.modelsConfig().providers.keys, emptySet<String>())
 
     // 发后不管的命令失败 → Response(success=false)
     events.clear()

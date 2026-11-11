@@ -1,6 +1,7 @@
 package app.pi.engine
 
 import app.pi.host.HostCommands
+import app.pi.host.HostAdvanced
 import app.pi.host.HostEngineApi
 import app.pi.host.HostException
 import app.pi.host.HostRequest
@@ -165,6 +166,9 @@ class PiEngineSession(
 
     /** 聊天界面用的 API：与旧 `PiEngineApi` 同名同类型，底下是宿主命令。 */
     val api = HostEngineApi(commands)
+
+    /** 作用域模型、缓存预热、工具详情、扩展 flag、自定义供应商（models.json）等高级命令的类型化入口。 */
+    val advanced = HostAdvanced(commands)
 
     /** 宿主的**全部**事件，原样不丢（`ui.*`、`auth.*`、`packages.progress`、`mcp.*`、`bus` …）。新界面订阅这条。 */
     private val _hostEvents = MutableSharedFlow<HostSignal.Event>(extraBufferCapacity = EVENT_BUFFER)
