@@ -2,6 +2,7 @@ package app.pi.engine
 
 import app.pi.host.HostCommands
 import app.pi.host.HostAdvanced
+import app.pi.host.HostAuth
 import app.pi.host.HostEngineApi
 import app.pi.host.HostException
 import app.pi.host.HostRequest
@@ -169,6 +170,9 @@ class PiEngineSession(
 
     /** 作用域模型、缓存预热、工具详情、扩展 flag、自定义供应商（models.json）等高级命令的类型化入口。 */
     val advanced = HostAdvanced(commands)
+
+    /** 认证：供应商 / API Key / 登录（宿主 `auth.*`，背后是 SDK 的 `ModelRuntime`）。 */
+    val auth = HostAuth(commands)
 
     /** 宿主的**全部**事件，原样不丢（`ui.*`、`auth.*`、`packages.progress`、`mcp.*`、`bus` …）。新界面订阅这条。 */
     private val _hostEvents = MutableSharedFlow<HostSignal.Event>(extraBufferCapacity = EVENT_BUFFER)

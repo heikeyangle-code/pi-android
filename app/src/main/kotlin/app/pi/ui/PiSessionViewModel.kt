@@ -112,6 +112,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -4540,6 +4541,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 宿主的高级命令入口；引擎没跑时 null。 */
     fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
+
+    /** 「模型与供应商」页要的全部宿主能力；引擎没跑时 null。 */
+    fun modelsHost(): app.pi.ui.models.ModelsHost? {
+        val engine = session ?: return null
+        val api = HostEngineApi(engine.commands)
+        return app.pi.ui.models.ModelsHost(
+            auth = engine.auth,
+            advanced = engine.advanced,
+            events = engine.client.signals.filterIsInstance<app.pi.host.HostSignal.Event>(),
+            requests = engine.client.requests,
+            answer = { id, value, cancelled ->
+                engine.client.respond(id, value?.let { kotlinx.serialization.json.JsonPrimitive(it) }, cancelled)
+            },
+            models = { api.getAvailableModels().also { m -> _state.value = _state.value.copy(models = m) } },
+            selectModel = { provider, id ->
+                val applied = api.setModel(provider, id)
+                _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
+            },
+            currentModel = { _state.value.meta.model?.let { m -> m.provider?.let { it to m.id } } },
+        )
+    }
 
     /** 只改「发给模型的版本」（SDK `appendContextEdit` 带替换内容），原文保留。 */
     fun replaceEntryInContext(entryId: String, text: String) {

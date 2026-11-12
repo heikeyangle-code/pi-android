@@ -1,6 +1,11 @@
 package app.pi.engine
 
 import app.pi.host.HostAdvanced
+import app.pi.host.HostAuth
+import app.pi.host.HostRequest
+import app.pi.host.HostSignal
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import app.pi.host.OpenArgs
 import app.pi.session.SessionLibrary
 import app.pi.rpc.PiEvent
@@ -176,6 +181,25 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
     check("modelsConfig 读到刚保存的供应商", adv.modelsConfig().providers.keys, setOf("mine"))
     adv.removeProvider("mine")
     check("删除后没有", adv.modelsConfig().providers.keys, emptySet<String>())
+
+    // —— HostAuth：供应商 / API Key / 登录消息解析（真宿主 + 合成帧） ——
+    val auth = session.auth
+    val provs = auth.providers()
+    flag("auth.providers 列出内置供应商", provs.size > 20, provs.size.toString())
+    val openai = provs.firstOrNull { it.id == "openai" }
+    flag("openai 有 api_key 方式", openai?.supportsApiKey == true)
+    val keyed = auth.setApiKey("openai", "sk-test-123")
+    check("setApiKey 后 configured", keyed?.configured, true)
+    flag("凭据列表含 openai/api_key", auth.credentials().any { it.providerId == "openai" && it.type == "api_key" })
+    val emptyKey = runCatching { auth.setApiKey("openai", "  ") }.exceptionOrNull()
+    flag("空 Key 被宿主拒绝", emptyKey != null, emptyKey?.message.orEmpty())
+    auth.logout("openai")
+    check("logout 后不再 configured", auth.providers().firstOrNull { it.id == "openai" }?.configured, false)
+    val ev = HostAuth.authEvent(HostSignal.Event(1, 1, "auth.event", Json {}.parseToJsonElement("""{"loginId":"l1","providerId":"p","event":{"type":"auth","url":"https://x/y","message":"open it"}}""")))
+    check("authEvent 解出链接与说明", ev?.url to ev?.message, "https://x/y" to "open it")
+    val pr = HostAuth.authPrompt(HostRequest("r1", "auth.prompt", Json {}.parseToJsonElement("""{"loginId":"l1","providerId":"p","prompt":{"message":"Paste code","secret":true}}""") as JsonObject))
+    check("authPrompt 解出提问", Triple(pr?.requestId, pr?.message, pr?.secret), Triple("r1", "Paste code", true))
+    check("别的事件不当成 auth.event", HostAuth.authEvent(HostSignal.Event(1, 1, "bus", null)), null)
 
     // 发后不管的命令失败 → Response(success=false)
     events.clear()

@@ -1303,6 +1303,15 @@ run_harness widget-lines \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
+# app.pi.models: 自定义供应商表单（`ProviderForm`，纯函数）：表单 ↔ models.json 的一个 provider。
+# 编译器看不见的是「不碰不认识的字段」——`input` 含 audio、模型的 `extra`、未知键都得原样带回去，
+# 否则编辑一个自定义供应商会悄悄丢字段；还有请求头的逐行解析与错误话术。
+run_harness provider-form \
+  app.pi.models.ProviderFormCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/models/ProviderFormCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/models/ProviderForm.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
 # app.pi.ui.extension: 扩展输出的两条**渲染判据**（`ExtensionTextLines.kt`，纯函数）：
 # 预格式化行（框线 / 列对齐双空格 / 超过 pi 默认 80 列的行 → 展开不换行 + 横向滚动）与
 # select 改开底部 sheet 的阈值（9 个选项起、或任一标签 > 36 列）。为什么必须在这里：两条
@@ -1544,6 +1553,7 @@ run_harness host-session \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostAuth.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 
 # app.pi.host.OpenArgsFactory: 启动前设置（PiLaunchOptions）→ session.open 参数。旧路径拼命令行 flag，

@@ -97,6 +97,8 @@ fun PiSettingsStack(
     onLoadAvailableModels: () -> Unit = {},
     /** 宿主的高级命令入口；引擎没跑时返回 null（「引擎」页据此显示说明）。 */
     advanced: () -> app.pi.host.HostAdvanced? = { null },
+    /** 「模型与供应商」页的宿主能力；引擎没跑时返回 null。 */
+    modelsHost: () -> app.pi.ui.models.ModelsHost? = { null },
     /**
      * A key to open this stack on, e.g. `enabledModels` for pi's
      * `/scoped-models` (see `NavRequest.SettingsFocus`). Consumed once, through
@@ -564,7 +566,7 @@ fun PiSettingsStack(
                 engineEntry = engineEntry,
             )
 
-            modelFlow -> ModelProviderScreen(
+            modelFlow -> app.pi.ui.models.ModelsScreen(
                 contentPadding = contentPadding,
                 onBack = {
                     modelFlow = false
@@ -572,16 +574,7 @@ fun PiSettingsStack(
                     modelFlowEditor = null
                     modelFlowPreset = null
                 },
-                lifecycle = lifecycle,
-                coordinator = coordinator,
-                store = effectiveStore,
-                availableModels = availableModels,
-                onLoadAvailableModels = onLoadAvailableModels,
-                initialPresetId = modelFlowPreset,
-                openImportSheet = modelFlowImport,
-                initialEditorKey = modelFlowEditor,
-                onSettingWritten = handleSettingWritten,
-                onFilesWritten = onExternalSettingsWrite,
+                host = modelsHost,
             )
 
             packages -> PiPackagesHost(
