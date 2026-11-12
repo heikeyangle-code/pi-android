@@ -1334,13 +1334,8 @@ run_harness mentions-unavailable \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/MentionLookup.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
 
-# app.pi.ui.chat: in-session branch navigation (`navigateTree`), which pi's RPC surface
-# cannot reach directly — the app drives it through a command its own extension registers,
-# so "the prompt call returned" is the only completion signal there is, and the branch that
-# has to be *excluded* is the abandoned one (the session file keeps it; only the in-memory
-# leaf says which line is live). This pins the landing rules, the summary choice, the
-# command arguments, and the outcome classification — including the arms that must not
-# rebuild the transcript, because "reset with nothing to show" is its own bug.
+# app.pi.ui.chat: 会话树跳转的纯逻辑——摘要选项、叶子是否移动的判定（含「不该重建对话」那几支）、
+# 以及只取活动分支的过滤。跳转本身是 SDK 的 navigateTree（宿主 `session.navigate`）。
 run_harness tree-navigation \
   app.pi.ui.chat.PiTreeNavigationCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \

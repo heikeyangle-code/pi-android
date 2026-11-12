@@ -4538,6 +4538,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 只改「发给模型的版本」（SDK `appendContextEdit` 带替换内容），原文保留。 */
+    fun replaceEntryInContext(entryId: String, text: String) {
+        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")
+        call("改写上下文") { _ ->
+            engine.commands.replaceInContext(entryId, text)
+            refreshTree()
+            refreshStats()
+        }
+    }
+
+    /** 停止正在进行的分支摘要（SDK `abortBranchSummary`）。 */
+    fun abortBranchSummary() {
+        val engine = session ?: return
+        viewModelScope.launch { runCatching { engine.advanced.abortBranchSummary() } }
+    }
+
     fun refreshTree() {
         if (treeRefreshInFlight) {
             treeRefreshQueued = true
@@ -6551,7 +6567,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
  * waited on — rather than the generic 读取 — is the difference between "stuck" and
  * "summarizing".
  */
-private const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
 
 /**
  * [UiState.nowMs] 的节拍：一秒。它不是随手取的数——pi 给同一个读数用的就是这个周期
@@ -6586,3 +6601,6 @@ enum class OverlayView { List, Tree }
 
 /** [PiSessionViewModel.overlay] 的读数：哪一层、哪一屏。 */
 data class OverlayState(val slot: OverlaySlot, val view: OverlayView)
+
+/** 跳转进行中的忙碌文案；会话树据此显示「停止摘要」。 */
+const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"

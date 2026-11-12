@@ -1,8 +1,0 @@
-# 截图与派生页是生成物（tools/shoot.mjs、tools/build-review.mjs 可从 HTML 重新生成），
-# 不入库以免仓库里塞进几 MB 的 PNG。
-design-demos/shots/
-review.html
-design-demos/shots-v2/
-# v2 全屏查看页（61 屏截图 base64 竖排，交给用户看的那份）同样是派生页：
-# 源是 design-demos/direction-b-v2.html + shots-v2/，5 MB 不入库。
-v2-viewer.html

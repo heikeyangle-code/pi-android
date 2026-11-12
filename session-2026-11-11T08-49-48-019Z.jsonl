@@ -1,3 +1,0 @@
-{"type":"session","version":3,"id":"01a1c9cc-8b2d-7395-b6b2-429a0a8ef33f","timestamp":"2026-11-11T08:49:48.019Z","cwd":"/tmp/sdk-host-Z1YUOh/work"}
-{"type":"model_change","id":"41bcc1a7","parentId":null,"timestamp":"2026-11-11T08:49:47.837Z","provider":"amazon-bedrock","modelId":"us.anthropic.claude-opus-4-6-v1"}
-{"type":"thinking_level_change","id":"677daed4","parentId":"41bcc1a7","timestamp":"2026-11-11T08:49:47.837Z","thinkingLevel":"medium"}

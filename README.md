@@ -5,10 +5,6 @@
 <h1 align="center">PI</h1>
 
 <p align="center">
-  <a href="./docs/screenshots/banner-three-themes.jpg"><img src="./docs/screenshots/banner-three-themes.jpg" alt="同一场对话，三套主题" width="100%" /></a>
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+" />
   <img src="https://img.shields.io/badge/arm64-ready-555" alt="arm64" />
   <img src="https://img.shields.io/badge/pi-1.1.0-7C5CFF" alt="pi 1.1.0" />
@@ -25,17 +21,9 @@ Ubuntu、Node、git、ripgrep、fd 全都打在 APK 里，第一次打开就能�
 
 每次调用占一行，耗时、行数、成败都摆在明面上。`read` 读进来的图直接画在卡里。
 
-<p align="center">
-  <a href="./docs/screenshots/chat-light-tool-cards.jpg"><img src="./docs/screenshots/chat-light-tool-cards.jpg" alt="浅色主题：read 工具卡里并排画着读进来的两张图" width="280" /></a>
-</p>
-
 ### 思考可折叠，改动看得见
 
 要看再展开，不看就是一行。`edit` 卡自带 diff，改了哪几行一眼就知道。
-
-<p align="center">
-  <a href="./docs/screenshots/chat-dark-tool-cards.jpg"><img src="./docs/screenshots/chat-dark-tool-cards.jpg" alt="暗色主题：带 +5/−4 diff 的 edit 卡" width="280" /></a>
-</p>
 
 ### 回复中途也能发消息
 
@@ -45,21 +33,9 @@ Ubuntu、Node、git、ripgrep、fd 全都打在 APK 里，第一次打开就能�
 
 主题是一张 JSON。界面、代码高亮、强调色一起换，同一场对话，换完就是另一个样子。
 
-<p align="center">
-  <a href="./docs/screenshots/chat-theme-slate.jpg"><img src="./docs/screenshots/chat-theme-slate.jpg" alt="深青主题" width="280" /></a>
-  &nbsp;
-  <a href="./docs/screenshots/chat-theme-purple.jpg"><img src="./docs/screenshots/chat-theme-purple.jpg" alt="暗紫主题" width="280" /></a>
-</p>
-
 ### 工作区，手机上的任意目录
 
 选一个目录就是一个工作区。文件浏览、编辑器（查找、撤销、行号）一应俱全；这次会话改过的文件和 diff 收在一处，技能、提示词、扩展、主题按优先级列出来，每一项都带真实路径。
-
-<p align="center">
-  <a href="./docs/screenshots/workspace-session-changes.jpg"><img src="./docs/screenshots/workspace-session-changes.jpg" alt="工作区：本次会话改过的文件与 diff" width="280" /></a>
-  &nbsp;
-  <a href="./docs/screenshots/workspace-resources.jpg"><img src="./docs/screenshots/workspace-resources.jpg" alt="工作区：技能、提示词、扩展、主题及其真实路径" width="280" /></a>
-</p>
 
 ### 扩展和电脑上完全一样
 
@@ -122,9 +98,9 @@ Android 8.0（API 26）及以上，arm64。到 [Releases](https://github.com/hei
 <details>
 <summary><b>架构</b>：引擎 · 协议 · 运行时 · 配置</summary>
 
-**引擎。** pi 以官方 npm 包的形式随 APK 分发，App 用 pi 自己的 `--mode rpc` 驱动它（JSONL over stdio），不 fork、不打补丁、不在中间做转换层。会话内核、工具、扩展加载器、provider 工厂全部是上游那一份。
+**引擎。** pi 以官方 npm 包随 APK 分发，App 通过自己的 Node 宿主（`sdk-host`，JSONL 协议 v1）直接使用官方 pi SDK——不 fork、不打补丁、不走 pi 的 RPC。详见 [docs/sdk-host](docs/sdk-host/README.md)。
 
-**协议。** 引擎之外是一个独立的纯 Kotlin/JVM 协议核心（[`rpc/`](rpc/) 模块，不带 Android 依赖）：33 条命令、9 种扩展界面方法、按 pi 的规则分帧（只按 `\n` 切、容忍 `U+2028`、增量 UTF-8 解码）。不插手机、不装模拟器就能跑完整套协议测试。
+**协议。** App 侧的 Kotlin 宿主层（`app/pi/host`）只做适配：命令、状态快照、扩展界面请求；pi 的功能一律来自 SDK。
 
 **运行时。** 工具执行的是这台手机上的真 Linux 用户态：
 
@@ -176,7 +152,7 @@ node tools/fetch-runtime.mjs           # 只组装运行时载荷
 bash tools/run-app-pure-checks.sh      # 纯逻辑 harness（不需要设备）
 ```
 
-`docs/` 下有更细的东西：[pi 契约](docs/pi-contract.md)、[RPC 覆盖](docs/rpc-coverage.md)、[界面规格](docs/pi-android-ui-spec.md)。
+`docs/` 下：[SDK 宿主](docs/sdk-host/README.md)、[pi 契约](docs/pi-contract.md)、[proroot 研究](docs/proroot-research.md)。
 
 </details>
 

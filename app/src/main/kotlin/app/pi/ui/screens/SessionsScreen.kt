@@ -78,12 +78,12 @@ import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.SessionSummary
 import app.pi.ui.PiSeg
+import app.pi.ui.NAVIGATE_BUSY_LABEL
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.chat.RenameSessionDialog
 import app.pi.ui.chat.SessionFileRow
-import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.chat.forkParentNameOf
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
@@ -101,6 +101,7 @@ import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.tree.SessionTreeView
 import java.util.concurrent.TimeUnit
 
 /** 覆盖层里的两个视图，同一条分段控件切换（`03-navigation-decision.md`）。 */
@@ -123,7 +124,7 @@ enum class SessionsView(val label: String) {
  *
  * v2 的分段控件（`design-demos/direction-b-v2.html:1854`）把两个视图放在同一条顶栏下，
  * 所以切换视图不改变「我在哪」；关掉这一层就回到原来的目的地。树是**嵌进来**的
- * （`SessionTreeScreen(embedded = true)`），它自己的顶栏与不透明底由这里提供——两个
+ * （`SessionTreeView`），它自己的顶栏与不透明底由这里提供——两个
  * 覆盖层叠在一起时只有最上面那个能被返回键关掉。
  *
  * ## 一行的两行形态
@@ -496,29 +497,21 @@ fun SessionsScreen(
         if (view == SessionsView.Tree) {
             // 树是嵌进来的：顶栏、分段控件与其上的不透明底都由本层提供，它只画自己的
             // 筛选行 + 列表。`embedded` 是这次唯一的形态改动，树的逻辑一行没动。
-            SessionTreeScreen(
-                state = state,
+            SessionTreeView(
+                roots = state.tree?.tree.orEmpty(),
+                leafId = state.tree?.leafId,
+                busy = state.busy?.takeIf { it == NAVIGATE_BUSY_LABEL },
                 onFork = { entryId ->
                     session.forkFrom(entryId)
                     onBack()
                 },
-                // 跳转 = pi's `navigateTree`: same session file, leaf moved. The overlay
-                // stays open on purpose — unlike a fork, which replaces the conversation
-                // and therefore closes it, a navigation lands the user back in the chat
-                // they are already looking at, and pi's own `/tree` also returns to the
-                // conversation after asking its summary question
-                // (`interactive-mode.ts:5293-5317`). Closing here would hide the summary
-                // card the user just asked for.
-                onNavigate = { entryId, choice, instructions ->
-                    session.navigateTo(entryId, choice, instructions)
-                },
-                skipSummaryPrompt = { session.branchSummarySkipPrompt() },
+                // 跳转留在本层：落回用户正在看的对话，摘要卡片也还看得见（fork 才会替换对话并关闭本层）。
+                onNavigate = { entryId, choice, instructions -> session.navigateTo(entryId, choice, instructions) },
                 onLabel = { entryId, label -> session.setEntryLabel(entryId, label) },
                 onHideFromContext = { entryId -> session.hideEntryFromContext(entryId) },
-                onRefresh = { session.refreshTree() },
-                onClose = onBack,
-                embedded = true,
-                onLoadEntries = { session.refreshEntries() },
+                onReplaceInContext = { entryId, text -> session.replaceEntryInContext(entryId, text) },
+                onAbortSummary = { session.abortBranchSummary() },
+                skipSummaryPrompt = { session.branchSummarySkipPrompt() },
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -1358,7 +1351,7 @@ private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
  * to one `contains`, so `read file` matched nothing in a session whose text says
  * "file … read" — and a two-word search behaved differently here than in pi for no
  * reason. The tree view already tokenises this way
- * (`SessionTreeScreen.kt`'s `flattenTree` filter), so the two search boxes in one
+ * (`TreeModel` 的搜索）, so the two search boxes in one
  * overlay no longer disagree about what a space means.
  *
  * The text searched is pi's too, as far as this app can see it: pi matches

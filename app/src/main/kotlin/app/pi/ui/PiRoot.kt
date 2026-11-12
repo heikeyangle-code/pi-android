@@ -46,7 +46,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.ProjectScreen
