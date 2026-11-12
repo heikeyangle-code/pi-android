@@ -70,7 +70,7 @@ bash 工具输出等宽、可折叠到 N 行；超长输出显示「已截断 ·
 点灰色直接去登录，§3）。思考等级是同一张表底部的一排分段按钮，**只显示 `thinking.levels` 返回的等级**
 （模型不支持推理时整排隐藏）。「循环切换」手势保留（`model.cycle` / `thinking.cycle`）。
 
-## 3. 供应商与登录（重做，原 `ModelProviderScreen` 2949 行 + `SubscriptionLogin` 582 行）
+## 3. 供应商与登录（**已实现**：`ui/models/ModelsScreen`；原 `ModelProviderScreen` 2949 行 + `SubscriptionLogin` 582 行已删）
 
 数据源：`auth.providers`（每个供应商的认证方式、是否已配置、状态）、`auth.credentials`。
 

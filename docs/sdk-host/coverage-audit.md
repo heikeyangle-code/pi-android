@@ -40,7 +40,8 @@ list / listAll / open / getTree / getBranch / appendSessionInfo / appendLabelCha
 ## ModelRuntime / 认证 / 模型
 - 登录 / 登出 / API key / 凭据列表 / 刷新目录：`auth.*`。
 - **自定义供应商 `models.json`**：`models.config.get/set/setProvider/removeProvider`（SDK 当校验器，非法回滚）。
-  旧 `ModelProviderScreen`（约 2950 行）里手写读写与校验的那部分应整体删除，改调这些命令。
+  **已完成**：旧 `ModelProviderScreen` 及其整簇（扫描、预设、官方目录读取、OAuth 宿主、凭据服务、重启标记）已删除，
+  新页面是 `ui/models/ModelsScreen`（经 `HostAuth` / `HostAdvanced`）；表单模型 `models/ProviderForm` 有纯 JVM 的 harness。
 - 虚拟模型（`registerVirtualModel`）：由扩展注册，宿主不额外接；`routedModel` 已在快照里。
 
 ## 扩展
