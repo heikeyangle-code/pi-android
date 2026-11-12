@@ -744,6 +744,11 @@ const ARTIFACTS = {
     kind: "tar.xz",
     why: "pi requires Node >= 22.19; official glibc build",
   },
+  termuxBootstrap: {
+    url: "https://github.com/termux/termux-packages/releases/download/bootstrap-2026.08.30-r1%2Bapt.android-7/bootstrap-aarch64.zip",
+    kind: "zip",
+    why: "optional second guest OS: Termux userland (bionic), run under proot with the canonical /data/data/com.termux prefix (docs/sdk-host/termux.md)",
+  },
   ripgrep: {
     url: "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
     kind: "tgz",
@@ -1485,6 +1490,8 @@ function main() {
     ["ubuntuBase", `ubuntu-base${PAYLOAD_SUFFIX}`],
     ["ripgrep", `ripgrep${PAYLOAD_SUFFIX}`],
     ["fd", `fd${PAYLOAD_SUFFIX}`],
+    // 第二个系统（Termux）的 bootstrap：保持 .zip，App 侧用 java.util.zip 直接解（TermuxBootstrap）。
+    ["termuxBootstrap", "termux-bootstrap.zip"],
   ];
   for (const [name, out] of assets) {
     const src = join(CACHE, ARTIFACTS[name].url.split("/").pop());
