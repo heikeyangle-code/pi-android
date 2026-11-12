@@ -10,7 +10,7 @@ import java.io.File
  *
  * 全部走 guest 里的 `pi-resources.mjs`（pi 自己的包管理器 + `pi config` 的开关逻辑），
  * App 不重写 `+path/-path` 的写法，也不再扫目录猜。脚本每次启动都重写到
- * `<rootfs>/opt/pi/`（与 `PiOAuthHost` 同一手法），以免旧版本脚本留在 rootfs 里。
+ * `<rootfs>/opt/pi/`，以免旧版本脚本留在 rootfs 里。
  */
 class PiResources(
     private val context: Context,

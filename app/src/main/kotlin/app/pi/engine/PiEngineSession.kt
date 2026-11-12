@@ -10,7 +10,6 @@ import app.pi.host.HostSignal
 import app.pi.host.HostUiBridge
 import app.pi.host.OpenArgs
 import app.pi.host.PiHostClient
-import app.pi.packages.PendingModelRestart
 import app.pi.rpc.JsonlFramer
 import app.pi.rpc.PiEvent
 import app.pi.rpc.PiEvents
@@ -566,7 +565,6 @@ class PiEngineSession(
                 commands.open(open, timeoutMs)
                 lastServingMs = (System.nanoTime() - startedAt) / 1_000_000
                 if (_state.value == EngineState.Starting) _state.value = EngineState.Ready
-                PendingModelRestart.clear()
             } catch (e: HostException) {
                 when (e.code) {
                     HostException.TIMEOUT -> Unit // 慢，不是坏：留在 Starting

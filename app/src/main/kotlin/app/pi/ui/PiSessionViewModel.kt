@@ -1755,7 +1755,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * `PiSettingsFileStore` caches each document after its first read
      * (`global`/`project`), and every other writer bypasses that cache: pi itself,
-     * `pi install` (guest-side), and the credential form's `PiEnginePreferences`.
+     * `pi install` (guest-side).
      * That last one invalidates a store instance of its *own*
      * (`PiConfigFiles.kt:579`), so the app's reader kept the pre-write values —
      * which is why this lives here, next to [settingsStore], rather than in the

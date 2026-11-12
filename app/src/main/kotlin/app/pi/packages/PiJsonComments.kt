@@ -8,8 +8,7 @@ package app.pi.packages
  * ## Why this is its own object
  *
  * It is the only part of reading `models.json` that pi does *not* do with a plain
- * `JSON.parse`, and more than one reader needs it now: `PiConfigFiles` (the
- * read/modify/write) and `PiModelInventory` (the read-only list behind 设置 → 模型).
+ * `JSON.parse`, and more than one reader needs it now: `PiConfigFiles`.
  * Keeping one copy is the point — a second stripper would be free to disagree with
  * the first, and disagreement here means one screen shows models the other cannot
  * see. It also lives outside `PiConfigFiles` so the bare-JVM harness can compile it

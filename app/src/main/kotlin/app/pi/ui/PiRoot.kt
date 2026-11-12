@@ -733,7 +733,7 @@ fun PiRoot() {
                     recentFailures = { session.recentFailures() },
                     // `get_available_models`: the only model list pi exposes over
                     // RPC, used to mark a scanned id as pi metadata or as an app
-                    // default (`ModelProviderScreen`).
+                    // default (`ModelsScreen`).
                     availableModels = uiState.models,
                     onLoadAvailableModels = { session.refreshModels() },
                     advanced = { session.advanced() },

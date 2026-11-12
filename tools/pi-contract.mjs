@@ -47,16 +47,9 @@
  *     compaction), and that the app still keeps entry types it does not model (the
  *     `context_edit` pair). pi exposes no RPC channel for any of them. See
  *     [checkSessionSurface].
- *  6. **Official model catalog** — the format of `@earendil-works/pi-ai`'s bundled
- *     `dist/providers/data/**`, which `packages/PiOfficialCatalog.kt` parses. Its
- *     sha256 check makes a *matching* file silent, so 0.99.0's rename of the inner keys
- *     from `<id>` to `<type>:<id>` — and its new image and classifier entries — reached
- *     the import sheet as extra chat models with nothing failing. See
- *     [checkCatalogData].
- *  7. **Behaviour** — `models.json` semantics, asserted by running the pinned
+ *  6. **Behaviour** — `models.json` semantics, asserted by running the pinned
  *     engine: a declaration that omits `input`/`contextWindow` really does replace
- *     the catalog entry with pi's defaults (that is why the app must not declare
- *     models pi knows), `modelOverrides` really does merge (that is why it is the
+ *     the catalog entry with pi's defaults, `modelOverrides` really does merge (that is why it is the
  *     safe way to adjust one), and a catalog model's default `inputLimits` really is
  *     the 2000×2000 / 4.5 MiB(base64) / q80 profile `AttachmentBudget.kt` pre-resizes to.
  *  8. **Extensions** — the extensions this app ships still load into the pinned
@@ -166,38 +159,6 @@ function checkSurface(piDir) {
 				`find the new name in the pinned rpc-types.ts and update Commands.kt + its callers.`,
 		);
 	}
-	// The provider table is the app's own transcription of pi's `providers/*.ts` — the
-	// one table here that *writes* something: `PiCredentialService.save` puts a
-	// preset's `baseUrl` and `api` into `models.json`, so a stale entry would override
-	// the engine's real endpoint for that provider (the §M11 shape again). Only the
-	// providers pi ships are asserted; the app's own three (Ollama, llama.cpp, 自定义)
-	// have no counterpart by definition.
-	const presets = [
-		...readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/packages/PiProviderPresets.kt"), "utf8")
-			.matchAll(/Preset\("([^"]+)",\s*"[^"]*",\s*"([^"]*)",\s*"([^"]*)",[^)]*?(true|false),\s*(true|false)/g),
-	].map((m) => ({ id: m[1], baseUrl: m[2], api: m[3], builtInPi: m[5] === "true" }));
-	for (const preset of presets.filter((p) => p.builtInPi && p.baseUrl.length > 0)) {
-		check(
-			`provider preset matches the pinned engine: ${preset.id}`,
-			dist.includes(preset.baseUrl),
-			`app.pi keeps its own table of pi's providers (packages/PiProviderPresets.kt) and ` +
-				`saves baseUrl/api from it into models.json — a stale entry overrides the engine's ` +
-				`own endpoint. Re-read the pinned providers/${preset.id}.ts.`,
-		);
-	}
-
-	// The one file path the app reconstructs rather than asks for. A rename here makes
-	// `PiModelCatalog` return an empty list for every provider — by design ("silence
-	// rather than a guess"), which means nothing else in the build could notice.
-	check(
-		"the pinned engine still names the model catalog `models-store.json`",
-		dist.includes("models-store.json"),
-		"app.pi reads pi's own model catalog beside models.json " +
-			"(packages/PiModelCatalog.kt, called from PiCredentialService.catalogModels and " +
-			"PiModelInventory). Re-read the pinned core/model-runtime.ts's FileModelsStore " +
-			"construction and update both readers if the name or the location moved.",
-	);
-
 	// `set_editor_text` is the ninth method (`rpc-types.ts`'s RpcExtensionUIRequest) and
 	// the one that is neither a dialog nor chrome: the app applies it to the composer
 	// (`PiSessionViewModel`'s `"set_editor_text" ->` arm). It was missing from this list
@@ -257,7 +218,7 @@ function checkProjectConfigDir(piDir) {
 		"the pinned engine's project config directory is the one the app joins onto the workspace",
 		kotlinDir === engineDir,
 		"app.pi resolves every project-scoped path itself: `<workspace>/<dir>/settings.json` " +
-			"(settings/PiSettingsFileStore.kt, packages/PiCredentialService.kt), `themes/` " +
+			"(settings/PiSettingsFileStore.kt, host/commands), `themes/` " +
 			"(ui/theme/PiThemeFiles.kt), `extensions/` (ui/PiSessionViewModel.kt), `skills/` and " +
 			"`prompts/`, and `pi install -l`'s scope (packages/AgentLayout.kt). Those call sites " +
 			"read `PiProjectConfig.DIRECTORY`. Re-read the pinned package.json's `piConfig` and " +
@@ -1062,15 +1023,15 @@ function checkBehaviour(piDir) {
 	const id = model.id;
 
 	// (1) A declaration that omits the capability fields replaces the catalog entry
-	//     with pi's defaults. This is the fact `PiCredentialService.save` is built on:
-	//     it is why the app declares nothing for a provider pi ships.
+	//     with pi's defaults. This is the fact the app's custom-provider form relies on:
+	//     omission is a downgrade, so the form writes every capability it knows.
 	writeModelsJson(probe, { baseUrl: "https://api.deepseek.com", api: "openai-completions", models: [{ id }] });
 	const afterDeclaration = availableModels(piDir, probe).find((m) => m.provider === "deepseek" && m.id === id);
 	check(
 		"a models.json entry without `input` really does become text-only",
 		Array.isArray(afterDeclaration?.input) && JSON.stringify(afterDeclaration.input) === '["text"]',
 		"docs/known-gaps.md §M11 rests on this. If pi stopped defaulting `input`, the rule in " +
-			"PiCredentialService.save ('declare only what pi cannot know') is no longer explained by it — re-derive it.",
+			"the custom-provider form (ProviderForm) writes capabilities explicitly because of this — re-derive that.",
 	);
 	check(
 		"a models.json entry without `contextWindow` really does become 128000",
@@ -1133,9 +1094,8 @@ function checkBehaviour(piDir) {
 		afterLimits?.inputLimits?.images?.resize?.maxBytes === 999 &&
 			afterLimits?.inputLimits?.images?.resize?.maxWidth === 2000 &&
 			JSON.stringify(afterLimits?.input) === JSON.stringify(model.input),
-		`the App's model editor adjusts a catalog model only through modelOverrides ` +
-			`(packages/PiCredentialService.kt's "declare only what pi cannot know" rule, §M11). If a nested ` +
-			`object like inputLimits did not merge, that rule would have to be re-derived — re-read the ` +
+		`models.config adjusts a catalog model only through modelOverrides. If a nested ` +
+			`object like inputLimits did not merge, that would have to be re-derived — re-read the ` +
 			`pinned core/provider-composer.ts's applyOverride.`,
 	);
 
@@ -1149,10 +1109,9 @@ function checkBehaviour(piDir) {
  * `ModelConfig.load` has exactly two call sites (`core/model-runtime.ts:176` in
  * `create`, `:699` in `refresh`), and nothing on the RPC surface calls `refresh` —
  * `get_available_models` answers from `getAvailableSnapshot()` (`rpc-mode.ts:490-493`).
- * `PiModelInventory` turns "the file has it, the engine's list does not" into
- * 「等待重启」, and `ModelProviderScreen` tells the user to restart for it. If pi ever grew an
- * RPC refresh (or reloaded the file per call), that sentence would become a lie — the
- * user would restart for nothing. So the negative is asserted directly: write the file
+ * The app now goes through the host (`models.config.*` + the SDK's own refresh), so this
+ * is kept as a statement about the raw engine only: if pi ever re-reads the file per call,
+ * the host's explicit refresh is merely redundant, not wrong. So the negative is asserted directly: write the file
  * *while the engine is running*, ask again, and require the new model to be absent —
  * then require it to be present in a fresh process.
  *
@@ -1263,10 +1222,8 @@ async function checkStartupOnlyReload(piDir) {
 		check(
 			"models.json edited while the engine runs really does need a restart",
 			after?.success === true && !liveIds.includes(addedId),
-			"PiModelInventory's PENDING_RESTART status and ModelProviderScreen's 「等待重启」 + " +
-				"restart button are this fact. If pi now re-reads models.json during a session, " +
-				"re-read core/model-runtime.ts's refresh call sites and drop that UI (or find " +
-				"the command that refreshes and use it instead of a restart).",
+			"informational: the host refreshes explicitly (auth.refreshModels). If pi now re-reads " +
+				"models.json during a session, this assertion is stale, not the app.",
 		);
 	} finally {
 		await live.stop();
@@ -2103,7 +2060,6 @@ const GROUPS = [
 	["tooltext", "--- tool-result text ---"],
 	["session", "--- session surface ---"],
 	["bundled", "--- bundled entry ---"],
-	["catalog", "--- official model catalog ---"],
 	["behaviour", "--- behaviour ---"],
 	["extensions", "--- extensions ---"],
 ];
@@ -2146,132 +2102,6 @@ if (!existsSync(join(piDir, "dist"))) {
 // `extensions` spawn the engine, so they are the two a failure elsewhere in the tree
 // (or a missing runtime) can turn into a throw before the static verdicts are read.
 // A full run keeps its historical order; `--only=<group>` runs exactly one.
-/**
- * The **official model catalog's data format**: `@earendil-works/pi-ai`'s bundled
- * `dist/providers/data/**`, which `packages/PiOfficialCatalog.kt` parses.
- *
- * ## Why this group exists
- *
- * This is the one pi file whose format change is *invisible* to the app. The reader
- * verifies each provider file's sha256 against a manifest, and a matching hash with
- * parseable JSON produces **no problem and no notice** — so when 0.99.0 renamed the
- * per-provider inner keys from `<id>` to `<type>:<id>` and started emitting image and
- * classifier entries next to chat ones, the app kept "succeeding": it ignored the key
- * names and read `element["id"]`, so 57 image models and 15 classifier models appeared
- * as chat models, were default-checked in the import sheet, and were written into
- * `enabledModels` (or, for non-built-in providers, into `models.json`, where pi's own
- * schema has no `type` and builds a chat model out of a classifier). That is the
- * §M11 shape — a capability silently wrong rather than loudly broken.
- *
- * ## What it asserts
- *
- *  1. the shipped `schemaVersion` is the one the app was written against
- *     (`PiOfficialCatalog.MODEL_DATA_SCHEMA_VERSION`, transcribed from pi's
- *     `scripts/model-data.ts`'s `MODEL_DATA_SCHEMA_VERSION`);
- *  2. every inner-key **prefix** the data actually uses is one of the model types the
- *     app's reader knows about — a fourth type must not arrive unnoticed;
- *  3. the data still contains a non-`chat` entry, so (2) is not vacuous: if pi ever
- *     emitted chat only, the filter this group protects would stop being exercised and
- *     that change should be seen, not assumed.
- *
- * The data lives in a **sibling** package (`@earendil-works/pi-ai`), reached through
- * the same `node_modules` the coding-agent package sits in — which is how both CI
- * (`build/pi-contract`) and a `--pi <installed tree>` invocation have it.
- */
-function checkCatalogData(piDir) {
-	const registryText = readFileSync(
-		join(ROOT, "app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"),
-		"utf8",
-	);
-	const declared = /MODEL_DATA_SCHEMA_VERSION\s*=\s*(\d+)/.exec(registryText);
-	// The types the app's reader knows how to *filter* (`PiOfficialCatalog`'s `providerOf`
-	// drops everything that is not chat; the rest are named so that a new one is a
-	// failure here rather than a new row in the import sheet).
-	const knownTypes = ["chat", "image", "classifier"];
-
-	// Two shapes, because the tool is pointed at both: CI hands `--pi` the package
-	// directory npm created (`<stage>/node_modules/@earendil-works/pi-coding-agent`,
-	// where pi-ai is the **sibling** package), while a hand-run may hand it an unpacked
-	// package root that carries its own `node_modules`. First existing wins.
-	const dataCandidates = [
-		join(piDir, "..", "pi-ai", "dist", "providers", "data"),
-		join(piDir, "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
-	];
-	const dataDir = dataCandidates.find((candidate) => existsSync(candidate)) ?? dataCandidates[0];
-	check(
-		"the pinned engine's pi-ai package still ships its model data directory",
-		existsSync(dataDir),
-		`looked for ${dataCandidates.join(" and ")}. PiOfficialCatalog.kt parses these files, and this ` +
-			`group is the only thing that would notice their format moving. If pi-ai moved its data, ` +
-			`re-point this check (packages/ai/scripts/generate-models.ts is what writes it) — do not ` +
-			`delete it.`,
-	);
-	if (!existsSync(dataDir)) return;
-
-	const manifestPath = join(dataDir, ".manifest.json");
-	check(
-		"the model data directory still has its manifest",
-		existsSync(manifestPath),
-		`${manifestPath} is missing. PiOfficialCatalog.kt reads \`schemaVersion\` from it; without the ` +
-			`file the app cannot check it either, so this is the earliest place to say so.`,
-	);
-	if (!existsSync(manifestPath)) return;
-
-	const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-	check(
-		`the model data manifest declares schemaVersion ${declared ? declared[1] : "<unreadable>"}, the version the app reads`,
-		declared !== null && Number(manifest.schemaVersion) === Number(declared[1]),
-		`${manifestPath} says schemaVersion ${JSON.stringify(manifest.schemaVersion)} and ` +
-			`PiOfficialCatalog.MODEL_DATA_SCHEMA_VERSION is ${declared ? declared[1] : "unreadable"}. ` +
-			`0.99.0 moved this from 3 to 6 and renamed the inner keys to \`<type>:<id>\` in the same ` +
-			`release; a mismatch means the reader's assumptions moved with it. Re-read ` +
-			`packages/ai/scripts/model-data.ts and generate-models.ts, then update ` +
-			`PiOfficialCatalog.kt (its \`type\` filter, and this constant).`,
-	);
-
-	const prefixes = new Map();
-	let providerFiles = 0;
-	let nonChat = 0;
-	for (const name of readdirSync(dataDir)) {
-		if (!name.endsWith(".json") || name.startsWith(".")) continue;
-		providerFiles++;
-		const groups = JSON.parse(readFileSync(join(dataDir, name), "utf8"));
-		for (const models of Object.values(groups)) {
-			if (models === null || typeof models !== "object") continue;
-			for (const key of Object.keys(models)) {
-				const prefix = key.includes(":") ? key.slice(0, key.indexOf(":")) : "<none>";
-				prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
-				if (prefix !== "chat") nonChat++;
-			}
-		}
-	}
-	check(
-		"the model data is still readable as api → inner key (>= 30 provider files)",
-		providerFiles >= 30 && prefixes.size > 0,
-		`read ${providerFiles} provider files under ${dataDir} and found ${prefixes.size} distinct ` +
-			`inner-key prefixes. A collapse here means the layout changed, not that the data is empty — ` +
-			`re-read generate-models.ts and re-point this reader.`,
-	);
-	const unknown = [...prefixes.keys()].filter((prefix) => !knownTypes.includes(prefix));
-	check(
-		`every inner-key prefix is a model type the app knows (${[...prefixes.keys()].sort().join(", ")})`,
-		unknown.length === 0,
-		`the data uses inner-key prefix(es) ${unknown.join(", ")}, which PiOfficialCatalog.kt does not ` +
-			`know about. \`providerOf\` filters on \`type\`, and \`modelOf\` defaults a missing \`type\` to ` +
-			`"chat"\` — so an unrecognised type is read as a chat model and lands in the import sheet's ` +
-			`default selection. Add it to \`knownTypes\` here *and* decide what the app does with it ` +
-			`(today: filter it out, like image and classifier).`,
-	);
-	check(
-		"the data still contains a non-chat entry, so the type filter is exercised",
-		nonChat > 0,
-		`every inner key in ${providerFiles} provider files is now \`chat:\`. The type filter in ` +
-			`PiOfficialCatalog.kt exists because 0.99.0 started emitting image and classifier entries ` +
-			`beside chat ones; with none left, that filter's justification (and this group's ` +
-			`non-vacuity) should be re-derived rather than assumed.`,
-	);
-	console.log(`   (${providerFiles} provider files, ${nonChat} non-chat entries, schemaVersion ${manifest.schemaVersion})`);
-}
 
 if (runs("surface")) {
 	console.log("\n--- surface ---");
@@ -2294,10 +2124,6 @@ if (runs("tooltext")) {
 if (runs("session")) {
 	console.log("\n--- session surface ---");
 	checkSessionSurface(piDir);
-}
-if (runs("catalog")) {
-	console.log("\n--- official model catalog ---");
-	checkCatalogData(piDir);
 }
 if (runs("bundled")) {
 	console.log("\n--- bundled entry ---");

@@ -80,7 +80,7 @@ fun PiSettingsStack(
     /**
      * The engine's restart, for the two branches that change files pi only reads
      * at startup: the package screen (through `EngineRestartCoordinator`) and the
-     * credential form (`models.json`, see [ModelProviderScreen]). Null keeps both
+     * credential form (`models.json`, see [app.pi.ui.models.ModelsScreen]). Null keeps both
      * screens honest: they say the restart is not wired instead of offering a
      * button that cannot work.
      */
@@ -108,7 +108,7 @@ fun PiSettingsStack(
     onFocusConsumed: () -> Unit = {},
     /**
      * Called after a screen wrote pi's files through a layer of its own (the
-     * credential form's `PiEnginePreferences`), so the owner of the settings store
+     * hand-edited files), so the owner of the settings store
      * can drop its cached documents. The store is the ViewModel's, so the
      * invalidation lives there — this stack only reports that a write happened.
      */
@@ -178,18 +178,8 @@ fun PiSettingsStack(
     // pi installs resources with `pi install`, which has no RPC command, so the
     // app owns this UI; the screen is `app.pi.packages.PiPackagesHost`.
     var packages by rememberSaveable { mutableStateOf(false) }
-    // 「模型与供应商」（`ModelProviderScreen`）：以前是 凭证表单 + 模型清单 两屏
-    // （`PiCredentialScreen` / `PiModelsScreen`），拍板合成一屏（导入是屏内 sheet、
-    // 三个选择键就地编辑），所以只剩一个层级加三个开屏参数：
-    //  - `modelFlowPreset`：从哪张厂商卡/哪条 Action 行进来的（null = 不预选）；
-    //  - `modelFlowImport`：进来直接拉起导入 sheet（之前注册表里 API Key / 本地模型
-    //    那两行就是"点进去填东西"的语义；两行已按用户裁定删除，入口留在这一屏自己身上）；
-    //  - `modelFlowEditor`：进来直接打开三个选择键之一的编辑器（搜索与
-    //    `/scoped-models` 的 `NavRequest.SettingsFocus`）。
+    // 「模型与供应商」（`ui/models/ModelsScreen`）：一个层级，数据全在宿主（auth.* / models.config.*）。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
-    var modelFlowPreset by rememberSaveable { mutableStateOf<String?>(null) }
-    var modelFlowImport by rememberSaveable { mutableStateOf(false) }
-    var modelFlowEditor by rememberSaveable { mutableStateOf<String?>(null) }
     // The open-source licence notices. Not a pi screen either — see §L: publishing
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
@@ -405,21 +395,11 @@ fun PiSettingsStack(
         writeEpoch++
     }
 
-    // 三个选择键的编辑器搬进了「模型与供应商」（一件事一个地方改），所以这三个 key
-    // 不再进分组屏 —— 搜索结果与 `/scoped-models` 焦点都路由到那一屏的就地编辑器；
-    // 分组屏里它们已被过滤掉（`SettingsGroupScreen` 用 `MODEL_SELECTION_KEYS`）。
     val openSetting: (String) -> Unit = { key ->
-        if (key in MODEL_SELECTION_KEYS) {
-            modelFlowPreset = null
-            modelFlowImport = false
-            modelFlowEditor = key
-            modelFlow = true
-        } else {
-            val setting = PiSettingsCatalog.byKey[key]
-            if (setting != null) {
-                groupId = setting.group
-                highlightKey = key
-            }
+        val setting = PiSettingsCatalog.byKey[key]
+        if (setting != null) {
+            groupId = setting.group
+            highlightKey = key
         }
     }
 
@@ -437,23 +417,7 @@ fun PiSettingsStack(
     // [onRunAction]; when the caller supplies nothing, the row keeps its honest
     // "not wired" dialog — which is why this is a per-key map and not a lambda
     // that would have to pretend every key is handled.
-    // 注册表里那三行（已导入的模型 / API Key / 本地模型）已按用户裁定删除：G_MODEL
-    // 分组页不存在，它们没有渲染面。目的地不变，仍由 `openModelFlow` 打开
-    // 「模型与供应商」一屏 —— 现在它由这一屏自己的三个入口（导入、API Key、订阅账号）
-    // 提供，注册表不再转一道手。
-    // 本地模型那一段（llama.cpp 端点）也走这一屏：那行已删除，但语义没变 —— pi 的
-    //  `/llama` 在 RPC 下根本跑不了：它的处理器除非
-    // `ctx.mode === "tui"` (`extensions/llama/index.ts:186-189`), and
-    // `ctx.ui.custom()` is a documented no-op in RPC mode. What *is* reachable is
-    // configuring the endpoint pi reads: `models.json` plus a placeholder
-    // credential (`docs/models.md:37`). The screen says the rest is TUI-only.
-    val openModelFlow: (preset: String?, importSheet: Boolean, editorKey: String?) -> Unit =
-        { preset, importSheet, editorKey ->
-            modelFlowPreset = preset
-            modelFlowImport = importSheet
-            modelFlowEditor = editorKey
-            modelFlow = true
-        }
+    val openModelFlow: () -> Unit = { modelFlow = true }
     val hostActions: Map<String, () -> Unit> = mapOf(
         // The `packages` row is a read-only *view* of what `pi install` wrote
         // (`PiSettingsRegistry.kt` says so on the row). Editing the array by hand
@@ -496,9 +460,6 @@ fun PiSettingsStack(
         } else if (modelFlow) {
             // 与屏自己的 onBack 同一套复位（四个状态一起清），两条退出路径不留半开状态。
             modelFlow = false
-            modelFlowImport = false
-            modelFlowEditor = null
-            modelFlowPreset = null
         } else if (packages) {
             packages = false
         } else if (deviceCapabilities) {
@@ -570,9 +531,6 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
                 onBack = {
                     modelFlow = false
-                    modelFlowImport = false
-                    modelFlowEditor = null
-                    modelFlowPreset = null
                 },
                 host = modelsHost,
             )
@@ -679,7 +637,7 @@ fun PiSettingsStack(
                 onOpenTerminal = onOpenTerminal,
                 // 首页顶栏的「模型与供应商」与分组页里那两条 Action 行是同一个目的地
                 // （`openModelFlow`），所以这里只是把已有的状态开关接上去，不多开任何一页。
-                onOpenModels = { openModelFlow(null, false, null) },
+                onOpenModels = openModelFlow,
                 onOpenDiagnostics = { diagnostics = true },
                 // 首页「其他」里的第三行。走这个栈自己的层级（`piFiles`），所以它的返回
                 // 语义与状态恢复与上面几页完全一致；`SettingsHome` 只是把点击转上来。

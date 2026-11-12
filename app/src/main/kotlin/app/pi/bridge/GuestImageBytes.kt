@@ -90,8 +90,7 @@ internal class GuestImage(
  *
  * ### 取的是什么
  *
- * 一次 `GET`，用 `HttpURLConnection`（不新增依赖，和 `packages/PiModelScanner.kt`
- * 已经出网那条路同一个栈）。**一个请求头都不设**：没有 cookie、没有 `Authorization`、
+ * 一次 `GET`，用 `HttpURLConnection`（不新增依赖，和 App 里其它出网路径同一个栈）。**一个请求头都不设**：没有 cookie、没有 `Authorization`、
  * 没有自定义 header。URL 里内嵌凭据（`http://user:pass@host/x.png`）直接拒绝，
  * 并且**不回显**这个 link（不然密码就进了 [lastFailure]）。
  *

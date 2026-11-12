@@ -501,7 +501,7 @@ private fun stampOf(file: File): String = "${file.length()}:${file.lastModified(
  * 10 秒 stale），`PiConfigFiles.write` 是临时文件 + rename。这一屏**不**写第二套。
  *
  * `mode600 = false`：可写白名单里没有凭据文件（`auth.json` 是只读的），所以这一屏不需要收紧
- * 权限 —— 那件事仍然归 `PiAuthStorage`。
+ * 权限 —— 凭据由宿主的 `auth.*` 管。
  *
  * @return null 表示成功，否则是给用户看的一句原因。
  */

@@ -269,8 +269,6 @@ run_harness packages \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiListOutput.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsMerge.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelCatalog.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
@@ -655,73 +653,10 @@ run_harness queue-restore \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/QueueRestoreCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/QueueRestore.kt"
 
-# app.pi.packages: 设置 → 模型 的那张清单（`PiModelInventory.kt`）与外部改动检测的判据
-# （`PiFileStamps.kt`）。为什么它必须在这里：清单要回答"导入过的模型为什么不在列表里"，而
-# 答案是一个**推断**（文件里有 + 有凭证 + 引擎没列 = 要重启），错在安静的那一侧就等于界面
-# 说"已经生效"而引擎从未读过那个文件 —— 正是 §M11/§M12 的形状。Compose 编译不了，所以判定
-# 必须留在纯对象里。文件本身不碰文件系统（四份文件原文由调用者传进来），只有 `PiFileStamps`
-# 用 `java.io.File` 做 mtime/大小判据。
-run_harness models-inventory \
-  app.pi.packages.PiModelInventoryCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiModelInventoryCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelInventory.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiFileStamps.kt"
 
-# app.pi.packages: 导入/编辑厂商时 settings.json 三个选择键的写入判定（`ModelSelectionPlan.kt`）。
-# 为什么必须在这里：用户报的「导入完了也有 bug」（B1）是旧 save() 每次无条件写
-# defaultProvider/defaultModel 并把 enabledModels 整表替换成只有本厂商的条目 —— 加一个模型
-# 默认模型被切走、导入第二个厂商冲掉第一个厂商的循环条目和手写 pattern。「勾选没动就不写」
-# 「别的厂商与手写 glob 必须活下来」是两条编译器看不见的条件判定，只能在这里钉住。
-# 纯 Kotlin stdlib：无 Android、无文件 IO。
-run_harness model-selection-plan \
-  app.pi.packages.ModelSelectionPlanCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/ModelSelectionPlanCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/ModelSelectionPlan.kt"
 
-# app.pi.packages: 厂商 `/models` 响应里**自愿给**的元数据（`PiScanVendorMeta.kt`）。为什么
-# 必须在这里：这些规则全是静默出错型 —— per-token→per-million 忘了乘，价格小一百万倍；
-# 图片能力读反，纯文本模型自称支持图片。屏幕上都只是一个数字或一个标签，编译器和肉眼都
-# 抓不到。用 OpenRouter 的真实字段形状钉住：有就给、没给就是 null（绝不写默认值）、
-# 非数字忽略。
-run_harness scan-vendor-meta \
-  app.pi.packages.PiScanVendorMetaCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiScanVendorMetaCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiScanVendorMeta.kt"
 
-# app.pi.packages: **models.dev 索引**（`PiModelsDev.kt`）—— 厂商 `/models` 从不发布的
-# 那部分能力的来源，尤其是思考档位（`thinkingLevelMap`）。为什么必须在这里：档位映射错了
-# 全是安静的（多给一个端点不认的档位 / 少给一个它能用的档位），而它正是 pi 从
-# `reasoning_options` 生成的那张表；这里用 models.dev 的真实形状（含只有中转站才有的裸 id）
-# 把 parse、精确/裸 id 两级查找、effort→档位映射钉住。纯逻辑 + kotlinx.serialization。
-run_harness models-dev \
-  app.pi.packages.PiModelsDevCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiModelsDevCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsDev.kt"
 
-# app.pi.packages: pi **官方随包发的模型目录**（`PiOfficialCatalog.kt`：41 份
-# `<provider>.json` + `.manifest.json` 的 SHA-256 校验）。为什么必须在这里：它取代了
-# App 手抄的提供商表 —— 读漏一份就是"提供商列表悄悄短一个"，正是用户要求"直读官方文件"
-# 的那个理由；而字段映射（`input`→图片能力、cost 的每百万单位、缺席≠不支持）全是静默
-# 出错型。每条失败路径都必须出 problem 行，而不是一个更短的列表。纯逻辑 + java.io +
-# java.security，无 Android。
-run_harness official-catalog \
-  app.pi.packages.PiOfficialCatalogCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
-
-# app.pi.packages: **官方目录在载荷里的位置**（`PiOfficialCatalog.ROOTFS_DATA_DIRECTORIES` /
-# `readFromRootfs`）。为什么必须在这里：那个目录的深度由 npm 的依赖树决定，而它已经搬过一次
-# —— `9fb65b7` 的载荷把 `@earendil-works/pi-ai` 嵌在 `pi-coding-agent/node_modules` 下，
-# pi 1.3.0 的 `tools/pi-engine.lock.json` 又把它提升到顶层。旧代码写死嵌套路径，于是升级后
-# 整张官方目录读不到，导入 sheet 的厂商列表塌成 App 自带的几档（用户报「已有厂商，再点导入
-# 模型，列表里只有三个」）。这条 harness 直接读 lock 文件里 pi-ai 的**实际**安装位置，断言
-# 候选目录覆盖它，并在临时目录里钉住「两种布局都在 → 提升的赢」「只有嵌套 → 仍然能读」
-# 「都读不到 → problems 逐个列出试过的路径」。纯逻辑 + java.io/nio + kotlinx.serialization。
-run_harness official-catalog-path \
-  app.pi.packages.PiOfficialCatalogPathCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogPathCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
 
 # :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
 # read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
@@ -1544,7 +1479,6 @@ run_harness host-api \
 run_harness host-session \
   app.pi.engine.HostSessionCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/engine/HostSessionCheck.kt" \
-  "$ROOT/app/src/test/kotlin/app/pi/engine/PendingModelRestartStub.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionLibrary.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/engine/PiEngineSession.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
@@ -1553,6 +1487,7 @@ run_harness host-session \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostAdvanced.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAuth.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 

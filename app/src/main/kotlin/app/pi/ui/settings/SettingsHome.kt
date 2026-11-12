@@ -78,7 +78,7 @@ fun SettingsHome(
      */
     onOpenTerminal: (() -> Unit)? = null,
     /**
-     * 「模型与供应商」（[ModelProviderScreen]）。**挪到了首页最顶栏**（用户拍板：
+     * 「模型与供应商」（[app.pi.ui.models.ModelsScreen]）。**挪到了首页最顶栏**（用户拍板：
      * 「位置在设置的最顶栏就行」）—— 它不再和终端并排放在「其他」一节，那一节现在
      * 只剩终端与 Pi 文件。
      *
@@ -191,7 +191,7 @@ fun SettingsHome(
                                     title = hit.title,
                                     supporting = PiSettingsCatalog.groupTitle(hit.group) + " · " + hit.description,
                                     onClick = {
-                                        if (hit.group == G_MODEL && onOpenModels != null) onOpenModels() else onOpenGroup(hit.group)
+                                        onOpenGroup(hit.group)
                                     },
                                 )
                             }
@@ -229,7 +229,7 @@ fun SettingsHome(
             }
             groupCards(
                 "模型与能力",
-                listOf("tools", "resources"),
+                listOf("model", "tools", "resources"),
                 lead = listOfNotNull(
                     onOpenModels?.let { HomeEntry("模型与供应商", "厂商、模型、凭证与导入", Icons.Filled.Timeline, it) },
                     onOpenEngine?.let { HomeEntry("引擎", "作用域模型、缓存预热、工具、扩展 flag、系统提示词、导出", Icons.Filled.Build, it) },

@@ -57,8 +57,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * The caches and locks are **per canonical file path**, not per instance
  * ([Document]). Four call sites used to build their own store over the same
- * `settings.json` (`PiSessionViewModel`, `WorkspaceStore`, `PiPackageFilterStore`,
- * `PiEnginePreferences`) and each cached its own copy, so `WorkspaceStore` — which
+ * `settings.json` (`PiSessionViewModel`, `WorkspaceStore`, `PiPackageFilterStore`) and each cached its own copy, so `WorkspaceStore` — which
  * never invalidated anything — wrote back a document from before a settings change
  * and erased it. Sharing the [Document] removes that whole class of bug; [shared] /
  * [forWorkspace] additionally hand out one instance per (global, project, appLocal)
