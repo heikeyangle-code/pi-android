@@ -1225,18 +1225,12 @@ run_harness notice-queue \
   "$ROOT/app/src/test/kotlin/app/pi/ui/extension/NoticeQueueCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/NoticeQueue.kt"
 
-# app.pi.ui.extension: `setWidget` 一行是什么（只做通用判断，不认任何第三方扩展的负载）：
-# 文字行按 pi 的方式截断、元素内换行拆成多行（有上限）、`<PREFIX>_JSON:{` 折叠成只取决于前缀的标签，
-# 普通文字不被吞。折叠标签与负载内容无关，是「扩展每个 tick 重发也不闪」的前提，编译器看不见。
-run_harness widget-lines \
-  app.pi.ui.extension.WidgetLinesCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/WidgetLinesCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionWidgetLines.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionInfoRows.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+# app.pi.ui.extension: 扩展面板的纯规则：数组元素里的换行不能被悄悄吞掉（宿主最不该有的失败）、
+# 病态输入有上限、像素宽 → 终端列数落在宿主能收的范围（宿主据此重绘组件工厂的表面）。
+run_harness panel-rules \
+  app.pi.ui.extension.ExtensionPanelRulesCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/ExtensionPanelRulesCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionPanelRules.kt"
 
 # app.pi.models: 自定义供应商表单（`ProviderForm`，纯函数）：表单 ↔ models.json 的一个 provider。
 # 编译器看不见的是「不碰不认识的字段」——`input` 含 audio、模型的 `extra`、未知键都得原样带回去，

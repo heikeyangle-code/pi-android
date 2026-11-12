@@ -84,9 +84,9 @@ fun ExtensionSpans(
 }
 
 /**
- * `setWidget` panels live in `ExtensionWidgetCard.kt` now, as a sibling of the tool
+ * `setWidget` panels live in `ExtensionPanels.kt` now, as a sibling of the tool
  * card: the same `app.pi.ui.blocks` furniture, its own title row and stripe. The
- * rules that decide *what* a widget line is are in `ExtensionWidgetLines.kt`.
+ * rules that decide *what* a widget line is are in `ExtensionPanelRules.kt`.
  */
 
 /** The `setTitle` value, or the screen's own fallback when pi set none. */

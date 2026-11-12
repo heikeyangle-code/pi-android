@@ -2531,6 +2531,7 @@ private fun ChatBody(
             widgets = remember(state.extensionWidgets) {
                 state.extensionWidgets.filter { it.placement == WidgetPlacement.AboveEditor }
             },
+            onColumns = session::setPanelColumns,
         )
 
         state.bash?.let { bashRun ->

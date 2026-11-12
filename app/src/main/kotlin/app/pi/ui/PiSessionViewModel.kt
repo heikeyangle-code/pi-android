@@ -4542,6 +4542,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 宿主的高级命令入口；引擎没跑时 null。 */
     fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
 
+    private var panelColumns = 0
+    private var panelResizeJob: Job? = null
+
+    /**
+     * 面板能放多少列等宽字符 → 宿主，让组件工厂按这个宽度重绘。布局抖动时防抖 100 ms，
+     * 同一个值不重发；引擎换了（重启 / 新进程）下一次布局变化会再发——宿主只在内存里存这一个数。
+     */
+    fun setPanelColumns(columns: Int) {
+        if (columns == panelColumns) return
+        panelColumns = columns
+        panelResizeJob?.cancel()
+        panelResizeJob = viewModelScope.launch {
+            delay(PANEL_RESIZE_DEBOUNCE_MS)
+            runCatching { session?.commands?.uiResize(columns) }
+        }
+    }
+
     /** 「模型与供应商」页要的全部宿主能力；引擎没跑时 null。 */
     fun modelsHost(): app.pi.ui.models.ModelsHost? {
         val engine = session ?: return null
@@ -6629,3 +6646,5 @@ data class OverlayState(val slot: OverlaySlot, val view: OverlayView)
 
 /** 跳转进行中的忙碌文案；会话树据此显示「停止摘要」。 */
 const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
+
+private const val PANEL_RESIZE_DEBOUNCE_MS = 100L

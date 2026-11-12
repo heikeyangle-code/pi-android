@@ -4,7 +4,7 @@ package app.pi.ui.extension
 //
 //  1. `isPreformatted` — is this widget line a *terminal row* (box art, a
 //     space-aligned table) whose column alignment survives only if the line is
-//     never soft-wrapped. `ExtensionWidgetCard.kt` gives such a line the
+//     never soft-wrapped. `ExtensionPanels.kt` gives such a line the
 //     "one row, no wrap, scroll sideways" treatment once the card is opened.
 //  2. `selectNeedsSheet` — is this `select` option list long or wide enough that
 //     the 330-wide dialog (`06 §2`) is the wrong shell for it? `ExtensionDialogs.kt`
@@ -23,9 +23,9 @@ package app.pi.ui.extension
  *
  * The widget panel's text area is ≈ 46–48 columns on the board's 412dp design
  * width: 正文列宽 384dp (`design/ui-refactor/12-color-area-and-scrollbar-plan.md:56`)
- * minus the stack's `pageHorizontal` padding (`ExtensionWidgetCard.kt:89`), the
+ * minus the stack's `pageHorizontal` padding (`ExtensionPanels.kt:89`), the
  * card's `BlockCardRowPadding` (`ui/blocks/BlockChrome.kt:291`) and the 12dp
- * accent stripe (`ExtensionWidgetCard.kt:127`), at `monoSmall` 12sp
+ * accent stripe (`ExtensionPanels.kt:127`), at `monoSmall` 12sp
  * (`ui/theme/PiTheme.kt:225` ≈ 7.2dp/列).
  *
  * 80 is chosen **above** that panel width on purpose: it is pi's own default
@@ -51,7 +51,7 @@ internal const val PreformatWideColumns = 80
  *  3. its visible width exceeds [PreformatWideColumns].
  *
  * The escape strip matters: a widget line reaches this file *raw* (the card
- * parses it with `Ansi.parse` at `ExtensionWidgetCard.kt:162`), so without
+ * parses it with `Ansi.parse` at `ExtensionPanels.kt:162`), so without
  * stripping, the bytes of an `ESC [ … m` SGR sequence would be counted as content
  * and could fake a double space the user's screen never shows.
  */

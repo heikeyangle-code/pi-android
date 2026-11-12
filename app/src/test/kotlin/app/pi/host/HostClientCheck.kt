@@ -55,6 +55,7 @@ fun main() {
     rules()
     commands()
     bridge()
+    widgets()
     replay()
     if (failures > 0) { println("harness: FAILED ($failures)"); exitProcess(1) }
     println("harness: OK (host-client)")
@@ -255,13 +256,31 @@ private fun bridge() {
     check("setStatus", Triple(st.method, st.statusKey, st.statusText), Triple("setStatus", "k", "忙"))
     val stClear = HostUiBridge.eventToLegacy("ui.status", obj("""{"key":"k","text":null}"""))!!
     check("setStatus 清除（text=null）", stClear.statusText, null)
-    val w = HostUiBridge.eventToLegacy("ui.widget", obj("""{"key":"w","lines":["l1","l2"],"surfaceId":null,"placement":"belowEditor"}"""))!!
-    check("setWidget 文本行", Triple(w.widgetKey, w.widgetLines, w.widgetPlacement), Triple("w", listOf("l1", "l2"), "belowEditor"))
-    val wc = HostUiBridge.eventToLegacy("ui.widget", obj("""{"key":"w","lines":null,"surfaceId":"s1","placement":"aboveEditor"}"""))!!
-    check("组件型小组件在旧界面里按清除处理", wc.widgetLines, emptyList<String>())
     check("setTitle", HostUiBridge.eventToLegacy("ui.title", obj("""{"title":"标题"}"""))!!.title, "标题")
     check("set_editor_text", HostUiBridge.eventToLegacy("ui.editorText", obj("""{"text":"x"}"""))!!.text, "x")
     check("不认识的事件 → null", HostUiBridge.eventToLegacy("ui.working", obj("""{"message":"m"}""")), null)
+}
+
+private fun widgets() {
+    val sw = SurfaceWidgets()
+    fun ev(name: String, json: String) = sw.onEvent(name, obj(json))
+    val lines = ev("ui.widget", """{"key":"w","lines":["l1","l2"],"surfaceId":null,"placement":"belowEditor"}""")
+    check("文本行小组件", lines, listOf(SurfaceWidgets.Update("w", listOf("l1", "l2"), "belowEditor")))
+    check("清除 = 空行", ev("ui.widget", """{"key":"w","lines":null,"surfaceId":null,"placement":null}""").single().lines, emptyList<String>())
+    // 宿主先 paint 再宣布：帧先到，缓存；宣布时补发
+    check("帧先于宣布：先不出", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":1,"lines":["a","b"]}"""), emptyList<SurfaceWidgets.Update>())
+    check("宣布时补发缓存的帧", ev("ui.widget", """{"key":"t","lines":null,"surfaceId":"s1","placement":"aboveEditor"}"""), listOf(SurfaceWidgets.Update("t", listOf("a", "b"), "aboveEditor")))
+    check("新帧更新", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["c"]}""").single().lines, listOf("c"))
+    check("旧帧（rev 不增）被忽略", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["old"]}"""), emptyList<SurfaceWidgets.Update>())
+    check("custom 表面不算小组件", ev("ui.surface", """{"surfaceId":"s9","key":"k","mode":"custom","rev":1,"lines":["x"]}"""), emptyList<SurfaceWidgets.Update>())
+    check("关闭 = 清除", ev("ui.close", """{"surfaceId":"s1","key":"widget:t","mode":"widget"}"""), listOf(SurfaceWidgets.Update("t", emptyList(), null)))
+    check("关闭后迟到的帧不复活", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":3,"lines":["z"]}"""), emptyList<SurfaceWidgets.Update>())
+    // 表面被字符串行替换：旧表面的迟到帧不能盖掉新内容
+    ev("ui.surface", """{"surfaceId":"s2","key":"widget:u","mode":"widget","rev":1,"lines":["f"]}""")
+    ev("ui.widget", """{"key":"u","lines":null,"surfaceId":"s2","placement":null}""")
+    ev("ui.widget", """{"key":"u","lines":["plain"],"surfaceId":null,"placement":null}""")
+    check("被替换后旧表面的帧忽略", ev("ui.surface", """{"surfaceId":"s2","key":"widget:u","mode":"widget","rev":9,"lines":["late"]}"""), emptyList<SurfaceWidgets.Update>())
+    check("旧界面事件形状", HostUiBridge.widgetToLegacy(SurfaceWidgets.Update("w", listOf("l1"), "belowEditor"))!!.let { Triple(it.widgetKey, it.widgetLines, it.widgetPlacement) }, Triple("w", listOf("l1"), "belowEditor"))
 }
 
 private fun replay() = runBlocking {
