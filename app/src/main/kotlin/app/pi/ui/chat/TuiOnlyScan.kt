@@ -61,7 +61,7 @@ fun tuiOnlyMarkers(source: String): List<String> =
  *
  * pi drops it before the wire (`rpc-mode.ts:195-208` only forwards an array or `undefined`), so
  * the extension gets **no panel and no error** — the same silence as `custom()`, from a call
- * that does not look like one. `pi-neuralwatt-provider` and `pi-subagents`' FleetView do it.
+ * that does not look like one. some extensions' fleet/status views do it.
  *
  * A regex and not a substring, and the difference matters: `"setWidget("` alone matches the
  * *common* case — `setWidget("plan-todos", lines)`, 6 of the 7 text-widget senders in the

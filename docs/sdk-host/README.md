@@ -63,3 +63,7 @@ pi 的 RPC 协议、RPC 响应类型、RPC 的残缺 UI 桩，**全部废弃**�
 - Kotlin 侧一行没改，所以没编译。
 - 宿主的**启动耗时**在手机上未测；本机 node22：握手 <100 ms，SDK 打包入口加载 ≈ 250 ms（冷缓存下 1 s 量级）。
 - [`sessions.md`](sessions.md) —— 会话管理整块按 SDK 重做：审计、覆盖对照、UI、删除顺序
+
+## 范围原则（当前）
+
+只做**官方 SDK 有的能力**，并按手机原生体验做强；不为官方不内置的第三方扩展（子代理、web-access 等）做专属接入或优化——通用的命令、工具、flag、扩展 UI（select/confirm/input/editor/status/widget/custom）、事件总线（`bus.*`）接好，扩展接入后自然可用。已撤掉的专属代码：`subagent.rpc`、子代理 widget 摘要与其 fixtures/脚本。PAUI 设计保留为文档，暂不实现。

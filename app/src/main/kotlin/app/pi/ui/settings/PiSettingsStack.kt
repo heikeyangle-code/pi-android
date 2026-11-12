@@ -95,6 +95,8 @@ fun PiSettingsStack(
      */
     availableModels: List<PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
+    /** 宿主的高级命令入口；引擎没跑时返回 null（「引擎」页据此显示说明）。 */
+    advanced: () -> app.pi.host.HostAdvanced? = { null },
     /**
      * A key to open this stack on, e.g. `enabledModels` for pi's
      * `/scoped-models` (see `NavRequest.SettingsFocus`). Consumed once, through
@@ -204,6 +206,7 @@ fun PiSettingsStack(
     // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器，与「模型与供应商」
     // 同类，是这个栈里的一个层级，返回语义与状态恢复和别的层级一致。
     var mcp by rememberSaveable { mutableStateOf(false) }
+    var engineOpen by rememberSaveable { mutableStateOf(false) }
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -480,6 +483,8 @@ fun PiSettingsStack(
         // 上一级目录**、到根才是 `onBack()`；这一支是它不在组合里时的兜底。
         if (piFiles) {
             piFiles = false
+        } else if (engineOpen) {
+            engineOpen = false
         } else if (mcp) {
             mcp = false
         } else if (licenses) {
@@ -523,6 +528,14 @@ fun PiSettingsStack(
             piFiles -> PiFilesScreen(
                 contentPadding = contentPadding,
                 onBack = { piFiles = false },
+            )
+
+            engineOpen -> EngineScreen(
+                contentPadding = contentPadding,
+                onBack = { engineOpen = false },
+                advanced = advanced,
+                availableModels = availableModels,
+                onLoadAvailableModels = onLoadAvailableModels,
             )
 
             mcp -> McpServersScreen(
@@ -680,6 +693,7 @@ fun PiSettingsStack(
                 onOpenPiFiles = { piFiles = true },
                 onOpenOther = { other = true },
                 onOpenMcp = { mcp = true },
+                onOpenEngine = { engineOpen = true },
             )
         }
     }

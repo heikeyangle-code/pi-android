@@ -1290,20 +1290,12 @@ run_harness notice-queue \
   "$ROOT/app/src/test/kotlin/app/pi/ui/extension/NoticeQueueCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/NoticeQueue.kt"
 
-# app.pi.ui.extension: what a `setWidget` line **is**. pi's RPC widget contract is
-# `widgetLines: string[]` and nothing else, so an extension that wants a richer panel sends a
-# **prefix plus a JSON object on one line** and expects the host to interpret it
-# (`pi-subagents`' `PI_SUBAGENT_ASYNC_JSON:`). Drawing every line verbatim made one 32 KB
-# payload occupy half the conversation and re-lay-out on every status tick, because pi's cap
-# counts *lines* (`MAX_WIDGET_LINES = 10`) — the same class of hole `ImageSizeCheck` closes for
-# a single long grep hit. Three properties here are invisible to a compiler: a folded label
-# never depends on the payload's volatile fields (that, and not a smaller font, is what removes
-# the flicker), no `Text` row ever exceeds `WIDGET_LINE_MAX_CHARS` (the bound on both layout and
-# `Ansi.parse`'s input), and prose is not swallowed (`FOO_JSON: hello` is text, only
-# `<PREFIX>:{` is a payload).
-run_harness widget-payload \
-  app.pi.ui.extension.WidgetPayloadCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/WidgetPayloadCheck.kt" \
+# app.pi.ui.extension: `setWidget` 一行是什么（只做通用判断，不认任何第三方扩展的负载）：
+# 文字行按 pi 的方式截断、元素内换行拆成多行（有上限）、`<PREFIX>_JSON:{` 折叠成只取决于前缀的标签，
+# 普通文字不被吞。折叠标签与负载内容无关，是「扩展每个 tick 重发也不闪」的前提，编译器看不见。
+run_harness widget-lines \
+  app.pi.ui.extension.WidgetLinesCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/WidgetLinesCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionWidgetLines.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionInfoRows.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \

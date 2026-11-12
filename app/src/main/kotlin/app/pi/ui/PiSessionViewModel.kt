@@ -4538,6 +4538,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 宿主的高级命令入口；引擎没跑时 null。 */
+    fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
+
     /** 只改「发给模型的版本」（SDK `appendContextEdit` 带替换内容），原文保留。 */
     fun replaceEntryInContext(entryId: String, text: String) {
         val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")

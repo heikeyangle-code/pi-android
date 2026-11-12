@@ -125,6 +125,7 @@ fun SettingsHome(
      * `null` 隐藏入口（预览与测试用）。
      */
     onOpenMcp: (() -> Unit)? = null,
+    onOpenEngine: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 退路用的自托管状态。放在早退之前，所以两个分支都走同一份 remember。
@@ -231,6 +232,7 @@ fun SettingsHome(
                 listOf("tools", "resources"),
                 lead = listOfNotNull(
                     onOpenModels?.let { HomeEntry("模型与供应商", "厂商、模型、凭证与导入", Icons.Filled.Timeline, it) },
+                    onOpenEngine?.let { HomeEntry("引擎", "作用域模型、缓存预热、工具、扩展 flag、系统提示词、导出", Icons.Filled.Build, it) },
                     onOpenMcp?.let { HomeEntry("MCP 服务器", "给 pi 接外部工具：开关、添加、编辑", Icons.Filled.Build, it) },
                 ),
             )

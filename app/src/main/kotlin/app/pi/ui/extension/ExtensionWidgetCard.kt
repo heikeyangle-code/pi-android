@@ -110,21 +110,20 @@ fun ExtensionWidgetStack(
                 if (expandedNow) all else boundedWidgetRows(all)
             }
             if (rows.isEmpty()) return@forEach
-            val tone = remember(rows) { widgetCardTone(rows) }
             // Only a widget with no header of its own needs the cue: a payload row already
             // shows `详情`, and a text panel earns one only when a line was actually cut.
             val hint = remember(rows) {
-                widgetNeedsDisclosure(rows) && rows.none { it is WidgetRow.Folded || it is WidgetRow.Summary }
+                widgetNeedsDisclosure(rows) && rows.none { it is WidgetRow.Folded }
             }
-            val stateColor = widgetToneColor(tone, palette)
+            val stateColor = widgetToneColor(null, palette)
             // **A panel with no title of its own gets the widget's key.** Only `Summary`/`Folded`
             // rows carry a header; anything else is an extension's plain `string[]` (e.g.
-            // `pi-web-access`' `setWidget("web-activity", lines)`), which used to arrive on the
+            // `setWidget("web-activity", lines)`), which used to arrive on the
             // phone as an unlabelled block of text. The key is the one identity the host always
             // has. See [widgetCaption] for why it is humanised and not translated.
             val caption = remember(widget.key, rows) {
                 widgetCaption(widget.key)
-                    ?.takeIf { rows.none { row -> row is WidgetRow.Summary || row is WidgetRow.Folded } }
+                    ?.takeIf { rows.none { row -> row is WidgetRow.Folded } }
             }
             BlockCard(
                 color = palette.cardBg,
@@ -229,15 +228,6 @@ private fun WidgetRowView(row: WidgetRow, expanded: Boolean) {
             badge = null,
             headline = emptyList(),
             details = emptyList(),
-            raw = row.raw,
-            expanded = expanded,
-        )
-
-        is WidgetRow.Summary -> WidgetDisclosure(
-            label = row.label,
-            badge = row.badge,
-            headline = row.headline,
-            details = row.details,
             raw = row.raw,
             expanded = expanded,
         )

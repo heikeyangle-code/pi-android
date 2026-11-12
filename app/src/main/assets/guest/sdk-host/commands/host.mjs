@@ -14,7 +14,7 @@ export function register(reg, { controller, hub, reg: registry }) {
     // 能力表：App 据此决定哪些入口亮起，而不是硬编码「有没有」。
     capabilities: [
       "ui.dialogs", "ui.widgetFactory", "ui.footer", "ui.header", "ui.custom",
-      "ui.palette", "ui.cancelNotice", "renderers", "subagents.rpc", "services.packages",
+      "ui.palette", "ui.cancelNotice", "renderers", "services.packages",
       "session.replace", "project.trust", "builtin.mcp", "builtin.codemode", "builtin.toolSearch",
     ],
   }));

@@ -193,12 +193,6 @@ class HostCommands(
         client.call("bus.subscribe", obj { put("names", JsonArray(names.map { JsonPrimitive(it) })) })
     }
 
-    suspend fun subagentRpc(method: String, params: JsonObject = JsonObject(emptyMap()), timeoutMs: Long? = null): JsonObject =
-        client.callObject("subagent.rpc", obj {
-            put("method", JsonPrimitive(method)); put("params", params)
-            timeoutMs?.let { put("timeoutMs", JsonPrimitive(it)) }
-        }, timeoutMs = timeoutMs?.plus(5_000))
-
     // ---- ui 回路 ----
 
     suspend fun uiInput(surfaceId: String, data: String) {

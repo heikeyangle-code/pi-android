@@ -319,8 +319,6 @@ try {
   await h.call("bus.emit", { name: "probe:ping", data: { n: 1 } });
   const busEvt = await h.waitFor(h.evt("bus", (d) => d.name === "probe:ping"), 5000).catch(() => null);
   expect("bus 事件原样转发给 App", busEvt?.data.data.n === 1, JSON.stringify(busEvt));
-  const sr = await h.call("subagent.rpc", { method: "ping", timeoutMs: 300 });
-  expect("subagent.rpc 在 pi-subagents 未装时返回可识别的错误而不是挂死", !sr.ok && sr.error.code === "busy", JSON.stringify(sr));
 
   // ---- 7b. 认证：供应商 / API Key / OAuth 登录 ----------------------------
   const provs = await h.call("auth.providers");

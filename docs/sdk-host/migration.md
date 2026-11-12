@@ -115,7 +115,7 @@ epoch 过滤、seq 跳号、res/req 配对、超时清理、未知帧忽略。
 3. 删：`ExtensionWidgetLines.kt` 里子代理相关的摘要拼接（`subagentSummary` 等），widget 里的子代理行改为跳转。
 **验收**：真机启动两个子代理，列表能看到，点进去能看到实时对话记录，发 steer 能被收到（`deliveryStatus`），能 stop。
 
-## 步骤 7 [ ]：PAUI 接到总线
+## 步骤 7 [暂缓]：PAUI 接到总线（不做第三方专属优化，见 ui-design.md §7）
 
 ui-design §7。改 `ui/extension/PauiView.kt` 的输入源为 `bus` 事件；写一个演示扩展放 `tools/sdk-host/fixtures/`，并在 test.mjs 里加用例（`paui:render` → `bus` 事件转发 → `bus.emit paui:event` 回到扩展）。
 

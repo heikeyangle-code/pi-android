@@ -736,6 +736,7 @@ fun PiRoot() {
                     // default (`ModelProviderScreen`).
                     availableModels = uiState.models,
                     onLoadAvailableModels = { session.refreshModels() },
+                    advanced = { session.advanced() },
                     // `/scoped-models`: open the group and highlight the key.
                     focusKey = settingsFocus,
                     onFocusConsumed = { settingsFocus = null },
