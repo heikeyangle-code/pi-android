@@ -10,6 +10,8 @@ import kotlinx.serialization.json.JsonElement
  */
 class ExtensionsAccess(
     val ext: HostExtensions,
+    /** 资源清单与项目信任（同样是宿主命令）。 */
+    val resources: HostResources,
     val events: Flow<HostSignal.Event>,
     val requests: Flow<HostRequest>,
     val respond: suspend (requestId: String, value: JsonElement?, cancelled: Boolean) -> Unit,

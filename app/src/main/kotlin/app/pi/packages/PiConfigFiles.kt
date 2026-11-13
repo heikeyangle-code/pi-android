@@ -194,7 +194,7 @@ object PiConfigFiles {
      */
     fun stringify(document: JsonObject): String = document.toString()
 
-    fun parseObject(text: String): JsonObject? = PiJson.parseObjectOrNull(TrustFile.stripBom(text))
+    fun parseObject(text: String): JsonObject? = PiJson.parseObjectOrNull(if (text.startsWith("\uFEFF")) text.substring(1) else text)
 
     /**
      * `stripJsonComments` (`core/model-config.ts:267` calls it before `JSON.parse`).

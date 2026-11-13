@@ -15,3 +15,12 @@
 - 工作区页的「正在跑 / 本次改动 / 资源」仍由转录和 guest 命令推出，应改读宿主 `session.entries` / `resources.*`。
 - 会话库按 cwd 分组、搜索优先；“项目”入口从会话库出发而不是 `workspace-N` 列表。
 - 终端仍把同一目录挂在 `/workspace`（和引擎的拼法不同），需要设备上验证后统一。
+
+## 扩展 / MCP / 资源（已迁到宿主）
+- 扩展包页：`packages.list/updates/install/remove/update` + `packages.progress`；装完 `session.reload` 热重载，不再重启引擎。
+- 资源：`resources.list/toggle`（官方 `pi config` 的三态），不再在 guest 另起 node 进程。
+- 项目信任：宿主返回 `trusted`，表态 `project.trust`；App 里复刻的信任库判据已删。
+- MCP：`mcp.servers`（只读配置）、`mcp.list`（真连）、`mcp.login/cancel/logout`（OAuth，可取消、可贴回跳地址）；
+  mcp.json 的编辑表单仍由 `PiMcpConfig` 的纯函数写（引擎没起来也能改），生效走 `session.reload`。
+- 已删：`PiPackagesScreen/Host/Service`、`pi list` 解析、`TrustFile/TrustRepository/ProjectTrust`、`ExtensionLifecycle`、
+  `PiMcpCheck/PiMcpLogin`、`PiResources`+`pi-resources.mjs`、`WorkspaceResources/ProjectResources/PiResourceFacts`（RPC 时代自己扫资源目录）。

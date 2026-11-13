@@ -252,40 +252,11 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
   return 0
 }
 
-# app.pi.packages: TrustFile's trust.json byte format + nearest-ancestor lookup,
-# ProjectTrust's resolution order, PiPackageSource classification, `pi list`
-# parsing and the restart state machine. Needs kotlinx.serialization (TrustFile)
-# and kotlinx.coroutines (ExtensionLifecycle's MutableStateFlow), plus :rpc's
-# pure ANSI stripper, which PiListOutput calls — and `PiProjectConfig.kt`, because
-# `ProjectTrust.CONFIG_DIR_NAME` reads the app's one transcription of pi's project
-# config directory instead of repeating the literal (a harness compile failure if
-# that file is ever left out, which is the point).
-run_harness packages \
-  app.pi.packages.PackagesPureLogicCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PackagesPureLogicCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/TrustFile.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/ProjectTrust.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiListOutput.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
-
-# app.pi.packages: `pi update`'s argv shape, the refusal of pi's self-update targets
-# (`self`/`pi` would replace the pinned engine payload), which sources are updateable at
-# all, and the recognition of pi's own result line — the progress line must not be mistaken
-# for a result. Pure kotlin stdlib.
-run_harness pi-package-update \
-  app.pi.packages.PiPackageUpdateCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt"
+# app.pi.packages: App 与引擎对 guest agent 目录的约定（`PiAgentDirContract`）。纯 Kotlin。
+run_harness agent-dir-contract \
+  app.pi.packages.PiAgentDirContractCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiAgentDirContractCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiAgentDirContract.kt"
 
 # app.pi.packages: pi 的 mcp.json 编辑（`PiMcpConfig`）—— 校验规则、保留未知键、损坏文件不覆盖、
 # 项目覆盖、令牌/OAuth 互斥、从别的客户端导入的转换。Android/Compose-free。
@@ -294,7 +265,7 @@ run_harness pi-mcp-config \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiMcpConfigCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiMcpConfig.kt"
 
-# app.pi.packages: pi 资源清单（`PiResourceCatalog`）—— 解析 pi-resources.mjs 的输出：分组来源、
+# app.pi.packages: pi 资源清单（`PiResourceCatalog`）—— 解析宿主 resources.list 的 JSON：分组来源、
 # 项目三态、安装失败、报错与噪音行。Android/Compose-free。
 run_harness pi-resource-catalog \
   app.pi.packages.PiResourceCatalogCheckKt \
@@ -1118,17 +1089,6 @@ run_harness settings-validation \
   "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsValidationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiSettingsValidation.kt"
 
-# app.pi.ui.settings: what the 「扩展与资源」group reports as *discovered*. The four rows that
-# used to list hand-written search paths were removed because pi finds resources by itself —
-# so this screen has to state what is actually there, with its sources, and it must never
-# invent a reading: a count, "nothing found yet", "could not read: why" and "not read yet"
-# are four different answers that must not impersonate each other (an empty directory and an
-# unreadable one look identical on disk, which is exactly the kind of lie this pins out).
-run_harness settings-resources \
-  app.pi.ui.settings.PiResourceFactsCheckKt \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt"
-
 # app.pi.settings: the settings document itself — deleting a key (pi's own "use the
 # default": writing `null` makes pi throw), one shared document per file, and the lock and
 # temp-file discipline around a write. Every property here answers a defect that shipped:
@@ -1143,10 +1103,7 @@ run_harness settings-resources \
 # only signal, so "no file" is the one way to say "not set", and (b) a file holding **only
 # whitespace** is *not* falsy — it really does replace the preamble with that whitespace, which
 # is exactly the state a user reaches by typing a space and saving.
-# `PiResourceFacts.kt` rides along because `PromptFileFacts` now reports all four prompt files in
-# that file's shape and **reuses its `DiscoverySource` labels** — pulling the enum in is how "the
-# same words as the four 「已发现的 …」 rows" becomes a construction guarantee instead of a
-# by-inspection one. It has no imports of its own, so the closure does not grow otherwise.
+# `DiscoverySource.kt` rides along because `PromptFileFacts` reuses its labels.
 run_harness settings-store \
   app.pi.settings.PiSettingsStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/settings/PiSettingsStoreCheck.kt" \
@@ -1154,7 +1111,7 @@ run_harness settings-store \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsLock.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/PromptFileSettingsStore.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/DiscoverySource.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SettingsDocument.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \

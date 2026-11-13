@@ -16,8 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.EngineRestartCoordinator
-import app.pi.packages.ExtensionLifecycle
-import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
@@ -27,9 +25,6 @@ import app.pi.runtime.RuntimeSelection
 import app.pi.ui.PromptFileFacts
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.screens.PiFilesScreen
-import app.pi.ui.screens.WorkspaceResourceKind
-import app.pi.ui.screens.WorkspaceResourceScan
-import app.pi.ui.screens.WorkspaceSource
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -230,22 +225,6 @@ fun PiSettingsStack(
     var restartPrompt by remember { mutableStateOf(false) }
     var restartNote by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-
-    // One lifecycle and one coordinator for the whole stack, so the two screens
-    // that write pi's startup-read files (厂商凭证 and 模型) share one answer to
-    // "is something waiting for a restart". They used to build one each, and a
-    // second machine that cannot see the first is how a screen ends up saying
-    // "没有待重启的变更" while the other says "需要重启".
-    val lifecycle = remember { ExtensionLifecycle() }
-    val coordinator = remember(lifecycle, restartEngine) {
-        restartEngine?.let { engine ->
-            EngineRestartCoordinator(
-                lifecycle = lifecycle,
-                isTurnRunning = isTurnRunning,
-                restartEngine = engine,
-            )
-        }
-    }
 
     // External-change epoch. `PiSettingsFileStore` caches both documents until the
     // app itself writes one, so a file edited by pi, a terminal, or the AI kept
@@ -537,12 +516,10 @@ fun PiSettingsStack(
                 host = modelsHost,
             )
 
-            packages -> PiPackagesHost(
+            packages -> ExtensionPackagesScreen(
                 contentPadding = contentPadding,
                 onBack = { packages = false },
-                restartEngine = restartEngine,
-                isTurnRunning = isTurnRunning,
-                defaultProjectTrust = defaultProjectTrust,
+                access = extensionsAccess,
             )
 
             deviceCapabilities -> DeviceCapabilityScreen(

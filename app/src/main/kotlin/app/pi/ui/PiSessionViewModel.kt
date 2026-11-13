@@ -4539,6 +4539,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val s = session ?: return null
         return app.pi.host.ExtensionsAccess(
             ext = app.pi.host.HostExtensions(s.commands),
+            resources = app.pi.host.HostResources { s.commands },
             events = s.hostEvents,
             requests = s.hostRequests,
             respond = { id, value, cancelled -> s.client.respond(id, value, cancelled) },
