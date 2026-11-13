@@ -1977,7 +1977,7 @@ class RuntimeProvisioner(
      */
     private fun createLink(link: File, target: String): String? {
         val linkPath = link.toPath()
-        val targetPath = java.nio.file.Path.of(target)
+        val targetPath = java.nio.file.Paths.get(target)
         val nio = runCatching { java.nio.file.Files.createSymbolicLink(linkPath, targetPath) }
         val linked = nio.isSuccess && runCatching { java.nio.file.Files.isSymbolicLink(linkPath) }
             .getOrDefault(false)

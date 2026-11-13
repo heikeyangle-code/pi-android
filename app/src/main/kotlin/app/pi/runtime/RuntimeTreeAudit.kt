@@ -2,7 +2,7 @@ package app.pi.runtime
 
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.Path
+import java.nio.file.Paths
 
 /**
  * 「解包说成功了，树里却少东西」——这条判定的唯一实现，以及 usrmerge 链接的修复。
@@ -277,7 +277,7 @@ object RuntimeTreeAudit {
             }
             val done = runCatching {
                 if (isLink) path.delete()
-                Files.createSymbolicLink(pathP, Path.of(link.target))
+                Files.createSymbolicLink(pathP, Paths.get(link.target))
                 true
             }.getOrDefault(false)
             if (done) repaired += link.path else failed += link.path
