@@ -8,6 +8,24 @@ export default function probe(pi) {
     dispose: () => {},
   }));
 
+  // 带自定义渲染器的工具：测 render.tool 把 renderCall / renderResult 渲成行，且同一次调用共享 state。
+  pi.registerTool?.({
+    name: "probe_tool",
+    label: "Probe tool",
+    description: "probe",
+    parameters: { type: "object", properties: { q: { type: "string" } } },
+    async execute() {
+      return { content: [{ type: "text", text: "ok" }], details: {} };
+    },
+    renderCall: (args, theme, ctx) => {
+      ctx.state.calls = (ctx.state.calls ?? 0) + 1;
+      return { render: (w) => [theme.fg("accent", `call q=${args?.q} w=${w} n=${ctx.state.calls}`)] };
+    },
+    renderResult: (result, options, theme, ctx) => ({
+      render: () => [`result expanded=${options.expanded} err=${ctx.isError} n=${ctx.state.calls}`, String(result?.content?.[0]?.text)],
+    }),
+  });
+
   // 假 OAuth 供应商：测 auth.login 把 SDK 的登录回调译成「事件 + 向 App 提问」。
   pi.registerProvider?.("probe-sso", {
     name: "Probe SSO",

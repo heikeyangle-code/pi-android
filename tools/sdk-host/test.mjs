@@ -107,6 +107,16 @@ try {
   // bindExtensions 要等所有 session_start 处理器（上面那串对话框）跑完，所以 ext.bound 只能在这之后。
   const bound = await h.waitFor(h.evt("ext.bound"), 30000);
   expect("扩展绑定完成（open 的应答没有被它拖住）", bound.data.ok === true, bound.data.error);
+  // 扩展工具的渲染器：renderCall / renderResult 渲成行；同一次调用的 state 共享；没有渲染器的工具返回 null。
+  const rt = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "t1", args: { q: "hi" }, width: 50, result: { content: [{ type: "text", text: "ok" }], isError: true }, expanded: true });
+  expect("render.tool 渲染 call", rt.ok && rt.data.call?.[0]?.includes("q=hi w=50 n=1"), JSON.stringify(rt));
+  expect("render.tool 渲染 result（同一次调用共享 state，带 isError / expanded）", rt.ok && rt.data.result?.[0] === "result expanded=true err=true n=1" && rt.data.result?.[1] === "ok", JSON.stringify(rt));
+  const rt2 = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "t1", args: { q: "hi" }, width: 50 });
+  expect("同一 toolCallId 再渲染，state 延续", rt2.ok && rt2.data.call?.[0]?.includes("n=2"), JSON.stringify(rt2));
+  const rt3 = await h.call("render.tool", { toolName: "no_such_tool", args: {}, width: 50 });
+  expect("没注册的工具 → null（App 用自己的原生卡）", rt3.ok && rt3.data.call === null && rt3.data.result === null && rt3.data.reason === "no_renderer", JSON.stringify(rt3));
+  const rt4 = await h.call("render.tool", { toolName: "read", args: { path: "x" }, width: 50 });
+  expect("内置工具 SDK 自带渲染器也能出行（App 对内置工具仍用原生卡，这是对照）", rt4.ok && Array.isArray(rt4.data.call), JSON.stringify(rt4));
 
   // ---- 4. 协议完整性 ----------------------------------------------------
   expect("扩展的 console.log / stdout.write 没有污染协议流", h.garbage.length === 0, JSON.stringify(h.garbage.slice(0, 2)));

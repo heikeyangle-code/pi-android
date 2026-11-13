@@ -26,9 +26,7 @@ import app.pi.ui.theme.PiTheme
  * pi puts the widget next to the editor (`docs/tui.md` §"Widgets above/below
  * editor"), and the app hangs [ExtensionWidgetStack] around its composer.
  *
- * **setStatus 不常驻。** pi 把它画在终端 footer 里；手机上它是任意字符串（计数、进度片段），
- * 常驻一条横带是用户没要的东西（裁决 D-3）。数据由宿主的 `ui.status` 事件进 `UiState.ext.statuses`，
- * 在「会话与队列」那张 sheet 里按需看。
+ * setStatus 是一行可横滑的小标签（`ExtensionStatusStrip`，在 ExtensionPanels.kt）；数据由宿主的 `ui.status` 事件进 `UiState.ext.statuses`。
  */
 
 /**

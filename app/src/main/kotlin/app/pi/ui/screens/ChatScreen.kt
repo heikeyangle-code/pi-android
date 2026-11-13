@@ -200,6 +200,7 @@ import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionPanelCard
+import app.pi.ui.extension.ExtensionStatusStrip
 import app.pi.ui.extension.FOOTER_COLLAPSED_ROWS
 import app.pi.ui.extension.HEADER_COLLAPSED_ROWS
 import app.pi.ui.extension.PLACEMENT_BELOW
@@ -2012,10 +2013,7 @@ private fun ChatBody(
         // deleted; the detail sheet draws the same figures in its own layout.
         val emptyTranscript = state.transcript.isEmpty()
 
-        // 扩展状态行（`ExtensionStatusRow`，即「📋 3/5」那一行）按用户裁决删除：
-        // 扩展自己给的任意字符串不该在我们的顶栏常驻占一条横带。数据仍在收集
-        // （`state.ext.statuses`），在「会话与队列」那张 sheet 里按需查看；
-        // 裁决与四个替代方案的比较见 `design/ui-refactor/11-designer-adjudication.md` D-3。
+        // 扩展状态（setStatus）：输入框上方一行可横滑的小标签（`ExtensionStatusStrip`）。
 
         // **An empty session shows nothing.** The two states that used to be drawn
         // here — 「引擎正在启动」 and 「引擎已就绪」 with their two paragraphs — are
@@ -2521,6 +2519,8 @@ private fun ChatBody(
                 onDismiss = { session.dismissExport() },
             )
         }
+
+        ExtensionStatusStrip(statuses = state.ext.statuses, editorTakeover = state.ext.editorTakeover)
 
         ExtensionWidgetStack(
             // Remembered on the widget list, which only changes when an extension

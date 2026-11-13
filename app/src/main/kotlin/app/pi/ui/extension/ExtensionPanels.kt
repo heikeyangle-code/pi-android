@@ -4,6 +4,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +29,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtPanel
+import app.pi.host.ExtStatus
 import app.pi.ui.blocks.BlockCard
 import app.pi.ui.blocks.BlockCardRowPadding
 import app.pi.ui.blocks.ExpandLabel
@@ -82,6 +85,65 @@ fun ExtensionWidgetStack(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             widgets.forEach { widget -> key(widget.key) { ExtensionPanelCard(caption = widgetCaption(widget.key), lines = widget.lines) } }
+        }
+    }
+}
+
+/**
+ * 扩展状态（`ctx.ui.setStatus`）：输入框上方的一行小标签，按 key 排序（pi 的顺序）。
+ *
+ * 它们是扩展随手给的短字符串（"3/5 ✓"、"indexing…"），所以做成一行、横向可滑的标签，
+ * 不占纵向空间；点一下展开成自动换行的整块，再点收回。颜色走 [chromeSpans]。
+ * [editorTakeover] 时多一枚灰标签说明"有扩展想接管输入框，手机上不支持"——让用户知道为什么某个扩展像是缺了一块。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ExtensionStatusStrip(
+    statuses: List<ExtStatus>,
+    editorTakeover: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val rows = remember(statuses) { statusRows(statuses.map { it.key to it.text }) }
+    if (rows.isEmpty() && !editorTakeover) return
+    var expanded by remember { mutableStateOf(false) }
+    val palette = PiTheme.palette
+    val chip: @Composable (String, String?) -> Unit = { key, text ->
+        Row(
+            modifier = Modifier
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (key.isNotEmpty()) {
+                Text(key, style = PiTheme.text.monoSmall, color = palette.dim, maxLines = 1)
+            }
+            if (text != null) {
+                ExtensionSpans(
+                    spans = remember(text) { chromeSpans(text) },
+                    defaultColor = palette.muted,
+                    style = PiTheme.text.monoSmall,
+                    modifier = Modifier.padding(start = if (key.isNotEmpty()) 4.dp else 0.dp),
+                    maxLines = if (expanded) Int.MAX_VALUE else 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 2.dp)
+            .toggleContent(expanded, { expanded = !expanded }),
+    ) {
+        if (expanded) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                rows.forEach { chip(it.key, it.text) }
+                if (editorTakeover) chip("", "输入框接管：手机上不支持")
+            }
+        } else {
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                rows.forEach { chip(it.key, it.text) }
+                if (editorTakeover) chip("", "输入框接管：手机上不支持")
+            }
         }
     }
 }

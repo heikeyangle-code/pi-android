@@ -13,9 +13,9 @@ App 这一侧分两类：**状态**（归并器）和**一次性**（对话框�
 | `widgets` | `ui.widget`（字符串行）/ 组件工厂的 `ui.surface` 帧 | 输入框上下的面板（`ExtensionPanels.kt`） |
 | `header` / `footer` | `ui.chrome` + 表面帧 | 顶栏下 / 输入框下的细栏（同一种面板卡） |
 | `custom` | `ctx.ui.custom()` 的表面 | 底部面板，可交互时带按键条（`ExtensionSurfaces.kt`） |
-| `statuses` | `ui.status` | 「会话与队列」sheet（不常驻，裁决 D-3） |
+| `statuses` | `ui.status` | 输入框上方一行可横滑的小标签，点开换行展开（`ExtensionStatusStrip`） |
 | `working.message` | `ui.working` | 顶栏状态词（取代「工作中」） |
-| `editorTakeover` | `ui.chrome{slot:editor,supported:false}` | sheet 里一句说明 |
+| `editorTakeover` | `ui.chrome{slot:editor,supported:false}` | 状态行里一枚灰标签 |
 | `working.frames/visible`、`thinkingLabel` | `ui.workingIndicator` 等 | **已进状态，还没画** |
 
 组件表面的规则（钉在 harness 里）：帧可能先于「属于谁」的宣布到达，所以先缓存；`rev` 不增的旧帧忽略；

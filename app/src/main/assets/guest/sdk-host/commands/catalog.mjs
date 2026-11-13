@@ -94,4 +94,69 @@ export function register(reg, { controller }) {
     const component = renderer(args.message, { expanded: Boolean(args.expanded), outputPad: 0 }, controller.theme);
     return { lines: component ? component.render(Number(args.width) || controller.surfaces.width) : null };
   });
+
+  // 扩展注册的**工具渲染器**（`renderCall` / `renderResult`，TUI 才会调）：按行渲染，App 把行当作自己的
+  // 「带 ANSI 的行」画在工具卡里。没有渲染器的工具（含内置工具）返回 null，App 用它自己的原生卡。
+  //
+  // 渲染器要的 `context.state` 是「同一次调用的 call / result 共享的一份可变状态」（TUI 的工具行持有它），
+  // 所以按 toolCallId 存一份，封顶，免得长会话里无限长。
+  const toolStates = new Map();
+  const stateFor = (id) => {
+    let st = toolStates.get(id);
+    if (!st) {
+      st = {};
+      toolStates.set(id, st);
+      if (toolStates.size > TOOL_STATE_LIMIT) toolStates.delete(toolStates.keys().next().value);
+    }
+    return st;
+  };
+  const hints = { keyText: () => "", keyHint: (_id, description) => description };
+
+  reg.add("render.tool", (args) => {
+    const s = controller.requireSession();
+    const name = str(args, "toolName");
+    const def = s.getToolDefinition?.(name);
+    if (!def || (!def.renderCall && !def.renderResult)) return { call: null, result: null, shell: null, reason: "no_renderer" };
+    const width = Number(args.width) || controller.surfaces.width;
+    const id = typeof args.toolCallId === "string" && args.toolCallId ? args.toolCallId : name;
+    const callArgs = args.args ?? {};
+    const result = args.result ?? null;
+    const context = {
+      ...hints,
+      args: callArgs,
+      toolCallId: id,
+      invalidate() {},
+      lastComponent: undefined,
+      state: stateFor(id),
+      cwd: s.sessionManager?.getCwd?.() ?? controller.cfg?.cwd ?? process.cwd(),
+      executionStarted: args.executionStarted !== false,
+      argsComplete: args.argsComplete !== false,
+      isPartial: Boolean(args.isPartial),
+      expanded: Boolean(args.expanded),
+      showImages: false,
+      isError: Boolean(result?.isError),
+      durationMs: Number.isFinite(args.durationMs) ? Number(args.durationMs) : undefined,
+      outputPad: 0,
+    };
+    const draw = (make) => {
+      try {
+        const component = make();
+        const lines = component ? component.render(width) : null;
+        component?.dispose?.();
+        return Array.isArray(lines) ? lines.map(String) : null;
+      } catch (error) {
+        return [`[render failed] ${error?.message ?? error}`];
+      }
+    };
+    return {
+      call: def.renderCall ? draw(() => def.renderCall(callArgs, controller.theme, context)) : null,
+      result:
+        def.renderResult && result
+          ? draw(() => def.renderResult(result, { expanded: context.expanded, isPartial: context.isPartial }, controller.theme, context))
+          : null,
+      shell: def.renderShell ?? "default",
+    };
+  });
 }
+
+const TOOL_STATE_LIMIT = 300;
