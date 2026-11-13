@@ -6,6 +6,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.util.zip.GZIPInputStream
 
@@ -236,7 +237,7 @@ class TarExtractor(
                     // If even the copy cannot be written (ENOSPC, a refused chmod) this
                     // throws with the archive entry, the link target and the reason, and
                     // `RuntimeProvisioner` never records the payload as installed.
-                    val linkError = runCatching { symlink(target.toPath(), Path.of(linkName)) }
+                    val linkError = runCatching { symlink(target.toPath(), Paths.get(linkName)) }
                         .exceptionOrNull()
                     if (linkError == null && isSymlink(target)) {
                         symlinksWritten++

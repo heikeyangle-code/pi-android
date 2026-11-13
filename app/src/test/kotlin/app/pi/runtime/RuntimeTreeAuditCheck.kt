@@ -50,7 +50,7 @@ private fun completeRootfs(tag: String): File {
 private fun link(root: File, name: String, target: String) {
     val path = File(root, name).toPath()
     java.nio.file.Files.isSymbolicLink(path).let { if (it) java.nio.file.Files.delete(path) }
-    java.nio.file.Files.createSymbolicLink(path, java.nio.file.Path.of(target))
+    java.nio.file.Files.createSymbolicLink(path, java.nio.file.Paths.get(target))
 }
 
 fun main() {
@@ -286,7 +286,7 @@ fun main() {
         outside.setExecutable(true, false)
         java.nio.file.Files.createSymbolicLink(
             File(root, "bin/bash").toPath(),
-            java.nio.file.Path.of("../../outside-bash"),
+            java.nio.file.Paths.get("../../outside-bash"),
         )
         val problems = RuntimeTreeAudit.failures(root, RuntimeTreeAudit.requirementsFor("ubuntu-base"))
         check(

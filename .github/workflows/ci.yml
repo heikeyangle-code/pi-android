@@ -498,3 +498,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check UI consistency
         run: bash tools/check-ui-consistency.sh
+      # compileSdk 37 让 Java 11 的 `Path.of` / `Files.readString` 编译通过，真机没有：
+      # 0.1.7 的「运行时解包失败 / No static method of(...)」就是这类。见脚本头部。
+      - name: Reject Java 11+ APIs Android's runtime does not have
+        run: bash tools/check-android-apis.sh
