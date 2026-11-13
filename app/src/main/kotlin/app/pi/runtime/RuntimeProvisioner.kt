@@ -442,7 +442,14 @@ class RuntimeProvisioner(
 
         for (payload in plan) {
             next()
-            extractPayloadOver(payload)
+            // 清单在这里读一次：解压进度要它的行数做分母，下面的 prune 与状态记录复用同一份。
+            val newList = packagedList(payload)
+            entryProgress = progressFor(steps[index], index, steps.size, newList?.size, onStep)
+            try {
+                extractPayloadOver(payload)
+            } finally {
+                entryProgress = null
+            }
             // ---------------------------------------------- the gate, per payload
             // **Before** the digest is recorded, and that order is the whole point. The
             // extractor now throws on a link it could not create, but "no exception" is
@@ -471,7 +478,6 @@ class RuntimeProvisioner(
             //
             // The packaged list is read once here and handed to both steps; the digest was
             // already read for the plan. One asset read per payload per attempt, never two.
-            val newList = packagedList(payload)
             prunePayload(payload, newList)
             val recordWarning = recordPayloadState(payload, packagedDigests[payload], newList)
             if (recordWarning != null) payloadWarnings += recordWarning
@@ -775,6 +781,29 @@ class RuntimeProvisioner(
      * and the extraction code have to agree, and a seventh payload added to [PAYLOADS]
      * without an arm here is a build-time list that silently does nothing on device.
      */
+    /**
+     * 解压中的细粒度进度：`(已解条目数)`→ 屏上的步骤文字。只在 [provision] 的解压循环里设置。
+     *
+     * 为什么要有：ubuntu 的解压在手机上要几十秒，而进度条是按 payload 分段的（`StepBar`），
+     * 整段时间纹丝不动，读起来就是卡死。分母取 payload 清单（`<name>.list`）的行数——它列的
+     * 正好是这个 payload 拥有的全部文件、软链和目录，与 tar 的条目数同量级，不需要为此多读一遍
+     * 压缩包。节流到每 ~150ms 一次，不把主线程刷爆。
+     */
+    private var entryProgress: ((Int) -> Unit)? = null
+
+    private fun progressFor(label: String, index: Int, total: Int, entries: Int?, onStep: (Step) -> Unit): ((Int) -> Unit)? {
+        if (entries == null || entries <= 0) return null
+        var last = 0L
+        return { seen ->
+            val now = System.nanoTime()
+            if (now - last >= 150_000_000L) {
+                last = now
+                val percent = (seen * 100L / entries).toInt().coerceIn(0, 99)
+                onStep(Step("$label · $percent%", index, total))
+            }
+        }
+    }
+
     private fun extractPayloadOver(payload: Payload) {
         when (payload.name) {
             UBUNTU_BASE -> extractAsset(UBUNTU_BASE, paths.rootfs)
@@ -1032,8 +1061,10 @@ class RuntimeProvisioner(
                 // Same two-tier creation as `guestSymlink`: HarmonyOS's `java.nio` symlink
                 // support is incomplete while the syscall works, and the extractor's
                 // copy fallback is the expensive last resort, not the first answer.
+                var seen = 0
                 val result = TarExtractor(
                     into,
+                    onEntry = entryProgress?.let { report -> { _: String -> report(++seen) } },
                     symlink = { link, target -> createLink(link.toFile(), target.toString())?.let { message ->
                         throw IOException(message)
                     } },
