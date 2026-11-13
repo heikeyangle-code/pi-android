@@ -440,6 +440,31 @@ try {
   const stGhost = await h.call("settings.set", { method: "setNoSuchThing", params: [] });
   expect("不存在的设置方法 → bad_args", !stGhost.ok && stGhost.error.code === "bad_args");
 
+  // ---- 7. cwd 跟着会话走：换项目不重启宿主 ------------------------------------
+  const other = join(h.root, "other-project");
+  mkdirSync(other, { recursive: true });
+  const bounce = async (cmd, args) => {
+    const m = h.frames.length;
+    const call = h.call(cmd, args, 60000);
+    const surf = await h.waitFor((f) => h.frames.indexOf(f) >= m && h.evt("ui.surface", (d) => d.mode === "custom")(f), 20000);
+    await h.call("ui.close", { surfaceId: surf.data.surfaceId });
+    return call;
+  };
+  const here0 = (await h.call("session.snapshot")).data;
+  const moved = await bounce("session.new", { cwd: other });
+  const there = (await h.call("session.snapshot")).data;
+  expect("session.new{cwd} 在另一个项目里开新会话", moved.ok && there.cwd === other && there.sessionFile !== here0.sessionFile, JSON.stringify(moved.error ?? there.cwd));
+  const hdr = JSON.parse(readFileSync(there.sessionFile, "utf8").split("\n")[0]);
+  expect("新会话头里记的就是那个 cwd", hdr.type === "session" && hdr.cwd === other, JSON.stringify(hdr));
+  const listedHere = await h.call("session.list", {});
+  expect("session.list（非 all）跟着当前 cwd 走", listedHere.ok && listedHere.data.sessions.every((x) => x.cwd === other), JSON.stringify(listedHere.data?.sessions?.map((x) => x.cwd)));
+  const nocwd = await h.call("session.new", { cwd: join(h.root, "nope") });
+  expect("cwd 不存在 → bad_args，当前会话不动", nocwd.error?.code === "bad_args" && (await h.call("session.snapshot")).data.cwd === other, JSON.stringify(nocwd.error));
+  const homeFile = join(dir, "2026-02-01T00-00-00-000Z_home-fixture.jsonl");
+  writeFileSync(homeFile, JSON.stringify({ type: "session", version: 3, id: "home-fixture", timestamp: new Date().toISOString(), cwd: here0.cwd }) + "\n");
+  const back = await bounce("session.switch", { sessionPath: homeFile });
+  expect("session.switch 回到原项目，cwd 随之回来", back.ok && (await h.call("session.snapshot")).data.cwd === here0.cwd, JSON.stringify([back.error, back.data?.cancelled, (await h.call("session.snapshot")).data.cwd, here0.cwd]));
+
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");
   const code = await new Promise((r) => (h.child.exitCode !== null ? r(h.child.exitCode) : h.child.once("exit", r)));

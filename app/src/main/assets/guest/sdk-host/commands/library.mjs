@@ -28,7 +28,7 @@ const SNIPPET = 80;
  */
 export function listInfos(sdk, controller, all) {
   const dir = controller.sessionDir ?? controller.cfg.sessionDir;
-  return all ? sdk.SessionManager.listAll(dir) : sdk.SessionManager.list(controller.cfg.cwd, dir);
+  return all ? sdk.SessionManager.listAll(dir) : sdk.SessionManager.list(controller.cwd, dir);
 }
 
 /** 去掉大字段，列表行不需要整段对话文本。 */

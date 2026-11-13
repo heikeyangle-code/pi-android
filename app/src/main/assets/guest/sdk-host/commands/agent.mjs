@@ -85,7 +85,7 @@ export function register(reg, { controller }) {
     if (out) {
       // 与 session.read 同一条规矩：宿主不是通用文件写口。只许写进工作目录或会话目录之内。
       const abs = resolve(out);
-      const roots = [controller.cfg.cwd, controller.sessionDir].filter(Boolean).map((r) => resolve(r));
+      const roots = [controller.cwd, controller.sessionDir].filter(Boolean).map((r) => resolve(r));
       if (!roots.some((r) => abs === r || abs.startsWith(r + sep))) throw bad(`导出路径必须在工作目录或会话目录之内：${out}`);
     }
     return { path: s.exportToJsonl(out) };

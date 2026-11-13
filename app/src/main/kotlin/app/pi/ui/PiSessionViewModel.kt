@@ -45,6 +45,7 @@ import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
+import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.SessionHit
 import app.pi.session.SessionLibrary
@@ -2070,6 +2071,48 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 "工作区「${target.displayName}」的目录不可写（${target.host.absolutePath}），没有切换。",
             )
         }
+        // **热切换（pi 的原语义）。** SDK 里 cwd 是会话的属性：`session.new{cwd}` 在新项目里开一段
+        // 新会话，宿主进程、模型、MCP、扩展都不动 —— 省掉十几秒冷启动。条件只有一个：那个目录在
+        // guest 里已经可达（内部工作区靠 rootfs 前缀天然可达；外部的要在引擎启动时已挂上）。
+        // 不可达才走下面的重启（要加 bind）。
+        val liveApi = api
+        val reachable = !target.external || target.host.absolutePath in host.boundExternalHostPaths
+        if (liveApi != null && reachable && !engineDownNow()) {
+            val wasBusyLive = host.turnRunning
+            if (wasBusyLive && !allowInterrupt) {
+                val detail = "正在生成回答，没有切换工作区。"
+                pushNotice(detail, Notice.Tone.Warning)
+                return WorkspaceSwitch.Refused(detail)
+            }
+            engineTransition = true
+            try {
+                val created = liveApi.newSession(cwd = target.guestPath)
+                if (created.cancelled) {
+                    val detail = "扩展取消了这次切换，仍在「${WorkspaceChoice.displayName(previous, null)}」。"
+                    pushNotice(detail, Notice.Tone.Warning)
+                    return WorkspaceSwitch.Refused(detail)
+                }
+                val stored = WorkspaceStore.setCurrent(app, name)
+                afterWorkspaceChanged(name, null)
+                afterSessionReplaced(brandNew = true)
+                requestNav(NavRequest.Chat)
+                if (wasBusyLive) {
+                    pushNotice("切换工作区中断了正在运行的回合：上一轮未完成的模型调用与工具都被停掉了。", Notice.Tone.Warning)
+                }
+                if (!stored) {
+                    pushNotice("工作区已切换，但这次选择没有保存成功（设置文件不可写）；重启应用后会回到「$previous」。", Notice.Tone.Warning)
+                }
+                return WorkspaceSwitch.Ok(name, interruptedTurn = wasBusyLive)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val detail = error.message?.takeIf { it.isNotBlank() } ?: "切换工作区失败"
+                pushNotice(detail, Notice.Tone.Warning)
+                return WorkspaceSwitch.Refused(detail)
+            } finally {
+                engineTransition = false
+            }
+        }
         val oldHost = WorkspaceStore.currentHost(app)
         // Captured *before* the restart: `host.turnRunning` reads the live engine's
         // pi state, and the live engine after a successful restart is a different
@@ -2146,6 +2189,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * rather than a surprise.
      */
     fun wouldInterruptTurn(): Boolean = host.turnRunning
+
+    private fun engineDownNow(): Boolean {
+        val e = _state.value.engine
+        return e == null || e == PiEngineSession.EngineState.Stopped || e == PiEngineSession.EngineState.Failed
+    }
 
     /**
      * Everything that was resolved against the old cwd, refreshed for the new one.

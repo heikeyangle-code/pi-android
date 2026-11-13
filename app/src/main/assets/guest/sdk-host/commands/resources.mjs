@@ -35,7 +35,8 @@ export function register(reg, { controller }) {
   async function load() {
     const sdk = controller.sdk;
     if (!sdk || !controller.opened) throw new HostError(ERR.NOT_OPEN, "先 session.open");
-    const { cwd, agentDir } = controller.cfg;
+    const { agentDir } = controller.cfg;
+    const cwd = controller.cwd;
     const trusted = controller.isProjectTrusted();
     const { ConfigSelectorComponent } = await importDist(controller, "modes/interactive/components/config-selector.js");
     const names = await builtinNames(controller);

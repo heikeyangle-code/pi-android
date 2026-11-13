@@ -135,11 +135,18 @@ class HostEngineApi(private val commands: HostCommands) {
 
     // ---- 会话 ----
 
-    suspend fun newSession(parentSession: String? = null): PiResponses.CancelledResult =
-        required("new_session", PiResponses.cancelledResult(write("session.new", obj { parentSession?.let { put("parentSession", JsonPrimitive(it)) } }, HostCommands.LONG_TIMEOUT_MS).asResponse("new_session")))
+    /** [cwd]（guest 路径）非空 = 在那个项目里开新会话，宿主不重启（SDK 的 cwd 是会话的属性）。 */
+    suspend fun newSession(parentSession: String? = null, cwd: String? = null): PiResponses.CancelledResult =
+        required("new_session", PiResponses.cancelledResult(write("session.new", obj {
+            parentSession?.let { put("parentSession", JsonPrimitive(it)) }
+            cwd?.let { put("cwd", JsonPrimitive(it)) }
+        }, HostCommands.LONG_TIMEOUT_MS).asResponse("new_session")))
 
-    suspend fun switchSession(sessionPath: String): PiResponses.CancelledResult =
-        required("switch_session", PiResponses.cancelledResult(write("session.switch", obj { put("sessionPath", JsonPrimitive(sessionPath)) }, HostCommands.LONG_TIMEOUT_MS).asResponse("switch_session")))
+    suspend fun switchSession(sessionPath: String, cwd: String? = null): PiResponses.CancelledResult =
+        required("switch_session", PiResponses.cancelledResult(write("session.switch", obj {
+            put("sessionPath", JsonPrimitive(sessionPath))
+            cwd?.let { put("cwd", JsonPrimitive(it)) }
+        }, HostCommands.LONG_TIMEOUT_MS).asResponse("switch_session")))
 
     suspend fun fork(entryId: String): PiResponses.ForkResult =
         required("fork", PiResponses.forkResult(write("session.fork", obj { put("entryId", JsonPrimitive(entryId)) }, HostCommands.LONG_TIMEOUT_MS).asResponse("fork")))

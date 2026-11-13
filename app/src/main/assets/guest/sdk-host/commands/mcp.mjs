@@ -20,7 +20,7 @@ export function register(reg, { controller, hub }) {
   const dist = (rel) => import(pathToFileURL(join(controller.cfg.piDir, "dist", "extensions", "mcp", rel)).href);
   const ctx = () => {
     if (!controller.opened) throw new HostError(ERR.NOT_OPEN, "先 session.open");
-    return { cwd: controller.cfg.cwd, agentDir: controller.cfg.agentDir };
+    return { cwd: controller.cwd, agentDir: controller.cfg.agentDir };
   };
 
   /** 跑 `pi mcp <args>`，收集输出。 */
@@ -94,7 +94,7 @@ export function register(reg, { controller, hub }) {
     if (Object.keys(patch).length === 0) throw bad("没有要改的字段（enabled / exposure）");
     // 在项目里改一个「定义在全局」的服务器 = 项目层覆盖，不动全局文件。
     const override = bool(args, "local", false) && entry.scope !== "project";
-    const path = override ? join(controller.cfg.cwd, ".pi", "mcp.json") : entry.source;
+    const path = override ? join(controller.cwd, ".pi", "mcp.json") : entry.source;
     updateMcpServerConfig(path, name, patch, { override });
     return { name, patch, path };
   });

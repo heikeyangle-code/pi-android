@@ -68,6 +68,8 @@ export class Controller {
     this.extensionsBound = false;
     this.pushState = createStatePusher(this);
     this.trustOverride = undefined;
+    /** 表态只对表态时的项目有效；会话换到别的 cwd 后，那个项目走自己的信任库记录。 */
+    this.trustOverrideCwd = undefined;
     this.lastOpenArgs = null;
   }
 
@@ -82,6 +84,11 @@ export class Controller {
   }
 
   // ------------------------------------------------------------------ open
+
+  /** 当前会话的工作目录。SDK 里 cwd 是会话的属性（会话头里记着），换会话就可能换；启动参数只是第一个会话的默认值。 */
+  get cwd() {
+    return this.runtime?.cwd ?? this.cfg.cwd;
+  }
 
   async open(args = {}) {
     if (this.opened) throw new HostError(ERR.BUSY, "session.open 只能调用一次；换会话用 session.new / session.switch");
@@ -100,7 +107,10 @@ export class Controller {
     });
     const trustStore = new sdk.ProjectTrustStore(agentDir);
     this.trustStore = trustStore;
-    if (typeof args.trust === "boolean") this.trustOverride = args.trust;
+    if (typeof args.trust === "boolean") {
+      this.trustOverride = args.trust;
+      this.trustOverrideCwd = this.cfg.cwd;
+    }
 
     const flagValues = new Map(Object.entries(args.flags ?? {}));
     const resources = args.resources ?? {};
@@ -163,7 +173,7 @@ export class Controller {
 
   #projectTrusted(cwd) {
     const sdk = this.sdk;
-    if (this.trustOverride !== undefined) return { value: this.trustOverride, undecided: false };
+    if (this.trustOverride !== undefined && this.trustOverrideCwd === cwd) return { value: this.trustOverride, undecided: false };
     const stored = this.trustStore.get(cwd);
     if (stored === true || stored === false) return { value: stored, undecided: false };
     const needs = sdk.hasTrustRequiringProjectResources(cwd);
@@ -174,7 +184,7 @@ export class Controller {
 
   /** 当前项目是否被信任（含 App 已表态的覆盖）。资源 / 包命令按它决定读不读项目层设置。 */
   isProjectTrusted() {
-    return this.#projectTrusted(this.cfg.cwd).value;
+    return this.#projectTrusted(this.cwd).value;
   }
 
   #pickSessionManager(sdk, cwd, sessionDir, sel) {
@@ -269,9 +279,10 @@ export class Controller {
 
   /** 项目信任表态（App 的弹窗回答）：写回 pi 的信任库并重载。 */
   async setProjectTrust(trusted) {
-    const cwd = this.cfg.cwd;
+    const cwd = this.cwd;
     this.trustStore.set(cwd, trusted);
     this.trustOverride = trusted;
+    this.trustOverrideCwd = cwd;
     await this.requireSession().reload();
     return { trusted };
   }

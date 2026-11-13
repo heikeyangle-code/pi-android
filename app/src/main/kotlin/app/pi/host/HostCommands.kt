@@ -119,11 +119,17 @@ class HostCommands(
     suspend fun stop(clearQueue: Boolean = false): HostReply =
         reply("chat.stop", obj { if (clearQueue) put("clearQueue", JsonPrimitive(true)) })
 
-    suspend fun newSession(parentSession: String? = null): HostReply =
-        reply("session.new", obj { parentSession?.let { put("parentSession", JsonPrimitive(it)) } })
+    suspend fun newSession(parentSession: String? = null, cwd: String? = null): HostReply =
+        reply("session.new", obj {
+            parentSession?.let { put("parentSession", JsonPrimitive(it)) }
+            cwd?.let { put("cwd", JsonPrimitive(it)) }
+        })
 
-    suspend fun switchSession(sessionPath: String): HostReply =
-        reply("session.switch", obj { put("sessionPath", JsonPrimitive(sessionPath)) })
+    suspend fun switchSession(sessionPath: String, cwd: String? = null): HostReply =
+        reply("session.switch", obj {
+            put("sessionPath", JsonPrimitive(sessionPath))
+            cwd?.let { put("cwd", JsonPrimitive(it)) }
+        })
 
     suspend fun fork(entryId: String): HostReply = reply("session.fork", obj { put("entryId", JsonPrimitive(entryId)) })
     suspend fun clone(): HostReply = reply("session.clone")

@@ -251,6 +251,11 @@ class PiEngineHost(private val appContext: Context) {
      * `toJsonEvent` event names). `Starting` is deliberately not "running": nothing
      * has been asked of the engine yet, so interrupting it loses no work.
      */
+    /** 本次引擎进程启动时挂进 guest 的外部目录（宿主路径）。不在其中的外部工作区要重启才可达。 */
+    @Volatile
+    var boundExternalHostPaths: Set<String> = emptySet()
+        private set
+
     val turnRunning: Boolean
         get() = _session.value?.state?.value == PiEngineSession.EngineState.Busy
 
@@ -662,12 +667,21 @@ class PiEngineHost(private val appContext: Context) {
             val workspaceBasePath = paths.workspaceBase.absolutePath
             val externalWorkspace = workspace.absolutePath != workspaceBasePath &&
                 !workspace.absolutePath.startsWith(workspaceBasePath + File.separator)
-            val extraBinds = if (externalWorkspace) {
-                File(paths.rootfs, guestWorkspace.removePrefix("/")).mkdirs()
-                listOf(workspace.absolutePath to guestWorkspace)
-            } else {
-                emptyList()
+            // **绑的是「所有已登记的外部工作区」，不只是当前这个。** pi 的 cwd 是会话的属性，
+            // 切项目 = 在新 cwd 里开会话，不需要重启进程；前提是那个目录在 guest 里已经可达。
+            // 内部工作区靠 rootfs 前缀天然可达，外部的只能在启动时挂上 —— 所以启动时把已登记的
+            // 全挂上，之后在它们之间切换都是热切换。新登记的外部目录才需要重启一次（诚实地说）。
+            val externalEntries = runCatching { WorkspaceStore.list(appContext) }.getOrDefault(emptyList())
+                .filter { it.external && it.available && it.host.isDirectory }
+            val extraBinds = buildList {
+                if (externalWorkspace) add(workspace.absolutePath to guestWorkspace)
+                for (entry in externalEntries) {
+                    val pair = entry.host.absolutePath to entry.guestPath
+                    if (pair !in this) add(pair)
+                }
+                forEach { (_, guest) -> File(paths.rootfs, guest.removePrefix("/")).mkdirs() }
             }
+            boundExternalHostPaths = extraBinds.map { it.first }.toSet()
             val extraEnv = mapOf(
                 // pi's file surface is 1:1 with a desktop install, so settings,
                 // skills, extensions and themes are interchangeable with one.

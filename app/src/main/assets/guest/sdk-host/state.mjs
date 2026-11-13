@@ -25,7 +25,7 @@ export function snapshotOf(controller, { messages = false } = {}) {
   return {
     epoch: controller.hub.epoch,
     seq: controller.hub.seq,
-    cwd: controller.cfg.cwd,
+    cwd: controller.cwd,
     agentDir: controller.cfg.agentDir,
     sessionId: s.sessionId,
     sessionFile: s.sessionFile ?? null,

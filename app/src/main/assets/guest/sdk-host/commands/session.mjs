@@ -3,10 +3,32 @@
  * 语义逐条对照 pi 的 `modes/rpc/rpc-mode.js`（1.5.0），差异处有注释。
  */
 
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
 import { DEFERRED } from "./registry.mjs";
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { snapshotOf, withState } from "../state.mjs";
 import { listInfos } from "./library.mjs";
+
+function checkedCwd(cwd) {
+  const abs = resolve(cwd);
+  if (!existsSync(abs) || !statSync(abs).isDirectory()) throw bad(`工作目录不存在：${cwd}`);
+  return abs;
+}
+
+/** 在 [cwd] 名下建一个空会话文件（只有头），返回路径。会话目录是平铺的，文件名规则同 SDK。 */
+function newSessionFileIn(controller, cwd, options) {
+  const abs = checkedCwd(cwd);
+  const id = randomUUID();
+  const timestamp = new Date().toISOString();
+  const dir = controller.sessionDir;
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
+  const header = { type: "session", version: 3, id, timestamp, cwd: abs, ...(options?.parentSession ? { parentSession: options.parentSession } : {}) };
+  writeFileSync(file, `${JSON.stringify(header)}\n`);
+  return file;
+}
 
 export function register(reg, { controller }) {
   // 应答附 state：打开后状态仓立刻有值，不用等下一条 state 事件。
@@ -81,9 +103,20 @@ export function register(reg, { controller }) {
   // ---- 会话替换（运行时会回调 rebind，epoch 自动 +1）---------------------
   reg.add("session.new", async (args) => {
     const options = optStr(args, "parentSession") ? { parentSession: args.parentSession } : undefined;
+    const cwd = optStr(args, "cwd");
+    if (cwd && resolve(cwd) !== resolve(controller.cwd)) {
+      // SDK 的 newSession 只在当前 cwd 里开。要在别的项目里开新会话：先落一个只有头的会话文件
+      // （和 SessionManager.newSession 写的头一模一样，cwd 记在头里），再 switchSession 过去 ——
+      // 这正是 pi 自己 /resume 跨项目的路径。
+      return withState(controller, await controller.runtime.switchSession(newSessionFileIn(controller, cwd, options)));
+    }
     return withState(controller, await controller.runtime.newSession(options));
   });
-  reg.add("session.switch", async (args) => withState(controller, await controller.runtime.switchSession(str(args, "sessionPath"))));
+  reg.add("session.switch", async (args) => {
+    const cwd = optStr(args, "cwd");
+    const options = cwd ? { cwdOverride: checkedCwd(cwd) } : undefined;
+    return withState(controller, await controller.runtime.switchSession(str(args, "sessionPath"), options));
+  });
   reg.add("session.fork", async (args) => {
     const result = await controller.runtime.fork(str(args, "entryId"));
     return withState(controller, { text: result.selectedText, cancelled: result.cancelled });
