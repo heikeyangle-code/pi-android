@@ -137,10 +137,15 @@ android {
     //
     // The list has to name the *actual* suffix: with `"gz"` listed and the files
     // named `.tgz`, none of the six payloads matched, every one of them was
-    // deflated, and the `openFd()` layer went dead. `tgz` covers all six today.
+    // deflated, and the `openFd()` layer went dead. `tgz` covers all but one today;
     // `xz` and `tar` are kept so a future repack (the assembler already
     // re-compresses Node from `.tar.xz`) cannot quietly reintroduce a compressed
     // payload.
+    //
+    // `zip` is the Termux bootstrap (`termux-bootstrap.zip`, Termux 第二系统): it
+    // went in after this block was written, so it shipped **deflated** and the CI
+    // step that compares the APK against `assets/runtime/` caught it — name and
+    // size matched, method did not. Stored is what `openFd()` needs there too.
     //
     // AGP 8.13.2 DSL, checked against the artifacts and *compiled* against them
     // rather than recalled:
@@ -179,7 +184,7 @@ android {
         // `ttf`: the bundled text faces (`res/font/` — the reading serif pair and JetBrains
         // Mono, ~6.7 MB). A stored font is `mmap`ped by the platform, so only the glyph pages
         // actually drawn become resident; a deflated one is inflated into memory in full first.
-        noCompress += listOf("tgz", "xz", "tar", "ttf")
+        noCompress += listOf("tgz", "xz", "tar", "zip", "ttf")
     }
 
     packaging {
