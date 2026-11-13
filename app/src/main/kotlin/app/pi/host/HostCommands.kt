@@ -195,6 +195,43 @@ class HostCommands(
 
     // ---- ui 回路 ----
 
+    /** 扩展工具的渲染结果：[call] / [result] 是带 ANSI 的行；没有渲染器的工具两者皆 null。 */
+    data class ToolRender(val call: List<String>?, val result: List<String>?)
+
+    /**
+     * `render.tool`：让宿主调扩展工具自己的 `renderCall` / `renderResult`，按 [width] 列渲染成行。
+     * [result] 为 null 时只渲染调用部分（工具还没出结果）。
+     */
+    suspend fun renderTool(
+        toolName: String,
+        toolCallId: String,
+        args: JsonObject?,
+        resultText: String?,
+        isError: Boolean,
+        expanded: Boolean,
+        isPartial: Boolean,
+        durationMs: Long?,
+        width: Int,
+    ): ToolRender {
+        val data = client.call("render.tool", obj {
+            put("toolName", JsonPrimitive(toolName))
+            put("toolCallId", JsonPrimitive(toolCallId))
+            put("args", args ?: JsonObject(emptyMap()))
+            if (resultText != null) {
+                put("result", obj {
+                    put("content", JsonArray(listOf(obj { put("type", JsonPrimitive("text")); put("text", JsonPrimitive(resultText)) })))
+                    put("isError", JsonPrimitive(isError))
+                })
+            }
+            put("expanded", JsonPrimitive(expanded))
+            put("isPartial", JsonPrimitive(isPartial))
+            durationMs?.let { put("durationMs", JsonPrimitive(it)) }
+            put("width", JsonPrimitive(width))
+        }) as? JsonObject
+        fun lines(key: String) = (data?.get(key) as? JsonArray)?.map { (it as? JsonPrimitive)?.content ?: it.toString() }
+        return ToolRender(lines("call"), lines("result"))
+    }
+
     suspend fun uiInput(surfaceId: String, data: String) {
         client.call("ui.input", obj { put("surfaceId", JsonPrimitive(surfaceId)); put("data", JsonPrimitive(data)) })
     }

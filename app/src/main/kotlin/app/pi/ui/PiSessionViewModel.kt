@@ -3615,6 +3615,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Forget per-session chrome that a gone engine can no longer maintain. */
     private fun clearExtensionChrome() {
+        toolRenderCache.reset()
         _state.value = _state.value.copy(
             ext = ExtUiState(),
             windowTitle = null,
@@ -4484,6 +4485,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { session?.commands?.uiResize(columns) }
         }
     }
+
+    private val toolRenderCache = app.pi.ui.extension.ToolRendererCache { item, expanded, width ->
+        val commands = session?.commands ?: throw IllegalStateException("no session")
+        commands.renderTool(
+            toolName = item.toolName,
+            toolCallId = item.toolCallId,
+            args = item.args,
+            resultText = if (item.status == app.pi.rpc.ToolStatus.Pending && item.output.isEmpty()) null else item.output,
+            isError = item.isError,
+            expanded = expanded,
+            isPartial = item.status == app.pi.rpc.ToolStatus.Pending,
+            durationMs = item.durationMs,
+            width = width,
+        )
+    }
+
+    /** 工具卡的扩展渲染入口：宿主不可达 / 没有渲染器都回 null，卡片回落通用样式。 */
+    val toolRenderer = app.pi.ui.extension.ToolRenderer { item, expanded ->
+        runCatching { toolRenderCache.render(item, expanded, panelColumns.takeIf { it > 0 } ?: 80) }.getOrNull()
+    }
+
 
     /** 键盘 / 文本 → 一个交互式表面（`ctx.ui.custom()` 的组件）。宿主喂给组件的 `handleInput` 后重绘。 */
     fun sendSurfaceInput(surfaceId: String, data: String) {

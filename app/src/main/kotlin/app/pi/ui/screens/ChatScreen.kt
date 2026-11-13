@@ -2246,6 +2246,7 @@ private fun ChatBody(
                         LocalTranscriptRowAnchor provides rowAnchor,
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
+                        app.pi.ui.extension.LocalToolRenderer provides session.toolRenderer,
                     ) {
                         BlockRenderer(
                             item = item,

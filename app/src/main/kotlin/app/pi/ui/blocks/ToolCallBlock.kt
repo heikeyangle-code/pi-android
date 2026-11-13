@@ -1,10 +1,12 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -165,6 +167,17 @@ fun ToolCallBlock(
     // value each one reads, so a tool row that republishes while streaming pays nothing.
     val title = remember(item.toolName) { mcpLabel(item.toolName) ?: item.toolName.ifEmpty { "工具" } }
     val paramSummary = remember(item.args) { toolParamSummary(item.args) }
+    // SDK 工具自带的 renderCall / renderResult（扩展、MCP 工具）。内置工具有原生卡，不问宿主；
+    // 没有渲染器时 `rendered` 恒为 null，下面的通用样式原样生效。
+    val toolRenderer = app.pi.ui.extension.LocalToolRenderer.current
+    val rendered by androidx.compose.runtime.produceState<app.pi.host.HostCommands.ToolRender?>(
+        initialValue = null,
+        key1 = app.pi.ui.extension.toolRenderKey(item, expanded),
+        key2 = toolRenderer,
+    ) {
+        value = if (toolRenderer == null || item.toolName in NATIVE_TOOL_NAMES) null
+        else toolRenderer.render(item, expanded) ?: value
+    }
     // The other half of pi's generic call line: `formatToolCallWithArgs(..., expanded = true)`
     // puts one `key: value` per argument, which the one-line title cell cannot (`render-utils.js:60-79`).
     val paramText = remember(item.args) { toolParamLines(item.args).joinToString("\n") }
@@ -273,7 +286,21 @@ fun ToolCallBlock(
                 // argument under the title (`render-utils.js:60-79`); the collapsed title cell
                 // can only carry one ellipsized line, so an MCP or extension tool's parameters
                 // were unreadable there. Same body budget and the same admission as the script.
-                if (expanded && script.isNullOrEmpty() && paramText.isNotEmpty()) {
+                // 渲染器的行：折叠时就是 SDK 的紧凑样式，展开后宿主按 expanded=true 重画。
+                // 终端行不折行，窄屏横向滑动，和扩展面板同一条规则。
+                rendered?.let { r ->
+                    val rows = (r.call.orEmpty() + r.result.orEmpty())
+                    if (rows.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .padding(top = PiSpacing.tiny)
+                                .horizontalScroll(rememberScrollState()),
+                        ) {
+                            rows.forEach { app.pi.ui.extension.PanelLine(it, wrap = false) }
+                        }
+                    }
+                }
+                if (expanded && rendered?.call == null && script.isNullOrEmpty() && paramText.isNotEmpty()) {
                     // Same reason as the script above: both calls scan the whole parameter text.
                     val shownParams = remember(paramText) { headLines(paramText, TOOL_BODY_MAX_LINES) }
                     MonoText(
@@ -348,7 +375,7 @@ fun ToolCallBlock(
                     }
                 }
 
-                if (expanded && item.output.isNotEmpty()) {
+                if (expanded && item.output.isNotEmpty() && rendered?.result == null) {
                     if (outputOversize) {
                         // The 200 KB ceiling is *ours* — a rendering budget, not a pi
                         // rule — and pi has usually already truncated this result at
@@ -427,6 +454,9 @@ fun ToolCallBlock(
  * information.
  */
 private const val COLLAPSED_OUTPUT_LINES = 200
+
+/** 有原生卡的内置工具：不向宿主要扩展渲染（SDK 给它们的渲染器是终端版，手机用原生卡）。 */
+private val NATIVE_TOOL_NAMES = setOf("read", "write", "edit", "grep", "find", "ls", "bash", "powershell", "codemode")
 private const val MAX_OUTPUT_BYTES = 200 * 1024
 
 /**
