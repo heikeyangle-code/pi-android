@@ -287,7 +287,6 @@ class PiEngineHost(private val appContext: Context) {
     @Volatile
     var lastSdkHostInstall: String? = null
         private set
-        private set
 
     /**
      * Why the durable boot audit ([BootAudit]) could not write, or null when it did (or
@@ -679,7 +678,7 @@ class PiEngineHost(private val appContext: Context) {
                     val pair = entry.host.absolutePath to entry.guestPath
                     if (pair !in this) add(pair)
                 }
-                forEach { (_, guest) -> File(paths.rootfs, guest.removePrefix("/")).mkdirs() }
+                forEach { pair -> File(paths.rootfs, pair.second.removePrefix("/")).mkdirs() }
             }
             boundExternalHostPaths = extraBinds.map { it.first }.toSet()
             val extraEnv = mapOf(

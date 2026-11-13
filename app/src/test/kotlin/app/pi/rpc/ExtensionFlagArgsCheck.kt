@@ -255,24 +255,39 @@ fun main() {
         )
     }
 
-    // ------------------------------------------------- argv order at the launch
+    // --------------------------------------- where the user's flags go now
+    //
+    // 旧路径把它们拼进 pi 的命令行（`--mode rpc … <suffix>`），所以这里钉的是"拼接顺序"。
+    // sdk-host 不解析命令行：宿主启动参数只有固定的 --cwd/--agent-dir/--session-dir/--pi-dir，
+    // 用户的 flag 在握手后作为 `session.open` 的结构化字段过去（`PiLaunchOptions.toOpenArgs`）。
+    // 于是要钉的变成两件相反的事：**链路还在**（startHost 收到 toOpenArgs），
+    // 以及**命令行里没有**（SdkHostLaunch 拼不出用户输入）。
     val hostFile = File(root, "app/src/main/kotlin/app/pi/engine/PiEngineHost.kt")
     check("the engine host is readable at $hostFile", hostFile.isFile)
     if (hostFile.isFile) {
         val host = hostFile.readText()
-        val modeAt = host.indexOf("--mode rpc")
-        val sessionDirAt = host.indexOf("--session-dir ")
-        val suffixAt = host.indexOf("launch.commandLineSuffix()")
         check(
-            "the engine host passes --mode rpc before the session dir",
-            modeAt >= 0 && sessionDirAt > modeAt,
-            "PiEngineHost must name both, in that order",
+            "the engine host hands the user's flags to session.open, not to argv",
+            host.contains("session.startHost(launch.toOpenArgs("),
+            "PiEngineHost must call startHost(launch.toOpenArgs(...)); flags spliced into the " +
+                "guest command line would never reach session.open and would silently vanish",
         )
         check(
-            "the extension suffix is appended after --session-dir (so no value is eaten)",
-            suffixAt > sessionDirAt && sessionDirAt >= 0,
-            "mode=$modeAt sessionDir=$sessionDirAt suffix=$suffixAt — the user's flags must come " +
-                "after every app flag that has a value, or a user token could become our value",
+            "no user flag is spliced into the guest command line",
+            !host.contains("commandLineSuffix()"),
+            "PiEngineHost must not build argv from user input any more — sdk-host takes them " +
+                "structurally through session.open",
+        )
+    }
+    val launchFile = File(root, "app/src/main/kotlin/app/pi/engine/SdkHostLaunch.kt")
+    check("the sdk-host launch command is readable at $launchFile", launchFile.isFile)
+    if (launchFile.isFile) {
+        val text = launchFile.readText()
+        check(
+            "the sdk-host command line carries only app-chosen arguments",
+            !text.contains("commandLineSuffix") && !text.contains("extensionFlags"),
+            "SdkHostLaunch must stay app-chosen (--cwd/--agent-dir/--session-dir/--pi-dir); " +
+                "a user token reaching this string is the value-eating bug the old order pinned",
         )
     }
 

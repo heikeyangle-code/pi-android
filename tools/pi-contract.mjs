@@ -182,7 +182,7 @@ function checkSurface(piDir) {
 				`extension's dialog would never be answered — check rpc-types.ts's RpcExtensionUIRequest.`,
 		);
 	}
-	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers, ${presets.filter((p) => p.builtInPi).length} provider presets scanned)`);
+	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers)`);
 	checkMentionArgv(dist);
 	checkPreSpawnFlags(dist);
 	checkProjectConfigDir(piDir);
@@ -1622,14 +1622,16 @@ function settingsSchemaPaths(text) {
  * 一组方法。pi 改名或挪文件，这里先变红，而不是用户点开「资源」才看到报错。
  */
 async function checkResourcesScript(piDir) {
-	const script = readFileSync(join(ROOT, "app/src/main/assets/guest/pi-resources.mjs"), "utf8");
-	const imports = [...script.matchAll(/dist\/([A-Za-z0-9_./-]+\.js)/g)].map((m) => m[1]);
+	// 资源页曾经另起 node 进程跑 `guest/pi-resources.mjs`；现在同一套逻辑在宿主进程里
+	// （`commands/resources.mjs`），进 dist 的方式也换成了 `importDist(controller, "...")`。
+	const script = readFileSync(join(ROOT, "app/src/main/assets/guest/sdk-host/commands/resources.mjs"), "utf8");
+	const imports = [...script.matchAll(/importDist\(controller,\s*"([A-Za-z0-9_./-]+\.js)"\)/g)].map((m) => m[1]);
 	for (const rel of new Set(imports)) {
-		check(`pi-resources.mjs imports dist/${rel}`, existsSync(join(piDir, "dist", rel)), "file is missing in the pinned engine");
+		check(`commands/resources.mjs imports dist/${rel}`, existsSync(join(piDir, "dist", rel)), "file is missing in the pinned engine");
 	}
 	const selector = readFileSync(join(piDir, "dist/modes/interactive/components/config-selector.js"), "utf8");
 	for (const name of ["getResourceList", "setWriteScope", "toggleResource", "getProjectOverrideState", "isInheritedGlobalItem", "getInheritedEnabled", "getItemScope"]) {
-		check(`ConfigSelector exposes ${name}`, selector.includes(name), "pi renamed it; pi-resources.mjs must follow");
+		check(`ConfigSelector exposes ${name}`, selector.includes(name), "pi renamed it; commands/resources.mjs must follow");
 	}
 }
 
@@ -1897,25 +1899,19 @@ function checkAppTables(piDir) {
 	}
 
 	// -------------------------------------------------------------- resource types
-	const appResourceTypes = kotlinListOf(read("app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt"), "RESOURCE_TYPES");
+	// App 侧不再有这张转录表（资源清单与开关整批交给宿主，见 assets/guest/sdk-host/commands/resources.mjs）：
+	// 键由 pi 自己的 `ConfigSelectorComponent.getResourceList()` 给出，App 一个都不写死。
+	// 这里只剩「这张表还能读出来」——读不出来说明 resources.mjs 依赖的 dist 结构挪了，
+	// 那是宿主唯一伸进 pi 非公开路径的地方。
 	const piResourceTypes = [.../const RESOURCE_TYPES = \[([^\]]*)\]/.exec(engine("modes/interactive/components/config-selector.js"))?.[1].matchAll(/"([^"]+)"/g) ?? []].map((m) => m[1]);
 	check(
-		"the resource-type list is still readable on both sides (4 keys)",
-		appResourceTypes?.length === 4 && piResourceTypes.length === 4,
-		`app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt's RESOURCE_TYPES ` +
-			`(${appResourceTypes?.length ?? "unreadable"}) and pi's ` +
-			`modes/interactive/components/config-selector.ts's (${piResourceTypes.length}) are the same ` +
-			`four keys. Re-point this reader if either list moved.`,
+		"pi's resource-type list is still readable (4 keys)",
+		piResourceTypes.length === 4,
+		`modes/interactive/components/config-selector.ts's RESOURCE_TYPES answered ` +
+			`${piResourceTypes.length} keys, expected 4. commands/resources.mjs lists resources through ` +
+			`that component; if the list moved or was inlined elsewhere, re-point the host before the ` +
+			`资源 page silently loses a group.`,
 	);
-	for (const type of appResourceTypes ?? []) {
-		check(
-			`pi still knows the resource type "${type}"`,
-			piResourceTypes.includes(type),
-			`PiPackageFilters.kt reads and writes the "${type}" key of settings.json's package filters. ` +
-				`A rename upstream means the app's filter row edits a key pi ignores — re-read the pinned ` +
-				`config-selector.ts and follow it.`,
-		);
-	}
 
 	// ------------------------------------------------------------------ tool names
 	const quickAdd = read("app/src/main/kotlin/app/pi/ui/settings/PiQuickAdd.kt");

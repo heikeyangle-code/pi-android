@@ -1395,7 +1395,7 @@ run_harness host-client \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
-  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # app.pi.engine: sdk-host 怎么进 rootfs、怎么被启动。安装器是「同步」而不是「复制」：内容相同不写、
 # 源里没了的目标里删（改名后的宿主不能留旧模块）、半个文件不交给 node；再用**真 assets**装一遍并用
@@ -1418,7 +1418,7 @@ run_harness host-api \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
-  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # app.pi.engine.PiEngineSession 接**真宿主 + 真 pi**：真进程、真管道、真状态机。握手后才 Ready、
 # 宿主拒绝变 Failed（不是永远转圈）、发后不管的命令失败变成 Response(success=false)、进程死时在等的
@@ -1437,7 +1437,7 @@ run_harness host-session \
   "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAdvanced.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAuth.kt" \
-  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # app.pi.host.OpenArgsFactory: 启动前设置（PiLaunchOptions）→ session.open 参数。旧路径拼命令行 flag，
 # 现在是结构化参数；钉住资源开关、扩展 flag、以及「路径优先于 id 优先于 continue」的会话选择。
@@ -1449,7 +1449,7 @@ run_harness host-launch \
   "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
-  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # app.pi.session.tree.TreeModel: 会话树视图模型（脊线 + 侧枝、三种过滤、搜索、活动路径、上下文编辑标记）。
 # 纯函数；5000 条直线不爆栈、不缩进。
@@ -1457,7 +1457,7 @@ run_harness tree-model \
   app.pi.session.tree.TreeModelCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/session/tree/TreeModelCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/tree/TreeModel.kt" \
-  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

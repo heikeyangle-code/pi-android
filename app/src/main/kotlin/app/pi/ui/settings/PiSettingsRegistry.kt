@@ -1530,6 +1530,14 @@ object PiSettingsCatalog {
         "retry.provider.timeoutMs" to "pi 读：settings-manager.ts:949 → core/sdk.ts:315（厂商请求超时）",
         "retry.provider.maxRetries" to "pi 读：settings-manager.ts:949 → core/sdk.ts:315（厂商层重试次数）",
         "retry.provider.maxRetryDelayMs" to "pi 读：settings-manager.ts:949 → core/sdk.ts:371（厂商要求的长等待上限）",
+        // 模型四键：pi 自己读（`getDefaultProvider`/`getDefaultModel`/`getDefaultThinkingLevel`/
+        // `getEnabledModels`，core/settings-manager.js:538 起），App 侧不再有读取方 ——
+        // 模型与供应商页走宿主的 `models.config.*` / `auth.*`（SDK 的 ModelRuntime），
+        // 本页只保留为 settings.json 的通用行编辑器。
+        "defaultProvider" to "pi 读：settings-manager.js:538 getDefaultProvider → 建会话时选厂商；App 的模型页经宿主 models.config.* 写，不读这一行的值",
+        "defaultModel" to "pi 读：settings-manager.js 的 getDefaultModel → 建会话时选模型；App 的模型页经宿主 models.config.* 写",
+        "defaultThinkingLevel" to "pi 读：settings-manager.js 的 getDefaultThinkingLevel → 建会话时的思考等级；App 不再读",
+        "enabledModels" to "pi 读：agent-session.js:2050 getEnabledModels（模式匹配已启用模型）；App 不再读",
         "defaultTools" to "pi 读：settings-manager.ts:1319 → core/sdk.ts:257（建会话时的内建工具选择）",
         "images.autoResize" to "pi 读：settings-manager.ts:1289 → core/agent-session.ts:522 / :2792（附件与 read 的图片缩放）",
         "images.blockImages" to "pi 读：settings-manager.ts:1302 → core/sdk.ts:271（建会话时是否允许图片进入模型）",

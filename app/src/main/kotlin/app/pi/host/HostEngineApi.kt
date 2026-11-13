@@ -4,6 +4,7 @@ import app.pi.rpc.PiEvent
 import app.pi.rpc.PiMessage
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -45,6 +46,23 @@ class HostEngineApi(private val commands: HostCommands) {
 
     suspend fun getEntries(since: String? = null): PiResponses.EntriesPage =
         required("get_entries", PiResponses.sessionEntries(read("session.entries", obj { since?.let { put("since", JsonPrimitive(it)) } })))
+
+    /**
+     * `get_entries` 的**原始**条目，给历史回放和分支过滤用。
+     *
+     * 那两处要的是 pi 自己那一层 JSON：`TranscriptReducer.seedFromHistory` 直接折
+     * `JsonObject`，`activeBranch` 按 `id` / `parentId` 走树。类型化之后的
+     * [PiResponses.EntriesPage] 只剩 `SessionEntry`，这一层字段就丢了 —— 所以同一份应答
+     * 这里再取一次原始形状，而不是从类型化条目反序列化回去（那等于写第二个解析器）。
+     */
+    suspend fun getEntriesRaw(since: String? = null): RawEntriesPage {
+        val data = guarded("get_entries") {
+            commands.client.callObject("session.entries", obj { since?.let { put("since", JsonPrimitive(it)) } })
+        }
+        val entries = (data["entries"] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
+        val leafId = (data["leafId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return RawEntriesPage(entries, leafId)
+    }
 
     suspend fun getTree(): PiResponses.TreePage = required("get_tree", PiResponses.tree(read("session.tree")))
 
@@ -191,6 +209,9 @@ class HostEngineApi(private val commands: HostCommands) {
         const val SLOW_TIMEOUT_MS = 600_000L
     }
 }
+
+/** [HostEngineApi.getEntriesRaw] 的答案：pi 的原始条目加它的 `leafId`。 */
+data class RawEntriesPage(val entries: List<JsonObject>, val leafId: String?)
 
 private inline fun obj(build: MutableMap<String, JsonElement>.() -> Unit): JsonObject =
     JsonObject(LinkedHashMap<String, JsonElement>().apply(build))

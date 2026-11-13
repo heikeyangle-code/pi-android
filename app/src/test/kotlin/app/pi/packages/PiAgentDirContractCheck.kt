@@ -57,8 +57,8 @@ fun main() {
         emptyList<Pair<String, String>>(),
     )
     if (failures > 0) {
-        println("FAILED: $failures")
+        println("\nharness: FAILED ($failures)")
         kotlin.system.exitProcess(1)
     }
-    println("OK")
+    println("\nharness: OK (all checks passed)")
 }

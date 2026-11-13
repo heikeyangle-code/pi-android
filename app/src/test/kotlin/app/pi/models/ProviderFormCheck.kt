@@ -52,6 +52,6 @@ fun main() {
     check("请求头缺冒号被拒", ProviderForm(headersText = "oops").toJson() is ProviderForm.Result.Invalid)
     check("请求头值里可以有冒号", ProviderForm.parseHeaders("Authorization: Bearer a:b") == mapOf("Authorization" to "Bearer a:b"))
 
-    if (failures > 0) { println("$failures FAILED"); System.exit(1) }
-    println("ok")
+    if (failures > 0) { println("\nharness: FAILED ($failures)"); System.exit(1) }
+    println("\nharness: OK (all checks passed)")
 }

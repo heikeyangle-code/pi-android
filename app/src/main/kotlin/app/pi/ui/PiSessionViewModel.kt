@@ -82,6 +82,8 @@ import app.pi.ui.extension.ExtensionDialog
 import app.pi.ui.extension.ExtensionDialogMethod
 import app.pi.ui.extension.ExtensionDialogQueue
 import app.pi.ui.extension.ExtensionNotice
+import app.pi.ui.extension.ToolRenderer
+import app.pi.ui.extension.ToolRendererCache
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.extension.trimNoticeQueue
@@ -1107,7 +1109,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 不再自己扫目录、解析 JSONL（docs/sdk-host/sessions.md）。需要引擎已打开。
      */
     private val sessionLibrary: SessionLibrary by lazy {
-        SessionLibrary(File(host.paths().agentDir), host.guestAgentDir) { session?.commands }
+        SessionLibrary(host.paths().agentDir, host.guestAgentDir) { session?.commands }
     }
 
     /**
@@ -4040,7 +4042,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun replayHistoryOverRpc(engine: PiEngineSession) {
         val page = try {
-            engine.api.getEntries()
+            // 原始条目而不是类型化的 `SessionEntry`：`seedHistory` 折的是 pi 那一层 JSON。
+            engine.api.getEntriesRaw()
         } catch (e: HostCommandException) {
             // `reason` 是宿主/pi 自己的原话（例如超大记录的那句），原样带给用户。
             fail("读取会话内容失败：${e.reason}。")
@@ -4549,7 +4552,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
     fun hostCommands(): app.pi.host.HostCommands? = session?.commands
 
-    private val toolRenderCache = app.pi.ui.extension.ToolRendererCache { item, expanded, width ->
+    private val toolRenderCache = ToolRendererCache { item, expanded, width ->
         val commands = session?.commands ?: throw IllegalStateException("no session")
         commands.renderTool(
             toolName = item.toolName,
@@ -4565,7 +4568,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 工具卡的扩展渲染入口：宿主不可达 / 没有渲染器都回 null，卡片回落通用样式。 */
-    val toolRenderer = app.pi.ui.extension.ToolRenderer { item, expanded ->
+    val toolRenderer = ToolRenderer { item, expanded ->
         runCatching { toolRenderCache.render(item, expanded, panelColumns.takeIf { it > 0 } ?: 80) }.getOrNull()
     }
 
@@ -5890,7 +5893,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun replayActiveBranch(engine: PiEngineSession) {
         val page = try {
-            engine.api.getEntries()
+            // 同 [replayHistoryOverRpc]：分支过滤要吃 `id` / `parentId`，那是原始条目才有的字段。
+            engine.api.getEntriesRaw()
         } catch (e: HostCommandException) {
             fail("跳转成功，但读回会话内容失败：${e.reason}。重新打开会话即可看到新的位置。")
             return
