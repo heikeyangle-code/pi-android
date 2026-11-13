@@ -108,7 +108,7 @@ R2_BASELINE=''
 # 选择器与编辑器的按钮层级）之后，实测降到 dp 408 / sp 12 —— 那一批是**新增界面代码**，
 # 不是迁移回退（旧界面的裸尺寸没有一处重新出现）。按脚本头「上升须评审明确接受」的约定，
 # 这里记下这次接受；下一步把这些尺寸迁到 `PiSpacing` / `PiSettingsMetrics` 后再下调。
-DP_BASELINE=377
+DP_BASELINE=346
 SP_BASELINE=12
 
 R2_BASELINE_TOTAL="$(printf '%s\n' "$R2_BASELINE" | awk '{ s += $2 } END { printf "%d\n", s }')"

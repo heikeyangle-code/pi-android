@@ -26,15 +26,9 @@ import app.pi.ui.theme.PiTheme
  * pi puts the widget next to the editor (`docs/tui.md` §"Widgets above/below
  * editor"), and the app hangs [ExtensionWidgetStack] around its composer.
  *
- * **The status row is gone.** pi draws `setStatus` in its terminal footer
- * (`interactive-mode.ts:2090`) and the app used to draw a scrolling row of
- * counters under its AppBar; the user's adjudication
- * (`design/ui-refactor/11-designer-adjudication.md` D-3 — v2's dialogue shell has
- * no such line) deleted that composable, `ExtensionStatusRow`. The *data* is
- * untouched: `UiState.extensionStatuses` is still collected and `setStatus` is
- * still routed (`PiSessionViewModel.setExtensionStatus`), so showing it again —
- * in the 「会话与队列」 sheet the adjudication names — is a call site, and nothing
- * here would have to change.
+ * **setStatus 不常驻。** pi 把它画在终端 footer 里；手机上它是任意字符串（计数、进度片段），
+ * 常驻一条横带是用户没要的东西（裁决 D-3）。数据由宿主的 `ui.status` 事件进 `UiState.ext.statuses`，
+ * 在「会话与队列」那张 sheet 里按需看。
  */
 
 /**

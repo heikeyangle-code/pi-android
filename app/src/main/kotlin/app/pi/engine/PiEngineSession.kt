@@ -2,7 +2,8 @@ package app.pi.engine
 
 import app.pi.host.HostCommands
 import app.pi.host.HostAdvanced
-import app.pi.host.SurfaceWidgets
+import app.pi.host.ExtUiReducer
+import app.pi.host.ExtUiState
 import app.pi.host.HostAuth
 import app.pi.host.HostEngineApi
 import app.pi.host.HostException
@@ -171,8 +172,10 @@ class PiEngineSession(
     /** 作用域模型、缓存预热、工具详情、扩展 flag、自定义供应商（models.json）等高级命令的类型化入口。 */
     val advanced = HostAdvanced(commands)
 
-    /** 小组件（字符串行与组件工厂的表面帧）的状态机；随进程，进程没了它也没了。 */
-    private val surfaceWidgets = SurfaceWidgets()
+    /** 扩展 UI 的状态（状态行、小组件、header/footer、custom 表面、工作中提示……）；随进程，进程没了它也没了。 */
+    private val extUiReducer = ExtUiReducer()
+    private val _extUi = MutableStateFlow(ExtUiState())
+    val extUi: StateFlow<ExtUiState> = _extUi.asStateFlow()
 
     /** 认证：供应商 / API Key / 登录（宿主 `auth.*`，背后是 SDK 的 `ModelRuntime`）。 */
     val auth = HostAuth(commands)
@@ -717,12 +720,8 @@ class PiEngineSession(
                     "agent" -> signal.data?.let { handleAgent(PiEvents.parse(it.toString())) }
                     "state" -> commands.stateStore.offerEvent(signal.data)
                     else -> {
-                        val updates = surfaceWidgets.onEvent(signal.name, signal.data)
-                        if (updates.isNotEmpty()) {
-                            updates.forEach { HostUiBridge.widgetToLegacy(it)?.let { event -> emitEvent(event) } }
-                        } else {
-                            HostUiBridge.eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
-                        }
+                        extUiReducer.apply(signal.name, signal.data)?.let { _extUi.value = it }
+                        HostUiBridge.eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
                     }
                 }
             }

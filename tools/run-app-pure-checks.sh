@@ -1230,7 +1230,8 @@ run_harness notice-queue \
 run_harness panel-rules \
   app.pi.ui.extension.ExtensionPanelRulesCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/extension/ExtensionPanelRulesCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionPanelRules.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionPanelRules.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionInfoRows.kt"
 
 # app.pi.models: 自定义供应商表单（`ProviderForm`，纯函数）：表单 ↔ models.json 的一个 provider。
 # 编译器看不见的是「不碰不认识的字段」——`input` 含 audio、模型的 `extra`、未知键都得原样带回去，
@@ -1442,6 +1443,7 @@ run_harness host-client \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
 
 # app.pi.engine: sdk-host 怎么进 rootfs、怎么被启动。安装器是「同步」而不是「复制」：内容相同不写、
@@ -1481,6 +1483,7 @@ run_harness host-session \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAdvanced.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAuth.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | sed 's/^/"/;s/$/"/' | tr '\n' ' ')

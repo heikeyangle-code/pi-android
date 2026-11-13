@@ -198,9 +198,11 @@ import app.pi.ui.render.transcriptGap
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
-import app.pi.ui.extension.ExtensionInfoCards
 import app.pi.ui.extension.ExtensionWidgetStack
-import app.pi.ui.extension.WidgetPlacement
+import app.pi.ui.extension.ExtensionPanelCard
+import app.pi.ui.extension.FOOTER_COLLAPSED_ROWS
+import app.pi.ui.extension.HEADER_COLLAPSED_ROWS
+import app.pi.ui.extension.PLACEMENT_BELOW
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiProseFamily
@@ -1846,7 +1848,6 @@ private fun ChatBody(
                                 add(PiMenuItem("命令面板") { draft = "/" })
                                 add(
                                     PiMenuItem("会话与队列") {
-                                        session.refreshTuiOnlyExtensions()
                                         sheet = ChatSheet.Tools
                                     },
                                 )
@@ -2013,7 +2014,7 @@ private fun ChatBody(
 
         // 扩展状态行（`ExtensionStatusRow`，即「📋 3/5」那一行）按用户裁决删除：
         // 扩展自己给的任意字符串不该在我们的顶栏常驻占一条横带。数据仍在收集
-        // （`state.extensionStatuses`），将来放进「会话与队列」那张 sheet 按需查看；
+        // （`state.ext.statuses`），在「会话与队列」那张 sheet 里按需查看；
         // 裁决与四个替代方案的比较见 `design/ui-refactor/11-designer-adjudication.md` D-3。
 
         // **An empty session shows nothing.** The two states that used to be drawn
@@ -2027,6 +2028,16 @@ private fun ChatBody(
         // Deliberate deviation from v2's phone59/phone60: those two screens no longer
         // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
         // D31.
+
+        // 扩展的 header（`ctx.ui.setHeader`）：顶栏之下的一条细栏，只在扩展挂了才有；点开看全部。
+        state.ext.header?.let { header ->
+            ExtensionPanelCard(
+                caption = null,
+                lines = header.lines,
+                collapsedRows = HEADER_COLLAPSED_ROWS,
+                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
+            )
+        }
 
         // **The transcript fills the page; the composer floats over it.**
         //
@@ -2511,25 +2522,14 @@ private fun ChatBody(
             )
         }
 
-        // The two non-widget extension surfaces: `setStatus` entries, and the extensions
-        // whose UI `--mode rpc` cannot carry. Both fold to one row and draw nothing when
-        // empty — the old always-on status row was deleted for being permanently *there*,
-        // not for showing status. Above the editor only: a widget's own `widgetPlacement`
-        // decides which side it goes on, these two have no placement of their own, and
-        // mounting them at both sites would draw two copies of one list.
-        ExtensionInfoCards(
-            statuses = state.extensionStatuses,
-            tuiOnly = state.tuiOnlyExtensions,
-        )
-
         ExtensionWidgetStack(
             // Remembered on the widget list, which only changes when an extension
             // pushes one: the filter used to allocate a new list on every recomposition
             // of this screen, i.e. once per streamed token, for an answer that had not
             // changed. `remember` rather than a cached field because the placement is a
             // property of the widget, not of this screen.
-            widgets = remember(state.extensionWidgets) {
-                state.extensionWidgets.filter { it.placement == WidgetPlacement.AboveEditor }
+            widgets = remember(state.ext.widgets) {
+                state.ext.widgets.filter { it.placement != PLACEMENT_BELOW }
             },
             onColumns = session::setPanelColumns,
         )
@@ -2802,10 +2802,19 @@ private fun ChatBody(
         // the app's footer; pi puts them between editor and footer, and the
         // difference is invisible at this density.
         ExtensionWidgetStack(
-            widgets = remember(state.extensionWidgets) {
-                state.extensionWidgets.filter { it.placement == WidgetPlacement.BelowEditor }
+            widgets = remember(state.ext.widgets) {
+                state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
             },
         )
+        // 扩展的 footer（`ctx.ui.setFooter`）：宿主把组件渲染成行，这里是一条细栏，点开看全部。
+        state.ext.footer?.let { footer ->
+            ExtensionPanelCard(
+                caption = null,
+                lines = footer.lines,
+                collapsedRows = FOOTER_COLLAPSED_ROWS,
+                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
+            )
+        }
             }
         }
     }

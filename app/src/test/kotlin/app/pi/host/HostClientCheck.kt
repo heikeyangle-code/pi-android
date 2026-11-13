@@ -252,35 +252,87 @@ private fun bridge() {
 
     val n = HostUiBridge.eventToLegacy("ui.notify", obj("""{"message":"hi","tone":"warning"}"""))!!
     check("notify", n.method to n.notifyType, "notify" to "warning")
-    val st = HostUiBridge.eventToLegacy("ui.status", obj("""{"key":"k","text":"忙"}"""))!!
-    check("setStatus", Triple(st.method, st.statusKey, st.statusText), Triple("setStatus", "k", "忙"))
-    val stClear = HostUiBridge.eventToLegacy("ui.status", obj("""{"key":"k","text":null}"""))!!
-    check("setStatus 清除（text=null）", stClear.statusText, null)
     check("setTitle", HostUiBridge.eventToLegacy("ui.title", obj("""{"title":"标题"}"""))!!.title, "标题")
     check("set_editor_text", HostUiBridge.eventToLegacy("ui.editorText", obj("""{"text":"x"}"""))!!.text, "x")
     check("不认识的事件 → null", HostUiBridge.eventToLegacy("ui.working", obj("""{"message":"m"}""")), null)
 }
 
 private fun widgets() {
-    val sw = SurfaceWidgets()
-    fun ev(name: String, json: String) = sw.onEvent(name, obj(json))
-    val lines = ev("ui.widget", """{"key":"w","lines":["l1","l2"],"surfaceId":null,"placement":"belowEditor"}""")
-    check("文本行小组件", lines, listOf(SurfaceWidgets.Update("w", listOf("l1", "l2"), "belowEditor")))
-    check("清除 = 空行", ev("ui.widget", """{"key":"w","lines":null,"surfaceId":null,"placement":null}""").single().lines, emptyList<String>())
-    // 宿主先 paint 再宣布：帧先到，缓存；宣布时补发
-    check("帧先于宣布：先不出", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":1,"lines":["a","b"]}"""), emptyList<SurfaceWidgets.Update>())
-    check("宣布时补发缓存的帧", ev("ui.widget", """{"key":"t","lines":null,"surfaceId":"s1","placement":"aboveEditor"}"""), listOf(SurfaceWidgets.Update("t", listOf("a", "b"), "aboveEditor")))
-    check("新帧更新", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["c"]}""").single().lines, listOf("c"))
-    check("旧帧（rev 不增）被忽略", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["old"]}"""), emptyList<SurfaceWidgets.Update>())
-    check("custom 表面不算小组件", ev("ui.surface", """{"surfaceId":"s9","key":"k","mode":"custom","rev":1,"lines":["x"]}"""), emptyList<SurfaceWidgets.Update>())
-    check("关闭 = 清除", ev("ui.close", """{"surfaceId":"s1","key":"widget:t","mode":"widget"}"""), listOf(SurfaceWidgets.Update("t", emptyList(), null)))
-    check("关闭后迟到的帧不复活", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":3,"lines":["z"]}"""), emptyList<SurfaceWidgets.Update>())
+    val r = ExtUiReducer()
+    fun ev(name: String, json: String) = r.apply(name, obj(json))
+    fun lines(key: String) = r.state.widgets.firstOrNull { it.key == key }?.lines
+
+    ev("ui.widget", """{"key":"w","lines":["l1","l2"],"surfaceId":null,"placement":"belowEditor"}""")
+    check("文本行小组件", r.state.widgets, listOf(ExtPanel("w", listOf("l1", "l2"), "belowEditor")))
+    ev("ui.widget", """{"key":"w","lines":null,"surfaceId":null,"placement":null}""")
+    check("清除", r.state.widgets, emptyList<ExtPanel>())
+
+    // 宿主先 paint 再宣布：帧先到，缓存；宣布时补出
+    check("帧先于宣布：没有可见变化", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":1,"lines":["a","b"]}"""), null)
+    ev("ui.widget", """{"key":"t","lines":null,"surfaceId":"s1","placement":"aboveEditor"}""")
+    check("宣布时补出缓存的帧", r.state.widgets, listOf(ExtPanel("t", listOf("a", "b"), "aboveEditor")))
+    ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["c"]}""")
+    check("新帧更新", lines("t"), listOf("c"))
+    check("旧帧（rev 不增）被忽略", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["old"]}"""), null)
+    ev("ui.close", """{"surfaceId":"s1","key":"widget:t","mode":"widget"}""")
+    check("关闭 = 清除", lines("t"), null)
+    check("关闭后迟到的帧不复活", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":3,"lines":["z"]}"""), null)
+
     // 表面被字符串行替换：旧表面的迟到帧不能盖掉新内容
     ev("ui.surface", """{"surfaceId":"s2","key":"widget:u","mode":"widget","rev":1,"lines":["f"]}""")
     ev("ui.widget", """{"key":"u","lines":null,"surfaceId":"s2","placement":null}""")
     ev("ui.widget", """{"key":"u","lines":["plain"],"surfaceId":null,"placement":null}""")
-    check("被替换后旧表面的帧忽略", ev("ui.surface", """{"surfaceId":"s2","key":"widget:u","mode":"widget","rev":9,"lines":["late"]}"""), emptyList<SurfaceWidgets.Update>())
-    check("旧界面事件形状", HostUiBridge.widgetToLegacy(SurfaceWidgets.Update("w", listOf("l1"), "belowEditor"))!!.let { Triple(it.widgetKey, it.widgetLines, it.widgetPlacement) }, Triple("w", listOf("l1"), "belowEditor"))
+    check("被替换后旧表面的帧忽略", ev("ui.surface", """{"surfaceId":"s2","key":"widget:u","mode":"widget","rev":9,"lines":["late"]}"""), null)
+    check("被替换后内容是字符串行", lines("u"), listOf("plain"))
+
+    // 顺序稳定：更新不跳位
+    ev("ui.widget", """{"key":"a","lines":["1"],"surfaceId":null,"placement":null}""")
+    ev("ui.widget", """{"key":"b","lines":["2"],"surfaceId":null,"placement":null}""")
+    ev("ui.widget", """{"key":"a","lines":["1x"],"surfaceId":null,"placement":null}""")
+    check("更新不改变首次出现的顺序", r.state.widgets.map { it.key }, listOf("u", "a", "b"))
+
+    // header / footer 槽
+    ev("ui.surface", """{"surfaceId":"h1","key":"header","mode":"header","rev":1,"lines":["H"]}""")
+    check("槽：帧先到不显示", r.state.header, null)
+    ev("ui.chrome", """{"slot":"header","attached":true,"supported":true,"surfaceId":"h1"}""")
+    check("槽：宣布后显示", r.state.header, ExtPanel("header", listOf("H")))
+    ev("ui.chrome", """{"slot":"header","attached":false,"supported":true}""")
+    check("槽：卸下", r.state.header, null)
+    ev("ui.chrome", """{"slot":"editor","attached":true,"supported":false}""")
+    check("输入框接管只做标记", r.state.editorTakeover, true)
+    ev("ui.chrome", """{"slot":"editor","attached":false,"supported":false}""")
+    check("输入框接管撤销", r.state.editorTakeover, false)
+
+    // custom 表面
+    ev("ui.surface", """{"surfaceId":"c1","key":"c1","mode":"custom","rev":1,"lines":["menu"],"overlay":true,"interactive":true}""")
+    check("custom 出现", r.state.custom, ExtCustom("c1", true, true, listOf("menu")))
+    ev("ui.surface", """{"surfaceId":"c1","key":"c1","mode":"custom","rev":2,"lines":["menu2"],"overlay":true,"interactive":true}""")
+    check("custom 重绘", r.state.custom?.lines, listOf("menu2"))
+    ev("ui.close", """{"surfaceId":"other","key":"x","mode":"custom"}""")
+    check("关别的表面不影响当前 custom", r.state.custom?.surfaceId, "c1")
+    ev("ui.close", """{"surfaceId":"c1","key":"c1","mode":"custom"}""")
+    check("custom 关闭", r.state.custom, null)
+
+    // 状态
+    ev("ui.status", """{"key":"b","text":"two"}""")
+    ev("ui.status", """{"key":"a","text":"one"}""")
+    ev("ui.status", """{"key":"b","text":"two!"}""")
+    check("状态 upsert（保持位置）", r.state.statuses, listOf(ExtStatus("b", "two!"), ExtStatus("a", "one")))
+    ev("ui.status", """{"key":"b","text":null}""")
+    check("状态 text=null 清除", r.state.statuses, listOf(ExtStatus("a", "one")))
+    ev("ui.status", """{"key":"a","text":"  "}""")
+    check("纯空白也是清除", r.state.statuses, emptyList<ExtStatus>())
+
+    // 工作中提示 / 思考标签
+    ev("ui.working", """{"message":"索引中"}""")
+    ev("ui.workingVisible", """{"visible":false}""")
+    ev("ui.workingIndicator", """{"frames":["a","b"],"intervalMs":120}""")
+    check("工作中提示", r.state.working, ExtWorking("索引中", false, listOf("a", "b"), 120L))
+    ev("ui.working", """{"message":null}""")
+    check("工作中提示清除不动其他字段", r.state.working.message to r.state.working.frames, (null as String?) to listOf("a", "b"))
+    ev("ui.thinkingLabel", """{"label":"琢磨中"}""")
+    check("思考标签", r.state.thinkingLabel, "琢磨中")
+    check("无关事件 → null", ev("ui.title", """{"title":"t"}"""), null)
 }
 
 private fun replay() = runBlocking {

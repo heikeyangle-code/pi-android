@@ -185,8 +185,11 @@ try {
   const mark2 = h.frames.length;
   const pending = h.call("session.new", {}, 60000);
   const custom2 = await h.waitFor((f) => h.frames.indexOf(f) >= mark2 && h.evt("ui.surface", (d) => d.mode === "custom")(f), 20000);
-  await h.call("ui.input", { surfaceId: custom2.data.surfaceId, data: "\r" });
+  // 这次不让组件自己 done()，而是 App 侧关掉表面（用户点 ✕）：扩展的 await ctx.ui.custom() 必须以 undefined 返回，
+  // 否则 session.new 会永远等下去。
+  const closedByApp = await h.call("ui.close", { surfaceId: custom2.data.surfaceId });
   const created = await pending;
+  expect("App 侧关闭 custom 表面 → 扩展的 await 以 undefined 返回", closedByApp.ok && closedByApp.data.closed === true && created.ok, JSON.stringify(created));
   expect("session.new", created.ok && created.data.cancelled === false, JSON.stringify(created));
   const after = await h.call("session.snapshot");
   expect("epoch 恰好 +1（不重复绑定）", after.data.epoch === epoch0 + 1, `${epoch0} → ${after.data.epoch}`);

@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.pi.host.ExtUiState
 import app.pi.engine.EngineCrashRecovery
 import app.pi.engine.EngineFailure
 import app.pi.engine.EngineFailureClassify
@@ -69,22 +70,17 @@ import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.MentionLookup
 import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
-import app.pi.ui.chat.TuiOnlyExtension
 import app.pi.ui.chat.activeBranch
 import app.pi.ui.chat.appendTailBounded
 import app.pi.ui.chat.navigateOutcome
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.wantsSummary
-import app.pi.ui.chat.tuiOnlyMarkers
 import app.pi.ui.extension.ComposerFill
 import app.pi.ui.extension.ExtensionAnswer
 import app.pi.ui.extension.ExtensionDialog
 import app.pi.ui.extension.ExtensionDialogMethod
 import app.pi.ui.extension.ExtensionDialogQueue
 import app.pi.ui.extension.ExtensionNotice
-import app.pi.ui.extension.ExtensionStatus
-import app.pi.ui.extension.ExtensionWidget
-import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.extension.trimNoticeQueue
@@ -723,9 +719,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         /** Requests waiting behind [extensionDialog], in arrival order. */
         val extensionDialogBacklog: Int = 0,
         /** `setStatus` entries, oldest key first. */
-        val extensionStatuses: List<ExtensionStatus> = emptyList(),
+        /** 扩展 UI 的全部状态（状态行、小组件、header/footer、custom 表面、工作中提示……），来自宿主 `ui.*` 事件。 */
+        val ext: ExtUiState = ExtUiState(),
         /** `setWidget` panels. Empty lines cleared the key, so none here are empty. */
-        val extensionWidgets: List<ExtensionWidget> = emptyList(),
         /** `setTitle`: the name pi wants this session shown under. */
         val windowTitle: String? = null,
         /** A `set_editor_text` waiting to be applied to the composer, then cleared. */
@@ -764,12 +760,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val bash: BashRun? = null,
         /** The `@` mention list for the token in the composer, if one is open. */
         val mentions: MentionList? = null,
-        /**
-         * Installed extensions that use a surface only the original TUI can
-         * carry. Heuristic (a source scan) because pi reports nothing — see
-         * [tuiOnlyMarkers] for why that is the only option.
-         */
-        val tuiOnlyExtensions: List<TuiOnlyExtension> = emptyList(),
         /** Label of the long RPC call in flight, for a progress line. */
         val busy: String? = null,
         /**
@@ -2674,6 +2664,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         session = engine
         api = engine.api
+        // 扩展 UI 的状态直接来自引擎的归并器；换引擎时 [clearExtensionChrome] 已经清空了上一份。
+        extUiJob?.cancel()
+        extUiJob = viewModelScope.launch {
+            engine.extUi.collect { ext -> _state.value = _state.value.copy(ext = ext) }
+        }
         // 会话列表要宿主已 `session.open` 才读得到：引擎一就绪就补读一次（此前的读取会失败并保留旧列表）。
         viewModelScope.launch {
             engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
@@ -3009,7 +3004,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 releaseBusy(replayToken)
             }
             refreshCommands()
-            refreshTuiOnlyExtensions()
             seedAutoRetryFromSettings()
             // The agent dir exists for sure by now, so a theme dropped into it
             // while the app was closed is discovered here as well.
@@ -3403,16 +3397,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 tone = noticeToneOf(request.notifyType),
             )
 
-            // Collected but not drawn: the status row was deleted by adjudication
-            // D-3. See setExtensionStatus for why the data is kept anyway.
-            "setStatus" -> setExtensionStatus(request.statusKey, request.statusText)
-
-            "setWidget" -> setExtensionWidget(
-                key = request.widgetKey,
-                lines = request.widgetLines,
-                placement = request.widgetPlacement,
-            )
-
             "setTitle" -> _state.value = _state.value.copy(
                 // The one chrome surface that *is* stripped, because it has no
                 // span host: `windowTitle` becomes the Chat AppBar's `Text`, which
@@ -3438,64 +3422,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
             else -> Unit
         }
-    }
-
-    /**
-     * `setStatus`: upsert by key, or remove it. `docs/rpc.md`: "Send
-     * `statusText: undefined` (or omit it) to clear the status entry" — the
-     * parser turns both into null, and an empty string renders as nothing at all,
-     * so both clear here too.
-     *
-     * **These do get drawn** — in the 「会话与队列」 sheet's 「扩展状态（N）」 section
-     * (`ChatSheets.kt`: `PiSectionHeader` + `ExtensionStatusLine`), which is exactly the
-     * landing the adjudication named when D-3 deleted the standalone status row
-     * (`design/ui-refactor/11-designer-adjudication.md`: "a call site, not a re-plumb").
-     * Earlier revisions of this comment claimed nothing rendered the list; that stopped
-     * being true when the sheet section came back.
-     *
-     * [text] keeps its escapes instead of being stripped here: whoever draws it
-     * next has to be able to paint the colour (`chromeSpans` +
-     * `tokenColorFor`), and the state should stay equal to the wire payload.
-     */
-    private fun setExtensionStatus(key: String?, text: String?) {
-        if (key.isNullOrEmpty()) return
-        val current = _state.value.extensionStatuses
-        val next = when {
-            text.isNullOrEmpty() -> current.filterNot { it.key == key }
-            current.any { it.key == key } -> current.map {
-                if (it.key == key) ExtensionStatus(key, text) else it
-            }
-            else -> current + ExtensionStatus(key, text)
-        }
-        _state.value = _state.value.copy(extensionStatuses = next)
-    }
-
-    /**
-     * `setWidget`: upsert by key, or remove it. An empty `widgetLines` clears —
-     * `docs/rpc.md` "Send `widgetLines: undefined` (or omit it) to clear the
-     * widget", and an empty array renders zero lines, so both are the same state.
-     * Order is first-seen stable so a widget does not jump around the composer
-     * when an extension updates it every turn.
-     *
-     * [lines] keep their escapes, and are neither capped nor trimmed here: the
-     * row budget and the colour both belong to the drawing site
-     * (`ExtensionWidgetStack`), so this state stays equal to the wire payload.
-     */
-    private fun setExtensionWidget(key: String?, lines: List<String>, placement: String?) {
-        if (key.isNullOrEmpty()) return
-        val current = _state.value.extensionWidgets
-        val next = when {
-            lines.isEmpty() -> current.filterNot { it.key == key }
-            current.any { it.key == key } -> current.map {
-                if (it.key == key) {
-                    ExtensionWidget(key, lines, WidgetPlacement.fromWire(placement))
-                } else {
-                    it
-                }
-            }
-            else -> current + ExtensionWidget(key, lines, WidgetPlacement.fromWire(placement))
-        }
-        _state.value = _state.value.copy(extensionWidgets = next)
     }
 
     /**
@@ -3690,8 +3616,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** Forget per-session chrome that a gone engine can no longer maintain. */
     private fun clearExtensionChrome() {
         _state.value = _state.value.copy(
-            extensionStatuses = emptyList(),
-            extensionWidgets = emptyList(),
+            ext = ExtUiState(),
             windowTitle = null,
             composerFill = null,
         )
@@ -4542,6 +4467,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 宿主的高级命令入口；引擎没跑时 null。 */
     fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
 
+    private var extUiJob: Job? = null
     private var panelColumns = 0
     private var panelResizeJob: Job? = null
 
@@ -4556,6 +4482,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         panelResizeJob = viewModelScope.launch {
             delay(PANEL_RESIZE_DEBOUNCE_MS)
             runCatching { session?.commands?.uiResize(columns) }
+        }
+    }
+
+    /** 键盘 / 文本 → 一个交互式表面（`ctx.ui.custom()` 的组件）。宿主喂给组件的 `handleInput` 后重绘。 */
+    fun sendSurfaceInput(surfaceId: String, data: String) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch { runCatching { commands.uiInput(surfaceId, data) } }
+    }
+
+    /** 用户点 ✕：先 Esc（组件自己收尾、自己 `done()`），它不理就强关；强关会让扩展的 await 以 undefined 返回。 */
+    fun closeSurface(surfaceId: String) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch {
+            runCatching { commands.uiInput(surfaceId, "\u001b") }
+            delay(SURFACE_ESC_GRACE_MS)
+            if (_state.value.ext.custom?.surfaceId == surfaceId) runCatching { commands.uiClose(surfaceId) }
         }
     }
 
@@ -4700,50 +4642,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call("读取可分叉消息") { api ->
             _state.value = _state.value.copy(forkMessages = api.getForkMessages())
         }
-    }
-
-    /**
-     * Scan installed extensions for TUI-only surfaces.
-     *
-     * pi exposes no signal for this: `custom()` returns `undefined` without a
-     * word and every setter is a no-op, so the app cannot observe the call — it
-     * can only read the extension's source, which is what the audit's §6.11
-     * proposes. Both locations pi auto-discovers are scanned
-     * (`docs/extensions.md` "Extension locations": the user dir and the project
-     * dir); the project one may be trust-gated and therefore not loaded at all,
-     * which is itself worth knowing.
-     */
-    fun refreshTuiOnlyExtensions() {
-        viewModelScope.launch {
-            val found = withContext(Dispatchers.IO) { scanTuiOnlyExtensions() }
-            _state.value = _state.value.copy(tuiOnlyExtensions = found)
-        }
-    }
-
-    private fun scanTuiOnlyExtensions(): List<TuiOnlyExtension> {
-        val roots = listOf(
-            File(host.paths().agentDir, "extensions") to "全局",
-            PiProjectConfig.extensionsDir(defaultWorkspace()) to "项目",
-        )
-        val found = mutableListOf<TuiOnlyExtension>()
-        for ((root, scope) in roots) {
-            if (!root.isDirectory) continue
-            for (file in root.walkTopDown()) {
-                if (!file.isFile) continue
-                if (file.extension.lowercase() !in EXTENSION_SOURCE_SUFFIXES) continue
-                if (file.length() > MAX_EXTENSION_SOURCE_BYTES) continue
-                val source = runCatching { file.readText() }.getOrNull() ?: continue
-                val markers = tuiOnlyMarkers(source)
-                if (markers.isEmpty()) continue
-                found += TuiOnlyExtension(
-                    name = file.name,
-                    scope = scope,
-                    path = file.absolutePath,
-                    markers = markers,
-                )
-            }
-        }
-        return found
     }
 
     /**
@@ -6168,7 +6066,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *  - `bash`: a `!` command is a *workspace* job, not a session one — pi keeps
      *    running it across a switch and the app's row reports that process, so
      *    clearing it would hide a command that is still running.
-     *  - the extension surfaces (`extensionStatuses`, `extensionWidgets`,
+     *  - the extension surfaces (`ext`,
      *    `windowTitle`, `notices`) and above all `extensionDialog`: pi re-sends them
      *    when they change and there is no RPC to re-read them. Dropping the dialog
      *    would be worse than stale — pi is *blocked* on that answer
@@ -6338,7 +6236,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun engineLabel(current: UiState = _state.value): String = when {
         current.busy != null -> current.busy
-        current.streaming -> "工作中"
+        // 扩展用 ctx.ui.setWorkingMessage 给的一句话（"索引中 3/12"）取代泛泛的「工作中」；只取第一行、去掉颜色码。
+        current.streaming -> current.ext.working.message?.let { chromeText(it).lineSequence().firstOrNull()?.trim() }
+            ?.takeIf { it.isNotEmpty() } ?: "工作中"
         current.boot !is Boot.Ready -> "启动中"
         current.engine == PiEngineSession.EngineState.Failed -> "引擎已退出"
         current.engine == PiEngineSession.EngineState.Stopped -> "引擎已停止"
@@ -6585,11 +6485,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          */
         const val MAX_REPORTED_FAILURES = 12
 
-        /** Extensions pi loads are TypeScript or JavaScript modules. */
-        val EXTENSION_SOURCE_SUFFIXES = setOf("ts", "js", "mts", "mjs", "cts", "cjs")
-
-        /** A 1 MiB source file is not an extension a phone should be parsing. */
-        const val MAX_EXTENSION_SOURCE_BYTES = 1L shl 20
     }
 }
 
@@ -6648,3 +6543,4 @@ data class OverlayState(val slot: OverlaySlot, val view: OverlayView)
 const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
 
 private const val PANEL_RESIZE_DEBOUNCE_MS = 100L
+private const val SURFACE_ESC_GRACE_MS = 250L

@@ -25,6 +25,15 @@ fun main() {
     check("列数：太宽取上限", columnsFor(widthPx = 100_000, chromePx = 0, charPx = 10) == MAX_COLUMNS)
     check("列数：字符宽为 0 不除零", columnsFor(widthPx = 1000, chromePx = 0, charPx = 0) == MAX_COLUMNS)
 
+    check("Esc 是单个 ESC 字符", SurfaceKeys.ESC == "\u001b" && SurfaceKeys.ESC.length == 1)
+    check("方向键是 CSI 序列", listOf(SurfaceKeys.UP, SurfaceKeys.DOWN, SurfaceKeys.RIGHT, SurfaceKeys.LEFT) == listOf("\u001b[A", "\u001b[B", "\u001b[C", "\u001b[D"))
+    check("回车是 CR", SurfaceKeys.ENTER == "\r")
+    check("退格是 DEL（终端惯例）", SurfaceKeys.BACKSPACE == "\u007f")
+
+    check("状态：按 key 排序", statusRows(listOf("b" to "2", "a" to "1")).map { it.key } == listOf("a", "b"))
+    check("状态：换行制表折成空格", statusRows(listOf("k" to "a\n\tb")).single().text == "a b")
+    check("状态：清洗后为空的不画", statusRows(listOf("k" to " \n ")).isEmpty())
+
     if (failures > 0) { println("harness: FAILED ($failures)"); kotlin.system.exitProcess(1) }
     println("harness: OK (panel-rules)")
 }

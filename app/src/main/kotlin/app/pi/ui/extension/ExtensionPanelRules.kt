@@ -27,3 +27,27 @@ internal const val COLLAPSED_ROWS = 3
 internal const val MAX_PANEL_ROWS = 200
 internal const val MIN_COLUMNS = 20
 internal const val MAX_COLUMNS = 200
+
+internal const val FOOTER_COLLAPSED_ROWS = 2
+internal const val HEADER_COLLAPSED_ROWS = 2
+internal const val PLACEMENT_BELOW = "belowEditor"
+
+/**
+ * 终端按键 → 组件 `handleInput` 收到的字节序列（pi 的 TUI 吃的就是这些）。
+ * 按键条上的每个键、文字输入框里的退格都从这里取，不在界面里手写转义码。
+ */
+internal object SurfaceKeys {
+    const val UP = "\u001b[A"
+    const val DOWN = "\u001b[B"
+    const val RIGHT = "\u001b[C"
+    const val LEFT = "\u001b[D"
+    const val ENTER = "\r"
+    const val ESC = "\u001b"
+    const val TAB = "\t"
+    const val SHIFT_TAB = "\u001b[Z"
+    const val BACKSPACE = "\u007f"
+    const val SPACE = " "
+    const val PAGE_UP = "\u001b[5~"
+    const val PAGE_DOWN = "\u001b[6~"
+    const val CTRL_C = "\u0003"
+}

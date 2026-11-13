@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.host.ExtPanel
 import app.pi.ui.blocks.BlockCard
 import app.pi.ui.blocks.BlockCardRowPadding
 import app.pi.ui.blocks.ExpandLabel
@@ -38,7 +39,7 @@ import app.pi.ui.theme.PiTheme
  * 扩展面板：`ctx.ui.setWidget` 的落点——输入框上下各一摞，一个 key 一张卡，按首次出现的顺序。
  *
  * SDK 给扩展的 widget 只有两种内容：字符串行，和一个会自己重绘的终端组件（工厂）。宿主已把后者
- * 渲染成同样的「带 ANSI 的行」（`ui.surface`，见 `host/SurfaceWidgets`），所以这里**只有一条绘制路径**，
+ * 渲染成同样的「带 ANSI 的行」（`ui.surface`，见 `host/ExtUiState.kt`），所以这里**只有一条绘制路径**，
  * 不区分来源，也不认识任何具体扩展：
  *
  *  - 收起：前 [COLLAPSED_ROWS] 行，每行一行不折行。面板是常驻的，一次推送不该把对话挤出屏幕。
@@ -52,7 +53,7 @@ import app.pi.ui.theme.PiTheme
  */
 @Composable
 fun ExtensionWidgetStack(
-    widgets: List<ExtensionWidget>,
+    widgets: List<ExtPanel>,
     modifier: Modifier = Modifier,
     onColumns: ((Int) -> Unit)? = null,
 ) {
@@ -80,25 +81,33 @@ fun ExtensionWidgetStack(
                 .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            widgets.forEach { widget -> key(widget.key) { WidgetPanel(widget) } }
+            widgets.forEach { widget -> key(widget.key) { ExtensionPanelCard(caption = widgetCaption(widget.key), lines = widget.lines) } }
         }
     }
 }
 
+/**
+ * 一块面板：标题（可无）+ 行。小组件、header、footer 共用——它们只是摆放位置不同。
+ * [collapsedRows] 行以内不出现「展开」；点卡片在原地展开，高度封顶、内部滚动。
+ */
 @Composable
-private fun WidgetPanel(widget: ExtensionWidget) {
+internal fun ExtensionPanelCard(
+    caption: String?,
+    lines: List<String>,
+    modifier: Modifier = Modifier,
+    collapsedRows: Int = COLLAPSED_ROWS,
+) {
     val palette = PiTheme.palette
     var expanded by remember { mutableStateOf(false) }
-    val rows = remember(widget.lines) { panelRows(widget.lines) }
+    val rows = remember(lines) { panelRows(lines) }
     if (rows.isEmpty()) return
-    val canExpand = rows.size > COLLAPSED_ROWS
-    val shown = if (expanded) rows else rows.take(COLLAPSED_ROWS)
+    val canExpand = rows.size > collapsedRows
+    val shown = if (expanded) rows else rows.take(collapsedRows)
     val wide = remember(rows) { rows.any { isPreformatted(it) } }
-    val caption = remember(widget.key) { widgetCaption(widget.key) }
 
     BlockCard(
         color = palette.cardBg,
-        modifier = Modifier
+        modifier = modifier
             .animateContentSize()
             .toggleContent(expanded, { if (canExpand) expanded = !expanded }),
         borderColor = palette.borderMuted.copy(alpha = 0.35f),
@@ -119,14 +128,11 @@ private fun WidgetPanel(widget: ExtensionWidget) {
                     if (canExpand) ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
                 }
             }
-            val side = rememberScrollState()
             val body = Modifier
                 .fillMaxWidth()
                 .then(if (expanded) Modifier.heightIn(max = EXPANDED_MAX_HEIGHT) else Modifier)
-            Column(
-                modifier = if (expanded) body.verticalScroll(rememberScrollState()) else body,
-            ) {
-                Column(modifier = if (expanded && wide) Modifier.horizontalScroll(side) else Modifier) {
+            Column(modifier = if (expanded) body.verticalScroll(rememberScrollState()) else body) {
+                Column(modifier = if (expanded && wide) Modifier.horizontalScroll(rememberScrollState()) else Modifier) {
                     shown.forEach { line -> PanelLine(line, wrap = expanded && !isPreformatted(line)) }
                 }
             }
@@ -135,7 +141,7 @@ private fun WidgetPanel(widget: ExtensionWidget) {
 }
 
 @Composable
-private fun PanelLine(raw: String, wrap: Boolean) {
+internal fun PanelLine(raw: String, wrap: Boolean) {
     val spans = remember(raw) { chromeSpans(raw) }
     ExtensionSpans(
         spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.rpc.Ansi.Span(" ")) else spans,

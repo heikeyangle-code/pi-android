@@ -130,6 +130,8 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
           .mount({
             mode: "custom",
             overlay: Boolean(options?.overlay),
+            // 被外部关掉（用户点了 ✕ / 会话被替换）：以 undefined 结束，扩展的 await 不能悬着。
+            onClose: () => finish(undefined),
             build: (tui, surface) => {
               surfaceRef = surface;
               return factory(tui, theme, keybindings, finish);

@@ -32,9 +32,9 @@ export class Surfaces {
    * 挂载一个组件。`build(tui)` 返回组件（custom() 允许返回 Promise）。
    * @returns {Promise<any>} surface
    */
-  async mount({ mode, key, overlay = false, build }) {
+  async mount({ mode, key, overlay = false, build, onClose }) {
     if (key) this.closeKey(key);
-    const surface = { id: randomUUID(), mode, key: key ?? null, overlay, component: null, rev: 0, timer: null, closed: false };
+    const surface = { id: randomUUID(), mode, key: key ?? null, overlay, component: null, rev: 0, timer: null, closed: false, onClose };
     const surfaces = this;
     const tui = {
       requestRender() {
@@ -117,6 +117,12 @@ export class Surfaces {
       // 扩展的 dispose 抛错不应影响关闭。
     }
     this.hub.emit("ui.close", { surfaceId: surface.id, key: surface.key, mode: surface.mode });
+    // 拥有者（例如 custom() 的 Promise）要知道自己被关了，否则从 App 侧关掉后它会永远挂着。
+    try {
+      surface.onClose?.();
+    } catch {
+      // 同上：拥有者的异常不影响关闭。
+    }
   }
 
   /** App → 组件。返回是否有组件接了这次输入。 */

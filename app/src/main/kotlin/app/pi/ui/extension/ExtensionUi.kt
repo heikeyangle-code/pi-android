@@ -195,31 +195,6 @@ data class ExtensionNotice(
     val tone: Notice.Tone = Notice.Tone.Info,
 )
 
-/** One `setStatus` entry. Ordered, keyed, cleared by an absent `statusText`. */
-data class ExtensionStatus(val key: String, val text: String)
-
-/**
- * `setWidget`'s placement. `docs/rpc.md` documents `aboveEditor` as the default
- * and `belowEditor` as the alternative; an unknown value is treated as the
- * documented default rather than dropped, so a newer pi still shows the widget.
- */
-enum class WidgetPlacement(val wire: String) {
-    AboveEditor("aboveEditor"),
-    BelowEditor("belowEditor");
-
-    companion object {
-        fun fromWire(value: String?): WidgetPlacement =
-            entries.firstOrNull { it.wire == value } ?: AboveEditor
-    }
-}
-
-/** One `setWidget` panel: non-empty [lines]; an empty list clears the key. */
-data class ExtensionWidget(
-    val key: String,
-    val lines: List<String>,
-    val placement: WidgetPlacement = WidgetPlacement.AboveEditor,
-)
-
 /**
  * A one-shot `set_editor_text` waiting for the composer to pick it up.
  *

@@ -126,6 +126,12 @@ fun ExtensionUiHost(
             backlog = state.extensionDialogBacklog,
             onAnswer = { id, answer -> session.answerDialog(id, answer) },
         )
+
+        ExtensionSurfaceHost(
+            custom = state.ext.custom,
+            onInput = session::sendSurfaceInput,
+            onClose = session::closeSurface,
+        )
     }
 }
 
