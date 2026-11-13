@@ -34,6 +34,27 @@ export function register(reg, { controller, hub }) {
 
   const fail = (err, fallback) => new HostError(ERR.REJECTED, err.join("\n").trim() || fallback);
 
+  // 配置视图：只读配置，**不连接**任何服务器（秒回）。`mcp.list` 才会真的去连，只在用户点「检测」时用。
+  reg.add("mcp.servers", async () => {
+    const { loadMcpConfig } = await dist("config.js");
+    const loaded = loadMcpConfig({ ...ctx(), projectTrusted: controller.isProjectTrusted() });
+    return {
+      servers: loaded.servers.map((e) => ({
+        name: e.name,
+        scope: e.scope ?? "global",
+        source: e.source,
+        override: e.override ?? null,
+        enabled: e.config.enabled !== false,
+        exposure: e.config.exposure ?? "codemode",
+        url: e.config.url ?? null,
+        command: e.config.command ?? null,
+        args: Array.isArray(e.config.args) ? e.config.args : [],
+        description: e.config.description ?? null,
+      })),
+      errors: loaded.errors ?? [],
+    };
+  });
+
   // 检测：会真的去连每个已启用的服务器，所以只在用户点「检测」时跑；超时由调用方给。
   reg.add("mcp.list", async () => {
     const { out, err } = await runCli(["list", "--json"]);

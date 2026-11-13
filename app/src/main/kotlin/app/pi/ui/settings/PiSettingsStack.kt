@@ -87,6 +87,8 @@ fun PiSettingsStack(
     restartEngine: (suspend (reason: String, allowInterrupt: Boolean) -> EngineRestartCoordinator.Outcome)? = null,
     /** Live turn state, so a restart is refused rather than interrupting a turn. */
     isTurnRunning: () -> Boolean = { false },
+    /** 扩展 / MCP 页问宿主的入口；引擎没起来时返回 null。 */
+    extensionsAccess: () -> app.pi.host.ExtensionsAccess? = { null },
     /**
      * `get_available_models` — pi's own metadata for the models it already has,
      * used to label what a scan matched and what fell back to app defaults. It is
@@ -506,7 +508,7 @@ fun PiSettingsStack(
                 onBack = { mcp = false },
                 userFile = File(paths.agentDir, "mcp.json"),
                 projectFile = File(PiProjectConfig.root(workspace), "mcp.json"),
-                onRestartEngine = { restartPrompt = true },
+                access = extensionsAccess,
                 onFilesWritten = onExternalSettingsWrite,
             )
 

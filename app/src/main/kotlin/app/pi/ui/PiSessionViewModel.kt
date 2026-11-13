@@ -4534,6 +4534,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 「扩展 / MCP」界面的宿主入口；引擎没起来为 null（界面据此说明，而不是假装有数据）。 */
+    fun extensionsAccess(): app.pi.host.ExtensionsAccess? {
+        val s = session ?: return null
+        return app.pi.host.ExtensionsAccess(
+            ext = app.pi.host.HostExtensions(s.commands),
+            events = s.hostEvents,
+            requests = s.hostRequests,
+            respond = { id, value, cancelled -> s.client.respond(id, value, cancelled) },
+        )
+    }
+
     /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
     fun hostCommands(): app.pi.host.HostCommands? = session?.commands
 

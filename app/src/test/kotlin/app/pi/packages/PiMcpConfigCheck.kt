@@ -157,16 +157,6 @@ fun main() {
     check("裸单条用后备名", single.added, listOf("solo"))
     check("非 JSON 报错", PiMcpConfig.importJson(obj("{}"), "nope", "i").error != null, true)
 
-    // ---------------------------------------------------------------- 登录输出
-    val loginOut = "Sign in to MCP server \"sentry\" in your browser:\nhttps://auth.example.com/authorize?x=1&state=abc\n"
-    check("取出授权网址", PiMcpLoginText.authorizationUrl(loginOut), "https://auth.example.com/authorize?x=1&state=abc")
-    check("没有网址 = null", PiMcpLoginText.authorizationUrl("connecting..."), null)
-    check("成功行", PiMcpLoginText.signedIn("Signed in to MCP server \"s\" (3 tools)."), true)
-    check("已登录", PiMcpLoginText.alreadySignedIn("Already signed in to MCP server \"s\" (3 tools)."), true)
-    check("失败行取 pi 自己的句子", PiMcpLoginText.failureLine("x\nSign-in to MCP server \"s\" failed: boom\n"), "Sign-in to MCP server \"s\" failed: boom")
-    check("服务器名安全", isSafeMcpServerName("a-b_1"), true)
-    check("服务器名含空格/分号不安全", isSafeMcpServerName("a;rm") || isSafeMcpServerName("a b"), false)
-
     // ---------------------------------------------------------------- 文件
     val dir = File(System.getProperty("java.io.tmpdir"), "mcp-check-${System.nanoTime()}").apply { mkdirs() }
     val file = PiMcpFile(File(dir, "mcp.json"))

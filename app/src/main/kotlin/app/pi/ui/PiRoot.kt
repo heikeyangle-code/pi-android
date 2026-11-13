@@ -654,6 +654,7 @@ fun PiRoot() {
                     PiSettingsStack(
                         contentPadding = padding,
                         onBack = openChat,
+                        extensionsAccess = session::extensionsAccess,
                     // The real store: pi's own settings.json files, merged the way
                     // pi merges them. Without it the stack would read and write an
                     // in-memory map and the app would appear to accept changes

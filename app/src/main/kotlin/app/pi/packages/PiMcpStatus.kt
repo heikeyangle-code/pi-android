@@ -1,14 +1,7 @@
 package app.pi.packages
 
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-
 /**
- * `pi mcp list --json` 的结果：每个服务器此刻连不连得上、有哪些工具、失败原因。
+ * 宿主 `mcp.list` 的结果：每个服务器此刻连不连得上、有哪些工具、失败原因。
  *
  * 输出格式来自 pi 自己（`dist/extensions/mcp/cli.js` 的 `list`）：
  * `{servers:[{name,scope,enabled,exposure,transport,state,tools[],toolExposure?,resources?,error?}],errors[],note?}`。
@@ -32,36 +25,6 @@ object PiMcpStatus {
 
     data class Report(val servers: List<Server>, val errors: List<String>, val note: String?) {
         fun of(name: String): Server? = servers.firstOrNull { it.name == name }
-    }
-
-    /** 文本里第一个 `{` 到最后一个 `}`：容忍前面混进的启动提示。解析不出返回 null。 */
-    fun parse(output: String): Report? {
-        val start = output.indexOf('{')
-        val end = output.lastIndexOf('}')
-        if (start < 0 || end <= start) return null
-        val root = try {
-            Json.parseToJsonElement(output.substring(start, end + 1)) as? JsonObject
-        } catch (_: Exception) {
-            null
-        } ?: return null
-        val servers = (root["servers"] as? JsonArray).orEmpty().mapNotNull { element ->
-            val o = element as? JsonObject ?: return@mapNotNull null
-            fun text(key: String) = (o[key] as? JsonPrimitive)?.contentOrNull
-            Server(
-                name = text("name") ?: return@mapNotNull null,
-                scope = text("scope") ?: "global",
-                enabled = (o["enabled"] as? JsonPrimitive)?.booleanOrNull != false,
-                state = text("state") ?: "unknown",
-                tools = (o["tools"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-                toolExposure = (o["toolExposure"] as? JsonObject)
-                    ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { k to it } }
-                    ?.toMap().orEmpty(),
-                resources = (o["resources"] as? JsonPrimitive)?.booleanOrNull == true,
-                error = text("error"),
-            )
-        }
-        val errors = (root["errors"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-        return Report(servers, errors, (root["note"] as? JsonPrimitive)?.contentOrNull)
     }
 
     /** 给人看的一个词。 */
