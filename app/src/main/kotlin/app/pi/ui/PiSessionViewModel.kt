@@ -4558,10 +4558,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             toolName = item.toolName,
             toolCallId = item.toolCallId,
             args = item.args,
-            resultText = if (item.status == app.pi.rpc.ToolStatus.Pending && item.output.isEmpty()) null else item.output,
+            resultText = if (item.status == ToolStatus.Pending && item.output.isEmpty()) null else item.output,
             isError = item.isError,
             expanded = expanded,
-            isPartial = item.status == app.pi.rpc.ToolStatus.Pending,
+            isPartial = item.status == ToolStatus.Pending,
             durationMs = item.durationMs,
             width = width,
         )

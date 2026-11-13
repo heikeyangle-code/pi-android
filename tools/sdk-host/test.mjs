@@ -9,6 +9,7 @@
  * `--no-bundle`：强制 SDK 走包名入口，验证回退路径。
  */
 import { dirname, join, resolve } from "node:path";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { startHost } from "./client.mjs";
@@ -47,6 +48,40 @@ h.onRequest((req) => {
   if (req.method === "auth.prompt") h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: globalThis.__authAnswer ?? "CODE1" } });
   if (req.method === "ui.select") h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: req.params.options[0] } });
 });
+
+// **CI 里没有凭据，pi 1.5 的 prompt 预检会直接拒绝**（No API key found for …），
+// 而这一组要验的是"预检通过后事件原样流出"。所以给一个只回一条流式文本的
+// OpenAI-compatible 端点，再把它写进 agentDir 的 models.json（带 apiKey，模型才算
+// available）与 settings.json（默认模型指向它）。真实上游的失败模式不在这里验。
+const probeServer = createServer((req, res) => {
+  req.on("data", () => {});
+  req.on("end", () => {
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    const chunk = (delta, finish = null) =>
+      `data: ${JSON.stringify({ id: "probe-1", object: "chat.completion.chunk", created: 1, model: "probe-model", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+    res.write(chunk({ role: "assistant", content: "hi" }));
+    res.write(chunk({}, "stop"));
+    res.write("data: [DONE]\n\n");
+    res.end();
+  });
+});
+await new Promise((done) => probeServer.listen(0, "127.0.0.1", done));
+const probePort = probeServer.address().port;
+writeFileSync(join(h.agentDir, "settings.json"), JSON.stringify({
+  defaultProvider: "probe-local",
+  defaultModel: "probe-model",
+  retry: { enabled: false },
+}));
+writeFileSync(join(h.agentDir, "models.json"), JSON.stringify({
+  providers: {
+    "probe-local": {
+      baseUrl: `http://127.0.0.1:${probePort}/v1`,
+      api: "openai-completions",
+      apiKey: "probe-key",
+      models: [{ id: "probe-model", contextWindow: 8000 }, { id: "probe-model-2", contextWindow: 8000 }],
+    },
+  },
+}));
 
 try {
   // ---- 1. 握手：不等 SDK ------------------------------------------------
@@ -285,7 +320,9 @@ try {
 
   // ---- 6d. models.json 事务：增改删 / 非法回滚（SDK 自己当校验器） ----
   const mc0 = await h.call("models.config.get");
-  expect("models.config.get 初始无文件", mc0.ok && mc0.data.exists === false && mc0.data.error === null, JSON.stringify(mc0.error ?? mc0.data));
+  // 文件不是"初始没有"了：上面为了绕过 prompt 预检写了一份（probe-local）。要验的是
+  // 「读回来的就是磁盘上那份」，以及后面的增改删都写在它之上。
+  expect("models.config.get 读回启动时写的那份", mc0.ok && mc0.data.exists === true && mc0.data.error === null && mc0.data.config?.providers?.["probe-local"], JSON.stringify(mc0.error ?? mc0.data).slice(0, 200));
   const good = { baseUrl: "http://127.0.0.1:1/v1", apiKey: "k", api: "openai-completions", models: [{ id: "m1", name: "M1" }] };
   const mcSet = await h.call("models.config.setProvider", { id: "mine", provider: good });
   expect("models.config.setProvider 新增", mcSet.ok && mcSet.data.providers.includes("mine"), JSON.stringify(mcSet.error ?? mcSet.data));
@@ -476,6 +513,7 @@ try {
   expect("测试过程没有异常", false, error?.stack ?? String(error));
   console.log("--- stderr tail ---\n" + h.stderrLines.join("").split("\n").slice(-15).join("\n"));
 } finally {
+  probeServer.close();
   h.stop();
   rmSync(h.root, { recursive: true, force: true });
 }

@@ -67,6 +67,17 @@ fun main() {
 private fun spawn(node: String, hostMain: File, piDir: File, tmp: File, name: String): PiEngineSession {
     val work = tmp.resolve("$name/work").also { it.mkdirs() }
     val agent = tmp.resolve("$name/agent").also { it.mkdirs() }
+    // **这台机器上没有模型凭据**，而 pi 1.5.0 的 prompt 预检会先问"这个模型有没有 auth"：
+    // 没有就直接拒绝，于是"发一条消息 → agent 事件 → Busy/Ready"整条链在这里测不到。
+    // 所以写一份指向环回口的自定义供应商（带 apiKey，模型才算 available）：
+    // 预检通过、请求必然连不上、agent_start / agent_error 照样按真事件流出来。
+    // 地址故意不通（9 是 discard 端口），重试关掉，失败是即时的。
+    agent.resolve("settings.json").writeText(
+        """{"defaultProvider":"probe-local","defaultModel":"probe-model","retry":{"enabled":false}}""",
+    )
+    agent.resolve("models.json").writeText(
+        """{"providers":{"probe-local":{"baseUrl":"http://127.0.0.1:9/v1","api":"openai-completions","apiKey":"probe-key","models":[{"id":"probe-model","contextWindow":8000},{"id":"probe-model-2","contextWindow":8000}]}}}""",
+    )
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     return PiEngineSession.spawn(
         argv = listOf(node, hostMain.path, "--cwd", work.path, "--agent-dir", agent.path, "--session-dir", agent.resolve("sessions").path, "--pi-dir", piDir.path),
@@ -118,7 +129,7 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
     check("删除成功且文件没了", lib.delete(fx) to fx.exists(), true to false)
     check("删不存在的 → false", lib.delete(fx), false)
 
-    // 发后不管：没有凭据的 prompt 预检通过、整轮失败 → 状态机 Busy/Ready 来回，不是卡死
+    // 发后不管：预检通过（models.json 给了假凭据）、整轮失败 → 状态机 Busy/Ready 来回，不是卡死
     val events = java.util.Collections.synchronizedList(mutableListOf<PiEvent>())
     val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { session.events.collect { events.add(it) } }
     session.prompt("你好")
@@ -177,10 +188,11 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
         "api" to kotlinx.serialization.json.JsonPrimitive("openai-completions"),
         "models" to kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonObject(mapOf("id" to kotlinx.serialization.json.JsonPrimitive("m1"))))),
     ))
+    val baselineProviders = adv.modelsConfig().providers.keys
     adv.setProvider("mine", okProv)
-    check("modelsConfig 读到刚保存的供应商", adv.modelsConfig().providers.keys, setOf("mine"))
+    check("modelsConfig 读到刚保存的供应商", adv.modelsConfig().providers.keys, baselineProviders + "mine")
     adv.removeProvider("mine")
-    check("删除后没有", adv.modelsConfig().providers.keys, emptySet<String>())
+    check("删除后回到启动时那份", adv.modelsConfig().providers.keys, baselineProviders)
 
     // —— HostAuth：供应商 / API Key / 登录消息解析（真宿主 + 合成帧） ——
     val auth = session.auth

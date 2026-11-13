@@ -391,6 +391,24 @@ jobs:
           mkdir -p build/downloads
           curl -fsSL --retry 3 --retry-delay 2 -o build/downloads/ubuntu-base.tar.gz "$url"
           ls -l build/downloads/ubuntu-base.tar.gz
+      # `host-session` 是唯一跑「真宿主 + 真 pi」的纯逻辑 harness（PiEngineSession →
+      # 成帧器 → 状态机 → transcript）。没有 `build/pi-contract` 它会打印 SKIP 然后 exit 0 ——
+      # 而 exit 0 没有 `harness: OK` 在 run-app-pure-checks.sh 里算失败（对，它红过）。
+      # 引擎树与 pi-contract job 共用同一个缓存键，命中时 npm 只是 up-to-date。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Cache the pinned engine (for the host-session harness)
+        uses: actions/cache@v4
+        with:
+          path: build/pi-contract
+          key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
+      - name: Install the pinned engine
+        run: |
+          version="$(node -e 'const t=require("fs").readFileSync("tools/fetch-runtime.mjs","utf8");process.stdout.write(/const PI_VERSION = "([^"]+)"/.exec(t)[1])')"
+          mkdir -p build/pi-contract
+          ( cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$version" )
+          test -d "build/pi-contract/node_modules/@earendil-works/pi-coding-agent/dist"
       - name: Run app/src/test harnesses
         run: |
           set -o pipefail
