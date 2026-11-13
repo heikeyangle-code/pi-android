@@ -199,6 +199,7 @@ import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.extension.ExtensionWidgetStack
+import app.pi.ui.extension.toExtensionPalette
 import app.pi.ui.extension.ExtensionPanelCard
 import app.pi.ui.extension.ExtensionStatusStrip
 import app.pi.ui.extension.FOOTER_COLLAPSED_ROWS
@@ -1580,10 +1581,20 @@ private fun ChatBody(
     // load-bearing — this effect is keyed on the sequence, but leaving and
     // re-entering the destination re-runs it, and a stale fill would silently
     // overwrite whatever the user typed in the meantime.
+    val themePalette = PiTheme.palette
+    // 键是「引擎在不在」而不是引擎状态本身：Busy/Ready 每个回合都在切，推色板会让宿主重绘全部表面。
+    val engineUp = state.engine == app.pi.engine.PiEngineSession.EngineState.Ready ||
+        state.engine == app.pi.engine.PiEngineSession.EngineState.Busy
+    LaunchedEffect(themePalette, engineUp) {
+        if (engineUp) {
+            session.pushExtensionPalette(themePalette.toExtensionPalette())
+        }
+    }
+
     val fill = state.composerFill
     LaunchedEffect(fill?.seq) {
         if (fill != null) {
-            draft = fill.text
+            draft = if (fill.append) draft + fill.text else fill.text
             session.consumeComposerFill(fill.seq)
         }
     }
@@ -2247,6 +2258,8 @@ private fun ChatBody(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
                         app.pi.ui.extension.LocalToolRenderer provides session.toolRenderer,
+                        app.pi.ui.blocks.LocalThinkingLabel provides state.ext.thinkingLabel
+                            ?.let { app.pi.ui.extension.chromeText(it).trim() }?.takeIf { it.isNotEmpty() },
                     ) {
                         BlockRenderer(
                             item = item,

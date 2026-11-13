@@ -3470,6 +3470,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text))
             }
 
+            // 宿主的 `pasteToEditor`：接在现有草稿后面。
+            "paste_editor_text" -> request.text?.let { text ->
+                composerFillSeq += 1
+                _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text, append = true))
+            }
+
             else -> Unit
         }
     }
@@ -4551,6 +4557,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
     fun hostCommands(): app.pi.host.HostCommands? = session?.commands
+
+    /**
+     * 把 App 当前色板交给宿主，让扩展组件的 `theme.fg(...)` 跟着 App 主题走。
+     * 宿主进程重启后色板回到默认，所以界面在引擎每次就绪时再推一次。失败不打扰用户：
+     * 最坏只是扩展组件用默认暗色。
+     */
+    fun pushExtensionPalette(palette: Map<String, String>) {
+        val commands = hostCommands() ?: return
+        viewModelScope.launch { runCatching { commands.uiPalette(palette) } }
+    }
 
     private val toolRenderCache = ToolRendererCache { item, expanded, width ->
         val commands = session?.commands ?: throw IllegalStateException("no session")
@@ -6326,7 +6342,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun engineLabel(current: UiState = _state.value): String = when {
         current.busy != null -> current.busy
         // 扩展用 ctx.ui.setWorkingMessage 给的一句话（"索引中 3/12"）取代泛泛的「工作中」；只取第一行、去掉颜色码。
-        current.streaming -> current.ext.working.message?.let { chromeText(it).lineSequence().firstOrNull()?.trim() }
+        current.streaming -> current.ext.working.message?.takeIf { current.ext.working.visible }?.let { chromeText(it).lineSequence().firstOrNull()?.trim() }
             ?.takeIf { it.isNotEmpty() } ?: "工作中"
         current.boot !is Boot.Ready -> "启动中"
         current.engine == PiEngineSession.EngineState.Failed -> "引擎已退出"

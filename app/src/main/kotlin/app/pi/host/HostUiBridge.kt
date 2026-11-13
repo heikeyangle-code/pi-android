@@ -60,6 +60,11 @@ object HostUiBridge {
                 put("method", JsonPrimitive("setTitle"))
                 d["title"]?.let { put("title", it) }
             }
+            // pasteToEditor：接在草稿后面，不是替换——扩展贴一段上下文，用户已经打的字不能丢。
+            "ui.paste" -> obj {
+                put("method", JsonPrimitive("paste_editor_text"))
+                d["text"]?.let { put("text", it) }
+            }
             "ui.editorText" -> obj {
                 put("method", JsonPrimitive("set_editor_text"))
                 d["text"]?.let { put("text", it) }
