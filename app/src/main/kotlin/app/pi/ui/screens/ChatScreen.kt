@@ -1581,6 +1581,15 @@ private fun ChatBody(
     // load-bearing — this effect is keyed on the sequence, but leaving and
     // re-entering the destination re-runs it, and a stale fill would silently
     // overwrite whatever the user typed in the meantime.
+    val messageActions = remember(session, state.streaming) {
+        app.pi.ui.chat.MessageActions(
+            quote = session::quoteIntoComposer,
+            continueFrom = session::continueFromMessage,
+            label = session::labelMessage,
+            hideFromContext = session::hideMessageFromContext,
+            streaming = state.streaming,
+        )
+    }
     val themePalette = PiTheme.palette
     // 键是「引擎在不在」而不是引擎状态本身：Busy/Ready 每个回合都在切，推色板会让宿主重绘全部表面。
     val engineUp = state.engine == app.pi.engine.PiEngineSession.EngineState.Ready ||
@@ -2258,6 +2267,7 @@ private fun ChatBody(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
                         app.pi.ui.extension.LocalToolRenderer provides session.toolRenderer,
+                        app.pi.ui.chat.LocalMessageActions provides messageActions,
                         app.pi.ui.blocks.LocalThinkingLabel provides state.ext.thinkingLabel
                             ?.let { app.pi.ui.extension.chromeText(it).trim() }?.takeIf { it.isNotEmpty() },
                     ) {

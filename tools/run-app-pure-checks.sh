@@ -719,6 +719,15 @@ run_harness runtime-space \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimeSpaceBudgetCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeSpaceBudget.kt"
 
+# app.pi.ui.chat: which pi session entry a long-pressed transcript row is. Label / continue-from /
+# hide-from-context are all keyed on pi's entry id, and a row produced during this run carries a
+# synthetic key pi has never heard of, so the match (id first, then newest same-role text) is pinned
+# here. Imports nothing: the caller folds the raw JSON into `EntryText` before asking.
+run_harness message-entry-resolver \
+  app.pi.ui.chat.MessageEntryResolverCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/MessageEntryResolverCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/MessageEntryResolver.kt"
+
 # app.pi.runtime: the three decisions that keep an update from deleting the user's files.
 # ① The prune: `PayloadPrune.victims(old, new, present)` is what replaced "one global
 # digest changed, so delete the whole runtime tree and re-extract 110 MiB", and its whole

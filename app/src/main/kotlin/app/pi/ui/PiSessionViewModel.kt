@@ -38,6 +38,11 @@ import app.pi.rpc.TOOL_UPDATE_THROTTLE_MS
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
+import app.pi.rpc.UserMessage
+import app.pi.rpc.AssistantText
+import app.pi.ui.chat.EntryText
+import app.pi.ui.chat.MessageEntryResolver
+import app.pi.ui.chat.MessageRole
 import app.pi.rpc.extensionErrorHeadline
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiProjectConfig
@@ -4521,6 +4526,68 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             refreshStats()
         }
     }
+
+    // ------------------------------------------------------ 消息长按面的动作（见 chat/MessageActions.kt）
+
+    /** 把引用块接在输入框草稿后面（和扩展的 `pasteToEditor` 同一条通道）。 */
+    fun quoteIntoComposer(text: String) {
+        composerFillSeq += 1
+        _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text, append = true))
+    }
+
+    /**
+     * 找出这行消息在 pi 会话里的条目 id，再交给 [then]；找不到就如实说，不猜。
+     * 匹配规则与它的 harness 在 [MessageEntryResolver]。pi 只在第一条助手消息写完后才把会话落盘，
+     * 所以刚发出的第一轮里这里可能还找不到——话术里写明原因，而不是报一个泛泛的「失败」。
+     */
+    private fun resolveEntryThen(item: TranscriptItem, what: String, then: (String) -> Unit) {
+        val api = this.api ?: return fail("引擎未就绪：pi 现在不在运行，$what 没有执行。")
+        val (role, text) = when (item) {
+            is UserMessage -> MessageRole.User.wire to item.text
+            is AssistantText -> MessageRole.Assistant.wire to item.text
+            else -> return
+        }
+        viewModelScope.launch {
+            val id = runCatching {
+                val raw = api.getEntriesRaw().entries
+                MessageEntryResolver.resolve(raw.mapNotNull(::entryText), item.key, role, text)
+            }.getOrNull()
+            if (id == null) {
+                pushNotice("这条消息还没写进 pi 的会话文件（pi 在第一轮回答结束后才落盘），$what 暂时做不了。", Notice.Tone.Warning)
+            } else {
+                then(id)
+            }
+        }
+    }
+
+    /** 原始条目 → 只剩角色与文本块；不是消息条目的返回 null。 */
+    private fun entryText(entry: kotlinx.serialization.json.JsonObject): EntryText? {
+        val id = (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        if ((entry["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "message") return null
+        val message = entry["message"] as? kotlinx.serialization.json.JsonObject ?: return null
+        val role = (message["role"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.lowercase() ?: return null
+        val content = message["content"]
+        val texts = when (content) {
+            is kotlinx.serialization.json.JsonPrimitive -> listOf(content.content)
+            is kotlinx.serialization.json.JsonArray -> content.mapNotNull { block ->
+                val o = block as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                if ((o["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "text") null
+                else (o["text"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+            else -> emptyList()
+        }
+        return EntryText(id, role, texts)
+    }
+
+    /** 「从这里继续」：把叶子移到这条消息，不做摘要（要摘要走会话树页）。 */
+    fun continueFromMessage(item: TranscriptItem) =
+        resolveEntryThen(item, "从这里继续") { navigateTo(it, BranchSummaryChoice.NoSummary) }
+
+    fun labelMessage(item: TranscriptItem, label: String?) =
+        resolveEntryThen(item, "加标签") { setEntryLabel(it, label) }
+
+    fun hideMessageFromContext(item: TranscriptItem) =
+        resolveEntryThen(item, "从上下文隐藏") { hideEntryFromContext(it) }
 
     /** 宿主的高级命令入口；引擎没跑时 null。 */
     fun advanced(): app.pi.host.HostAdvanced? = session?.advanced

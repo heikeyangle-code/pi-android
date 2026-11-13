@@ -16,6 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiImage
 import app.pi.rpc.UserMessage
+import app.pi.ui.chat.MessageActionTarget
+import app.pi.ui.chat.MessageRole
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
@@ -52,11 +54,12 @@ import app.pi.ui.theme.PiSpacing
  * comes from `PiShapes.card`: `card` is still the older spec's 16dp and is shared with
  * other blocks.
  *
- * The block's actions (复制 / 编辑并从此分叉) come from **long-pressing the bubble's own
- * chrome** — there is no ⋮ beside it (see [BlockActionMenu]: the button cost 32 dp of width
- * per row, and the chrome long press opens the same menu). The system text-selection scope
- * ([SelectableContent]) and the attachment grid that opens the full-screen viewer
- * ([onImageClick]) are unchanged.
+ * The block's actions come from **one long press on the whole bubble**: a haptic tick and a bottom
+ * sheet (复制全部 / 选择文字 / 引用 / 编辑并从此分叉 / 从这里继续 / 加标签 / 从上下文隐藏), see
+ * [MessageActionTarget]. The text is deliberately not in a system selection container any more —
+ * that made the same gesture mean two things depending on where the finger landed; free selection
+ * is the sheet's 「选择文字」. The attachment grid that opens the full-screen viewer
+ * ([onImageClick]) is unchanged.
  *
  * F15 (`docs/rendering-review.md`): pi sends the user's own text through
  * `Markdown` with `userMessageText` as `defaultTextStyle.color`
@@ -91,33 +94,20 @@ fun UserMessageBlock(
     showTimestamps: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     BlockColumn(modifier) {
-        BlockActionMenu(
-            actions = buildList {
-                add(BlockAction("复制") { clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text)) })
-                // pi forks a session from a *user* message (`fork`, rpc-types.ts:62;
-                // pi's own picker is /fork, docs/sessions.md:31). Only the row's
-                // *transcript key* travels from here: it is pi's entry id on the
-                // replay path and a synthetic `user-<millis>-<n>` on the live one, so
-                // the ViewModel resolves it against `get_fork_messages` rather than
-                // handing it to pi (`forkFromMessage`, `PiSessionViewModel.kt`).
-                if (onForkFromMessage != null) {
-                    add(BlockAction("编辑并从此分叉") { onForkFromMessage(item.key) })
-                }
-            },
+        // 长按 → 底部操作面，见 [MessageActionTarget]。pi 的 `/fork` 只能从**用户**消息分叉
+        // （`getUserMessagesForForking`），所以「编辑并从此分叉」只在这里给；传出去的仍是行键，
+        // 由 ViewModel 对着 pi 的可分叉点解析（实时行的键是合成的，pi 不认）。
+        MessageActionTarget(
+            item = item,
+            role = MessageRole.User,
+            text = item.text,
+            onEditAndFork = onForkFromMessage?.let { fork -> { fork(item.key) } },
         ) {
-        // The bubble's body is one selection scope: the user's own words are the
-        // first thing anyone tries to copy, and before this the only way was the
-        // menu's 复制. The ⋮ above keeps that whole-bubble copy for a single tap.
-        SelectableContent {
-        // 气泡右对齐（所有档位）、宽度跟内容走、最宽 86%，右下角收成小半径（「我说的」的落点）。
-        // **不用 `BoxWithConstraints`**：它是 SubcomposeLayout，内容在布局阶段才组合。气泡里是整段
-        // Markdown（异步解析），一条多屏高的用户消息放在 LazyColumn 里，子组合重来的那一刻行高会被
-        // 短暂算小，滚动偏移被夹回去，读者看到的就是「从气泡底部直接跳到顶部」（用户报的）。
-        // 这里用一个普通的 `layout` 修饰符：最大宽度取 86%，量完再靠右摆，没有子组合。
-        // 通栏气泡里一个「好」字也占满整行，视觉重量比 AI 的整段回答还大，滚动时也分不出
-        // 是谁在说话；右对齐后用户回合一眼可辨，长消息仍接近满宽，不吃亏。
+        // 气泡右对齐（所有档位）、宽度跟内容走、最宽 86%，右下角收成小半径。
+        // **不用 `BoxWithConstraints`**：它是 SubcomposeLayout，内容在布局阶段才组合，整段 Markdown
+        // 异步解析时行高会被短暂算小，LazyColumn 的滚动偏移被夹回去（用户报的「从气泡底部跳到顶部」）。
+        // 这里用普通的 `layout` 修饰符：最大宽度取 86%，量完再靠右摆。
         Surface(
             // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
             // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
@@ -182,7 +172,6 @@ fun UserMessageBlock(
                     )
                 }
             }
-        }
         }
         }
     }

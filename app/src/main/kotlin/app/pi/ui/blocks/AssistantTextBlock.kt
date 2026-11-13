@@ -5,6 +5,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.pi.rpc.AssistantText
 import app.pi.rpc.PiImage
+import app.pi.ui.chat.MessageActionTarget
+import app.pi.ui.chat.MessageRole
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.render.withStreamingCursor
 
@@ -57,25 +59,16 @@ fun AssistantTextBlock(
      */
     onImageClick: ((PiImage) -> Unit)? = null,
 ) {
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     BlockColumn(modifier) {
-        // §4.8: 助手消息长按 → 复制全部. 保存为文件 / 重新生成 are not offered here —
-        // see the block-action report: neither has a target in this build.
+        // 长按 → 底部操作面（复制全部 / 选择文字 / 引用 / 从这里继续 / 标签 / 从上下文隐藏），
+        // 见 [MessageActionTarget]。正文**不再**放进系统选择容器：那样长按落在字上就被选择手柄吃掉、
+        // 落在边距上才出菜单，同一个手势两种结果。要自由选择，面里有「选择文字」。
         //
-        // 复制全部 still copies `item.text` in full — pi's own message content, never
-        // the rendered, wrapped or truncated form the markdown pipeline produced.
-        BlockActionMenu(
-            actions = listOf(
-                BlockAction("复制全部") {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text))
-                },
-            ),
-        ) {
-        SelectableContent {
+        // 「复制全部」复制的仍是 `item.text` 原文，光标 `▍` 不会进剪贴板。
+        MessageActionTarget(item = item, role = MessageRole.Assistant, text = item.text) {
             // 光标 `▍` 接在 Markdown 源码末尾（`withStreamingCursor`），紧跟最后一个字，也不占
             // 布局宽度：原来是正文旁边另放一个 8×16 的方块，贴着整块正文的右缘（最后一行很短
             // 时离字很远），并且流式结束它消失的那一帧正文变宽、已断好的行会重排。
-            // 「复制全部」仍复制 `item.text` 原文，光标不会进剪贴板。
             val shown = if (item.streaming) withStreamingCursor(item.text) else item.text
             if (shown.isNotEmpty()) {
                 PiMarkdownText(
@@ -85,7 +78,6 @@ fun AssistantTextBlock(
                     streaming = item.streaming,
                 )
             }
-        }
         }
     }
 }

@@ -28,6 +28,18 @@
 | steeringMode / followUpMode | `queue.steeringMode/followUpMode` | 有 |
 | reload | `session.reload` | 有 |
 
+## 对话页消息长按（整条消息一个长按 → 底部操作面，触感反馈）
+| 动作 | 用户消息 | 助手消息 | SDK 对应 |
+|---|---|---|---|
+| 复制全部 / 选择文字 / 引用到输入框 | ✓ | ✓ | 纯 App（选择文字 = 面内整条 Markdown 原文的系统选择） |
+| 编辑并从此分叉 | ✓ | — | `session.fork`（pi 只允许从用户消息分叉） |
+| 从这里继续（开新分支） | ✓ | ✓ | `session.navigate`（不摘要） |
+| 加标签 / 清除 | ✓ | ✓ | `session.label`（`appendLabelChange`） |
+| 从模型上下文隐藏 | ✓ | ✓ | `session.contextEdit`（`appendContextEdit`） |
+生成中只给前三项（宿主会拒绝改会话树）。行键对不上 pi 条目 id 时（本轮实时生成的行）按「角色 + 正文，最新优先」
+回查（`MessageEntryResolver`，有 harness）；第一轮回答结束前 pi 尚未落盘，会明说「还没写进会话文件」。
+**未做**：重新生成（SDK 没有这个方法，要靠「从此分叉再发」模拟，没接）；工具卡仍只有复制类动作（已改用同样的底部面板）。
+
 ## SessionManager（见 `sessions.md`）
 list / listAll / open / getTree / getBranch / appendSessionInfo / appendLabelChange / appendContextEdit：
 宿主全部有（`session.list/search/read/rename/delete/label/path/contextEdit/tree/entries`）；
