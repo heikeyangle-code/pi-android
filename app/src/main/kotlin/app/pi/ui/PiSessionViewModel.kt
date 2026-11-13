@@ -4534,6 +4534,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
+    fun hostCommands(): app.pi.host.HostCommands? = session?.commands
+
     private val toolRenderCache = app.pi.ui.extension.ToolRendererCache { item, expanded, width ->
         val commands = session?.commands ?: throw IllegalStateException("no session")
         commands.renderTool(

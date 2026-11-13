@@ -25,7 +25,6 @@ import app.pi.packages.PiResourceCatalog.Override
 import app.pi.packages.PiResourceCatalog.Parsed
 import app.pi.packages.PiResourceCatalog.SourceKind
 import app.pi.packages.PiResourceCatalog.Type
-import app.pi.packages.PiResources
 import app.pi.ui.PiSeg
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
@@ -42,13 +41,13 @@ import java.io.File
 /**
  * 工作区「资源」一段的数据与动作。
  *
- * 资源清单**不是扫目录得来的**，是 pi 自己的包管理器给出的结论（[PiResources]）：所以 git 包、
+ * 资源清单**不是扫目录得来的**，是 pi 自己的包管理器给出的结论（宿主 `resources.list`，见 `HostResources`）：所以 git 包、
  * 清单里声明的资源、内置扩展都在，来源标题与 `pi config` 里一字不差。开关写的也是 pi 的
  * `settings.json`（全局 `~/.pi/agent/`，项目 `<工作区>/.pi/`），写法就是 pi 的。
  */
 @Stable
 internal class ResourceManager(
-    private val service: PiResources,
+    private val service: app.pi.host.HostResources,
     private val layout: AgentLayout,
     private val scope: CoroutineScope,
 ) {
@@ -82,7 +81,7 @@ internal class ResourceManager(
         checkingUpdates = true
         updateError = null
         scope.launch {
-            when (val result = withContext(Dispatchers.IO) { service.updates(trusted) }) {
+            when (val result = service.updates()) {
                 is Parsed.Ok -> updates = result.value
                 is Parsed.Error -> {
                     updates = null
@@ -100,18 +99,19 @@ internal class ResourceManager(
         val cache = HashMap<String, PiResourceCatalog.Snapshot>()
     }
 
-    fun refresh(projectTrusted: Boolean) {
-        trusted = projectTrusted
+    fun refresh() {
         loading = true
         // 先拿上次读到的清单顶上：每次读都要冷启动一遍引擎（几秒），没必要让人对着空白等。
         // 读完再换成新的；换的只是内容，开关位置不变。
-        if (snapshot == null) cache[cacheKey(projectTrusted)]?.let { snapshot = it }
+        if (snapshot == null) cache[cacheKey(trusted)]?.let { snapshot = it }
         scope.launch {
-            val result = withContext(Dispatchers.IO) { service.list(projectTrusted) }
+            val result = service.list()
             when (result) {
                 is Parsed.Ok -> {
                     snapshot = result.value
-                    cache[cacheKey(projectTrusted)] = result.value
+                    // 信任与否是宿主（SDK 的信任库）说了算，不再在 App 里复刻一遍判据。
+                    trusted = result.value.trusted
+                    cache[cacheKey(trusted)] = result.value
                     error = null
                 }
                 is Parsed.Error -> error = result.message
@@ -126,14 +126,14 @@ internal class ResourceManager(
         busyKey = key
         val target = layer
         scope.launch {
-            val result = withContext(Dispatchers.IO) { service.toggle(target, item, trusted) }
+            val result = service.toggle(target, item)
             when (result) {
                 is Parsed.Ok -> {
                     changed = true
                     error = null
                     // 同一个进程写完盘后已经重读了一遍；老脚本没带才再列一次。
                     val fresh = result.value.snapshot?.let { Parsed.Ok(it) }
-                        ?: withContext(Dispatchers.IO) { service.list(trusted) }
+                        ?: service.list()
                     if (fresh is Parsed.Ok) {
                         snapshot = fresh.value
                         cache[cacheKey(trusted)] = fresh.value

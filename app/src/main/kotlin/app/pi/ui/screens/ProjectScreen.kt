@@ -67,10 +67,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
 import app.pi.packages.AgentLayout
-import app.pi.packages.GuestCommand
-import app.pi.packages.PiResources
-import app.pi.packages.ProjectTrust
-import app.pi.packages.TrustRepository
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
@@ -327,7 +323,7 @@ fun ProjectScreen(
 
     // ------------------------------------------------------------ ⑤ 资源扫描
     val resourceManager = remember(layout) {
-        ResourceManager(PiResources(context, layout, GuestCommand(layout)), layout, scope)
+        ResourceManager(app.pi.host.HostResources { session.hostCommands() }, layout, scope)
     }
     // 文件 / 资源两个分段：这一屏原来把两者摞在一条列表里，往下滚才看到资源，
     // 像两个功能硬拼在一起。
@@ -335,50 +331,11 @@ fun ProjectScreen(
     // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
     var overflow by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
-    var projectUntrusted by remember { mutableStateOf(false) }
-    LaunchedEffect(refreshTick, workspace, projectUntrusted, showResources) {
-        if (showResources) resourceManager.refresh(!projectUntrusted)
+    // 信任由宿主裁决（SDK 的 ProjectTrustStore），资源清单带回 `trusted`；这里不再自己读 trust.json 复刻判据。
+    val projectUntrusted = resourceManager.snapshot?.trusted == false
+    LaunchedEffect(refreshTick, workspace, state.workspace.revision, showResources, engine) {
+        if (showResources) resourceManager.refresh()
     }
-    LaunchedEffect(refreshTick, workspace, agentDir) {
-        withContext(Dispatchers.IO) {
-            // 信任：pi 只加载**受信任**项目的 `.pi` 资源（`interactive-mode.ts:3877`、
-            // `:3888-3907`），未受信任时它照旧启动但忽略这些目录 —— 而这一段照常把它们
-            // 列出来，所以必须说清哪些不会生效。
-            //
-            // 判据与设置里的「扩展包与项目信任」卡同源（`PiPackagesHost.readTrust`）：
-            // `trust.json` 的存档决定 + 设置里的 `defaultProjectTrust`，交给纯逻辑
-            // `ProjectTrust.resolve` 裁决。`hasTrustRequiringResources` 在这里用**宿主侧
-            // 同一批目录**判断（`.pi/` 下是否有东西），pi 还会额外看 `<cwd>/.agents/skills`；
-            // 漏掉那一处只会让提示**少出现**，不会凭空出现。
-            val requiresTrust = ProjectTrust.TRUST_REQUIRING_CONFIG_ENTRIES.any {
-                File(configDir, it).exists()
-            }
-            if (requiresTrust) {
-                val repository = TrustRepository(layout)
-                val saved = runCatching { repository.decisionFor(layout.guestWorkspace) }.getOrNull()
-                val defaultTrust = runCatching {
-                    (session.settingsStore.read("defaultProjectTrust") as? JsonPrimitive)?.content
-                }.getOrNull() ?: "ask"
-                projectUntrusted = runCatching {
-                    !ProjectTrust.resolve(
-                        ProjectTrust.Inputs(
-                            cwd = layout.guestWorkspace,
-                            hasTrustRequiringResources = true,
-                            savedDecision = saved,
-                            defaultProjectTrust = defaultTrust,
-                            // 这一屏不是那个对话框：不给答案（null），让 resolve 按存档
-                            // 与默认值裁决，而不是替用户点一个。
-                            hasUI = true,
-                            userAnswer = null,
-                        ),
-                    ).trusted
-                }.getOrDefault(false)
-            } else {
-                projectUntrusted = false
-            }
-        }
-    }
-
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
     // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
