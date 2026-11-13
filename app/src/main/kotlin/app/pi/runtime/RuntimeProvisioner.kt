@@ -1337,7 +1337,13 @@ class RuntimeProvisioner(
             ?: throw ProvisioningException("node archive had no top-level directory")
         val target = File(paths.rootfs, "opt/node")
         target.parentFile?.mkdirs()
-        val notMerged = mergeTreeOver(top, target)
+        // 首次安装（目标还不存在）：整棵树**改名**过去，而不是逐文件复制。暂存目录和目标同在
+        // `paths.runtime` 之下、同一个文件系统，`rename(2)` 是一次元数据操作；旧实现在这里把
+        // 约 195 MB 解出来之后又整棵读-写一遍（File.copyTo），首次安装白白多写一份 node。
+        // 目标已存在（升级、或用户 `npm -g` 过）才走下面的覆盖合并——那条路径要保住用户的东西，
+        // 不能改名顶替。改名失败（极少数文件系统）同样落回合并，行为与此前一致。
+        val renamed = !existsWithoutFollowing(target) && top.renameTo(target)
+        val notMerged = if (renamed) emptyList() else mergeTreeOver(top, target)
         deleteTreeInsideVolatile(staging, "node 暂存目录")
         // 失败 ⇒ 不许记账。 `mergeTreeOver` used to swallow a copy or symlink it could not
         // perform (`runCatching { … }` with no result check), and `provision` then recorded
