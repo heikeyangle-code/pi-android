@@ -25,11 +25,6 @@
 			"sha256": "01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc",
 			"why": "pi requires Node >= 22.19; official glibc build"
 		},
-		"termuxBootstrap": {
-			"url": "https://github.com/termux/termux-packages/releases/download/bootstrap-2026.08.30-r1%2Bapt.android-7/bootstrap-aarch64.zip",
-			"sha256": "7e92f4c435d16207cdda63d5629e666ab98441f09eefa6a8423037ef13263346",
-			"why": "optional second guest OS: Termux userland (bionic), run under proot with the canonical /data/data/com.termux prefix (docs/sdk-host/termux.md)"
-		},
 		"ripgrep": {
 			"url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
 			"sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
