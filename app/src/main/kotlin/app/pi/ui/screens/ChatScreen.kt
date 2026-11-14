@@ -165,7 +165,7 @@ import app.pi.ui.chat.ContextSheet
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
-import app.pi.ui.chat.PiCommandAction
+import app.pi.ui.chat.ChatAction
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.RenameSessionDialog
@@ -1672,30 +1672,30 @@ private fun ChatBody(
     // `prompt` → extension command → skill → template) for anything pi owns, and
     // the app's native implementation for pi's built-ins, which pi's TUI also
     // implements client-side (`interactive-mode.ts` `setupEditorSubmitHandler`).
-    fun pick(command: PiSlashCommand, args: String) {
-        when (command.action) {
-            PiCommandAction.Prompt -> session.runPromptCommand(command, args)
-            PiCommandAction.PickFork -> {
+    fun perform(action: ChatAction, command: PiSlashCommand? = null, args: String = "") {
+        when (action) {
+            ChatAction.Prompt -> command?.let { session.runPromptCommand(it, args) }
+            ChatAction.PickFork -> {
                 session.refreshForkMessages()
                 sheet = ChatSheet.Fork
             }
-            PiCommandAction.CloneSession -> session.cloneSession()
+            ChatAction.CloneSession -> session.cloneSession()
             // `/export <path>`: pi picks the writer from the extension
             // (`interactive-mode.ts:6062-6066`), and so does the ViewModel.
-            PiCommandAction.ExportSession -> session.exportSession(args.takeIf { it.isNotBlank() })
-            PiCommandAction.CopyLastAssistant -> copyLastAssistant(session, context)
+            ChatAction.ExportSession -> session.exportSession(args.takeIf { it.isNotBlank() })
+            ChatAction.CopyLastAssistant -> copyLastAssistant(session, context)
             // `/name <名字>` renames outright, exactly as pi does
             // (`interactive-mode.ts:6193-6207`); the dialog is for the bare `/name`,
             // where there is nothing to apply yet. The argument was silently dropped
             // here — twice, in fact, because the first fix was lost in a later
             // rewrite of this function — so it is worth saying out loud: this arm
             // reads `args`.
-            PiCommandAction.RenameSession -> if (args.isNotBlank()) {
+            ChatAction.RenameSession -> if (args.isNotBlank()) {
                 session.renameSession(args)
             } else {
                 sheet = ChatSheet.Rename
             }
-            PiCommandAction.Compact -> session.compact(args.takeIf { it.isNotBlank() })
+            ChatAction.Compact -> session.compact(args.takeIf { it.isNotBlank() })
             // `/import`: pi takes a path argument, a phone takes a picked document.
             // Any argument is ignored — there is no path to type — and the picker's
             // cancel is the "cancelled" answer rather than an error.
@@ -1706,7 +1706,7 @@ private fun ChatBody(
             // *guest*, which the app's own reader has no entry point for. So the
             // picker opens — and the argument is **said to be ignored** rather than
             // dropped in silence, which is the one option that is never acceptable.
-            PiCommandAction.ImportSession -> {
+            ChatAction.ImportSession -> {
                 if (args.isNotBlank()) {
                     session.notifyUser(
                         "本应用改用文件选择器导入，参数「$args」被忽略：请在选择器里挑那个 .jsonl 文件。",
@@ -1716,33 +1716,42 @@ private fun ChatBody(
             }
             // 以下都是 pi 的内建命令在手机上的做法：打开对应的界面，或直接执行。每一项都和
             // 「⋯」菜单 / 顶栏里的同名入口走同一个函数，不另起一套。
-            PiCommandAction.OpenSettings -> {
-                CLIENT_BUILTINS[command.name]?.note?.let { session.notifyUser(it) }
+            ChatAction.OpenSettings -> {
+                command?.let { CLIENT_BUILTINS[it.name]?.note }?.let { session.notifyUser(it) }
                 onOpenSettings()
             }
-            PiCommandAction.PickModel -> {
+            ChatAction.PickModel -> {
                 session.refreshModels()
                 sheet = ChatSheet.Model
             }
-            PiCommandAction.PickThinking -> {
+            ChatAction.PickThinking -> {
                 session.refreshThinkingLevels()
                 sheet = ChatSheet.Thinking
             }
-            PiCommandAction.OpenTree -> session.requestNav(NavRequest.SessionTree)
-            PiCommandAction.SessionStats -> {
+            ChatAction.OpenTree -> session.requestNav(NavRequest.SessionTree)
+            ChatAction.SessionStats -> {
                 session.refreshStats()
                 sheet = ChatSheet.Stats
             }
-            PiCommandAction.NewSession -> session.newSession()
-            PiCommandAction.OpenSessions -> onOpenSessions()
-            PiCommandAction.ReloadResources -> session.reloadResources()
-            PiCommandAction.BugReport -> session.generateBugReport(args.takeIf { it.isNotBlank() }) { text ->
+            ChatAction.NewSession -> session.newSession()
+            ChatAction.OpenSessions -> onOpenSessions()
+            ChatAction.ReloadResources -> session.reloadResources()
+            ChatAction.BugReport -> session.generateBugReport(args.takeIf { it.isNotBlank() }) { text ->
                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
                 session.notifyUser("问题报告已复制（${text.length} 字），可以直接粘贴发给 pi 开发者。")
             }
-            PiCommandAction.Unsupported -> session.notifyUser(unsupportedReason(command.name), warning = true)
+            ChatAction.ContextUsage -> {
+                session.refreshStats()
+                sheet = ChatSheet.Context
+            }
+            ChatAction.ToolsSheet -> sheet = ChatSheet.Tools
+            ChatAction.Unsupported ->
+                session.notifyUser(unsupportedReason(command?.name.orEmpty()), warning = true)
         }
     }
+
+    /** 命令面板点了一行 / 手敲了 `/name args`。 */
+    fun pick(command: PiSlashCommand, args: String) = perform(command.action, command, args)
 
     Column(Modifier.fillMaxSize()) {
         // ---------------------------------------------------------------- 顶栏
@@ -1866,7 +1875,14 @@ private fun ChatBody(
                             // image and opens upwards. Neither flips itself.
                             placement = PiMenuPlacement.Below,
                             items = buildList {
-                                // 窄屏把搜索图标收进这里；宽屏仍用顶栏那枚。
+                                // 一个入口、三组、两道分隔线（此前是 19 项平铺的抽屉）。每项的「做什么」
+                                // 只有 `perform` 里那一份，命令面板的同名行走的是同一个函数；
+                                // 顺序是：先「对这段对话做什么」，再「对会话做什么」，再「模型」，最后「全局」。
+                                //
+                                // 去掉的两项：「命令面板」（输入框工具行就有 `/`）和「循环切换思考等级」
+                                // （输入框的思考等级文字就是它；菜单里只留选择器）。
+                                //
+                                // ---- 对话（只改你看到的，不动会话）
                                 if (!showSearchAction) {
                                     add(
                                         PiMenuItem(
@@ -1877,54 +1893,8 @@ private fun ChatBody(
                                         },
                                     )
                                 }
-                                add(PiMenuItem("命令面板") { draft = "/" })
-                                add(
-                                    PiMenuItem("会话与队列") {
-                                        sheet = ChatSheet.Tools
-                                    },
-                                )
-                                add(
-                                    PiMenuItem("会话树") {
-                                        // `PiRoot` refreshes the tree when it handles
-                                        // this request (see the `/tree` arm in
-                                        // `pick`); refreshing here too issued the same
-                                        // two RPCs twice.
-                                        session.requestNav(NavRequest.SessionTree)
-                                    },
-                                )
-                                // Two sheets, two names: 会话信息 is metadata
-                                // (name / id / file / counts) and 上下文与用量 is
-                                // every figure the app has. The composer's ring opens
-                                // the second one directly; this row exists so the
-                                // first is reachable without the ring.
-                                add(
-                                    PiMenuItem("会话信息") {
-                                        session.refreshStats()
-                                        sheet = ChatSheet.Stats
-                                    },
-                                )
-                                add(
-                                    PiMenuItem("上下文与用量") {
-                                        session.refreshStats()
-                                        sheet = ChatSheet.Context
-                                    },
-                                )
-                                add(PiMenuItem("新建会话") { session.newSession() })
-                                add(
-                                    PiMenuItem("从历史消息分叉") {
-                                        session.refreshForkMessages()
-                                        sheet = ChatSheet.Fork
-                                    },
-                                )
-                                add(PiMenuItem("复制当前会话") { session.cloneSession() })
-                                add(PiMenuItem("重命名") { sheet = ChatSheet.Rename })
-                                add(PiMenuItem("导出会话（HTML + 可导入文件）") { session.exportSession() })
                                 add(
                                     PiMenuItem("跳到上一条提问") {
-                                        // F34: the first visible row as a *full-list*
-                                        // index — the loading row does not exist in
-                                        // `visibleItems`, and the hidden prefix does
-                                        // not exist in the rendered list.
                                         val firstFull =
                                             listState.firstVisibleItemIndex + hiddenCount
                                         userRowIndices().lastOrNull { it < firstFull }?.let { row ->
@@ -1943,54 +1913,30 @@ private fun ChatBody(
                                         }
                                     },
                                 )
-                                add(
-                                    PiMenuItem("复制最后一条回复") {
-                                        copyLastAssistant(session, context)
-                                    },
-                                )
-                                // The label is read at build time, so it is still the
-                                // toggle it always was.
+                                add(PiMenuItem("复制最后一条回复") { perform(ChatAction.CopyLastAssistant) })
                                 add(
                                     PiMenuItem(
                                         if (toolsExpanded) "收起全部工具输出" else "展开全部工具输出",
                                     ) { toolsExpanded = !toolsExpanded },
                                 )
-                                // 「循环切换模型」 is **deleted**. pi has the keybinding
-                                // (`app.model.cycleForward` / `cycleBackward`,
-                                // `keybindings.md`) and a keyboard is where a blind
-                                // cycle belongs: you press it again and watch the
-                                // footer. On a phone the same tap has no visible
-                                // result — the model chip and the composer both stay as
-                                // they were until the next turn — so it read as a
-                                // button that did nothing, and it is redundant next to
-                                // the AppBar's model chip and `/model`, both of which
-                                // *show* what they are choosing.
-                                add(
-                                    PiMenuItem("思考等级…") {
-                                        session.refreshThinkingLevels()
-                                        sheet = ChatSheet.Thinking
-                                    },
-                                )
-                                add(
-                                    PiMenuItem("循环切换思考等级") {
-                                        session.cycleThinkingLevel()
-                                    },
-                                )
-                                add(
-                                    PiMenuItem("选择模型…") {
-                                        session.refreshModels()
-                                        sheet = ChatSheet.Model
-                                    },
-                                )
-                                // 设置：底栏拆掉之后，工作区在顶栏那枚文件夹图标里，
-                                // 设置仍留在这里。放在最末并带一条分隔线，因为它是
-                                // 「离开这一屏」，与上面的会话/模型动作不是一类。
-                                add(
-                                    PiMenuItem("设置", dividerBefore = true) { onOpenSettings() },
-                                )
-                                // There is no terminal entry here any more: the user
-                                // retired the terminal outright, so the settings home's
-                                // row is the one door.
+                                // ---- 会话
+                                add(PiMenuItem("新建会话", dividerBefore = true) { perform(ChatAction.NewSession) })
+                                add(PiMenuItem("会话树") { perform(ChatAction.OpenTree) })
+                                add(PiMenuItem("从历史消息分叉") { perform(ChatAction.PickFork) })
+                                add(PiMenuItem("复制当前会话") { perform(ChatAction.CloneSession) })
+                                add(PiMenuItem("重命名") { perform(ChatAction.RenameSession) })
+                                add(PiMenuItem("导出会话（HTML + 可导入文件）") { perform(ChatAction.ExportSession) })
+                                add(PiMenuItem("会话信息") { perform(ChatAction.SessionStats) })
+                                add(PiMenuItem("上下文与用量") { perform(ChatAction.ContextUsage) })
+                                add(PiMenuItem("会话与队列") { perform(ChatAction.ToolsSheet) })
+                                // ---- 模型
+                                add(PiMenuItem("选择模型…", dividerBefore = true) { perform(ChatAction.PickModel) })
+                                add(PiMenuItem("思考等级…") { perform(ChatAction.PickThinking) })
+                                // ---- 全局
+                                add(PiMenuItem("重新加载扩展与资源", dividerBefore = true) { perform(ChatAction.ReloadResources) })
+                                // 「设置」是离开这一屏，所以单独排在最后；终端入口已经被用户裁掉，
+                                // 设置首页那一行是唯一的门。
+                                add(PiMenuItem("设置") { perform(ChatAction.OpenSettings) })
                             },
                         )
                     }
@@ -2690,16 +2636,10 @@ private fun ChatBody(
             // The reading the transcript's status row used to carry. The ring is always
             // drawn; the total falls back to the model's own window (pi's footer rule).
             contextUsage = state.stats?.contextUsage,
-            onOpenContext = {
-                session.refreshStats()
-                sheet = ChatSheet.Context
-            },
+            onOpenContext = { perform(ChatAction.ContextUsage) },
             // 顶栏那颗 chip 挪到工具行之后，模型名和「打开模型面板」的动作从这里进。
             modelLabel = modelLabel,
-            onOpenModel = {
-                session.refreshModels()
-                sheet = ChatSheet.Model
-            },
+            onOpenModel = { perform(ChatAction.PickModel) },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,

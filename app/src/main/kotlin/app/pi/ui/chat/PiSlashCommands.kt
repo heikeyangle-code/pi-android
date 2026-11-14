@@ -4,15 +4,20 @@ import app.pi.rpc.PiResponses
 import app.pi.rpc.PiSourceInfo
 
 /**
+ * 对话页上一个「动作」：命令面板的行、顶栏「⋯」菜单的项**共用这一个枚举和同一个执行函数**
+ * （`ChatScreen.perform`）。此前菜单项各自内联一段 lambda、面板另有一个 `pick`，同一件事
+ * （新建会话、选模型、导出……）在两处各写一遍，改一处漏另一处。现在两处只负责「摆在哪、叫什么」，
+ * 做什么只有一份。
+ *
  * What selecting a palette row does.
  *
  * [Prompt] is the only action that goes back to pi as a string: pi dispatches `/name args` itself
  * (extension command → skill → prompt template). Everything else is one of pi's **built-in** commands,
  * which pi's own TUI runs client-side — so each client decides what it means on its own screen.
  * 宿主把 pi 的内建命令表送过来（`catalog.commands.builtins`），这里只维护「手机上怎么做」：
- * [CLIENT_BUILTINS] 里有的就是下面这些动作，没有的显示出来并说明（[PiCommandAction.Unsupported]）。
+ * [CLIENT_BUILTINS] 里有的就是下面这些动作，没有的显示出来并说明（[ChatAction.Unsupported]）。
  */
-enum class PiCommandAction {
+enum class ChatAction {
     /** `prompt("/<name> args")` — pi expands/dispatches it. */
     Prompt,
 
@@ -40,6 +45,12 @@ enum class PiCommandAction {
 
     /** `/import`: pi 的 TUI 要一个路径；手机上没有路径可敲，所以开文件选择器（见 ChatScreen）。 */
     ImportSession,
+
+    /** 菜单用：上下文占用与用量面板（输入框的环也开它）。 */
+    ContextUsage,
+
+    /** 菜单用：「会话与队列」面板。 */
+    ToolsSheet,
 
     /** pi 有这个命令，这个客户端做不了：点一下说明原因（[UNSUPPORTED_BUILTIN_REASONS]），不假装。 */
     Unsupported,
@@ -88,7 +99,7 @@ data class PiSlashCommand(
      * the split is deliberate — derivation is pi's, presentation is the user's.
      */
     val sourceTag: String?,
-    val action: PiCommandAction,
+    val action: ChatAction,
     val argumentHint: String? = null,
 ) {
     /** What the user types to invoke it. */
@@ -103,7 +114,7 @@ data class PiSlashCommand(
  * @property argumentHint 有参数的命令：点击只把 `/name ` 填进输入框等用户补参数，不直接执行。
  */
 class ClientBuiltin(
-    val action: PiCommandAction,
+    val action: ChatAction,
     val zh: String,
     val argumentHint: String? = null,
     val note: String? = null,
@@ -118,41 +129,41 @@ class ClientBuiltin(
  * 不会像手抄表那样悄悄缺一个。
  */
 val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
-    "settings" to ClientBuiltin(PiCommandAction.OpenSettings, "打开设置"),
-    "model" to ClientBuiltin(PiCommandAction.PickModel, "选择模型"),
-    "tree" to ClientBuiltin(PiCommandAction.OpenTree, "浏览会话树（切换分支）"),
-    "thinking" to ClientBuiltin(PiCommandAction.PickThinking, "设置思考等级"),
+    "settings" to ClientBuiltin(ChatAction.OpenSettings, "打开设置"),
+    "model" to ClientBuiltin(ChatAction.PickModel, "选择模型"),
+    "tree" to ClientBuiltin(ChatAction.OpenTree, "浏览会话树（切换分支）"),
+    "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级"),
     "scoped-models" to ClientBuiltin(
-        PiCommandAction.OpenSettings, "选择参与循环切换的模型",
+        ChatAction.OpenSettings, "选择参与循环切换的模型",
         note = "「循环模型」在 设置 → 模型与推理。",
     ),
     "export" to ClientBuiltin(
-        PiCommandAction.ExportSession,
+        ChatAction.ExportSession,
         "导出会话：不带参数＝HTML 与可导入的会话文件各一份；给名字＝按后缀只写一份",
     ),
-    "import" to ClientBuiltin(PiCommandAction.ImportSession, "从 JSONL 文件导入并恢复会话"),
-    "bug" to ClientBuiltin(PiCommandAction.BugReport, "生成问题报告并复制（可附一句说明）"),
-    "copy" to ClientBuiltin(PiCommandAction.CopyLastAssistant, "复制最后一条回复到剪贴板"),
-    "name" to ClientBuiltin(PiCommandAction.RenameSession, "设置会话显示名称"),
-    "session" to ClientBuiltin(PiCommandAction.SessionStats, "查看会话信息与用量"),
-    "fork" to ClientBuiltin(PiCommandAction.PickFork, "从某条历史消息分叉出新会话"),
-    "clone" to ClientBuiltin(PiCommandAction.CloneSession, "在当前节点复制整个会话"),
+    "import" to ClientBuiltin(ChatAction.ImportSession, "从 JSONL 文件导入并恢复会话"),
+    "bug" to ClientBuiltin(ChatAction.BugReport, "生成问题报告并复制（可附一句说明）"),
+    "copy" to ClientBuiltin(ChatAction.CopyLastAssistant, "复制最后一条回复到剪贴板"),
+    "name" to ClientBuiltin(ChatAction.RenameSession, "设置会话显示名称"),
+    "session" to ClientBuiltin(ChatAction.SessionStats, "查看会话信息与用量"),
+    "fork" to ClientBuiltin(ChatAction.PickFork, "从某条历史消息分叉出新会话"),
+    "clone" to ClientBuiltin(ChatAction.CloneSession, "在当前节点复制整个会话"),
     "trust" to ClientBuiltin(
-        PiCommandAction.OpenSettings, "保存项目信任决定",
+        ChatAction.OpenSettings, "保存项目信任决定",
         note = "项目信任在 设置 → 安全与信任，或工作区里该项目的资源页。",
     ),
     "login" to ClientBuiltin(
-        PiCommandAction.OpenSettings, "配置模型服务商登录",
+        ChatAction.OpenSettings, "配置模型服务商登录",
         note = "登录/凭证在 设置 → 模型与推理 → 凭证。",
     ),
     "logout" to ClientBuiltin(
-        PiCommandAction.OpenSettings, "移除模型服务商登录",
+        ChatAction.OpenSettings, "移除模型服务商登录",
         note = "退出登录在 设置 → 模型与推理 → 凭证。",
     ),
-    "new" to ClientBuiltin(PiCommandAction.NewSession, "开始新会话"),
-    "compact" to ClientBuiltin(PiCommandAction.Compact, "手动压缩会话上下文"),
-    "resume" to ClientBuiltin(PiCommandAction.OpenSessions, "恢复另一个会话"),
-    "reload" to ClientBuiltin(PiCommandAction.ReloadResources, "重新加载扩展、技能、提示词、主题和上下文文件"),
+    "new" to ClientBuiltin(ChatAction.NewSession, "开始新会话"),
+    "compact" to ClientBuiltin(ChatAction.Compact, "手动压缩会话上下文"),
+    "resume" to ClientBuiltin(ChatAction.OpenSessions, "恢复另一个会话"),
+    "reload" to ClientBuiltin(ChatAction.ReloadResources, "重新加载扩展、技能、提示词、主题和上下文文件"),
 )
 
 /**
@@ -197,7 +208,7 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
                 description = builtin.description,
                 source = PiCommandSource.Builtin,
                 sourceTag = null,
-                action = PiCommandAction.Unsupported,
+                action = ChatAction.Unsupported,
             )
         }
     }
@@ -271,7 +282,7 @@ fun piCommandPalette(
                 PiResponses.CommandSource.Unknown -> PiCommandSource.Extension
             },
             sourceTag = sourceTagOf(command.sourceInfo),
-            action = PiCommandAction.Prompt,
+            action = ChatAction.Prompt,
         )
     }
     return builtins + fromPi.sortedBy { tuiGroupRank(it.source) }

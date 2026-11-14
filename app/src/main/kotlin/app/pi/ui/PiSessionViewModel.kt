@@ -70,7 +70,7 @@ import app.pi.settings.readString
 import app.pi.ui.chat.BASH_OUTPUT_MAX_CHARS
 import app.pi.ui.chat.BranchSummaryChoice
 import app.pi.ui.chat.NavigateOutcome
-import app.pi.ui.chat.PiCommandAction
+import app.pi.ui.chat.ChatAction
 import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.MentionLookup
@@ -4960,7 +4960,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Invoke one palette command whose action is [PiCommandAction.Prompt].
+     * Invoke one palette command whose action is [ChatAction.Prompt].
      *
      * Always through `prompt`, **never** `steer`, even mid-turn: pi's
      * `_queueUserInput` calls `_throwIfExtensionCommand` first, so a `steer` or

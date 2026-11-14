@@ -51,6 +51,10 @@
   new/compact/resume/reload），没有（share/changelog/hotkeys/quit，以及 pi 以后新增的）显示为「不支持」行，点一下说原因。
   `/bug` 走 `session.bugReport`，成文后复制到剪贴板；`/reload` 走 `session.reload`；scoped-models/trust/login/logout 跳设置并说明落在哪页。
   合约测试（`tools/pi-contract.mjs`）改为只盯两件事：映射表里的名字 pi 还有；宿主确实在读 pi 的那张表。
+- **面板与「⋯」菜单共用一份动作**：`ChatAction`（原 `PiCommandAction`）+ `ChatScreen.perform`。菜单项和面板行只负责
+  「摆在哪、叫什么」，「做什么」只有一处；输入框的环/模型 chip 也走它。菜单由 19 项平铺改为「对话 / 会话 / 模型 / 全局」
+  三组两道分隔线，去掉「命令面板」（输入框有 `/`）和「循环切换思考等级」（输入框的思考等级文字就是它）。
+  对话内的纯视图动作（查找、上/下一条提问、展开工具输出）仍是菜单内联——它们依赖列表状态，不属于命令。
 - 队列条已经显示每条排队消息的文字并能「收回并编辑」（此前审计表写「无内容预览」是过期的）。
 
 ## SessionManager（见 `sessions.md`）
