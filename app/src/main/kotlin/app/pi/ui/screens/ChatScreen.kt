@@ -186,7 +186,8 @@ import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
 import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
-import app.pi.ui.chat.unlistedBuiltinHint
+import app.pi.ui.chat.CLIENT_BUILTINS
+import app.pi.ui.chat.unsupportedReason
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.render.LocalPiMarkdownImmediate
 import app.pi.ui.render.LocalPiMarkdownParsed
@@ -589,6 +590,7 @@ private fun ChatBody(
     // it" for an image, "stream it into the workspace" for anything else — belong
     // off it.
     val pickerScope = rememberCoroutineScope()
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         // A null uri is the user backing out of the picker, not a failure.
         if (uri != null) {
@@ -1712,26 +1714,33 @@ private fun ChatBody(
                 }
                 importPicker.launch("*/*")
             }
-            // `OpenSettings`, `PickModel`, `PickThinking`, `OpenModelScope` and
-            // `TerminalOnly` used to have arms here. Their palette rows (`/settings`,
-            // `/model`, `/thinking`, `/scoped-models`, and the five whose only answer
-            // was a notice naming a Settings row) are deleted — each row was a second
-            // door onto a surface the user already has one gesture away — and the
-            // `when` is exhaustive over [PiCommandAction], so the arms went with them.
-            // The surfaces themselves are untouched: 设置 is a 「⋯」 menu row on this
-            // screen (底栏拆掉之后它从这里进), the model is the AppBar chip, and the
-            // thinking level is the composer's `◐`. Typing one of those names is
-            // answered by
-            // `unlistedBuiltinHint` rather than by a lie.
-            //
-            // The same treatment took `OpenTree`, `SessionStats`, `NewSession` and
-            // `OpenSessions` with their `/tree`, `/session`, `/new` and `/resume` rows
-            // (group D in `ui/chat/PiSlashCommands.kt`): the session-list overlay is
-            // already the list *and* the tree (the top bar's session name opens it),
-            // and 会话信息 / 新建会话 are already the overflow menu's rows — 会话页's
-            // 「＋ 新建会话」 for the latter. Those arms only re-issued navigation and
-            // sheets the palette could not improve on. The `when` has no `else` on
-            // purpose: it must stay exhaustive over [PiCommandAction].
+            // 以下都是 pi 的内建命令在手机上的做法：打开对应的界面，或直接执行。每一项都和
+            // 「⋯」菜单 / 顶栏里的同名入口走同一个函数，不另起一套。
+            PiCommandAction.OpenSettings -> {
+                CLIENT_BUILTINS[command.name]?.note?.let { session.notifyUser(it) }
+                onOpenSettings()
+            }
+            PiCommandAction.PickModel -> {
+                session.refreshModels()
+                sheet = ChatSheet.Model
+            }
+            PiCommandAction.PickThinking -> {
+                session.refreshThinkingLevels()
+                sheet = ChatSheet.Thinking
+            }
+            PiCommandAction.OpenTree -> session.requestNav(NavRequest.SessionTree)
+            PiCommandAction.SessionStats -> {
+                session.refreshStats()
+                sheet = ChatSheet.Stats
+            }
+            PiCommandAction.NewSession -> session.newSession()
+            PiCommandAction.OpenSessions -> onOpenSessions()
+            PiCommandAction.ReloadResources -> session.reloadResources()
+            PiCommandAction.BugReport -> session.generateBugReport(args.takeIf { it.isNotBlank() }) { text ->
+                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                session.notifyUser("问题报告已复制（${text.length} 字），可以直接粘贴发给 pi 开发者。")
+            }
+            PiCommandAction.Unsupported -> session.notifyUser(unsupportedReason(command.name), warning = true)
         }
     }
 
@@ -2769,35 +2778,9 @@ private fun ChatBody(
                     // slash and send it as a message, which is exactly wrong for a name
                     // pi *does* implement.
                     //
-                    // **Typed built-ins whose surface this app has actually run**: `/new`,
-                    // `/reload`, `/tree`, `/resume`, `/session`, `/model`, `/settings`,
-                    // `/thinking`. The palette does not *list* them (same surface one
-                    // gesture away — the ruling in [PI_BUILTIN_SLASH_COMMANDS]), but a
-                    // user who types one out of pi habit used to be told to go and press
-                    // a button instead; now the typed command does the thing, through the
-                    // same entry the menu row calls. Only when it ran is the draft
-                    // cleared and the keyboard dropped.
-                    is ComposerRoute.Unknown -> {
-                        val ran = when (route.name.trim().lowercase()) {
-                            "new" -> { session.newSession(); true }
-                            "reload" -> { session.reloadResources(); true }
-                            "tree" -> { session.requestNav(NavRequest.SessionTree); true }
-                            "resume" -> { onOpenSessions(); true }
-                            "session" -> { session.refreshStats(); sheet = ChatSheet.Stats; true }
-                            "model" -> { session.refreshModels(); sheet = ChatSheet.Model; true }
-                            "settings" -> { onOpenSettings(); true }
-                            "thinking" -> { session.cycleThinkingLevel(); true }
-                            else -> false
-                        }
-                        if (ran) {
-                            draft = ""
-                            dismissKeys()
-                        } else {
-                            unlistedBuiltinHint(route.name)
-                                ?.let { session.notifyUser(it) }
-                                ?: session.notifyUnknownCommand(route.name)
-                        }
-                    }
+                    // pi 的内建命令全部在面板里（见 `builtinRows`），所以这里只剩真正的手误：
+                    // 名字不是内建、也不是扩展/模板/技能。
+                    is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
                 }
             },
             // pi's Escape (`interactive-mode.js:2416-2418`):
@@ -3093,11 +3076,6 @@ private fun scanSearchHits(
     }
     return SearchHits(ordered, present)
 }
-
-// The "pi has this command but this palette does not list it" table lives in
-// `ui/chat/PiSlashCommands.kt` (`PI_UNLISTED_BUILTIN_COMMANDS` /
-// `unlistedBuiltinHint`), beside the built-in list it complements — a private copy
-// here would be a second table that goes stale the moment pi's list moves.
 
 /**
  * The transcript's search bar, transcribed from v2's `SearchState` bar

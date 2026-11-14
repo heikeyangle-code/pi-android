@@ -78,6 +78,27 @@ object PiResponses {
         val path: String?,
     )
 
+    /**
+     * pi 自己的内建斜杠命令（`BUILTIN_SLASH_COMMANDS`），由宿主的 `catalog.commands` 带来。
+     * 只有名字、说明和参数提示——「这个命令在手机上怎么做」是 App 的事，不在线上。
+     */
+    data class BuiltinCommand(val name: String, val description: String?, val argumentHint: String?)
+
+    /** [slashCommands] + 宿主随同给出的内建表；内建表读不到时为空（见宿主 `loadBuiltins`）。 */
+    data class CommandCatalog(val commands: List<SlashCommand>, val builtins: List<BuiltinCommand>)
+
+    fun commandCatalog(response: PiEvent.Response): CommandCatalog {
+        val builtins = dataArray(response, "builtins").mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            BuiltinCommand(
+                name = obj.str("name") ?: return@mapNotNull null,
+                description = obj.str("description"),
+                argumentHint = obj.str("argumentHint"),
+            )
+        }
+        return CommandCatalog(slashCommands(response), builtins)
+    }
+
     /** `RpcSessionState`. */
     data class SessionState(
         /**

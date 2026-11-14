@@ -44,10 +44,13 @@
 - **错误卡「重试」**：只在末尾那张错误卡上、pi 空闲时出现。SDK 没有「立刻重试」（`session.retry` 只管自动重试开关与中止；
   它内部是摘掉出错消息再 `agent.continue()`，不对外），所以做法是把最后一条用户消息（文字+图片）再发一次；
   出错的助手消息发给模型前会被 pi-ai 丢掉，上下文与第一次一致，代价是会话里多一条重复的用户消息。
-- **手敲的内建命令会执行**：`/new` `/reload` `/tree` `/resume` `/session` `/model` `/settings` `/thinking`。
-  命令面板仍不单列它们（同一入口在界面上一步可达），但手敲不再只得到一句「去按那个按钮」。
-  `/reload` 走宿主 `session.reload`（进程内重建资源加载器，不重启引擎）。其余（login/logout/trust/scoped-models/bug/share/
-  changelog/hotkeys/quit）仍是说明句——其中 login/logout/trust 宿主已有命令，是否开入口要单独裁决。
+- **命令面板重做为协议驱动**：宿主的 `catalog.commands` 除扩展/模板/技能外，还带 pi 自己的 `BUILTIN_SLASH_COMMANDS`
+  （`builtins`：名字/说明/参数提示；从 `dist/core/slash-commands.js` 按路径读，读不到带 `builtinsError`，App 退回自己映射表的顺序）。
+  App 不再手抄 pi 的命令表，只维护 `CLIENT_BUILTINS`（pi 命令名 → 手机上怎么做 + 中文说明）。pi 的每个内建命令一行：
+  有映射就是可执行行（settings/model/tree/thinking/scoped-models/export/import/bug/copy/name/session/fork/clone/trust/login/logout/
+  new/compact/resume/reload），没有（share/changelog/hotkeys/quit，以及 pi 以后新增的）显示为「不支持」行，点一下说原因。
+  `/bug` 走 `session.bugReport`，成文后复制到剪贴板；`/reload` 走 `session.reload`；scoped-models/trust/login/logout 跳设置并说明落在哪页。
+  合约测试（`tools/pi-contract.mjs`）改为只盯两件事：映射表里的名字 pi 还有；宿主确实在读 pi 的那张表。
 - 队列条已经显示每条排队消息的文字并能「收回并编辑」（此前审计表写「无内容预览」是过期的）。
 
 ## SessionManager（见 `sessions.md`）

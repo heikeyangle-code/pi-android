@@ -79,6 +79,7 @@ import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.activeBranch
 import app.pi.ui.chat.appendTailBounded
 import app.pi.ui.chat.navigateOutcome
+import app.pi.ui.chat.builtinRows
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.wantsSummary
 import app.pi.ui.extension.ComposerFill
@@ -4463,7 +4464,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // pi's own default is true (`settings-manager.ts:1165`).
             val skillCommands = settingsStore.readBoolean("enableSkillCommands") ?: true
             _state.value = _state.value.copy(
-                commands = piCommandPalette(api.getCommands(), skillCommandsEnabled = skillCommands),
+                commands = api.getCommandCatalog().let { catalog ->
+                    piCommandPalette(
+                        catalog.commands,
+                        builtins = builtinRows(catalog.builtins),
+                        skillCommandsEnabled = skillCommands,
+                    )
+                },
                 commandsLoaded = true,
             )
         }
@@ -4528,6 +4535,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ------------------------------------------------------ 消息长按面的动作（见 chat/MessageActions.kt）
+
+    /**
+     * `/bug`：让当前模型描述「这个会话哪里不对」，成文后交给 [deliver]（界面负责复制到剪贴板）。
+     * 宿主的 `session.bugReport` 要等一轮模型调用，所以先说一声在生成；失败如实说。
+     */
+    fun generateBugReport(hint: String?, deliver: (String) -> Unit) {
+        val adv = advanced() ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有生成问题报告。", Notice.Tone.Warning)
+        pushNotice("正在生成问题报告，要等模型回一轮…", Notice.Tone.Info)
+        viewModelScope.launch {
+            runCatching { adv.bugReport(hint) }
+                .onSuccess { text ->
+                    if (text.isBlank()) pushNotice("模型没有给出报告内容。", Notice.Tone.Warning) else deliver(text)
+                }
+                .onFailure { pushNotice("生成问题报告失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+        }
+    }
 
     /**
      * 重新加载扩展、技能、提示词模板和主题（pi 的 `/reload`，宿主的 `session.reload`）。

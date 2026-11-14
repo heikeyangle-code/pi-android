@@ -1864,39 +1864,38 @@ function checkAppTables(piDir) {
 
 	// ------------------------------------------------------- built-in slash commands
 	const slashText = read("app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt");
-	const listedBlock = kotlinBlock(slashText, "PI_BUILTIN_SLASH_COMMANDS") ?? "";
-	const unlistedBlock = kotlinBlock(slashText, "PI_UNLISTED_BUILTIN_COMMANDS") ?? "";
-	const listed = [...listedBlock.matchAll(/PiSlashCommand\(\s*"([a-z-]+)"/g)].map((m) => m[1]);
-	const unlisted = [...unlistedBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+"/gm)].map((m) => m[1]);
+	// 命令面板的内建命令表是**线协议驱动**的：宿主从 pi 的 BUILTIN_SLASH_COMMANDS 读出名字/说明送给 App，
+	// App 里只剩「怎么做」的映射（CLIENT_BUILTINS）和几句「做不了」的实话（UNSUPPORTED_BUILTIN_REASONS）。
+	// 所以不再要求手抄表覆盖 pi 的名单——pi 新增的命令会自己出现在面板里；要盯的只有两件事：
+	// 映射表里的名字 pi 还有，以及宿主确实在读 pi 的那张表。
+	const clientBlock = kotlinBlock(slashText, "CLIENT_BUILTINS") ?? "";
+	const reasonBlock = kotlinBlock(slashText, "UNSUPPORTED_BUILTIN_REASONS") ?? "";
+	const mapped = [...clientBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+ClientBuiltin\(/gm)].map((m) => m[1]);
+	const unsupported = [...reasonBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+"/gm)].map((m) => m[1]);
 	const piBuiltins = [...engine("core/slash-commands.js").matchAll(/name: "([a-z-]+)"/g)].map((m) => m[1]);
 	check(
-		"the built-in slash-command tables are still readable (>= 7 rows + >= 10 hints, and pi has >= 20)",
-		listed.length >= 7 && unlisted.length >= 10 && piBuiltins.length >= 20,
-		`ui/chat/PiSlashCommands.kt keeps both halves of pi's built-in list ` +
-			`(${listed.length} rows + ${unlisted.length} hints read; pi's BUILTIN_SLASH_COMMANDS has ` +
-			`${piBuiltins.length}). The reader matches \`PiSlashCommand("name"\` inside the rows block ` +
-			`and \`"name" to "…"\` inside the hints map; re-point it if either was reformatted.`,
+		"the built-in slash-command tables are still readable (>= 10 mapped, and pi has >= 20)",
+		mapped.length >= 10 && piBuiltins.length >= 20,
+		`ui/chat/PiSlashCommands.kt's CLIENT_BUILTINS (${mapped.length} read) maps pi's built-ins to what this ` +
+			`app does; pi's BUILTIN_SLASH_COMMANDS has ${piBuiltins.length}. The reader matches ` +
+			`\`"name" to ClientBuiltin(\` inside the CLIENT_BUILTINS block; re-point it if it was reformatted.`,
 	);
-	for (const name of [...listed, ...unlisted]) {
+	for (const name of [...mapped, ...unsupported]) {
 		check(
 			`pi still has the built-in slash command /${name}`,
 			piBuiltins.includes(name),
-			`ui/chat/PiSlashCommands.kt names /${name}. If pi removed or renamed it, the app either ` +
-				`offers a command that does nothing (a row) or tells the user pi has a command it no ` +
-				`longer has (a hint). Re-read the pinned core/slash-commands.ts's BUILTIN_SLASH_COMMANDS ` +
-				`and update the row/hint.`,
+			`ui/chat/PiSlashCommands.kt names /${name}. If pi removed or renamed it, the palette keeps a row ` +
+				`for a command that no longer exists. Re-read the pinned core/slash-commands's list and update.`,
 		);
 	}
-	for (const name of piBuiltins) {
-		check(
-			`the app covers pi's built-in slash command /${name}`,
-			listed.includes(name) || unlisted.includes(name),
-			`pi's BUILTIN_SLASH_COMMANDS has /${name} and neither table in ui/chat/PiSlashCommands.kt ` +
-				`names it, so a user who types it is told there is no such command — which is false. This ` +
-				`is how /bug (new in 0.86.1) stayed uncovered. Add it to PI_BUILTIN_SLASH_COMMANDS as a ` +
-				`row or to PI_UNLISTED_BUILTIN_COMMANDS with an honest sentence.`,
-		);
-	}
+	check(
+		"the host sends pi's own built-in table (catalog.commands.builtins)",
+		/BUILTIN_SLASH_COMMANDS/.test(read("app/src/main/assets/guest/sdk-host/commands/catalog.mjs")) &&
+			/BUILTIN_SLASH_COMMANDS/.test(engine("core/slash-commands.js")),
+		`sdk-host/commands/catalog.mjs must read BUILTIN_SLASH_COMMANDS from dist/core/slash-commands.js, and ` +
+			`pi's file must still export it — otherwise the palette falls back to the app's own order and pi's ` +
+			`new commands stop appearing.`,
+	);
 
 	// -------------------------------------------------------------- resource types
 	// App 侧不再有这张转录表（资源清单与开关整批交给宿主，见 assets/guest/sdk-host/commands/resources.mjs）：

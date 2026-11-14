@@ -170,6 +170,13 @@ try {
 
   const cmds = await h.call("catalog.commands");
   expect("catalog.commands 含扩展命令", cmds.ok && cmds.data.commands.some((c) => c.name === "probe-ping"));
+  // 内建命令表来自 pi 自己（BUILTIN_SLASH_COMMANDS）；测试用的 pi 若读不到就必须带原因，不能静默给空表。
+  expect(
+    "catalog.commands 带 pi 的内建命令表（或读不到的原因）",
+    cmds.ok && Array.isArray(cmds.data.builtins) &&
+      (cmds.data.builtins.some((c) => c.name === "settings" && typeof c.description === "string") ||
+        typeof cmds.data.builtinsError === "string"),
+  );
   const tools = await h.call("catalog.tools");
   expect("catalog.tools", tools.ok && tools.data.active.length > 0);
   const toolNames = tools.data.all.map((t) => t.name);

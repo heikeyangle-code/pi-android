@@ -6,67 +6,43 @@ import app.pi.rpc.PiSourceInfo
 /**
  * What selecting a palette row does.
  *
- * `Prompt` is the only action that goes back to pi as a string: pi dispatches
- * `/name args` itself (`agent-session.ts` `prompt()` →
- * `_tryExecuteExtensionCommand`, then `_expandSkillCommand`, then
- * `expandPromptTemplate`). Everything else is a **built-in** interactive
- * command, and pi's own TUI handles those entirely client-side
- * (`interactive-mode.ts` `setupEditorSubmitHandler`): they are not extension
- * commands, are not prompt templates, and are deliberately excluded from
- * `get_commands` (`rpc-mode.ts` "get_commands" builds its list from
- * `extensionRunner.getRegisteredCommands()` + `session.promptTemplates` +
- * skills only). A built-in therefore has exactly two honest outcomes in a GUI:
- * run the app's own implementation of it, or say that only the terminal can.
+ * [Prompt] is the only action that goes back to pi as a string: pi dispatches `/name args` itself
+ * (extension command → skill → prompt template). Everything else is one of pi's **built-in** commands,
+ * which pi's own TUI runs client-side — so each client decides what it means on its own screen.
+ * 宿主把 pi 的内建命令表送过来（`catalog.commands.builtins`），这里只维护「手机上怎么做」：
+ * [CLIENT_BUILTINS] 里有的就是下面这些动作，没有的显示出来并说明（[PiCommandAction.Unsupported]）。
  */
 enum class PiCommandAction {
     /** `prompt("/<name> args")` — pi expands/dispatches it. */
     Prompt,
 
-    /**
-     * Built-ins this GUI implements natively.
-     *
-     * Three values used to sit at the head of this group and one at the tail:
-     * `OpenSettings`, `PickModel` and `PickThinking` (deleted with their
-     * `/settings`, `/model` and `/thinking` rows, [PI_BUILTIN_SLASH_COMMANDS] §B)
-     * and `OpenModelScope` (deleted with `/scoped-models`, §C). Every one of them
-     * opened a surface the user already has one gesture away, so the palette entry
-     * was a duplicate door — the surfaces themselves are untouched.
-     *
-     * `TerminalOnly` is gone too. It marked a built-in with no RPC path whose
-     * `appLanding` named the Settings row that does the job; the last five rows
-     * carrying it were deleted under the same ruling, which left the value with no
-     * reachable state at all.
-     *
-     * Four more went the same way with the four rows deleted under §D: `OpenTree`,
-     * `SessionStats`, `NewSession` and `OpenSessions`. Each one's surface is already
-     * on the chat page — the session-list overlay carries the tree view, the overflow
-     * menu carries 会话信息 and 新建会话, and the top bar's session name opens the list —
-     * so the palette row was a second door (the same ruling as §B), and with no row
-     * left to carry the value the value has no reachable state. The arms in
-     * `ChatScreen.pick` were deleted with them; the surfaces are untouched.
-     */
+    OpenSettings,
+    PickModel,
+    PickThinking,
+    OpenTree,
+    SessionStats,
+    NewSession,
+    OpenSessions,
+    ReloadResources,
+    BugReport,
     PickFork,
     CloneSession,
 
     /**
-     * `/export [path]`. The format follows the argument's extension, the way pi's
-     * own TUI does it (`interactive-mode.ts:6062-6066`): `.jsonl` goes to the
-     * app-side JSONL writer, anything else to `export_html`.
+     * `/export [path]`. The format follows the argument's extension, the way pi's own TUI does it
+     * (`interactive-mode.ts:6062-6066`): `.jsonl` goes to the app-side JSONL writer, anything else to
+     * `export_html`.
      */
     ExportSession,
     CopyLastAssistant,
     RenameSession,
     Compact,
 
-    /**
-     * `/import <path.jsonl>`. pi's TUI asks for a path and hands it to
-     * `runtimeHost.importFromJsonl` (`interactive-mode.ts:6107-6119`); a phone has
-     * no path to type, so this opens the document picker and the ViewModel does the
-     * rest (`PiSessionViewModel.importSession`). It has a real destination in this
-     * app: `switch_session` already takes a session file path (`rpc-types.ts:61`),
-     * so the picked file is copied into the session directory and adopted.
-     */
+    /** `/import`: pi 的 TUI 要一个路径；手机上没有路径可敲，所以开文件选择器（见 ChatScreen）。 */
     ImportSession,
+
+    /** pi 有这个命令，这个客户端做不了：点一下说明原因（[UNSUPPORTED_BUILTIN_REASONS]），不假装。 */
+    Unsupported,
 }
 
 /** Palette grouping. Mirrors the `source` field of `RpcSlashCommand`. */
@@ -120,228 +96,116 @@ data class PiSlashCommand(
 }
 
 /**
- * pi's built-in slash commands, transcribed from `core/slash-commands.ts:20-42`
- * (the same array pi builds its own autocomplete from,
- * `interactive-mode.ts:636`).
+ * 一个 pi 内建命令在手机上怎么做。
  *
- * Order is pi's order and is not sorted on purpose: it is the order the user
- * sees in the original TUI, and a palette that reorders itself would make the
- * two surfaces feel like different products. The list is a **subsequence** of
- * pi's array: seventeen rows are deliberately absent. The four groups below
- * account for sixteen of them; the seventeenth, `/bug`, is told by
- * [PI_UNLISTED_BUILTIN_COMMANDS] (it arrived in pi 0.86.1, after these groups
- * were written).
- *
- * ## The seventeen rows that are not here
- *
- * Four groups, four reasons. Only group A is about a missing ability; the other
- * three are about the palette not being a second copy of the screens around it.
- *
- * ### A. Four abilities this platform cannot deliver at all
- *
- * `share` (`slash-commands.ts:27`), `changelog` (`:31`), `hotkeys` (`:32`) and
- * `quit` (`:42`) were rows whose tap could only produce a warning — there was no
- * landing and no RPC path. Each named an ability this platform has no path to:
- *
- *  - `share` uploads the session to a **Radius artifact**, falling back to a secret
- *    GitHub gist written through the `gh` CLI (`interactive-mode.ts:6629` →
- *    `session-share.ts:38` `shareSession`: Radius at `:88`, gist at `:141`). pi's own
- *    description in 1.3.0 says both (`slash-commands.ts:27` — "Share session via a
- *    Radius artifact or a GitHub gist"); there is no RPC command for it and no `gh` on
- *    Android. What the user actually wants — getting the session out of the app —
- *    is `export` plus the app's own share sheet (`ui/chat/SessionExportDelivery.kt`).
- *  - `changelog` (`:3022`) and `hotkeys` (`:3027`) render a TUI text panel:
- *    changelog entries come from pi's own update check, and a shortcut list has
- *    no meaning on a touch screen.
- *  - `quit` (`:3099`) shuts down pi's interactive process. Here the engine is
- *    owned by the app's foreground service, not by the transcript, so there is
- *    nothing for the GUI to quit.
- *
- * ### B. Three abilities the app already offers one gesture away
- *
- * `settings` (`:20`), `model` (`:21`) and `thinking` (`:23`) all work; they are
- * gone because each was a second door to something the screen behind the palette
- * already offers, and duplicate doors are what made the panel unreadable:
- *
- *  - `settings` → 对话页「⋯」菜单的「设置」(`PiRoot.kt`, `PiDestination.Settings`);
- *  - `model` → the composer tool row's model chip, which opens the same selector
- *    (`ChatScreen.kt`, `ComposerModelChip` → `ChatSheet.Model`);
- *  - `thinking` → the top bar「⋯」菜单的「思考等级…」/「循环切换思考等级」, which opens
- *    the same picker (the composer's `◐` was removed on 2026-10-26).
- *
- * ### C. Five whose destination is a Settings row
- *
- * `scoped-models` (`:24`), `trust` (`:35`), `login` (`:36`), `logout` (`:37`) and
- * `reload` (`:41`) are gone under the same ruling, stated more strictly: a
- * palette row may not be a door into Settings. Tapping one of them never
- * navigated — it only pushed a notice naming the Settings row that does the job —
- * so the row was literally telling the user to go and do it themselves. The
- * outcomes remain reachable in Settings (项目信任策略 / 凭证 / 重启引擎 / 循环模型), and
- * the deletion takes `PiCommandAction.TerminalOnly` with it: with no row carrying
- * a destination, the action had no reachable state left.
- *
- * ### D. Four built-ins whose surface is already on the chat page
- *
- * `tree`, `session`, `new` and `resume` (the array in `core/slash-commands.ts`;
- * `:20-43` in the 0.87.1 checkout) are gone under §B's ruling, and each one names a
- * surface that is one gesture away rather than a screen the app lacks:
- *
- *  - `tree` → the 「会话树」 view inside the session-list overlay (the top bar's session
- *    name opens it, and the overlay's segmented control switches to it);
- *  - `session` → 溢出菜单 → 「会话信息」, which is the same `refreshStats()` sheet;
- *  - `new` → 会话页的「＋ 新建会话」, and the overflow menu's 「新建会话」;
- *  - `resume` → the session-list overlay, which the top bar's session name opens.
- *
- * With the rows went `PiCommandAction`'s `OpenTree`, `SessionStats`, `NewSession` and
- * `OpenSessions` — no row carried them any more, so the values had no reachable state
- * (the same test §C applied to `TerminalOnly`) — and the four arms in `ChatScreen.pick`
- * that called `requestNav` / `newSession()` / `refreshStats()` for them. The sentences
- * in [PI_UNLISTED_BUILTIN_COMMANDS] name the entry that does work.
- *
- * This is a **palette** decision, not a capability decision. pi still has all
- * seventeen commands, and the outcomes of groups B–D stay reachable through the
- * surfaces their sentences name; what is gone is the duplicate row — and the names
- * are kept in [PI_UNLISTED_BUILTIN_COMMANDS] so a user who types one by hand gets a
- * true sentence instead of "no such command". See `T7` in the delivery notes.
+ * @property zh 面板里显示的中文说明（pi 自己的说明是英文）。
+ * @property note 点击后先弹的一句话——用于「跳到设置页」这一类，告诉用户落在哪一页。
+ * @property argumentHint 有参数的命令：点击只把 `/name ` 填进输入框等用户补参数，不直接执行。
  */
-val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
-    // pi: "Enable/disable models for Ctrl+P cycling". The mobile wording names the
-    // setting row instead of the keybinding — `Ctrl+P` does not exist here and the
-    // toggle that the command addresses is the same one, `enabledModels`
-    // (`settings-manager.ts:1316-1326`, row at `PiSettingsRegistry.kt:339`) — but
-    // both halves of pi's promise stay: it is a list of models that are *enabled
-    // or disabled*, and it is the set that cycling uses.
-    //
-    // Group C: not listed, because its destination *is* a settings row and this
-    // palette must not be a set of doors into Settings. `enabledModels` is
-    // reachable at 设置 → 模型与推理 → 循环模型.
-    PiSlashCommand(
-        "export", "导出会话：不带参数＝HTML 与可导入的会话文件各一份；给名字＝按后缀只写一份", PiCommandSource.Builtin, null,
+class ClientBuiltin(
+    val action: PiCommandAction,
+    val zh: String,
+    val argumentHint: String? = null,
+    val note: String? = null,
+)
+
+/**
+ * pi 的内建命令 → 本客户端的实现。**键就是 pi 的命令名**，表里的顺序也是 pi 的
+ * `BUILTIN_SLASH_COMMANDS` 顺序（宿主没送来内建表时，面板按这个顺序兜底）。
+ *
+ * 这张表只回答「怎么做」；有哪些命令、说明是什么，以 pi（宿主送来的内建表）为准。
+ * pi 以后新增的命令不在这里，会作为「不支持」行出现在面板里（说明用 pi 自己的英文），
+ * 不会像手抄表那样悄悄缺一个。
+ */
+val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
+    "settings" to ClientBuiltin(PiCommandAction.OpenSettings, "打开设置"),
+    "model" to ClientBuiltin(PiCommandAction.PickModel, "选择模型"),
+    "tree" to ClientBuiltin(PiCommandAction.OpenTree, "浏览会话树（切换分支）"),
+    "thinking" to ClientBuiltin(PiCommandAction.PickThinking, "设置思考等级"),
+    "scoped-models" to ClientBuiltin(
+        PiCommandAction.OpenSettings, "选择参与循环切换的模型",
+        note = "「循环模型」在 设置 → 模型与推理。",
+    ),
+    "export" to ClientBuiltin(
         PiCommandAction.ExportSession,
+        "导出会话：不带参数＝HTML 与可导入的会话文件各一份；给名字＝按后缀只写一份",
     ),
-    // No `argumentHint`: a hint suppresses the palette tap's "run it" behaviour
-    // (`ChatScreen.pick` is only reached when `argumentHint == null`), and there is
-    // no path for a phone user to type — the tap *is* the command.
-    PiSlashCommand(
-        "import", "从 JSONL 文件导入并恢复会话", PiCommandSource.Builtin, null,
-        PiCommandAction.ImportSession,
+    "import" to ClientBuiltin(PiCommandAction.ImportSession, "从 JSONL 文件导入并恢复会话"),
+    "bug" to ClientBuiltin(PiCommandAction.BugReport, "生成问题报告并复制（可附一句说明）"),
+    "copy" to ClientBuiltin(PiCommandAction.CopyLastAssistant, "复制最后一条回复到剪贴板"),
+    "name" to ClientBuiltin(PiCommandAction.RenameSession, "设置会话显示名称"),
+    "session" to ClientBuiltin(PiCommandAction.SessionStats, "查看会话信息与用量"),
+    "fork" to ClientBuiltin(PiCommandAction.PickFork, "从某条历史消息分叉出新会话"),
+    "clone" to ClientBuiltin(PiCommandAction.CloneSession, "在当前节点复制整个会话"),
+    "trust" to ClientBuiltin(
+        PiCommandAction.OpenSettings, "保存项目信任决定",
+        note = "项目信任在 设置 → 安全与信任，或工作区里该项目的资源页。",
     ),
-    // pi: "Copy last agent message to clipboard". 回复, not 消息: pi copies the last
-    // *agent* message, and this app's own wording for that object elsewhere is
-    // 「最后一条回复」 (the overflow row, `ChatScreen.kt`), so the two entries for
-    // the same action read the same.
-    PiSlashCommand("copy", "复制最后一条回复到剪贴板", PiCommandSource.Builtin, null, PiCommandAction.CopyLastAssistant),
-    PiSlashCommand("name", "设置会话显示名称", PiCommandSource.Builtin, null, PiCommandAction.RenameSession),
-    // pi 自己的说法是 "Creates a new session from an earlier user message"
-    // (`docs/sessions.md:27`)，所以「分叉」+「新会话」两个词都要在：只写「创建分支」会被读成
-    // 树上的一次分支（那是 `/tree`，同一个会话文件，`docs/sessions.md:26`）。
-    PiSlashCommand("fork", "从某条历史消息分叉出新会话", PiCommandSource.Builtin, null, PiCommandAction.PickFork),
-    PiSlashCommand("clone", "在当前节点复制整个会话", PiCommandSource.Builtin, null, PiCommandAction.CloneSession),
-    // `/trust`, `/login`, `/logout` and `/reload` used to sit here as rows whose
-    // tap only produced a notice pointing at a Settings row. Group C: gone. The
-    // notice never navigated, so the palette was telling the user to go and do it
-    // themselves. The outcomes are still reachable, in Settings:
-    // 项目信任策略 (安全与信任), 凭证 (模型与推理), 重启引擎 (运行时与诊断).
-    PiSlashCommand("compact", "手动压缩会话上下文", PiCommandSource.Builtin, null, PiCommandAction.Compact),
+    "login" to ClientBuiltin(
+        PiCommandAction.OpenSettings, "配置模型服务商登录",
+        note = "登录/凭证在 设置 → 模型与推理 → 凭证。",
+    ),
+    "logout" to ClientBuiltin(
+        PiCommandAction.OpenSettings, "移除模型服务商登录",
+        note = "退出登录在 设置 → 模型与推理 → 凭证。",
+    ),
+    "new" to ClientBuiltin(PiCommandAction.NewSession, "开始新会话"),
+    "compact" to ClientBuiltin(PiCommandAction.Compact, "手动压缩会话上下文"),
+    "resume" to ClientBuiltin(PiCommandAction.OpenSessions, "恢复另一个会话"),
+    "reload" to ClientBuiltin(PiCommandAction.ReloadResources, "重新加载扩展、技能、提示词、主题和上下文文件"),
 )
 
 /**
- * The other seventeen of pi's twenty-four built-ins: the ones this palette does
- * **not** list, and the sentence the app should give a user who types one by
- * hand.
- *
- * `PI_BUILTIN_SLASH_COMMANDS` names seven and this map names seventeen; together
- * they are exactly pi's `BUILTIN_SLASH_COMMANDS` (24 names). Both directions
- * matter: the seven are rows, and these seventeen are the ones a user can still
- * type because they remember them from pi. Without this table the app would
- * answer `/trust` with the "that is not a command" message, which is false — pi
- * has it.
- *
- * **Both directions are asserted**: `tools/pi-contract.mjs`'s `tables` group
- * reads the seven rows and this map's keys and requires them to cover pi's list
- * exactly, so a built-in pi adds fails the build until a sentence exists for it.
- * That is why `/bug` is here — it arrived in pi 0.86.1 and neither table named
- * it, so typing it answered "no such command" until the 0.87.1 audit.
- *
- * ## How `ChatScreen` uses it (agreed contract)
- *
- * The `ComposerRoute.Unknown` branch looks a name up in [unlistedBuiltinHint]
- * and only falls through to the typo message when there is no entry — a genuine
- * typo is the only case that deserves "that is not a command":
- *
- * ```kotlin
- * is ComposerRoute.Unknown -> unlistedBuiltinHint(route.name)
- *     ?.let { session.notifyUser(it) }
- *     ?: session.notifyUnknownCommand(route.name)
- * ```
- *
- * The map is public and immutable, and [unlistedBuiltinHint] is the lookup entry
- * point; both are stable. The seven entries that name a surface do so because the
- * user ruled that the *palette* should not be a second door to a screen that is
- * already on the chat page — they are not navigation targets, so nothing here
- * needs to be wired to a `NavRequest`.
- *
- * The rest fall into two shapes, and the difference is a fact about pi rather than
- * a wording choice:
- *
- *  - **`login` / `logout` name where the ability actually lives**: pi's OAuth flow
- *    exists only inside its interactive UI (`interactive-mode.ts:5485`
- *    `handleLoginCommand`, from `/login` at `:3052-3060`), and the terminal page runs
- *    exactly that (`PtyLauncher` hands the guest shell the same agent dir the engine
- *    uses). So the sentence points at the terminal, because that is where the command
- *    works — it is **not** a Settings path, which is the shape that was deleted.
- *  - **the remaining eight say only that pi has the command and this app has no
- *    entry**: **do not** turn them into Settings paths. That is precisely the shape
- *    that was deleted (a row that tells the user to go and configure something
- *    themselves), and re-adding it here would put it back on a different surface.
+ * pi 有、这个客户端做不了的内建命令，各自的实话。不在这里也不在 [CLIENT_BUILTINS] 里的名字
+ * （pi 新加的）用 [GENERIC_UNSUPPORTED]。
  */
-val PI_UNLISTED_BUILTIN_COMMANDS: Map<String, String> = mapOf(
-    // Group B in [PI_BUILTIN_SLASH_COMMANDS]: the ability has a direct surface on
-    // this screen, so the sentence names it instead of denying it.
-    "settings" to "pi 有 /settings；本应用用「⋯」菜单的「设置」进入，命令面板不再单列。",
-    "model" to "pi 有 /model；本应用用顶栏的模型按钮打开选择器，命令面板不再单列。",
-    "thinking" to "pi 有 /thinking；本应用用输入框的 ◐ 切换思考等级，命令面板不再单列。",
-    // Group D: same ruling as Group B, four more rows whose surface is on this page.
-    // Each sentence names the *entry*, not a Settings path — that shape is what
-    // Group C deleted and it must not come back through this table.
-    "tree" to "pi 有 /tree；本应用点顶栏的会话名打开会话列表，再切到「会话树」，命令面板不再单列。",
-    "session" to "pi 有 /session；本应用用 溢出菜单 → 「会话信息」看这些数字，命令面板不再单列。",
-    "new" to "pi 有 /new；本应用用 会话页 的「＋ 新建会话」（或 溢出菜单 → 「新建会话」），命令面板不再单列。",
-    "resume" to "pi 有 /resume；本应用点顶栏的会话名打开「会话列表」再选一个，命令面板不再单列。",
-    // Group C: deleted so the palette stops pointing at Settings. The sentence
-    // states that honestly and stops there — no path, no "go and do it".
-    "scoped-models" to "pi 有 /scoped-models；本应用没有对应入口。",
-    "trust" to "pi 有 /trust；本应用没有对应入口。",
-    // `/bug` arrived in pi **0.86.1** (its changelog's 新用户可见面) and neither
-    // table named it until the 0.87.1 audit — pi's `/bug` files a report to the Pi
-    // developers from its own TUI, and this app's local 诊断报告 is a different
-    // ability, so the Group C sentence is the honest one. The `tables` group in
-    // `tools/pi-contract.mjs` is what would have caught it.
-    "bug" to "pi 有 /bug；本应用没有对应入口。",
-    // Not "no entry": pi's login is an interactive-TUI command and the terminal page
-    // runs that TUI, so the true sentence is where to run it. Same for logout.
-    "login" to "pi 有 /login；本应用没有内建表单——到 工作区 → 终端 输入 pi 回车，再运行 /login。",
-    "logout" to "pi 有 /logout；同上，到 工作区 → 终端 的原版 TUI 里运行。",
-    "reload" to "pi 有 /reload；本应用没有对应入口。",
-    // Group A: this platform cannot deliver the ability at all.
-    "share" to "pi 有 /share；本应用没有对应入口。",
-    "changelog" to "pi 有 /changelog；本应用没有对应入口。",
-    "hotkeys" to "pi 有 /hotkeys；本应用没有对应入口。",
-    "quit" to "pi 有 /quit；本应用没有对应入口。",
+val UNSUPPORTED_BUILTIN_REASONS: Map<String, String> = mapOf(
+    "share" to "分享需要把会话上传到 Radius 或用 gh 建 gist，本应用没有这条路；要把会话交出去请用 /export。",
+    "changelog" to "更新日志是终端里的文本面板；本应用的版本变化看应用自己的更新说明。",
+    "hotkeys" to "快捷键列表对触屏没有意义。",
+    "quit" to "引擎由应用的前台服务管理，没有要退出的终端进程。",
 )
 
+const val GENERIC_UNSUPPORTED = "pi 有这个命令，这个版本的应用还没有对应的做法。"
+
 /**
- * The sentence for a pi built-in this palette does not list, or null when [name]
- * is not one of pi's unlisted built-ins.
+ * 面板里的内建命令行：**pi 的表在前、我们的映射在后**。
  *
- * [name] is what was typed after the `/`, with the slash already removed —
- * `ComposerRoute.Unknown.name` is exactly that. A leading `/` is tolerated anyway
- * so a caller cannot get it wrong, and the match is case-insensitive because this
- * is a courtesy message and never a dispatch: `/Trust` deserves the same true
- * sentence as `/trust` rather than "no such command".
+ * [wire] 是宿主送来的 pi 内建表（空 = 宿主没读到，退回 [CLIENT_BUILTINS] 的顺序加上
+ * [UNSUPPORTED_BUILTIN_REASONS] 的几项）。每个 pi 命令一行：映射里有 → 可执行行；没有 → 不支持行。
  */
-fun unlistedBuiltinHint(name: String): String? =
-    PI_UNLISTED_BUILTIN_COMMANDS[name.trim().removePrefix("/").lowercase()]
+fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
+    val source = wire.ifEmpty {
+        (CLIENT_BUILTINS.keys + UNSUPPORTED_BUILTIN_REASONS.keys).map { PiResponses.BuiltinCommand(it, null, null) }
+    }
+    return source.map { builtin ->
+        val client = CLIENT_BUILTINS[builtin.name]
+        if (client != null) {
+            PiSlashCommand(
+                name = builtin.name,
+                description = client.zh,
+                source = PiCommandSource.Builtin,
+                sourceTag = null,
+                action = client.action,
+                // 只用我们自己的提示：pi 的提示（如 /model 的 `<provider/model>`）描述的是 pi 终端里
+                // 带参数的用法；这里点一下就该直接执行（有提示的行点击只会把名字填进输入框等参数）。
+                argumentHint = client.argumentHint,
+            )
+        } else {
+            PiSlashCommand(
+                name = builtin.name,
+                description = builtin.description,
+                source = PiCommandSource.Builtin,
+                sourceTag = null,
+                action = PiCommandAction.Unsupported,
+            )
+        }
+    }
+}
+
+/** 点了「不支持」行（或手敲了它）时的那句实话。 */
+fun unsupportedReason(name: String): String =
+    UNSUPPORTED_BUILTIN_REASONS[name.trim().removePrefix("/").lowercase()] ?: GENERIC_UNSUPPORTED
 
 /**
  * Build the palette: pi's `get_commands` result plus pi's built-ins.
@@ -388,7 +252,7 @@ fun unlistedBuiltinHint(name: String): String? =
  */
 fun piCommandPalette(
     commands: List<PiResponses.SlashCommand>,
-    builtins: List<PiSlashCommand> = PI_BUILTIN_SLASH_COMMANDS,
+    builtins: List<PiSlashCommand> = builtinRows(emptyList()),
     skillCommandsEnabled: Boolean = true,
 ): List<PiSlashCommand> {
     val taken = builtins.mapTo(HashSet()) { it.name }

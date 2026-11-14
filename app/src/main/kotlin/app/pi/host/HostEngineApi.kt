@@ -79,6 +79,9 @@ class HostEngineApi(private val commands: HostCommands) {
 
     suspend fun getCommands(): List<PiResponses.SlashCommand> = PiResponses.slashCommands(read("catalog.commands"))
 
+    /** 命令面板的全部原料：扩展/模板/技能命令，加 pi 自己的内建命令表（一次请求）。 */
+    suspend fun getCommandCatalog(): PiResponses.CommandCatalog = PiResponses.commandCatalog(read("catalog.commands"))
+
     // ---- 模型 / 思考 / 队列 ----
 
     suspend fun setModel(provider: String, modelId: String): PiResponses.ModelInfo {

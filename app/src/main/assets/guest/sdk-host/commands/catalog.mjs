@@ -3,9 +3,40 @@
 import { ERR, HostError, bad, str } from "../protocol.mjs";
 import { withState } from "../state.mjs";
 
+import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+
+/**
+ * pi 自己的内建斜杠命令表（`BUILTIN_SLASH_COMMANDS`：名字、说明、参数提示）。
+ *
+ * 它不在包的公开出口里（`index.d.ts` 没导出），所以和 resources.mjs 一样从 dist 里按文件路径读——
+ * 这是第二处伸进 pi 非公开路径的地方。读不到（pi 挪了文件）就给空表并带上原因：App 据此退回自己
+ * 那张映射表的顺序，而不是整个命令面板空掉。**为什么要从宿主要这张表**：此前 App 里手抄了一份
+ * （再加一张「没做的」说明表和一条合约测试盯着它们跟 pi 同步），pi 每加一个命令 App 就缺一个；
+ * 现在名字与说明以 pi 为准，App 只决定「这个命令在手机上怎么做」。
+ */
+let builtinsCache = null;
+async function loadBuiltins(controller) {
+  if (builtinsCache) return builtinsCache;
+  try {
+    const mod = await import(pathToFileURL(join(controller.cfg.piDir, "dist", "core", "slash-commands.js")).href);
+    builtinsCache = {
+      builtins: [...mod.BUILTIN_SLASH_COMMANDS].map((c) => ({
+        name: c.name,
+        description: c.description ?? null,
+        argumentHint: c.argumentHint ?? null,
+      })),
+    };
+  } catch (e) {
+    // 不缓存失败：下次打开面板再试（升级/修复之后不必重启宿主）。
+    return { builtins: [], builtinsError: String(e?.message ?? e) };
+  }
+  return builtinsCache;
+}
+
 export function register(reg, { controller }) {
   // `get_commands` 的同款拼装；多带 sourceInfo 以外的 invocationName，App 不必再猜前缀。
-  reg.add("catalog.commands", () => {
+  reg.add("catalog.commands", async () => {
     const s = controller.requireSession();
     const commands = [];
     for (const c of s.extensionRunner.getRegisteredCommands()) {
@@ -17,7 +48,7 @@ export function register(reg, { controller }) {
     for (const k of s.resourceLoader.getSkills().skills) {
       commands.push({ name: `skill:${k.name}`, description: k.description, source: "skill", sourceInfo: k.sourceInfo });
     }
-    return { commands };
+    return { commands, ...(await loadBuiltins(controller)) };
   });
 
   reg.add("catalog.tools", () => {
