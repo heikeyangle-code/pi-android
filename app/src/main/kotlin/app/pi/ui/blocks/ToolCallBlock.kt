@@ -121,7 +121,7 @@ fun ToolCallBlock(
     }
     val previewText = remember(bodyText, expanded, fullOutput, outputOversize) {
         when {
-            !expanded || outputOversize -> ""
+            (!expanded && state != ToolState.Failed) || outputOversize -> ""
             fullOutput -> bodyText
             else -> headLines(bodyText, COLLAPSED_OUTPUT_LINES)
         }
@@ -386,7 +386,7 @@ fun ToolCallBlock(
                     }
                 }
 
-                if (expanded && item.output.isNotEmpty() && rendered?.result == null) {
+                if ((expanded || state == ToolState.Failed) && item.output.isNotEmpty() && rendered?.result == null) {
                     if (outputOversize) {
                         // The 200 KB ceiling is *ours* — a rendering budget, not a pi
                         // rule — and pi has usually already truncated this result at

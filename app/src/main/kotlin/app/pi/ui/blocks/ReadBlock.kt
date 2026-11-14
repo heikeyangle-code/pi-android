@@ -87,7 +87,7 @@ internal fun ReadBlock(
                     expanded = expanded,
                     expandable = hasBody,
                 )
-                if (expanded) {
+                if (expanded || state == ToolState.Failed) {
                     if (body.lines.isEmpty()) {
                         // A settled `read` with no lines is an empty file; while the call is
                         // still running the same state only means "nothing yet".
