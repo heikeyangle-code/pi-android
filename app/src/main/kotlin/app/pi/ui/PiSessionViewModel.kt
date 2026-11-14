@@ -3024,16 +3024,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // (audit §6.7) — this is also what makes an extension's `appendEntry`
         // state and its `custom_message`s visible at all.
         viewModelScope.launch {
-            // 宿主要 `session.open` 应答之后才有会话：此前任何读取（状态/模型/命令表/会话内容）
-            // 都会被拒（「会话还没有建立」）。RPC 时代命令排在管道里自然等着，SDK 宿主不会——
-            // 抢跑的结果就是进聊天没有模型、底部弹两条错误。所以先等引擎就绪（或已死）。
-            val reached = engine.state.first {
-                it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy ||
-                    it == PiEngineSession.EngineState.Failed || it == PiEngineSession.EngineState.Stopped
-            }
-            if (session !== engine ||
-                reached == PiEngineSession.EngineState.Failed || reached == PiEngineSession.EngineState.Stopped
-            ) return@launch
+            // 见 [awaitServing]：宿主 `session.open` 应答前所有读取都会被拒。
+            if (!awaitServing(engine)) return@launch
             // The replay projects the whole session. `seedHistory` suspends now, so
             // this no longer blocks the frame thread — but the screen would sit on
             // the previous (usually empty) transcript with no explanation. `busy` is
@@ -3826,6 +3818,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * can run in the same frame when an engine dies, and four copies of one
      * sentence read as four failures.
      */
+    /**
+     * 引擎的"会话已建好"闸门。
+     *
+     * SDK 宿主在 `session.open` 应答之前拒绝一切读写（`NOT_OPEN`，「会话还没有建立」）；RPC 时代命令
+     * 排在管道里自然等着，现在没有这个缓冲。所以**所有以会话为前提的读取/命令**都经过这里：
+     * 引擎就绪（Ready/Busy）返回 true，引擎已死（Failed/Stopped）返回 false，其余状态一直等
+     * （手机冷启动可能很慢，那是慢不是坏）。
+     */
+    private suspend fun awaitServing(engine: PiEngineSession): Boolean {
+        val reached = engine.state.first {
+            it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy ||
+                it == PiEngineSession.EngineState.Failed || it == PiEngineSession.EngineState.Stopped
+        }
+        if (session !== engine) return false
+        return reached == PiEngineSession.EngineState.Ready || reached == PiEngineSession.EngineState.Busy
+    }
+
     private fun call(
         label: String,
         noEngine: NoEngine = NoEngine.Notify,
@@ -3849,7 +3858,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
+        val engine = session
         viewModelScope.launch {
+            // 命令先排队，等宿主打开会话再发；引擎死了就悄悄放弃（死因已有专门的界面）。
+            if (engine != null && !awaitServing(engine)) return@launch
             val token = claimBusy(label)
             try {
                 block(api)
