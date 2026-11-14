@@ -3024,6 +3024,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // (audit §6.7) — this is also what makes an extension's `appendEntry`
         // state and its `custom_message`s visible at all.
         viewModelScope.launch {
+            // 宿主要 `session.open` 应答之后才有会话：此前任何读取（状态/模型/命令表/会话内容）
+            // 都会被拒（「会话还没有建立」）。RPC 时代命令排在管道里自然等着，SDK 宿主不会——
+            // 抢跑的结果就是进聊天没有模型、底部弹两条错误。所以先等引擎就绪（或已死）。
+            val reached = engine.state.first {
+                it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy ||
+                    it == PiEngineSession.EngineState.Failed || it == PiEngineSession.EngineState.Stopped
+            }
+            if (session !== engine ||
+                reached == PiEngineSession.EngineState.Failed || reached == PiEngineSession.EngineState.Stopped
+            ) return@launch
             // The replay projects the whole session. `seedHistory` suspends now, so
             // this no longer blocks the frame thread — but the screen would sit on
             // the previous (usually empty) transcript with no explanation. `busy` is
