@@ -40,6 +40,16 @@
 回查（`MessageEntryResolver`，有 harness）；第一轮回答结束前 pi 尚未落盘，会明说「还没写进会话文件」。
 **未做**：重新生成（SDK 没有这个方法，要靠「从此分叉再发」模拟，没接）；工具卡仍只有复制类动作（已改用同样的底部面板）。
 
+## 对话页其余交互
+- **错误卡「重试」**：只在末尾那张错误卡上、pi 空闲时出现。SDK 没有「立刻重试」（`session.retry` 只管自动重试开关与中止；
+  它内部是摘掉出错消息再 `agent.continue()`，不对外），所以做法是把最后一条用户消息（文字+图片）再发一次；
+  出错的助手消息发给模型前会被 pi-ai 丢掉，上下文与第一次一致，代价是会话里多一条重复的用户消息。
+- **手敲的内建命令会执行**：`/new` `/reload` `/tree` `/resume` `/session` `/model` `/settings` `/thinking`。
+  命令面板仍不单列它们（同一入口在界面上一步可达），但手敲不再只得到一句「去按那个按钮」。
+  `/reload` 走宿主 `session.reload`（进程内重建资源加载器，不重启引擎）。其余（login/logout/trust/scoped-models/bug/share/
+  changelog/hotkeys/quit）仍是说明句——其中 login/logout/trust 宿主已有命令，是否开入口要单独裁决。
+- 队列条已经显示每条排队消息的文字并能「收回并编辑」（此前审计表写「无内容预览」是过期的）。
+
 ## SessionManager（见 `sessions.md`）
 list / listAll / open / getTree / getBranch / appendSessionInfo / appendLabelChange / appendContextEdit：
 宿主全部有（`session.list/search/read/rename/delete/label/path/contextEdit/tree/entries`）；

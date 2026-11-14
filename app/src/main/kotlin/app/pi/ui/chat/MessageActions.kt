@@ -55,6 +55,12 @@ class MessageActions(
     val label: (TranscriptItem, String?) -> Unit,
     val hideFromContext: (TranscriptItem) -> Unit,
     val streaming: Boolean,
+    /**
+     * 末尾那张错误卡的行键，只有「现在能重试」时才非 null（没在生成、且错误卡就是最后一行）。
+     * 只有最后一行可以重试：更早的错误之后用户已经继续了对话，再把旧提示发一遍没有意义。
+     */
+    val retryKey: String? = null,
+    val retry: () -> Unit = {},
 )
 
 val LocalMessageActions = staticCompositionLocalOf<MessageActions?> { null }

@@ -1581,13 +1581,15 @@ private fun ChatBody(
     // load-bearing — this effect is keyed on the sequence, but leaving and
     // re-entering the destination re-runs it, and a stale fill would silently
     // overwrite whatever the user typed in the meantime.
-    val messageActions = remember(session, state.streaming) {
+    val messageActions = remember(session, state.streaming, state.transcript.lastOrNull()) {
         app.pi.ui.chat.MessageActions(
             quote = session::quoteIntoComposer,
             continueFrom = session::continueFromMessage,
             label = session::labelMessage,
             hideFromContext = session::hideMessageFromContext,
             streaming = state.streaming,
+            retryKey = (state.transcript.lastOrNull() as? app.pi.rpc.ErrorText)?.key?.takeIf { !state.streaming },
+            retry = session::retryLastPrompt,
         )
     }
     val themePalette = PiTheme.palette
@@ -2766,9 +2768,36 @@ private fun ChatBody(
                     // "retry it as prose" — the old wording told the user to drop the
                     // slash and send it as a message, which is exactly wrong for a name
                     // pi *does* implement.
-                    is ComposerRoute.Unknown -> unlistedBuiltinHint(route.name)
-                        ?.let { session.notifyUser(it) }
-                        ?: session.notifyUnknownCommand(route.name)
+                    //
+                    // **Typed built-ins whose surface this app has actually run**: `/new`,
+                    // `/reload`, `/tree`, `/resume`, `/session`, `/model`, `/settings`,
+                    // `/thinking`. The palette does not *list* them (same surface one
+                    // gesture away — the ruling in [PI_BUILTIN_SLASH_COMMANDS]), but a
+                    // user who types one out of pi habit used to be told to go and press
+                    // a button instead; now the typed command does the thing, through the
+                    // same entry the menu row calls. Only when it ran is the draft
+                    // cleared and the keyboard dropped.
+                    is ComposerRoute.Unknown -> {
+                        val ran = when (route.name.trim().lowercase()) {
+                            "new" -> { session.newSession(); true }
+                            "reload" -> { session.reloadResources(); true }
+                            "tree" -> { session.requestNav(NavRequest.SessionTree); true }
+                            "resume" -> { onOpenSessions(); true }
+                            "session" -> { session.refreshStats(); sheet = ChatSheet.Stats; true }
+                            "model" -> { session.refreshModels(); sheet = ChatSheet.Model; true }
+                            "settings" -> { onOpenSettings(); true }
+                            "thinking" -> { session.cycleThinkingLevel(); true }
+                            else -> false
+                        }
+                        if (ran) {
+                            draft = ""
+                            dismissKeys()
+                        } else {
+                            unlistedBuiltinHint(route.name)
+                                ?.let { session.notifyUser(it) }
+                                ?: session.notifyUnknownCommand(route.name)
+                        }
+                    }
                 }
             },
             // pi's Escape (`interactive-mode.js:2416-2418`):

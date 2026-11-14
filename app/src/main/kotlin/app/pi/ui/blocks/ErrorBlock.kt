@@ -17,7 +17,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.MaterialTheme
 import app.pi.rpc.ErrorText
+import app.pi.ui.chat.LocalMessageActions
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 
@@ -32,10 +35,10 @@ import app.pi.ui.theme.PiSpacing
  * 错误块 row — which also restores `bodyOnTool`'s contrast guarantee, since that
  * derived token is computed against the full `toolErrorBg`.
  *
- * The spec's recovery path (「重试 / 换模型 / 查看详情」, §4.9) is not reachable from
- * this block today: the app has no retry action, so F19 deleted the dead
- * `onRetry` parameter and the button it gated. 换模型 is reachable from the AppBar
- * chip / model row; a real 重试 needs an action in `ui/PiSessionViewModel.kt`.
+ * The spec's recovery path (「重试 / 换模型 / 查看详情」, §4.9): 重试 is the link under the
+ * message of the **last** card while pi is idle ([MessageActions.retryKey]); it re-sends the last
+ * user prompt, because the SDK has no "retry now" (`session.retry` only flips auto-retry).
+ * 换模型 is reachable from the AppBar chip / model row.
  */
 @Composable
 fun ErrorBlock(
@@ -89,6 +92,19 @@ fun ErrorBlock(
                                 modifier = Modifier.padding(top = PiSpacing.tiny),
                                 color = palette.bodyOnTool,
                                 maxLines = if (expanded) Int.MAX_VALUE else ERROR_PREVIEW_LINES,
+                            )
+                        }
+                        // 重试：只在末尾那张错误卡上出现（见 MessageActions.retryKey）。点它不会展开卡片。
+                        val actions = LocalMessageActions.current
+                        if (actions != null && actions.retryKey == item.key) {
+                            Text(
+                                text = "重试",
+                                modifier = Modifier
+                                    .padding(top = PiSpacing.tiny)
+                                    .clickable(onClickLabel = "重发上一条消息", onClick = actions.retry)
+                                    .padding(vertical = PiSpacing.tiny),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.primary,
                             )
                         }
                         if (expanded && !detail.isNullOrBlank()) {

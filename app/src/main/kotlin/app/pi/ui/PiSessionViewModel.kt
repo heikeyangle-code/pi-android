@@ -4529,6 +4529,33 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------ 消息长按面的动作（见 chat/MessageActions.kt）
 
+    /**
+     * 重新加载扩展、技能、提示词模板和主题（pi 的 `/reload`，宿主的 `session.reload`）。
+     * 不重启引擎：host 在进程内重建资源加载器，对话和进行中的会话都不受影响。
+     */
+    fun reloadResources() {
+        val ext = extensionsAccess()?.ext ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有重新加载。", Notice.Tone.Warning)
+        viewModelScope.launch {
+            runCatching { ext.reload() }
+                .onSuccess { pushNotice("已重新加载扩展、技能、提示词和主题。", Notice.Tone.Info) }
+                .onFailure { pushNotice("重新加载失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+        }
+    }
+
+    /**
+     * 错误卡的「重试」：把最后一条用户消息（文字和图片）原样再发一次。
+     *
+     * pi 的 SDK 没有「立刻重试」——`session.retry` 只管自动重试的开关和中止；它自己的自动重试
+     * 内部是把出错的助手消息从上下文摘掉再 `agent.continue()`，那条路不对外。出错的助手消息
+     * （stopReason=error）在发给模型前会被 pi-ai 的 transformMessages 丢掉，所以重发同一句
+     * 提示，模型看到的上下文和第一次是一致的；代价是会话里多一条重复的用户消息。
+     */
+    fun retryLastPrompt() {
+        val last = _state.value.transcript.lastOrNull { it is UserMessage } as? UserMessage
+            ?: return pushNotice("没有可以重发的上一条消息。", Notice.Tone.Warning)
+        send(last.text, last.images)
+    }
+
     /** 把引用块接在输入框草稿后面（和扩展的 `pasteToEditor` 同一条通道）。 */
     fun quoteIntoComposer(text: String) {
         composerFillSeq += 1
