@@ -58,6 +58,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.text.BasicTextField
@@ -2649,6 +2650,7 @@ private fun ChatBody(
             // is still a message" branch uses.
             canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
             onCycleThinking = { session.cycleThinkingLevel() },
+            onPickThinking = { sheet = ChatSheet.Thinking },
             onOpenPalette = { if (draft.isBlank()) draft = "/" },
             onOpenBash = { if (draft.isBlank()) draft = "!" },
             // `!!` types both characters: it is a different pi mode, not a double
@@ -3795,6 +3797,8 @@ private fun Composer(
     onOpenModel: () -> Unit,
     /** 点思考等级的文字：循环切到下一档。 */
     onCycleThinking: () -> Unit,
+    /** 长按思考等级：打开选择列表（pi 的 `thinking.levels`），不用循环到想要的那一档。 */
+    onPickThinking: () -> Unit,
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
     /** pi's `!!`: run the command without putting it in the model's context. */
@@ -4048,7 +4052,7 @@ private fun Composer(
                     // 思考等级：**只删了 ◐ 图标**，文字按钮本身还在；宽度够就显示。
                     if (showThinking) {
                         Spacer(Modifier.width(PiSpacing.composerChipGap))
-                        ThinkingLevelButton(level = thinkingLevel, onClick = onCycleThinking)
+                        ThinkingLevelButton(level = thinkingLevel, onClick = onCycleThinking, onLongClick = onPickThinking)
                     }
                     Spacer(Modifier.width(PiSpacing.composerChipSendGap))
                     Box(
@@ -4438,12 +4442,18 @@ private fun ContextRingButton(
  * 显示（见 `Composer` 里的 `showThinking`），不是这枚按钮自己判断宽度。
  */
 @Composable
-private fun ThinkingLevelButton(level: String, onClick: () -> Unit) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun ThinkingLevelButton(level: String, onClick: () -> Unit, onLongClick: () -> Unit) {
     Row(
         modifier = Modifier
             .height(PiSpacing.composerThinkingHeight)
             .clip(RoundedCornerShape(6.dp))
-            .clickable(onClickLabel = "切换思考等级：${thinkingLabelOf(level)}", onClick = onClick)
+            .combinedClickable(
+                onClickLabel = "切换思考等级：${thinkingLabelOf(level)}",
+                onClick = onClick,
+                onLongClickLabel = "选择思考等级",
+                onLongClick = onLongClick,
+            )
             .padding(horizontal = PiSpacing.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
