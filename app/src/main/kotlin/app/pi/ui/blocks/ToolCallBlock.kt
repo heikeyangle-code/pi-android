@@ -121,9 +121,7 @@ fun ToolCallBlock(
     }
     val previewText = remember(bodyText, expanded, fullOutput, outputOversize) {
         when {
-            outputOversize -> ""
-            // pi 的通用结果：折叠只给前 10 行（`tool-execution.js` FALLBACK_PREVIEW_LINES），展开才多。
-            !expanded -> headLines(bodyText, FALLBACK_PREVIEW_LINES)
+            !expanded || outputOversize -> ""
             fullOutput -> bodyText
             else -> headLines(bodyText, COLLAPSED_OUTPUT_LINES)
         }
@@ -388,7 +386,7 @@ fun ToolCallBlock(
                     }
                 }
 
-                if (item.output.isNotEmpty() && rendered?.result == null) {
+                if (expanded && item.output.isNotEmpty() && rendered?.result == null) {
                     if (outputOversize) {
                         // The 200 KB ceiling is *ours* — a rendering budget, not a pi
                         // rule — and pi has usually already truncated this result at
@@ -417,12 +415,7 @@ fun ToolCallBlock(
                             color = palette.bodyOnTool,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
                         )
-                        if (!expanded && outputLineCount > FALLBACK_PREVIEW_LINES) {
-                            ExpandAllLabel(
-                                text = "展开（还有 ${outputLineCount - FALLBACK_PREVIEW_LINES} 行，共 $outputLineCount 行）",
-                                onClick = { expanded = true },
-                            )
-                        } else if (expanded && !fullOutput && outputLineCount > COLLAPSED_OUTPUT_LINES) {
+                        if (!fullOutput && outputLineCount > COLLAPSED_OUTPUT_LINES) {
                             ExpandAllLabel(
                                 text = "展开全部（共 $outputLineCount 行）",
                                 onClick = { fullOutput = true },
@@ -472,9 +465,6 @@ fun ToolCallBlock(
  * information.
  */
 private const val COLLAPSED_OUTPUT_LINES = 200
-
-/** pi 通用结果的折叠预览行数（`tool-execution.js` FALLBACK_PREVIEW_LINES）。 */
-private const val FALLBACK_PREVIEW_LINES = 10
 
 /** 扩展渲染器的结果在折叠态最多画几行（调用行另算）；pi 终端里同样只给紧凑样式。 */
 private const val COLLAPSED_RENDER_RESULT_LINES = 5

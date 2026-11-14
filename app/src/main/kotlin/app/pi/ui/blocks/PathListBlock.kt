@@ -138,7 +138,11 @@ private fun PathListBlock(
         pathListNotice(fullOutputPath, item.details, entries = body.kind == PathBodyKind.Ls)
     }
     val plan = remember(body, expanded, fullOutput) {
-        capPathGroups(body.groups, if (expanded || fullOutput) TOOL_LIST_MAX_ENTRIES else preview)
+        if (!expanded) {
+            emptyList()
+        } else {
+            capPathGroups(body.groups, if (fullOutput) TOOL_LIST_MAX_ENTRIES else preview)
+        }
     }
     val shown = remember(plan) { countEntries(plan) }
     val omitted = (body.entryCount - shown).coerceAtLeast(0)
@@ -168,7 +172,7 @@ private fun PathListBlock(
                     expanded = expanded,
                     expandable = hasBody,
                 )
-                run {
+                if (expanded) {
                     when {
                         body.empty -> Text(text = emptyText, style = PiTheme.text.meta, color = palette.muted)
                         plan.isEmpty() -> Unit
@@ -205,10 +209,10 @@ private fun PathListBlock(
                             }
                         }
                     }
-                    if (omitted > 0 && !expanded && !fullOutput) {
+                    if (omitted > 0 && !fullOutput) {
                         ExpandAllLabel(
                             text = "展开全部（还有 $omitted 项）",
-                            onClick = { expanded = true },
+                            onClick = { fullOutput = true },
                         )
                     } else if (omitted > 0) {
                         Text(

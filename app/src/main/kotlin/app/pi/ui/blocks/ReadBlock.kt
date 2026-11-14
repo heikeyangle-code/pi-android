@@ -87,8 +87,7 @@ internal fun ReadBlock(
                     expanded = expanded,
                     expandable = hasBody,
                 )
-                // pi：折叠的 read 只有标题，但出错时结果照样显示（`renderers/read.js` formatReadResult）。
-                if (expanded || state == ToolState.Failed) {
+                if (expanded) {
                     if (body.lines.isEmpty()) {
                         // A settled `read` with no lines is an empty file; while the call is
                         // still running the same state only means "nothing yet".

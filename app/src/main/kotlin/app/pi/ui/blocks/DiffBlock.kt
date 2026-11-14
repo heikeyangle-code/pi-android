@@ -84,8 +84,7 @@ fun DiffBlock(
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
     // row, exactly as pi re-applies expansion to all of its children.
-    // pi 的 edit 卡不折叠：diff 恒显示（`renderers/edit.js` buildEditCallComponent），所以默认展开，仍可手动收起。
-    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(true) }
+    var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     // **`expanded` is a key, so a collapsed diff card plans nothing.** `plan` is read only
     // inside the `if (expanded)` branch below, yet it used to be built here unconditionally —
     // and building it is not cheap: it walks every hunk, pairs removed/added runs, and runs the

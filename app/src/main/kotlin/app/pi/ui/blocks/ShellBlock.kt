@@ -156,8 +156,11 @@ internal fun ShellBlock(
     // result for a 5-line answer, and this is the row most likely to be recycled while the
     // reader scrolls a run of shell calls.
     val painted = remember(bodyText, fullOutput, expanded) {
-        // pi 默认折叠态就画尾部 5 个视觉行（`renderers/bash.js`），展开才是全量。
-        ParseCaches.tail(bodyText, if (expanded || fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
+        if (!expanded) {
+            ""
+        } else {
+            ParseCaches.tail(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
+        }
     }
     val subject = remember(command, timeout) { shellSubject(command, timeout) }
     // The live clock comes **from the ViewModel** ([nowMs], `UiState.nowMs`), which ticks
@@ -232,13 +235,13 @@ internal fun ShellBlock(
                 // not cosmetic — five *logical* lines wrap to a varying number of rows as the
                 // tail slides, so the card's height used to change while a command streamed and
                 // everything below it moved with it.
-                if (bodyText.isNotEmpty()) {
+                if (expanded && bodyText.isNotEmpty()) {
                     ShellPreviewBody(
                         text = painted,
                         totalLines = lines,
-                        fullOutput = expanded || fullOutput,
+                        fullOutput = fullOutput,
                         color = palette.bodyOnTool,
-                        onExpandAll = { expanded = true },
+                        onExpandAll = { fullOutput = true },
                     )
                 }
                 // A settled command with no output says so in the footer ([toolFooterText]),
@@ -256,7 +259,7 @@ internal fun ShellBlock(
                 // It is the same information as the sentence pi's bash tool appends to its own
                 // output, so it appears once: [stripFullOutputFooter] removes that sentence from
                 // the body first (`:59-64`), and nothing else in this card prints it.
-                if (notice != null) {
+                if (expanded && notice != null) {
                     ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
                 ToolImages(item.images, onImageClick)
