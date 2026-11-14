@@ -75,11 +75,7 @@ internal fun GrepBlock(
         grepNotice(fullOutputPath, item.details)
     }
     val plan = remember(body, expanded, fullOutput) {
-        if (!expanded) {
-            emptyList()
-        } else {
-            capGrepGroups(body.groups, if (fullOutput) TOOL_LIST_MAX_ENTRIES else GREP_PREVIEW_MATCHES)
-        }
+        capGrepGroups(body.groups, if (expanded || fullOutput) TOOL_LIST_MAX_ENTRIES else GREP_PREVIEW_MATCHES)
     }
     val shownMatches = remember(plan) { countMatches(plan) }
     val omitted = (body.matchCount - shownMatches).coerceAtLeast(0)
@@ -115,7 +111,7 @@ internal fun GrepBlock(
                     expanded = expanded,
                     expandable = hasBody,
                 )
-                if (expanded) {
+                run {
                     when {
                         body.empty -> Text(
                             text = "没有匹配",
@@ -138,10 +134,10 @@ internal fun GrepBlock(
                             }
                         }
                     }
-                    if (omitted > 0 && !fullOutput) {
+                    if (omitted > 0 && !expanded && !fullOutput) {
                         ExpandAllLabel(
                             text = "展开全部（还有 $omitted 处）",
-                            onClick = { fullOutput = true },
+                            onClick = { expanded = true },
                         )
                     } else if (omitted > 0) {
                         Text(

@@ -47,7 +47,7 @@ internal fun WriteBlock(
     val body = remember(item.args) { ToolOutputParse.writeBody(item.args) }
     val command = remember(item.args) { toolCommandText(item.args) }
     val pending = state == ToolState.Running
-    val shown = if (fullOutput) body.lines else body.lines.take(WRITE_PREVIEW_LINES)
+    val shown = if (expanded || fullOutput) body.lines else body.lines.take(WRITE_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val failed = state == ToolState.Failed
     val hasBody = body.lines.isNotEmpty() || failed
@@ -74,7 +74,7 @@ internal fun WriteBlock(
                     expanded = expanded,
                     expandable = hasBody,
                 )
-                if (expanded) {
+                run {
                     if (body.lines.isEmpty()) {
                         if (failed) {
                             // pi's result half on an error (`renderers/write.ts:134-142`). The
@@ -101,10 +101,10 @@ internal fun WriteBlock(
                             color = palette.bodyOnTool,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
                         )
-                        if (hidden > 0 && !fullOutput) {
+                        if (hidden > 0 && !expanded && !fullOutput) {
                             ExpandAllLabel(
                                 text = "展开全部（还有 $hidden 行，共 ${body.totalLines} 行）",
-                                onClick = { fullOutput = true },
+                                onClick = { expanded = true },
                             )
                         } else if (hidden > 0) {
                             Text(
