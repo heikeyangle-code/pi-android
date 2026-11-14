@@ -289,14 +289,25 @@ fun ToolCallBlock(
                 // 渲染器的行：折叠时就是 SDK 的紧凑样式，展开后宿主按 expanded=true 重画。
                 // 终端行不折行，窄屏横向滑动，和扩展面板同一条规则。
                 rendered?.let { r ->
-                    val rows = (r.call.orEmpty() + r.result.orEmpty())
+                    val all = (r.call.orEmpty() + r.result.orEmpty())
+                    // 折叠只给预览：很多扩展的 renderResult 不看 `expanded`，无论怎么问都吐全量，
+                    // 所以裁剪在这里做，卡片才一定收得起来；展开才给全部。调用行恒保留。
+                    val callCount = r.call.orEmpty().size
+                    val limit = maxOf(callCount, 0) + COLLAPSED_RENDER_RESULT_LINES
+                    val rows = if (expanded || all.size <= limit) all else all.take(limit)
+                    val hidden = all.size - rows.size
                     if (rows.isNotEmpty()) {
-                        Column(
-                            modifier = Modifier
-                                .padding(top = PiSpacing.tiny)
-                                .horizontalScroll(rememberScrollState()),
-                        ) {
-                            rows.forEach { app.pi.ui.extension.PanelLine(it, wrap = false) }
+                        Column(modifier = Modifier.padding(top = PiSpacing.tiny)) {
+                            Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                rows.forEach { app.pi.ui.extension.PanelLine(it, wrap = false) }
+                            }
+                            if (hidden > 0) {
+                                Text(
+                                    text = "… 还有 $hidden 行，点标题展开",
+                                    style = PiTheme.text.meta,
+                                    color = palette.muted,
+                                )
+                            }
                         }
                     }
                 }
@@ -454,6 +465,9 @@ fun ToolCallBlock(
  * information.
  */
 private const val COLLAPSED_OUTPUT_LINES = 200
+
+/** 扩展渲染器的结果在折叠态最多画几行（调用行另算）；pi 终端里同样只给紧凑样式。 */
+private const val COLLAPSED_RENDER_RESULT_LINES = 5
 
 /** 有原生卡的内置工具：不向宿主要扩展渲染（SDK 给它们的渲染器是终端版，手机用原生卡）。 */
 private val NATIVE_TOOL_NAMES = setOf("read", "write", "edit", "grep", "find", "ls", "bash", "powershell", "codemode")
