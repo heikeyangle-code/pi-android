@@ -51,6 +51,8 @@ export default function probe(pi) {
 
   pi.registerCommand?.("probe-ping", {
     description: "probe command",
+    getArgumentCompletions: (prefix) =>
+      ["alpha", "beta", "gamma"].filter((v) => v.startsWith(prefix)).map((v) => ({ value: v, label: v, description: `arg ${v}` })),
     handler: async (_args, ctx) => ctx.ui.notify("pong"),
   });
 

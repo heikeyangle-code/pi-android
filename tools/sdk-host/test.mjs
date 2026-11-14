@@ -170,6 +170,11 @@ try {
 
   const cmds = await h.call("catalog.commands");
   expect("catalog.commands 含扩展命令", cmds.ok && cmds.data.commands.some((c) => c.name === "probe-ping"));
+  expect("扩展命令标出 hasCompletions", cmds.data.commands.find((c) => c.name === "probe-ping")?.hasCompletions === true);
+  const comp = await h.call("catalog.commandCompletions", { name: "probe-ping", prefix: "b" });
+  expect("catalog.commandCompletions 按前缀过滤并带说明", comp.ok && comp.data.items.length === 1 && comp.data.items[0].value === "beta" && comp.data.items[0].description === "arg beta");
+  const none = await h.call("catalog.commandCompletions", { name: "no-such-command", prefix: "" });
+  expect("catalog.commandCompletions 对没有补全的命令给空表", none.ok && none.data.items.length === 0);
   // 内建命令表来自 pi 自己（BUILTIN_SLASH_COMMANDS）；测试用的 pi 若读不到就必须带原因，不能静默给空表。
   expect(
     "catalog.commands 带 pi 的内建命令表（或读不到的原因）",

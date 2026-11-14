@@ -1,6 +1,6 @@
 /** 可调用的东西：斜杠命令（扩展 / 提示模板 / 技能）和工具。 */
 
-import { ERR, HostError, bad, str } from "../protocol.mjs";
+import { ERR, HostError, bad, optStr, str } from "../protocol.mjs";
 import { withState } from "../state.mjs";
 
 import { pathToFileURL } from "node:url";
@@ -40,15 +40,55 @@ export function register(reg, { controller }) {
     const s = controller.requireSession();
     const commands = [];
     for (const c of s.extensionRunner.getRegisteredCommands()) {
-      commands.push({ name: c.invocationName, description: c.description, source: "extension", sourceInfo: c.sourceInfo });
+      commands.push({
+        name: c.invocationName,
+        description: c.description,
+        source: "extension",
+        sourceInfo: c.sourceInfo,
+        // 扩展自己提供参数补全（`getArgumentCompletions`）：App 据此在敲完命令名之后去问 `catalog.commandCompletions`。
+        hasCompletions: typeof c.getArgumentCompletions === "function",
+      });
     }
     for (const t of s.promptTemplates) {
-      commands.push({ name: t.name, description: t.description, source: "prompt", sourceInfo: t.sourceInfo });
+      // `argumentHint` 来自模板 frontmatter 的 `argument-hint`；App 用它决定「点一下是执行还是先填名字等参数」。
+      commands.push({
+        name: t.name,
+        description: t.description,
+        source: "prompt",
+        sourceInfo: t.sourceInfo,
+        argumentHint: t.argumentHint ?? null,
+      });
     }
     for (const k of s.resourceLoader.getSkills().skills) {
       commands.push({ name: `skill:${k.name}`, description: k.description, source: "skill", sourceInfo: k.sourceInfo });
     }
     return { commands, ...(await loadBuiltins(controller)) };
+  });
+
+  // 扩展命令的参数补全（pi TUI 敲 `/name ` 之后出的那份）。`name` 是调用名（带 `:1` 后缀的那种），
+  // `prefix` 是已经敲了的参数前缀。补全函数是扩展自己的代码，可能慢或抛错：限时 2 秒，出错给空表
+  // 并带原因，不让命令面板挂住。
+  reg.add("catalog.commandCompletions", async (args) => {
+    const name = str(args, "name");
+    const prefix = optStr(args, "prefix") ?? "";
+    const command = controller.requireSession().extensionRunner.getRegisteredCommands().find((c) => c.invocationName === name);
+    if (typeof command?.getArgumentCompletions !== "function") return { items: [] };
+    try {
+      const items = await Promise.race([
+        Promise.resolve(command.getArgumentCompletions(prefix)),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 2000)),
+      ]);
+      if (items === "timeout") return { items: [], error: "补全超时" };
+      return {
+        items: (Array.isArray(items) ? items : []).slice(0, 50).map((i) => ({
+          value: String(i.value),
+          label: String(i.label ?? i.value),
+          description: i.description ?? null,
+        })),
+      };
+    } catch (e) {
+      return { items: [], error: String(e?.message ?? e) };
+    }
   });
 
   reg.add("catalog.tools", () => {

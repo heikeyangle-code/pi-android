@@ -76,7 +76,21 @@ object PiResponses {
         val sourceInfo: PiSourceInfo?,
         val location: String?,
         val path: String?,
+        /** 提示模板 frontmatter 的 `argument-hint`；有它的命令点一下是「先填名字等参数」而不是直接执行。 */
+        val argumentHint: String? = null,
+        /** 扩展命令自带参数补全（`getArgumentCompletions`）；见 [commandCompletions]。 */
+        val hasCompletions: Boolean = false,
     )
+
+    /** 扩展命令的一条参数补全（pi-tui 的 `AutocompleteItem`）。 */
+    data class CommandCompletion(val value: String, val label: String, val description: String?)
+
+    fun commandCompletions(response: PiEvent.Response): List<CommandCompletion> =
+        dataArray(response, "items").mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val value = obj.str("value") ?: return@mapNotNull null
+            CommandCompletion(value, obj.str("label") ?: value, obj.str("description"))
+        }
 
     /**
      * pi 自己的内建斜杠命令（`BUILTIN_SLASH_COMMANDS`），由宿主的 `catalog.commands` 带来。
@@ -326,6 +340,8 @@ object PiResponses {
                 // implementation in agreement.
                 location = obj.str("location"),
                 path = obj.str("path") ?: sourceInfo?.str("path"),
+                argumentHint = obj.str("argumentHint")?.takeIf { it.isNotBlank() },
+                hasCompletions = (obj["hasCompletions"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
             )
         }
     }

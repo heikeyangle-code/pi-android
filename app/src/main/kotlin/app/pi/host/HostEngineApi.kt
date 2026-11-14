@@ -79,6 +79,12 @@ class HostEngineApi(private val commands: HostCommands) {
 
     suspend fun getCommands(): List<PiResponses.SlashCommand> = PiResponses.slashCommands(read("catalog.commands"))
 
+    /** 扩展命令对当前已敲参数前缀给出的补全；扩展没给或出错时为空表。 */
+    suspend fun getCommandCompletions(name: String, prefix: String): List<PiResponses.CommandCompletion> =
+        PiResponses.commandCompletions(
+            read("catalog.commandCompletions", obj { put("name", JsonPrimitive(name)); put("prefix", JsonPrimitive(prefix)) }),
+        )
+
     /** 命令面板的全部原料：扩展/模板/技能命令，加 pi 自己的内建命令表（一次请求）。 */
     suspend fun getCommandCatalog(): PiResponses.CommandCatalog = PiResponses.commandCatalog(read("catalog.commands"))
 
