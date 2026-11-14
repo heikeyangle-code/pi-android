@@ -78,7 +78,7 @@ internal fun EditBlock(
                     expanded = expanded,
                     expandable = failed,
                 )
-                if (expanded && failed) {
+                if (failed) {
                     // pi's error branch (`renderers/edit.ts:97-106`): the result text, unless
                     // it is the preview's own error, which this app never has.
                     //
