@@ -2474,8 +2474,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     if (autoRestarting) {
                         autoEngineRestarts += 1
+                        // 退出码直接写在提示里：tawcroot 的崩溃分得很开（137/9=被系统杀、
+                        // 139=段错误、126/127=exec 失败、0=正常退出），而这条通知是用户
+                        // 唯一会看到的现场。没有它，只能靠事后翻诊断报告。
+                        val exit = engine.lastExitCode?.let { "（退出码 $it）" } ?: "（被信号结束）"
                         pushNotice(
-                            "引擎已退出，正在自动重启（第 $autoEngineRestarts 次）…",
+                            "引擎已退出$exit，正在自动重启（第 $autoEngineRestarts 次）…",
                             Notice.Tone.Warning,
                         )
                         viewModelScope.launch {
