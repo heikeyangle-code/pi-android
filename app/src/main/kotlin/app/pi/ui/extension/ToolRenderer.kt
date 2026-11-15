@@ -6,8 +6,6 @@ import app.pi.rpc.ExtensionEntry
 import app.pi.rpc.HookMessage
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * 扩展 / MCP 工具自带的 `renderCall` / `renderResult` 的手机侧入口。
@@ -31,15 +29,15 @@ internal data class ToolRenderKey(
     val argsHash: Int,
     val detailsHash: Int,
     val expanded: Boolean,
-    /** render.tool accepts terminal columns; cached wrapping is invalid at another width. */
+    /** render.tool formats rows for a terminal width; a different width must not reuse wrapping. */
     val width: Int,
 )
 
 /**
- * Streaming snapshots are progress, not a new settled result. In particular `liveDetails`
- * can be replaced on every throttled tool update; including it in this key while Pending
- * turns each progress publication into another guest RPC. The terminal status transition
- * invalidates the key and carries the final output/details into the renderer exactly once.
+ * Progress snapshots are not settled render inputs. pi publishes them about every 200 ms;
+ * using `output.length` or `liveDetails` while Pending turns each publication into a guest
+ * render RPC. The status transition at completion invalidates the key and includes the final
+ * output/details. Keep width in the key because the host renderer receives it and may wrap.
  */
 internal fun toolRenderKey(item: ToolCall, expanded: Boolean, width: Int = 0) =
     ToolRenderKey(
@@ -54,16 +52,16 @@ internal fun toolRenderKey(item: ToolCall, expanded: Boolean, width: Int = 0) =
     )
 
 /**
- * One session's bounded memo for extension renderer results.
+ * Session-scoped, bounded LRU for extension tool results.
  *
- * Access order matters: a long transcript should evict the coldest render, not discard every
- * render at once. The mutex also coalesces concurrent requests for the same key; otherwise
- * two effects entering the viewport together can both miss and issue duplicate host RPCs.
+ * Do not hold a global lock across [fetch]: rendering one slow guest tool must not serialize
+ * unrelated visible cards. Concurrent misses for one key can duplicate a request, but cannot
+ * block every other card or hold the UI-facing caller behind another card's round trip.
  */
 internal class ToolRendererCache(
     private val fetch: suspend (ToolCall, Boolean, Int) -> HostCommands.ToolRender,
 ) {
-    private val mutex = Mutex()
+    private val lock = Any()
     private val absent = HashSet<String>()
     private val last = object : LinkedHashMap<ToolRenderKey, HostCommands.ToolRender>(64, 0.75f, true) {
         override fun removeEldestEntry(
@@ -71,20 +69,30 @@ internal class ToolRendererCache(
         ): Boolean = size > MAX_ENTRIES
     }
 
-    suspend fun render(item: ToolCall, expanded: Boolean, width: Int): HostCommands.ToolRender? = mutex.withLock {
-        if (item.toolName in absent) return@withLock null
+    suspend fun render(item: ToolCall, expanded: Boolean, width: Int): HostCommands.ToolRender? {
         val key = toolRenderKey(item, expanded, width)
-        last[key]?.let { return@withLock it }
-        val result = fetch(item, expanded, width)
-        if (result.call == null && result.result == null) {
-            absent += item.toolName
-            return@withLock null
+        synchronized(lock) {
+            if (item.toolName in absent) return null
+            last[key]?.let { return it }
         }
-        last[key] = result
-        result
+
+        // Never hold the cache lock while waiting for the guest. The caller owns cancellation;
+        // a row leaving composition can cancel its own request without stalling other rows.
+        val result = fetch(item, expanded, width)
+        synchronized(lock) {
+            if (result.call == null && result.result == null) {
+                absent += item.toolName
+                return null
+            }
+            // Another caller may have completed the same key while this request was in flight.
+            // Prefer its cached value so all consumers converge on the same immutable result.
+            last[key]?.let { return it }
+            last[key] = result
+            return result
+        }
     }
 
-    suspend fun reset() = mutex.withLock {
+    fun reset() = synchronized(lock) {
         absent.clear()
         last.clear()
     }
@@ -129,7 +137,7 @@ internal class MessageRendererCache(private val fetch: suspend (HookMessage, Boo
 
 /**
  * 扩展自己的 `custom` 会话条目：[render] 返回 null = 宿主不可达；[HostCommands.EntryRender.hasRenderer] 为 false
- * = 没有渲染器，pi 什么也不画。结果按（条目、展开态）缓存，「是否有渲染器」按 customType 缓存。
+ * = 没有渲染器。结果按（条目、展开态）缓存，「是否有渲染器」按 customType 缓存。
  */
 fun interface EntryRenderer {
     suspend fun render(item: ExtensionEntry, expanded: Boolean): List<String>?
@@ -138,8 +146,8 @@ fun interface EntryRenderer {
 val LocalEntryRenderer = staticCompositionLocalOf<EntryRenderer?> { null }
 
 /**
- * 扩展的 markdown transformer（`registerMarkdownTransformer`）：TUI 在 Assistant/UserMessageComponent 里
- * 逐条套用。这里只对**已完成**的消息套用（流式时每个 token 往返一次宿主不值得；与 TUI 的差别写在文档里）。
+ * 扩展的 markdown transformer（`registerMarkdownTransformer`）：这里只对已完成的消息套用，
+ * 避免流式时每个 token 都往返 guest。
  */
 fun interface MarkdownTransform {
     suspend fun transform(markdown: String, messageType: String, messageId: String): String
