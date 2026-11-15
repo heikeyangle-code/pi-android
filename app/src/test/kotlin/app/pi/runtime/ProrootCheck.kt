@@ -783,12 +783,12 @@ fun main() {
             // 真机形状：`env true` 退出 0 且**什么都不打印**（RUN 行没有输出字段）。
             execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0") + "\n" +
             execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
-            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0", "v24.19.0"),
+            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0", "v24.22.1"),
     )
     check("a healthy run passes", execPass.ok, true)
     check("a passing run has one result per target", execPass.results.size, ProrootExecProbe.TARGETS.size)
     check("a pass never carries a reason", execPass.results.map { it.reason }, listOf(null, null))
-    check("the pass names the engine's binary and its version", execPass.describe().any { it.contains("/opt/node/bin/node --version") && it.contains("v24.19.0") }, true)
+    check("the pass names the engine's binary and its version", execPass.describe().any { it.contains("/opt/node/bin/node --version") && it.contains("v24.22.1") }, true)
     check("a passing line starts with the pass mark", execPass.describe().first().startsWith(ProrootExecProbe.PASS_MARK), true)
 
     // **门禁必须是可满足的** —— 这一组断言是用户真机报告换来的，也是这次修复的判据。

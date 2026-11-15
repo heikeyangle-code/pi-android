@@ -107,7 +107,7 @@ Android 8.0（API 26）及以上，arm64。到 [Releases](https://github.com/hei
 | | |
 | :--- | :--- |
 | **Ubuntu 24.04 base** | glibc 2.39——npm 的 `linux-arm64` 预编译件能直接跑 |
-| **Node.js 24.19** | 官方 glibc 构建，`node` / `npm` 都是原生的 |
+| **Node.js 24.22** | 官方 glibc 构建，`node` / `npm` 都是原生的 |
 | **git · ripgrep · fd · CA 证书** | pi 的 `grep`、`find`、git 工具真正调用的那几个二进制 |
 | **proot**（Termux 构建） | 用户态系统调用翻译层，所以**不需要 root** |
 
@@ -166,7 +166,7 @@ bash tools/run-app-pure-checks.sh      # 纯逻辑 harness（不需要设备）
 | :--- | :--- |
 | **[pi](https://github.com/earendil-works/pi)** | 上游 coding agent，`@earendil-works/pi-coding-agent` **1.1.0**（MIT） |
 | **[Ubuntu Base 24.04](https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/)** | glibc 用户态 |
-| **[Node.js 24.19](https://nodejs.org/en/download)** | 官方 glibc 构建 |
+| **[Node.js 24.22](https://nodejs.org/en/download)** | 官方 glibc 构建 |
 | **[proot](https://proot-me.github.io/)**（Termux 构建） | 用户态系统调用翻译层 |
 | **[ripgrep](https://github.com/BurntSushi/ripgrep)** · **[fd](https://github.com/sharkdp/fd)** · git · CA 证书 | pi 的工具真正调用的那几个二进制 |
 
