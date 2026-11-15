@@ -105,7 +105,7 @@ object TawcrootProbe {
                 // 没有标记行时把**进程退出码**和第一行原始输出补进去：tawcroot 崩溃（139）、
                 // bind 解析失败（84）、seccomp 装不上（88）在这里一眼分得开。没有这两个数，
                 // 真机上只能看到"没输出"，这正是这次卡住的原因。
-                if ("$ProrootExecProbe.MARKER" !in text) {
+                if (ProrootExecProbe.MARKER !in text) {
                     val first = text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
                     buildString {
                         if (text.isNotBlank()) append(text).append('\n')
