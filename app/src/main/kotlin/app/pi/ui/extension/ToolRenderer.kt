@@ -6,6 +6,8 @@ import app.pi.rpc.ExtensionEntry
 import app.pi.rpc.HookMessage
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 扩展 / MCP 工具自带的 `renderCall` / `renderResult` 的手机侧入口。
@@ -29,51 +31,67 @@ internal data class ToolRenderKey(
     val argsHash: Int,
     val detailsHash: Int,
     val expanded: Boolean,
+    /** render.tool accepts terminal columns; cached wrapping is invalid at another width. */
+    val width: Int,
 )
 
-internal fun toolRenderKey(item: ToolCall, expanded: Boolean) =
+/**
+ * Streaming snapshots are progress, not a new settled result. In particular `liveDetails`
+ * can be replaced on every throttled tool update; including it in this key while Pending
+ * turns each progress publication into another guest RPC. The terminal status transition
+ * invalidates the key and carries the final output/details into the renderer exactly once.
+ */
+internal fun toolRenderKey(item: ToolCall, expanded: Boolean, width: Int = 0) =
     ToolRenderKey(
-        item.toolCallId,
-        item.status,
-        // **输出长度只在工具结束后参与键**。流式期间 pi 每 200 ms 推一次进度，
-        // 把长度算进键里等于每个 tick 都去 guest 里重渲染一遍整份结果 —— 这是扩展
-        // 工具卡「划过去掉帧」的主因。待完成时固定为 0；完成时 status 变化本身
-        // 就会换键，正好拿到最终结果。
-        if (item.status == ToolStatus.Pending) 0 else item.output.length,
-        item.args?.hashCode() ?: 0,
-        (item.details ?: item.liveDetails)?.hashCode() ?: 0,
-        expanded,
+        toolCallId = item.toolCallId,
+        status = item.status,
+        outputLength = if (item.status == ToolStatus.Pending) 0 else item.output.length,
+        argsHash = item.args?.hashCode() ?: 0,
+        detailsHash = if (item.status == ToolStatus.Pending) 0
+        else (item.details ?: item.liveDetails)?.hashCode() ?: 0,
+        expanded = expanded,
+        width = width,
     )
 
-/** 一个工具名一旦被宿主答过"没有渲染器"，同一会话内不再问。 */
-internal class ToolRendererCache(private val fetch: suspend (ToolCall, Boolean, Int) -> HostCommands.ToolRender) {
+/**
+ * One session's bounded memo for extension renderer results.
+ *
+ * Access order matters: a long transcript should evict the coldest render, not discard every
+ * render at once. The mutex also coalesces concurrent requests for the same key; otherwise
+ * two effects entering the viewport together can both miss and issue duplicate host RPCs.
+ */
+internal class ToolRendererCache(
+    private val fetch: suspend (ToolCall, Boolean, Int) -> HostCommands.ToolRender,
+) {
+    private val mutex = Mutex()
     private val absent = HashSet<String>()
-    /**
-     * LRU，不是「满了就 clear()」。
-     *
-     * 原来的 `if (last.size > 200) last.clear()` 会在长会话里把**所有**已渲染的卡一次性作废：
-     * 滚回去时每张卡先回落通用样式、再取回行 —— 高度先矮后高，看起来就是「卡片乱跳」。
-     * 保留最近用过的 200 条，淘汰最久没用的那一条即可。
-     */
     private val last = object : LinkedHashMap<ToolRenderKey, HostCommands.ToolRender>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ToolRenderKey, HostCommands.ToolRender>?): Boolean =
-            size > 200
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<ToolRenderKey, HostCommands.ToolRender>?,
+        ): Boolean = size > MAX_ENTRIES
     }
 
-    suspend fun render(item: ToolCall, expanded: Boolean, width: Int): HostCommands.ToolRender? {
-        if (item.toolName in absent) return null
-        val key = toolRenderKey(item, expanded)
-        last[key]?.let { return it }
-        val r = fetch(item, expanded, width)
-        if (r.call == null && r.result == null) {
+    suspend fun render(item: ToolCall, expanded: Boolean, width: Int): HostCommands.ToolRender? = mutex.withLock {
+        if (item.toolName in absent) return@withLock null
+        val key = toolRenderKey(item, expanded, width)
+        last[key]?.let { return@withLock it }
+        val result = fetch(item, expanded, width)
+        if (result.call == null && result.result == null) {
             absent += item.toolName
-            return null
+            return@withLock null
         }
-        last[key] = r
-        return r
+        last[key] = result
+        result
     }
 
-    fun reset() { absent.clear(); last.clear() }
+    suspend fun reset() = mutex.withLock {
+        absent.clear()
+        last.clear()
+    }
+
+    private companion object {
+        const val MAX_ENTRIES = 200
+    }
 }
 
 /**
