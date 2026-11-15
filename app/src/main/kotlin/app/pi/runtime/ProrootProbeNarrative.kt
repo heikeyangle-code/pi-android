@@ -117,11 +117,13 @@ object ProrootProbeNarrative {
         fallback: EngineFallback,
         probeDetail: List<String>,
         mode: ProrootSeccomp = RuntimeChoice.PROROOT_SECCOMP,
+        /** 生效的运行时。`None` 那一档要写它，否则 tawcroot 在跑时会说成 proroot。 */
+        engine: GuestEngine = GuestEngine.Proroot,
     ): String {
         // Every other reason is already complete: the switch, the missing files and the
         // failure streak have nothing to add from the probe, and this object has no
         // business restating them.
-        if (fallback != EngineFallback.ProbeNotPassed) return RuntimeChoice.describe(fallback)
+        if (fallback != EngineFallback.ProbeNotPassed) return RuntimeChoice.describe(fallback, engine)
 
         // Reuse the base sentence rather than retyping it, so the two forms cannot drift.
         val base = RuntimeChoice.describe(EngineFallback.ProbeNotPassed)

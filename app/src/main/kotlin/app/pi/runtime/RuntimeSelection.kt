@@ -211,7 +211,10 @@ class RuntimeSelection(
          * that once per epoch on `Dispatchers.IO` (`PiSettingsStack`).
          */
         val summary: String
-            get() = ProrootProbeNarrative.summary(fallback, probeDetail, mode)
+            // `engine` must travel with it: with `EngineFallback.None` the sentence is
+            // whatever runtime is *actually running*, and defaulting it to proroot made
+            // this row say "proroot" while tawcroot was in effect.
+            get() = ProrootProbeNarrative.summary(fallback, probeDetail, mode, engine)
     }
 
     fun plan(
