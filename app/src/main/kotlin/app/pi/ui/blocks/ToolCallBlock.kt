@@ -170,14 +170,28 @@ fun ToolCallBlock(
     // SDK 工具自带的 renderCall / renderResult（扩展、MCP 工具）。内置工具有原生卡，不问宿主；
     // 没有渲染器时 `rendered` 恒为 null，下面的通用样式原样生效。
     val toolRenderer = app.pi.ui.extension.LocalToolRenderer.current
-    val rendered by androidx.compose.runtime.produceState<app.pi.host.HostCommands.ToolRender?>(
-        initialValue = null,
-        key1 = app.pi.ui.extension.toolRenderKey(item, expanded),
-        key2 = toolRenderer,
-    ) {
-        value = if (toolRenderer == null || item.toolName in NATIVE_TOOL_NAMES) null
-        else toolRenderer.render(item, expanded) ?: value
+    // The previous render is kept **across key changes**: `produceState(initialValue = null)`
+    // reset to null on every expand/collapse, so the card first fell back to the generic
+    // layout and then grew again when the host answered — a two-step height change on one
+    // tap, which is what made the whole list jump. This holds the last lines until the new
+    // ones arrive.
+    val renderedState = remember(item.toolCallId) {
+        mutableStateOf<app.pi.host.HostCommands.ToolRender?>(null)
     }
+    val renderKey = app.pi.ui.extension.toolRenderKey(item, expanded)
+    androidx.compose.runtime.LaunchedEffect(renderKey, toolRenderer) {
+        if (toolRenderer == null || item.toolName in NATIVE_TOOL_NAMES) {
+            renderedState.value = null
+            return@LaunchedEffect
+        }
+        // Fast-scroll guard: a row that leaves the screen within ~120 ms never asks the
+        // guest to render. Scrolling past a long transcript used to fire one `render.tool`
+        // round trip per extension card that entered the viewport — the jank the user
+        // reported. 120 ms is ~7 frames: slower than a fling, faster than a deliberate stop.
+        kotlinx.coroutines.delay(120)
+        renderedState.value = toolRenderer.render(item, expanded) ?: renderedState.value
+    }
+    val rendered = renderedState.value
     // The other half of pi's generic call line: `formatToolCallWithArgs(..., expanded = true)`
     // puts one `key: value` per argument, which the one-line title cell cannot (`render-utils.js:60-79`).
     val paramText = remember(item.args) { toolParamLines(item.args).joinToString("\n") }

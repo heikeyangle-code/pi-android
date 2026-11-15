@@ -35,7 +35,11 @@ internal fun toolRenderKey(item: ToolCall, expanded: Boolean) =
     ToolRenderKey(
         item.toolCallId,
         item.status,
-        item.output.length,
+        // **输出长度只在工具结束后参与键**。流式期间 pi 每 200 ms 推一次进度，
+        // 把长度算进键里等于每个 tick 都去 guest 里重渲染一遍整份结果 —— 这是扩展
+        // 工具卡「划过去掉帧」的主因。待完成时固定为 0；完成时 status 变化本身
+        // 就会换键，正好拿到最终结果。
+        if (item.status == ToolStatus.Pending) 0 else item.output.length,
         item.args?.hashCode() ?: 0,
         (item.details ?: item.liveDetails)?.hashCode() ?: 0,
         expanded,
@@ -44,7 +48,17 @@ internal fun toolRenderKey(item: ToolCall, expanded: Boolean) =
 /** 一个工具名一旦被宿主答过"没有渲染器"，同一会话内不再问。 */
 internal class ToolRendererCache(private val fetch: suspend (ToolCall, Boolean, Int) -> HostCommands.ToolRender) {
     private val absent = HashSet<String>()
-    private val last = HashMap<ToolRenderKey, HostCommands.ToolRender>()
+    /**
+     * LRU，不是「满了就 clear()」。
+     *
+     * 原来的 `if (last.size > 200) last.clear()` 会在长会话里把**所有**已渲染的卡一次性作废：
+     * 滚回去时每张卡先回落通用样式、再取回行 —— 高度先矮后高，看起来就是「卡片乱跳」。
+     * 保留最近用过的 200 条，淘汰最久没用的那一条即可。
+     */
+    private val last = object : LinkedHashMap<ToolRenderKey, HostCommands.ToolRender>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ToolRenderKey, HostCommands.ToolRender>?): Boolean =
+            size > 200
+    }
 
     suspend fun render(item: ToolCall, expanded: Boolean, width: Int): HostCommands.ToolRender? {
         if (item.toolName in absent) return null
@@ -55,7 +69,6 @@ internal class ToolRendererCache(private val fetch: suspend (ToolCall, Boolean, 
             absent += item.toolName
             return null
         }
-        if (last.size > 200) last.clear()
         last[key] = r
         return r
     }
