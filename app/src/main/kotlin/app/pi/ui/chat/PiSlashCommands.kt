@@ -139,7 +139,7 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
     "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级"),
     "scoped-models" to ClientBuiltin(
         ChatAction.OpenSettings, "选择参与循环切换的模型",
-        note = "「循环模型」在 设置 → 模型与推理。",
+        note = "「循环模型」在 设置 → 模型与供应商 → 默认模型与推理。",
     ),
     "export" to ClientBuiltin(
         ChatAction.ExportSession,
@@ -158,11 +158,11 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
     ),
     "login" to ClientBuiltin(
         ChatAction.OpenSettings, "配置模型服务商登录",
-        note = "登录/凭证在 设置 → 模型与推理 → 凭证。",
+        note = "登录在 设置 → 模型与供应商（点开供应商）。",
     ),
     "logout" to ClientBuiltin(
         ChatAction.OpenSettings, "移除模型服务商登录",
-        note = "退出登录在 设置 → 模型与推理 → 凭证。",
+        note = "退出登录在 设置 → 模型与供应商（点开供应商）。",
     ),
     "new" to ClientBuiltin(ChatAction.NewSession, "开始新会话"),
     "compact" to ClientBuiltin(ChatAction.Compact, "手动压缩会话上下文"),

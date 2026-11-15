@@ -58,6 +58,8 @@ fun ModelsScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     host: () -> ModelsHost?,
+    /** 打开「默认模型与推理」（默认模型 / 默认思考等级 / 循环模型 / 思考预算……settings.json 里那组行）。 */
+    onOpenDefaults: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var reload by remember { mutableStateOf(0) }
@@ -120,6 +122,15 @@ fun ModelsScreen(
                     PiSettingsEntryRow(
                         title = cur?.let { (p, id) -> d.models.firstOrNull { it.provider == p && it.id == id }?.name?.ifBlank { id } ?: id } ?: "没有选择模型",
                         supporting = cur?.first?.let { "当前模型 · $it" } ?: "在下面的供应商里配置凭据，然后选一个模型",
+                    )
+                }
+            }
+            item(key = "defaults") {
+                PiSettingsCard {
+                    PiSettingsEntryRow(
+                        title = "默认模型与推理",
+                        supporting = "默认模型 · 默认思考等级 · 循环模型 · 思考预算",
+                        onClick = onOpenDefaults,
                     )
                 }
             }
@@ -214,9 +225,16 @@ private fun ProviderCard(
         list.forEachIndexed { i, p ->
             if (i > 0) PiSettingsHairline()
             val count = d.models.count { it.provider == p.id }
+            // 订阅 ≠ 任意 OAuth：只有 SDK 的 isUsingSubscription 才叫「订阅登录」。
             val state = when {
-                p.usingOAuth -> "订阅登录"
-                p.configured -> "已配置"
+                p.usingSubscription -> "订阅登录"
+                p.usingOAuth -> "网页登录"
+                p.configured -> when (p.statusSource) {
+                    "stored" -> "已保存凭据"
+                    "environment" -> "环境变量"
+                    "runtime" -> "临时 Key"
+                    else -> "已配置"
+                }
                 else -> "未配置"
             }
             PiSettingsEntryRow(
@@ -263,6 +281,15 @@ private fun ProviderSheet(
     var note by remember { mutableStateOf<String?>(null) }
     var configured by remember { mutableStateOf(provider.configured) }
     var showAll by remember { mutableStateOf(false) }
+    var modelQuery by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf<PiResponses.ModelInfo?>(null) }
+    // 目录里这家的全部模型：还没登录也看得到它有什么（`model.list {all, provider}`）。读不到就退回
+    // 调用方给的「可用模型」，不留空白。
+    var catalog by remember { mutableStateOf<List<PiResponses.ModelInfo>?>(null) }
+    LaunchedEffect(provider.id, configured) {
+        catalog = host()?.let { h -> runCatching { h.catalog(provider.id) }.getOrNull() }
+    }
+    val allModels = catalog ?: models
 
     // 登录期间的事件与提问：只收属于这次 loginId 的。
     val active = login?.loginId
@@ -373,11 +400,46 @@ private fun ProviderSheet(
             }
             custom?.let { c -> PiSettingsChip(text = "编辑自定义供应商…", onClick = { onEditCustom(c) }) }
 
-            Text("模型（${models.size}）", style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.gutter))
-            if (models.isEmpty()) {
-                Text("这个供应商现在没有可用模型——先配置凭据，或刷新目录。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+            val q = modelQuery.trim()
+            val filtered = allModels.filter { q.isEmpty() || it.id.contains(q, true) || it.name.contains(q, true) }
+            Text("模型（${allModels.size}）", style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.gutter))
+            if (!configured && allModels.isNotEmpty()) {
+                Text("先在上面配置凭据，才能选用这些模型。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
             }
-            val shown = if (showAll) models else models.take(MODEL_PREVIEW)
+            if (allModels.isEmpty()) {
+                Text("目录里没有这个供应商的模型——刷新目录，或在自定义供应商里添加。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+            }
+            if (allModels.size > MODEL_PREVIEW) {
+                PiEditorField(
+                    value = modelQuery,
+                    onValueChange = { modelQuery = it; showAll = false },
+                    placeholder = "搜索这家的模型",
+                    modifier = Modifier.padding(top = PiSpacing.small),
+                )
+            }
+            picked?.let { m ->
+                // 选一个模型要回答一个问题：只这次会话用，还是以后都默认用它。SDK 的 setModel 默认只改本会话
+                // （persist 才写 settings.json），所以这里把两条路都摆出来，不替人选。
+                PiSettingsCard {
+                    Column(Modifier.padding(PiSettingsMetrics.pageHorizontal)) {
+                        Text(m.name.ifBlank { m.id }, style = PiTheme.text.prose, color = PiTheme.palette.text)
+                        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), modifier = Modifier.padding(top = PiSpacing.small)) {
+                            for ((label, persist) in listOf("本次会话使用" to false, "设为默认并使用" to true)) {
+                                PiSettingsChip(text = label, onClick = {
+                                    val h = host() ?: run { note = "引擎没在运行。"; return@PiSettingsChip }
+                                    scope.launch {
+                                        runCatching { h.selectModel(m.provider.orEmpty(), m.id, persist) }
+                                            .onSuccess { note = (if (persist) "已设为默认并切换到 " else "已切换到 ") + m.name.ifBlank { m.id } + "。"; picked = null }
+                                            .onFailure { note = "切换失败：${it.message}" }
+                                    }
+                                })
+                            }
+                            PiSettingsChip(text = "取消", onClick = { picked = null })
+                        }
+                    }
+                }
+            }
+            val shown = if (showAll) filtered else filtered.take(MODEL_PREVIEW)
             shown.forEach { m ->
                 val isCurrent = current?.let { it.first == m.provider && it.second == m.id } == true
                 PiSettingsEntryRow(
@@ -389,18 +451,15 @@ private fun ProviderSheet(
                         m.contextWindow?.let { "${it / 1000}K 上下文" },
                         m.inputCost?.let { c -> m.outputCost?.let { o -> "$$c / $$o 每百万 token" } },
                     ).joinToString(" · ").ifEmpty { null },
-                    onClick = {
-                        val h = host() ?: return@PiSettingsEntryRow
-                        scope.launch {
-                            runCatching { h.selectModel(m.provider.orEmpty(), m.id) }
-                                .onSuccess { note = "已切换到 ${m.name.ifBlank { m.id }}。" }
-                                .onFailure { note = "切换失败：${it.message}" }
-                        }
-                    },
+                    // 没配置凭据的供应商，模型只读：点了也选不了（SDK 的 model.set 会拒绝），不如不给点。
+                    onClick = if (configured) ({ picked = m }) else null,
                 )
             }
-            if (!showAll && models.size > MODEL_PREVIEW) {
-                PiSettingsChip(text = "显示全部 ${models.size} 个", onClick = { showAll = true })
+            if (!showAll && filtered.size > MODEL_PREVIEW) {
+                PiSettingsChip(text = "显示全部 ${filtered.size} 个", onClick = { showAll = true })
+            }
+            if (q.isNotEmpty() && filtered.isEmpty()) {
+                Text("没有匹配「$q」的模型。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
             }
         }
     }

@@ -31,6 +31,9 @@ function describeProvider(runtime, provider) {
     methods,
     configured: runtime.hasConfiguredAuth(provider.id),
     usingOAuth: runtime.isUsingOAuth(provider.id),
+    // 订阅账号 ≠ 任何 OAuth：SDK 的 isUsingSubscription = 正在用 OAuth 且该供应商的 oauth.isSubscription。
+    // App 的「订阅登录」标签必须用它，用 usingOAuth 会把非订阅型 OAuth 也标成订阅。
+    usingSubscription: runtime.isUsingSubscription(provider.id),
     status: runtime.getProviderAuthStatus(provider.id),
   };
 }

@@ -75,6 +75,16 @@ class HostEngineApi(private val commands: HostCommands) {
 
     suspend fun getAvailableModels(): List<PiResponses.ModelInfo> = PiResponses.availableModels(read("model.list"))
 
+    /**
+     * 目录里**全部**模型（含还没配置凭据的供应商，`getModels`），[provider] 非空只取那一家。
+     * 与 [getAvailableModels] 同一个解析器；多出来的 `available` 字段它不读，可用性由
+     * 供应商的 `configured` 决定（`hasConfiguredAuth` 同一来源）。
+     */
+    suspend fun getModelCatalog(provider: String? = null): List<PiResponses.ModelInfo> =
+        PiResponses.availableModels(
+            read("model.list", obj { put("all", JsonPrimitive(true)); if (provider != null) put("provider", JsonPrimitive(provider)) }),
+        )
+
     suspend fun getAvailableThinkingLevels(): List<String> = PiResponses.thinkingLevels(read("thinking.levels"))
 
     suspend fun getCommands(): List<PiResponses.SlashCommand> = PiResponses.slashCommands(read("catalog.commands"))
@@ -90,8 +100,15 @@ class HostEngineApi(private val commands: HostCommands) {
 
     // ---- 模型 / 思考 / 队列 ----
 
-    suspend fun setModel(provider: String, modelId: String): PiResponses.ModelInfo {
-        val r = write("model.set", obj { put("provider", JsonPrimitive(provider)); put("modelId", JsonPrimitive(modelId)) })
+    /**
+     * [persist] 是 SDK 的 `ModelMutationOptions.persist`：默认只改本会话，true 才写进全局默认
+     * （`defaultProvider` / `defaultModel`）。
+     */
+    suspend fun setModel(provider: String, modelId: String, persist: Boolean = false): PiResponses.ModelInfo {
+        val r = write("model.set", obj {
+            put("provider", JsonPrimitive(provider)); put("modelId", JsonPrimitive(modelId))
+            if (persist) put("persist", JsonPrimitive(true))
+        })
         // 宿主应答 {model, state}；旧读取器直接读 model 对象。
         return required("set_model", PiResponses.setModel(response("set_model", r.data["model"])))
     }

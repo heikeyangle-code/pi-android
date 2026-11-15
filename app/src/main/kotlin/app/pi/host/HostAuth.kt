@@ -33,7 +33,15 @@ class HostAuth(private val commands: HostCommands) {
         val usingOAuth: Boolean,
         /** SDK 的 `getProviderAuthStatus` 原样：有的是字符串，有的是对象，界面只用它的文字形式。 */
         val status: JsonElement?,
+        /**
+         * SDK 的 `isUsingSubscription`：正在用 OAuth **且**该供应商的 OAuth 是订阅账号。
+         * 「订阅登录」标签只能看它——`usingOAuth` 对非订阅型 OAuth 也是 true。
+         */
+        val usingSubscription: Boolean = false,
     ) {
+        /** `getProviderAuthStatus().source`：`runtime`（本进程临时）/ `stored`（auth.json）/ `environment` / 配置里写的。 */
+        val statusSource: String? get() = ((status as? JsonObject)?.get("source") as? JsonPrimitive)?.takeIf { it.isString }?.content
+
         val supportsApiKey get() = methods.any { it.isApiKey }
         val oauth: Method? get() = methods.firstOrNull { it.isOauth }
         val isSubscription get() = oauth?.isSubscription == true
@@ -128,6 +136,7 @@ class HostAuth(private val commands: HostCommands) {
         configured = (o["configured"] as? JsonPrimitive)?.content == "true",
         usingOAuth = (o["usingOAuth"] as? JsonPrimitive)?.content == "true",
         status = o["status"]?.takeIf { it !is JsonNull },
+        usingSubscription = (o["usingSubscription"] as? JsonPrimitive)?.content == "true",
     )
 
     private fun rows(e: JsonElement?): List<JsonObject> = (e as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()

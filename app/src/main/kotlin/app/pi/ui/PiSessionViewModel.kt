@@ -4342,8 +4342,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 engine.client.respond(id, value?.let { kotlinx.serialization.json.JsonPrimitive(it) }, cancelled)
             },
             models = { api.getAvailableModels().also { m -> _state.value = _state.value.copy(models = m) } },
-            selectModel = { provider, id ->
-                val applied = api.setModel(provider, id)
+            catalog = { provider -> api.getModelCatalog(provider) },
+            selectModel = { provider, id, persist ->
+                val applied = api.setModel(provider, id, persist)
                 _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
             },
             currentModel = { _state.value.meta.model?.let { m -> m.provider?.let { it to m.id } } },

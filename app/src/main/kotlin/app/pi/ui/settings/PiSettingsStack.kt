@@ -177,6 +177,9 @@ fun PiSettingsStack(
     var packages by rememberSaveable { mutableStateOf(false) }
     // 「模型与供应商」（`ui/models/ModelsScreen`）：一个层级，数据全在宿主（auth.* / models.config.*）。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
+    // 从「模型与供应商」点进「默认模型与推理」（那一组行的页）时置位：从那一页退出要回到模型页，
+    // 而不是掉回设置首页。组页本身没有别的入口（首页过滤了它），所以这是它唯一的来路。
+    var defaultsFromModels by rememberSaveable { mutableStateOf(false) }
     // The open-source licence notices. Not a pi screen either — see §L: publishing
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
@@ -463,6 +466,10 @@ fun PiSettingsStack(
         } else if (groupId != null || highlightKey != null) {
             groupId = null
             highlightKey = null
+            if (defaultsFromModels) {
+                defaultsFromModels = false
+                modelFlow = true
+            }
         } else {
             // 首页：底栏没了，这一下退到对话。
             onBack()
@@ -527,6 +534,11 @@ fun PiSettingsStack(
                     modelFlow = false
                 },
                 host = modelsHost,
+                onOpenDefaults = {
+                    defaultsFromModels = true
+                    modelFlow = false
+                    groupId = G_MODEL
+                },
             )
 
             packages -> ExtensionPackagesScreen(
@@ -584,6 +596,10 @@ fun PiSettingsStack(
                 onBack = {
                     groupId = null
                     highlightKey = null
+                    if (defaultsFromModels) {
+                        defaultsFromModels = false
+                        modelFlow = true
+                    }
                 },
                 highlightKey = highlightKey,
                 knownThemes = knownThemes,

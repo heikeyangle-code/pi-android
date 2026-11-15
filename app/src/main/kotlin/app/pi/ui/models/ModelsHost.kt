@@ -23,8 +23,13 @@ class ModelsHost(
     val answer: suspend (requestId: String, value: String?, cancelled: Boolean) -> Unit,
     /** 此刻可用的全部模型（`model.list`）。 */
     val models: suspend () -> List<PiResponses.ModelInfo>,
-    /** 选中某个模型作为当前模型（`model.set`）。 */
-    val selectModel: suspend (provider: String, modelId: String) -> Unit,
+    /** 目录里全部模型（含还没配置凭据的供应商），只取 [provider] 一家（`model.list {all}`）。 */
+    val catalog: suspend (provider: String) -> List<PiResponses.ModelInfo>,
+    /**
+     * 选中某个模型作为当前模型（`model.set`）。[persist] = false 只改本会话；true 同时写进
+     * 全局默认（SDK 的 `ModelMutationOptions.persist`）。
+     */
+    val selectModel: suspend (provider: String, modelId: String, persist: Boolean) -> Unit,
     /** 当前模型 `provider/id`，没有则 null。 */
     val currentModel: () -> Pair<String, String>?,
 )

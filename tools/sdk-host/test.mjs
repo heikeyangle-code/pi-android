@@ -316,6 +316,34 @@ try {
     const clr = await h.call("models.setScoped", { models: [] });
     expect("models.setScoped 空数组 = 取消作用域", clr.ok && clr.data.state.scopedModelCount === 0);
   }
+  // ---- 模型目录与 persist（SDK ModelMutationOptions：默认只改本会话）----
+  const allList = await h.call("model.list", { all: true });
+  const allModels = allList.data?.models ?? [];
+  expect("model.list all:true 含还没配置凭据的供应商，且每条带 available",
+    allList.ok && allModels.length > mods.length && allModels.every((m) => typeof m.available === "boolean") && allModels.some((m) => m.available === false),
+    JSON.stringify(allList.error ?? { all: allModels.length, avail: mods.length }));
+  const oneProv = mods[0]?.provider;
+  const oneList = await h.call("model.list", { all: true, provider: oneProv });
+  expect("model.list all:true provider 只取那一家", oneList.ok && oneList.data.models.length > 0 && oneList.data.models.every((m) => m.provider === oneProv));
+  expect("model.list all 非布尔 → bad_args", (await h.call("model.list", { all: "yes" })).error?.code === "bad_args");
+  if (mods.length >= 2) {
+    const before = (await h.call("settings.get")).data.global ?? {};
+    const target = mods.find((m) => !(m.provider === before.defaultProvider && m.id === before.defaultModel)) ?? mods[1];
+    const sess = await h.call("model.set", { provider: target.provider, modelId: target.id });
+    const afterSess = (await h.call("settings.get")).data.global ?? {};
+    expect("model.set 默认只改本会话，不写 defaultModel（会话里确实换了，全局默认没动）",
+      sess.ok && sess.data.state?.model?.id === target.id && afterSess.defaultModel !== target.id && afterSess.defaultModel === before.defaultModel,
+      JSON.stringify({ was: before.defaultModel, now: afterSess.defaultModel, target: target.id }));
+    const other = mods.find((m) => m.id !== target.id);
+    const pers = await h.call("model.set", { provider: other.provider, modelId: other.id, persist: true });
+    const afterPers = (await h.call("settings.get")).data.global ?? {};
+    expect("model.set persist:true 写进全局默认", pers.ok && afterPers.defaultModel === other.id && afterPers.defaultProvider === other.provider,
+      JSON.stringify(pers.error ?? afterPers));
+    expect("model.set persist 非布尔 → bad_args", (await h.call("model.set", { provider: other.provider, modelId: other.id, persist: 1 })).error?.code === "bad_args");
+  }
+  expect("model.cycle 非法 direction → bad_args", (await h.call("model.cycle", { direction: "sideways" })).error?.code === "bad_args");
+  const lv = await h.call("thinking.levels");
+  expect("thinking.levels 带 supportsThinking", lv.ok && Array.isArray(lv.data.levels) && typeof lv.data.supportsThinking === "boolean", JSON.stringify(lv.error ?? lv.data));
   const cs = await h.call("cache.status");
   expect("cache.status 有 mode 与 status 字段", cs.ok && typeof cs.data.mode === "string" && "status" in cs.data, JSON.stringify(cs.error ?? cs.data));
   const cm = await h.call("cache.setMode", { mode: cs.data?.mode ?? "off" });
@@ -396,6 +424,7 @@ try {
   expect("auth.providers 列出内置与扩展供应商（含认证方式）", provs.ok && provs.data.providers.length > 20 && sso?.methods.some((m) => m.type === "oauth" && m.name === "Probe SSO"), JSON.stringify(provs.error ?? sso));
   const anth = provs.data.providers.find((p) => p.id === "anthropic");
   expect("内置供应商带 api_key 方式", anth?.methods.some((m) => m.type === "api_key"));
+  expect("auth.providers 带 usingSubscription（订阅 ≠ 任意 OAuth）", provs.data.providers.every((p) => typeof p.usingSubscription === "boolean"));
 
   const setKey = await h.call("auth.setApiKey", { providerId: "openai", apiKey: "sk-test-123" });
   expect("auth.setApiKey", setKey.ok && setKey.data.provider.configured === true, JSON.stringify(setKey.error ?? setKey.data));
