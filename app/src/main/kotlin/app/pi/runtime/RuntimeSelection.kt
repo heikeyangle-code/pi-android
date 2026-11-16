@@ -176,7 +176,7 @@ class RuntimeSelection(
          * work over data already in hand — see the narrative's KDoc.
          */
         val summary: String
-            get() = ProrootProbeNarrative.summary(fallback, probe?.detail.orEmpty())
+            get() = ProrootProbeNarrative.summary(fallback, probe?.detail.orEmpty(), engine = engine)
     }
 
     /** The effective state, for the settings row and the diagnostic report. */

@@ -414,12 +414,12 @@ fun main() {
     check("the streak outranks a passing gate", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 99), EngineDecision(GuestEngine.Proot, EngineFallback.FailureStreak))
     check("all four conditions satisfied means proroot", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 0), EngineDecision(GuestEngine.Proroot, EngineFallback.None))
     check("the switch is checked before the files", RuntimeChoice.decide(enabled = false, filesPresent = false, probePassed = false, consecutiveFailures = 5), EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff))
-    check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it).isNotBlank() }, true)
+    check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it, engine = GuestEngine.Proroot).isNotBlank() }, true)
     // 这一组句子读出来的是「运行时（实际生效）」那一行的值：标题问「在跑哪个」，所以每个值
     // 都必须**先写那个运行时**，原因才跟在括号里。旧的一组是反过来的（关掉时写「未开启（走
     // proot）」），用户直接问了出来：「关掉 Pro Root 为什么要写着未开启」。这条不变量逐值
     // 钉住「谁在最前面」，改文案时最先被它拦住。
-    val sentences = EngineFallback.entries.associateWith { RuntimeChoice.describe(it) }
+    val sentences = EngineFallback.entries.associateWith { RuntimeChoice.describe(it, engine = GuestEngine.Proroot) }
     check(
         "every sentence leads with the runtime that is in effect",
         sentences.values.map { it.substringBefore('（') }.distinct().sorted(),
@@ -444,7 +444,7 @@ fun main() {
     // 尚未运行 不再讲「下一次 / 再下一次」：拨开开关现在会**当场**跑探针并重启引擎
     // （`ui/settings/RuntimeSwitchAction`），所以三趟车的说明既不是用户看到的事，也和开关
     // 那一行的文案互相矛盾。这一档只剩一个含义：此刻没有这个 revision 的探针结论。
-    val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun)
+    val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun, engine = GuestEngine.Proroot)
     check("尚未运行 names the missing probe verdict", notRun.contains("探针尚未运行"), true)
     check("尚未运行 no longer promises a next launch", notRun.contains("下一次"), false)
     check("尚未运行 no longer counts launches", notRun.contains("再下一次"), false)
@@ -758,7 +758,7 @@ fun main() {
     check("the disclosures are not the same sentence", ProrootSeccomp.Seccomp.disclosure == ProrootSeccomp.NoSeccomp.disclosure, false)
     check("the no-seccomp disclosure says it is not selectable", ProrootSeccomp.NoSeccomp.disclosure.contains("不可选"), true)
     check("every mode has a disclosure", ProrootSeccomp.entries.all { it.disclosure.isNotBlank() }, true)
-    check("the in-use sentence names the shipping mode", RuntimeChoice.describe(EngineFallback.None).contains(RuntimeChoice.PROROOT_SECCOMP.disclosure), true)
+    check("the in-use sentence names the shipping mode", RuntimeChoice.describe(EngineFallback.None, engine = GuestEngine.Proroot).contains(RuntimeChoice.PROROOT_SECCOMP.disclosure), true)
 
     // ================================================ 6c. 动态二进制档（ProrootExecProbe）
     // The stage added after the device where the first two passed and the engine still exited

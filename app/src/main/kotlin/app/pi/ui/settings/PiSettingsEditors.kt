@@ -1354,6 +1354,9 @@ internal fun PiEditorField(
     textStyle: TextStyle = PiTheme.text.mono,
     contentPadding: PaddingValues = PiFieldPaddingSingleLine,
     trailing: (@Composable () -> Unit)? = null,
+    /** 密钥类输入传 `PasswordVisualTransformation()`：屏幕上不留明文（值本身不变）。 */
+    visualTransformation: androidx.compose.ui.text.input.VisualTransformation =
+        androidx.compose.ui.text.input.VisualTransformation.None,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -1395,6 +1398,7 @@ internal fun PiEditorField(
                 readOnly = readOnly,
                 singleLine = singleLine,
                 maxLines = maxLines,
+                visualTransformation = visualTransformation,
                 textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(PiTheme.palette.accent),
                 interactionSource = interaction,

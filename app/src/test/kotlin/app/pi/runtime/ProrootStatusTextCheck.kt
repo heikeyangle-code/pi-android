@@ -66,15 +66,31 @@ private const val MODE = "默认档"
 
 fun main() {
     // ================================================= 1. 基础句子与其它回退原因
+    // 生效的运行时必须一路传到句子里：缺省参数曾把 tawcroot 在跑时说成 proroot。
+    check(
+        "the in-use sentence names tawcroot when tawcroot is the engine",
+        RuntimeChoice.describe(EngineFallback.None, engine = GuestEngine.Tawcroot).startsWith("tawcroot"),
+        true,
+    )
+    check(
+        "the in-use sentence for proroot is not the tawcroot one",
+        RuntimeChoice.describe(EngineFallback.None, engine = GuestEngine.Proroot).startsWith("proroot"),
+        true,
+    )
+    check(
+        "the narrative carries the engine through for the in-use state",
+        ProrootProbeNarrative.summary(EngineFallback.None, emptyList(), engine = GuestEngine.Tawcroot).startsWith("tawcroot"),
+        true,
+    )
     check(
         "a refusal with no evidence says so instead of naming a stage",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, emptyList()),
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, emptyList(), engine = GuestEngine.Proroot),
         "$BASE（$MODE，缓存里没有逐阶段记录）",
     )
     check(
         "the refusal sentence is the base sentence plus a bracket",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, emptyList())
-            .startsWith(RuntimeChoice.describe(EngineFallback.ProbeNotPassed)),
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, emptyList(), engine = GuestEngine.Proroot)
+            .startsWith(RuntimeChoice.describe(EngineFallback.ProbeNotPassed, engine = GuestEngine.Proroot)),
         true,
     )
     check(
@@ -86,17 +102,17 @@ fun main() {
         "every other reason is passed through verbatim",
         EngineFallback.entries
             .filter { it != EngineFallback.ProbeNotPassed }
-            .all { ProrootProbeNarrative.summary(it, listOf("  guestpath=untranslated（errno=2）")) == RuntimeChoice.describe(it) },
+            .all { ProrootProbeNarrative.summary(it, listOf("  guestpath=untranslated（errno=2）"), engine = GuestEngine.Proroot) == RuntimeChoice.describe(it, engine = GuestEngine.Proroot) },
         true,
     )
     check(
         "尚未运行 says the verdict is missing, not that a launch is pending",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotRun, emptyList()),
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotRun, emptyList(), engine = GuestEngine.Proroot),
         "proot（探针尚未运行）",
     )
     check(
         "尚未运行 no longer promises anything about the next launch",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotRun, emptyList())
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotRun, emptyList(), engine = GuestEngine.Proroot)
             .let { !it.contains("下一次") && !it.contains("再下一次") },
         true,
     )
@@ -112,12 +128,12 @@ fun main() {
     )
     check(
         "an untranslated raw syscall names the raw stage and the phase line",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated),
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated, engine = GuestEngine.Proroot),
         "$BASE（$MODE·raw syscall：guestpath=untranslated（errno=2））",
     )
     check(
         "the stage it names is the one the report blames",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated)
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated, engine = GuestEngine.Proroot)
             .contains(ProrootRawProbe.UNTRANSLATED),
         true,
     )
@@ -127,7 +143,7 @@ fun main() {
     // lines (the cache key already pins a valid verdict to a 档).
     check(
         "the sentence names the mode in force",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated)
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated, engine = GuestEngine.Proroot)
             .contains(RuntimeChoice.PROROOT_SECCOMP.shortLabel),
         true,
     )
@@ -137,10 +153,12 @@ fun main() {
             EngineFallback.ProbeNotPassed,
             untranslated,
             ProrootSeccomp.Seccomp,
+            engine = GuestEngine.Proroot,
         ) == ProrootProbeNarrative.summary(
             EngineFallback.ProbeNotPassed,
             untranslated,
             ProrootSeccomp.NoSeccomp,
+            engine = GuestEngine.Proroot,
         ),
         false,
     )
@@ -195,13 +213,13 @@ fun main() {
     )
     check(
         "the launcher stage is quoted verbatim in the sentence",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launcherDied)
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launcherDied, engine = GuestEngine.Proroot)
             .contains("[proroot] bad bind format"),
         true,
     )
     check(
         "the launcher stage does not borrow the raw stage's name",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launcherDied)
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launcherDied, engine = GuestEngine.Proroot)
             .contains(ProrootProbeNarrative.STAGE_LAUNCH),
         true,
     )
@@ -290,7 +308,7 @@ fun main() {
             "/usr/local/bin/rg: No such file or directory, and the loader said a great deal more than this",
         ) + "\n" + toolMarker("search", "rg", 127, "No such file or directory"),
     ).describe().map { "  $it" }
-    val longSummary = ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, rawPassing + longTools)
+    val longSummary = ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, rawPassing + longTools, engine = GuestEngine.Proroot)
     val truncatedQuote = longSummary
         .substringAfter("${ProrootProbeNarrative.STAGE_TOOLS}${ProrootRawProbe.HEADER_SEPARATOR}")
         .removeSuffix("）")
@@ -314,7 +332,7 @@ fun main() {
     check(
         "every reason is one line",
         EngineFallback.entries.all { fallback ->
-            val text = ProrootProbeNarrative.summary(fallback, untranslated)
+            val text = ProrootProbeNarrative.summary(fallback, untranslated, engine = GuestEngine.Proroot)
             text.none { it == '\n' || it == '\r' } && text.length <= ProrootProbeNarrative.MAX_SUMMARY_CHARS
         },
         true,
@@ -324,6 +342,7 @@ fun main() {
         ProrootProbeNarrative.summary(
             EngineFallback.ProbeNotPassed,
             listOf("${ProrootRawProbe.NOT_RUN_HEADER}${ProrootRawProbe.HEADER_SEPARATOR}guest 里\n没有 perl"),
+            engine = GuestEngine.Proroot,
         ).none { it == '\n' },
         true,
     )

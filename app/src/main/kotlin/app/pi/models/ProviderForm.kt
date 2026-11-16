@@ -18,9 +18,17 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 data class ProviderForm(
     val id: String = "",
+    /** 显示名（`name`）；空 = 用 id。 */
+    val name: String = "",
     val baseUrl: String = "",
     val api: String = "",
     val apiKey: String = "",
+    /**
+     * `authHeader`：把解析出的 API Key 作为 `Authorization: Bearer …` 发出。要求 `apiKey` 存在
+     * （SDK 在组装供应商时检查：`authHeader requires a resolved API key`，原话会被带回）。
+     * 只有 true 才写；false 是 SDK 默认值，不写。
+     */
+    val authHeader: Boolean = false,
     /** 每行 `名称: 值`。 */
     val headersText: String = "",
     val models: List<ModelForm> = emptyList(),
@@ -33,8 +41,20 @@ data class ProviderForm(
         val acceptsImages: Boolean = false,
         val contextWindow: String = "",
         val maxTokens: String = "",
+        /**
+         * 价格，**美元 / 百万 token**（SDK 的 `ModelCostSchema`：`input` `output` `cacheRead` `cacheWrite`
+         * 四项**全部必填**）。空 = 没写。只要写了其中任何一项，就必须有输入与输出；缓存读写不填按 0 写出。
+         */
+        val costInput: String = "",
+        val costOutput: String = "",
+        val costCacheRead: String = "",
+        val costCacheWrite: String = "",
+        /** `cost` 里表单没有界面的字段（`tiers` 分档价），原样带回。 */
+        val costExtra: JsonObject = JsonObject(emptyMap()),
         val extra: JsonObject = JsonObject(emptyMap()),
-    )
+    ) {
+        val hasCost: Boolean get() = listOf(costInput, costOutput, costCacheRead, costCacheWrite).any { it.isNotBlank() }
+    }
 
     sealed interface Result {
         data class Ok(val json: JsonObject) : Result
@@ -47,9 +67,11 @@ data class ProviderForm(
         ids.firstOrNull { id -> ids.count { it == id } > 1 }?.let { return Result.Invalid("模型 ID 重复：$it") }
         val headers = parseHeaders(headersText) ?: return Result.Invalid("请求头每行要写成「名称: 值」。")
         val out = LinkedHashMap<String, JsonElement>(extra)
+        put(out, "name", name)
         put(out, "baseUrl", baseUrl)
         put(out, "api", api)
         put(out, "apiKey", apiKey)
+        if (authHeader) out["authHeader"] = JsonPrimitive(true) else out.remove("authHeader")
         if (headers.isEmpty()) out.remove("headers") else out["headers"] = JsonObject(headers.mapValues { JsonPrimitive(it.value) })
         val modelJson = ArrayList<JsonElement>()
         for (m in models) {
@@ -67,20 +89,67 @@ data class ProviderForm(
                 val n = t.toLongOrNull()?.takeIf { it > 0 } ?: return Result.Invalid("「${m.id}」的$label 要是正整数。")
                 o[key] = JsonPrimitive(n)
             }
+            // extra 里有 cost = 它不是对象（表单表达不了）：原样留着，不再碰。
+            if (!m.extra.containsKey("cost")) {
+                when (val cost = costJson(m)) {
+                    is CostResult.Invalid -> return Result.Invalid(cost.message)
+                    is CostResult.None -> o.remove("cost")
+                    is CostResult.Value -> o["cost"] = cost.json
+                }
+            }
             modelJson += JsonObject(o)
         }
         if (modelJson.isEmpty()) out.remove("models") else out["models"] = JsonArray(modelJson)
         return Result.Ok(JsonObject(out))
     }
 
+    private sealed interface CostResult {
+        data object None : CostResult
+        data class Value(val json: JsonObject) : CostResult
+        data class Invalid(val message: String) : CostResult
+    }
+
+    private fun costJson(m: ModelForm): CostResult {
+        if (!m.hasCost) return CostResult.None
+        val label = m.id.trim()
+        fun parse(text: String, what: String): Any? {
+            val t = text.trim()
+            if (t.isEmpty()) return null
+            val d = t.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+                ?: return CostResult.Invalid("「$label」的$what 要是不小于 0 的数字。")
+            return d
+        }
+        val parsed = listOf(
+            "input" to parse(m.costInput, "输入价格"),
+            "output" to parse(m.costOutput, "输出价格"),
+            "cacheRead" to parse(m.costCacheRead, "缓存读取价格"),
+            "cacheWrite" to parse(m.costCacheWrite, "缓存写入价格"),
+        )
+        parsed.forEach { (_, v) -> if (v is CostResult.Invalid) return v }
+        val byKey = parsed.associate { (k, v) -> k to (v as Double?) }
+        if (byKey["input"] == null || byKey["output"] == null) {
+            return CostResult.Invalid("「$label」的价格要同时填输入和输出（缓存读写不填按 0）。")
+        }
+        val out = LinkedHashMap<String, JsonElement>(m.costExtra)
+        for (key in listOf("input", "output", "cacheRead", "cacheWrite")) out[key] = number(byKey[key] ?: 0.0)
+        return CostResult.Value(JsonObject(out))
+    }
+
     companion object {
+        /** 整数价格写成整数（`3` 而不是 `3.0`），其余按原值。 */
+        private fun number(d: Double): JsonPrimitive =
+            if (d == Math.floor(d) && Math.abs(d) < 1e15) JsonPrimitive(d.toLong()) else JsonPrimitive(d)
+
         /** 已有 provider → 表单。认得的字段进表单，其余进 extra。 */
         fun from(id: String, provider: JsonObject): ProviderForm {
-            val known = setOf("baseUrl", "api", "apiKey", "headers", "models")
+            val known = setOf("name", "baseUrl", "api", "apiKey", "authHeader", "headers", "models")
             val headers = (provider["headers"] as? JsonObject)?.entries
                 ?.joinToString("\n") { (k, v) -> "$k: ${(v as? JsonPrimitive)?.content ?: v}" }.orEmpty()
             val models = (provider["models"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { m ->
-                val knownModel = setOf("id", "name", "reasoning", "input", "contextWindow", "maxTokens")
+                val knownModel = setOf("id", "name", "reasoning", "input", "contextWindow", "maxTokens", "cost")
+                // cost 不是对象时留在 extra（原样往返），是对象时拆进四个价格字段。
+                val costObj = m["cost"] as? JsonObject
+                val costKeys = setOf("input", "output", "cacheRead", "cacheWrite")
                 val input = (m["input"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
                 // input 里除了 text/image 还有别的值时，原样留在 extra，不被「只认图片」吞掉。
                 val inputIsPlain = input.all { it == "text" || it == "image" }
@@ -91,14 +160,25 @@ data class ProviderForm(
                     acceptsImages = "image" in input,
                     contextWindow = str(m["contextWindow"]),
                     maxTokens = str(m["maxTokens"]),
-                    extra = JsonObject(m.filterKeys { it !in knownModel || (it == "input" && !inputIsPlain) }),
+                    costInput = str(costObj?.get("input")),
+                    costOutput = str(costObj?.get("output")),
+                    costCacheRead = str(costObj?.get("cacheRead")),
+                    costCacheWrite = str(costObj?.get("cacheWrite")),
+                    costExtra = JsonObject(costObj?.filterKeys { it !in costKeys }.orEmpty()),
+                    extra = JsonObject(
+                        m.filterKeys {
+                            it !in knownModel || (it == "input" && !inputIsPlain) || (it == "cost" && costObj == null)
+                        },
+                    ),
                 )
             }
             return ProviderForm(
                 id = id,
+                name = str(provider["name"]),
                 baseUrl = str(provider["baseUrl"]),
                 api = str(provider["api"]),
                 apiKey = str(provider["apiKey"]),
+                authHeader = (provider["authHeader"] as? JsonPrimitive)?.content == "true",
                 headersText = headers,
                 models = models,
                 extra = JsonObject(provider.filterKeys { it !in known }),

@@ -207,7 +207,7 @@ fun main() {
     )
     check(
         "and the sentence names the same stage as the first recorded line",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, cached?.detail.orEmpty())
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, cached?.detail.orEmpty(), engine = GuestEngine.Proroot)
             .contains(ProrootProbeNarrative.STAGE_RAW) &&
             ProrootProbeNarrative.detailLines(EngineFallback.ProbeNotPassed, false, recordedFailure)
                 .first().startsWith(ProrootRawProbe.FAILURE_HEADER),
@@ -259,9 +259,9 @@ fun main() {
     )
     check(
         "and the row names the launch stage, not the raw one",
-        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launchFailure)
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launchFailure, engine = GuestEngine.Proroot)
             .contains(ProrootProbeNarrative.STAGE_LAUNCH) &&
-            !ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launchFailure)
+            !ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launchFailure, engine = GuestEngine.Proroot)
                 .contains(ProrootProbeNarrative.STAGE_RAW),
         true,
     )

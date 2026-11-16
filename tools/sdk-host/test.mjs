@@ -344,6 +344,17 @@ try {
   expect("model.cycle 非法 direction → bad_args", (await h.call("model.cycle", { direction: "sideways" })).error?.code === "bad_args");
   const lv = await h.call("thinking.levels");
   expect("thinking.levels 带 supportsThinking", lv.ok && Array.isArray(lv.data.levels) && typeof lv.data.supportsThinking === "boolean", JSON.stringify(lv.error ?? lv.data));
+  // ---- 目录刷新：SDK 的 errors 是 Map，不能 JSON.stringify（会变 {}）----
+  const rf = await h.call("auth.refreshModels");
+  expect("auth.refreshModels 返回 { aborted:boolean, errors:{providerId:string} }",
+    rf.ok && typeof rf.data.result?.aborted === "boolean" && rf.data.result?.errors && typeof rf.data.result.errors === "object" &&
+      Object.values(rf.data.result.errors).every((m) => typeof m === "string"),
+    JSON.stringify(rf.error ?? rf.data));
+  const { wireRefresh } = await import("../../app/src/main/assets/guest/sdk-host/commands/auth.mjs");
+  const wired = wireRefresh({ aborted: false, errors: new Map([["openrouter", new Error("fetch failed")], ["x", "plain"]]) });
+  expect("wireRefresh：Map<id, Error> 摊成 { id: message }（修前是 {}）",
+    wired.errors.openrouter === "fetch failed" && wired.errors.x === "plain" && wired.aborted === false, JSON.stringify(wired));
+  expect("wireRefresh：缺字段不炸", JSON.stringify(wireRefresh(undefined)) === '{"aborted":false,"errors":{}}');
   const cs = await h.call("cache.status");
   expect("cache.status 有 mode 与 status 字段", cs.ok && typeof cs.data.mode === "string" && "status" in cs.data, JSON.stringify(cs.error ?? cs.data));
   const cm = await h.call("cache.setMode", { mode: cs.data?.mode ?? "off" });

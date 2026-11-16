@@ -143,12 +143,23 @@ export function register(reg, { controller, hub }) {
   });
 
   // 重新拉各供应商的模型目录（要网络）。
+  //
+  // SDK 的 `refresh()` 返回 `{ aborted, errors: Map<providerId, Error> }`。以前这里直接
+  // `JSON.stringify(result)`：Map 会被写成 `{}`、Error 写成 `{}`，哪家拉失败了 App 一个字都看不到。
+  // 这里把 Map 摊成 `{ providerId: message }`，App 才能说出「哪几家没刷新成功、为什么」。
   reg.add("auth.refreshModels", async () => {
     const rt = controller.requireSession().modelRuntime;
     const result = await rt.refresh();
     hub.emit("auth.changed", { action: "refresh" });
-    return { result: JSON.parse(JSON.stringify(result ?? null, (_k, v) => (v instanceof Error ? { message: v.message } : v))) };
+    return { result: wireRefresh(result) };
   });
+}
+
+/** `ModelsRefreshResult` → 能过 JSON 的形状。 */
+export function wireRefresh(result) {
+  const errors = {};
+  for (const [providerId, error] of result?.errors ?? []) errors[providerId] = String(error?.message ?? error);
+  return { aborted: result?.aborted === true, errors };
 }
 
 function stripSignal(prompt) {

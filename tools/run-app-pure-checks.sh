@@ -1205,6 +1205,14 @@ run_harness provider-form \
   "$ROOT/app/src/main/kotlin/app/pi/models/ProviderForm.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
+# app.pi.ui.models: 「模型与供应商」页的全部判断（`ModelsPresentation.kt`，纯函数）：连接状态
+# （订阅 ≠ 任意 OAuth）、供应商分区与搜索、模型分组、价格/上下文文案、刷新结果、新增 id 的校验。
+# 页面只画这里算好的东西。
+run_harness models-presentation \
+  app.pi.ui.models.ModelsPresentationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/models/ModelsPresentationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/models/ModelsPresentation.kt"
+
 # app.pi.ui.extension: 扩展输出的两条**渲染判据**（`ExtensionTextLines.kt`，纯函数）：
 # 预格式化行（框线 / 列对齐双空格 / 超过 pi 默认 80 列的行 → 展开不换行 + 横向滚动）与
 # select 改开底部 sheet 的阈值（9 个选项起、或任一标签 > 36 列）。为什么必须在这里：两条

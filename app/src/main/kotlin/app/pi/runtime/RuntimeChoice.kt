@@ -394,7 +394,7 @@ object RuntimeChoice {
      * 一个：**此刻没有这个 revision 的探针结论**——正在测（那时状态行显示「正在测…」，读不到
      * 这句）、或上一次探测没能留下结论。它就说这一件事，不猜下一步。
      */
-    fun describe(fallback: EngineFallback, engine: GuestEngine = GuestEngine.Proroot): String = when (fallback) {
+    fun describe(fallback: EngineFallback, engine: GuestEngine): String = when (fallback) {
         EngineFallback.None -> if (engine == GuestEngine.Tawcroot) {
             "tawcroot（seccomp 陷阱 + 进程内模拟，开源）"
         } else {

@@ -1,5 +1,6 @@
 package app.pi.ui.models
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,8 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,25 +17,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.HostAdvanced
 import app.pi.host.HostAuth
 import app.pi.models.ProviderForm
 import app.pi.rpc.PiResponses
 import app.pi.ui.PiTopBar
-import app.pi.ui.components.PiSheet
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
-import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsChip
-import app.pi.ui.settings.PiSettingsEntryRow
-import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
-import app.pi.ui.settings.PiSettingsToggleRow
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -51,7 +44,8 @@ import kotlinx.serialization.json.JsonPrimitive
  *  - `model.list`：此刻可用的模型；
  *  - `models.config.*`：自定义供应商（`models.json`），保存时由 SDK 当校验器，非法回滚并带回原话。
  *
- * 没有任何手写的文件扫描、预设表、合并或「写完要重启」：写入立刻生效，目录由 SDK 刷新。
+ * 页面只负责把 [ModelsPresentation] 算好的东西画出来：分段、排序、状态词、价格与能力标签、刷新结果
+ * 那句话，都是那边的纯函数，各有 harness 钉着。写入立刻生效，目录由 SDK 刷新，没有「写完要重启」。
  */
 @Composable
 fun ModelsScreen(
@@ -66,33 +60,27 @@ fun ModelsScreen(
     var data by remember { mutableStateOf<Data?>(null) }
     var query by remember { mutableStateOf("") }
     var notice by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var refresh by remember { mutableStateOf<RefreshSummary?>(null) }
+    var showOthers by remember { mutableStateOf(false) }
     var openProvider by remember { mutableStateOf<String?>(null) }
-    var form by remember { mutableStateOf<ProviderForm?>(null) }
-    var formIsNew by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(false) }
+    var form by remember { mutableStateOf<FormRequest?>(null) }
 
     LaunchedEffect(reload) {
         val h = host()
-        data = if (h == null) null else {
-            val providers = runCatching { h.auth.providers() }
-            notice = providers.exceptionOrNull()?.let { "读取供应商失败：${it.message}" } ?: notice
-            Data(
-                providers = providers.getOrDefault(emptyList()),
-                models = runCatching { h.models() }.getOrDefault(emptyList()),
-                custom = runCatching { h.advanced.modelsConfig() }.getOrNull(),
-                current = h.currentModel(),
-            )
+        if (h == null) {
+            data = null
+            return@LaunchedEffect
         }
-    }
-
-    fun act(label: String, block: suspend (ModelsHost) -> Unit) {
-        val h = host() ?: run { notice = "引擎没在运行：$label 没有执行。"; return }
-        scope.launch {
-            busy = label
-            runCatching { block(h) }.onFailure { notice = "$label 失败：${it.message}" }
-            busy = null
-            reload++
-        }
+        val providers = runCatching { h.auth.providers() }
+        providers.exceptionOrNull()?.let { notice = "读取供应商失败：${it.message}" }
+        data = Data(
+            providers = providers.getOrDefault(emptyList()),
+            models = runCatching { h.models() }.getOrDefault(emptyList()),
+            custom = runCatching { h.advanced.modelsConfig() }.getOrNull(),
+            current = h.currentModel(),
+        )
     }
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
@@ -102,38 +90,53 @@ fun ModelsScreen(
             PiInfoNote("引擎没有在运行，这一页读不到模型与供应商。启动后再来。")
             return@Column
         }
-        val q = query.trim()
-        val matches = { p: HostAuth.Provider -> q.isEmpty() || p.name.contains(q, true) || p.id.contains(q, true) }
-        val configured = d.providers.filter { it.configured && matches(it) }
-        val others = d.providers.filter { !it.configured && matches(it) }
+
         val customIds = d.custom?.providers?.keys.orEmpty()
+        val facts = d.facts(customIds)
+        val names = d.providers.associate { it.id to it.name }
+        val sections = sectionProviders(facts, query)
+        val searching = query.isNotBlank()
+        val current = d.currentFacts()
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = PiSpacing.small * 2, bottom = contentPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(top = PiSpacing.small * 2, bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
-            notice?.let { n -> item(key = "notice") { PiSettingsCard { PiSettingsEntryRow(title = n, supporting = "点一下关掉", onClick = { notice = null }) } } }
-            busy?.let { b -> item(key = "busy") { SectionLabel("$b…") } }
+            notice?.let { n ->
+                item(key = "notice") {
+                    ModelsCard(onClick = { notice = null }) {
+                        Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(n, style = PiTheme.text.prose, color = PiTheme.palette.warning)
+                            Text("点一下关掉", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                        }
+                    }
+                }
+            }
 
+            // ---- 当前模型：整页最重的一块 ----
             item(key = "current") {
-                PiSettingsCard {
-                    val cur = d.current
-                    PiSettingsEntryRow(
-                        title = cur?.let { (p, id) -> d.models.firstOrNull { it.provider == p && it.id == id }?.name?.ifBlank { id } ?: id } ?: "没有选择模型",
-                        supporting = cur?.first?.let { "当前模型 · $it" } ?: "在下面的供应商里配置凭据，然后选一个模型",
-                    )
+                ModelsCard(accent = current != null) {
+                    Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("当前模型", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        if (current != null) {
+                            Text(current.title, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(names[current.provider]?.ifBlank { null } ?: current.provider, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            }
+                            TagRow(capabilityTags(current) + listOfNotNull(priceLabel(current.inputCost, current.outputCost)?.let { "$it /M" }))
+                        } else {
+                            Text("还没有选择模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                            Text("先连接一个供应商，再选一个模型。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PrimaryAction(if (current == null) "选择模型" else "更换模型", enabled = d.models.isNotEmpty(), onClick = { picker = true })
+                            PiSettingsChip(text = "默认与推理", onClick = onOpenDefaults)
+                        }
+                    }
                 }
             }
-            item(key = "defaults") {
-                PiSettingsCard {
-                    PiSettingsEntryRow(
-                        title = "默认模型与推理",
-                        supporting = "默认模型 · 默认思考等级 · 循环模型 · 思考预算",
-                        onClick = onOpenDefaults,
-                    )
-                }
-            }
+
             item(key = "search") {
                 PiEditorField(
                     value = query,
@@ -144,39 +147,105 @@ fun ModelsScreen(
                 )
             }
 
-            if (configured.isNotEmpty()) {
-                item(key = "l:conf") { SectionLabel("已配置（${configured.size}）") }
-                item(key = "c:conf") { ProviderCard(configured, d, customIds) { openProvider = it } }
+            if (sections.subscriptionOffers.isNotEmpty()) {
+                item(key = "l:sub") { ModelsSectionLabel("用订阅账号登录") }
+                item(key = "c:sub") { ProviderCard(sections.subscriptionOffers) { openProvider = it } }
             }
-            if (others.isNotEmpty()) {
-                item(key = "l:other") { SectionLabel("其他供应商（${others.size}）") }
-                item(key = "c:other") { ProviderCard(others, d, customIds) { openProvider = it } }
+            if (sections.connected.isNotEmpty()) {
+                item(key = "l:conn") { ModelsSectionLabel("已连接（${sections.connected.size}）") }
+                item(key = "c:conn") { ProviderCard(sections.connected) { openProvider = it } }
             }
-            if (configured.isEmpty() && others.isEmpty()) {
-                item(key = "none") { PiSettingsCard { PiSettingsEntryRow(title = "没有匹配的供应商", supporting = "换个词，或添加自定义供应商。") } }
+            if (sections.others.isNotEmpty()) {
+                val open = showOthers || searching
+                item(key = "l:other") {
+                    ModelsSectionLabel(
+                        "其他供应商（${sections.others.size}）",
+                        trailing = if (searching) null else ({
+                            PiSettingsChip(text = if (open) "收起" else "浏览全部", onClick = { showOthers = !showOthers })
+                        }),
+                    )
+                }
+                if (open) item(key = "c:other") { ProviderCard(sections.others) { openProvider = it } }
             }
-
-            item(key = "l:custom") { SectionLabel("自定义供应商（models.json）") }
-            item(key = "c:custom") {
-                PiSettingsCard {
-                    d.custom?.providers.orEmpty().entries.forEachIndexed { i, (id, json) ->
-                        if (i > 0) PiSettingsHairline()
-                        PiSettingsEntryRow(
-                            title = id,
-                            supporting = (json["baseUrl"] as? JsonPrimitive)?.content ?: "编辑",
-                            onClick = { form = ProviderForm.from(id, json); formIsNew = false },
-                        )
+            if (sections.connected.isEmpty() && sections.subscriptionOffers.isEmpty() && sections.others.isEmpty()) {
+                item(key = "none") {
+                    ModelsCard {
+                        Column(Modifier.padding(ModelsCardPadding)) {
+                            Text("没有匹配的供应商", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                            Text("换个词，或在下面添加自定义供应商。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                        }
                     }
-                    if (!d.custom?.providers.isNullOrEmpty()) PiSettingsHairline()
-                    PiSettingsEntryRow(title = "添加自定义供应商…", supporting = "OpenAI 兼容、Anthropic 兼容等任意端点", onClick = { form = ProviderForm(api = "openai-completions"); formIsNew = true })
-                    d.custom?.error?.let { e -> PiSettingsHairline(); PiSettingsEntryRow(title = "models.json 有问题", supporting = e) }
                 }
             }
 
-            item(key = "l:ops") { SectionLabel("目录") }
+            // ---- 自定义（models.json） ----
+            item(key = "l:custom") { ModelsSectionLabel("自定义供应商") }
+            item(key = "c:custom") {
+                ModelsCard {
+                    Column {
+                        val custom = d.custom?.providers.orEmpty()
+                        custom.entries.forEach { (id, json) ->
+                            val builtin = d.providers.any { it.id == id }
+                            CustomRow(
+                                id = id,
+                                name = names[id]?.takeIf { it.isNotBlank() && it != id },
+                                detail = (json["baseUrl"] as? JsonPrimitive)?.content,
+                                overrides = builtin,
+                                onClick = { form = FormRequest(ProviderForm.from(id, json), isNew = false) },
+                            )
+                            ModelsDivider()
+                        }
+                        ActionRow(
+                            title = "添加自定义供应商",
+                            detail = "OpenAI 兼容、Anthropic 兼容等任意端点，也可以只改某个内置供应商的地址",
+                            onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
+                        )
+                        d.custom?.error?.let { e ->
+                            ModelsDivider()
+                            Column(Modifier.padding(ModelsCardPadding)) {
+                                Text("models.json 有问题", style = PiTheme.text.prose, color = PiTheme.palette.error)
+                                Text(e, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---- 目录 ----
+            item(key = "l:ops") { ModelsSectionLabel("目录") }
             item(key = "c:ops") {
-                PiSettingsCard {
-                    PiSettingsEntryRow(title = "刷新模型目录", supporting = "重新向各供应商拉取模型列表（需要网络）", onClick = { act("刷新模型目录") { it.auth.refreshModels() } })
+                ModelsCard {
+                    Column {
+                        ActionRow(
+                            title = if (busy) "正在刷新…" else "刷新模型目录",
+                            detail = "重新向各供应商拉取模型列表（需要网络）",
+                            enabled = !busy,
+                            onClick = {
+                                val h = host() ?: run { notice = "引擎没在运行：刷新没有执行。"; return@ActionRow }
+                                scope.launch {
+                                    busy = true
+                                    runCatching { h.auth.refreshModels() }
+                                        .onSuccess { refresh = refreshSummary(it) }
+                                        .onFailure { notice = "刷新失败：${it.message}" }
+                                    busy = false
+                                    reload++
+                                }
+                            },
+                        )
+                        refresh?.let { r ->
+                            ModelsDivider()
+                            Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    r.sentence(names),
+                                    style = PiTheme.text.meta,
+                                    color = if (r.ok) PiTheme.palette.success else PiTheme.palette.warning,
+                                )
+                                r.detail(names).forEach {
+                                    Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -186,19 +255,37 @@ fun ModelsScreen(
             if (p == null) openProvider = null else ProviderSheet(
                 host = host,
                 provider = p,
-                models = d.models.filter { it.provider == p.id },
+                facts = facts.first { it.id == id },
+                available = d.models.filter { it.provider == p.id },
                 current = d.current,
                 custom = d.custom?.providers?.get(p.id),
+                onChanged = { reload++ },
                 onDismiss = { openProvider = null; reload++ },
-                onEditCustom = { json -> openProvider = null; form = ProviderForm.from(p.id, json); formIsNew = false },
+                onEditCustom = { json -> openProvider = null; form = FormRequest(ProviderForm.from(p.id, json), isNew = false) },
+                onOverrideBuiltin = {
+                    openProvider = null
+                    form = FormRequest(ProviderForm(id = p.id, name = ""), isNew = true)
+                },
             )
         }
 
-        form?.let { f ->
-            FormSheet(
-                initial = f,
-                isNew = formIsNew,
-                existingIds = customIds + d.providers.map { it.id },
+        if (picker) {
+            ModelPickerSheet(
+                host = host,
+                models = d.models.map { it.facts() },
+                providerNames = names,
+                current = d.current,
+                onDismiss = { picker = false },
+                onSwitched = { msg -> notice = msg; reload++ },
+            )
+        }
+
+        form?.let { req ->
+            ProviderFormSheet(
+                initial = req.form,
+                isNew = req.isNew,
+                customIds = customIds,
+                knownIds = d.providers.map { it.id }.toSet(),
                 host = host,
                 onDismiss = { form = null },
                 onDone = { form = null; reload++ },
@@ -207,360 +294,92 @@ fun ModelsScreen(
     }
 }
 
+private class FormRequest(val form: ProviderForm, val isNew: Boolean)
+
 private class Data(
     val providers: List<HostAuth.Provider>,
     val models: List<PiResponses.ModelInfo>,
     val custom: HostAdvanced.ModelsConfig?,
     val current: Pair<String, String>?,
+) {
+    fun facts(customIds: Set<String>): List<ProviderFacts> = providers.map { p ->
+        ProviderFacts(
+            id = p.id,
+            name = p.name,
+            configured = p.configured,
+            usingOAuth = p.usingOAuth,
+            usingSubscription = p.usingSubscription,
+            source = p.statusSource,
+            offersSubscription = p.isSubscription,
+            modelCount = models.count { it.provider == p.id },
+            custom = p.id in customIds,
+        )
+    }
+
+    fun currentFacts(): ModelFacts? = current?.let { (p, id) ->
+        models.firstOrNull { it.provider == p && it.id == id }?.facts()
+            ?: ModelFacts(p, id, id, false, false, null, null, null)
+    }
+}
+
+internal fun PiResponses.ModelInfo.facts() = ModelFacts(
+    provider = provider.orEmpty(),
+    id = id,
+    name = name,
+    reasoning = reasoning,
+    images = acceptsImages,
+    contextWindow = contextWindow,
+    inputCost = inputCost,
+    outputCost = outputCost,
 )
 
 @Composable
-private fun ProviderCard(
-    list: List<HostAuth.Provider>,
-    d: Data,
-    customIds: Set<String>,
-    onOpen: (String) -> Unit,
-) {
-    PiSettingsCard {
-        list.forEachIndexed { i, p ->
-            if (i > 0) PiSettingsHairline()
-            val count = d.models.count { it.provider == p.id }
-            // 订阅 ≠ 任意 OAuth：只有 SDK 的 isUsingSubscription 才叫「订阅登录」。
-            val state = when {
-                p.usingSubscription -> "订阅登录"
-                p.usingOAuth -> "网页登录"
-                p.configured -> when (p.statusSource) {
-                    "stored" -> "已保存凭据"
-                    "environment" -> "环境变量"
-                    "runtime" -> "临时 Key"
-                    else -> "已配置"
-                }
-                else -> "未配置"
+private fun ProviderCard(list: List<ProviderFacts>, onOpen: (String) -> Unit) {
+    ModelsCard {
+        Column {
+            list.forEachIndexed { i, p ->
+                if (i > 0) ModelsDivider()
+                ProviderRow(p, onClick = { onOpen(p.id) })
             }
-            PiSettingsEntryRow(
-                title = p.name,
-                supporting = listOfNotNull(
-                    state,
-                    if (count > 0) "$count 个模型" else null,
-                    if (p.id in customIds) "自定义" else null,
-                    if (p.isSubscription && !p.configured) "支持订阅账号" else null,
-                ).joinToString(" · "),
-                onClick = { onOpen(p.id) },
+        }
+    }
+}
+
+@Composable
+private fun CustomRow(id: String, name: String?, detail: String?, overrides: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = ModelsCardPadding, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ProviderAvatar(id, name ?: id)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(name ?: id, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(if (overrides) "覆盖内置" else null, detail).joinToString(" · ").ifEmpty { "编辑" },
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.dim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-    }
-}
-
-// ------------------------------------------------------------------ 供应商面板 + 登录
-
-private class Login(
-    val loginId: String,
-    val lines: List<String> = emptyList(),
-    val url: String? = null,
-    val code: String? = null,
-    val prompt: HostAuth.AuthPrompt? = null,
-    val error: String? = null,
-)
-
-@Composable
-private fun ProviderSheet(
-    host: () -> ModelsHost?,
-    provider: HostAuth.Provider,
-    models: List<PiResponses.ModelInfo>,
-    current: Pair<String, String>?,
-    custom: kotlinx.serialization.json.JsonObject?,
-    onDismiss: () -> Unit,
-    onEditCustom: (kotlinx.serialization.json.JsonObject) -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
-    val uri = LocalUriHandler.current
-    var key by remember { mutableStateOf("") }
-    var login by remember { mutableStateOf<Login?>(null) }
-    var promptText by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf<String?>(null) }
-    var configured by remember { mutableStateOf(provider.configured) }
-    var showAll by remember { mutableStateOf(false) }
-    var modelQuery by remember { mutableStateOf("") }
-    var picked by remember { mutableStateOf<PiResponses.ModelInfo?>(null) }
-    // 目录里这家的全部模型：还没登录也看得到它有什么（`model.list {all, provider}`）。读不到就退回
-    // 调用方给的「可用模型」，不留空白。
-    var catalog by remember { mutableStateOf<List<PiResponses.ModelInfo>?>(null) }
-    LaunchedEffect(provider.id, configured) {
-        catalog = host()?.let { h -> runCatching { h.catalog(provider.id) }.getOrNull() }
-    }
-    val allModels = catalog ?: models
-
-    // 登录期间的事件与提问：只收属于这次 loginId 的。
-    val active = login?.loginId
-    LaunchedEffect(active) {
-        val h = host() ?: return@LaunchedEffect
-        if (active == null) return@LaunchedEffect
-        launch {
-            h.events.collect { e ->
-                val ev = HostAuth.authEvent(e)?.takeIf { it.loginId == active } ?: return@collect
-                val cur = login ?: return@collect
-                login = Login(
-                    loginId = cur.loginId,
-                    lines = (cur.lines + listOfNotNull(ev.message)).takeLast(6),
-                    url = ev.url ?: cur.url,
-                    code = ev.code ?: cur.code,
-                    prompt = cur.prompt,
-                    error = cur.error,
-                )
-            }
-        }
-        h.requests.collect { r ->
-            val pr = HostAuth.authPrompt(r)?.takeIf { it.loginId == active } ?: return@collect
-            val cur = login ?: return@collect
-            promptText = ""
-            login = Login(cur.loginId, cur.lines, cur.url, cur.code, pr, cur.error)
-        }
-    }
-
-    PiSheet(onDismiss = onDismiss, fullHeight = true) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
-            Text(provider.name, style = PiTheme.text.prose, color = PiTheme.palette.text)
-            Text(provider.id + if (configured) " · 已配置" else " · 未配置", style = PiTheme.text.meta, color = PiTheme.palette.muted)
-            note?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning, modifier = Modifier.padding(top = PiSpacing.small)) }
-
-            if (provider.supportsApiKey) {
-                Text("API Key", style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.gutter))
-                PiEditorField(value = key, onValueChange = { key = it }, placeholder = if (configured) "已保存；输入新 Key 覆盖" else "粘贴 API Key")
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), modifier = Modifier.padding(top = PiSpacing.small)) {
-                    PiSettingsChip(text = "保存", enabled = key.isNotBlank(), onClick = {
-                        val h = host() ?: run { note = "引擎没在运行。"; return@PiSettingsChip }
-                        scope.launch {
-                            runCatching { h.auth.setApiKey(provider.id, key.trim()) }
-                                .onSuccess { configured = true; key = ""; note = "已保存。" }
-                                .onFailure { note = "保存失败：${it.message}" }
-                        }
-                    })
-                }
-            }
-
-            provider.oauth?.let { oauth ->
-                val l = login
-                Text(oauth.name, style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.gutter))
-                if (l == null) {
-                    PiSettingsChip(text = oauth.loginLabel ?: (if (oauth.isSubscription) "用订阅账号登录" else "登录"), onClick = {
-                        val h = host() ?: run { note = "引擎没在运行。"; return@PiSettingsChip }
-                        val id = "l" + System.currentTimeMillis().toString(36)
-                        login = Login(id)
-                        scope.launch {
-                            runCatching { h.auth.login(provider.id, "oauth", id) }
-                                .onSuccess { configured = true; login = null; note = "登录成功。" }
-                                .onFailure { login = Login(id, error = it.message ?: "登录失败") }
-                        }
-                    })
-                } else {
-                    l.lines.forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.text) }
-                    l.url?.let { url ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), modifier = Modifier.padding(top = PiSpacing.small)) {
-                            PiSettingsChip(text = "打开浏览器", onClick = { runCatching { uri.openUri(url) } })
-                            PiSettingsChip(text = "复制链接", onClick = { clipboard.setText(AnnotatedString(url)) })
-                        }
-                    }
-                    l.code?.let { code ->
-                        Text(code, style = PiTheme.text.monoSmall, color = PiTheme.palette.accent, modifier = Modifier.padding(top = PiSpacing.small))
-                        PiSettingsChip(text = "复制验证码", onClick = { clipboard.setText(AnnotatedString(code)) })
-                    }
-                    l.prompt?.let { pr ->
-                        Text(pr.message, style = PiTheme.text.prose, color = PiTheme.palette.text, modifier = Modifier.padding(top = PiSpacing.small))
-                        PiEditorField(value = promptText, onValueChange = { promptText = it }, placeholder = pr.placeholder)
-                        PiSettingsChip(text = "提交", onClick = {
-                            val h = host() ?: return@PiSettingsChip
-                            scope.launch {
-                                runCatching { h.answer(pr.requestId, promptText, false) }
-                                login = Login(l.loginId, l.lines, l.url, l.code, null, l.error)
-                            }
-                        })
-                    }
-                    l.error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error, modifier = Modifier.padding(top = PiSpacing.small)) }
-                    PiSettingsChip(text = if (l.error == null) "取消登录" else "关闭", onClick = {
-                        val h = host()
-                        if (l.error == null && h != null) scope.launch { runCatching { h.auth.cancel(l.loginId) } }
-                        login = null
-                    })
-                }
-            }
-
-            if (configured) {
-                PiSettingsChip(
-                    text = "退出登录 / 删除凭据",
-                    onClick = {
-                        val h = host() ?: return@PiSettingsChip
-                        scope.launch {
-                            runCatching { h.auth.logout(provider.id) }
-                                .onSuccess { configured = false; note = "已删除凭据。" }
-                                .onFailure { note = "失败：${it.message}" }
-                        }
-                    },
-                )
-            }
-            custom?.let { c -> PiSettingsChip(text = "编辑自定义供应商…", onClick = { onEditCustom(c) }) }
-
-            val q = modelQuery.trim()
-            val filtered = allModels.filter { q.isEmpty() || it.id.contains(q, true) || it.name.contains(q, true) }
-            Text("模型（${allModels.size}）", style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.gutter))
-            if (!configured && allModels.isNotEmpty()) {
-                Text("先在上面配置凭据，才能选用这些模型。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
-            }
-            if (allModels.isEmpty()) {
-                Text("目录里没有这个供应商的模型——刷新目录，或在自定义供应商里添加。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
-            }
-            if (allModels.size > MODEL_PREVIEW) {
-                PiEditorField(
-                    value = modelQuery,
-                    onValueChange = { modelQuery = it; showAll = false },
-                    placeholder = "搜索这家的模型",
-                    modifier = Modifier.padding(top = PiSpacing.small),
-                )
-            }
-            picked?.let { m ->
-                // 选一个模型要回答一个问题：只这次会话用，还是以后都默认用它。SDK 的 setModel 默认只改本会话
-                // （persist 才写 settings.json），所以这里把两条路都摆出来，不替人选。
-                PiSettingsCard {
-                    Column(Modifier.padding(PiSettingsMetrics.pageHorizontal)) {
-                        Text(m.name.ifBlank { m.id }, style = PiTheme.text.prose, color = PiTheme.palette.text)
-                        Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), modifier = Modifier.padding(top = PiSpacing.small)) {
-                            for ((label, persist) in listOf("本次会话使用" to false, "设为默认并使用" to true)) {
-                                PiSettingsChip(text = label, onClick = {
-                                    val h = host() ?: run { note = "引擎没在运行。"; return@PiSettingsChip }
-                                    scope.launch {
-                                        runCatching { h.selectModel(m.provider.orEmpty(), m.id, persist) }
-                                            .onSuccess { note = (if (persist) "已设为默认并切换到 " else "已切换到 ") + m.name.ifBlank { m.id } + "。"; picked = null }
-                                            .onFailure { note = "切换失败：${it.message}" }
-                                    }
-                                })
-                            }
-                            PiSettingsChip(text = "取消", onClick = { picked = null })
-                        }
-                    }
-                }
-            }
-            val shown = if (showAll) filtered else filtered.take(MODEL_PREVIEW)
-            shown.forEach { m ->
-                val isCurrent = current?.let { it.first == m.provider && it.second == m.id } == true
-                PiSettingsEntryRow(
-                    title = m.name.ifBlank { m.id },
-                    supporting = listOfNotNull(
-                        if (isCurrent) "当前" else null,
-                        if (m.reasoning) "推理" else null,
-                        if (m.acceptsImages) "看图" else null,
-                        m.contextWindow?.let { "${it / 1000}K 上下文" },
-                        m.inputCost?.let { c -> m.outputCost?.let { o -> "$$c / $$o 每百万 token" } },
-                    ).joinToString(" · ").ifEmpty { null },
-                    // 没配置凭据的供应商，模型只读：点了也选不了（SDK 的 model.set 会拒绝），不如不给点。
-                    onClick = if (configured) ({ picked = m }) else null,
-                )
-            }
-            if (!showAll && filtered.size > MODEL_PREVIEW) {
-                PiSettingsChip(text = "显示全部 ${filtered.size} 个", onClick = { showAll = true })
-            }
-            if (q.isNotEmpty() && filtered.isEmpty()) {
-                Text("没有匹配「$q」的模型。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ 自定义供应商表单
-
-@Composable
-private fun FormSheet(
-    initial: ProviderForm,
-    isNew: Boolean,
-    existingIds: Set<String>,
-    host: () -> ModelsHost?,
-    onDismiss: () -> Unit,
-    onDone: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var f by remember { mutableStateOf(initial) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var saving by remember { mutableStateOf(false) }
-
-    PiSheet(onDismiss = onDismiss, fullHeight = true) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
-            Text(if (isNew) "添加自定义供应商" else "编辑 ${initial.id}", style = PiTheme.text.prose, color = PiTheme.palette.text)
-            if (isNew) {
-                Field("名称（ID）", f.id, "例如 my-proxy") { f = f.copy(id = it) }
-            }
-            Field("Base URL", f.baseUrl, "https://example.com/v1") { f = f.copy(baseUrl = it) }
-            Field("协议（api）", f.api, "openai-completions") { f = f.copy(api = it) }
-            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                for (api in API_SUGGESTIONS) PiSettingsChip(text = api.substringBefore('-'), active = f.api == api, onClick = { f = f.copy(api = api) })
-            }
-            Field("API Key", f.apiKey, "密钥，或环境变量名，或 !命令") { f = f.copy(apiKey = it) }
-            Field("请求头（每行 名称: 值）", f.headersText, "X-Org: abc", singleLine = false) { f = f.copy(headersText = it) }
-
-            Text("模型", style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.gutter))
-            f.models.forEachIndexed { i, m ->
-                PiSettingsCard {
-                    Column(Modifier.padding(PiSettingsMetrics.pageHorizontal)) {
-                        Field("模型 ID", m.id, "gpt-x") { v -> f = f.copy(models = f.models.mapIndexed { j, x -> if (j == i) x.copy(id = v) else x }) }
-                        Field("显示名（可空）", m.name, "") { v -> f = f.copy(models = f.models.mapIndexed { j, x -> if (j == i) x.copy(name = v) else x }) }
-                        PiSettingsToggleRow("推理模型", null, m.reasoning, { v -> f = f.copy(models = f.models.mapIndexed { j, x -> if (j == i) x.copy(reasoning = v) else x }) })
-                        PiSettingsToggleRow("接受图片", null, m.acceptsImages, { v -> f = f.copy(models = f.models.mapIndexed { j, x -> if (j == i) x.copy(acceptsImages = v) else x }) })
-                        Field("上下文窗口（token，可空）", m.contextWindow, "128000") { v -> f = f.copy(models = f.models.mapIndexed { j, x -> if (j == i) x.copy(contextWindow = v) else x }) }
-                        Field("最大输出（token，可空）", m.maxTokens, "8192") { v -> f = f.copy(models = f.models.mapIndexed { j, x -> if (j == i) x.copy(maxTokens = v) else x }) }
-                        PiSettingsChip(text = "删除这个模型", onClick = { f = f.copy(models = f.models.filterIndexed { j, _ -> j != i }) })
-                    }
-                }
-            }
-            PiSettingsChip(text = "添加模型", onClick = { f = f.copy(models = f.models + ProviderForm.ModelForm()) })
-
-            error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error, modifier = Modifier.padding(top = PiSpacing.gutter)) }
-            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), modifier = Modifier.padding(top = PiSpacing.gutter, bottom = PiSpacing.gutter)) {
-                PiSettingsChip(text = if (saving) "保存中…" else "保存", enabled = !saving, onClick = {
-                    val id = f.id.trim()
-                    if (id.isEmpty()) { error = "名称不能为空。"; return@PiSettingsChip }
-                    if (isNew && id in existingIds) { error = "已经有叫「$id」的供应商。"; return@PiSettingsChip }
-                    val h = host() ?: run { error = "引擎没在运行。"; return@PiSettingsChip }
-                    when (val r = f.toJson()) {
-                        is ProviderForm.Result.Invalid -> error = r.message
-                        is ProviderForm.Result.Ok -> {
-                            saving = true
-                            scope.launch {
-                                // 校验是 SDK 的事：非法会回滚，并带回字段精确的原话。
-                                runCatching { h.advanced.setProvider(id, r.json) }
-                                    .onSuccess { onDone() }
-                                    .onFailure { error = it.message; saving = false }
-                            }
-                        }
-                    }
-                })
-                if (!isNew) {
-                    PiSettingsChip(text = "删除供应商", onClick = {
-                        val h = host() ?: return@PiSettingsChip
-                        scope.launch {
-                            runCatching { h.advanced.removeProvider(initial.id) }
-                                .onSuccess { onDone() }
-                                .onFailure { error = it.message }
-                        }
-                    })
-                }
-            }
-        }
+        Text("›", style = PiTheme.text.prose, color = PiTheme.palette.dim)
     }
 }
 
 @Composable
-private fun Field(label: String, value: String, placeholder: String, singleLine: Boolean = true, onChange: (String) -> Unit) {
-    Text(label, style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.padding(top = PiSpacing.small))
-    PiEditorField(value = value, onValueChange = onChange, placeholder = placeholder, singleLine = singleLine, minHeight = if (singleLine) null else 72.dp)
+private fun ActionRow(title: String, detail: String, onClick: () -> Unit, enabled: Boolean = true) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = ModelsCardPadding, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(title, style = PiTheme.text.prose, color = if (enabled) PiTheme.palette.accent else PiTheme.palette.muted)
+        Text(detail, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+    }
 }
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        modifier = Modifier.padding(start = PiSettingsMetrics.pageHorizontal + PiSpacing.small, end = PiSettingsMetrics.pageHorizontal),
-        style = PiTheme.text.meta,
-        color = PiTheme.palette.muted,
-    )
-}
-
-private const val MODEL_PREVIEW = 12
-private val API_SUGGESTIONS = listOf("openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai")
