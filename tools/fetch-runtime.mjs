@@ -740,7 +740,7 @@ const ARTIFACTS = {
     why: "glibc 2.39 userland — the reason npm's linux-arm64 prebuilds work",
   },
   node: {
-    url: "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-arm64.tar.xz",
+    url: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.xz",
     kind: "tar.xz",
     why: "pi requires Node >= 22.19; official glibc build",
   },

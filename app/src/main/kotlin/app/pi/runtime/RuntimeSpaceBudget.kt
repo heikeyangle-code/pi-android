@@ -24,7 +24,7 @@ package app.pi.runtime
  * bytes counted:
  *
  *  - `ubuntu-base-24.04.3-base-arm64.tar.gz` 29,865,086 B -> 100,694,073 B;
- *  - `node-v24.19.0-linux-arm64.tar.xz`      30,553,480 B -> 194,612,147 B;
+ *  - `node-v24.22.1-linux-arm64.tar.xz`      30,978,868 B -> 198,255,017 B;
  *  - `pi-engine.tgz` (`--omit=dev --omit=optional`) 23,278,289 B -> ~144 MB tree.
  *
  * That is **> 438 MB** for the three large payloads alone, before git/ripgrep/fd,
