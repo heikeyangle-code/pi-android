@@ -100,8 +100,6 @@ internal fun ShellBlock(
     var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by rememberSaveable { mutableStateOf(false) }
     val pending = state == ToolState.Running
-    // 默认折叠只有标题；例外：运行中看得到尾部进度，失败看得到原因。
-    val peek = pending || state == ToolState.Failed
     val command = remember(item.args) { argString(item.args, "command").orEmpty() }
     val timeout = remember(item.args) { argInt(item.args, "timeout") }
     val exitCode = remember(item.exitCode, item.output) {
@@ -157,8 +155,8 @@ internal fun ShellBlock(
     // above: a collapsed-then-expanded card that was disposed in between re-split the whole
     // result for a 5-line answer, and this is the row most likely to be recycled while the
     // reader scrolls a run of shell calls.
-    val painted = remember(bodyText, fullOutput, expanded, peek) {
-        if (!expanded && !peek) {
+    val painted = remember(bodyText, fullOutput, expanded) {
+        if (!expanded) {
             ""
         } else {
             ParseCaches.tail(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
@@ -237,13 +235,13 @@ internal fun ShellBlock(
                 // not cosmetic — five *logical* lines wrap to a varying number of rows as the
                 // tail slides, so the card's height used to change while a command streamed and
                 // everything below it moved with it.
-                if ((expanded || peek) && bodyText.isNotEmpty()) {
+                if (expanded && bodyText.isNotEmpty()) {
                     ShellPreviewBody(
                         text = painted,
                         totalLines = lines,
                         fullOutput = fullOutput,
                         color = palette.bodyOnTool,
-                        onExpandAll = { expanded = true; fullOutput = true },
+                        onExpandAll = { fullOutput = true },
                     )
                 }
                 // A settled command with no output says so in the footer ([toolFooterText]),
@@ -261,7 +259,7 @@ internal fun ShellBlock(
                 // It is the same information as the sentence pi's bash tool appends to its own
                 // output, so it appears once: [stripFullOutputFooter] removes that sentence from
                 // the body first (`:59-64`), and nothing else in this card prints it.
-                if ((expanded || peek) && notice != null) {
+                if (expanded && notice != null) {
                     ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
                 ToolImages(item.images, onImageClick)
