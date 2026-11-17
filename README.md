@@ -138,6 +138,8 @@ Bring the Pi ecosystem into a mobile environment.
 
 The project supports Pi-oriented customization through extensions, skills, prompts, and themes, with the goal of preserving compatibility with the upstream agent architecture.
 
+All of it has one entry point in the app (设置 → 扩展与资源): extensions, skills, prompts, themes, context files, packages, MCP servers and project trust. Each entry names the real path it came from and whether it is project-level or global — there is no private store, because what you install is a file in the workspace or in pi's agent directory.
+
 ### Configure your own models
 
 Use supported provider presets or configure a custom OpenAI-compatible endpoint.
@@ -279,6 +281,12 @@ node tools/sdk-host/test.mjs
 
 bash tools/run-app-pure-checks.sh
 ```
+
+### What a green build does and does not prove
+
+Every push runs the protocol, APK (`targetSdk` 28 and 36), upstream-contract, pure-logic, comment, UI-consistency and TAWCROOT jobs. Green means: it compiles, the contract against the pinned pi version still holds, and everything that can be checked without a device passes.
+
+It does not mean every screen has been exercised on a phone. Runtime switching, the three backends, extension UI and other device-level behaviour are verified by hand on real hardware — and the TAWCROOT backend is the least proven of the three, still being stabilised.
 
 For SDK Host implementation details, see:
 
