@@ -238,6 +238,20 @@ export class Controller {
     };
   }
 
+  /**
+   * 一批目录各自的信任结论（项目切换列表用）。同一个 `#projectTrusted` 顺序，所以与切过去之后
+   * 看到的一致；只读，不建会话、不动信任库。目录名不是字符串或不是绝对路径的忽略。
+   */
+  trustOf(cwds) {
+    const out = {};
+    for (const cwd of Array.isArray(cwds) ? cwds.slice(0, 200) : []) {
+      if (typeof cwd !== "string" || !cwd.startsWith("/")) continue;
+      const t = this.#projectTrusted(cwd);
+      out[cwd] = { trusted: t.value, undecided: t.undecided, source: t.source };
+    }
+    return out;
+  }
+
   #pickSessionManager(sdk, cwd, sessionDir, sel) {
     const { SessionManager } = sdk;
     if (typeof sel.file === "string") return SessionManager.open(sel.file, sessionDir);

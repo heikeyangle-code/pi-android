@@ -48,6 +48,26 @@ class HostResources(private val commands: () -> HostCommands?) {
     /** 项目信任的现状（`project.trustState`）：结论、来源、记录、默认策略。 */
     suspend fun trustState(): Parsed<PiProjectTrust.State> = trust { it.trustState() }
 
+    /**
+     * 一批项目目录（guest 路径）各自的信任结论，项目切换列表用。读不到（引擎没起 / 宿主出错）
+     * 返回空表：列表照常显示，只是不带信任徽标。值：`true` 信任 / `false` 不信任 / `null` 待表态。
+     */
+    suspend fun trustOf(cwds: List<String>): Map<String, Boolean?> {
+        if (cwds.isEmpty()) return emptyMap()
+        val c = commands() ?: return emptyMap()
+        return try {
+            val trust = c.trustOf(cwds).data["trust"] as? JsonObject ?: return emptyMap()
+            trust.mapNotNull { (cwd, v) ->
+                val o = v as? JsonObject ?: return@mapNotNull null
+                val undecided = (o["undecided"] as? JsonPrimitive)?.content == "true"
+                val trusted = (o["trusted"] as? JsonPrimitive)?.content == "true"
+                cwd to (if (undecided) null else trusted)
+            }.toMap()
+        } catch (e: HostException) {
+            emptyMap()
+        }
+    }
+
     /** 项目信任的表态（官方弹窗的回答）：写进 pi 的信任库（或只记本次）并重载会话；应答是新的状态。 */
     suspend fun setTrust(option: PiProjectTrust.Option): Parsed<PiProjectTrust.State> =
         trust { it.setTrust(option.trusted, option.remember.key) }

@@ -191,6 +191,13 @@ fun ProjectScreen(
     LaunchedEffect(refreshTick, state.workspace.revision) {
         workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
     }
+    // 每个项目各自的信任结论（SDK 的信任库说了算，宿主 `project.trustOf`）：键是 guest 路径。
+    // 引擎没起就是空表，切换列表照常显示、只是不带徽标。
+    var projectTrust by remember { mutableStateOf<Map<String, Boolean?>>(emptyMap()) }
+    LaunchedEffect(workspaceEntries, state.workspace.revision) {
+        val access = session.extensionsAccess()
+        projectTrust = if (access == null) emptyMap() else access.resources.trustOf(workspaceEntries.map { it.guestPath })
+    }
 
     // 当前工作区**叫什么**：一份真相，就是 ViewModel 发布的那份身份 —— 工作区**目录名**
     // （`WorkspaceState.name`，由 `WorkspaceStore.reconcile` 与 `switchWorkspace` 写），label 从
@@ -1097,6 +1104,7 @@ fun ProjectScreen(
     if (rootSheet) {
         WorkspaceRootSheet(
             entries = workspaceEntries,
+            trust = projectTrust,
             onClose = { rootSheet = false },
             // 面板先关，再决定切不切：`switchWorkspace` 的 `Refused` / `Failed` 那句话是
             // VM 推的 notice（主窗口里那一条 snackbar），面板是一层 `Dialog` 窗口，开着就
@@ -2405,6 +2413,8 @@ private fun EntryGlyph(kind: WorkspaceEntryKind) {
 @Composable
 private fun WorkspaceRootSheet(
     entries: List<WorkspaceStore.Entry>,
+    /** guest 路径 → 信任结论（`true` 信任 / `false` 不信任 / `null` 待表态）；没有这一项 = 不知道，不画徽标。 */
+    trust: Map<String, Boolean?>,
     onClose: () -> Unit,
     onPick: (WorkspaceStore.Entry) -> Unit,
     onNew: () -> Unit,
@@ -2412,17 +2422,17 @@ private fun WorkspaceRootSheet(
     onMenu: (WorkspaceStore.Entry) -> Unit,
 ) {
     WsSheet(
-        title = "切换工作区",
+        title = "切换项目",
         onClose = onClose,
-        subtitle = "App 私有目录和设备目录里的都可以当工作区。",
-        footer = "换工作区会新建一个 pi 会话，当前会话不会被删除。",
+        subtitle = "项目就是一个目录：App 私有目录和设备目录里的都可以。",
+        footer = "换项目会新建一个 pi 会话，当前会话不会被删除。项目信任按目录记在 pi 的信任库里。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
         // 两个入口放在最上面（工作区一多，「新建」会被挤到列表下面）：一张卡、两行，
         // 每行一句话说清「它会做什么」，比两颗并排的小胶囊好点、也好读。
         WsCard {
             WsRow(
-                title = "新建工作区",
+                title = "新建项目",
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = {
@@ -2433,7 +2443,7 @@ private fun WorkspaceRootSheet(
                         tint = PiTheme.palette.accent,
                     )
                 },
-                meta = "建在 App 私有目录里，建好可随时改名。",
+                meta = "起个目录名，建在 App 私有目录里；留空自动编号。",
                 onClick = onNew,
             )
             WsHairline(startInset = WsIconHairlineStart)
@@ -2456,7 +2466,7 @@ private fun WorkspaceRootSheet(
                 strong = true,
                 lead = { FolderGlyph() },
                 leadBackground = if (item.isCurrent) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
-                badge = if (renamed || item.isCurrent || item.external || !item.available) {
+                badge = if (renamed || item.isCurrent || item.external || !item.available || (item.guestPath in trust && trust[item.guestPath] != true)) {
                     {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -2473,6 +2483,15 @@ private fun WorkspaceRootSheet(
                             }
                             if (!item.available) {
                                 WsBadge(text = "读不到", tone = StateTone.Warning)
+                            }
+                            // 信任挂在目录路径上（pi 的 trust.json 按 cwd 记）；只标「不是默认好」的两种，
+                            // 已信任是常态，不画（一屏都是同一个徽标等于没有）。
+                            if (item.guestPath in trust) {
+                                when (trust[item.guestPath]) {
+                                    false -> WsBadge(text = "未信任", tone = StateTone.Warning)
+                                    null -> WsBadge(text = "待表态", tone = StateTone.Warning)
+                                    true -> Unit
+                                }
                             }
                             if (item.isCurrent) {
                                 WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")

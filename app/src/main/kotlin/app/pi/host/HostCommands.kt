@@ -184,6 +184,10 @@ class HostCommands(
 
     suspend fun trustState(): HostReply = reply("project.trustState")
 
+    /** 一批目录（guest 路径）各自的信任结论：`{trust:{<cwd>:{trusted,undecided,source}}}`。 */
+    suspend fun trustOf(cwds: List<String>): HostReply =
+        reply("project.trustOf", obj { put("cwds", JsonArray(cwds.map { JsonPrimitive(it) })) })
+
     // ---- 通用口（升级的杠杆）----
 
     /** 任意命令。宿主新增的命令不用等这个文件，直接用它。 */

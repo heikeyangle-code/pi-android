@@ -440,6 +440,9 @@ try {
   expect("project.trust parent：记在父目录，本目录是「继承」", trustParent.ok && trustParent.data.trusted === true && trustParent.data.entry?.inherited === true && trustParent.data.entry.path === trustParent.data.parent, JSON.stringify(trustParent.error ?? trustParent.data));
   expect("「信任父目录」不能用于不信任 → bad_args", (await h.call("project.trust", { trusted: false, remember: "parent" })).error?.code === "bad_args");
   expect("未知 remember → bad_args", (await h.call("project.trust", { trusted: true, remember: "forever" })).error?.code === "bad_args");
+  const tof = await h.call("project.trustOf", { cwds: [h.work, join(h.work, "nowhere"), "relative/x", 7] });
+  expect("project.trustOf：每个绝对路径各给结论，相对路径与非字符串被忽略", tof.ok && Object.keys(tof.data.trust).length === 2 && tof.data.trust[h.work]?.trusted === true && tof.data.trust[h.work].source === "store" && typeof tof.data.trust[join(h.work, "nowhere")]?.undecided === "boolean", JSON.stringify(tof.error ?? tof.data));
+  expect("project.trustOf：没有 cwds 也不报错", (await h.call("project.trustOf", {})).data?.trust && Object.keys((await h.call("project.trustOf", {})).data.trust).length === 0);
   const clearInh = await h.call("project.trust", { trusted: false, remember: "reset-inherited" }, 60000);
   expect("project.trust reset-inherited：清掉父目录那条记录", clearInh.ok && clearInh.data.entry === null && clearInh.data.undecided === true, JSON.stringify(clearInh.error ?? clearInh.data));
   expect("没有记录时 reset-inherited → bad_args", (await h.call("project.trust", { trusted: false, remember: "reset-inherited" })).error?.code === "bad_args");
