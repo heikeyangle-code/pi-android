@@ -1,6 +1,10 @@
 **English** · [简体中文](README.zh-CN.md)
 
 <p align="center">
+  <img src="./brand/pi-readme-icon.svg" alt="Pi for Android" width="104" />
+</p>
+
+<p align="center">
   <b>A real coding agent. Running locally on your Android device.</b>
 </p>
 
