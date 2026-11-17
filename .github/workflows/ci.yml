@@ -17,7 +17,11 @@ on:
     #
     # 这里故意不写 `branches: ['**']`：一次性的分支不值得每次都花掉两个 targetSdk
     # 变体的完整构建（含 ~65 MB 运行时装配），而 PR 那一侧本来就覆盖了评审场景。
-    branches: [main, 'proroot-*']
+    #
+    # `feat/sdk-host` 是**长期存在的迁移线**（把引擎宿主从 `pi --mode rpc` 换成官方 SDK），
+    # 它改的是 Kotlin 侧的引擎边界，分支上没有 CI 就等于盲改 —— 所以按 `proroot-*`
+    # 的同样理由给它开构建。合并/放弃这条线时，把这一项删掉。
+    branches: [main, 'proroot-*', 'feat/sdk-host']
     # 纯文案 / 纯截图 / 纯标志图改动不进构建。一次 main 上的 push 会跑两个 targetSdk
     # 变体的完整构建（含 ~65 MB 运行时装配），而改一个字的 README 不可能让它们变红。
     # 注意只列「构建不可能读」的东西：`docs/` 里目前全是 markdown 与截图，
@@ -63,6 +67,10 @@ jobs:
   apk:
     name: APK (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    # tawcroot 先构建，APK 再把 `libtawcroot.so` 打进去。**没有它，设置里选 tawcroot
+    # 只会得到「缺组件」并回退 proot** —— 这正是用户在 2026-11-15 装出来的那版
+    # （二进制只在 tawcroot 任务的 artifact 里，APK 里没有）。
+    needs: tawcroot
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +84,16 @@ jobs:
             targetSdk: 36
     steps:
       - uses: actions/checkout@v4
+      # tawcroot 的产物进 jniLibs：`lib*.so` 才会被 Android 解到 nativeLibraryDir，
+      # 而那正是 `PiRuntime.tawcrootBinary()` 去看的位置。
+      - uses: actions/download-artifact@v4
+        with:
+          name: libtawcroot
+          path: app/src/main/jniLibs/arm64-v8a
+      - name: Assert the runtime binary is in the APK inputs
+        run: |
+          ls -l app/src/main/jniLibs/arm64-v8a/libtawcroot.so
+          file app/src/main/jniLibs/arm64-v8a/libtawcroot.so
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -231,12 +249,22 @@ jobs:
             echo "::error::$apk is not signed with keystore/pi-sideload.jks; devices with the app installed could not update over it"
             exit 1
           fi
+      # 这一类"构建出来了但没进包"的错，只有解包 APK 才看得见：tawcroot 任务成功、
+      # artifact 也在，但 APK 没下载它 —— 2026-11-15 用户装完才发现「缺组件」。
+      # 所以在打包产物上断言一次，别让下一个人靠安装来验证。
       - name: Verify runtime payloads are stored uncompressed and unrecompressed
         run: |
           set -euo pipefail
           apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
           apk_bytes="$(stat -c %s "$apk")"
           echo "inspecting $apk ($apk_bytes bytes)"
+          # 运行时二进制必须在**产物**里，而不只是 jniLibs 里：打包规则（jniLibs.excludes、
+          # abiFilters、splits）可以在构建成功的前提下把它丢掉。与"文件放进了源码树"
+          # 是两条不同的断言；这里只是对已生成的 APK 多跑一次 `unzip -l`，1~2 秒。
+          if ! unzip -l "$apk" | grep -qE 'lib/arm64-v8a/libtawcroot\.so'; then
+            echo "::error::$apk has no lib/arm64-v8a/libtawcroot.so; selecting tawcroot would only report 缺组件 and fall back to proot"
+            exit 1
+          fi
           staged=app/src/main/assets/runtime
           ls -l "$staged"
 
@@ -387,6 +415,24 @@ jobs:
           mkdir -p build/downloads
           curl -fsSL --retry 3 --retry-delay 2 -o build/downloads/ubuntu-base.tar.gz "$url"
           ls -l build/downloads/ubuntu-base.tar.gz
+      # `host-session` 是唯一跑「真宿主 + 真 pi」的纯逻辑 harness（PiEngineSession →
+      # 成帧器 → 状态机 → transcript）。没有 `build/pi-contract` 它会打印 SKIP 然后 exit 0 ——
+      # 而 exit 0 没有 `harness: OK` 在 run-app-pure-checks.sh 里算失败（对，它红过）。
+      # 引擎树与 pi-contract job 共用同一个缓存键，命中时 npm 只是 up-to-date。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Cache the pinned engine (for the host-session harness)
+        uses: actions/cache@v4
+        with:
+          path: build/pi-contract
+          key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
+      - name: Install the pinned engine
+        run: |
+          version="$(node -e 'const t=require("fs").readFileSync("tools/fetch-runtime.mjs","utf8");process.stdout.write(/const PI_VERSION = "([^"]+)"/.exec(t)[1])')"
+          mkdir -p build/pi-contract
+          ( cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$version" )
+          test -d "build/pi-contract/node_modules/@earendil-works/pi-coding-agent/dist"
       - name: Run app/src/test harnesses
         run: |
           set -o pipefail
@@ -423,6 +469,17 @@ jobs:
           key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
       - name: Assert the app's assumptions about the pinned engine
         run: node tools/pi-contract.mjs
+      # sdk-host（feat/sdk-host 迁移线）：先断言宿主依赖的 SDK 面还在，再用真引擎驱动一遍，
+      # 分别在「打包入口 / 包名回退 / 模拟 proroot 的 scandir 补丁」三种条件下。
+      # 升级 pi 时这三步红了，按 docs/sdk-host/upgrading.md 处理。
+      - name: sdk-host contract (SDK surface the host depends on)
+        run: node tools/sdk-host/contract.mjs
+      - name: sdk-host behaviour (bundle entry)
+        run: node tools/sdk-host/test.mjs
+      - name: sdk-host behaviour (package fallback)
+        run: node tools/sdk-host/test.mjs --no-bundle
+      - name: sdk-host behaviour (proroot scandir patch)
+        run: node tools/sdk-host/test.mjs --scandir-fix
       # The other half of the tool-output check. The `pure-checks` job asserts the App still
       # parses the committed fixture; this asserts the fixture is still what the pinned
       # engine produces, by running pi's own tool implementations against a fixed workspace
@@ -469,3 +526,36 @@ jobs:
       # 0.1.7 的「运行时解包失败 / No static method of(...)」就是这类。见脚本头部。
       - name: Reject Java 11+ APIs Android's runtime does not have
         run: bash tools/check-android-apis.sh
+
+  # tawcroot 从钉死的提交构建（无二进制下载）。不挡合并：构建脚本依赖上游的 build.sh，
+  # 上游改了它这里才会红；没有产物时 App 把 tawcroot 判「缺组件」并回退 proot。
+  tawcroot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 与 APK 任务同样的 SDK 接法（runner 自带 SDK，action 挂不上去也不致命）。
+      - uses: android-actions/setup-android@v3
+        continue-on-error: true
+      - name: Ensure an NDK is available
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::no Android SDK at $SDK"
+            exit 1
+          fi
+          if ! ls -d "$SDK"/ndk/* >/dev/null 2>&1; then
+            # runner 的 cmdline-tools 目录名随镜像变（16.0 / latest 都见过），别写死。
+            sdkm="$(command -v sdkmanager || find "$SDK/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | sort -V | tail -1)"
+            [ -n "$sdkm" ] || { echo "::error::no sdkmanager under $SDK"; exit 1; }
+            yes 2>/dev/null | "$sdkm" --licenses >/dev/null 2>&1 || true
+            yes 2>/dev/null | "$sdkm" --install "ndk;27.2.12479018" >/dev/null 2>&1 || true
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          ls -d "$SDK"/ndk/* || { echo "::error::still no NDK under $SDK/ndk"; exit 1; }
+      - name: Build libtawcroot.so from the pinned tag
+        run: bash tools/build-tawcroot.sh "$RUNNER_TEMP/tawcroot-out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libtawcroot
+          path: ${{ runner.temp }}/tawcroot-out/libtawcroot.so

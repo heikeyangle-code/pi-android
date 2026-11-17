@@ -46,7 +46,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.ProjectScreen
@@ -655,6 +654,7 @@ fun PiRoot() {
                     PiSettingsStack(
                         contentPadding = padding,
                         onBack = openChat,
+                        extensionsAccess = session::extensionsAccess,
                     // The real store: pi's own settings.json files, merged the way
                     // pi merges them. Without it the stack would read and write an
                     // in-memory map and the app would appear to accept changes
@@ -734,9 +734,11 @@ fun PiRoot() {
                     recentFailures = { session.recentFailures() },
                     // `get_available_models`: the only model list pi exposes over
                     // RPC, used to mark a scanned id as pi metadata or as an app
-                    // default (`ModelProviderScreen`).
+                    // default (`ModelsScreen`).
                     availableModels = uiState.models,
                     onLoadAvailableModels = { session.refreshModels() },
+                    advanced = { session.advanced() },
+                    modelsHost = { session.modelsHost() },
                     // `/scoped-models`: open the group and highlight the key.
                     focusKey = settingsFocus,
                     onFocusConsumed = { settingsFocus = null },
@@ -867,6 +869,7 @@ fun PiRoot() {
             // 底距必须活过 `calculateBottomPadding()` 返回 0 的情况：正常时它等于
             // 系统导航条 inset（底栏拆掉之后不再有 56dp），再加 8dp 的呼吸；
             // `maxOf` 兜住「再也报告不出来」那一下，否则 snackbar 落到手势条下面。
+            app.pi.ui.resources.ProjectTrustHost(session)
             ExtensionUiHost(
                 session = session,
                 snackbarBottomPadding = maxOf(

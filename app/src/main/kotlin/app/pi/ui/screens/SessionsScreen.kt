@@ -76,14 +76,14 @@ import androidx.compose.ui.unit.sp
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
-import app.pi.session.PiSessionStore
+import app.pi.session.SessionSummary
 import app.pi.ui.PiSeg
+import app.pi.ui.NAVIGATE_BUSY_LABEL
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.chat.RenameSessionDialog
 import app.pi.ui.chat.SessionFileRow
-import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.chat.forkParentNameOf
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
@@ -101,6 +101,7 @@ import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.tree.SessionTreeView
 import java.util.concurrent.TimeUnit
 
 /** 覆盖层里的两个视图，同一条分段控件切换（`03-navigation-decision.md`）。 */
@@ -123,7 +124,7 @@ enum class SessionsView(val label: String) {
  *
  * v2 的分段控件（`design-demos/direction-b-v2.html:1854`）把两个视图放在同一条顶栏下，
  * 所以切换视图不改变「我在哪」；关掉这一层就回到原来的目的地。树是**嵌进来**的
- * （`SessionTreeScreen(embedded = true)`），它自己的顶栏与不透明底由这里提供——两个
+ * （`SessionTreeView`），它自己的顶栏与不透明底由这里提供——两个
  * 覆盖层叠在一起时只有最上面那个能被返回键关掉。
  *
  * ## 一行的两行形态
@@ -202,17 +203,18 @@ fun SessionsScreen(
     // 「还没有会话」——那句断言在旧代码里来自一个被吞掉的异常。
     val sessionsFailed by session.sessionsFailed.collectAsState()
     val state by session.state.collectAsState()
+    val searchHits by session.searchHits.collectAsState()
 
     var query by rememberSaveable { mutableStateOf("") }
     var byName by rememberSaveable { mutableStateOf(false) }
     var namedOnly by rememberSaveable { mutableStateOf(false) }
-    var confirming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    var confirming by remember { mutableStateOf<SessionSummary?>(null) }
     // Long-press opens pi's two per-session actions. Both exist in pi's session
     // selector; ours live here because a phone has no Ctrl+D and no `new_session`
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
-    var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    var actions by remember { mutableStateOf<SessionSummary?>(null) }
     // 长按菜单里的「重命名」：要改名的那一行。
-    var renaming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    var renaming by remember { mutableStateOf<SessionSummary?>(null) }
     var viewIndex by rememberSaveable { mutableIntStateOf(initialView.ordinal) }
     // 顶栏「⋯」。它是屏内状态，不是覆盖层：菜单开着时按返回应该先关菜单（`Popup`
     // 自己吃掉那一下），而不是把整层会话列表关掉。
@@ -222,6 +224,8 @@ fun SessionsScreen(
     // 点组标题折叠/展开那一组。搜索时不折叠（命中的行不能被藏起来）。
     var collapsedGroups by remember { mutableStateOf(emptySet<String>()) }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
+    // 正文搜索：查询变了就让 ViewModel 去搜（它自己防抖、并取消上一次）。
+    LaunchedEffect(query) { session.searchSessionText(query) }
     // The host can ask for a different view *after* this screen is already composed
     // (a second `/tree` while the overlay is open): the overlay stays mounted across
     // requests, so `rememberSaveable`'s initial value would never be consulted again.
@@ -260,7 +264,7 @@ fun SessionsScreen(
     // 就是这条判定，纯函数，只认 pi 记在文件头里的那个字符串。
     val forkParentNames = remember(sessions) {
         // 判定要的只有两个字段，所以这里先投影一次：`SessionForkLabel.kt` 是纯文件
-        // （一个 import 都没有），不认识 `PiSessionStore.Summary`，也正因如此它能在没有
+        // （一个 import 都没有），不认识 `SessionSummary`，也正因如此它能在没有
         // Android 的机器上被 harness 真跑一遍。
         val rows = sessions.map { SessionFileRow(it.file.name, it.displayName) }
         sessions.associate { it.file.absolutePath to forkParentNameOf(it.parentSession, rows) }
@@ -319,7 +323,7 @@ fun SessionsScreen(
             }
         // 当前工作区的那一组永远排第一：换了工作区，它就顶到最前面；新会话还没落盘时
         // 它还没有任何一行，就先放一个空组：只有组标题，没有占位行，等文件出现再长出真行。
-        fun isCurrent(cwd: String, rows: List<PiSessionStore.Summary>) =
+        fun isCurrent(cwd: String, rows: List<SessionSummary>) =
             cwd.trimEnd('/') in currentCwds || (activeFile != null && rows.any { it.file.name == activeFile })
         val grouped = visible
             .groupBy { it.cwd }
@@ -327,18 +331,25 @@ fun SessionsScreen(
             .let { list ->
                 val withCurrent =
                     if (query.isBlank() && !namedOnly && list.none { (cwd, rows) -> isCurrent(cwd, rows) }) {
-                        currentCwds.firstOrNull()?.let { listOf(it to emptyList<PiSessionStore.Summary>()) }.orEmpty() + list
+                        currentCwds.firstOrNull()?.let { listOf(it to emptyList<SessionSummary>()) }.orEmpty() + list
                     } else {
                         list
                     }
                 withCurrent.sortedWith(
-                    compareByDescending<Pair<String, List<PiSessionStore.Summary>>> { (cwd, rows) -> isCurrent(cwd, rows) }
+                    compareByDescending<Pair<String, List<SessionSummary>>> { (cwd, rows) -> isCurrent(cwd, rows) }
                         .thenByDescending { (_, rows) -> rows.maxOfOrNull { it.lastActivityAt } ?: 0L },
                 )
             }
         SessionListView(visible = visible, groups = grouped)
     }
     val visible = listView.visible
+    // 正文命中里、上面的名字/目录筛选**没有**列出的那些（同一个会话不出现两次）。
+    val hitsOutside = remember(searchHits, visible, query) {
+        if (query.isBlank()) emptyList() else {
+            val shown = visible.mapTo(HashSet()) { it.file.absolutePath }
+            searchHits.filter { it.session.file.absolutePath !in shown && (!namedOnly || hasName(it.session)) }
+        }
+    }
     // 绝大多数会话用的是同一个模型：每行都印一遍「deepseek-flash」只是噪音。只在某一行
     // 和多数不同时才写出模型名。
     val commonModel = remember(sessions) {
@@ -486,27 +497,21 @@ fun SessionsScreen(
         if (view == SessionsView.Tree) {
             // 树是嵌进来的：顶栏、分段控件与其上的不透明底都由本层提供，它只画自己的
             // 筛选行 + 列表。`embedded` 是这次唯一的形态改动，树的逻辑一行没动。
-            SessionTreeScreen(
-                state = state,
+            SessionTreeView(
+                roots = state.tree?.tree.orEmpty(),
+                leafId = state.tree?.leafId,
+                busy = state.busy?.takeIf { it == NAVIGATE_BUSY_LABEL },
                 onFork = { entryId ->
                     session.forkFrom(entryId)
                     onBack()
                 },
-                // 跳转 = pi's `navigateTree`: same session file, leaf moved. The overlay
-                // stays open on purpose — unlike a fork, which replaces the conversation
-                // and therefore closes it, a navigation lands the user back in the chat
-                // they are already looking at, and pi's own `/tree` also returns to the
-                // conversation after asking its summary question
-                // (`interactive-mode.ts:5293-5317`). Closing here would hide the summary
-                // card the user just asked for.
-                onNavigate = { entryId, choice, instructions ->
-                    session.navigateTo(entryId, choice, instructions)
-                },
+                // 跳转留在本层：落回用户正在看的对话，摘要卡片也还看得见（fork 才会替换对话并关闭本层）。
+                onNavigate = { entryId, choice, instructions -> session.navigateTo(entryId, choice, instructions) },
+                onLabel = { entryId, label -> session.setEntryLabel(entryId, label) },
+                onHideFromContext = { entryId -> session.hideEntryFromContext(entryId) },
+                onReplaceInContext = { entryId, text -> session.replaceEntryInContext(entryId, text) },
+                onAbortSummary = { session.abortBranchSummary() },
                 skipSummaryPrompt = { session.branchSummarySkipPrompt() },
-                onRefresh = { session.refreshTree() },
-                onClose = onBack,
-                embedded = true,
-                onLoadEntries = { session.refreshEntries() },
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -616,7 +621,7 @@ fun SessionsScreen(
                         body = "会话按工作目录分组，这里会列出每一个目录的对话。",
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else if (visible.isEmpty()) {
+                } else if (visible.isEmpty() && hitsOutside.isEmpty()) {
                     PiEmptyStateTopAnchored(
                         icon = Icons.Filled.Search,
                         title = "没有匹配的会话",
@@ -674,6 +679,33 @@ fun SessionsScreen(
                                         onOpenChat()
                                     },
                                     onLongPress = { actions = summary },
+                                )
+                            }
+                        }
+                        // 正文命中：标题/名字没命中、但对话里出现了这个词的会话。放在分组之后，
+                        // 不和上面的筛选结果混排 —— 上面是「名字像」，这里是「内容里有」。
+                        if (hitsOutside.isNotEmpty()) {
+                            item(key = "hits-hdr") {
+                                Text(
+                                    "正文里出现（${hitsOutside.size}）",
+                                    modifier = Modifier.padding(
+                                        start = PiSettingsMetrics.pageHorizontal,
+                                        end = PiSettingsMetrics.pageHorizontal,
+                                        top = SESSIONS_GROUP_HEADING_TOP,
+                                        bottom = SESSIONS_GROUP_HEADING_BOTTOM,
+                                    ),
+                                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            itemsIndexed(hitsOutside, key = { _, h -> "hit:" + h.session.file.absolutePath }) { _, hit ->
+                                SearchHitRow(
+                                    hit = hit,
+                                    onOpen = {
+                                        session.switchSession(hit.session)
+                                        onOpenChat()
+                                    },
+                                    onLongPress = { actions = hit.session },
                                 )
                             }
                         }
@@ -1102,10 +1134,43 @@ private fun GroupHeading(label: String, count: Int, current: Boolean, collapsed:
  * 相对时间用 `meta` + `tnum`（12 档 + 等宽数字）：v2 是 `mono t12 c-muted`，等宽保证
  * 滚动时那一列数字不抖；单位与数字之间**不留空格**（`11分钟前`）。
  */
+/**
+ * 正文命中的一行：会话名 + 命中片段。比 [SessionRow] 朴素 —— 它回答的是「这段对话里哪儿提到了它」，
+ * 片段才是主角；时间、条数、来源这些细节点进去以后在对话页里看。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SearchHitRow(hit: app.pi.session.SessionHit, onOpen: () -> Unit, onLongPress: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            hit.session.displayName,
+            style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (hit.snippet.isNotBlank()) {
+            Text(
+                hit.snippet,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
-    summary: PiSessionStore.Summary,
+    summary: SessionSummary,
     active: Boolean,
     first: Boolean,
     last: Boolean,
@@ -1272,7 +1337,7 @@ private fun relativeTime(epochMillis: Long): String {
 }
 
 /** pi's `hasSessionName` (`session-selector-search.ts:36-38`): a *trimmed* non-empty name. */
-private fun hasName(summary: PiSessionStore.Summary): Boolean = !summary.name.isNullOrBlank()
+private fun hasName(summary: SessionSummary): Boolean = !summary.name.isNullOrBlank()
 
 /** `\s+` — pi's own tokenizer, both here and in the tree selector. */
 private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
@@ -1286,12 +1351,12 @@ private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
  * to one `contains`, so `read file` matched nothing in a session whose text says
  * "file … read" — and a two-word search behaved differently here than in pi for no
  * reason. The tree view already tokenises this way
- * (`SessionTreeScreen.kt`'s `flattenTree` filter), so the two search boxes in one
+ * (`TreeModel` 的搜索）, so the two search boxes in one
  * overlay no longer disagree about what a space means.
  *
  * The text searched is pi's too, as far as this app can see it: pi matches
  * `id + name + allMessagesText + cwd` (`:31-33`). `allMessagesText` does not come over
- * the wire — [PiSessionStore.Summary] carries no such field, and the store deliberately
+ * the wire — [SessionSummary] carries no such field, and the store deliberately
  * stops scanning at 1 MiB per file rather than streaming every message — so this
  * searches the fields that *are* here: the name pi recorded, the first-message title
  * behind it (pi searches both; the app used to search only the display name, so a
@@ -1313,7 +1378,7 @@ private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
  * string as lowercasing their concatenation (the JVM's `lowercase()` is context-sensitive:
  * a final capital sigma lowercases differently at the end of a word).
  */
-private fun sessionMatches(summary: PiSessionStore.Summary, tokens: List<String>): Boolean {
+private fun sessionMatches(summary: SessionSummary, tokens: List<String>): Boolean {
     if (tokens.isEmpty()) return true
     val text = buildString {
         append(summary.name.orEmpty()).append('\n')
@@ -1337,7 +1402,7 @@ private fun sessionQueryTokens(query: String): List<String> =
     query.lowercase().split(SESSION_SEARCH_WHITESPACE).filter { it.isNotEmpty() }
 
 /**
- * This screen's two derived readings of [PiSessionStore.Summary], computed together so that
+ * This screen's two derived readings of [SessionSummary], computed together so that
  * one key set (and therefore one O(n) `remember` comparison) covers both.
  *
  * @param visible the rows after the search box and the two filter chips, and after the
@@ -1346,6 +1411,6 @@ private fun sessionQueryTokens(query: String): List<String> =
  *   keeping [visible]'s order inside it.
  */
 private data class SessionListView(
-    val visible: List<PiSessionStore.Summary>,
-    val groups: List<Pair<String, List<PiSessionStore.Summary>>>,
+    val visible: List<SessionSummary>,
+    val groups: List<Pair<String, List<SessionSummary>>>,
 )

@@ -500,16 +500,20 @@ fun main() {
         "${PAIRED_CONTROL_SECTION.first}/${PAIRED_CONTROL_SECTION.second} is declared as the " +
             "control/reading pair but holds no row — a stale exemption",
     )
+    // 2026-11-15：运行时从「开关」改成「三选一（proot / proroot / tawcroot）」，
+    // 这一节因此从「控制 + 一行读数」变成「一个可编辑的三选一 + 两行只读读数」
+    // （实际生效、各运行时状态）。形状仍是同一条规则：控制在上、读数在下，且只有控制可编辑。
     check(
-        "the control/reading section is exactly the switch and its derived reading",
-        pairRows.map { it.key } == listOf("app.runtime.proroot", "app.runtime.prorootStatus"),
-        "expected [app.runtime.proroot, app.runtime.prorootStatus] (control first), got " +
-            pairRows.joinToString { it.key },
+        "the control/reading section is exactly the one control plus its readings",
+        pairRows.map { it.key } ==
+            listOf("app.runtime.engine", "app.runtime.prorootStatus", "app.runtime.engineMatrix"),
+        "expected [app.runtime.engine, app.runtime.prorootStatus, app.runtime.engineMatrix] " +
+            "(control first), got " + pairRows.joinToString { it.key },
     )
     check(
-        "the control is editable, the reading below it is a read-only fact",
-        pairRows.firstOrNull()?.let { !it.nonEditable && it.kind == "Switch" } == true &&
-            pairRows.getOrNull(1)?.let { it.nonEditable && it.readOnly && it.kind == "Text" } == true,
+        "the control is the only editable row; the readings below it are read-only facts",
+        pairRows.firstOrNull()?.let { !it.nonEditable && it.kind == "Value" } == true &&
+            pairRows.drop(1).all { it.nonEditable && it.readOnly && it.kind == "Text" },
         pairRows.joinToString { "${it.key} kind=${it.kind} readOnly=${it.readOnly}" },
     )
 
@@ -761,9 +765,13 @@ fun main() {
         "the reader's fallback for app.appearance.showTimestamps is off too",
         viewModel.contains("bool(\"app.appearance.showTimestamps\", false)"),
     )
+    // 2026-11-15：`UiPrefs` 跟着会话页的数据模型一起搬到了 `ui/SessionModels.kt`；
+    // 默认值这一条按**搬去之后的文件**读，否则红的是搬家，不是默认值变了。
+    val sessionModels = File(root, "app/src/main/kotlin/app/pi/ui/SessionModels.kt")
+        .takeIf { it.isFile }?.readText().orEmpty()
     check(
         "UiPrefs' own default for showTimestamps is off too",
-        viewModel.contains("val showTimestamps: Boolean = false"),
+        sessionModels.contains("val showTimestamps: Boolean = false"),
     )
     for (block in listOf("UserMessageBlock.kt", "NoticeBlock.kt")) {
         val body = File(root, "app/src/main/kotlin/app/pi/ui/blocks/$block")

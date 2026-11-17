@@ -439,6 +439,23 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      */
     fun prorootProbeCache(): File = File(runtime, ".proroot-probe")
 
+    // ------------------------------------------------------------------ tawcroot
+    // 一个静态二进制，以 `libtawcroot.so` 放进 `nativeLibraryDir`（jniLib 提取器只认 `lib*.so`，
+    // 不校验 ELF 类型；它是静态非 PIE 的 `ET_EXEC`，直接被内核加载，不经 bionic linker）。
+    // 由 `tools/build-tawcroot.sh` 按钉死的提交从源码构建，不是下载来的。
+
+    /** tawcroot 的可执行文件——Android `execve()` 的就是它。 */
+    fun tawcrootBinary(): File = File(nativeLibDir, "libtawcroot.so")
+
+    /** 缺的 tawcroot 组件（按文件名）；全在则空。每次现查——只有一个文件，`stat` 一次。 */
+    fun missingTawcrootComponents(): List<String> =
+        RuntimeChoice.TAWCROOT_REQUIRED_FILES.filter { !File(nativeLibDir, it).isFile }
+
+    /** tawcroot 探针结论缓存，与 [prorootProbeCache] 同在易失树里、同理由。 */
+    fun tawcrootProbeCache(): File = File(runtime, ".tawcroot-probe")
+
+    fun clearTawcrootProbeCache(): Boolean = tawcrootProbeCache().delete()
+
     /**
      * Throw the cached verdict away so the next proroot launch re-runs the gate.
      *

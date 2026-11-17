@@ -76,7 +76,42 @@ object PiResponses {
         val sourceInfo: PiSourceInfo?,
         val location: String?,
         val path: String?,
+        /** 提示模板 frontmatter 的 `argument-hint`；有它的命令点一下是「先填名字等参数」而不是直接执行。 */
+        val argumentHint: String? = null,
+        /** 扩展命令自带参数补全（`getArgumentCompletions`）；见 [commandCompletions]。 */
+        val hasCompletions: Boolean = false,
     )
+
+    /** 扩展命令的一条参数补全（pi-tui 的 `AutocompleteItem`）。 */
+    data class CommandCompletion(val value: String, val label: String, val description: String?)
+
+    fun commandCompletions(response: PiEvent.Response): List<CommandCompletion> =
+        dataArray(response, "items").mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val value = obj.str("value") ?: return@mapNotNull null
+            CommandCompletion(value, obj.str("label") ?: value, obj.str("description"))
+        }
+
+    /**
+     * pi 自己的内建斜杠命令（`BUILTIN_SLASH_COMMANDS`），由宿主的 `catalog.commands` 带来。
+     * 只有名字、说明和参数提示——「这个命令在手机上怎么做」是 App 的事，不在线上。
+     */
+    data class BuiltinCommand(val name: String, val description: String?, val argumentHint: String?)
+
+    /** [slashCommands] + 宿主随同给出的内建表；内建表读不到时为空（见宿主 `loadBuiltins`）。 */
+    data class CommandCatalog(val commands: List<SlashCommand>, val builtins: List<BuiltinCommand>)
+
+    fun commandCatalog(response: PiEvent.Response): CommandCatalog {
+        val builtins = dataArray(response, "builtins").mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            BuiltinCommand(
+                name = obj.str("name") ?: return@mapNotNull null,
+                description = obj.str("description"),
+                argumentHint = obj.str("argumentHint"),
+            )
+        }
+        return CommandCatalog(slashCommands(response), builtins)
+    }
 
     /** `RpcSessionState`. */
     data class SessionState(
@@ -305,6 +340,8 @@ object PiResponses {
                 // implementation in agreement.
                 location = obj.str("location"),
                 path = obj.str("path") ?: sourceInfo?.str("path"),
+                argumentHint = obj.str("argumentHint")?.takeIf { it.isNotBlank() },
+                hasCompletions = (obj["hasCompletions"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
             )
         }
     }

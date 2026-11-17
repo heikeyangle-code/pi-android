@@ -1,0 +1,423 @@
+/**
+ * Controller：宿主的核心，持有「运行时 → 当前会话」这条链，并把它接到 Hub 上。
+ *
+ * 一个进程 = 一个工作区（与 App 的 PiEngineHost 对齐）。但一个进程里的会话会被替换很多次
+ * （new / switch / fork / clone / 扩展触发），所以：
+ *  - 持有的是 `AgentSessionRuntime`，不是 `AgentSession`；
+ *  - 订阅与扩展绑定都在 `#bind` 里，由运行时在每次替换后回调（`setRebindSession`），
+ *    **只此一处**：rpc-mode 在命令处理里又手动绑一次，是历史遗留，这里不重复；
+ *  - 每次 `#bind` 把 epoch +1，旧会话残留的事件在 App 侧按 epoch 丢弃。
+ *
+ * 首次绑定特殊：`bindExtensions` 会等每个扩展的 `session_start` 处理器，而处理器里常见
+ * `await ctx.ui.select(...)`（等用户作答）。若 `session.open` 等它，一个扩展就能把「建立会话」
+ * 拖死（原型版冒烟测试踩到的）。所以首次绑定是后台的，完成后发 `ext.bound` 事件；
+ * 后续替换由命令发起，命令本来就是异步应答，直接等。
+ */
+
+import { realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { loadSdk, sdkVia } from "./sdk.mjs";
+import { ERR, HostError } from "./protocol.mjs";
+import { STATE_EVENTS, createStatePusher } from "./state.mjs";
+
+/** 去掉 message_update 里每个增量都带着的整条 partial（pi 的 `modes/json-event.js` 同款，体积差一个数量级）。 */
+export function toJsonEvent(event) {
+  if (event.type !== "message_update") return event;
+  const { partial: _drop, ...rest } = event.assistantMessageEvent ?? {};
+  let assistantMessageEvent = rest;
+  if (event.assistantMessageEvent?.type === "toolcall_start") {
+    const call = event.assistantMessageEvent.partial?.content?.[event.assistantMessageEvent.contentIndex];
+    if (call?.type === "toolCall") assistantMessageEvent = { ...rest, id: call.id, toolName: call.name };
+  }
+  return { type: "message_update", usage: event.message?.usage, assistantMessageEvent };
+}
+
+/**
+ * 与 CLI 一致的内置扩展：Code Mode、Tool Search、MCP。
+ * 缺口：CLI 还有 `llama.cpp` 内置扩展，SDK 没有导出它的工厂（只能 import dist/extensions/index.js，
+ * 那是未打包的模块图，会拖慢启动），先不接，见 docs/sdk-host/capabilities.md。
+ */
+export function builtinExtensions(sdk, enabled = {}) {
+  const table = [
+    ["codemode", sdk.createCodemodeExtension],
+    ["tool-search", sdk.createToolSearchExtension],
+    ["mcp", sdk.createMcpExtension],
+  ];
+  return table
+    .filter(([name, make]) => typeof make === "function" && enabled[name] !== false)
+    .map(([name, make]) => ({ name, factory: make(), replaceable: true, builtin: true }));
+}
+
+export class Controller {
+  /**
+   * @param {{hub: import("./hub.mjs").Hub, transport: any, ui: any, surfaces: any, cfg: any}} deps
+   */
+  constructor({ hub, transport, ui, surfaces, cfg }) {
+    this.hub = hub;
+    this.transport = transport;
+    this.ui = ui;
+    this.surfaces = surfaces;
+    this.cfg = cfg;
+    this.sdk = null;
+    this.runtime = null;
+    this.bus = null;
+    this.opened = false;
+    this.shutdownRequested = false;
+    this.unsubscribe = null;
+    this.unsubscribeBackpressure = null;
+    this.firstBind = true;
+    this.extensionsBound = false;
+    this.pushState = createStatePusher(this);
+    this.trustOverride = undefined;
+    /** 表态只对表态时的项目有效；会话换到别的 cwd 后，那个项目走自己的信任库记录。 */
+    this.trustOverrideCwd = undefined;
+    this.lastOpenArgs = null;
+  }
+
+  get session() {
+    return this.runtime?.session ?? null;
+  }
+
+  requireSession() {
+    const session = this.session;
+    if (!session) throw new HostError(ERR.NOT_OPEN, "会话还没有建立：先发 session.open");
+    return session;
+  }
+
+  // ------------------------------------------------------------------ open
+
+  /** 当前会话的工作目录。SDK 里 cwd 是会话的属性（会话头里记着），换会话就可能换；启动参数只是第一个会话的默认值。 */
+  get cwd() {
+    return this.runtime?.cwd ?? this.cfg.cwd;
+  }
+
+  async open(args = {}) {
+    if (this.opened) throw new HostError(ERR.BUSY, "session.open 只能调用一次；换会话用 session.new / session.switch");
+    this.opened = true;
+    this.lastOpenArgs = args;
+    const sdk = (this.sdk = await loadSdk(this.cfg.piDir));
+    const { cwd, agentDir } = this.cfg;
+    const sessionDir = args.sessionDir ?? this.cfg.sessionDir ?? join(agentDir, "sessions");
+    /** 实际生效的会话目录（平铺：会话文件直接放在里面）。列表、搜索、路径校验都以它为准。 */
+    this.sessionDir = sessionDir;
+
+    this.bus = sdk.createEventBus();
+    const modelRuntime = await sdk.ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const trustStore = new sdk.ProjectTrustStore(agentDir);
+    this.trustStore = trustStore;
+    if (typeof args.trust === "boolean") {
+      this.trustOverride = args.trust;
+      this.trustOverrideCwd = this.cfg.cwd;
+    }
+
+    const flagValues = new Map(Object.entries(args.flags ?? {}));
+    const resources = args.resources ?? {};
+
+    const factory = async ({ cwd: targetCwd, sessionManager, sessionStartEvent }) => {
+      const trusted = this.#projectTrusted(targetCwd);
+      const settingsManager = sdk.SettingsManager.create(targetCwd, agentDir, { projectTrusted: trusted.value });
+      const services = await sdk.createAgentSessionServices({
+        cwd: targetCwd,
+        agentDir,
+        settingsManager,
+        modelRuntime,
+        extensionFlagValues: flagValues,
+        resourceLoaderOptions: {
+          eventBus: this.bus,
+          additionalExtensionPaths: this.cfg.extensions,
+          // CLI 的内置扩展（pi 的 `extensions/index.js` 里 builtInExtensions）：SDK 会话**默认不带**，
+          // 要自己装。同样 `builtin: true` + `replaceable: true`，于是 `pi config` / settings 里的
+          // `-builtin:mcp` 这类开关继续有效，第三方 MCP 扩展也能照旧「接管」内置的。
+          extensionFactories: builtinExtensions(sdk, args.builtins),
+          noExtensions: resources.noExtensions,
+          noSkills: resources.noSkills,
+          noPromptTemplates: resources.noPromptTemplates,
+          noThemes: resources.noThemes,
+          noContextFiles: resources.noContextFiles,
+        },
+      });
+      const created = await sdk.createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+      if (trusted.undecided) {
+        // 项目里有需要信任才加载的资源，而用户还没表态：先按「不信任」起，让 App 去问。
+        this.hub.emit("project.trust.required", { cwd: targetCwd });
+      }
+      return { ...created, services, diagnostics: services.diagnostics };
+    };
+
+    const sessionManager = this.#pickSessionManager(sdk, cwd, sessionDir, args.session ?? {});
+    this.runtime = await sdk.createAgentSessionRuntime(factory, { cwd, agentDir, sessionManager });
+    this.runtime.setRebindSession(async () => {
+      await this.#bind({ background: false });
+    });
+
+    this.#bind({ background: true }); // 同步段：订阅 + epoch；扩展绑定在后台
+    setImmediate(() => this.pushState("open")); // 应答先出去，状态紧随其后
+
+    const session = this.session;
+    return {
+      protocol: 1,
+      sdkVia: sdkVia(),
+      piVersion: sdk.VERSION ?? null,
+      cwd,
+      agentDir,
+      sessionDir,
+      epoch: this.hub.epoch,
+      sessionId: session.sessionId,
+      sessionFile: session.sessionFile ?? null,
+      modelFallbackMessage: this.runtime.modelFallbackMessage ?? null,
+      diagnostics: this.runtime.diagnostics ?? [],
+    };
+  }
+
+  /**
+   * 这个项目信不信任——与官方 `resolveProjectTrusted`（`core/project-trust.ts`）同一个顺序：
+   *  1. 本次会话的表态（`--trust` 或「仅本次」）；
+   *  2. 信任库里**最近**的一条记录（`ProjectTrustStore.get` 会沿父目录往上找，所以信任一个父目录就覆盖整棵树）；
+   *  3. 项目里没有任何需要信任才加载的东西 → 信任（无所谓）；
+   *  4. 设置 `defaultProjectTrust`：`always` / `never` 直接定；
+   *  5. `ask`：先按「不信任」起，`undecided = true`，让 App 去问。
+   * 官方在 3 与 4 之间还会让扩展的 `project_trust` 事件表态；宿主在会话建好之前没有扩展可问，所以没有这一步。
+   * `source` 说明结论从哪来，界面据此写「为什么」。
+   */
+  #projectTrusted(cwd) {
+    const sdk = this.sdk;
+    if (this.trustOverride !== undefined && this.trustOverrideCwd === cwd) {
+      return { value: this.trustOverride, undecided: false, source: "session" };
+    }
+    const stored = this.trustStore.get(cwd);
+    if (stored === true || stored === false) return { value: stored, undecided: false, source: "store" };
+    if (!sdk.hasTrustRequiringProjectResources(cwd)) return { value: true, undecided: false, source: "nothing-to-trust" };
+    const fallback = this.#defaultProjectTrust(cwd);
+    if (fallback === "always") return { value: true, undecided: false, source: "default" };
+    if (fallback === "never") return { value: false, undecided: false, source: "default" };
+    return { value: false, undecided: true, source: "ask" };
+  }
+
+  /** 全局设置 `defaultProjectTrust`（SDK 自己把非法值归成 `ask`）。读不到就当 `ask`：宁可多问一次。 */
+  #defaultProjectTrust(cwd) {
+    try {
+      return this.sdk.SettingsManager.create(cwd, this.cfg.agentDir, { projectTrusted: false }).getDefaultProjectTrust();
+    } catch {
+      return "ask";
+    }
+  }
+
+  /** 当前项目是否被信任（含 App 已表态的覆盖）。资源 / 包命令按它决定读不读项目层设置。 */
+  isProjectTrusted() {
+    return this.#projectTrusted(this.cwd).value;
+  }
+
+  /**
+   * 信任的完整读数：结论、来源、信任库里哪一条在起作用（可能是父目录的）、项目里有没有需要信任的东西。
+   * 「继承」= 起作用的记录不是这个目录自己的（比如信任了它的父目录）。
+   */
+  trustState() {
+    this.requireSession();
+    const cwd = this.cwd;
+    const t = this.#projectTrusted(cwd);
+    const entry = this.trustStore.getEntry(cwd);
+    let canonical = cwd;
+    try {
+      canonical = realpathSync(cwd);
+    } catch {
+      canonical = resolve(cwd);
+    }
+    const parent = dirname(canonical);
+    return {
+      cwd,
+      trusted: t.value,
+      undecided: t.undecided,
+      source: t.source,
+      entry: entry ? { path: entry.path, decision: entry.decision, inherited: entry.path !== canonical } : null,
+      needsTrust: this.sdk.hasTrustRequiringProjectResources(cwd),
+      defaultProjectTrust: this.#defaultProjectTrust(cwd),
+      parent: parent === canonical ? null : parent,
+    };
+  }
+
+  /**
+   * 一批目录各自的信任结论（项目切换列表用）。同一个 `#projectTrusted` 顺序，所以与切过去之后
+   * 看到的一致；只读，不建会话、不动信任库。目录名不是字符串或不是绝对路径的忽略。
+   */
+  trustOf(cwds) {
+    const out = {};
+    for (const cwd of Array.isArray(cwds) ? cwds.slice(0, 200) : []) {
+      if (typeof cwd !== "string" || !cwd.startsWith("/")) continue;
+      const t = this.#projectTrusted(cwd);
+      out[cwd] = { trusted: t.value, undecided: t.undecided, source: t.source };
+    }
+    return out;
+  }
+
+  #pickSessionManager(sdk, cwd, sessionDir, sel) {
+    const { SessionManager } = sdk;
+    if (typeof sel.file === "string") return SessionManager.open(sel.file, sessionDir);
+    if (typeof sel.id === "string") {
+      // pi 的 `--session-id` 语义：找得到就接着写，找不到就用这个 id 新建。
+      const found = SessionManager.findById(cwd, sel.id, sessionDir);
+      return found ? SessionManager.open(found, sessionDir) : SessionManager.create(cwd, sessionDir, { id: sel.id });
+    }
+    if (sel.continue === true) return SessionManager.continueRecent(cwd, sessionDir);
+    return SessionManager.create(cwd, sessionDir);
+  }
+
+  // ------------------------------------------------------------------ bind
+
+  async #bind({ background }) {
+    const session = this.runtime.session;
+    const hub = this.hub;
+
+    this.unsubscribe?.();
+    this.unsubscribeBackpressure?.();
+    this.extensionsBound = false;
+    this.ui.reset();
+    hub.bumpEpoch();
+    hub.emit("session.bound", { sessionId: session.sessionId, sessionFile: session.sessionFile ?? null, first: this.firstBind });
+
+    this.unsubscribe = session.subscribe((event) => {
+      hub.emit("agent", toJsonEvent(event));
+      if (STATE_EVENTS.has(event.type)) this.pushState(event.type);
+      if (event.type === "agent_settled" && this.shutdownRequested) void this.shutdown(0);
+    });
+    // 事件产生得比管道消化得快时，让 agent 停一停，而不是在内存里堆帧。
+    this.unsubscribeBackpressure = session.agent.subscribe(async () => {
+      await this.transport.drained();
+    });
+
+    const bindings = {
+      uiContext: this.ui.context,
+      mode: this.cfg.mode,
+      commandContextActions: this.#commandActions(),
+      shutdownHandler: () => {
+        this.shutdownRequested = true;
+      },
+      onError: (err) => hub.emit("ext.error", { extensionPath: err.extensionPath, event: err.event, error: err.error }),
+    };
+    const bind = () => session.bindExtensions(bindings);
+    const wasFirst = this.firstBind;
+    this.firstBind = false;
+
+    if (!background) {
+      await bind();
+      this.extensionsBound = true;
+      this.pushState("rebind");
+      return;
+    }
+    // `setImmediate`：`bindExtensions` 的同步段会加载扩展并跑 `session_start`，实测能把
+    // 紧随其后的应答推迟 8 秒。让 `open` 的应答先写出去。
+    setImmediate(() => {
+      bind()
+        .then(() => {
+          this.extensionsBound = true;
+          hub.emit("ext.bound", { ok: true, first: wasFirst });
+          this.pushState("extensions");
+        })
+        .catch((error) => hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) }));
+    });
+  }
+
+  #commandActions() {
+    const runtime = this.runtime;
+    return {
+      waitForIdle: () => this.session.waitForIdle(),
+      newSession: async (options) => runtime.newSession(options),
+      fork: async (entryId, forkOptions) => ({ cancelled: (await runtime.fork(entryId, forkOptions)).cancelled }),
+      navigateTree: async (targetId, options) => ({
+        cancelled: (
+          await this.session.navigateTree(targetId, {
+            summarize: options?.summarize,
+            customInstructions: options?.customInstructions,
+            replaceInstructions: options?.replaceInstructions,
+            label: options?.label,
+          })
+        ).cancelled,
+      }),
+      switchSession: async (sessionPath, options) => runtime.switchSession(sessionPath, options),
+      reload: async () => {
+        await this.session.reload();
+      },
+    };
+  }
+
+  /**
+   * 项目信任表态：写进 pi 的信任库（`trust.json`），并让**已经在跑的会话**读到新结论。
+   *
+   * `remember`（对应官方弹窗的几个选项，`getProjectTrustOptions`）：
+   *  - `folder`：记在这个目录（信任 / 不信任）；
+   *  - `parent`：信任它的父目录并清掉这个目录自己的记录——只对「信任」有意义，官方也只给这一个选项；
+   *  - `session`：只管这一次，不写信任库；
+   *  - `reset`：清掉这个目录自己的记录，回到「没表态」（之后按 `defaultProjectTrust` 走）；
+   *  - `reset-inherited`：起作用的是父目录的记录时，清掉那一条。
+   *
+   * **必须把结论交给会话的 `SettingsManager.setProjectTrusted`**：`session.reload()` 明确「保留
+   * SettingsManager 当时的信任态」（`resource-loader.ts` reload 注释），只写信任库再 reload，
+   * 会话里项目层的设置与资源仍然按旧结论加载。
+   */
+  async setProjectTrust(trusted, remember = "folder") {
+    const cwd = this.cwd;
+    const parent = dirname(cwd);
+    switch (remember) {
+      case "folder":
+        this.trustStore.set(cwd, trusted);
+        this.#clearTrustOverride();
+        break;
+      case "parent":
+        if (!trusted) throw new HostError(ERR.BAD_ARGS, "「信任父目录」只用于信任。");
+        if (parent === cwd) throw new HostError(ERR.BAD_ARGS, "这个目录没有父目录。");
+        this.trustStore.setMany([
+          { path: parent, decision: true },
+          { path: cwd, decision: null },
+        ]);
+        this.#clearTrustOverride();
+        break;
+      case "session":
+        this.trustOverride = trusted;
+        this.trustOverrideCwd = cwd;
+        break;
+      case "reset":
+        this.trustStore.set(cwd, null);
+        this.#clearTrustOverride();
+        break;
+      case "reset-inherited": {
+        // 起作用的是父目录的记录：清掉那一条（会影响它下面所有没自己记录的项目，界面要把话说清）。
+        const entry = this.trustStore.getEntry(cwd);
+        if (!entry) throw new HostError(ERR.BAD_ARGS, "没有可清除的信任记录。");
+        this.trustStore.setMany([{ path: entry.path, decision: null }]);
+        this.#clearTrustOverride();
+        break;
+      }
+      default:
+        throw new HostError(ERR.BAD_ARGS, `未知的 remember：${remember}`);
+    }
+    const session = this.requireSession();
+    const now = this.#projectTrusted(cwd);
+    session.settingsManager.setProjectTrusted(now.value);
+    await session.reload();
+    if (now.undecided) this.hub.emit("project.trust.required", { cwd });
+    return this.trustState();
+  }
+
+  #clearTrustOverride() {
+    this.trustOverride = undefined;
+    this.trustOverrideCwd = undefined;
+  }
+
+  // ------------------------------------------------------------------ shutdown
+
+  async shutdown(code = 0) {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    try {
+      this.unsubscribe?.();
+      this.unsubscribeBackpressure?.();
+      this.hub.cancelAllAsks();
+      await Promise.race([this.runtime?.dispose(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+      await Promise.race([this.transport.flush(), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    } finally {
+      process.exit(code);
+    }
+  }
+}

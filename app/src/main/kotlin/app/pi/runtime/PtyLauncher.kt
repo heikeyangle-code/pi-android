@@ -265,8 +265,8 @@ object PtyLauncher {
             // thread that will not start, an OOM) would mean a second retry leaks the first
             // child — proroot has no `--kill-on-exit`. An unattributable failure therefore
             // propagates, with the first process's fate unchanged.
-            if (prepared.engine != GuestEngine.Proroot) throw startFailure
-            selection.recordProrootFailure(
+            if (prepared.engine == GuestEngine.Proot) throw startFailure
+            selection.recordEngineFailure(
                 "${startFailure::class.java.simpleName}: ${startFailure.message}",
             )
             spawn(prepare(context, spec, allowProroot = false), paths, onOutput, onExit)
@@ -282,7 +282,7 @@ object PtyLauncher {
     ): PtySession = PtySession.spawn(
         argv = prepared.argv,
         environment = prepared.environment,
-        workingDirectory = paths.runtime,
+        workingDirectory = GuestCommandLine.hostCwd(paths, prepared.engine),
         greeting = greetingFor(prepared),
         engine = prepared.engine,
         // proroot's scratch directory, so the session can identify this launch by

@@ -16,8 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.EngineRestartCoordinator
-import app.pi.packages.ExtensionLifecycle
-import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
@@ -26,15 +24,10 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
 import app.pi.ui.PromptFileFacts
 import app.pi.ui.device.DeviceCapabilityScreen
-import app.pi.ui.screens.PiFilesScreen
-import app.pi.ui.screens.WorkspaceResourceKind
-import app.pi.ui.screens.WorkspaceResourceScan
-import app.pi.ui.screens.WorkspaceSource
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
@@ -80,13 +73,15 @@ fun PiSettingsStack(
     /**
      * The engine's restart, for the two branches that change files pi only reads
      * at startup: the package screen (through `EngineRestartCoordinator`) and the
-     * credential form (`models.json`, see [ModelProviderScreen]). Null keeps both
+     * credential form (`models.json`, see [app.pi.ui.models.ModelsScreen]). Null keeps both
      * screens honest: they say the restart is not wired instead of offering a
      * button that cannot work.
      */
     restartEngine: (suspend (reason: String, allowInterrupt: Boolean) -> EngineRestartCoordinator.Outcome)? = null,
     /** Live turn state, so a restart is refused rather than interrupting a turn. */
     isTurnRunning: () -> Boolean = { false },
+    /** 扩展 / MCP 页问宿主的入口；引擎没起来时返回 null。 */
+    extensionsAccess: () -> app.pi.host.ExtensionsAccess? = { null },
     /**
      * `get_available_models` — pi's own metadata for the models it already has,
      * used to label what a scan matched and what fell back to app defaults. It is
@@ -95,6 +90,10 @@ fun PiSettingsStack(
      */
     availableModels: List<PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
+    /** 宿主的高级命令入口；引擎没跑时返回 null（「引擎」页据此显示说明）。 */
+    advanced: () -> app.pi.host.HostAdvanced? = { null },
+    /** 「模型与供应商」页的宿主能力；引擎没跑时返回 null。 */
+    modelsHost: () -> app.pi.ui.models.ModelsHost? = { null },
     /**
      * A key to open this stack on, e.g. `enabledModels` for pi's
      * `/scoped-models` (see `NavRequest.SettingsFocus`). Consumed once, through
@@ -104,7 +103,7 @@ fun PiSettingsStack(
     onFocusConsumed: () -> Unit = {},
     /**
      * Called after a screen wrote pi's files through a layer of its own (the
-     * credential form's `PiEnginePreferences`), so the owner of the settings store
+     * hand-edited files), so the owner of the settings store
      * can drop its cached documents. The store is the ViewModel's, so the
      * invalidation lives there — this stack only reports that a write happened.
      */
@@ -171,21 +170,15 @@ fun PiSettingsStack(
     // 设置首页的「其他」一屏：终端 / Pi 文件 / 设备能力 / 扩展包 / 安全与隐私 / 开源许可。
     var other by rememberSaveable { mutableStateOf(false) }
     var deviceCapabilities by rememberSaveable { mutableStateOf(false) }
-    // pi installs resources with `pi install`, which has no RPC command, so the
-    // app owns this UI; the screen is `app.pi.packages.PiPackagesHost`.
-    var packages by rememberSaveable { mutableStateOf(false) }
-    // 「模型与供应商」（`ModelProviderScreen`）：以前是 凭证表单 + 模型清单 两屏
-    // （`PiCredentialScreen` / `PiModelsScreen`），拍板合成一屏（导入是屏内 sheet、
-    // 三个选择键就地编辑），所以只剩一个层级加三个开屏参数：
-    //  - `modelFlowPreset`：从哪张厂商卡/哪条 Action 行进来的（null = 不预选）；
-    //  - `modelFlowImport`：进来直接拉起导入 sheet（之前注册表里 API Key / 本地模型
-    //    那两行就是"点进去填东西"的语义；两行已按用户裁定删除，入口留在这一屏自己身上）；
-    //  - `modelFlowEditor`：进来直接打开三个选择键之一的编辑器（搜索与
-    //    `/scoped-models` 的 `NavRequest.SettingsFocus`）。
+    // 「扩展与资源」枢纽（`ui/resources/ResourcesHubScreen`）：扩展 / 技能 / 提示 / 主题 / 上下文 / 包 / MCP / 项目信任都从这里进。
+    // 它跳去 MCP、Pi 文件、引擎、设置组时自己保持 true，所以那些页返回就回到枢纽，不用另记来路。
+    var resources by rememberSaveable { mutableStateOf(false) }
+    var resourcesProject by rememberSaveable { mutableStateOf(false) }
+    // 「模型与供应商」（`ui/models/ModelsScreen`）：一个层级，数据全在宿主（auth.* / models.config.*）。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
-    var modelFlowPreset by rememberSaveable { mutableStateOf<String?>(null) }
-    var modelFlowImport by rememberSaveable { mutableStateOf(false) }
-    var modelFlowEditor by rememberSaveable { mutableStateOf<String?>(null) }
+    // 从「模型与供应商」点进「默认模型与推理」（那一组行的页）时置位：从那一页退出要回到模型页，
+    // 而不是掉回设置首页。组页本身没有别的入口（首页过滤了它），所以这是它唯一的来路。
+    var defaultsFromModels by rememberSaveable { mutableStateOf(false) }
     // The open-source licence notices. Not a pi screen either — see §L: publishing
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
@@ -195,15 +188,10 @@ fun PiSettingsStack(
     // 用户能亲眼看到退出码是空的、stderr 是空的、哪个载荷读不出来，再决定发不发。
     // 它不碰引擎，因此引擎已经退出时同样可用（这正是它存在的场景）。
     var diagnostics by rememberSaveable { mutableStateOf(false) }
-    // 设置首页「其他」里的「Pi 文件」（`app.pi.ui.screens.PiFilesScreen`）。它既不是 pi
-    // 的设置键也不是 pi 的功能，而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3），
-    // 所以与上面几页同一档：这个栈里的一个层级，而不是首页自己托管的一屏 —— 层级的
-    // 返回语义与 `rememberSaveable` 都归这里（自托管那条退路只在没有宿主时用，见
-    // `SettingsHome` 的 `onOpenPiFiles`）。
-    var piFiles by rememberSaveable { mutableStateOf(false) }
     // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器，与「模型与供应商」
     // 同类，是这个栈里的一个层级，返回语义与状态恢复和别的层级一致。
     var mcp by rememberSaveable { mutableStateOf(false) }
+    var engineOpen by rememberSaveable { mutableStateOf(false) }
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -233,22 +221,6 @@ fun PiSettingsStack(
     var restartPrompt by remember { mutableStateOf(false) }
     var restartNote by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-
-    // One lifecycle and one coordinator for the whole stack, so the two screens
-    // that write pi's startup-read files (厂商凭证 and 模型) share one answer to
-    // "is something waiting for a restart". They used to build one each, and a
-    // second machine that cannot see the first is how a screen ends up saying
-    // "没有待重启的变更" while the other says "需要重启".
-    val lifecycle = remember { ExtensionLifecycle() }
-    val coordinator = remember(lifecycle, restartEngine) {
-        restartEngine?.let { engine ->
-            EngineRestartCoordinator(
-                lifecycle = lifecycle,
-                isTurnRunning = isTurnRunning,
-                restartEngine = engine,
-            )
-        }
-    }
 
     // External-change epoch. `PiSettingsFileStore` caches both documents until the
     // app itself writes one, so a file edited by pi, a terminal, or the AI kept
@@ -342,19 +314,31 @@ fun PiSettingsStack(
     // Null until the first IO read lands: the row shows its own 未读取 for that frame and
     // the detail block renders nothing, rather than a default that looks like a reading.
     var runtimeStatus by remember { mutableStateOf<RuntimeSelection.Status?>(null) }
+    var engineStatuses by remember {
+        mutableStateOf<Map<app.pi.runtime.GuestEngine, RuntimeSelection.Status>?>(null)
+    }
     // `runtimeSwitch` is a key for the reason its KDoc gives: the toggle's own flow changes
     // the switch value (a refused restart rolls it back) and the cached verdict (a probe just
     // ran), and neither bump reaches this screen on its own — the epoch above only fires on
     // the write itself, which happens *before* the probe. It also covers a plain
     // `Probing → Idle` transition for a probe that changed nothing.
     LaunchedEffect(runtimeSelection, filesEpoch, runtimeStatusEpoch, runtimeSwitch) {
-        runtimeStatus = withContext(Dispatchers.IO) { runtimeSelection.status() }
+        val read = withContext(Dispatchers.IO) {
+            runtimeSelection.status() to app.pi.runtime.GuestEngine.entries.associateWith {
+                runtimeSelection.statusFor(it)
+            }
+        }
+        runtimeStatus = read.first
+        engineStatuses = read.second
     }
     // While the toggle's flow is doing something, the row says so instead of showing the
     // previous verdict: the probe runs for tens of seconds and a row that keeps showing the
     // old sentence is the "switch did nothing" shape this change removes. `null` (Idle) means
     // "show the real reading" — see `RuntimeSwitchAction.statusLine`.
-    val runtimeStatusText = RuntimeSwitchAction.statusLine(runtimeSwitch)
+    val runtimeStatusText = RuntimeSwitchAction.statusLine(
+        runtimeSwitch,
+        RuntimeSwitchAction.Target.valueOf(runtimeSelection.selectedEngine.name),
+    )
         ?: runtimeStatus?.summary
         ?: "未读取"
 
@@ -383,14 +367,15 @@ fun PiSettingsStack(
     val promptDetailOverrides = promptReading?.let { PromptFileFacts.detail(it) }
         ?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()
 
-    val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
-        AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
+    val engineMatrix = engineMatrixOverrides(engineStatuses)
+    val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText, engineMatrix.first) {
+        AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText, engineMatrix.first)
     }
     // Turning the switch must refresh the status row in the same breath; an app-only
     // write touches no pi document, so nothing else in the stack would notice, and the
     // status text is exactly what a stale value would lie about.
     val handleSettingWritten: (String) -> Unit = { key ->
-        if (key == AppOnlySettingsStore.KEY_PROROOT) runtimeStatusEpoch++
+        if (key == AppOnlySettingsStore.KEY_ENGINE) runtimeStatusEpoch++
         // 先让宿主读它要读的（`refreshPrefs` / `refreshTheme` / proroot 的探针流程），再让这一栈
         // 的行重读 store。顺序反过来，proroot 那两行会先用旧的 `runtimeStatusText` 重读一次。
         onSettingWritten(key)
@@ -400,21 +385,15 @@ fun PiSettingsStack(
         writeEpoch++
     }
 
-    // 三个选择键的编辑器搬进了「模型与供应商」（一件事一个地方改），所以这三个 key
-    // 不再进分组屏 —— 搜索结果与 `/scoped-models` 焦点都路由到那一屏的就地编辑器；
-    // 分组屏里它们已被过滤掉（`SettingsGroupScreen` 用 `MODEL_SELECTION_KEYS`）。
     val openSetting: (String) -> Unit = { key ->
-        if (key in MODEL_SELECTION_KEYS) {
-            modelFlowPreset = null
-            modelFlowImport = false
-            modelFlowEditor = key
-            modelFlow = true
-        } else {
-            val setting = PiSettingsCatalog.byKey[key]
-            if (setting != null) {
-                groupId = setting.group
-                highlightKey = key
-            }
+        val setting = PiSettingsCatalog.byKey[key]
+        if (key == "hub:resources" || key == "hub:resources:project") {
+            // 项目页的「扩展与资源」入口：不是某一条设置，是枢纽页本身；`:project` 直接落在项目层。
+            resourcesProject = key.endsWith(":project")
+            resources = true
+        } else if (setting != null) {
+            groupId = setting.group
+            highlightKey = key
         }
     }
 
@@ -432,30 +411,8 @@ fun PiSettingsStack(
     // [onRunAction]; when the caller supplies nothing, the row keeps its honest
     // "not wired" dialog — which is why this is a per-key map and not a lambda
     // that would have to pretend every key is handled.
-    // 注册表里那三行（已导入的模型 / API Key / 本地模型）已按用户裁定删除：G_MODEL
-    // 分组页不存在，它们没有渲染面。目的地不变，仍由 `openModelFlow` 打开
-    // 「模型与供应商」一屏 —— 现在它由这一屏自己的三个入口（导入、API Key、订阅账号）
-    // 提供，注册表不再转一道手。
-    // 本地模型那一段（llama.cpp 端点）也走这一屏：那行已删除，但语义没变 —— pi 的
-    //  `/llama` 在 RPC 下根本跑不了：它的处理器除非
-    // `ctx.mode === "tui"` (`extensions/llama/index.ts:186-189`), and
-    // `ctx.ui.custom()` is a documented no-op in RPC mode. What *is* reachable is
-    // configuring the endpoint pi reads: `models.json` plus a placeholder
-    // credential (`docs/models.md:37`). The screen says the rest is TUI-only.
-    val openModelFlow: (preset: String?, importSheet: Boolean, editorKey: String?) -> Unit =
-        { preset, importSheet, editorKey ->
-            modelFlowPreset = preset
-            modelFlowImport = importSheet
-            modelFlowEditor = editorKey
-            modelFlow = true
-        }
+    val openModelFlow: () -> Unit = { modelFlow = true }
     val hostActions: Map<String, () -> Unit> = mapOf(
-        // The `packages` row is a read-only *view* of what `pi install` wrote
-        // (`PiSettingsRegistry.kt` says so on the row). Editing the array by hand
-        // bypasses the download/resolve step and can leave a spec that looks
-        // installed but was never fetched, so the row opens the manager status quo
-        // screen instead of a list editor — the same screen 设置首页 already links.
-        "packages" to { packages = true },
         // The 进程 section's three switches are pi's process configuration, so
         // they can only take effect in a new `pi --mode rpc` process. This row is
         // the next step the rows above point at.
@@ -464,9 +421,6 @@ fun PiSettingsStack(
         // 看不到 logcat。这一行把 App 此刻还能读到的一切汇总成一份纯文本交给用户，报告
         // 的抓取发生在引擎退出的一瞬间（`engineDiagnostics`），所以引擎死了也能导。
         "app.runtime.diagnostics" to { diagnostics = true },
-        // 「查看资源文件」：这一屏的出口，指向「Pi 文件」屏。它走的是本栈**已有**的层级
-        // `piFiles`（`SettingsHome` 的入口行用的是同一个），不新造导航；那一屏是目录浏览器，
-        // `skills/`、`prompts/`、`themes/`、`extensions/` 都在里面能看到和编辑。
     )
 
     // **一直启用**：底栏没了以后，设置首页的返回键必须回到对话，否则按一下直接退出
@@ -474,12 +428,8 @@ fun PiSettingsStack(
     // 与覆盖层那条的关系：它们在 `PiRoot` 里，覆盖层 handler 组合顺序在后 ⇒ LIFO 先
     // 接到按键，所以覆盖层开着时按返回关的是覆盖层，不是这一屏。
     BackHandler(enabled = true) {
-        // `piFiles` 排在最前：它是这一栈里最深的一层，返回键先关它（回到设置首页），
-        // 而不是继续往外退。正常情况下 `PiFilesScreen` 自己那个 `BackHandler` 会先拿到
-        // 按键（组合顺序在后 → `OnBackPressedDispatcher` 的 LIFO），在那里"返回"是**退到
-        // 上一级目录**、到根才是 `onBack()`；这一支是它不在组合里时的兜底。
-        if (piFiles) {
-            piFiles = false
+        if (engineOpen) {
+            engineOpen = false
         } else if (mcp) {
             mcp = false
         } else if (licenses) {
@@ -489,11 +439,6 @@ fun PiSettingsStack(
         } else if (modelFlow) {
             // 与屏自己的 onBack 同一套复位（四个状态一起清），两条退出路径不留半开状态。
             modelFlow = false
-            modelFlowImport = false
-            modelFlowEditor = null
-            modelFlowPreset = null
-        } else if (packages) {
-            packages = false
         } else if (deviceCapabilities) {
             deviceCapabilities = false
         } else if (other) {
@@ -501,28 +446,27 @@ fun PiSettingsStack(
         } else if (groupId != null || highlightKey != null) {
             groupId = null
             highlightKey = null
+            if (defaultsFromModels) {
+                defaultsFromModels = false
+                modelFlow = true
+            }
+        } else if (resources) {
+            resources = false
         } else {
             // 首页：底栏没了，这一下退到对话。
             onBack()
         }
     }
 
-    // `SettingsManager.getDefaultProjectTrust()` reads this key and coerces a
-    // missing value to `"ask"` (`settings-manager.ts:85`, `:1014-1017`); the
-    // package screen asks the same question when a project declares resources.
-    val defaultProjectTrust =
-        (effectiveStore.read("defaultProjectTrust") as? JsonPrimitive)?.content ?: "ask"
-
     val currentGroup = groupId
     Box(Modifier.fillMaxSize()) {
         when {
-            // 设置首页「其他 → Pi 文件」的目的地。放在最前与 BackHandler 的判定同序：
-            // 它是这一栈里最深的一层。入口由 `SettingsHome` 的 `onOpenPiFiles` 传来
-            // （见下面那处 `else ->`），所以这一屏的返回语义、层级与 `rememberSaveable`
-            // 状态都留在这个栈里，与搜索 / 分组页同一套。
-            piFiles -> PiFilesScreen(
+            engineOpen -> EngineScreen(
                 contentPadding = contentPadding,
-                onBack = { piFiles = false },
+                onBack = { engineOpen = false },
+                advanced = advanced,
+                availableModels = availableModels,
+                onLoadAvailableModels = onLoadAvailableModels,
             )
 
             mcp -> McpServersScreen(
@@ -530,7 +474,7 @@ fun PiSettingsStack(
                 onBack = { mcp = false },
                 userFile = File(paths.agentDir, "mcp.json"),
                 projectFile = File(PiProjectConfig.root(workspace), "mcp.json"),
-                onRestartEngine = { restartPrompt = true },
+                access = extensionsAccess,
                 onFilesWritten = onExternalSettingsWrite,
             )
 
@@ -551,32 +495,17 @@ fun PiSettingsStack(
                 engineEntry = engineEntry,
             )
 
-            modelFlow -> ModelProviderScreen(
+            modelFlow -> app.pi.ui.models.ModelsScreen(
                 contentPadding = contentPadding,
                 onBack = {
                     modelFlow = false
-                    modelFlowImport = false
-                    modelFlowEditor = null
-                    modelFlowPreset = null
                 },
-                lifecycle = lifecycle,
-                coordinator = coordinator,
-                store = effectiveStore,
-                availableModels = availableModels,
-                onLoadAvailableModels = onLoadAvailableModels,
-                initialPresetId = modelFlowPreset,
-                openImportSheet = modelFlowImport,
-                initialEditorKey = modelFlowEditor,
-                onSettingWritten = handleSettingWritten,
-                onFilesWritten = onExternalSettingsWrite,
-            )
-
-            packages -> PiPackagesHost(
-                contentPadding = contentPadding,
-                onBack = { packages = false },
-                restartEngine = restartEngine,
-                isTurnRunning = isTurnRunning,
-                defaultProjectTrust = defaultProjectTrust,
+                host = modelsHost,
+                onOpenDefaults = {
+                    defaultsFromModels = true
+                    modelFlow = false
+                    groupId = G_MODEL
+                },
             )
 
             deviceCapabilities -> DeviceCapabilityScreen(
@@ -594,17 +523,10 @@ fun PiSettingsStack(
                         open()
                     }
                 },
-                onOpenPiFiles = {
-                    other = false
-                    piFiles = true
-                },
                 onOpenDeviceCapabilities = {
                     other = false
                     deviceCapabilities = true
                 },
-                // 扩展包与项目信任的入口只留在「扩展与资源」那一组里（`packages` 行）：
-                // 以前这里再放一个同名入口，用户就有两处在管同一件事。
-                onOpenPackages = null,
                 onOpenSecurity = {
                     other = false
                     groupId = "security"
@@ -628,6 +550,10 @@ fun PiSettingsStack(
                 onBack = {
                     groupId = null
                     highlightKey = null
+                    if (defaultsFromModels) {
+                        defaultsFromModels = false
+                        modelFlow = true
+                    }
                 },
                 highlightKey = highlightKey,
                 knownThemes = knownThemes,
@@ -649,10 +575,32 @@ fun PiSettingsStack(
                     emptyMap()
                 } else {
                     runtimeDetailOverrides(runtimeStatus)
-                }) + promptDetailOverrides,
+                }) + promptDetailOverrides +
+                    (if (runtimeSwitch.inFlight || engineMatrix.second.isEmpty()) {
+                        emptyMap()
+                    } else {
+                        mapOf(AppOnlySettingsStore.KEY_MATRIX to engineMatrix.second)
+                    }),
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
+            )
+
+            resources -> app.pi.ui.resources.ResourcesHubScreen(
+                contentPadding = contentPadding,
+                startOnProject = resourcesProject,
+                onBack = { resources = false },
+                access = extensionsAccess,
+                onOpenMcp = { mcp = true },
+                onOpenEngine = { engineOpen = true },
+                onOpenCommandSettings = {
+                    groupId = "resources"
+                    highlightKey = null
+                },
+                onOpenTrustPolicy = {
+                    groupId = "security"
+                    highlightKey = "defaultProjectTrust"
+                },
             )
 
             else -> SettingsHome(
@@ -664,22 +612,23 @@ fun PiSettingsStack(
                 // 「外观 → 主题 dark」那类摘要会停在旧值上。
                 freshness = rowsEpoch,
                 onOpenGroup = { id ->
-                    groupId = id
-                    highlightKey = null
+                    if (id == "resources") {
+                        resources = true
+                    } else {
+                        groupId = id
+                        highlightKey = null
+                    }
                 },
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
-                onOpenPackages = { packages = true },
                 onOpenLicenses = { licenses = true },
                 onOpenTerminal = onOpenTerminal,
                 // 首页顶栏的「模型与供应商」与分组页里那两条 Action 行是同一个目的地
                 // （`openModelFlow`），所以这里只是把已有的状态开关接上去，不多开任何一页。
-                onOpenModels = { openModelFlow(null, false, null) },
+                onOpenModels = openModelFlow,
                 onOpenDiagnostics = { diagnostics = true },
-                // 首页「其他」里的第三行。走这个栈自己的层级（`piFiles`），所以它的返回
-                // 语义与状态恢复与上面几页完全一致；`SettingsHome` 只是把点击转上来。
-                onOpenPiFiles = { piFiles = true },
                 onOpenOther = { other = true },
                 onOpenMcp = { mcp = true },
+                onOpenEngine = { engineOpen = true },
             )
         }
     }

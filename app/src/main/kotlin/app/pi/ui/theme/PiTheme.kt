@@ -173,6 +173,9 @@ object PiSpacing {
     /** 2dp: the tightest gap — a label to its glyph, a caption to its body. */
     val tiny = 2.dp
 
+    /** 命令/参数面板列表的最大高度。 */
+    val paletteMaxHeight = 260.dp
+
     /** 3dp: the state stripe's width in the block chrome. */
     val stripe = 3.dp
 

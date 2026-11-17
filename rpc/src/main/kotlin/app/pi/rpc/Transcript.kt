@@ -235,6 +235,20 @@ data class HookMessage(
     override val ts: Long,
     val customType: String = "",
     val markdown: String = "",
+    /** 消息的 `details`（任意 JSON）；扩展的消息渲染器按它画，没有就只能画 [markdown]。 */
+    val details: JsonElement? = null,
+) : TranscriptItem
+
+/**
+ * 扩展自己的 `custom` 会话条目（`pi.appendEntry(customType, data)`）。pi 只通过扩展用
+ * `registerEntryRenderer(customType, …)` 注册的渲染器画它，没有渲染器就什么也不画；
+ * 转录里照实保留，是否可见由宿主答「有没有渲染器」决定（见 `render.entry`）。
+ */
+data class ExtensionEntry(
+    override val key: String,
+    override val ts: Long,
+    val customType: String,
+    val data: JsonElement? = null,
 ) : TranscriptItem
 
 /** The `model-change` block: a single muted line in the stream. */
@@ -1173,7 +1187,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 // [onHookEntry]); the live chain used to drop it, so injected context
                 // only appeared after a reload. `display: false` means pi keeps it in
                 // context but hides it, exactly as [onHookEntry] treats it.
-                onHookMessage(event.customType ?: "extension", event.text)
+                onHookMessage(event.customType ?: "extension", event.text, details = event.details)
             } else if (event.role == "user") {
                 // History replay reaches the same rows through `onEntry` -> the
                 // persisted `message` entry; this is the live half, so an
@@ -2122,23 +2136,15 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             "custom_message", "hook_message" -> onHookEntry(entry, entryId, ts)
 
             // An extension's own persisted state (`{ type, customType, data }`,
-            // core/session-manager.ts:104-108, docs/session-format.md:279) is
-            // **deliberately not drawn**. pi shows it only through the renderer the
-            // extension registered for that `customType` (`interactive-mode.ts:3557-3562`,
-            // `components/custom-entry.ts`), and with no renderer registered pi itself
-            // adds no child at all (`:3558-3561`). The RPC wire carries no renderer
-            // registry, so the closest thing to pi's own behaviour is this: nothing.
-            //
-            // Until 2026-09-24 this arm projected the type and the payload as a muted
-            // row, plus (since 9c547a1) the first level of `data` as key/value lines.
-            // Both were the App's own invention, never a user decision, and the JSON
-            // they printed (`web-search-results`, the web-search extension's fetch
-            // cache) read as noise under every tool card. Removal was the user's
-            // ruling, and it matches D29's "扩展状态…彻底不显示"
-            // (`design/ui-refactor/07-construction-decisions.md:186-188`). The data
-            // is untouched: the entries stay in the session file, `get_entries`
-            // still returns them, and the session tree screen still shows them.
-            "custom" -> TranscriptChange.None
+            // core/session-manager.ts:104-108). pi draws it only through the renderer the
+            // extension registered with `registerEntryRenderer(customType, …)` and adds
+            // nothing when there is none (`interactive-mode.js addCustomEntryToChat`).
+            // The reducer keeps every entry as an [ExtensionEntry]; the chat screen shows
+            // only those whose type the host says has a renderer (`render.entry`), so the
+            // "JSON noise under every tool card" the old projection caused stays gone.
+            "custom" -> entry.str("customType")?.let {
+                append(ExtensionEntry(key = keyFor(entryId, "entry"), ts = ts, customType = it, data = entry["data"]))
+            } ?: TranscriptChange.None
 
             // F26: there is deliberately **no** `skill` / `skill_invocation` case
             // here. pi has neither an entry type nor an event with those names —
@@ -2503,6 +2509,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ts = ts,
                 customType = customType,
                 markdown = text,
+                details = entry["details"],
             ),
         )
     }
@@ -2566,6 +2573,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         customType: String,
         text: String,
         entryId: String? = null,
+        details: JsonElement? = null,
     ): TranscriptChange {
         if (customType.isBlank() && text.isEmpty()) return TranscriptChange.None
         return append(
@@ -2574,6 +2582,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ts = now(),
                 customType = customType,
                 markdown = text,
+                details = details,
             ),
         )
     }

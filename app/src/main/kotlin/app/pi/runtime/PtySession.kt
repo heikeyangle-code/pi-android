@@ -115,10 +115,10 @@ class PtySession private constructor(
         // ([GuestTreeReaper.capture]). The capture is a `/proc` read — milliseconds —
         // whereas the reaping that follows waits for TERM and then KILL, which is why
         // only that half goes to a thread.
-        val captured = if (engine == GuestEngine.Proroot) {
+        val captured = if (engine != GuestEngine.Proot) {
             val pid = launch?.launcherPid
             if (pid == null) {
-                lastError = "停止终端时拿不到 proroot 的 launcher pid（.proroot-config 表没有出现），未回收 guest 进程树"
+                lastError = "停止终端时拿不到 ${engine.name.lowercase()} 的 launcher pid，未回收 guest 进程树"
                 runCatching { onStopped(launch) }
                 null
             } else {
@@ -194,10 +194,11 @@ class PtySession private constructor(
                 // where the program wrote it.
                 .redirectErrorStream(true)
             builder.environment().putAll(environment)
-            val handle = if (engine == GuestEngine.Proroot && prorootTmp != null) {
-                ProrootLaunchHandle.arm(prorootTmp, launchToken)
-            } else {
-                null
+            val handle = when {
+                engine == GuestEngine.Proroot && prorootTmp != null -> ProrootLaunchHandle.arm(prorootTmp, launchToken)
+                // tawcroot 没有 config 表：靠环境里的 launch token + 父进程认出 launcher（回收整棵树要用）。
+                engine == GuestEngine.Tawcroot && launchToken != null -> ProrootLaunchHandle.armByToken(launchToken)
+                else -> null
             }
             val process = builder.start()
             // Resolve after the process exists: the table is written by the launcher,

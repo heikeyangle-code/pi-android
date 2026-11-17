@@ -10,6 +10,13 @@ package app.pi.runtime
 enum class GuestEngine {
     Proot,
     Proroot,
+
+    /**
+     * tawcroot（wmww/tawc，MIT）：seccomp `RET_TRAP` + 进程内 `SIGSYS` 处理的**单进程**
+     * proot 替代，没有 tracer、没有 `ptrace`。开源、能按钉死的提交从源码构建，所以它是
+     * 三个运行时里唯一可审计的非 proot 选项。机制与取舍见 `docs/runtime-engines.md`。
+     */
+    Tawcroot,
 }
 
 /**
@@ -289,6 +296,29 @@ object RuntimeChoice {
     }
 
     /** The counter after a proroot launch that failed before producing a result. */
+    /**
+     * 三选一的判定：[selected] 是用户选的运行时。proot 永远可用（它就是回退）；另外两个
+     * 各自要过同一串关卡——文件在、没耗尽失败预算、探针通过——任何一关不过都回到 proot，
+     * 并带上原因。判定本身与 [decide] 是同一条规则，只是「开着」从布尔变成了「选了谁」。
+     */
+    fun decideFor(
+        selected: GuestEngine,
+        filesPresent: Boolean,
+        probePassed: Boolean,
+        consecutiveFailures: Int,
+    ): EngineDecision = when {
+        selected == GuestEngine.Proot -> EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff)
+        !filesPresent -> EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing)
+        consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ->
+            EngineDecision(GuestEngine.Proot, EngineFallback.FailureStreak)
+
+        !probePassed -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotPassed)
+        else -> EngineDecision(selected, EngineFallback.None)
+    }
+
+    /** tawcroot 的运行文件：只有一个静态二进制（`libtawcroot.so`），没有 helper。 */
+    val TAWCROOT_REQUIRED_FILES: List<String> = listOf("libtawcroot.so")
+
     fun afterFailure(consecutiveFailures: Int): Int = consecutiveFailures + 1
 
     /**
@@ -364,14 +394,18 @@ object RuntimeChoice {
      * 一个：**此刻没有这个 revision 的探针结论**——正在测（那时状态行显示「正在测…」，读不到
      * 这句）、或上一次探测没能留下结论。它就说这一件事，不猜下一步。
      */
-    fun describe(fallback: EngineFallback): String = when (fallback) {
-        EngineFallback.None -> "proroot（${PROROOT_SECCOMP.disclosure}）"
+    fun describe(fallback: EngineFallback, engine: GuestEngine): String = when (fallback) {
+        EngineFallback.None -> if (engine == GuestEngine.Tawcroot) {
+            "tawcroot（seccomp 陷阱 + 进程内模拟，开源）"
+        } else {
+            "proroot（${PROROOT_SECCOMP.disclosure}）"
+        }
         EngineFallback.SwitchOff -> "proot"
         EngineFallback.RuntimeFilesMissing -> "proot（运行时文件缺失）"
         EngineFallback.ProbeNotPassed -> "proot（探针未通过）"
         EngineFallback.ProbeNotRun -> "proot（探针尚未运行）"
         EngineFallback.FailureStreak ->
-            "proot（连续 $MAX_CONSECUTIVE_FAILURES 次启动失败，重新打开开关可清零重试）"
+            "proot（连续 $MAX_CONSECUTIVE_FAILURES 次启动失败，重新选择该运行时可清零重试）"
 
         EngineFallback.InstallPath -> "proot（装机与维护路径不参与 proroot）"
     }

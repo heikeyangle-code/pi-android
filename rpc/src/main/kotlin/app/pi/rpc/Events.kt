@@ -205,6 +205,8 @@ sealed interface PiEvent {
          * event.
          */
         val images: List<PiImage> = emptyList(),
+        /** `role: "custom"` 消息的 `details`：扩展的消息渲染器（`render.message`）要用它。 */
+        val details: JsonElement? = null,
     ) : PiEvent {
         override val type = "message_end"
     }
@@ -527,6 +529,7 @@ object PiEvents {
                 // an assistant/toolResult payload's images are handled by their
                 // own blocks and would be dropped here anyway.
                 images = if (role == "user") imageBlocks(content) else emptyList(),
+                details = if (role == "custom") (msg?.get("details") ?: o["details"]) else null,
             )
         }
 

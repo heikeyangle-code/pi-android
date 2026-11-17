@@ -1,6 +1,8 @@
 package app.pi.packages
 
 import android.os.Environment
+import app.pi.runtime.EngineRefusal
+import app.pi.runtime.GuestCommandLine
 import app.pi.runtime.GuestTreeReaper
 import app.pi.runtime.ProrootLaunchHandle
 import app.pi.runtime.RuntimeSelection
@@ -160,12 +162,12 @@ class GuestCommand(private val layout: AgentLayout) {
         val plan = selection.plan(guestCommand, cwd, storage, binds, env)
         val first = execute(plan, guestCommand, timeoutMs, onOutput)
         val failure = first.failure
-        if (plan.usingProroot && failure != null) {
+        if (plan.usingExperimental && failure != null) {
             // Layer ②: count it, then run the same command on proot so the user's
             // intent still happens. The retry is forced — `allowProroot = false` —
             // rather than re-decided, because a re-decision would consult the gate
             // and could pick proroot again for a command that just failed on it.
-            selection.recordProrootFailure(failure)
+            selection.recordEngineFailure(failure)
             val retryPlan = selection.plan(guestCommand, cwd, storage, binds, env, allowProroot = false)
             val second = execute(retryPlan, guestCommand, timeoutMs, onOutput)
             // The retry plan's own notes are deliberately *not* included: it is
@@ -173,13 +175,13 @@ class GuestCommand(private val layout: AgentLayout) {
             // path", and that would be a lie about why this run is on proot. The
             // sentence below is the true one.
             return second.outcome.copy(
-                notes = plan.notes + "proroot 启动失败（$failure），本次已用 proot 重试一次",
+                notes = plan.notes + "${plan.engine.name.lowercase()} 启动失败（$failure），本次已用 proot 重试一次",
             )
         }
         // A command that ran at all proves the runtime works, whatever the command's
         // own exit code was: the streak counts *launch* failures, and clearing it on a
         // failed `npm install` would let a broken runtime look healthy.
-        if (plan.usingProroot && first.outcome.launchError == null) selection.recordProrootSuccess()
+        if (plan.usingExperimental && first.outcome.launchError == null) selection.recordEngineSuccess()
         return first.outcome.copy(notes = plan.notes)
     }
 
@@ -199,14 +201,10 @@ class GuestCommand(private val layout: AgentLayout) {
         // Armed **before** the process starts: the handle identifies this launch by
         // the config table that appears after this moment, which is the only pid the
         // platform will let the app learn (`ProrootLaunchHandle` says why).
-        val handle = if (plan.usingProroot) {
-            ProrootLaunchHandle.arm(layout.paths.prorootTmp, plan.launchToken)
-        } else {
-            null
-        }
+        val handle = plan.armHandle(layout.paths)
         val process = try {
             ProcessBuilder(plan.argv)
-                .directory(layout.paths.runtime)
+                .directory(GuestCommandLine.hostCwd(layout.paths, plan.engine))
                 .also { it.environment().putAll(plan.environment) }
                 .start()
         } catch (error: Throwable) {
@@ -221,8 +219,8 @@ class GuestCommand(private val layout: AgentLayout) {
                     launchError = "${error::class.java.simpleName}: ${error.message}",
                 ),
                 handle = handle,
-                failure = if (plan.usingProroot) {
-                    "无法启动 proroot：${error::class.java.simpleName}: ${error.message}"
+                failure = if (plan.usingExperimental) {
+                    "无法启动 ${plan.engine.name.lowercase()}：${error::class.java.simpleName}: ${error.message}"
                 } else {
                     null
                 },
@@ -253,7 +251,7 @@ class GuestCommand(private val layout: AgentLayout) {
         // window is what turns that into a fallback instead of a failed install: a
         // real command that is still running after the grace costs nothing extra,
         // because the long wait below then starts where this one left off.
-        val finished = if (plan.usingProroot) {
+        val finished = if (plan.usingExperimental) {
             process.waitFor(PROROOT_START_GRACE_MS, TimeUnit.MILLISECONDS) ||
                 process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
         } else {
@@ -266,10 +264,10 @@ class GuestCommand(private val layout: AgentLayout) {
             // process (see [GuestTreeReaper.capture]). Killing first and reaping second —
             // the obvious order, and the one this code had — leaks exactly the tree the
             // reaper exists for.
-            val captured = if (plan.usingProroot) {
+            val captured = if (plan.usingExperimental) {
                 val pid = handle?.launcherPid
                 if (pid == null) {
-                    err.append("\n超时后无法回收 guest 进程树：proroot 的 .proroot-config 表没有出现，拿不到 launcher pid")
+                    err.append("\n超时后无法回收 guest 进程树：拿不到 launcher pid（${plan.engine.name.lowercase()} 的 launch token 没在 /proc 里出现）")
                     null
                 } else {
                     runCatching {
@@ -307,8 +305,8 @@ class GuestCommand(private val layout: AgentLayout) {
         handle?.deleteConfig()
 
         val exitCode = if (finished) runCatching { process.exitValue() }.getOrNull() else null
-        val failure = if (plan.usingProroot && exitCode != null && exitCode != 0) {
-            prorootRefusal("$out\n$err")
+        val failure = if (plan.usingExperimental && exitCode != null && exitCode != 0) {
+            EngineRefusal.of(plan.engine, "$out\n$err")
         } else {
             null
         }
@@ -325,22 +323,6 @@ class GuestCommand(private val layout: AgentLayout) {
             handle = handle,
             failure = failure,
         )
-    }
-
-    /**
-     * Whether a fast, non-zero exit came from proroot's own launcher rather than from
-     * the guest command.
-     *
-     * Both strings are shapes upstream prints for a rejected argument set
-     * (`[proroot] unknown option: -L`, `Usage: libproroot.so [-r rootfs] …` —
-     * `docs/proroot-research.md` §4.2). Requiring one of them is what keeps a
-     * *command* that merely failed and mentioned "proroot" from being counted as a
-     * runtime failure and retried.
-     */
-    private fun prorootRefusal(text: String): String? {
-        val firstLine = text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
-        val fromLauncher = text.contains("[proroot]") || text.contains("libproroot.so")
-        return if (fromLauncher) firstLine.ifEmpty { "proroot 退出码非 0" } else null
     }
 
     /**

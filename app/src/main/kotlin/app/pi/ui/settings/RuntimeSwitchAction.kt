@@ -76,7 +76,64 @@ object RuntimeSwitchAction {
 
         /** 现在把引擎重启到 proroot。 */
         RestartingToProroot(true),
+
+        /** 现在把引擎重启到 tawcroot。 */
+        RestartingToTawcroot(true),
     }
+
+    /**
+     * 三选一的目标。名字与 `GuestEngine` 逐个相同（调用点用 `Target.valueOf(engine.name)`
+     * 映射），这里不 import 它：这个对象要在裸 JVM 上只带自己编译。
+     */
+    enum class Target { Proot, Proroot, Tawcroot }
+
+    /** 往 tawcroot 重启时状态行的值。 */
+    const val RESTART_TO_TAWCROOT_STATUS = "正在把引擎重启到 tawcroot…"
+
+    /** 选了 [target] 之后第一步：proot 无需测量，直接重启；另两个先测门禁。 */
+    fun onWrite(target: Target): Step =
+        if (target == Target.Proot) Step.RestartingToProot else Step.Probing
+
+    /**
+     * 探针结论落地后：[selected] 是**此刻**重读的选择，[written] 是这次写入的目标。
+     * 两者不同说明用户在探针期间又换了（过期，什么都不做）；通过才重启到 [written]。
+     */
+    fun afterProbe(selected: Target, written: Target, probePassed: Boolean): Step = when {
+        selected != written -> Step.Idle
+        written == Target.Proot -> Step.Idle
+        probePassed -> restartingTo(written)
+        else -> Step.Idle
+    }
+
+    fun restartingTo(target: Target): Step = when (target) {
+        Target.Proot -> Step.RestartingToProot
+        Target.Proroot -> Step.RestartingToProroot
+        Target.Tawcroot -> Step.RestartingToTawcroot
+    }
+
+    /**
+     * 重启结论落地后选择最终持有的值。**被拒绝的重启绝不留下一个说非 proot 的选择**
+     * （引擎仍在原运行时上）：落回 proot，与布尔版 `settle` 的 `Refused → false` 同一条规则。
+     * 注意：从 tawcroot 换到 proot 被拒时同样落 proot——那是用户写下的值。
+     */
+    fun settle(written: Target, result: RestartResult): Target = when (result) {
+        RestartResult.Refused -> Target.Proot
+        RestartResult.Ok, RestartResult.Failed -> written
+    }
+
+    /** 换回 proot 当场生效（可打断回合）；换到另两个保持不中断。 */
+    fun allowInterrupt(target: Target): Boolean = target == Target.Proot
+
+    /** 探针期间状态行的句子，点名被测的运行时。 */
+    fun probingStatus(target: Target): String = when (target) {
+        Target.Proot -> PROBING_STATUS
+        Target.Proroot -> PROBING_STATUS
+        Target.Tawcroot -> "正在测 tawcroot 探针（最长约 60 秒）…"
+    }
+
+    /** [statusLine] 的按目标版本；Probing 说的是被测的那个运行时。 */
+    fun statusLine(step: Step, target: Target): String? =
+        if (step == Step.Probing) probingStatus(target) else statusLine(step)
 
     /**
      * 引擎重启的三种结论，与 `EngineRestartCoordinator.Outcome` 一一对应。
@@ -186,5 +243,6 @@ object RuntimeSwitchAction {
         Step.Probing -> PROBING_STATUS
         Step.RestartingToProot -> RESTART_TO_PROOT_STATUS
         Step.RestartingToProroot -> RESTART_TO_PROROOT_STATUS
+        Step.RestartingToTawcroot -> RESTART_TO_TAWCROOT_STATUS
     }
 }

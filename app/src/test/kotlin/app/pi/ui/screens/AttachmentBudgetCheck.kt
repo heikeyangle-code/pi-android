@@ -237,10 +237,16 @@ fun main() {
     // 计划之前），以及 `images.autoResize: false` 那一支（`withAutoResizeOff`，它本来就不建计划）。
     // 两处文案一模一样，所以数量是 2 而不是 1 —— 少了哪一处都会红。
     // `pi.repo.root` 由 `tools/run-app-pure-checks.sh` 传给每个 harness（与 `ImageSizeCheck` 同法）。
-    val chatScreen = System.getProperty("pi.repo.root")?.let {
-        File(it, "app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt")
+    // 2026-11-15：ChatScreen 拆成了四个文件（输入框、附件、状态行、查找），压缩与降级那一支
+    // 搬进了 ChatAttachments.kt。这里读**拆开后的这一组**，而不是只读 ChatScreen.kt —— 否则
+    // 每个断言都在"文件里搜不到"，红的是拆分，不是代码。
+    val screenDir = System.getProperty("pi.repo.root")?.let {
+        File(it, "app/src/main/kotlin/app/pi/ui/screens")
     }
-    val chatText = if (chatScreen != null && chatScreen.isFile) chatScreen.readText() else ""
+    val chatText = listOf("ChatScreen.kt", "ChatAttachments.kt")
+        .map { screenDir?.resolve(it) }
+        .filter { it != null && it.isFile }
+        .joinToString("\n") { it!!.readText() }
     val fastPathReturn = Regex(
         "return PiImage\\(Base64\\.encodeToString\\(bytes, Base64\\.NO_WRAP\\), mime\\)",
     ).findAll(chatText).toList()

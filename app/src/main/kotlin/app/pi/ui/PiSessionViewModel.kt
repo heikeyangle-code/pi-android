@@ -6,20 +6,18 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.OpenableColumns
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.pi.host.ExtUiState
 import app.pi.engine.EngineCrashRecovery
-import app.pi.engine.EngineFailure
 import app.pi.engine.EngineFailureClassify
 import app.pi.engine.RetryMode
 import app.pi.engine.EngineExitCause
-import app.pi.engine.PiEngineApi
+import app.pi.host.HostEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
-import app.pi.engine.PiRpcException
+import app.pi.host.HostCommandException
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.asOutcome
 import app.pi.rpc.Notice
@@ -37,15 +35,21 @@ import app.pi.rpc.TOOL_UPDATE_THROTTLE_MS
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
+import app.pi.rpc.UserMessage
+import app.pi.rpc.AssistantText
+import app.pi.ui.chat.EntryText
+import app.pi.ui.chat.MessageEntryResolver
+import app.pi.ui.chat.MessageRole
 import app.pi.rpc.extensionErrorHeadline
 import app.pi.runtime.GuestWorkspacePath
-import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
-import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
+import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
-import app.pi.session.PiSessionStore
+import app.pi.session.SessionHit
+import app.pi.session.SessionLibrary
+import app.pi.session.SessionSummary
 import app.pi.session.ResumeTarget
 import app.pi.session.SessionExportNaming
 import app.pi.session.SessionFileReader
@@ -61,29 +65,33 @@ import app.pi.settings.readString
 import app.pi.ui.chat.BASH_OUTPUT_MAX_CHARS
 import app.pi.ui.chat.BranchSummaryChoice
 import app.pi.ui.chat.NavigateOutcome
-import app.pi.ui.chat.PiCommandAction
+import app.pi.ui.chat.ChatAction
 import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.MentionLookup
 import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
-import app.pi.ui.chat.TuiOnlyExtension
 import app.pi.ui.chat.activeBranch
 import app.pi.ui.chat.appendTailBounded
-import app.pi.ui.chat.navigateCommandArgs
 import app.pi.ui.chat.navigateOutcome
+import app.pi.ui.chat.builtinRows
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.wantsSummary
-import app.pi.ui.chat.tuiOnlyMarkers
 import app.pi.ui.extension.ComposerFill
+import app.pi.rpc.ExtensionEntry
+import app.pi.ui.extension.EntryRenderer
+import app.pi.ui.extension.EntryRendererCache
+import app.pi.ui.extension.MarkdownTransform
+import app.pi.ui.extension.MarkdownTransformCache
 import app.pi.ui.extension.ExtensionAnswer
 import app.pi.ui.extension.ExtensionDialog
 import app.pi.ui.extension.ExtensionDialogMethod
 import app.pi.ui.extension.ExtensionDialogQueue
 import app.pi.ui.extension.ExtensionNotice
-import app.pi.ui.extension.ExtensionStatus
-import app.pi.ui.extension.ExtensionWidget
-import app.pi.ui.extension.WidgetPlacement
+import app.pi.ui.extension.MessageRenderer
+import app.pi.ui.extension.MessageRendererCache
+import app.pi.ui.extension.ToolRenderer
+import app.pi.ui.extension.ToolRendererCache
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.extension.trimNoticeQueue
@@ -111,6 +119,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -118,469 +128,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.io.IOException
-
-/**
- * Boot progress, as a first-class state rather than a boolean.
- *
- * Top-level rather than nested inside the ViewModel because the screens render
- * it: [BootScreen] takes one to draw the unpacking steps and the failure detail,
- * and nesting it would force every call site to qualify through the ViewModel
- * for no benefit.
- */
-sealed interface Boot {
-    data object Idle : Boot
-
-    /** Unpacking the runtime, with the step to show. */
-    data class Working(val step: RuntimeProvisioner.Step) : Boot
-
-    /** The engine process is up; the transcript can be rendered. */
-    data object Ready : Boot
-
-    /**
-     * Boot failed. [message] is written for a person; [detail] carries the raw
-     * stderr or exception text, which is the only thing that lets a failure be
-     * diagnosed remotely.
-     */
-    /**
-     * 失败页的内容，由 [EngineFailureClassify] 按**真实原因**算出来。
-     *
-     * 以前这里只有 `message`/`detail` 两个字符串，三种完全不同的失败共用一句
-     * 「引擎没有在运行」和同一组按钮（含会删掉 guest 安装物的「重建运行时」）。现在
-     * 每一类有自己的标题、解释和该不该给重建按钮。
-     */
-    data class Failed(val failure: EngineFailure) : Boot
-}
-
-/**
- * Which workspace the engine is in, and the one signal the composer needs about a
- * switch.
- *
- * Top-level for the same reason as [Boot]: the chat screen renders it, and the
- * screen is not allowed to know how a workspace is chosen — only that one was.
- *
- * ## [revision] is the draft-clearing signal
- *
- * The user's ruling on the composer is "草稿就清空就行": a draft typed for one
- * workspace must not be sendable to another. [revision] is the *fact* that a new
- * session context has begun; the composer's unsent content now lives in this
- * ViewModel (`PiSessionViewModel.composerDraft`, [ComposerDraft]), so the clearing
- * happens here too — at the one place this state is published,
- * [PiSessionViewModel.publishWorkspaceState], through
- * `PiSessionViewModel.alignComposerToWorkspace`. The `>` rule in that method is the
- * whole ruling: **a switch clears, an alignment does not.**
- *
- * (Until this moved, the screen keyed its own `rememberSaveable` on this field. The
- * field is unchanged; only its reader is. What forced the move is in [ComposerDraft]:
- * the pending images' base64 text was being written into the saved instance state,
- * and a phone photo is past Binder's transaction limit on its own.)
- *
- * It is bumped **once per successful switch** — and also when the startup
- * reconcile has to move the process back to the default workspace, because that is
- * a different session context too even though the user did not press anything. It
- * is never bumped for a switch that failed or was refused, because nothing about
- * the session changed.
- */
-data class WorkspaceState(
-    /** The current workspace's directory name — the identity, e.g. `workspace-1`. */
-    val name: String = WorkspaceStore.DEFAULT_NAME,
-    /** [name] as a path relative to the files directory (`pi/workspaces/…`). */
-    val relative: String = GuestWorkspacePath.DEFAULT_RELATIVE,
-    /** The host directory, for a screen that wants to show it. Null if not resolvable. */
-    val hostPath: String? = null,
-    /** Bumped on every successful switch; see the class KDoc. Starts at 0. */
-    val revision: Int = 0,
-    /**
-     * Why the current workspace is not the stored choice, when the stored choice
-     * was unusable. Shown to the user once; null on the normal path.
-     */
-    val note: String? = null,
-)
-
-/**
- * The outcome of a workspace switch.
- *
- * Four shapes, and they exist so the screen can say the right thing without
- * inspecting engine internals: a refusal changed nothing, a failure changed the
- * engine but not the workspace, and only [Ok] means "you are now in the new one".
- *
- * @see PiSessionViewModel.switchWorkspace
- */
-sealed interface WorkspaceSwitch {
-    /**
-     * The engine is now running in [name].
-     *
-     * @param interruptedTurn true when a turn was in flight and the switch
-     *        deliberately killed it (`allowInterrupt`). The screen asked first
-     *        ([PiSessionViewModel.wouldInterruptTurn]) and the ViewModel posts the
-     *        warning notice after, so this is only the machine-readable half of a
-     *        warning the user has already had twice.
-     */
-    data class Ok(val name: String, val interruptedTurn: Boolean) : WorkspaceSwitch
-
-    /** [name] was already current; the engine was not touched. */
-    data class AlreadyCurrent(val name: String) : WorkspaceSwitch
-
-    /**
-     * **Nothing changed.** The target is not a workspace we own, is not writable,
-     * or a turn is running and the caller did not accept interrupting it. The old
-     * engine is still running in the old workspace.
-     */
-    data class Refused(val message: String) : WorkspaceSwitch
-
-    /**
-     * The switch was attempted and did not complete. [rolledBackTo] names the
-     * workspace the engine was put back into, or null when it could not be
-     * restarted at all — in which case [message] and [detail] are the only
-     * description of a stopped engine, and the persisted choice was never changed.
-     */
-    data class Failed(
-        val message: String,
-        val detail: String? = null,
-        val rolledBackTo: String? = null,
-    ) : WorkspaceSwitch
-}
-
-/**
- * A navigation the ViewModel asks the UI to perform.
- *
- * Requested through state rather than a callback because the action that needs
- * it usually ends in a coroutine after an RPC answer (`switch_session`, a
- * palette row) — by then there is no composable on the stack to call. pi itself
- * has no navigation API at all, so this vocabulary is the app's own and belongs
- * to the layer that knows the answer arrived.
- *
- * Only [Chat] and [Settings] name a top-level destination — the vocabulary and
- * `PiDestination` are kept in step on purpose, so a request can never ask for a
- * destination the app does not have. Everything else here raises an overlay or
- * focuses a screen.
- *
- * 工作区 is deliberately absent for that reason: nothing in the app asks to *go*
- * there (the sessions page and the chat 「⋯」 menu are the two doors), so there is
- * no request for it. It used to be named by a `Workbench` member whose one
- * consumer was the chat composer's
- * terminal chip — removed with the chip when the terminal became a settings row.
- */
-sealed interface NavRequest {
-    /**
-     * Open the session list over the current destination — **and nothing else**.
-     *
-     * This replaced a `Sessions` member that switched to a 会话 *destination*.
-     * The list is a selector, not a place (`03-navigation-decision.md`), and once
-     * it became an overlay the request had to stop moving the destination: which
-     * session the user is in is answered by picking a row, not by the picker
-     * appearing.
-     *
-     * ## Why `/resume` does not switch to 对话 first either
-     *
-     * `/resume` is one of this member's callers, and it was worth deciding once
-     * rather than per call site: the palette row is typed **in the composer**, so
-     * the user is already on 对话 with the session they intend to leave in front of
-     * them. Switching destinations first would rebuild the transcript and move the
-     * ground under the list they are about to read, for no gain — and if they pick a
-     * row, the pick moves them then, which is exactly the moment the move carries
-     * information. The app-bar entry does the same thing for the same reason.
-     */
-    data object SessionList : NavRequest
-
-    data object Chat : NavRequest
-
-    /**
-     * The full-screen terminal, over whatever destination is active.
-     *
-     * This is what was `Workbench`. The rename is the point: the old name meant
-     * 「去工作区」, which was true while the terminal *was* the 工作区 destination,
-     * and became a lie the moment that destination turned into the project
-     * overview. The terminal is not a place in the app; it is the fallback surface
-     * for the handful of extension APIs the RPC path cannot carry, and the settings
-     * home's one row is now the only door to it (`03-navigation-decision.md`).
-     *
-     * Reached from the settings row, which is why it is a request at all rather
-     * than a callback: the row lives several composables down inside
-     * [app.pi.ui.settings.PiSettingsStack], and the overlay it raises belongs to
-     * `PiRoot`.
-     */
-    data object Terminal : NavRequest
-
-    data object Settings : NavRequest
-
-    /**
-     * The settings destination, positioned on one key.
-     *
-     * pi has no navigation API, so this vocabulary is the app's own. It exists
-     * for the one built-in command that opens a *selector* pi implements inside
-     * its TUI overlay: `/scoped-models` calls `showModelsSelector()`
-     * (`interactive-mode.ts:2975-2978`; the method at `:5024`), which is a
-     * different component from the plain `/model` picker (`showModelSelector`,
-     * `:4987`) and what it toggles is persisted as `settings.enabledModels`
-     * (`settings-manager.ts:1316-1326`). That key is a row in this app
-     * (`PiSettingsRegistry.kt:355`), so the faithful mapping of "open the
-     * scoped-models selector" is "open settings on that row".
-     */
-    data class SettingsFocus(val key: String) : NavRequest
-
-    /** The session tree overlay (pi's `/tree`). */
-    data object SessionTree : NavRequest
-}
-
-/**
- * One `bash` run, as the GUI needs to draw it.
- *
- * pi records a finished run as a `BashExecutionMessage` in the session
- * (`agent-session.ts` `recordBashResult`) and streams output as
- * `bash_execution_update` while it runs (`:3027`), but it emits **no event for
- * the result itself** — the only place the final `BashResult` appears is the
- * `bash` command's own response (`rpc-mode.ts:563-584`). This state is
- * therefore assembled from both: deltas from the event stream, the final fields
- * from the awaited response.
- */
-data class BashRun(
-    val command: String,
-    /** pi's `!!` prefix: the output is not added to the model's context. */
-    val excludeFromContext: Boolean,
-    val output: String = "",
-    val running: Boolean = true,
-    /** Null while running, and for a run pi reports as cancelled. */
-    val exitCode: Int? = null,
-    val cancelled: Boolean = false,
-    val truncated: Boolean = false,
-    val fullOutputPath: String? = null,
-)
-
-/**
- * A finished `/export` the user has not taken delivery of yet.
- *
- * pi writes an export into the user's own cwd and reports the path
- * (`interactive-mode.ts:6060-6075`, default destination
- * `core/export-html/index.ts:274-281`); this app's equivalent destination is its
- * private workspace, where nothing outside the app can open it. The file is the
- * deliverable, so the screen needs one more thing than "it worked": something to
- * hand to Download or the share sheet. This value is that handle — it exists
- * between the export and the user's choice, and it is the only reason the app
- * keeps a path to its own artifact in state.
- *
- * ## 一次导出是两份
- *
- * HTML 给人看/分享，**导不回来**（不是 pi 的会话格式）；所以同一份导出里还带着**会话文件本身**
- * —— 逐字节复制、连名字都不改，那份才是能 `importFromJsonl` 导回来的。
- *
- * [ExportedFile.path] 是 App 私有目录里的绝对路径，**从不渲染**：用户可见文案不出现内部目录。
- * [ExportedFile.name] 是用户看得到的文件名，也是交付时用的 Download 文件名。
- */
-data class ExportedSession(val files: List<ExportedFile>) {
-    /** 行上显示的那一行：两份的文件名并排，`.html` / `.jsonl` 一眼分清。 */
-    val name: String get() = files.joinToString(" ＋ ") { it.name }
-}
-
-/** [ExportedSession] 里的一份产物（HTML 或那份逐字节复制的会话文件）。 */
-data class ExportedFile(
-    /** 文件名，也是交付时的 Download 文件名。 */
-    val name: String,
-    /** What the delivery channel calls the file — see `SessionExportNaming`. */
-    val mimeType: String,
-    /** Absolute path inside the app's private workspace. Not user-visible. */
-    val path: String,
-)
-
-/**
- * App-local UI preferences: the settings whose only reader is this app.
- *
- * Every one of these keys is declared by the settings registry and by nothing
- * else, so before this type existed the rows wrote a JSON value that no code
- * ever consulted — a switch that looks like it works and cannot. They are read
- * here once and published through [UiState.prefs] so the transcript and the theme
- * actually follow them.
- *
- * `hideThinkingBlock` is the one exception: it is **pi's own** setting
- * (`core/settings-manager.ts:119`, `:962`), the registry row only mirrored it,
- * and the transcript was never told about it.
- *
- * The four `app.terminal.*` keys are siblings of these and deliberately not
- * repeated here: `ui/terminal/TerminalSettings.kt` is their consumer, so a second
- * reader in the ViewModel would be a second truth about the same key. (Their 设置
- * rows were deleted with the 终端与 Shell group; the keys still work when a
- * `settings.json` names them.)
- */
-/**
- * How much of a session's history the transcript currently holds.
- *
- * The transcript is no longer "the whole session": it is the **newest window** of
- * it, extended backwards on demand. This cursor is what makes that progressive, and
- * it is deliberately *not* part of `get_entries` — pi's `since` cursor only moves
- * forwards (`modes/rpc/rpc-mode.ts:638-648`), so the backward direction has to be
- * answered by the session file, which [SessionFileReader] reads in bounded windows.
- * The `session-replay-cost` harness pins that the two agree.
- *
- * **Not a second source of truth for the session.** It is not itself an entry list
- * and nothing outside the ViewModel's transcript path reads it: the tree overlay,
- * fork messages, export and search still go through pi. It is the *reader's*
- * position, the same way a file offset is, and it is dropped whenever the
- * transcript comes from somewhere else ([UiState.history] becomes null).
- */
-data class HistoryCursor(
-    /**
-     * Byte offset in the session file of the **first** entry [UiState.transcript]
-     * holds. Zero means the loaded range starts at the file's first entry.
-     *
-     * A byte offset rather than an entry index on purpose: the reader has to seek to
-     * it, and pi's `get_entries` cursor is an *entry id* whose index pi computes by
-     * scanning its own list — which is the O(history) work this whole path exists to
-     * avoid.
-     */
-    val startOffset: Long,
-    /**
-     * True when [startOffset] is the beginning of the file: no earlier history.
-     *
-     * **Only a read that establishes it may set this** — a window
-     * `SessionFileReader.readBefore` flagged `reachedStart`, or a range that already
-     * begins at byte 0 ([BackwardRead]). Neither a read that failed nor a step that
-     * delivered nothing may set it: doing so deletes the 「加载更早」 row and makes every
-     * entry above the loaded range unreachable for the rest of the session, which is the
-     * reported 「之前的内容都被截掉了，都没了」.
-     */
-    val reachedStart: Boolean,
-    /** A backward window is being read right now; the screen must not ask again. */
-    val loading: Boolean = false,
-    /**
-     * Why the last backward step delivered nothing, or null when it delivered.
-     *
-     * The reason the screen shows. A non-null stop means "do not ask again by yourself,
-     * but the reader may press the row" — [hasEarlier] is false for the scroll effect
-     * (`ChatScreen.kt:1312`), while the row itself stays because [showsEarlierRow] is
-     * about whether there is anything to say, not about whether a step is automatic.
-     */
-    val stop: HistoryStop? = null,
-) {
-    /** Whether the scroll effect may ask for another window without the reader's press. */
-    val hasEarlier: Boolean get() = !reachedStart && !loading && stop == null
-
-    /** Whether the 「加载更早」 row belongs on screen at all. */
-    val showsEarlierRow: Boolean get() = !reachedStart
-}
-
-data class UiPrefs(
-    /**
-     * The whole 排版 preset, resolved once here from
-     * `app.appearance.typography` / `.lineHeight` / `.fontSize`.
-     *
-     * Built in [readPrefs] rather than exposed as three raw strings with a
-     * computed property, because the three consumers (`MainActivity`'s
-     * `PiTheme`, `PiMarkdownText`'s five library objects, `ChatScreen`'s
-     * `spacedBy`) each need a different part of it and a property would rebuild
-     * the five `TextStyle`s on every read. Being a data-class field also lets
-     * `remember` key on a value that compares structurally, so an equal preset
-     * does not invalidate anything.
-     *
-     * It replaces `fontScaleDelta: Int` and `messageDensity: String`. Those two
-     * keys are gone from the registry and are read only by the migration in
-     * `readPrefs`; see [PiTypographyProfile.migratedTypography] and
-     * [PiTypographyProfile.migratedFontSize].
-     */
-    val typographyProfile: PiTypographyProfile = PiTypographyProfile.Default,
-    /**
-     * `app.appearance.showTimestamps`, **default off**. It gates three things: the clock on
-     * the user's own bubble, the clock at the end of a notice line, and the date separators
-     * `ChatScreen` inserts between days. The first two were unconditional until this switch
-     * was made to mean something — which is what made the row look broken.
-     */
-    val showTimestamps: Boolean = false,
-    val thinkingCollapsedByDefault: Boolean = true,
-    val expandToolsByDefault: Boolean = false,
-    /** pi's `hideThinkingBlock`. */
-    val hideThinkingBlock: Boolean = false,
-    /**
-     * `app.runtime.keepAlive`: whether the foreground service is started at all
-     * (`PiEngineService` owns the wake lock, so this is the only honest meaning
-     * the switch can have).
-     */
-    val keepAlive: Boolean = true,
-    /**
-     * pi's `showCacheMissNotices` (`core/settings-manager.ts:120`, read at
-     * `:965-967` as `?? false`). It is the switch that gates the summarization
-     * cost line, and pi reads it for exactly three notices: the compaction /
-     * branch-summary billing line (`modes/interactive/interactive-mode.ts:3802-3812`),
-     * the assistant diagnostics (`:3814`) and the provider-recovery notices.
-     *
-     * Default `false` **is pi's default** — the row exists in the settings stack
-     * (`ui/settings/PiSettingsRegistry.kt:331`) and, until this field existed, no
-     * code read it, so the switch looked wired and was not.
-     */
-    val showCacheMissNotices: Boolean = false,
-)
-
-/**
- * The composer's unsent content: the text in the editor, and the images staged for
- * the message that has not been sent yet.
- *
- * ## Why this is not `rememberSaveable` — the crash this type exists to prevent
- *
- * Both halves used to be `rememberSaveable` in `ChatScreen`, and the attachments
- * went into the saved state as their **base64 text** (the `AttachmentListSaver` that
- * was deleted with this move). What `ChatScreen` stages is now compressed to pi's own
- * inline limits — longest edge 2000, base64 under 4.5 MB per image — and one message's
- * images are budgeted **together** against the framing cap (`AttachmentBudget`:
- * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` − 64 KiB ≈ **63.94 MiB of base64**, i.e.
- * ≈ 47.95 MB of bytes, or 14 pi-maximum images). That budget is what makes this type
- * necessary rather than optional: the smallest contribution one image can make to the
- * Bundle is still megabytes of text, and a legal message is now up to fourteen of them,
- * while Binder's per-transaction limit is ~1 MB — so the *first* image was already over it.
- *
- * `rememberSaveable` does not write those strings to a file. They go to
- * `androidx.compose.ui.platform.DisposableSaveableStateRegistry`, which registers a
- * `SavedStateRegistry` provider whose answer is
- * `SaveableStateRegistry.performSave().toBundle()` — `Bundle.putParcelableArrayList`
- * of exactly those strings (verified in the bytecode of `ui-android:1.12.1`,
- * `DisposableSaveableStateRegistry_androidKt.toBundle`) — and that Bundle is the
- * Activity's saved instance state, which `ActivityThread` hands to the system server
- * **over Binder**. Binder's per-transaction limit is ~1 MB, so as soon as the screen
- * was stopped with one image staged, the write blew the limit and the process was
- * killed. The picker is what stops it, which is the reported shape exactly:
- * 选一张不发送没事 (staged state is still empty when the picker opens the first time),
- * 再选第二张就退出软件 (the first image's base64 is in the saved state when the picker
- * opens the second time). A rotation with one image staged crashed the same way.
- *
- * ## Why the ViewModel holds it
- *
- * Everything the user keeps survives here, and **none of it is ever serialised**.
- * `AndroidViewModel` lives as long as the Activity's `ViewModelStore`, so
- *  - 切到工作区 / 设置 and back keeps the text and the images — which is the ruling
- *    D28/D30 actually makes ("切走之前是什么样，切回来什么样就可以了",
- *    `design/ui-refactor/07-construction-decisions.md:184`, `:194`), now kept by the
- *    ViewModel instead of by `PiRoot`'s `SaveableStateHolder`; and
- *  - a rotation keeps them (a config change does not clear the store); and
- *  - the saved instance state never sees them, whatever their size.
- *
- * What is given up is the restore **after process death**. That part was incidental:
- * D28's ruling is about a destination switch, and the Bundle was only ever the
- * mechanism, not the requirement. It is also the half that cannot be kept — the
- * Bundle is the one thing that survives process death, and it is exactly the thing
- * that cannot hold these bytes. Saving the *text* alone (it is small) was considered
- * and rejected: it would leave the staged images to vanish while the text stayed,
- * which reads as the app having eaten the pictures.
- *
- * ## Clearing
- *
- * "草稿就清空就行": a workspace switch ends the session context the text was typed
- * for, so both halves are emptied on a switch and only on a switch —
- * [PiSessionViewModel.alignComposerToWorkspace].
- *
- * The two values are Compose snapshot state rather than `StateFlow`s because they are
- * per-keystroke: a `UiState` copy per character would recompose the whole transcript
- * for a text field that lives above it.
- */
-class ComposerDraft {
-    /** The editor's text. */
-    val text: MutableState<String> = mutableStateOf("")
-
-    /** The images staged for the next message, in the order the user picked them. */
-    val attachments: MutableState<List<PiImage>> = mutableStateOf(emptyList())
-
-    /** 文字与待发图片一起清空；`发送` 与用户主动清空走它，**工作区切换不走**。 */
-    fun clear() {
-        text.value = ""
-        attachments.value = emptyList()
-    }
-}
-
 /**
  * Owns the engine for the life of the UI and projects it into renderable state.
  *
@@ -593,7 +140,7 @@ class ComposerDraft {
  * Note what this class does **not** do: it never re-derives conversation state.
  * pi owns the session; the transcript here is a projection, and re-attaching
  * replays pi's own records from `get_entries`. Every RPC call goes through
- * [PiEngineApi] — the typed façade over pi's command surface — so a command pi
+ * [HostEngineApi] — the typed façade over pi's command surface — so a command pi
  * can answer is never a hand-built `JsonObject` here.
  *
  * It *is* the owner of the extension UI protocol, because that protocol is a
@@ -612,6 +159,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * does not appear when it has no suggestions
      * (`packages/tui/src/autocomplete.ts:305`).
      */
+    /** 命令参数补全的一次应答：对 [command] 的 [prefix] 给出的候选（`catalog.commandCompletions`）。 */
+    data class ArgCompletions(
+        val command: String,
+        val prefix: String,
+        val items: List<PiResponses.CommandCompletion>,
+    )
+
     data class MentionList(
         val query: String,
         val items: List<PiFileMentions.Item>,
@@ -720,9 +274,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         /** Requests waiting behind [extensionDialog], in arrival order. */
         val extensionDialogBacklog: Int = 0,
         /** `setStatus` entries, oldest key first. */
-        val extensionStatuses: List<ExtensionStatus> = emptyList(),
+        /** 扩展 UI 的全部状态（状态行、小组件、header/footer、custom 表面、工作中提示……），来自宿主 `ui.*` 事件。 */
+        val ext: ExtUiState = ExtUiState(),
         /** `setWidget` panels. Empty lines cleared the key, so none here are empty. */
-        val extensionWidgets: List<ExtensionWidget> = emptyList(),
         /** `setTitle`: the name pi wants this session shown under. */
         val windowTitle: String? = null,
         /** A `set_editor_text` waiting to be applied to the composer, then cleared. */
@@ -761,12 +315,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val bash: BashRun? = null,
         /** The `@` mention list for the token in the composer, if one is open. */
         val mentions: MentionList? = null,
-        /**
-         * Installed extensions that use a surface only the original TUI can
-         * carry. Heuristic (a source scan) because pi reports nothing — see
-         * [tuiOnlyMarkers] for why that is the only option.
-         */
-        val tuiOnlyExtensions: List<TuiOnlyExtension> = emptyList(),
+        val argCompletions: ArgCompletions? = null,
         /** Label of the long RPC call in flight, for a progress line. */
         val busy: String? = null,
         /**
@@ -978,7 +527,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * attached. Null exactly when there is no engine to talk to, which is what
      * every action below checks before doing anything.
      */
-    private var api: PiEngineApi? = null
+    private var api: HostEngineApi? = null
 
     /**
      * The engine's own teardown, handed to the foreground service.
@@ -1109,14 +658,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val promptFileStore: PromptFileStore by lazy { PromptFileStore(host.paths().agentDir) }
 
     /**
-     * pi's session index, read straight off disk.
-     *
-     * pi's RPC surface has no list-sessions command — it can only switch to a path
-     * you already know — so the list has to come from the files, exactly as the
-     * desktop picker does.
+     * 会话库：列表 / 搜索 / 改名 / 删除，全部经宿主命令（SDK 的 `SessionManager`）。
+     * 不再自己扫目录、解析 JSONL（docs/sdk-host/sessions.md）。需要引擎已打开。
      */
-    private val sessionStore: PiSessionStore by lazy {
-        PiSessionStore(File(host.paths().agentDir, "sessions"), host.paths().sessionIndexFile())
+    private val sessionLibrary: SessionLibrary by lazy {
+        SessionLibrary(host.paths().agentDir, host.guestAgentDir) { session?.commands }
     }
 
     /**
@@ -1157,8 +703,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var lastMentionFailure: String? = null
 
-    private val _sessions = MutableStateFlow<List<PiSessionStore.Summary>>(emptyList())
-    val sessions: StateFlow<List<PiSessionStore.Summary>> = _sessions.asStateFlow()
+    private val _sessions = MutableStateFlow<List<SessionSummary>>(emptyList())
+    val sessions: StateFlow<List<SessionSummary>> = _sessions.asStateFlow()
 
     /**
      * Whether a [refreshSessions] scan is in flight **and has nothing to show yet**.
@@ -1178,7 +724,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 最近一次会话列表读取**失败**了。
      *
-     * 为什么要有这个状态：旧写法是 `runCatching { sessionStore.list() }.getOrDefault(emptyList())`
+     * 为什么要有这个状态：旧写法是 `runCatching { sessionLibrary.list() }.getOrDefault(emptyList())`
      * —— 读不到就把列表**换成空**，而 `sessionsLoading` 那一刻已经是 false，于是 `SessionsScreen`
      * 落到「还没有会话」那一支：**一句关于用户数据、却没有校验过的断言**。会话屏本来已经区分了
      * 「正在读取」，缺的就是这第三种状态。
@@ -1200,6 +746,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var sessionsRefreshInFlight = false
     private var sessionsRefreshQueued = false
 
+    /**
+     * 会话正文的全文搜索结果（宿主 `session.search`，SDK 的 `SessionInfo.allMessagesText`）。
+     * 只含用户与助手的文字，**不含工具结果**（与桌面 pi 一致）。查询少于 2 个字符不搜。
+     */
+    private val _searchHits = MutableStateFlow<List<SessionHit>>(emptyList())
+    val searchHits: StateFlow<List<SessionHit>> = _searchHits.asStateFlow()
+    private var searchJob: kotlinx.coroutines.Job? = null
+
+    fun searchSessionText(query: String) {
+        searchJob?.cancel()
+        val q = query.trim()
+        if (q.length < 2) {
+            _searchHits.value = emptyList()
+            return
+        }
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(250) // 防抖：边打字边搜会让宿主读几百个文件
+            val read = runCatching { sessionLibrary.search(q) }
+            read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            // 失败（引擎没开等）就当没有命中：本地标题/名字筛选照常工作，不弹错。
+            _searchHits.value = read.getOrDefault(emptyList())
+        }
+    }
+
     fun refreshSessions() {
         if (sessionsRefreshInFlight) {
             sessionsRefreshQueued = true
@@ -1209,7 +779,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _sessionsLoading.value = _sessions.value.isEmpty()
             try {
-                val read = runCatching { sessionStore.list() }
+                val read = runCatching { sessionLibrary.list() }
                 // 协程被取消不是「读取失败」：照旧抛出去（`finally` 仍然会清 loading），否则一次
                 // 正常的取消会被写成一条「读不到会话列表」。
                 read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
@@ -1517,7 +1087,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // (`piCommandPalette`).
             refreshCommands()
         }
-        if (key == AppOnlySettingsStore.KEY_PROROOT) {
+        if (key == AppOnlySettingsStore.KEY_ENGINE) {
             // 开关当场生效：清结论（写入本身已经做了）→ 现在跑探针 → 通过就当场重启引擎。
             // 见 [applyRuntimeSwitch] 与 `RuntimeSwitchAction`。
             applyRuntimeSwitch()
@@ -1568,113 +1138,89 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val context = getApplication<Application>()
         val prefs = RuntimePreferences.get(context)
         val selection = RuntimeSelection.of(context, host.paths())
-        val nowEnabled = prefs.prorootEnabled
+        val target = RuntimeSwitchAction.Target.valueOf(prefs.selectedEngine.name)
         val generation = ++runtimeSwitchGeneration
-        // 用户可以在探针跑着的时候把开关拨回去。上一次切换停在挂起点上被取消，这一次写入
-        // 自己的流程接管屏幕上的状态。探针是阻塞调用（`Process.waitFor`），取消不会把它
-        // 打断，所以下面每一步都重新核对 `generation`，而不是依赖取消 —— 过期的结论绝不
-        // 能再去重启引擎。
+        // 用户可以在探针跑着的时候改选别的。上一次切换在挂起点上被取消；探针是阻塞调用，
+        // 取消打断不了它，所以下面每一步都重新核对 `generation` 与此刻的选择——过期的结论
+        // 绝不能再去重启引擎。
         runtimeSwitchJob?.cancel()
         runtimeSwitchJob = viewModelScope.launch {
-            _runtimeSwitch.value = RuntimeSwitchAction.onWrite(nowEnabled)
-            if (nowEnabled) {
-                notifyUser("已打开运行时加速：正在这台设备上测 proroot 探针（最长约 60 秒），通过后会立刻重启引擎。")
-                probeThenSwitch(generation, selection, prefs)
+            _runtimeSwitch.value = RuntimeSwitchAction.onWrite(target)
+            if (target == RuntimeSwitchAction.Target.Proot) {
+                notifyUser("已选择 proot：正在重启引擎，把运行时换回 proot。")
+                restartForRuntimeSwitch(generation, selection, prefs, target)
             } else {
-                notifyUser("已关闭运行时加速：正在重启引擎，把运行时换回 proot。")
-                restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = false)
+                notifyUser("已选择 ${target.name.lowercase()}：正在这台设备上测探针（最长约 60 秒），通过后会立刻重启引擎。")
+                probeThenSwitch(generation, selection, prefs, target)
             }
         }
     }
 
     /**
-     * 现在跑一次门禁，再按结论决定要不要重启引擎。
+     * 现在跑一次所选运行时的门禁，再按结论决定要不要重启引擎。
      *
-     * 门禁就在 `plan()` 后面，而这里要问的正是「引擎此刻启动会用哪个运行时」：`plan()` 不
-     * 启动任何进程（它只组装 argv/env），在允许 proroot 时咨询或运行门禁
-     * （`RuntimeSelection.gate`），用的 revision、二进制 digest 与缓存 key 都和真正那次
-     * 启动一模一样。另写一套 `ProrootProbe.run(revision, digest)` 会把「解包 revision 怎么
-     * 读」抄成第二份 —— 抄错的那天，这里写下的结论 `status()` 读不到，状态行就会在 proroot
-     * 明明在用的时候说「探针尚未运行」。
+     * 门禁就在 `plan()` 后面：`plan()` 不启动任何进程，在选中的运行时上咨询或运行门禁
+     * （`RuntimeSelection.gate`），revision / digest / 缓存 key 与真正那次启动一模一样，
+     * 所以这里写下的结论 `status()` 读得到。
      */
     private suspend fun probeThenSwitch(
         generation: Int,
         selection: RuntimeSelection,
         prefs: RuntimePreferences,
+        target: RuntimeSwitchAction.Target,
     ) {
+        val name = target.name.lowercase()
         val plan = withContext(Dispatchers.IO) {
             runCatching {
                 selection.plan(
-                    // 这条命令永远不会被执行，它进不了任何日志或界面（`Plan.argv` 在这里
-                    // 就被丢掉）：`plan` 只拼字符串、不起进程，签名要求一个 guest 命令而已。
+                    // 永远不会被执行：`plan` 只拼 argv/env，签名要求一个 guest 命令而已。
                     guestCommand = "true",
                     cwd = "/",
-                    // 与引擎启动时给门禁的值相同（`PiEngineHost` 传的是同一份外部存储根）：
-                    // 探针要在那里种一个 marker 再用 raw syscall 读回来。
                     storage = android.os.Environment.getExternalStorageDirectory(),
                 )
             }.getOrNull()
         }
         if (generation != runtimeSwitchGeneration) return
         if (plan == null) {
-            // 探针本身没跑起来（读不到运行时、拿不到 digest、起了进程但抛了）。不编一个
-            // 结论：状态行会显示 `RuntimeSelection.status()` 的真实读数（多半是「探针尚未
-            // 运行」），通知只说这里测不成。
             _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
-            notifyUser("proroot 探针没能跑完：仍然走 proot。稍后再拨一次这个开关可以重测。", warning = true)
+            notifyUser("$name 探针没能跑完：仍然走 proot。稍后再选一次这个运行时可以重测。", warning = true)
             return
         }
-        _runtimeSwitch.value = RuntimeSwitchAction.afterProbe(prefs.prorootEnabled, plan.usingProroot)
-        if (!plan.usingProroot) {
-            // 探针没通过（或运行时文件缺失）：引擎本来就在 proot 上，重启它只是白打断一个
-            // 回合。原因用**状态行接下来要显示的那一句**说——`status()` 读的就是刚写下的
-            // 缓存结论，所以通知与那一行不会各说一套（`plan.summary` 是同一份证据的即时
-            // 形态，只在缓存里没有结论时两者才会分叉，那种情况下行上的读数是权威）。
+        val selectedNow = RuntimeSwitchAction.Target.valueOf(prefs.selectedEngine.name)
+        val passed = plan.usingExperimental && plan.engine.name == target.name
+        _runtimeSwitch.value = RuntimeSwitchAction.afterProbe(selectedNow, target, passed)
+        if (!passed) {
             val rowSentence = withContext(Dispatchers.IO) {
                 runCatching { selection.status() }.getOrNull()?.summary
             }
             notifyUser(
-                "没有切换到 proroot。实际生效：${rowSentence ?: plan.summary}——" +
+                "没有切换到 $name。实际生效：${rowSentence ?: plan.summary}——" +
                     "逐阶段记录在「运行时（实际生效）」那一行下面。",
                 warning = true,
             )
             return
         }
-        restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = true)
+        restartForRuntimeSwitch(generation, selection, prefs, target)
     }
 
     /**
-     * 重启引擎换运行时，再按结论定下开关的最终值。
+     * 重启引擎换运行时，再按结论定下选择的最终值。
      *
-     * 走的是「重启引擎」那一行同一条路（`restartEngine`），但**能不能打断正在跑的回合由方向
-     * 决定**（`RuntimeSwitchAction.allowInterrupt`，纯函数）：关掉时允许中断，因为那个动作的
-     * 语义就是「当场换回 proot」，而 `Busy` 时的拒绝会把关闭卡住（旧代码还会把它回滚成打开）；
-     * 打开时不允许，被拒就退回关闭 —— 那一侧要守的是「开关绝不能说 proroot 而引擎在 proot 上」。
-     * 两个方向最终持有哪个值都由 `RuntimeSwitchAction.settle` 决定，这里只负责写下去。
+     * 走「重启引擎」同一条路（`restartEngine`）；能不能打断回合由目标决定
+     * （`RuntimeSwitchAction.allowInterrupt`）：换回 proot 当场生效，换到实验性运行时不中断、
+     * 被拒就落回 proot。最终值由 `RuntimeSwitchAction.settle` 定，这里只负责写下去。
      */
     private suspend fun restartForRuntimeSwitch(
         generation: Int,
         selection: RuntimeSelection,
         prefs: RuntimePreferences,
-        nowEnabled: Boolean,
+        target: RuntimeSwitchAction.Target,
     ) {
-        _runtimeSwitch.value = if (nowEnabled) {
-            RuntimeSwitchAction.Step.RestartingToProroot
-        } else {
-            RuntimeSwitchAction.Step.RestartingToProot
-        }
+        val name = target.name.lowercase()
+        _runtimeSwitch.value = RuntimeSwitchAction.restartingTo(target)
         val outcome = restartEngine(
-            reason = if (nowEnabled) {
-                "在设置里打开了运行时加速（proroot）"
-            } else {
-                "在设置里关掉了运行时加速（proroot）"
-            },
-            // **方向**决定能不能打断正在跑的回合，判定在 `RuntimeSwitchAction.allowInterrupt`
-            // （纯函数，harness 钉住）：关掉时必须当场落地（用户的裁决「关闭就简单关闭重启
-            // 不就完了」），打开时保持不中断、被拒就退回关闭。旧代码两个方向都是 `false`，
-            // 而 `PiEngineHost.restart` 在 `Busy` 时拒绝 ⇒ 关掉这次写入被回滚成「开」，
-            // 就是用户报的「打开之后关不掉」。
-            allowInterrupt = RuntimeSwitchAction.allowInterrupt(nowEnabled),
+            reason = "在设置里把运行时选成了 $name",
+            allowInterrupt = RuntimeSwitchAction.allowInterrupt(target),
         )
         if (generation != runtimeSwitchGeneration) return
         val result = when (outcome) {
@@ -1682,44 +1228,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             is EngineRestartCoordinator.Outcome.Refused -> RuntimeSwitchAction.RestartResult.Refused
             is EngineRestartCoordinator.Outcome.Failed -> RuntimeSwitchAction.RestartResult.Failed
         }
-        // 开关最终持有哪个值，由纯函数定；这里只负责把它写下去 —— 不再自己判一次方向，
-        // 那正是「关掉被回滚成开」的写法（`settle` 的 KDoc 记着这次的证据）。
-        val finalEnabled = RuntimeSwitchAction.settle(nowEnabled, result)
-        if (prefs.prorootEnabled != finalEnabled) {
-            if (finalEnabled) {
-                // 回到「开」：只写偏好，**不删缓存的探针结论**。设置页那条写法
-                // （`RuntimeSelection.setProrootEnabled(true)`）会把结论当成「再试一次」删掉，
-                // 于是状态行会在引擎明明还在跑 proroot 的时候说「探针尚未运行」—— 一句真的
-                // 假话。结论描述的是这台机器，不是这个开关。
-                prefs.setProrootEnabled(true)
+        val finalTarget = RuntimeSwitchAction.settle(target, result)
+        if (prefs.selectedEngine.name != finalTarget.name) {
+            if (finalTarget == RuntimeSwitchAction.Target.Proot) {
+                selection.setSelectedEngine(app.pi.runtime.GuestEngine.Proot)
             } else {
-                // 回到「关」：与设置页同一条写法。开关一关，每条启动路径都按 proot 走
-                // （`RuntimeChoice.decide` 的第一条就是开关），失败计数清零、结论保留。
-                selection.setProrootEnabled(false)
+                // 只写偏好，不删探针结论：结论描述的是这台机器，不是这个选择。
+                prefs.setSelectedEngine(app.pi.runtime.GuestEngine.valueOf(finalTarget.name))
             }
         }
         _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
         val message = when (outcome) {
-            is EngineRestartCoordinator.Outcome.Ok -> if (nowEnabled) {
-                "引擎已在 proroot 上重启，运行时加速已生效。"
+            is EngineRestartCoordinator.Outcome.Ok -> "引擎已在 $name 上重启。"
+            is EngineRestartCoordinator.Outcome.Refused -> outcome.message + if (target != RuntimeSwitchAction.Target.Proot) {
+                "已退回 proot：等这一段跑完再选 $name。"
             } else {
-                "引擎已按 proot 重启，运行时加速已关闭。"
+                "已选 proot 并会保持；引擎这一次没有重启成功，仍在原来的运行时上跑，下次重启引擎就会走 proot。"
             }
 
-            // 关掉这一侧基本到不了这里（`allowInterrupt = true` 让重启不被回合拒绝），能到的
-            // 只剩「运行时需要按载荷更新」那一类拒绝；这句话说的是当时的**真事**：开关已经关了
-            // （用户写下的值保留），但引擎这一次没能重启，所以它还在原来的运行时上跑。
-            is EngineRestartCoordinator.Outcome.Refused -> outcome.message + if (nowEnabled) {
-                "开关已退回关闭：等这一段跑完再打开，就能切到 proroot。"
+            is EngineRestartCoordinator.Outcome.Failed -> outcome.message + if (target != RuntimeSwitchAction.Target.Proot) {
+                "探针已经通过，下次启动引擎时会用 $name。"
             } else {
-                "开关已关闭并会保持关闭；引擎这一次没有重启成功，所以它还在原来的运行时上跑，" +
-                    "下一次重启引擎（或重开 App）就会走 proot。"
-            }
-
-            is EngineRestartCoordinator.Outcome.Failed -> outcome.message + if (nowEnabled) {
-                "探针已经通过，下次启动引擎时会用 proroot。"
-            } else {
-                "开关已关闭；下次启动引擎时会走 proot。"
+                "已选 proot；下次启动引擎时会走 proot。"
             }
         }
         notifyUser(message, warning = outcome !is EngineRestartCoordinator.Outcome.Ok)
@@ -1731,7 +1261,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * `PiSettingsFileStore` caches each document after its first read
      * (`global`/`project`), and every other writer bypasses that cache: pi itself,
-     * `pi install` (guest-side), and the credential form's `PiEnginePreferences`.
+     * `pi install` (guest-side).
      * That last one invalidates a store instance of its *own*
      * (`PiConfigFiles.kt:579`), so the app's reader kept the pre-write values —
      * which is why this lives here, next to [settingsStore], rather than in the
@@ -1978,8 +1508,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun workspaceEntries(): List<WorkspaceStore.Entry> = WorkspaceStore.list(getApplication())
 
-    /** Create the next `workspace-N`. Does **not** switch to it; see [switchWorkspace]. */
-    fun createWorkspace(): WorkspaceStore.Create = WorkspaceStore.create(getApplication())
+    /** Create project directory [name] (blank = next `workspace-N`). Does **not** switch to it; see [switchWorkspace]. */
+    fun createWorkspace(name: String? = null): WorkspaceStore.Create = WorkspaceStore.create(getApplication(), name)
 
     /** Give a workspace a display label. Never moves the directory — see [WorkspaceStore.rename]. */
     fun renameWorkspace(name: String, label: String): WorkspaceStore.Rename =
@@ -2055,6 +1585,48 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return WorkspaceSwitch.Refused(
                 "工作区「${target.displayName}」的目录不可写（${target.host.absolutePath}），没有切换。",
             )
+        }
+        // **热切换（pi 的原语义）。** SDK 里 cwd 是会话的属性：`session.new{cwd}` 在新项目里开一段
+        // 新会话，宿主进程、模型、MCP、扩展都不动 —— 省掉十几秒冷启动。条件只有一个：那个目录在
+        // guest 里已经可达（内部工作区靠 rootfs 前缀天然可达；外部的要在引擎启动时已挂上）。
+        // 不可达才走下面的重启（要加 bind）。
+        val liveApi = api
+        val reachable = !target.external || target.host.absolutePath in host.boundExternalHostPaths
+        if (liveApi != null && reachable && !engineDownNow()) {
+            val wasBusyLive = host.turnRunning
+            if (wasBusyLive && !allowInterrupt) {
+                val detail = "正在生成回答，没有切换工作区。"
+                pushNotice(detail, Notice.Tone.Warning)
+                return WorkspaceSwitch.Refused(detail)
+            }
+            engineTransition = true
+            try {
+                val created = liveApi.newSession(cwd = target.guestPath)
+                if (created.cancelled) {
+                    val detail = "扩展取消了这次切换，仍在「${WorkspaceChoice.displayName(previous, null)}」。"
+                    pushNotice(detail, Notice.Tone.Warning)
+                    return WorkspaceSwitch.Refused(detail)
+                }
+                val stored = WorkspaceStore.setCurrent(app, name)
+                afterWorkspaceChanged(name, null)
+                afterSessionReplaced(brandNew = true)
+                requestNav(NavRequest.Chat)
+                if (wasBusyLive) {
+                    pushNotice("切换工作区中断了正在运行的回合：上一轮未完成的模型调用与工具都被停掉了。", Notice.Tone.Warning)
+                }
+                if (!stored) {
+                    pushNotice("工作区已切换，但这次选择没有保存成功（设置文件不可写）；重启应用后会回到「$previous」。", Notice.Tone.Warning)
+                }
+                return WorkspaceSwitch.Ok(name, interruptedTurn = wasBusyLive)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val detail = error.message?.takeIf { it.isNotBlank() } ?: "切换工作区失败"
+                pushNotice(detail, Notice.Tone.Warning)
+                return WorkspaceSwitch.Refused(detail)
+            } finally {
+                engineTransition = false
+            }
         }
         val oldHost = WorkspaceStore.currentHost(app)
         // Captured *before* the restart: `host.turnRunning` reads the live engine's
@@ -2132,6 +1704,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * rather than a surprise.
      */
     fun wouldInterruptTurn(): Boolean = host.turnRunning
+
+    private fun engineDownNow(): Boolean {
+        val e = _state.value.engine
+        return e == null || e == PiEngineSession.EngineState.Stopped || e == PiEngineSession.EngineState.Failed
+    }
 
     /**
      * Everything that was resolved against the old cwd, refreshed for the new one.
@@ -2649,7 +2226,43 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         clearExtensionChrome()
 
         session = engine
-        api = PiEngineApi(engine)
+        api = engine.api
+        // 扩展 UI 的状态直接来自引擎的归并器；换引擎时 [clearExtensionChrome] 已经清空了上一份。
+        extUiJob?.cancel()
+        extUiJob = viewModelScope.launch {
+            engine.extUi.collect { ext -> _state.value = _state.value.copy(ext = ext) }
+        }
+        // 官方渲染组件自己要求重绘（`ui.requestRender()`：动画、定时刷新）→ 清缓存、换一版，卡片重取。
+        entryProbeJob?.cancel()
+        entryProbeJob = viewModelScope.launch {
+            _state.map { it.transcript }.distinctUntilChanged().collect { probeEntryTypes(it) }
+        }
+        renderInvalidateJob?.cancel()
+        renderInvalidateJob = viewModelScope.launch {
+            engine.hostEvents.collect { ev ->
+                if (ev.name == "project.trust.required") {
+                    // 官方弹窗：项目里有要信任才加载的东西、又没人表态。事件只发一次，
+                    // 错过（界面还没挂上）就再也问不到，所以状态存在这里，由 [ProjectTrustHost] 显示。
+                    refreshTrustPrompt()
+                }
+                if (ev.name == "render.invalidate") {
+                    toolRenderCache.reset()
+                    messageRenderCache.reset()
+                    entryRenderCache.reset()
+                    _renderRev.value += 1
+                }
+            }
+        }
+        // 事件可能在界面订阅之前就发过了：引擎就绪后主动问一次信任状态。
+        viewModelScope.launch {
+            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
+            if (session === engine) refreshTrustPrompt()
+        }
+        // 会话列表要宿主已 `session.open` 才读得到：引擎一就绪就补读一次（此前的读取会失败并保留旧列表）。
+        viewModelScope.launch {
+            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
+            if (session === engine) refreshSessions()
+        }
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
@@ -2944,6 +2557,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // (audit §6.7) — this is also what makes an extension's `appendEntry`
         // state and its `custom_message`s visible at all.
         viewModelScope.launch {
+            // 见 [awaitServing]：宿主 `session.open` 应答前所有读取都会被拒。
+            if (!awaitServing(engine)) return@launch
             // The replay projects the whole session. `seedHistory` suspends now, so
             // this no longer blocks the frame thread — but the screen would sit on
             // the previous (usually empty) transcript with no explanation. `busy` is
@@ -2980,7 +2595,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 releaseBusy(replayToken)
             }
             refreshCommands()
-            refreshTuiOnlyExtensions()
             seedAutoRetryFromSettings()
             // The agent dir exists for sure by now, so a theme dropped into it
             // while the app was closed is discovered here as well.
@@ -3374,16 +2988,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 tone = noticeToneOf(request.notifyType),
             )
 
-            // Collected but not drawn: the status row was deleted by adjudication
-            // D-3. See setExtensionStatus for why the data is kept anyway.
-            "setStatus" -> setExtensionStatus(request.statusKey, request.statusText)
-
-            "setWidget" -> setExtensionWidget(
-                key = request.widgetKey,
-                lines = request.widgetLines,
-                placement = request.widgetPlacement,
-            )
-
             "setTitle" -> _state.value = _state.value.copy(
                 // The one chrome surface that *is* stripped, because it has no
                 // span host: `windowTitle` becomes the Chat AppBar's `Text`, which
@@ -3407,66 +3011,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text))
             }
 
+            // 宿主的 `pasteToEditor`：接在现有草稿后面。
+            "paste_editor_text" -> request.text?.let { text ->
+                composerFillSeq += 1
+                _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text, append = true))
+            }
+
             else -> Unit
         }
-    }
-
-    /**
-     * `setStatus`: upsert by key, or remove it. `docs/rpc.md`: "Send
-     * `statusText: undefined` (or omit it) to clear the status entry" — the
-     * parser turns both into null, and an empty string renders as nothing at all,
-     * so both clear here too.
-     *
-     * **These do get drawn** — in the 「会话与队列」 sheet's 「扩展状态（N）」 section
-     * (`ChatSheets.kt`: `PiSectionHeader` + `ExtensionStatusLine`), which is exactly the
-     * landing the adjudication named when D-3 deleted the standalone status row
-     * (`design/ui-refactor/11-designer-adjudication.md`: "a call site, not a re-plumb").
-     * Earlier revisions of this comment claimed nothing rendered the list; that stopped
-     * being true when the sheet section came back.
-     *
-     * [text] keeps its escapes instead of being stripped here: whoever draws it
-     * next has to be able to paint the colour (`chromeSpans` +
-     * `tokenColorFor`), and the state should stay equal to the wire payload.
-     */
-    private fun setExtensionStatus(key: String?, text: String?) {
-        if (key.isNullOrEmpty()) return
-        val current = _state.value.extensionStatuses
-        val next = when {
-            text.isNullOrEmpty() -> current.filterNot { it.key == key }
-            current.any { it.key == key } -> current.map {
-                if (it.key == key) ExtensionStatus(key, text) else it
-            }
-            else -> current + ExtensionStatus(key, text)
-        }
-        _state.value = _state.value.copy(extensionStatuses = next)
-    }
-
-    /**
-     * `setWidget`: upsert by key, or remove it. An empty `widgetLines` clears —
-     * `docs/rpc.md` "Send `widgetLines: undefined` (or omit it) to clear the
-     * widget", and an empty array renders zero lines, so both are the same state.
-     * Order is first-seen stable so a widget does not jump around the composer
-     * when an extension updates it every turn.
-     *
-     * [lines] keep their escapes, and are neither capped nor trimmed here: the
-     * row budget and the colour both belong to the drawing site
-     * (`ExtensionWidgetStack`), so this state stays equal to the wire payload.
-     */
-    private fun setExtensionWidget(key: String?, lines: List<String>, placement: String?) {
-        if (key.isNullOrEmpty()) return
-        val current = _state.value.extensionWidgets
-        val next = when {
-            lines.isEmpty() -> current.filterNot { it.key == key }
-            current.any { it.key == key } -> current.map {
-                if (it.key == key) {
-                    ExtensionWidget(key, lines, WidgetPlacement.fromWire(placement))
-                } else {
-                    it
-                }
-            }
-            else -> current + ExtensionWidget(key, lines, WidgetPlacement.fromWire(placement))
-        }
-        _state.value = _state.value.copy(extensionWidgets = next)
     }
 
     /**
@@ -3660,9 +3212,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Forget per-session chrome that a gone engine can no longer maintain. */
     private fun clearExtensionChrome() {
+        toolRenderCache.reset()
+        messageRenderCache.reset()
+        entryRenderCache.reset()
+        markdownTransformCache.reset()
+        _entryRenderable.value = emptySet()
         _state.value = _state.value.copy(
-            extensionStatuses = emptyList(),
-            extensionWidgets = emptyList(),
+            ext = ExtUiState(),
             windowTitle = null,
             composerFill = null,
         )
@@ -3680,7 +3236,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // silently dropped (`rpc-mode.ts` input handler) — so a late reply cannot
         // corrupt the stream, and an early one resolves to the same documented
         // default pi would have chosen.
-        runCatching { engine.send(command) }
+        runCatching {
+            val id = (command["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@runCatching
+            val cancelled = (command["cancelled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+            val confirmed = (command["confirmed"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull()
+            val value = (command["value"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            engine.respondUi(id, value = value, confirmed = confirmed, cancelled = cancelled)
+        }
     }
 
     /**
@@ -3793,20 +3355,37 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * can run in the same frame when an engine dies, and four copies of one
      * sentence read as four failures.
      */
+    /**
+     * 引擎的"会话已建好"闸门。
+     *
+     * SDK 宿主在 `session.open` 应答之前拒绝一切读写（`NOT_OPEN`，「会话还没有建立」）；RPC 时代命令
+     * 排在管道里自然等着，现在没有这个缓冲。所以**所有以会话为前提的读取/命令**都经过这里：
+     * 引擎就绪（Ready/Busy）返回 true，引擎已死（Failed/Stopped）返回 false，其余状态一直等
+     * （手机冷启动可能很慢，那是慢不是坏）。
+     */
+    private suspend fun awaitServing(engine: PiEngineSession): Boolean {
+        val reached = engine.state.first {
+            it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy ||
+                it == PiEngineSession.EngineState.Failed || it == PiEngineSession.EngineState.Stopped
+        }
+        if (session !== engine) return false
+        return reached == PiEngineSession.EngineState.Ready || reached == PiEngineSession.EngineState.Busy
+    }
+
     private fun call(
         label: String,
         noEngine: NoEngine = NoEngine.Notify,
         /**
          * Optional translation of a failure into something the user can act on.
          *
-         * The default is [Throwable.message], which for a [PiRpcException] is pi's
+         * The default is [Throwable.message], which for a [HostCommandException] is pi's
          * own English sentence prefixed with the command name — correct, but it
          * names the *symptom* and not one thing to do next. A command whose
          * failures have a small, knowable set of causes passes a mapper here
          * instead; pi's own text is kept inside the sentence, never replaced.
          */
         errorText: ((Throwable) -> String)? = null,
-        block: suspend (PiEngineApi) -> Unit,
+        block: suspend (HostEngineApi) -> Unit,
     ) {
         val api = this.api
         if (api == null) {
@@ -3816,7 +3395,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
+        val engine = session
         viewModelScope.launch {
+            // 命令先排队，等宿主打开会话再发；引擎死了就悄悄放弃（死因已有专门的界面）。
+            if (engine != null && !awaitServing(engine)) return@launch
             val token = claimBusy(label)
             try {
                 block(api)
@@ -3997,7 +3579,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *     left — reading its file would replay the wrong history, which is worse than
      *     the slow open this path replaces.
      *  2. [SessionHints.file] is set by the one caller that already knows the answer
-     *     from disk ([switchSession] holds the `PiSessionStore.Summary` the user
+     *     from disk ([switchSession] holds the `SessionSummary` the user
      *     tapped, and [importSession] the file it just copied), so the common case —
      *     opening a conversation from the list — needs no round trip at all.
      */
@@ -4030,27 +3612,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * the *second* choice is written down next to it.
      */
     private suspend fun replayHistoryOverRpc(engine: PiEngineSession) {
-        val response = runCatching {
-            engine.request({ PiCommands.getEntries(it) })
-        }.getOrNull() ?: run {
-            fail("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。")
+        val page = try {
+            // 原始条目而不是类型化的 `SessionEntry`：`seedHistory` 折的是 pi 那一层 JSON。
+            engine.api.getEntriesRaw()
+        } catch (e: HostCommandException) {
+            // `reason` 是宿主/pi 自己的原话（例如超大记录的那句），原样带给用户。
+            fail("读取会话内容失败：${e.reason}。")
             return
-        }
-        if (!response.success) {
-            // A brand-new in-memory session answers with an empty page, not an
-            // error (that is the success branch below); a real error means the
-            // transcript cannot be rebuilt — and `response.error` already carries
-            // the engine's own reason, e.g. the oversized-record sentence.
-            fail("读取会话内容失败：${response.error ?: "原因未知"}。")
+        } catch (e: Exception) {
+            fail("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。")
             return
         }
         // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
         // the rows without publishing, and a publication is what carries the new
-        // list (and its `replaced` flag) to this consumer. It **suspends**: the
-        // projection runs on `Dispatchers.Default` and takes over the engine's
-        // reducer under its transcript lock, so this await is where the frame thread
-        // is released.
-        val entries = PiResponses.entries(response)
+        // list (and its `replaced` flag) to this consumer. It **suspends**.
+        val entries = page.entries
         // This path is a **whole session** in one answer (`get_entries` has no
         // pagination), so the retained-size accounting is the largest of the three
         // callers and the one that used to be worst on the frame thread. See
@@ -4380,11 +3956,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * replay）都必须先 await 这一句。失败不抛：`get_state` 拿不到时 replay 会走
      * `get_entries` 回落，而 `call` 版本的报错行为一点没变。
      */
-    private suspend fun refreshStateNow(api: PiEngineApi) {
+    private suspend fun refreshStateNow(api: HostEngineApi) {
         runCatching { loadState(api) }
     }
 
-    private suspend fun loadState(api: PiEngineApi) {
+    private suspend fun loadState(api: HostEngineApi) {
         val remote = api.getState()
         val current = _state.value.meta
         val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
@@ -4447,7 +4023,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // pi's own default is true (`settings-manager.ts:1165`).
             val skillCommands = settingsStore.readBoolean("enableSkillCommands") ?: true
             _state.value = _state.value.copy(
-                commands = piCommandPalette(api.getCommands(), skillCommandsEnabled = skillCommands),
+                commands = api.getCommandCatalog().let { catalog ->
+                    piCommandPalette(
+                        catalog.commands,
+                        builtins = builtinRows(catalog.builtins),
+                        skillCommandsEnabled = skillCommands,
+                    )
+                },
                 commandsLoaded = true,
             )
         }
@@ -4485,6 +4067,349 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // 标志在这里释放。
     private var treeRefreshInFlight = false
     private var treeRefreshQueued = false
+
+    /**
+     * 给会话树上的条目打标签（书签）；`label` 为 null/空 = 清除。SDK 的 `appendLabelChange`：
+     * 只追加一条 `label` 条目，不改写已有记录。树随后重读，标签就出现在那一行上。
+     */
+    fun setEntryLabel(entryId: String, label: String?) {
+        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，标签没有保存。")
+        call("保存标签") { _ ->
+            engine.commands.setLabel(entryId, label)
+            refreshTree()
+        }
+    }
+
+    /**
+     * 把一条用户消息从**模型上下文**里隐藏（SDK 的 `appendContextEdit`）：对话页仍然看得见、记录一个字不少，
+     * 只是之后发给模型的上下文里不再有它。宿主在流式生成中会拒绝，原话经 [call] 的失败通道告诉用户。
+     */
+    fun hideEntryFromContext(entryId: String) {
+        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")
+        call("从上下文隐藏") { _ ->
+            engine.commands.hideFromContext(entryId)
+            refreshTree()
+            refreshStats()
+        }
+    }
+
+    // ------------------------------------------------------ 消息长按面的动作（见 chat/MessageActions.kt）
+
+    /**
+     * `/bug`：让当前模型描述「这个会话哪里不对」，成文后交给 [deliver]（界面负责复制到剪贴板）。
+     * 宿主的 `session.bugReport` 要等一轮模型调用，所以先说一声在生成；失败如实说。
+     */
+    fun generateBugReport(hint: String?, deliver: (String) -> Unit) {
+        val adv = advanced() ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有生成问题报告。", Notice.Tone.Warning)
+        pushNotice("正在生成问题报告，要等模型回一轮…", Notice.Tone.Info)
+        viewModelScope.launch {
+            runCatching { adv.bugReport(hint) }
+                .onSuccess { text ->
+                    if (text.isBlank()) pushNotice("模型没有给出报告内容。", Notice.Tone.Warning) else deliver(text)
+                }
+                .onFailure { pushNotice("生成问题报告失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+        }
+    }
+
+    /**
+     * 重新加载扩展、技能、提示词模板和主题（pi 的 `/reload`，宿主的 `session.reload`）。
+     * 不重启引擎：host 在进程内重建资源加载器，对话和进行中的会话都不受影响。
+     */
+    fun reloadResources() {
+        val ext = extensionsAccess()?.ext ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有重新加载。", Notice.Tone.Warning)
+        viewModelScope.launch {
+            runCatching { ext.reload() }
+                .onSuccess { pushNotice("已重新加载扩展、技能、提示词和主题。", Notice.Tone.Info) }
+                .onFailure { pushNotice("重新加载失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+        }
+    }
+
+    /**
+     * 错误卡的「重试」：把最后一条用户消息（文字和图片）原样再发一次。
+     *
+     * pi 的 SDK 没有「立刻重试」——`session.retry` 只管自动重试的开关和中止；它自己的自动重试
+     * 内部是把出错的助手消息从上下文摘掉再 `agent.continue()`，那条路不对外。出错的助手消息
+     * （stopReason=error）在发给模型前会被 pi-ai 的 transformMessages 丢掉，所以重发同一句
+     * 提示，模型看到的上下文和第一次是一致的；代价是会话里多一条重复的用户消息。
+     */
+    fun retryLastPrompt() {
+        val last = _state.value.transcript.lastOrNull { it is UserMessage } as? UserMessage
+            ?: return pushNotice("没有可以重发的上一条消息。", Notice.Tone.Warning)
+        send(last.text, last.images)
+    }
+
+    /** 把引用块接在输入框草稿后面（和扩展的 `pasteToEditor` 同一条通道）。 */
+    fun quoteIntoComposer(text: String) {
+        composerFillSeq += 1
+        _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text, append = true))
+    }
+
+    /**
+     * 找出这行消息在 pi 会话里的条目 id，再交给 [then]；找不到就如实说，不猜。
+     * 匹配规则与它的 harness 在 [MessageEntryResolver]。pi 只在第一条助手消息写完后才把会话落盘，
+     * 所以刚发出的第一轮里这里可能还找不到——话术里写明原因，而不是报一个泛泛的「失败」。
+     */
+    private fun resolveEntryThen(item: TranscriptItem, what: String, then: (String) -> Unit) {
+        val api = this.api ?: return fail("引擎未就绪：pi 现在不在运行，$what 没有执行。")
+        val (role, text) = when (item) {
+            is UserMessage -> MessageRole.User.wire to item.text
+            is AssistantText -> MessageRole.Assistant.wire to item.text
+            else -> return
+        }
+        viewModelScope.launch {
+            val id = runCatching {
+                val raw = api.getEntriesRaw().entries
+                MessageEntryResolver.resolve(raw.mapNotNull(::entryText), item.key, role, text)
+            }.getOrNull()
+            if (id == null) {
+                pushNotice("这条消息还没写进 pi 的会话文件（pi 在第一轮回答结束后才落盘），$what 暂时做不了。", Notice.Tone.Warning)
+            } else {
+                then(id)
+            }
+        }
+    }
+
+    /** 原始条目 → 只剩角色与文本块；不是消息条目的返回 null。 */
+    private fun entryText(entry: kotlinx.serialization.json.JsonObject): EntryText? {
+        val id = (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        if ((entry["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "message") return null
+        val message = entry["message"] as? kotlinx.serialization.json.JsonObject ?: return null
+        val role = (message["role"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.lowercase() ?: return null
+        val content = message["content"]
+        val texts = when (content) {
+            is kotlinx.serialization.json.JsonPrimitive -> listOf(content.content)
+            is kotlinx.serialization.json.JsonArray -> content.mapNotNull { block ->
+                val o = block as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                if ((o["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "text") null
+                else (o["text"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+            else -> emptyList()
+        }
+        return EntryText(id, role, texts)
+    }
+
+    /** 「从这里继续」：把叶子移到这条消息，不做摘要（要摘要走会话树页）。 */
+    fun continueFromMessage(item: TranscriptItem) =
+        resolveEntryThen(item, "从这里继续") { navigateTo(it, BranchSummaryChoice.NoSummary) }
+
+    fun labelMessage(item: TranscriptItem, label: String?) =
+        resolveEntryThen(item, "加标签") { setEntryLabel(it, label) }
+
+    fun hideMessageFromContext(item: TranscriptItem) =
+        resolveEntryThen(item, "从上下文隐藏") { hideEntryFromContext(it) }
+
+    /** 宿主的高级命令入口；引擎没跑时 null。 */
+    fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
+
+    private var extUiJob: Job? = null
+    private var panelColumns = 0
+    private var panelResizeJob: Job? = null
+
+    /**
+     * 面板能放多少列等宽字符 → 宿主，让组件工厂按这个宽度重绘。布局抖动时防抖 100 ms，
+     * 同一个值不重发；引擎换了（重启 / 新进程）下一次布局变化会再发——宿主只在内存里存这一个数。
+     */
+    fun setPanelColumns(columns: Int) {
+        if (columns == panelColumns) return
+        panelColumns = columns
+        panelResizeJob?.cancel()
+        panelResizeJob = viewModelScope.launch {
+            delay(PANEL_RESIZE_DEBOUNCE_MS)
+            runCatching { session?.commands?.uiResize(columns) }
+        }
+    }
+
+    /** 「扩展 / MCP」界面的宿主入口；引擎没起来为 null（界面据此说明，而不是假装有数据）。 */
+    fun extensionsAccess(): app.pi.host.ExtensionsAccess? {
+        val s = session ?: return null
+        return app.pi.host.ExtensionsAccess(
+            ext = app.pi.host.HostExtensions(s.commands),
+            resources = app.pi.host.HostResources { s.commands },
+            events = s.hostEvents,
+            requests = s.hostRequests,
+            respond = { id, value, cancelled -> s.client.respond(id, value, cancelled) },
+        )
+    }
+
+    private val _trustPrompt = MutableStateFlow<app.pi.packages.PiProjectTrust.State?>(null)
+
+    /** 要问用户「信任这个项目吗」时非空（项目里有 `.pi` 资源、没人表态、默认策略是 ask）。 */
+    val trustPrompt: StateFlow<app.pi.packages.PiProjectTrust.State?> = _trustPrompt.asStateFlow()
+
+    private fun refreshTrustPrompt() {
+        val c = session?.commands ?: return
+        viewModelScope.launch {
+            val st = runCatching { app.pi.packages.PiProjectTrust.parse(c.trustState().data) }.getOrNull()
+            _trustPrompt.value = st?.takeIf { it.undecided }
+        }
+    }
+
+    /** 用户在弹窗里选了一项。失败时返回宿主原话（弹窗保留，用户可重试）。 */
+    suspend fun answerTrust(option: app.pi.packages.PiProjectTrust.Option): String? {
+        val c = session?.commands ?: return "引擎没在运行。"
+        return try {
+            c.setTrust(option.trusted, option.remember.key)
+            _trustPrompt.value = null
+            null
+        } catch (e: app.pi.host.HostException) {
+            e.message ?: e.code
+        }
+    }
+
+    /** 先不决定：这次不再问（下次开这个项目还会问）。 */
+    fun dismissTrustPrompt() { _trustPrompt.value = null }
+
+    /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
+    fun hostCommands(): app.pi.host.HostCommands? = session?.commands
+
+    /**
+     * 把 App 当前色板交给宿主，让扩展组件的 `theme.fg(...)` 跟着 App 主题走。
+     * 宿主进程重启后色板回到默认，所以界面在引擎每次就绪时再推一次。失败不打扰用户：
+     * 最坏只是扩展组件用默认暗色。
+     */
+    fun pushExtensionPalette(palette: Map<String, String>) {
+        val commands = hostCommands() ?: return
+        viewModelScope.launch { runCatching { commands.uiPalette(palette) } }
+    }
+
+    private var renderInvalidateJob: Job? = null
+    private var entryProbeJob: Job? = null
+    private val _renderRev = MutableStateFlow(0)
+
+    /** 宿主说「渲染结果变了」时加一；聊天页据此换一个 [ToolRenderer] 实例，卡片的 produceState 就重取。 */
+    val renderRev: StateFlow<Int> = _renderRev.asStateFlow()
+
+    private val toolRenderCache = ToolRendererCache { item, expanded, width ->
+        val commands = session?.commands ?: throw IllegalStateException("no session")
+        commands.renderTool(
+            toolName = item.toolName,
+            toolCallId = item.toolCallId,
+            args = item.args,
+            resultText = if (item.status == ToolStatus.Pending && item.output.isEmpty()) null else item.output,
+            // 已结束取结果的 details，运行中取最新的进度快照（`tool_execution_update.partialResult.details`）。
+            details = item.details ?: item.liveDetails,
+            images = item.images,
+            argsComplete = item.args != null,
+            isError = item.isError,
+            expanded = expanded,
+            isPartial = item.status == ToolStatus.Pending,
+            durationMs = item.durationMs,
+            width = width,
+        )
+    }
+
+    private val messageRenderCache = MessageRendererCache { item, expanded ->
+        val commands = session?.commands ?: throw IllegalStateException("no session")
+        commands.renderMessage(item.customType, item.markdown, item.details, expanded, panelColumns.takeIf { it > 0 } ?: 80)
+    }
+
+    /** 扩展自定义消息的渲染入口：没有渲染器 / 宿主不可达回 null，消息回落 markdown。 */
+    val messageRenderer = MessageRenderer { item, expanded ->
+        runCatching { messageRenderCache.render(item, expanded) }.getOrNull()
+    }
+
+    private val entryRenderCache = EntryRendererCache { item, expanded ->
+        val commands = session?.commands ?: throw IllegalStateException("no session")
+        commands.renderEntry(item.customType, item.key, item.data, expanded, panelColumns.takeIf { it > 0 } ?: 80)
+    }
+
+    /** 扩展自定义会话条目的渲染入口（`registerEntryRenderer`）：没有渲染器 / 宿主不可达回 null。 */
+    val entryRenderer = EntryRenderer { item, expanded ->
+        runCatching { entryRenderCache.render(item, expanded) }.getOrNull()
+    }
+
+    private val _entryRenderable = MutableStateFlow<Set<String>>(emptySet())
+
+    /** 有扩展渲染器的条目 customType：转录里只有这些 `custom` 条目会画出来（pi：没渲染器就不添加任何子组件）。 */
+    val entryRenderable: StateFlow<Set<String>> = _entryRenderable.asStateFlow()
+
+    private val markdownTransformCache = MarkdownTransformCache { text, type, id ->
+        val commands = session?.commands ?: throw IllegalStateException("no session")
+        commands.renderMarkdown(text, type, isStreaming = false, width = panelColumns.takeIf { it > 0 } ?: 80, messageId = id)
+    }
+
+    /** 已完成消息的 markdown 经扩展 transformer 改写；没有 transformer / 宿主不可达就原样返回。 */
+    val markdownTransform = MarkdownTransform { text, type, id ->
+        runCatching { markdownTransformCache.transform(text, type, id) }.getOrDefault(text)
+    }
+
+    /** 转录里新出现的 `custom` 条目类型各问宿主一次「有没有渲染器」，结果驱动 [entryRenderable]。 */
+    private fun probeEntryTypes(transcript: List<TranscriptItem>) {
+        val fresh = transcript.filterIsInstance<ExtensionEntry>()
+            .filter { !entryRenderCache.known(it.customType) }
+            .distinctBy { it.customType }
+        if (fresh.isEmpty()) return
+        viewModelScope.launch {
+            for (item in fresh) runCatching { entryRenderCache.render(item, false) }
+            _entryRenderable.value = fresh.map { it.customType }.filter(entryRenderCache::hasRenderer).toSet() + _entryRenderable.value
+        }
+    }
+
+    /** 工具卡的扩展渲染入口：宿主不可达 / 没有渲染器都回 null，卡片回落通用样式。 */
+    val toolRenderer = ToolRenderer { item, expanded ->
+        runCatching { toolRenderCache.render(item, expanded, panelColumns.takeIf { it > 0 } ?: 80) }.getOrNull()
+    }
+
+
+    /** 键盘 / 文本 → 一个交互式表面（`ctx.ui.custom()` 的组件）。宿主喂给组件的 `handleInput` 后重绘。 */
+    fun sendSurfaceInput(surfaceId: String, data: String) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch { runCatching { commands.uiInput(surfaceId, data) } }
+    }
+
+    /** 用户点 ✕：先 Esc（组件自己收尾、自己 `done()`），它不理就强关；强关会让扩展的 await 以 undefined 返回。 */
+    fun closeSurface(surfaceId: String) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch {
+            runCatching { commands.uiInput(surfaceId, "\u001b") }
+            delay(SURFACE_ESC_GRACE_MS)
+            if (_state.value.ext.custom?.surfaceId == surfaceId) runCatching { commands.uiClose(surfaceId) }
+        }
+    }
+
+    /** 「模型与供应商」页要的全部宿主能力；引擎没跑时 null。 */
+    fun modelsHost(): app.pi.ui.models.ModelsHost? {
+        val engine = session ?: return null
+        val api = HostEngineApi(engine.commands)
+        return app.pi.ui.models.ModelsHost(
+            auth = engine.auth,
+            advanced = engine.advanced,
+            events = engine.client.signals.filterIsInstance<app.pi.host.HostSignal.Event>(),
+            requests = engine.client.requests,
+            answer = { id, value, cancelled ->
+                engine.client.respond(id, value?.let { kotlinx.serialization.json.JsonPrimitive(it) }, cancelled)
+            },
+            models = { api.getAvailableModels().also { m -> _state.value = _state.value.copy(models = m) } },
+            catalog = { provider -> api.getModelCatalog(provider) },
+            selectModel = { provider, id, persist ->
+                val applied = api.setModel(provider, id, persist)
+                _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
+            },
+            currentModel = { _state.value.meta.model?.let { m -> m.provider?.let { it to m.id } } },
+        )
+    }
+
+    /** 只改「发给模型的版本」（SDK `appendContextEdit` 带替换内容），原文保留。 */
+    fun replaceEntryInContext(entryId: String, text: String) {
+        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")
+        call("改写上下文") { _ ->
+            engine.commands.replaceInContext(entryId, text)
+            refreshTree()
+            refreshStats()
+        }
+    }
+
+    /** 停止正在进行的上下文压缩（SDK `abortCompaction`）；聊天页的状态卡直接用。 */
+    fun abortCompaction() {
+        val engine = session ?: return
+        viewModelScope.launch { runCatching { engine.advanced.abortCompaction() } }
+    }
+
+    /** 停止正在进行的分支摘要（SDK `abortBranchSummary`）。 */
+    fun abortBranchSummary() {
+        val engine = session ?: return
+        viewModelScope.launch { runCatching { engine.advanced.abortBranchSummary() } }
+    }
 
     fun refreshTree() {
         if (treeRefreshInFlight) {
@@ -4593,50 +4518,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Scan installed extensions for TUI-only surfaces.
-     *
-     * pi exposes no signal for this: `custom()` returns `undefined` without a
-     * word and every setter is a no-op, so the app cannot observe the call — it
-     * can only read the extension's source, which is what the audit's §6.11
-     * proposes. Both locations pi auto-discovers are scanned
-     * (`docs/extensions.md` "Extension locations": the user dir and the project
-     * dir); the project one may be trust-gated and therefore not loaded at all,
-     * which is itself worth knowing.
-     */
-    fun refreshTuiOnlyExtensions() {
-        viewModelScope.launch {
-            val found = withContext(Dispatchers.IO) { scanTuiOnlyExtensions() }
-            _state.value = _state.value.copy(tuiOnlyExtensions = found)
-        }
-    }
-
-    private fun scanTuiOnlyExtensions(): List<TuiOnlyExtension> {
-        val roots = listOf(
-            File(host.paths().agentDir, "extensions") to "全局",
-            PiProjectConfig.extensionsDir(defaultWorkspace()) to "项目",
-        )
-        val found = mutableListOf<TuiOnlyExtension>()
-        for ((root, scope) in roots) {
-            if (!root.isDirectory) continue
-            for (file in root.walkTopDown()) {
-                if (!file.isFile) continue
-                if (file.extension.lowercase() !in EXTENSION_SOURCE_SUFFIXES) continue
-                if (file.length() > MAX_EXTENSION_SOURCE_BYTES) continue
-                val source = runCatching { file.readText() }.getOrNull() ?: continue
-                val markers = tuiOnlyMarkers(source)
-                if (markers.isEmpty()) continue
-                found += TuiOnlyExtension(
-                    name = file.name,
-                    scope = scope,
-                    path = file.absolutePath,
-                    markers = markers,
-                )
-            }
-        }
-        return found
-    }
-
-    /**
      * Seed [EngineMeta.autoRetry] from pi's settings document.
      *
      * `get_state` has no retry field, and pi's own source of truth is the setting
@@ -4680,13 +4561,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // delivery, not to this submission (see `PiEngineSession.prompt`). The
         // pending row is what shows the message in the meantime.
         if (_state.value.meta.compacting) {
-            engine.send(
-                PiCommands.steer(
-                    id = "steer-${System.nanoTime()}",
-                    message = trimmed,
-                    images = images,
-                ),
-            )
+            engine.fire("session.steer", app.pi.host.sendArgs(trimmed, images))
             syncTranscript(engine, engine.publication.value)
             // pi answers this window with its own status line — `Queued message for
             // after compaction` (`interactive-mode.js:3916`, in
@@ -4737,7 +4612,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Invoke one palette command whose action is [PiCommandAction.Prompt].
+     * Invoke one palette command whose action is [ChatAction.Prompt].
      *
      * Always through `prompt`, **never** `steer`, even mid-turn: pi's
      * `_queueUserInput` calls `_throwIfExtensionCommand` first, so a `steer` or
@@ -4764,7 +4639,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             //
             // `send`, not `prompt`: only `PiEngineSession.prompt` echoes, and this
             // is the one `/` path that must not.
-            engine.send(PiCommands.prompt("cmd-${System.nanoTime()}", text))
+            engine.fire("session.prompt", app.pi.host.sendArgs(text, emptyList()))
         } else {
             // Templates and skills are expanded inside pi into a real user message
             // (`core/agent-session.js:1631-1632`), so the optimistic echo is confirmed
@@ -4826,13 +4701,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // text instead (`_queueUserInput`, `:1722-1740`, no compaction check). Same
         // trade, same worst case. No echo, for the same reason as [send].
         if (_state.value.meta.compacting) {
-            engine.send(
-                PiCommands.followUp(
-                    id = "follow-${System.nanoTime()}",
-                    message = trimmed,
-                    images = images,
-                ),
-            )
+            engine.fire("session.followUp", app.pi.host.sendArgs(trimmed, images))
             syncTranscript(engine, engine.publication.value)
             // Same status line as [send]'s compaction branch, and pi's own wording
             // for it (`interactive-mode.js:3916`).
@@ -4938,6 +4807,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * `model.cycle`：按作用域顺序切到下一个模型（pi 的 Ctrl+P）。
+     * 只有一个可选模型时宿主答 null，给一句提示而不是静默。
+     */
+    fun cycleModel() {
+        call("切换模型") { api ->
+            val result = api.cycleModel()
+            val model = result?.model
+            if (model == null) {
+                pushNotice("没有其他可切换的模型", Notice.Tone.Warning)
+                return@call
+            }
+            _state.value = _state.value.copy(meta = _state.value.meta.copy(model = model))
+            refreshState()
+            refreshStats()
+        }
+    }
+
     /** `set_model`. pi answers with the model it actually switched to. */
     fun setModel(model: PiResponses.ModelInfo) {
         val provider = model.provider
@@ -4988,12 +4875,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call("压缩上下文") { api ->
             val result = try {
                 api.compact(customInstructions?.takeIf { it.isNotBlank() })
-            } catch (error: PiRpcException) {
+            } catch (error: HostCommandException) {
                 // pi 用英文原文说明「没什么可压」的两种情形
                 // (`core/agent-session.ts:1985-1992`)，原样弹出来就是中文界面里的一句
                 // 英文。只映射这两条**已知**原因，其余 reason 一字不改地透出：这里不是
                 // 一个把 pi 的话吞掉的翻译层，用户拿它去搜/去报错仍然要对得上。
-                throw PiRpcException(error.command, compactReasonInChinese(error.reason))
+                throw HostCommandException(error.command, compactReasonInChinese(error.reason))
             }
             val before = result.tokensBefore
             val after = result.estimatedTokensAfter
@@ -5074,6 +4961,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var argCompletionId = 0
+
+    /**
+     * 向扩展命令要参数候选（pi 的 `getArgumentCompletions`）。后发先至：旧请求的应答一律丢弃；
+     * 失败不弹通知（补全是锦上添花，扩展里抛了就当没有候选）。
+     */
+    fun requestArgCompletions(name: String, prefix: String) {
+        val id = ++argCompletionId
+        val engine = session ?: return
+        val api = this.api ?: return
+        viewModelScope.launch {
+            if (!awaitServing(engine)) return@launch
+            val items = runCatching { api.getCommandCompletions(name, prefix) }.getOrNull() ?: return@launch
+            if (id != argCompletionId) return@launch
+            _state.value = _state.value.copy(argCompletions = ArgCompletions(name, prefix, items))
+        }
+    }
+
+    fun dismissArgCompletions() {
+        argCompletionId++
+        if (_state.value.argCompletions != null) {
+            _state.value = _state.value.copy(argCompletions = null)
+        }
+    }
+
     /** Close the mention list: the token stopped being a mention, or the screen left. */
     fun dismissMentions() {
         mentionRequestId++
@@ -5147,7 +5059,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * of an existing session file, written verbatim into the new session's header as
      * `parentSession` (`session-manager.ts:938` in `SessionManager.new`). pi does
      * nothing else with it — its session selector rebuilds a tree from that field
-     * (`components/session-selector.ts:206-231`), and our own [PiSessionStore.Summary]
+     * (`components/session-selector.ts:206-231`), and our own [SessionSummary]
      * already reads it back (`parentSession`), which is why a child session shows up
      * with the 「来自〈父会话名〉」 line. No grouping or tag of our own is involved.
      *
@@ -5190,7 +5102,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * pi resolves `parentSession` inside the guest, so handing it a host path would
      * record a parent that does not exist from pi's side.
      */
-    fun newChildSession(summary: PiSessionStore.Summary) {
+    fun newChildSession(summary: SessionSummary) {
         val path = guestSessionPath(summary.file)
         if (path == null) {
             fail("找不到会话文件：${summary.file.name}")
@@ -5208,16 +5120,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * active session before ever calling this: pi is appending to that file, and
      * unlinking it under the engine would keep it writing to a removed inode.
      *
-     * The unlink itself goes through [PiSessionStore.delete] rather than
-     * `summary.file.delete()` so the store's containment guard
-     * (`PiSessionStore.kt:161-167` — only a regular `.jsonl` directly inside the
-     * session root) is the one that runs; a `Summary` is data, and data must not be
-     * able to name an arbitrary path to unlink.
+     * 删除走宿主的 `session.delete`（[SessionLibrary.delete]）：宿主只认会话目录之内的路径、
+     * 拒绝删当前会话；[SessionSummary] 是数据，数据不能指名任意路径去 unlink。
      */
-    fun deleteSession(summary: PiSessionStore.Summary) {
+    fun deleteSession(summary: SessionSummary) {
         viewModelScope.launch {
             val removed = withContext(Dispatchers.IO) {
-                sessionStore.delete(summary.file)
+                sessionLibrary.delete(summary.file)
             }
             if (removed) {
                 pushNotice("已删除：${summary.displayName}", Notice.Tone.Info)
@@ -5238,7 +5147,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * under pi is what lets a `session_before_switch` extension veto it
      * (audit §6.9).
      */
-    fun switchSession(summary: PiSessionStore.Summary) {
+    fun switchSession(summary: SessionSummary) {
         val path = guestSessionPath(summary.file)
         if (path == null) {
             fail("找不到会话文件：${summary.file.name}")
@@ -5295,7 +5204,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
      * 宁可保持现状，也不要猜一个工作区。
      */
-    private suspend fun adoptSessionWorkspace(summary: PiSessionStore.Summary, generation: Long) {
+    private suspend fun adoptSessionWorkspace(summary: SessionSummary, generation: Long) {
         // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
         //
         // `Summary.cwd` 本来就是**从会话文件头里读出来的**（`PiSessionStore` 的第 622/744 行
@@ -5400,7 +5309,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             } catch (error: Throwable) {
                 // pi's raw text is not echoed: two of its three shapes carry a
                 // filesystem path, and user-visible copy here never shows one.
-                fail(SessionImport.failureSentence((error as? PiRpcException)?.reason ?: error.message))
+                fail(SessionImport.failureSentence((error as? HostCommandException)?.reason ?: error.message))
             } finally {
                 releaseBusy(importToken)
             }
@@ -5548,7 +5457,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * it is deterministic, keyed on which of the two paths produced the row.
      *
      * The fix does not need a new wire field. pi already publishes the complete,
-     * authoritative list of forkable points ([PiEngineApi.getForkMessages] →
+     * authoritative list of forkable points ([HostEngineApi.getForkMessages] →
      * `session.getUserMessagesForForking()`, `core/agent-session.ts:3309-3327`),
      * so the row is resolved against that list — see [resolveForkPoint].
      *
@@ -5760,37 +5669,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (entryId.isBlank()) return
         call(NAVIGATE_BUSY_LABEL, errorText = ::navigateFailureText) { api ->
-            if (api.getCommands().none { it.name == NAVIGATE_COMMAND }) {
-                pushNotice(
-                    "设备扩展没有提供「$NAVIGATE_COMMAND」命令，所以没有跳转。" +
-                        "它是随包扩展：到「包」里确认 pi-android-bridge 已启用，再重启引擎。",
-                    Notice.Tone.Warning,
-                )
-                return@call
-            }
-
             val before = api.getTree().leafId
-            val text = "/$NAVIGATE_COMMAND " + navigateCommandArgs(
+            // 官方 `navigateTree`（宿主 `session.navigate`）：直接方法，不再绕 pi-android-bridge 扩展命令，
+            // 也就没有「命令不存在时文字被当成用户消息发给模型」那条风险。
+            val result = engine.commands.navigate(
                 targetId = entryId,
                 summarize = wantsSummary(choice, branchSummarySkipPrompt()),
                 customInstructions = customInstructions,
             )
-            // Straight to the session rather than through [PiEngineSession.prompt]: that
-            // one mirrors the message into the transcript before sending it, and a command
-            // line is not something the user said. `SLOW_TIMEOUT_MS` because this can run a
-            // full summarization before it answers.
-            val response = engine.request(
-                { PiCommands.prompt(it, text) },
-                PiEngineApi.SLOW_TIMEOUT_MS,
-            )
-            if (!response.success) {
-                throw PiRpcException("prompt", response.error ?: "pi 拒绝了这次跳转")
-            }
+            val refused = (result.data["cancelled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
 
             // The only authoritative "did it move": both `get_tree` and `get_entries`
             // report pi's **in-memory** leaf (`rpc-mode.ts:653`, `:648`), which is what
             // `branch()`/`branchWithSummary()` just changed.
-            when (navigateOutcome(before, api.getTree().leafId, refused = false)) {
+            when (navigateOutcome(before, api.getTree().leafId, refused = refused)) {
                 NavigateOutcome.Moved -> {
                     replayActiveBranch(engine)
                     // The tree's own view is a second surface of the same fact, and the
@@ -5828,16 +5720,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * onto the new context.
      */
     private suspend fun replayActiveBranch(engine: PiEngineSession) {
-        val response = runCatching { engine.request({ PiCommands.getEntries(it) }) }.getOrNull() ?: run {
+        val page = try {
+            // 同 [replayHistoryOverRpc]：分支过滤要吃 `id` / `parentId`，那是原始条目才有的字段。
+            engine.api.getEntriesRaw()
+        } catch (e: HostCommandException) {
+            fail("跳转成功，但读回会话内容失败：${e.reason}。重新打开会话即可看到新的位置。")
+            return
+        } catch (e: Exception) {
             fail("跳转成功，但没能读回这个会话的内容；重新打开会话即可看到新的位置。")
             return
         }
-        if (!response.success) {
-            fail("跳转成功，但读回会话内容失败：${response.error ?: "原因未知"}。重新打开会话即可看到新的位置。")
-            return
-        }
-        val entries = PiResponses.entries(response)
-        val branch = activeBranch(entries, PiResponses.sessionEntries(response)?.leafId)
+        val branch = activeBranch(page.entries, page.leafId)
         val chars = withContext(Dispatchers.IO) { retainedChars(branch) }
         engine.seedHistory(branch)
         loadedHistoryChars = chars
@@ -5915,14 +5808,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 会话列表里长按「重命名」：当前正在用的会话走 RPC（引擎正往它的文件里追加，不能同时写），
      * 其余会话直接往文件末尾追加一条 `session_info`（[PiSessionStore.rename]）。
      */
-    fun renameSessionFromList(summary: PiSessionStore.Summary, name: String) {
+    fun renameSessionFromList(summary: SessionSummary, name: String) {
         val open = _state.value.meta.sessionFile?.substringAfterLast('/')
         if (open != null && open == summary.file.name) {
             renameSession(name)
             return
         }
         viewModelScope.launch {
-            val ok = sessionStore.rename(summary.file, name)
+            val ok = sessionLibrary.rename(summary.file, name)
             if (ok) {
                 refreshSessions()
             } else {
@@ -6090,7 +5983,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *  - `bash`: a `!` command is a *workspace* job, not a session one — pi keeps
      *    running it across a switch and the app's row reports that process, so
      *    clearing it would hide a command that is still running.
-     *  - the extension surfaces (`extensionStatuses`, `extensionWidgets`,
+     *  - the extension surfaces (`ext`,
      *    `windowTitle`, `notices`) and above all `extensionDialog`: pi re-sends them
      *    when they change and there is no RPC to re-read them. Dropping the dialog
      *    would be worse than stale — pi is *blocked* on that answer
@@ -6260,7 +6153,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun engineLabel(current: UiState = _state.value): String = when {
         current.busy != null -> current.busy
-        current.streaming -> "工作中"
+        // 扩展用 ctx.ui.setWorkingMessage 给的一句话（"索引中 3/12"）取代泛泛的「工作中」；只取第一行、去掉颜色码。
+        current.streaming -> current.ext.working.message?.takeIf { current.ext.working.visible }?.let { chromeText(it).lineSequence().firstOrNull()?.trim() }
+            ?.takeIf { it.isNotEmpty() } ?: "工作中"
         current.boot !is Boot.Ready -> "启动中"
         current.engine == PiEngineSession.EngineState.Failed -> "引擎已退出"
         current.engine == PiEngineSession.EngineState.Stopped -> "引擎已停止"
@@ -6507,11 +6402,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          */
         const val MAX_REPORTED_FAILURES = 12
 
-        /** Extensions pi loads are TypeScript or JavaScript modules. */
-        val EXTENSION_SOURCE_SUFFIXES = setOf("ts", "js", "mts", "mjs", "cts", "cjs")
-
-        /** A 1 MiB source file is not an extension a phone should be parsing. */
-        const val MAX_EXTENSION_SOURCE_BYTES = 1L shl 20
     }
 }
 
@@ -6522,7 +6412,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
  * is the only way in. Not a user-facing name: it never appears in the composer, because it
  * is dispatched straight to the session rather than through the prompt path that echoes.
  */
-private const val NAVIGATE_COMMAND = "pi-android-navigate"
 
 /**
  * What the status line says while a navigation is in flight.
@@ -6532,7 +6421,6 @@ private const val NAVIGATE_COMMAND = "pi-android-navigate"
  * waited on — rather than the generic 读取 — is the difference between "stuck" and
  * "summarizing".
  */
-private const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
 
 /**
  * [UiState.nowMs] 的节拍：一秒。它不是随手取的数——pi 给同一个读数用的就是这个周期
@@ -6567,3 +6455,9 @@ enum class OverlayView { List, Tree }
 
 /** [PiSessionViewModel.overlay] 的读数：哪一层、哪一屏。 */
 data class OverlayState(val slot: OverlaySlot, val view: OverlayView)
+
+/** 跳转进行中的忙碌文案；会话树据此显示「停止摘要」。 */
+const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
+
+private const val PANEL_RESIZE_DEBOUNCE_MS = 100L
+private const val SURFACE_ESC_GRACE_MS = 250L

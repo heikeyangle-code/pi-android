@@ -71,6 +71,30 @@ class RuntimeSelection(
     /** The user's standing choice, as the settings row reads it. */
     val prorootEnabled: Boolean get() = prefs?.prorootEnabled ?: false
 
+    /** 用户选的运行时（三选一）。 */
+    val selectedEngine: GuestEngine get() = prefs?.selectedEngine ?: GuestEngine.Proot
+
+    /**
+     * 选运行时。重新选一个非 proot 的引擎 = 清零失败计数 + 删掉**那个引擎**的探针缓存，
+     * 下一次启动 guest 时重跑门禁——「再试一次」这个动作就是重新选它。
+     */
+    fun setSelectedEngine(engine: GuestEngine) {
+        prefs?.setSelectedEngine(engine)
+        when (engine) {
+            GuestEngine.Proroot -> runCatching { paths.clearProrootProbeCache() }
+            GuestEngine.Tawcroot -> runCatching { paths.clearTawcrootProbeCache() }
+            GuestEngine.Proot -> Unit
+        }
+        if (engine != GuestEngine.Proot) Log.i(TAG, "选择了 ${engine.name}：失败计数已清零，探针缓存已删除，下次启动重跑门禁")
+    }
+
+    /** 某个运行时缺的组件文件；proot 随包内置，不查。 */
+    private fun missingFor(engine: GuestEngine): List<String> = when (engine) {
+        GuestEngine.Proot -> emptyList()
+        GuestEngine.Proroot -> paths.missingProrootComponents()
+        GuestEngine.Tawcroot -> paths.missingTawcrootComponents()
+    }
+
     /**
      * Write the switch, keeping everything that means "try again" together.
      *
@@ -125,8 +149,23 @@ class RuntimeSelection(
          * afterwards is provably **this** launch's, not a concurrent one's.
          */
         val launchToken: String? = null,
+        /** 用户**选**的运行时（门禁没过时和 [engine] 不同）。 */
+        val selectedEngine: GuestEngine = GuestEngine.Proot,
     ) {
         val usingProroot: Boolean get() = engine == GuestEngine.Proroot
+
+        /** 本次用的是非 proot 的实验性运行时：失败要计数、第一次失败要用 proot 重试。 */
+        val usingExperimental: Boolean get() = engine != GuestEngine.Proot
+
+        /**
+         * 这次启动的「句柄」：用来找 launcher pid，超时 / 停止时回收整棵 guest 树。proroot 靠它的
+         * config 表，tawcroot 靠环境里的 launch token + 父进程；proot 有 `--kill-on-exit`，不需要。
+         */
+        fun armHandle(paths: PiPaths): ProrootLaunchHandle? = when (engine) {
+            GuestEngine.Proroot -> ProrootLaunchHandle.arm(paths.prorootTmpDir(), launchToken)
+            GuestEngine.Tawcroot -> launchToken?.let { ProrootLaunchHandle.armByToken(it) }
+            GuestEngine.Proot -> null
+        }
 
         /**
          * One line for the settings row.
@@ -137,7 +176,7 @@ class RuntimeSelection(
          * work over data already in hand — see the narrative's KDoc.
          */
         val summary: String
-            get() = ProrootProbeNarrative.summary(fallback, probe?.detail.orEmpty())
+            get() = ProrootProbeNarrative.summary(fallback, probe?.detail.orEmpty(), engine = engine)
     }
 
     /** The effective state, for the settings row and the diagnostic report. */
@@ -158,6 +197,7 @@ class RuntimeSelection(
          * row's sentence can say which档 refused.
          */
         val mode: ProrootSeccomp = RuntimeChoice.PROROOT_SECCOMP,
+        val selected: GuestEngine = GuestEngine.Proot,
     ) {
         /**
          * The sentence the settings row, the settings-home summary and the report's
@@ -171,7 +211,10 @@ class RuntimeSelection(
          * that once per epoch on `Dispatchers.IO` (`PiSettingsStack`).
          */
         val summary: String
-            get() = ProrootProbeNarrative.summary(fallback, probeDetail, mode)
+            // `engine` must travel with it: with `EngineFallback.None` the sentence is
+            // whatever runtime is *actually running*, and defaulting it to proroot made
+            // this row say "proroot" while tawcroot was in effect.
+            get() = ProrootProbeNarrative.summary(fallback, probeDetail, mode, engine)
     }
 
     fun plan(
@@ -186,14 +229,15 @@ class RuntimeSelection(
          */
         allowProroot: Boolean = true,
     ): Plan {
-        val enabled = allowProroot && (prefs?.prorootEnabled ?: false)
+        val selected = if (allowProroot) selectedEngine else GuestEngine.Proot
+        val enabled = selected != GuestEngine.Proot
         // **Nothing proroot-shaped is touched while the switch is off** — not the five
         // `stat`s, not the config-table listing. The decision below cannot use either
         // of them in that case (`RuntimeChoice.decide` returns `SwitchOff` on its first
         // condition), so computing them would be work whose result is provably
         // discarded, on a path that runs on every guest start. The user asked for
         // exactly this: 「如果没打开，根本没必要检查」.
-        val missing = if (enabled) paths.missingProrootComponents() else emptyList()
+        val missing = missingFor(selected)
         val filesPresent = missing.isEmpty()
         val failures = prefs?.prorootFailures ?: 0
 
@@ -202,7 +246,7 @@ class RuntimeSelection(
         // exhausted proroot must not be given another chance by a probe.
         var probe: ProrootProbe.Verdict? = null
         val probePassed = if (enabled && filesPresent && !RuntimeChoice.exhausted(failures)) {
-            probe = gate(storage)
+            probe = gate(storage, selected)
             probe.passed
         } else {
             false
@@ -211,7 +255,7 @@ class RuntimeSelection(
         val decision = if (!allowProroot) {
             EngineDecision(GuestEngine.Proot, EngineFallback.InstallPath)
         } else {
-            RuntimeChoice.decide(enabled, filesPresent, probePassed, failures)
+            RuntimeChoice.decideFor(selected, filesPresent, probePassed, failures)
         }
 
         // Only while proroot can actually launch. The sweep is the cleanup proroot's own
@@ -221,7 +265,7 @@ class RuntimeSelection(
         // revision change wipes the whole tree anyway), which is why gating this on the
         // switch loses no cleanup. It is also a no-op when the directory does not exist,
         // because it looks through [PiPaths.prorootTmpDir] and creates nothing.
-        if (enabled) sweepProrootConfigs()
+        if (selected == GuestEngine.Proroot) sweepProrootConfigs()
 
         // A per-launch identity, carried in the launcher's environment and read back
         // from `/proc/<pid>/environ` when the launch's pid is resolved. The pid has to
@@ -230,7 +274,7 @@ class RuntimeSelection(
         // ([ProrootLaunchHandle] carries the argument). Proot plans get no token: they
         // are never reaped by pid, and a guest environment should not grow a variable
         // nothing reads.
-        val token = if (decision.engine == GuestEngine.Proroot) UUID.randomUUID().toString() else null
+        val token = if (decision.engine != GuestEngine.Proot) UUID.randomUUID().toString() else null
         val environment = GuestCommandLine.environment(
             paths = paths,
             engine = decision.engine,
@@ -249,9 +293,10 @@ class RuntimeSelection(
                 extraBinds = extraBinds,
             ),
             environment = environment,
-            notes = notesFor(decision, missing, probe, failures),
+            notes = notesFor(decision, selected, missing, probe, failures),
             probe = probe,
             launchToken = token,
+            selectedEngine = selected,
         )
     }
 
@@ -266,16 +311,29 @@ class RuntimeSelection(
      * are why [PiSettingsStack] calls it once per epoch on `Dispatchers.IO` and hands
      * the finished strings down, and why the row's `read(key)` never reaches here.
      */
-    fun status(): Status {
-        val enabled = prefs?.prorootEnabled ?: false
-        val failures = prefs?.prorootFailures ?: 0
+    fun status(): Status = statusFor(selectedEngine)
+
+    /**
+     * 某个运行时**现在**的状态——设置页把三个选项各问一遍，每个选项下面写它自己的「可用 / 缺组件 /
+     * 探针没过 / 失败 N 次」，用户选之前就知道选了会怎样。只读缓存，不跑探针。
+     */
+    fun statusFor(candidate: GuestEngine): Status {
+        val enabled = candidate != GuestEngine.Proot
+        // 失败计数属于「当前选中的那个」：没选中的引擎没有在跑，没有失败可数。
+        val failures = if (candidate == selectedEngine) prefs?.prorootFailures ?: 0 else 0
         // Same rule as [plan]: a switch that is off is answered by `SwitchOff` before
         // anything else is consulted, so the five `stat`s (and the digest behind them)
         // would be work whose result is discarded. The settings row and the diagnostic
         // report call this, and both are opened by users who never enabled proroot.
-        val missing = if (enabled) paths.missingProrootComponents() else emptyList()
+        val missing = missingFor(candidate)
         val cached = if (enabled && missing.isEmpty()) {
-            runCatching { ProrootProbe.cached(paths, revision(), ProrootProbe.digestOf(paths)) }.getOrNull()
+            runCatching {
+                when (candidate) {
+                    GuestEngine.Proroot -> ProrootProbe.cached(paths, revision(), ProrootProbe.digestOf(paths))
+                    GuestEngine.Tawcroot -> TawcrootProbe.cached(paths, revision(), TawcrootProbe.digestOf(paths))
+                    GuestEngine.Proot -> null
+                }
+            }.getOrNull()
         } else {
             null
         }
@@ -285,9 +343,10 @@ class RuntimeSelection(
             RuntimeChoice.exhausted(failures) -> EngineDecision(GuestEngine.Proot, EngineFallback.FailureStreak)
             cached == null -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotRun)
             !cached.passed -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotPassed)
-            else -> EngineDecision(GuestEngine.Proroot, EngineFallback.None)
+            else -> EngineDecision(candidate, EngineFallback.None)
         }
         return Status(
+            selected = candidate,
             enabled = enabled,
             failures = failures,
             missingComponents = missing,
@@ -305,18 +364,22 @@ class RuntimeSelection(
      * exited non-zero is a result, not a runtime failure, and counting it would
      * abandon proroot because a user's `npm install` failed.
      */
+    fun recordEngineFailure(reason: String) = recordProrootFailure(reason)
+
+    fun recordEngineSuccess() = recordProrootSuccess()
+
     fun recordProrootFailure(reason: String) {
         val store = prefs ?: return
         val next = RuntimeChoice.afterFailure(store.prorootFailures)
         store.setProrootFailures(next)
-        Log.w(TAG, "proroot 启动失败（$next/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}）：$reason")
+        Log.w(TAG, "${selectedEngine.name} 启动失败（$next/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}）：$reason")
         if (RuntimeChoice.exhausted(next)) {
             // The "tell the user" half of DSH App's contract. The reachable surfaces
             // are the settings row (its summary reads `status()`), the diagnostic
             // report, and this log line: there is no toast channel inside the app
             // process, and inventing one would need the chat/session layer this
             // change deliberately does not touch.
-            Log.w(TAG, "proroot 已连续失败 $next 次，强制回退 proot；用户重新打开开关可清零重试")
+            Log.w(TAG, "${selectedEngine.name} 已连续失败 $next 次，强制回退 proot；用户重新选择它可清零重试")
         }
     }
 
@@ -385,45 +448,34 @@ class RuntimeSelection(
      * boot — finds the cached verdict. Nothing is skipped and nothing is decided on a
      * guess: the gate still has to pass before proroot is ever used.
      */
-    private fun gate(storage: File?): ProrootProbe.Verdict {
+    private fun gate(storage: File?, engine: GuestEngine): ProrootProbe.Verdict {
         val revision = revision()
-        val digest = runCatching { ProrootProbe.digestOf(paths) }.getOrDefault("")
-        ProrootProbe.cached(paths, revision, digest)?.let { return it }
-        // A missing digest means we could not even read the binaries; do not cache a
-        // verdict that was never measured.
+        val digest = runCatching { digestOf(engine) }.getOrDefault("")
+        cachedVerdict(engine, revision, digest)?.let { return it }
         if (digest.isEmpty()) {
             return ProrootProbe.Verdict(
                 passed = false,
                 key = "unknown",
-                detail = listOf("✗ 探针未运行：读不到 proroot 二进制"),
+                detail = listOf("✗ 探针未运行：读不到 ${engine.name} 二进制"),
                 cached = false,
             )
         }
+        // 终端页从主线程启动 guest，探针要几秒到几十秒：主线程上只起后台线程、本次先回 proot，
+        // 下一次启动用结论。两个引擎共用这一条规则（一次只跑一个探针）。
         if (onMainThread()) {
             if (probeInFlight.compareAndSet(false, true)) {
-                val key = ProrootProbe.key(revision, digest)
+                val key = keyOf(engine, revision, digest)
                 Thread({
                     try {
-                        val verdict = ProrootProbe.run(
-                            paths,
-                            storage,
-                            revision,
-                            digest,
-                            // The probe hands the launcher's identity back at a stage timeout,
-                            // before it kills the direct child, so this — the Android side —
-                            // can capture and reap the tree. The probe file itself stays
-                            // Android-free; see `ProrootProbe.run`'s KDoc.
-                            onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
-                        )
-                        recordGateVerdict(verdict, key)
+                        recordGateVerdict(runProbe(engine, storage, revision, digest), key, engine)
                     } finally {
                         probeInFlight.set(false)
                     }
-                }, "pi-proroot-gate").apply { isDaemon = true }.start()
+                }, "pi-${engine.name.lowercase()}-gate").apply { isDaemon = true }.start()
             }
             return ProrootProbe.Verdict(
                 passed = false,
-                key = ProrootProbe.key(revision, digest),
+                key = keyOf(engine, revision, digest),
                 detail = listOf(
                     "✗ 探针尚未运行：首次使用需要在后台线程上跑一次（终端页从主线程启动）",
                     "  已在后台开始测，下一次启动 guest 时使用结论",
@@ -431,24 +483,38 @@ class RuntimeSelection(
                 cached = false,
             )
         }
-        val verdict = ProrootProbe.run(
-            paths,
-            storage,
-            revision,
-            digest,
-            // Same seam as the background call above: the reaper is Android and lives in this
-            // class's package, the probe is not, and there is no default that could silently
-            // skip the reaping.
-            onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
-        )
-        recordGateVerdict(verdict, verdict.key)
+        val verdict = runProbe(engine, storage, revision, digest)
+        recordGateVerdict(verdict, verdict.key, engine)
         return verdict
     }
 
-    /** Log and account for a gate verdict, from either thread. */
-    private fun recordGateVerdict(verdict: ProrootProbe.Verdict, key: String) {
+    private fun digestOf(engine: GuestEngine): String = when (engine) {
+        GuestEngine.Proroot -> ProrootProbe.digestOf(paths)
+        GuestEngine.Tawcroot -> TawcrootProbe.digestOf(paths)
+        GuestEngine.Proot -> ""
+    }
+
+    private fun keyOf(engine: GuestEngine, revision: String, digest: String): String = when (engine) {
+        GuestEngine.Tawcroot -> TawcrootProbe.key(revision, digest)
+        else -> ProrootProbe.key(revision, digest)
+    }
+
+    private fun cachedVerdict(engine: GuestEngine, revision: String, digest: String): ProrootProbe.Verdict? =
+        when (engine) {
+            GuestEngine.Proroot -> ProrootProbe.cached(paths, revision, digest)
+            GuestEngine.Tawcroot -> TawcrootProbe.cached(paths, revision, digest)
+            GuestEngine.Proot -> null
+        }
+
+    private fun runProbe(engine: GuestEngine, storage: File?, revision: String, digest: String): ProrootProbe.Verdict =
+        when (engine) {
+            GuestEngine.Tawcroot -> TawcrootProbe.run(paths, storage, revision, digest)
+            else -> ProrootProbe.run(paths, storage, revision, digest, onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe)
+        }
+
+    private fun recordGateVerdict(verdict: ProrootProbe.Verdict, key: String, engine: GuestEngine) {
         if (verdict.passed) recordProrootSuccess()
-        Log.i(TAG, "proroot 探针（$key）：${if (verdict.passed) "通过" else "未通过"}")
+        Log.i(TAG, "${engine.name} 探针（$key）：${if (verdict.passed) "通过" else "未通过"}")
         verdict.detail.forEach { Log.i(TAG, "  $it") }
     }
 
@@ -465,26 +531,31 @@ class RuntimeSelection(
 
     private fun notesFor(
         decision: EngineDecision,
+        selected: GuestEngine,
         missing: List<String>,
         probe: ProrootProbe.Verdict?,
         failures: Int,
     ): List<String> = buildList {
-        add(decision.engine.let { engine ->
-            if (engine == GuestEngine.Proroot) "proroot（实验性）：本次 guest 进程使用 proroot" else "本次 guest 进程使用 proot"
-        })
+        add(
+            when (decision.engine) {
+                GuestEngine.Proroot -> "proroot（实验性）：本次 guest 进程使用 proroot"
+                GuestEngine.Tawcroot -> "tawcroot（实验性）：本次 guest 进程使用 tawcroot"
+                GuestEngine.Proot -> "本次 guest 进程使用 proot"
+            },
+        )
         // The 档 goes out with the two notes where it is part of the answer: a launch that
         // is about to use proroot has to say what it promised, and a refusal by the gate has
         // to say which promise was in force when it was refused. Not on every proot launch —
         // the switch being off is already the whole reason there, and a per-command line
         // about a runtime nobody selected is noise. One line, the same string the settings
         // row shows, so the log and the UI cannot disagree about it.
-        if (decision.engine == GuestEngine.Proroot || decision.fallback == EngineFallback.ProbeNotPassed) {
+        if (decision.engine == GuestEngine.Proroot || (selected == GuestEngine.Proroot && decision.fallback == EngineFallback.ProbeNotPassed)) {
             add("proroot 档：${RuntimeChoice.PROROOT_SECCOMP.tag}（${RuntimeChoice.PROROOT_SECCOMP.disclosure}）")
         }
-        if (decision.fallback != EngineFallback.None) add(RuntimeChoice.describe(decision.fallback))
+        if (decision.fallback != EngineFallback.None) add(RuntimeChoice.describe(decision.fallback, selected))
         when (decision.fallback) {
             EngineFallback.RuntimeFilesMissing ->
-                add("nativeLibraryDir 缺少：${missing.joinToString("、")}")
+                add("nativeLibraryDir 缺少：${missing.joinToString("、")}（${selected.name}）")
 
             EngineFallback.ProbeNotPassed -> {
                 // The verdict's own lines, and nothing else. This branch is reached only
@@ -495,7 +566,7 @@ class RuntimeSelection(
             }
 
             EngineFallback.FailureStreak ->
-                add("失败计数 $failures/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}；重新打开开关可清零重试")
+                add("失败计数 $failures/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}；在设置里重新选择该运行时可清零重试")
 
             else -> Unit
         }

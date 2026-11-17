@@ -1,8 +1,10 @@
 package app.pi.ui.settings
 
+import app.pi.runtime.GuestEngine
 import app.pi.runtime.RuntimeSelection
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * The settings store decorator that gives the two **app-only** runtime rows a home
@@ -76,21 +78,24 @@ class AppOnlySettingsStore(
      * rather than computed here: see the class KDoc.
      */
     private val runtimeStatus: String,
+    /** 「各运行时状态」那一行的摘要；同样由调用方给，store 不碰探针。 */
+    private val engineMatrix: String = "未读取",
 ) : PiSettingsStore {
 
     override fun read(key: String): JsonElement? = when (key) {
-        KEY_PROROOT -> JsonPrimitive(runtime.prorootEnabled)
+        KEY_ENGINE -> JsonPrimitive(runtime.selectedEngine.name.lowercase())
         KEY_STATUS -> JsonPrimitive(runtimeStatus)
+        KEY_MATRIX -> JsonPrimitive(engineMatrix)
         else -> base.read(key)
     }
 
     override fun write(key: String, value: JsonElement) {
         when (key) {
-            KEY_PROROOT -> runtime.setProrootEnabled(value.boolValue(false))
+            KEY_ENGINE -> runtime.setSelectedEngine(engineOf(value))
             // A derived value has no writer. The row is `readOnly`, so nothing should
             // reach here; swallowing it keeps a future editor from writing a sentence
             // into pi's settings.json under a key the app would then ignore.
-            KEY_STATUS -> Unit
+            KEY_STATUS, KEY_MATRIX -> Unit
             else -> base.write(key, value)
         }
     }
@@ -105,15 +110,26 @@ class AppOnlySettingsStore(
      */
     override fun remove(key: String) {
         when (key) {
-            KEY_PROROOT -> runtime.setProrootEnabled(false)
-            KEY_STATUS -> Unit
+            KEY_ENGINE -> runtime.setSelectedEngine(GuestEngine.Proot)
+            KEY_STATUS, KEY_MATRIX -> Unit
             else -> base.remove(key)
         }
     }
 
     companion object {
-        /** The switch. App-only; see the class KDoc. */
-        const val KEY_PROROOT = "app.runtime.proroot"
+        /** 三选一（proot / proroot / tawcroot）。App-only；默认 proot。 */
+        const val KEY_ENGINE = "app.runtime.engine"
+
+        /** 各运行时逐个的状态读数（只读，值一行、证据在行下）。 */
+        const val KEY_MATRIX = "app.runtime.engineMatrix"
+
+        /** 未知字符串一律落 proot：宁可不切，也不把一个读不懂的值当成实验性运行时。 */
+        internal fun engineOf(value: JsonElement): GuestEngine =
+            when ((value as? JsonPrimitive)?.contentOrNull?.lowercase()) {
+                "proroot" -> GuestEngine.Proroot
+                "tawcroot" -> GuestEngine.Tawcroot
+                else -> GuestEngine.Proot
+            }
 
         /** The effective runtime and the fallback reason. Derived, read-only. */
         const val KEY_STATUS = "app.runtime.prorootStatus"

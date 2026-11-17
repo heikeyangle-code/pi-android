@@ -195,85 +195,6 @@ data class ExtensionNotice(
     val tone: Notice.Tone = Notice.Tone.Info,
 )
 
-/** One `setStatus` entry. Ordered, keyed, cleared by an absent `statusText`. */
-data class ExtensionStatus(val key: String, val text: String)
-
-/**
- * `setWidget`'s placement. `docs/rpc.md` documents `aboveEditor` as the default
- * and `belowEditor` as the alternative; an unknown value is treated as the
- * documented default rather than dropped, so a newer pi still shows the widget.
- */
-enum class WidgetPlacement(val wire: String) {
-    AboveEditor("aboveEditor"),
-    BelowEditor("belowEditor");
-
-    companion object {
-        fun fromWire(value: String?): WidgetPlacement =
-            entries.firstOrNull { it.wire == value } ?: AboveEditor
-    }
-}
-
-/**
- * pi's own cap on the rows a string widget may occupy
- * (`interactive-mode.ts:2276`: `MAX_WIDGET_LINES = 10`, "Maximum total widget
- * lines to prevent viewport overflow").
- *
- * Borrowed as pi's value rather than chosen here: a widget is an extension's
- * layout, and the cap exists because the *host* cannot let one panel push the
- * conversation off screen. A different number would make the same widget render
- * differently in the two hosts for no reason.
- */
-const val MAX_WIDGET_LINES = 10
-
-/**
- * pi's truncation row, **verbatim** (`interactive-mode.ts:2217`:
- * `theme.fg("muted", "... (widget truncated)")`).
- *
- * Left in English on purpose. It is a line of the interface pi itself paints,
- * not this app's prose, and translating it would make one widget read
- * differently depending on which host drew it. pi colours it `muted`; the app
- * already draws every widget line in `palette.muted`, so the bare string is the
- * faithful equivalent.
- */
-const val WIDGET_TRUNCATED_LINE = "... (widget truncated)"
-
-/**
- * pi's truncation rule for a string widget, applied where the widget is drawn.
- *
- * The slice happens at render time rather than when the state is built, so
- * [ExtensionWidget.lines] stays exactly what pi sent — the same separation pi
- * keeps between its widget map and the `Container` it builds from it
- * (`interactive-mode.ts:2213-2218`).
- */
-fun boundedWidgetLines(lines: List<String>): List<String> =
-    if (lines.size <= MAX_WIDGET_LINES) {
-        lines
-    } else {
-        lines.take(MAX_WIDGET_LINES) + WIDGET_TRUNCATED_LINE
-    }
-
-/**
- * pi's row cap, applied **after** a text line's own newlines have been split into
- * rows ([widgetRows]).
- *
- * Same constant and same truncation row as [boundedWidgetLines] — one line of a widget
- * array can legitimately be several rows (an extension that pushes file content), and a
- * cap that counted array elements would let the split walk straight past it.
- */
-internal fun boundedWidgetRows(rows: List<WidgetRow>): List<WidgetRow> =
-    if (rows.size <= MAX_WIDGET_LINES) {
-        rows
-    } else {
-        rows.take(MAX_WIDGET_LINES) + WidgetRow.Text(WIDGET_TRUNCATED_LINE)
-    }
-
-/** One `setWidget` panel: non-empty [lines]; an empty list clears the key. */
-data class ExtensionWidget(
-    val key: String,
-    val lines: List<String>,
-    val placement: WidgetPlacement = WidgetPlacement.AboveEditor,
-)
-
 /**
  * A one-shot `set_editor_text` waiting for the composer to pick it up.
  *
@@ -282,7 +203,7 @@ data class ExtensionWidget(
  * clears the slot once consumed. Without that, leaving and re-entering the Chat
  * destination would re-run the effect and overwrite whatever the user typed since.
  */
-data class ComposerFill(val seq: Long, val text: String)
+data class ComposerFill(val seq: Long, val text: String, val append: Boolean = false)
 
 /**
  * `notifyType` -> tone. `docs/rpc.md`: the field is `info` / `warning` / `error`

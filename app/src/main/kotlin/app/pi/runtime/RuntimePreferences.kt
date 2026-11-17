@@ -43,7 +43,21 @@ class RuntimePreferences private constructor(context: Context) {
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /** The user's switch. **False unless the user turned it on.** */
-    val prorootEnabled: Boolean get() = prefs.getBoolean(KEY_ENABLED, false)
+    /**
+     * 用户选的运行时（三选一）。proot 是默认，也是任何一关不过时的回退。
+     *
+     * 迁移：只有旧的布尔 `proroot.enabled` 的安装，`true` 读作 [GuestEngine.Proroot]；一旦写过新键，
+     * 新键说了算。旧键仍会同步写，所以退回旧版本时「开着 proroot」的用户依然是开着的。
+     */
+    val selectedEngine: GuestEngine
+        get() {
+            val stored = prefs.getString(KEY_ENGINE, null)
+                ?.let { name -> GuestEngine.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+            return stored ?: if (prefs.getBoolean(KEY_ENABLED, false)) GuestEngine.Proroot else GuestEngine.Proot
+        }
+
+    /** 选的是不是 proroot——旧调用方的问法，保留。 */
+    val prorootEnabled: Boolean get() = selectedEngine == GuestEngine.Proroot
 
     /** Consecutive proroot launches that failed before doing any work. */
     val prorootFailures: Int get() = prefs.getInt(KEY_FAILURES, 0)
@@ -53,12 +67,18 @@ class RuntimePreferences private constructor(context: Context) {
      * text promises that re-enabling is how a forced fallback is undone, and a
      * counter that survived it would make the switch a no-op.
      */
-    fun setProrootEnabled(enabled: Boolean) {
+    /** 选运行时；失败计数清零（换了引擎，旧引擎攒的失败不算新引擎的）。 */
+    fun setSelectedEngine(engine: GuestEngine) {
         prefs.edit()
-            .putBoolean(KEY_ENABLED, enabled)
+            .putString(KEY_ENGINE, engine.name)
+            .putBoolean(KEY_ENABLED, engine == GuestEngine.Proroot)
             .putInt(KEY_FAILURES, 0)
             .apply()
     }
+
+    /** 旧的开关语义：开 = proroot，关 = proot。 */
+    fun setProrootEnabled(enabled: Boolean) =
+        setSelectedEngine(if (enabled) GuestEngine.Proroot else GuestEngine.Proot)
 
     fun setProrootFailures(count: Int) {
         prefs.edit().putInt(KEY_FAILURES, count).apply()
@@ -70,6 +90,9 @@ class RuntimePreferences private constructor(context: Context) {
 
         /** The switch's key inside [PREFS_NAME]. */
         const val KEY_ENABLED = "proroot.enabled"
+
+        /** 三选一的新键，值是 [GuestEngine.name]。 */
+        const val KEY_ENGINE = "runtime.engine"
 
         /** The consecutive-failure counter's key inside [PREFS_NAME]. */
         const val KEY_FAILURES = "proroot.failures"

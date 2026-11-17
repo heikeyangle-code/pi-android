@@ -47,16 +47,9 @@
  *     compaction), and that the app still keeps entry types it does not model (the
  *     `context_edit` pair). pi exposes no RPC channel for any of them. See
  *     [checkSessionSurface].
- *  6. **Official model catalog** — the format of `@earendil-works/pi-ai`'s bundled
- *     `dist/providers/data/**`, which `packages/PiOfficialCatalog.kt` parses. Its
- *     sha256 check makes a *matching* file silent, so 0.99.0's rename of the inner keys
- *     from `<id>` to `<type>:<id>` — and its new image and classifier entries — reached
- *     the import sheet as extra chat models with nothing failing. See
- *     [checkCatalogData].
- *  7. **Behaviour** — `models.json` semantics, asserted by running the pinned
+ *  6. **Behaviour** — `models.json` semantics, asserted by running the pinned
  *     engine: a declaration that omits `input`/`contextWindow` really does replace
- *     the catalog entry with pi's defaults (that is why the app must not declare
- *     models pi knows), `modelOverrides` really does merge (that is why it is the
+ *     the catalog entry with pi's defaults, `modelOverrides` really does merge (that is why it is the
  *     safe way to adjust one), and a catalog model's default `inputLimits` really is
  *     the 2000×2000 / 4.5 MiB(base64) / q80 profile `AttachmentBudget.kt` pre-resizes to.
  *  8. **Extensions** — the extensions this app ships still load into the pinned
@@ -106,6 +99,14 @@ function pinnedVersion() {
 }
 
 const failures = [];
+/** [text] 里从 [from] 到 [until]（缺省到文件尾）的那一段；用来把断言限定在某一个函数体里。 */
+function functionBody(text, from, until) {
+	const i = text.indexOf(from);
+	if (i < 0) return "";
+	const j = until ? text.indexOf(until, i + from.length) : -1;
+	return j < 0 ? text.slice(i) : text.slice(i, j);
+}
+
 function check(name, ok, consequence) {
 	if (ok) {
 		console.log(`PASS ${name}`);
@@ -166,38 +167,6 @@ function checkSurface(piDir) {
 				`find the new name in the pinned rpc-types.ts and update Commands.kt + its callers.`,
 		);
 	}
-	// The provider table is the app's own transcription of pi's `providers/*.ts` — the
-	// one table here that *writes* something: `PiCredentialService.save` puts a
-	// preset's `baseUrl` and `api` into `models.json`, so a stale entry would override
-	// the engine's real endpoint for that provider (the §M11 shape again). Only the
-	// providers pi ships are asserted; the app's own three (Ollama, llama.cpp, 自定义)
-	// have no counterpart by definition.
-	const presets = [
-		...readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/packages/PiProviderPresets.kt"), "utf8")
-			.matchAll(/Preset\("([^"]+)",\s*"[^"]*",\s*"([^"]*)",\s*"([^"]*)",[^)]*?(true|false),\s*(true|false)/g),
-	].map((m) => ({ id: m[1], baseUrl: m[2], api: m[3], builtInPi: m[5] === "true" }));
-	for (const preset of presets.filter((p) => p.builtInPi && p.baseUrl.length > 0)) {
-		check(
-			`provider preset matches the pinned engine: ${preset.id}`,
-			dist.includes(preset.baseUrl),
-			`app.pi keeps its own table of pi's providers (packages/PiProviderPresets.kt) and ` +
-				`saves baseUrl/api from it into models.json — a stale entry overrides the engine's ` +
-				`own endpoint. Re-read the pinned providers/${preset.id}.ts.`,
-		);
-	}
-
-	// The one file path the app reconstructs rather than asks for. A rename here makes
-	// `PiModelCatalog` return an empty list for every provider — by design ("silence
-	// rather than a guess"), which means nothing else in the build could notice.
-	check(
-		"the pinned engine still names the model catalog `models-store.json`",
-		dist.includes("models-store.json"),
-		"app.pi reads pi's own model catalog beside models.json " +
-			"(packages/PiModelCatalog.kt, called from PiCredentialService.catalogModels and " +
-			"PiModelInventory). Re-read the pinned core/model-runtime.ts's FileModelsStore " +
-			"construction and update both readers if the name or the location moved.",
-	);
-
 	// `set_editor_text` is the ninth method (`rpc-types.ts`'s RpcExtensionUIRequest) and
 	// the one that is neither a dialog nor chrome: the app applies it to the composer
 	// (`PiSessionViewModel`'s `"set_editor_text" ->` arm). It was missing from this list
@@ -221,7 +190,7 @@ function checkSurface(piDir) {
 				`extension's dialog would never be answered — check rpc-types.ts's RpcExtensionUIRequest.`,
 		);
 	}
-	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers, ${presets.filter((p) => p.builtInPi).length} provider presets scanned)`);
+	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers)`);
 	checkMentionArgv(dist);
 	checkPreSpawnFlags(dist);
 	checkProjectConfigDir(piDir);
@@ -257,7 +226,7 @@ function checkProjectConfigDir(piDir) {
 		"the pinned engine's project config directory is the one the app joins onto the workspace",
 		kotlinDir === engineDir,
 		"app.pi resolves every project-scoped path itself: `<workspace>/<dir>/settings.json` " +
-			"(settings/PiSettingsFileStore.kt, packages/PiCredentialService.kt), `themes/` " +
+			"(settings/PiSettingsFileStore.kt, host/commands), `themes/` " +
 			"(ui/theme/PiThemeFiles.kt), `extensions/` (ui/PiSessionViewModel.kt), `skills/` and " +
 			"`prompts/`, and `pi install -l`'s scope (packages/AgentLayout.kt). Those call sites " +
 			"read `PiProjectConfig.DIRECTORY`. Re-read the pinned package.json's `piConfig` and " +
@@ -1062,15 +1031,15 @@ function checkBehaviour(piDir) {
 	const id = model.id;
 
 	// (1) A declaration that omits the capability fields replaces the catalog entry
-	//     with pi's defaults. This is the fact `PiCredentialService.save` is built on:
-	//     it is why the app declares nothing for a provider pi ships.
+	//     with pi's defaults. This is the fact the app's custom-provider form relies on:
+	//     omission is a downgrade, so the form writes every capability it knows.
 	writeModelsJson(probe, { baseUrl: "https://api.deepseek.com", api: "openai-completions", models: [{ id }] });
 	const afterDeclaration = availableModels(piDir, probe).find((m) => m.provider === "deepseek" && m.id === id);
 	check(
 		"a models.json entry without `input` really does become text-only",
 		Array.isArray(afterDeclaration?.input) && JSON.stringify(afterDeclaration.input) === '["text"]',
 		"docs/known-gaps.md §M11 rests on this. If pi stopped defaulting `input`, the rule in " +
-			"PiCredentialService.save ('declare only what pi cannot know') is no longer explained by it — re-derive it.",
+			"the custom-provider form (ProviderForm) writes capabilities explicitly because of this — re-derive that.",
 	);
 	check(
 		"a models.json entry without `contextWindow` really does become 128000",
@@ -1133,9 +1102,8 @@ function checkBehaviour(piDir) {
 		afterLimits?.inputLimits?.images?.resize?.maxBytes === 999 &&
 			afterLimits?.inputLimits?.images?.resize?.maxWidth === 2000 &&
 			JSON.stringify(afterLimits?.input) === JSON.stringify(model.input),
-		`the App's model editor adjusts a catalog model only through modelOverrides ` +
-			`(packages/PiCredentialService.kt's "declare only what pi cannot know" rule, §M11). If a nested ` +
-			`object like inputLimits did not merge, that rule would have to be re-derived — re-read the ` +
+		`models.config adjusts a catalog model only through modelOverrides. If a nested ` +
+			`object like inputLimits did not merge, that would have to be re-derived — re-read the ` +
 			`pinned core/provider-composer.ts's applyOverride.`,
 	);
 
@@ -1149,10 +1117,9 @@ function checkBehaviour(piDir) {
  * `ModelConfig.load` has exactly two call sites (`core/model-runtime.ts:176` in
  * `create`, `:699` in `refresh`), and nothing on the RPC surface calls `refresh` —
  * `get_available_models` answers from `getAvailableSnapshot()` (`rpc-mode.ts:490-493`).
- * `PiModelInventory` turns "the file has it, the engine's list does not" into
- * 「等待重启」, and `ModelProviderScreen` tells the user to restart for it. If pi ever grew an
- * RPC refresh (or reloaded the file per call), that sentence would become a lie — the
- * user would restart for nothing. So the negative is asserted directly: write the file
+ * The app now goes through the host (`models.config.*` + the SDK's own refresh), so this
+ * is kept as a statement about the raw engine only: if pi ever re-reads the file per call,
+ * the host's explicit refresh is merely redundant, not wrong. So the negative is asserted directly: write the file
  * *while the engine is running*, ask again, and require the new model to be absent —
  * then require it to be present in a fresh process.
  *
@@ -1263,10 +1230,8 @@ async function checkStartupOnlyReload(piDir) {
 		check(
 			"models.json edited while the engine runs really does need a restart",
 			after?.success === true && !liveIds.includes(addedId),
-			"PiModelInventory's PENDING_RESTART status and ModelProviderScreen's 「等待重启」 + " +
-				"restart button are this fact. If pi now re-reads models.json during a session, " +
-				"re-read core/model-runtime.ts's refresh call sites and drop that UI (or find " +
-				"the command that refreshes and use it instead of a restart).",
+			"informational: the host refreshes explicitly (auth.refreshModels). If pi now re-reads " +
+				"models.json during a session, this assertion is stale, not the app.",
 		);
 	} finally {
 		await live.stop();
@@ -1665,14 +1630,16 @@ function settingsSchemaPaths(text) {
  * 一组方法。pi 改名或挪文件，这里先变红，而不是用户点开「资源」才看到报错。
  */
 async function checkResourcesScript(piDir) {
-	const script = readFileSync(join(ROOT, "app/src/main/assets/guest/pi-resources.mjs"), "utf8");
-	const imports = [...script.matchAll(/dist\/([A-Za-z0-9_./-]+\.js)/g)].map((m) => m[1]);
+	// 资源页曾经另起 node 进程跑 `guest/pi-resources.mjs`；现在同一套逻辑在宿主进程里
+	// （`commands/resources.mjs`），进 dist 的方式也换成了 `importDist(controller, "...")`。
+	const script = readFileSync(join(ROOT, "app/src/main/assets/guest/sdk-host/commands/resources.mjs"), "utf8");
+	const imports = [...script.matchAll(/importDist\(controller,\s*"([A-Za-z0-9_./-]+\.js)"\)/g)].map((m) => m[1]);
 	for (const rel of new Set(imports)) {
-		check(`pi-resources.mjs imports dist/${rel}`, existsSync(join(piDir, "dist", rel)), "file is missing in the pinned engine");
+		check(`commands/resources.mjs imports dist/${rel}`, existsSync(join(piDir, "dist", rel)), "file is missing in the pinned engine");
 	}
 	const selector = readFileSync(join(piDir, "dist/modes/interactive/components/config-selector.js"), "utf8");
 	for (const name of ["getResourceList", "setWriteScope", "toggleResource", "getProjectOverrideState", "isInheritedGlobalItem", "getInheritedEnabled", "getItemScope"]) {
-		check(`ConfigSelector exposes ${name}`, selector.includes(name), "pi renamed it; pi-resources.mjs must follow");
+		check(`ConfigSelector exposes ${name}`, selector.includes(name), "pi renamed it; commands/resources.mjs must follow");
 	}
 }
 
@@ -1807,6 +1774,10 @@ function checkAppTables(piDir) {
 	// gone stale (pi removed the key, or the app started exposing it) fails too, so the
 	// list cannot rot into a description of a state that cannot happen.
 	const UNEXPOSED_SETTINGS_DECISIONS = {
+		// Superseded by a dedicated surface: the 「扩展与资源 → 扩展包」page installs / updates /
+		// removes through the SDK's DefaultPackageManager (host `packages.*`), which is what
+		// writes this array. A row that edits the array by hand would skip the download step.
+		packages: "由「扩展与资源 → 扩展包」页经 SDK PackageManager 读写（宿主 packages.*）；手改数组会跳过下载这一步",
 		// TUI-only: the original terminal interface's own presentation and input
 		// details, which this app re-implements in Compose. Changing them changes
 		// nothing a phone shows.
@@ -1905,60 +1876,106 @@ function checkAppTables(piDir) {
 
 	// ------------------------------------------------------- built-in slash commands
 	const slashText = read("app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt");
-	const listedBlock = kotlinBlock(slashText, "PI_BUILTIN_SLASH_COMMANDS") ?? "";
-	const unlistedBlock = kotlinBlock(slashText, "PI_UNLISTED_BUILTIN_COMMANDS") ?? "";
-	const listed = [...listedBlock.matchAll(/PiSlashCommand\(\s*"([a-z-]+)"/g)].map((m) => m[1]);
-	const unlisted = [...unlistedBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+"/gm)].map((m) => m[1]);
+	// 命令面板的内建命令表是**线协议驱动**的：宿主从 pi 的 BUILTIN_SLASH_COMMANDS 读出名字/说明送给 App，
+	// App 里只剩「怎么做」的映射（CLIENT_BUILTINS）和几句「做不了」的实话（UNSUPPORTED_BUILTIN_REASONS）。
+	// 所以不再要求手抄表覆盖 pi 的名单——pi 新增的命令会自己出现在面板里；要盯的只有两件事：
+	// 映射表里的名字 pi 还有，以及宿主确实在读 pi 的那张表。
+	const clientBlock = kotlinBlock(slashText, "CLIENT_BUILTINS") ?? "";
+	const reasonBlock = kotlinBlock(slashText, "UNSUPPORTED_BUILTIN_REASONS") ?? "";
+	const mapped = [...clientBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+ClientBuiltin\(/gm)].map((m) => m[1]);
+	const unsupported = [...reasonBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+"/gm)].map((m) => m[1]);
 	const piBuiltins = [...engine("core/slash-commands.js").matchAll(/name: "([a-z-]+)"/g)].map((m) => m[1]);
 	check(
-		"the built-in slash-command tables are still readable (>= 7 rows + >= 10 hints, and pi has >= 20)",
-		listed.length >= 7 && unlisted.length >= 10 && piBuiltins.length >= 20,
-		`ui/chat/PiSlashCommands.kt keeps both halves of pi's built-in list ` +
-			`(${listed.length} rows + ${unlisted.length} hints read; pi's BUILTIN_SLASH_COMMANDS has ` +
-			`${piBuiltins.length}). The reader matches \`PiSlashCommand("name"\` inside the rows block ` +
-			`and \`"name" to "…"\` inside the hints map; re-point it if either was reformatted.`,
+		"the built-in slash-command tables are still readable (>= 10 mapped, and pi has >= 20)",
+		mapped.length >= 10 && piBuiltins.length >= 20,
+		`ui/chat/PiSlashCommands.kt's CLIENT_BUILTINS (${mapped.length} read) maps pi's built-ins to what this ` +
+			`app does; pi's BUILTIN_SLASH_COMMANDS has ${piBuiltins.length}. The reader matches ` +
+			`\`"name" to ClientBuiltin(\` inside the CLIENT_BUILTINS block; re-point it if it was reformatted.`,
 	);
-	for (const name of [...listed, ...unlisted]) {
+	for (const name of [...mapped, ...unsupported]) {
 		check(
 			`pi still has the built-in slash command /${name}`,
 			piBuiltins.includes(name),
-			`ui/chat/PiSlashCommands.kt names /${name}. If pi removed or renamed it, the app either ` +
-				`offers a command that does nothing (a row) or tells the user pi has a command it no ` +
-				`longer has (a hint). Re-read the pinned core/slash-commands.ts's BUILTIN_SLASH_COMMANDS ` +
-				`and update the row/hint.`,
+			`ui/chat/PiSlashCommands.kt names /${name}. If pi removed or renamed it, the palette keeps a row ` +
+				`for a command that no longer exists. Re-read the pinned core/slash-commands's list and update.`,
 		);
 	}
-	for (const name of piBuiltins) {
-		check(
-			`the app covers pi's built-in slash command /${name}`,
-			listed.includes(name) || unlisted.includes(name),
-			`pi's BUILTIN_SLASH_COMMANDS has /${name} and neither table in ui/chat/PiSlashCommands.kt ` +
-				`names it, so a user who types it is told there is no such command — which is false. This ` +
-				`is how /bug (new in 0.86.1) stayed uncovered. Add it to PI_BUILTIN_SLASH_COMMANDS as a ` +
-				`row or to PI_UNLISTED_BUILTIN_COMMANDS with an honest sentence.`,
-		);
-	}
+	check(
+		"the host sends pi's own built-in table (catalog.commands.builtins)",
+		/BUILTIN_SLASH_COMMANDS/.test(read("app/src/main/assets/guest/sdk-host/commands/catalog.mjs")) &&
+			/BUILTIN_SLASH_COMMANDS/.test(engine("core/slash-commands.js")),
+		`sdk-host/commands/catalog.mjs must read BUILTIN_SLASH_COMMANDS from dist/core/slash-commands.js, and ` +
+			`pi's file must still export it — otherwise the palette falls back to the app's own order and pi's ` +
+			`new commands stop appearing.`,
+	);
+
+	// ------------------------------------------------- tool / message renderer inputs
+	// 渲染一律由 pi 官方的 ToolExecutionComponent / CustomMessageComponent 做（它们自己拼 render context，
+	// 宿主不再手拼——手拼就是 undefined/undefined 的来源）。这里守三件事：宿主确实在用官方组件、
+	// 官方组件还导出、宿主读的两个内部子渲染字段还在。
+	const toolExec = engine("modes/interactive/components/tool-execution.js");
+	const hostRender = read("app/src/main/assets/guest/sdk-host/commands/catalog.mjs");
+	check(
+		"the host renders tools and custom messages with pi's own components",
+		/new controller\.sdk\.ToolExecutionComponent\(/.test(hostRender) &&
+			/new CustomMessageComponent\(/.test(hostRender) &&
+			!/renderCall\(callArgs/.test(hostRender) &&
+			!/getRenderContext|invalidate\(\) \{\}/.test(hostRender),
+		`commands/catalog.mjs must drive ToolExecutionComponent / CustomMessageComponent, not hand-build a render ` +
+			`context and call renderCall/renderResult itself.`,
+	);
+	check(
+		"the host resolves tool renderers through pi's resolver chain",
+		/resolveToolRenderers\(name/.test(hostRender) && /resolveToolRenderers\(toolName, \(\) =>/.test(engine("modes/interactive/interactive-mode.js")),
+		`TUI draws a tool with extensionRunner.resolveToolRenderers(name, base); the host must use the same chain, ` +
+			`or extensions that take over a tool's rendering (registerToolRenderer) are ignored.`,
+	);
+	// 扩展的另外两个渲染入口：自定义会话条目（registerEntryRenderer）与 markdown transformer。
+	const customEntry = engine("modes/interactive/components/custom-entry.js");
+	const runnerSrc = engine("core/extensions/runner.js");
+	check(
+		"custom session entries are drawn by pi's CustomEntryComponent through the runner's entry renderers",
+		/export class CustomEntryComponent/.test(customEntry) && /hasContent\(\)/.test(customEntry) &&
+			/getEntryRenderer\(customType\)/.test(runnerSrc) &&
+			/getMarkdownTransformers\(\)/.test(runnerSrc) &&
+			/new CustomEntryComponent\(/.test(hostRender) && /getEntryRenderer\(customType\)/.test(hostRender) &&
+			/getMarkdownTransformers\(\)/.test(hostRender),
+		`render.entry / render.markdown in commands/catalog.mjs rely on CustomEntryComponent (loaded by file path: it is ` +
+			`not a public export), runner.getEntryRenderer and runner.getMarkdownTransformers.`,
+	);
+	check(
+		"pi still exports the components and initTheme the host needs",
+		/ToolExecutionComponent/.test(engine("index.d.ts")) && /CustomMessageComponent/.test(engine("index.d.ts")) && /initTheme/.test(engine("index.d.ts")),
+		`index.d.ts no longer exports ToolExecutionComponent / CustomMessageComponent / initTheme.`,
+	);
+	check(
+		"the sub-renderers the host splits call/result from still exist",
+		/callRendererComponent/.test(toolExec) && /resultRendererComponent/.test(toolExec),
+		`catalog.mjs reads comp.callRendererComponent / comp.resultRendererComponent to draw the card head and body ` +
+			`separately; tool-execution.js renamed them.`,
+	);
+	check(
+		"pi gives renderResult { content, details }, and the host forwards result.details",
+		/resultRenderer\(\{ content: this\.result\.content, details: this\.result\.details \}/.test(toolExec) &&
+			/put\("details", details\)/.test(functionBody(read("app/src/main/kotlin/app/pi/host/HostCommands.kt"), "suspend fun renderTool(", "suspend fun renderMessage(")),
+		`pi calls renderResult with { content, details }. HostCommands.renderTool must put the tool's ` +
+			`details into the result it sends, or every renderer that reads details renders undefined.`,
+	);
 
 	// -------------------------------------------------------------- resource types
-	const appResourceTypes = kotlinListOf(read("app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt"), "RESOURCE_TYPES");
+	// App 侧不再有这张转录表（资源清单与开关整批交给宿主，见 assets/guest/sdk-host/commands/resources.mjs）：
+	// 键由 pi 自己的 `ConfigSelectorComponent.getResourceList()` 给出，App 一个都不写死。
+	// 这里只剩「这张表还能读出来」——读不出来说明 resources.mjs 依赖的 dist 结构挪了，
+	// 那是宿主唯一伸进 pi 非公开路径的地方。
 	const piResourceTypes = [.../const RESOURCE_TYPES = \[([^\]]*)\]/.exec(engine("modes/interactive/components/config-selector.js"))?.[1].matchAll(/"([^"]+)"/g) ?? []].map((m) => m[1]);
 	check(
-		"the resource-type list is still readable on both sides (4 keys)",
-		appResourceTypes?.length === 4 && piResourceTypes.length === 4,
-		`app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt's RESOURCE_TYPES ` +
-			`(${appResourceTypes?.length ?? "unreadable"}) and pi's ` +
-			`modes/interactive/components/config-selector.ts's (${piResourceTypes.length}) are the same ` +
-			`four keys. Re-point this reader if either list moved.`,
+		"pi's resource-type list is still readable (4 keys)",
+		piResourceTypes.length === 4,
+		`modes/interactive/components/config-selector.ts's RESOURCE_TYPES answered ` +
+			`${piResourceTypes.length} keys, expected 4. commands/resources.mjs lists resources through ` +
+			`that component; if the list moved or was inlined elsewhere, re-point the host before the ` +
+			`资源 page silently loses a group.`,
 	);
-	for (const type of appResourceTypes ?? []) {
-		check(
-			`pi still knows the resource type "${type}"`,
-			piResourceTypes.includes(type),
-			`PiPackageFilters.kt reads and writes the "${type}" key of settings.json's package filters. ` +
-				`A rename upstream means the app's filter row edits a key pi ignores — re-read the pinned ` +
-				`config-selector.ts and follow it.`,
-		);
-	}
 
 	// ------------------------------------------------------------------ tool names
 	const quickAdd = read("app/src/main/kotlin/app/pi/ui/settings/PiQuickAdd.kt");
@@ -2103,7 +2120,6 @@ const GROUPS = [
 	["tooltext", "--- tool-result text ---"],
 	["session", "--- session surface ---"],
 	["bundled", "--- bundled entry ---"],
-	["catalog", "--- official model catalog ---"],
 	["behaviour", "--- behaviour ---"],
 	["extensions", "--- extensions ---"],
 ];
@@ -2146,132 +2162,6 @@ if (!existsSync(join(piDir, "dist"))) {
 // `extensions` spawn the engine, so they are the two a failure elsewhere in the tree
 // (or a missing runtime) can turn into a throw before the static verdicts are read.
 // A full run keeps its historical order; `--only=<group>` runs exactly one.
-/**
- * The **official model catalog's data format**: `@earendil-works/pi-ai`'s bundled
- * `dist/providers/data/**`, which `packages/PiOfficialCatalog.kt` parses.
- *
- * ## Why this group exists
- *
- * This is the one pi file whose format change is *invisible* to the app. The reader
- * verifies each provider file's sha256 against a manifest, and a matching hash with
- * parseable JSON produces **no problem and no notice** — so when 0.99.0 renamed the
- * per-provider inner keys from `<id>` to `<type>:<id>` and started emitting image and
- * classifier entries next to chat ones, the app kept "succeeding": it ignored the key
- * names and read `element["id"]`, so 57 image models and 15 classifier models appeared
- * as chat models, were default-checked in the import sheet, and were written into
- * `enabledModels` (or, for non-built-in providers, into `models.json`, where pi's own
- * schema has no `type` and builds a chat model out of a classifier). That is the
- * §M11 shape — a capability silently wrong rather than loudly broken.
- *
- * ## What it asserts
- *
- *  1. the shipped `schemaVersion` is the one the app was written against
- *     (`PiOfficialCatalog.MODEL_DATA_SCHEMA_VERSION`, transcribed from pi's
- *     `scripts/model-data.ts`'s `MODEL_DATA_SCHEMA_VERSION`);
- *  2. every inner-key **prefix** the data actually uses is one of the model types the
- *     app's reader knows about — a fourth type must not arrive unnoticed;
- *  3. the data still contains a non-`chat` entry, so (2) is not vacuous: if pi ever
- *     emitted chat only, the filter this group protects would stop being exercised and
- *     that change should be seen, not assumed.
- *
- * The data lives in a **sibling** package (`@earendil-works/pi-ai`), reached through
- * the same `node_modules` the coding-agent package sits in — which is how both CI
- * (`build/pi-contract`) and a `--pi <installed tree>` invocation have it.
- */
-function checkCatalogData(piDir) {
-	const registryText = readFileSync(
-		join(ROOT, "app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"),
-		"utf8",
-	);
-	const declared = /MODEL_DATA_SCHEMA_VERSION\s*=\s*(\d+)/.exec(registryText);
-	// The types the app's reader knows how to *filter* (`PiOfficialCatalog`'s `providerOf`
-	// drops everything that is not chat; the rest are named so that a new one is a
-	// failure here rather than a new row in the import sheet).
-	const knownTypes = ["chat", "image", "classifier"];
-
-	// Two shapes, because the tool is pointed at both: CI hands `--pi` the package
-	// directory npm created (`<stage>/node_modules/@earendil-works/pi-coding-agent`,
-	// where pi-ai is the **sibling** package), while a hand-run may hand it an unpacked
-	// package root that carries its own `node_modules`. First existing wins.
-	const dataCandidates = [
-		join(piDir, "..", "pi-ai", "dist", "providers", "data"),
-		join(piDir, "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
-	];
-	const dataDir = dataCandidates.find((candidate) => existsSync(candidate)) ?? dataCandidates[0];
-	check(
-		"the pinned engine's pi-ai package still ships its model data directory",
-		existsSync(dataDir),
-		`looked for ${dataCandidates.join(" and ")}. PiOfficialCatalog.kt parses these files, and this ` +
-			`group is the only thing that would notice their format moving. If pi-ai moved its data, ` +
-			`re-point this check (packages/ai/scripts/generate-models.ts is what writes it) — do not ` +
-			`delete it.`,
-	);
-	if (!existsSync(dataDir)) return;
-
-	const manifestPath = join(dataDir, ".manifest.json");
-	check(
-		"the model data directory still has its manifest",
-		existsSync(manifestPath),
-		`${manifestPath} is missing. PiOfficialCatalog.kt reads \`schemaVersion\` from it; without the ` +
-			`file the app cannot check it either, so this is the earliest place to say so.`,
-	);
-	if (!existsSync(manifestPath)) return;
-
-	const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-	check(
-		`the model data manifest declares schemaVersion ${declared ? declared[1] : "<unreadable>"}, the version the app reads`,
-		declared !== null && Number(manifest.schemaVersion) === Number(declared[1]),
-		`${manifestPath} says schemaVersion ${JSON.stringify(manifest.schemaVersion)} and ` +
-			`PiOfficialCatalog.MODEL_DATA_SCHEMA_VERSION is ${declared ? declared[1] : "unreadable"}. ` +
-			`0.99.0 moved this from 3 to 6 and renamed the inner keys to \`<type>:<id>\` in the same ` +
-			`release; a mismatch means the reader's assumptions moved with it. Re-read ` +
-			`packages/ai/scripts/model-data.ts and generate-models.ts, then update ` +
-			`PiOfficialCatalog.kt (its \`type\` filter, and this constant).`,
-	);
-
-	const prefixes = new Map();
-	let providerFiles = 0;
-	let nonChat = 0;
-	for (const name of readdirSync(dataDir)) {
-		if (!name.endsWith(".json") || name.startsWith(".")) continue;
-		providerFiles++;
-		const groups = JSON.parse(readFileSync(join(dataDir, name), "utf8"));
-		for (const models of Object.values(groups)) {
-			if (models === null || typeof models !== "object") continue;
-			for (const key of Object.keys(models)) {
-				const prefix = key.includes(":") ? key.slice(0, key.indexOf(":")) : "<none>";
-				prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
-				if (prefix !== "chat") nonChat++;
-			}
-		}
-	}
-	check(
-		"the model data is still readable as api → inner key (>= 30 provider files)",
-		providerFiles >= 30 && prefixes.size > 0,
-		`read ${providerFiles} provider files under ${dataDir} and found ${prefixes.size} distinct ` +
-			`inner-key prefixes. A collapse here means the layout changed, not that the data is empty — ` +
-			`re-read generate-models.ts and re-point this reader.`,
-	);
-	const unknown = [...prefixes.keys()].filter((prefix) => !knownTypes.includes(prefix));
-	check(
-		`every inner-key prefix is a model type the app knows (${[...prefixes.keys()].sort().join(", ")})`,
-		unknown.length === 0,
-		`the data uses inner-key prefix(es) ${unknown.join(", ")}, which PiOfficialCatalog.kt does not ` +
-			`know about. \`providerOf\` filters on \`type\`, and \`modelOf\` defaults a missing \`type\` to ` +
-			`"chat"\` — so an unrecognised type is read as a chat model and lands in the import sheet's ` +
-			`default selection. Add it to \`knownTypes\` here *and* decide what the app does with it ` +
-			`(today: filter it out, like image and classifier).`,
-	);
-	check(
-		"the data still contains a non-chat entry, so the type filter is exercised",
-		nonChat > 0,
-		`every inner key in ${providerFiles} provider files is now \`chat:\`. The type filter in ` +
-			`PiOfficialCatalog.kt exists because 0.99.0 started emitting image and classifier entries ` +
-			`beside chat ones; with none left, that filter's justification (and this group's ` +
-			`non-vacuity) should be re-derived rather than assumed.`,
-	);
-	console.log(`   (${providerFiles} provider files, ${nonChat} non-chat entries, schemaVersion ${manifest.schemaVersion})`);
-}
 
 if (runs("surface")) {
 	console.log("\n--- surface ---");
@@ -2294,10 +2184,6 @@ if (runs("tooltext")) {
 if (runs("session")) {
 	console.log("\n--- session surface ---");
 	checkSessionSurface(piDir);
-}
-if (runs("catalog")) {
-	console.log("\n--- official model catalog ---");
-	checkCatalogData(piDir);
 }
 if (runs("bundled")) {
 	console.log("\n--- bundled entry ---");

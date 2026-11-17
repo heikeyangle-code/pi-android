@@ -1339,7 +1339,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     # Linux userland
     ("Ubuntu 基础系统", "24.04.3", "各软件包各自的许可证", "Linux 运行时（首次启动解包）", "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/"),
     ("Ubuntu 附加软件包", "见清单", "各软件包各自的许可证", "Linux 运行时（首次启动解包）", "https://ports.ubuntu.com/ubuntu-ports/"),
-    ("Node.js", "24.19.0", "MIT（含其内置依赖的许可证）", "Linux 运行时（首次启动解包）", "https://nodejs.org/dist/v24.19.0/"),
+    ("Node.js", "24.22.1", "MIT（含其内置依赖的许可证）", "Linux 运行时（首次启动解包）", "https://nodejs.org/dist/v24.22.1/"),
     ("git", "2.43.0", "GPL-2.0", "Linux 运行时（首次启动解包）", "https://git.kernel.org/pub/scm/git/git.git"),
     ("ca-certificates", "20260601", "GPL-2.0+（打包）与 MPL-2.0（证书数据）", "Linux 运行时（首次启动解包）", "https://packages.ubuntu.com/noble/ca-certificates"),
     ("ripgrep", "15.2.0", "Unlicense 或 MIT", "Linux 运行时（首次启动解包）", "https://github.com/BurntSushi/ripgrep"),

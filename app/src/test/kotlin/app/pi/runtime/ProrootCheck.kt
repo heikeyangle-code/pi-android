@@ -414,12 +414,12 @@ fun main() {
     check("the streak outranks a passing gate", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 99), EngineDecision(GuestEngine.Proot, EngineFallback.FailureStreak))
     check("all four conditions satisfied means proroot", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 0), EngineDecision(GuestEngine.Proroot, EngineFallback.None))
     check("the switch is checked before the files", RuntimeChoice.decide(enabled = false, filesPresent = false, probePassed = false, consecutiveFailures = 5), EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff))
-    check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it).isNotBlank() }, true)
+    check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it, engine = GuestEngine.Proroot).isNotBlank() }, true)
     // 这一组句子读出来的是「运行时（实际生效）」那一行的值：标题问「在跑哪个」，所以每个值
     // 都必须**先写那个运行时**，原因才跟在括号里。旧的一组是反过来的（关掉时写「未开启（走
     // proot）」），用户直接问了出来：「关掉 Pro Root 为什么要写着未开启」。这条不变量逐值
     // 钉住「谁在最前面」，改文案时最先被它拦住。
-    val sentences = EngineFallback.entries.associateWith { RuntimeChoice.describe(it) }
+    val sentences = EngineFallback.entries.associateWith { RuntimeChoice.describe(it, engine = GuestEngine.Proroot) }
     check(
         "every sentence leads with the runtime that is in effect",
         sentences.values.map { it.substringBefore('（') }.distinct().sorted(),
@@ -444,7 +444,7 @@ fun main() {
     // 尚未运行 不再讲「下一次 / 再下一次」：拨开开关现在会**当场**跑探针并重启引擎
     // （`ui/settings/RuntimeSwitchAction`），所以三趟车的说明既不是用户看到的事，也和开关
     // 那一行的文案互相矛盾。这一档只剩一个含义：此刻没有这个 revision 的探针结论。
-    val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun)
+    val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun, engine = GuestEngine.Proroot)
     check("尚未运行 names the missing probe verdict", notRun.contains("探针尚未运行"), true)
     check("尚未运行 no longer promises a next launch", notRun.contains("下一次"), false)
     check("尚未运行 no longer counts launches", notRun.contains("再下一次"), false)
@@ -453,7 +453,7 @@ fun main() {
         "the failure streak names the count and the way out",
         listOf(
             sentences[EngineFallback.FailureStreak]?.contains("3 次启动失败") == true,
-            sentences[EngineFallback.FailureStreak]?.contains("重新打开开关") == true,
+            sentences[EngineFallback.FailureStreak]?.contains("重新选择该运行时") == true,
         ),
         listOf(true, true),
     )
@@ -758,7 +758,7 @@ fun main() {
     check("the disclosures are not the same sentence", ProrootSeccomp.Seccomp.disclosure == ProrootSeccomp.NoSeccomp.disclosure, false)
     check("the no-seccomp disclosure says it is not selectable", ProrootSeccomp.NoSeccomp.disclosure.contains("不可选"), true)
     check("every mode has a disclosure", ProrootSeccomp.entries.all { it.disclosure.isNotBlank() }, true)
-    check("the in-use sentence names the shipping mode", RuntimeChoice.describe(EngineFallback.None).contains(RuntimeChoice.PROROOT_SECCOMP.disclosure), true)
+    check("the in-use sentence names the shipping mode", RuntimeChoice.describe(EngineFallback.None, engine = GuestEngine.Proroot).contains(RuntimeChoice.PROROOT_SECCOMP.disclosure), true)
 
     // ================================================ 6c. 动态二进制档（ProrootExecProbe）
     // The stage added after the device where the first two passed and the engine still exited
@@ -783,12 +783,12 @@ fun main() {
             // 真机形状：`env true` 退出 0 且**什么都不打印**（RUN 行没有输出字段）。
             execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0") + "\n" +
             execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
-            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0", "v24.19.0"),
+            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0", "v24.22.1"),
     )
     check("a healthy run passes", execPass.ok, true)
     check("a passing run has one result per target", execPass.results.size, ProrootExecProbe.TARGETS.size)
     check("a pass never carries a reason", execPass.results.map { it.reason }, listOf(null, null))
-    check("the pass names the engine's binary and its version", execPass.describe().any { it.contains("/opt/node/bin/node --version") && it.contains("v24.19.0") }, true)
+    check("the pass names the engine's binary and its version", execPass.describe().any { it.contains("/opt/node/bin/node --version") && it.contains("v24.22.1") }, true)
     check("a passing line starts with the pass mark", execPass.describe().first().startsWith(ProrootExecProbe.PASS_MARK), true)
 
     // **门禁必须是可满足的** —— 这一组断言是用户真机报告换来的，也是这次修复的判据。
@@ -1125,26 +1125,44 @@ fun main() {
         java.io.File(System.getProperty("pi.repo.root") ?: "."),
         "app/src/main/kotlin/app/pi/runtime/RuntimeSelection.kt",
     ).readText().replace(Regex("\\s+"), " ")
-    val statsGuard = "val missing = if (enabled) paths.missingProrootComponents() else emptyList()"
-    check("both entry points guard the five stats with `enabled`", selectionSource.split(statsGuard).size - 1, 2)
+    // 2026-11-15：三选一之后，「缺哪些文件」由 `missingFor(engine)` 按**选中的引擎**回答，
+    // proot 返回空表（一个 stat 都不做）。两个调用点（`plan` 与 `statusFor`）都只走它，
+    // 于是要钉的是：proot 的分支不查、另两个各查自己那份、而清单函数只有一个入口。
     check(
-        "the five stats are called nowhere else",
+        "proot 不查组件，另两个各查自己那份",
+        selectionSource.contains("GuestEngine.Proot -> emptyList()") &&
+            selectionSource.contains("GuestEngine.Proroot -> paths.missingProrootComponents()") &&
+            selectionSource.contains("GuestEngine.Tawcroot -> paths.missingTawcrootComponents()"),
+        true,
+    )
+    check(
+        "每份组件清单只被 missingFor 点一次（两个调用点都走它）",
         selectionSource.split("missingProrootComponents()").size - 1,
-        2,
+        1,
+    )
+    check(
+        "tawcroot 的组件清单同样只有一个入口",
+        selectionSource.split("missingTawcrootComponents()").size - 1,
+        1,
     )
     check(
         "the gate is called only behind `enabled && filesPresent && not exhausted`",
-        selectionSource.contains("val probePassed = if (enabled && filesPresent && !RuntimeChoice.exhausted(failures)) { probe = gate(storage)"),
+        selectionSource.contains("val probePassed = if (enabled && filesPresent && !RuntimeChoice.exhausted(failures))") &&
+            selectionSource.contains("probe = gate(storage, selected)"),
         true,
     )
     check(
-        "the cache is read only behind `enabled && missing.isEmpty()`",
-        selectionSource.contains("val cached = if (enabled && missing.isEmpty()) { runCatching { ProrootProbe.cached("),
+        "the cache is read only behind `enabled && missing.isEmpty()`, per engine",
+        selectionSource.contains("val cached = if (enabled && missing.isEmpty())") &&
+            selectionSource.contains("GuestEngine.Proroot -> ProrootProbe.cached(") &&
+            selectionSource.contains("GuestEngine.Tawcroot -> TawcrootProbe.cached("),
         true,
     )
+    // 三选一之后，扫目录只对 proroot 有意义（`.proroot-config-*` 是 proroot 的启动表；
+    // tawcroot 没有 config 表，见 ProrootLaunchHandle 的注释）。
     check(
-        "the config sweep runs only when the switch is on",
-        selectionSource.split("if (enabled) sweepProrootConfigs()").size - 1,
+        "the config sweep runs only when proroot is the selected engine",
+        selectionSource.split("if (selected == GuestEngine.Proroot) sweepProrootConfigs()").size - 1,
         1,
     )
     check(

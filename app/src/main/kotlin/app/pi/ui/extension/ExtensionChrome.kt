@@ -26,15 +26,7 @@ import app.pi.ui.theme.PiTheme
  * pi puts the widget next to the editor (`docs/tui.md` §"Widgets above/below
  * editor"), and the app hangs [ExtensionWidgetStack] around its composer.
  *
- * **The status row is gone.** pi draws `setStatus` in its terminal footer
- * (`interactive-mode.ts:2090`) and the app used to draw a scrolling row of
- * counters under its AppBar; the user's adjudication
- * (`design/ui-refactor/11-designer-adjudication.md` D-3 — v2's dialogue shell has
- * no such line) deleted that composable, `ExtensionStatusRow`. The *data* is
- * untouched: `UiState.extensionStatuses` is still collected and `setStatus` is
- * still routed (`PiSessionViewModel.setExtensionStatus`), so showing it again —
- * in the 「会话与队列」 sheet the adjudication names — is a call site, and nothing
- * here would have to change.
+ * setStatus 是一行可横滑的小标签（`ExtensionStatusStrip`，在 ExtensionPanels.kt）；数据由宿主的 `ui.status` 事件进 `UiState.ext.statuses`。
  */
 
 /**
@@ -84,9 +76,9 @@ fun ExtensionSpans(
 }
 
 /**
- * `setWidget` panels live in `ExtensionWidgetCard.kt` now, as a sibling of the tool
+ * `setWidget` panels live in `ExtensionPanels.kt` now, as a sibling of the tool
  * card: the same `app.pi.ui.blocks` furniture, its own title row and stripe. The
- * rules that decide *what* a widget line is are in `ExtensionWidgetLines.kt`.
+ * rules that decide *what* a widget line is are in `ExtensionPanelRules.kt`.
  */
 
 /** The `setTitle` value, or the screen's own fallback when pi set none. */

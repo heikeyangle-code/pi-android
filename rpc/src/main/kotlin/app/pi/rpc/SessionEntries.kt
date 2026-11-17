@@ -130,6 +130,35 @@ sealed interface SessionEntry {
     }
 
     /** An entry type a newer pi introduced. Kept, never dropped. */
+    /**
+     * SDK 1.5 的 `usage` 条目：不属于对话的计费记录（`kind` 例如 `cache_warm` —— 缓存预热那次请求的用量）。
+     * 以前被当成 [Unknown]；树和转录需要把它们认出来，才能说「这是预热花的钱」而不是一条莫名其妙的未知条目。
+     */
+    data class Usage(
+        override val meta: EntryMeta,
+        val kind: String?,
+        val provider: String?,
+        val model: String?,
+        val usage: TokenUsage?,
+        val note: String?,
+    ) : SessionEntry {
+        override val type = "usage"
+    }
+
+    /**
+     * SDK 1.5 的 `context_edit` 条目：只追加、不改写 —— 让更早的某条（[targetId]）**不再进入模型上下文**
+     * （[omitted]），或只替换它的内容。记录本身一个字都没变，对话页仍能看到原文。
+     */
+    data class ContextEdit(
+        override val meta: EntryMeta,
+        val targetId: String?,
+        /** `replacement` 为 null/缺省 = 从模型上下文里隐藏；否则是「改写内容」。 */
+        val omitted: Boolean,
+        val replacement: JsonObject?,
+    ) : SessionEntry {
+        override val type = "context_edit"
+    }
+
     data class Unknown(
         override val type: String,
         override val meta: EntryMeta,
@@ -226,6 +255,20 @@ fun parseSessionEntry(raw: JsonObject): SessionEntry {
             meta = meta,
             name = raw.str("name"),
         )
+
+        "usage" -> SessionEntry.Usage(
+            meta = meta,
+            kind = raw.str("kind"),
+            provider = raw.str("provider"),
+            model = raw.str("model"),
+            usage = raw.obj("usage")?.let(PiEvents::parseUsage),
+            note = raw.str("note"),
+        )
+
+        "context_edit" -> {
+            val replacement = raw.obj("replacement")
+            SessionEntry.ContextEdit(meta, raw.str("targetId"), omitted = replacement == null, replacement = replacement)
+        }
 
         else -> SessionEntry.Unknown(type, meta, raw)
     }

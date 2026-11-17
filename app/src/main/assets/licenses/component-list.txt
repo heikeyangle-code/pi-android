@@ -38,9 +38,9 @@
       上游      https://ports.ubuntu.com/ubuntu-ports/
 
   Node.js
-      版本      24.19.0
+      版本      24.22.1
       许可证    MIT（含其内置依赖的许可证）
-      上游      https://nodejs.org/dist/v24.19.0/
+      上游      https://nodejs.org/dist/v24.22.1/
 
   git
       版本      2.43.0

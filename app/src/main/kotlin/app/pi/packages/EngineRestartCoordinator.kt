@@ -1,32 +1,15 @@
 package app.pi.packages
 
 /**
- * Puts [ExtensionLifecycle] and the real engine restart together, so the "never
- * restart silently" rule is code rather than an intention.
+ * 引擎重启的结果类型（成功 / 被拒 / 失败）。
  *
- * The two halves cannot enforce it alone:
- *
- *  - [ExtensionLifecycle] knows what is pending but not whether a turn is running;
- *  - [app.pi.engine.PiEngineHost.restart] knows the turn state and can refuse, but
- *    has no idea a resource change is waiting to be picked up.
- *
- * This coordinator is the only place that calls one with the other's answer in
- * hand, and it passes `allowInterrupt = false` **always** — even after the user has
- * confirmed. That is deliberate: confirmation is not a standing licence to kill
- * whatever the engine happens to be doing later. A queued follow-up can start a new
- * turn between the tap and the call, and the host's own check is what catches it. If
- * it does, the request goes back to "waiting for the turn to end" rather than being
- * reported as a failure, because nothing was attempted.
+ * 以前这里是一台状态机：装包 / 改资源之后「有改动待重启」→ 等回合结束 → 确认 → 重启。那是 RPC 时代
+ * 「资源只在进程启动时读一次」的产物。现在扩展、技能、提示词、主题、MCP 都走宿主的 `session.reload`
+ * 热重载，不重启进程，状态机已删；只有「进程开关」（代理、内存上限这类只在新进程里生效的选项）
+ * 才还需要真重启，结果就是下面这三种。
  */
-class EngineRestartCoordinator(
-    private val lifecycle: ExtensionLifecycle,
-    /** Live turn state, normally `{ engineHost.turnRunning }`. */
-    private val isTurnRunning: () -> Boolean,
-    /** The real restart, normally `{ reason, allow -> engineHost.restart(reason, ...) }`. */
-    private val restartEngine: suspend (reason: String, allowInterrupt: Boolean) -> Outcome,
-) {
+object EngineRestartCoordinator {
 
-    /** The outcome of a restart attempt, decoupled from `PiEngineHost.Restart`. */
     sealed interface Outcome {
         data object Ok : Outcome
 
@@ -35,49 +18,6 @@ class EngineRestartCoordinator(
 
         /** The engine was stopped and could not be brought back. */
         data class Failed(val message: String) : Outcome
-    }
-
-    /**
-     * Step 1: the user pressed 重启 (or an install completed and the UI offered it).
-     *
-     * This never restarts anything. It returns what the UI must do next:
-     * show the confirmation, or tell the user a turn is in the way.
-     */
-    fun request(reason: String): ExtensionLifecycle.RequestOutcome =
-        lifecycle.requestRestart(turnRunning = isTurnRunning())
-
-    /**
-     * Step 2: the user confirmed. Only now is the engine touched.
-     *
-     * Safety rails, in order:
-     *
-     *  1. `restartStarted()` refuses unless the state machine is genuinely in
-     *     [ExtensionLifecycle.State.AwaitingConfirmation], so a second tap, a
-     *     stale dialog or a dismissed-then-replayed callback cannot restart twice.
-     *  2. The host is asked with `allowInterrupt = false`, so it re-checks the turn
-     *     independently and refuses if one appeared after the confirmation.
-     *  3. Every non-`Ok` outcome is recorded on the state machine, so the UI shows a
-     *     pending restart with a reason instead of looking done.
-     */
-    suspend fun confirm(reason: String): Outcome {
-        if (!lifecycle.restartStarted()) {
-            return Outcome.Refused("当前没有待确认的重启请求，已忽略。")
-        }
-        val outcome = restartEngine(reason, false)
-        when (outcome) {
-            is Outcome.Ok -> lifecycle.restartSucceeded()
-            is Outcome.Failed -> lifecycle.restartFailed(outcome.message)
-            is Outcome.Refused -> {
-                // Not a failure: the engine was never touched. Go back to the waiting
-                // state the confirmation came from, carrying the engine's own sentence
-                // so the UI can say why. This must not go through `requestRestart`:
-                // from `Restarting` that answers BusyWithPackageCommand and changes
-                // nothing, which left the screen reading "正在重启引擎…" with no button
-                // to leave it.
-                lifecycle.restartRefused(outcome.message)
-            }
-        }
-        return outcome
     }
 }
 

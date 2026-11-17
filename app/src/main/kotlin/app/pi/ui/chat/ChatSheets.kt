@@ -52,7 +52,6 @@ import app.pi.rpc.TokenUsage
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.components.PiType
 import app.pi.ui.extension.ExtensionSpans
-import app.pi.ui.extension.ExtensionStatus
 import app.pi.ui.extension.chromeSpans
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiSectionHeader
@@ -476,56 +475,6 @@ fun SessionToolsSheet(
                 onClick = onCopyLast,
             )
 
-            // The one thing the GUI cannot render at all. pi gives the client no
-            // signal when an extension takes these paths (`custom()` returns
-            // `undefined` silently, `setFooter` is a no-op:
-            // `modes/rpc/rpc-mode.ts:189`, `:229-231`), so the honest move is to name
-            // the extensions whose interface this app cannot show — and to say that
-            // nothing here will display them. It used to end with "use them in the
-            // original TUI"; the terminal is not a usable surface, so that sentence
-            // named an action the user could not complete. What is left is the fact
-            // the user can act on: which installed extension will look incomplete.
-            if (state.tuiOnlyExtensions.isNotEmpty()) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PiSectionHeader("本应用显示不了的扩展（${state.tuiOnlyExtensions.size}）")
-                Text(
-                    "下面这些扩展用到了本应用不支持的自绘界面，它们在对话页不会显示内容。",
-                    modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                state.tuiOnlyExtensions.forEach { extension ->
-                    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp)) {
-                        Text(
-                            "${extension.name}（${extension.scope}）",
-                            style = PiType.rowTitle,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            extension.markers.joinToString(" · "),
-                            style = PiTheme.text.meta,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-
-            // D-3's landing for extension status (see [ExtensionStatusLine]).
-            // Last section of this sheet, and **absent entirely** when there is
-            // nothing to show: no empty shell, no `（0）`.
-            if (state.extensionStatuses.isNotEmpty()) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PiSectionHeader("扩展状态（${state.extensionStatuses.size}）")
-                Text(
-                    "扩展通过 setStatus 交给客户端的字符串，按扩展自己的颜色显示。",
-                    modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                state.extensionStatuses.forEach { status ->
-                    ExtensionStatusLine(status)
-                }
-            }
             Spacer(Modifier.height(PiSpacing.unit))
         }
     }
@@ -698,60 +647,6 @@ fun SessionStatsSheet(
             }
             Spacer(Modifier.height(PiSpacing.unit))
         }
-    }
-}
-
-/**
- * One extension `setStatus` entry: its key, then its text **in the extension's own
- * colours**.
- *
- * ## Why this lives in a sheet instead of above the transcript
- *
- * Adjudication **D-3** (`design/ui-refactor/11-designer-adjudication.md`): extension
- * status is not a permanent band. An extension hands the client an arbitrary string —
- * often a counter or a progress fragment — and a line of them under the AppBar is
- * chrome the user did not ask for and cannot act on. So the *component* that drew
- * that row (`ExtensionStatusRow`) was deleted, while the **data** was deliberately
- * kept (`UiState.extensionStatuses`, fed by `PiSessionViewModel.setExtensionStatus`).
- * This is the "on demand" half of that ruling: open 会话与队列 and the statuses are
- * here. Nothing renders them anywhere else, and nothing should — a second permanent
- * copy is exactly what D-3 removed.
- *
- * ## The colours are the extension's, through the one existing channel
- *
- * [ExtensionSpans] + [chromeSpans] are the same pair the extension widgets use
- * (`ui/extension/ExtensionChrome.kt`): pi sends SGR bytes inside an ordinary string,
- * `chromeSpans` parses them and the renderer matches each foreground back onto a pi
- * palette token. Nothing here re-implements any of that — an extension that colours
- * its status gets the colour it asked for, and one that does not gets the default.
- *
- * The text **wraps and is not capped**: a status an extension wrote in full is worth
- * reading in full when the user has explicitly opened a sheet to read it.
- */
-@Composable
-private fun ExtensionStatusLine(status: ExtensionStatus) {
-    val palette = PiTheme.palette
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            text = status.key,
-            modifier = Modifier.padding(end = PiSpacing.inner),
-            style = PiTheme.text.monoSmall,
-            color = palette.muted,
-            maxLines = 1,
-        )
-        ExtensionSpans(
-            spans = remember(status.text) { chromeSpans(status.text) },
-            defaultColor = MaterialTheme.colorScheme.onSurface,
-            style = PiTheme.text.monoSmall,
-            modifier = Modifier.weight(1f),
-            maxLines = Int.MAX_VALUE,
-            overflow = TextOverflow.Clip,
-        )
     }
 }
 

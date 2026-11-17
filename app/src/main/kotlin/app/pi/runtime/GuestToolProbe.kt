@@ -174,6 +174,20 @@ object GuestToolProbe {
                 "search" -> searches[fields[2]] = observed
             }
         }
+        // 一条标记行都没有：探针进程根本没跑起来（崩了 / 被 SELinux 拒 / 参数被吃掉）。
+        // 这时每个工具的 "没有输出" 都是同一个原因，所以把**进程退出码**和**第一行原始输出**
+        // 带进原因里 —— 缺了这两个数，真机上只能看到"没输出"，无法区分 139(SIGSEGV) /
+        // 84(bind 解析) / 126(不可执行)。
+        val noMarkers = versions.isEmpty() && searches.isEmpty()
+        val rawFirst = output.lineSequence()
+            .map { it.trimEnd('\r').trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("$MARKER$SEPARATOR") }
+            ?.take(200)
+        val noMarkerReason = buildString {
+            append("探针进程没有输出任何标记行")
+            if (exitCode != null) append("（退出码 $exitCode）")
+            if (rawFirst != null) append("；第一行输出：$rawFirst")
+        }
         val results = TOOLS.map { tool ->
             val version = versions[tool]
             val search = searches[tool]
@@ -184,7 +198,8 @@ object GuestToolProbe {
                     versionExit = null,
                     searchExit = search?.first,
                     searchOutput = search?.second,
-                    reason = "没有输出 `$tool --version` 的结果行（探针没跑到，或这个命令没被执行）",
+                    reason = if (noMarkers) noMarkerReason
+                    else "没有输出 `$tool --version` 的结果行（探针没跑到，或这个命令没被执行）",
                 )
 
                 version.first != 0 -> failure(
@@ -270,6 +285,7 @@ object GuestToolProbe {
         val launcher = when (engine) {
             GuestEngine.Proot -> paths.prootBinary()
             GuestEngine.Proroot -> paths.prorootLauncher()
+            GuestEngine.Tawcroot -> paths.tawcrootBinary()
         }
         if (!paths.rootfs.isDirectory || !launcher.exists()) {
             return Report(
@@ -281,7 +297,12 @@ object GuestToolProbe {
         val env = GuestCommandLine.environment(paths, engine)
         val process = try {
             ProcessBuilder(argv)
-                .directory(paths.runtime)
+                // tawcroot 的宿主 cwd 必须在 rootfs 里（getcwd 反向翻译）；proot/proroot 保持
+                // 原来的 runtime 目录，避免为一次探针改动既有运行时的行为。
+                .directory(
+                    if (engine == GuestEngine.Tawcroot) TawcrootCommand.hostCwd(paths)
+                    else paths.runtime,
+                )
                 // stderr merged: a missing tool says why there, and that text is the
                 // detail the report needs. One stream also rules out a two-pipe
                 // deadlock, which a concurrent-reader-free caller cannot fix.

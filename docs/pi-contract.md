@@ -46,7 +46,7 @@ CI 里是一个独立 job（`contract`，ubuntu-latest + node 24），缓存键�
 
 | 断言 | 依赖它的 App 代码 |
 |---|---|
-| 不带 `input` 的声明会变成 text-only | `PiCredentialService.save` 的"只声明 pi 不知道的"规则 |
+| 不带 `input` 的声明会变成 text-only | 自定义供应商表单（`models/ProviderForm`）显式写出能力字段的理由 |
 | 不带 `contextWindow` 的声明会变成 128000 | 同上（"省略等于降级"） |
 | `modelOverrides` 变一个字段 | 同上（App 推荐/保留它的理由） |
 | `modelOverrides` 保住其它字段 | 同上（否则它与 `models[]` 无从区分） |

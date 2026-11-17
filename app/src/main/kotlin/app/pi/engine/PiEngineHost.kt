@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import app.pi.bridge.DeviceBridgeController
 import app.pi.runtime.BootAudit
+import app.pi.runtime.GuestCommandLine
 import app.pi.runtime.GuestTreeReaper
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
@@ -15,6 +16,7 @@ import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.RuntimeSelfCheck
 import app.pi.runtime.RuntimeTreeAudit
 import app.pi.runtime.WorkspaceStore
+import app.pi.host.toOpenArgs
 import app.pi.rpc.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -250,6 +252,11 @@ class PiEngineHost(private val appContext: Context) {
      * `toJsonEvent` event names). `Starting` is deliberately not "running": nothing
      * has been asked of the engine yet, so interrupting it loses no work.
      */
+    /** 本次引擎进程启动时挂进 guest 的外部目录（宿主路径）。不在其中的外部工作区要重启才可达。 */
+    @Volatile
+    var boundExternalHostPaths: Set<String> = emptySet()
+        private set
+
     val turnRunning: Boolean
         get() = _session.value?.state?.value == PiEngineSession.EngineState.Busy
 
@@ -272,6 +279,14 @@ class PiEngineHost(private val appContext: Context) {
      */
     @Volatile
     var lastScandirFix: String? = null
+
+    /**
+     * 上一次把 sdk-host 装进 rootfs 的结果：`null` 成功，否则是一句话（装不上不致命 —— 现在
+     * 引擎入口还是旧的；**切到 sdk-host 之后（migration.md 步骤 3）它就是致命的**，那时这句话要进
+     * 启动失败卡片）。每次启动都装，理由与 [installScandirFix] 相同：目标在易失树里。
+     */
+    @Volatile
+    var lastSdkHostInstall: String? = null
         private set
 
     /**
@@ -559,6 +574,12 @@ class PiEngineHost(private val appContext: Context) {
             //     degraded proroot, it is the same broken proroot as before.
             lastScandirFix = installScandirFix()
 
+            // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。**这一步只把文件放进 rootfs，
+            //     还不启动它** —— 下面的启动命令仍是旧入口，切换要和读取端（PiEngineSession）
+            //     一起换（migration.md 步骤 3），单换一边会让引擎起得来、界面却读不懂它。
+            //     先装上，是为了让真机能手动验证「proot / proroot 下宿主起得来」（runtimes.md 清单）。
+            lastSdkHostInstall = installSdkHost()
+
             // 4. Spawn pi inside the guest.
             val workspace = workspaceProvider()
             workspace.mkdirs()
@@ -608,20 +629,20 @@ class PiEngineHost(private val appContext: Context) {
             // while the engine is running (not only at the exit it captures). Written before
             // the process exists, so a run that dies immediately still names its entry.
             lastEngineEntry = entry
-            // Only the unpacked entry needs the flag; `rpc-entry.js` injects it.
-            val needsModeFlag = entry == EngineEntry.Unpacked
 
             launchOptions = launch
 
-            val guestCommand = buildString {
-                append("exec /opt/node/bin/node ").append(cli)
-                if (needsModeFlag) append(" --mode rpc")
-                append(" --session-dir ").append(guestAgentDir).append("/sessions")
-                // pi's pre-spawn flags. The suffix is already shell-quoted because
-                // the argv builder hands this string to `bash -c` inside the
-                // rootfs; empty when no option is set.
-                append(launch.commandLineSuffix())
-            }
+            // 启动 sdk-host（不再是 pi 的 RPC 入口）。proot 与 proroot 共用这一条命令
+            // （docs/sdk-host/runtimes.md）；用户的启动前设置不再拼成命令行 flag，而是在握手后
+            // 以结构化参数交给 `session.open`（见下面的 `startHost`、`PiLaunchOptions.toOpenArgs`）。
+            // `entry`（打包版/解包版）只用来确认引擎已安装：宿主自己的 `loadSdk` 优先用 bundle、
+            // 缺了回退 dist（`sdkVia`），不需要 App 再替它挑。
+            val guestCommand = SdkHostLaunch.command(
+                cwd = guestWorkspace,
+                agentDir = guestAgentDir,
+                sessionDir = "$guestAgentDir/sessions",
+                piDir = engineRoot,
+            )
 
             // The engine is the largest and most latency-sensitive guest process —
             // Node plus pi, and the thing the user waits for on every cold start — so
@@ -646,12 +667,21 @@ class PiEngineHost(private val appContext: Context) {
             val workspaceBasePath = paths.workspaceBase.absolutePath
             val externalWorkspace = workspace.absolutePath != workspaceBasePath &&
                 !workspace.absolutePath.startsWith(workspaceBasePath + File.separator)
-            val extraBinds = if (externalWorkspace) {
-                File(paths.rootfs, guestWorkspace.removePrefix("/")).mkdirs()
-                listOf(workspace.absolutePath to guestWorkspace)
-            } else {
-                emptyList()
+            // **绑的是「所有已登记的外部工作区」，不只是当前这个。** pi 的 cwd 是会话的属性，
+            // 切项目 = 在新 cwd 里开会话，不需要重启进程；前提是那个目录在 guest 里已经可达。
+            // 内部工作区靠 rootfs 前缀天然可达，外部的只能在启动时挂上 —— 所以启动时把已登记的
+            // 全挂上，之后在它们之间切换都是热切换。新登记的外部目录才需要重启一次（诚实地说）。
+            val externalEntries = runCatching { WorkspaceStore.list(appContext) }.getOrDefault(emptyList())
+                .filter { it.external && it.available && it.host.isDirectory }
+            val extraBinds = buildList {
+                if (externalWorkspace) add(workspace.absolutePath to guestWorkspace)
+                for (entry in externalEntries) {
+                    val pair = entry.host.absolutePath to entry.guestPath
+                    if (pair !in this) add(pair)
+                }
+                forEach { pair -> File(paths.rootfs, pair.second.removePrefix("/")).mkdirs() }
             }
+            boundExternalHostPaths = extraBinds.map { it.first }.toSet()
             val extraEnv = mapOf(
                 // pi's file surface is 1:1 with a desktop install, so settings,
                 // skills, extensions and themes are interchangeable with one.
@@ -723,16 +753,12 @@ class PiEngineHost(private val appContext: Context) {
             // reaped at all — proroot rejects `--kill-on-exit` and
             // `PiEngineSession.close()` only destroys the direct child, so every stop
             // would leave `bash` and a Node engine behind.
-            val engineHandle = if (firstPlan.usingProroot) {
-                ProrootLaunchHandle.arm(paths.prorootTmpDir(), firstPlan.launchToken)
-            } else {
-                null
-            }
+            val engineHandle = firstPlan.armHandle(paths)
             val first = runCatching {
                 PiEngineSession.spawn(
                     argv = firstPlan.argv,
                     env = firstPlan.environment,
-                    cwd = paths.runtime,
+                    cwd = GuestCommandLine.hostCwd(paths, firstPlan.engine),
                     scope = scope,
                 )
             }
@@ -748,9 +774,9 @@ class PiEngineHost(private val appContext: Context) {
             // evidence a user can read (`lastProrootForensics`).
             var prorootSpawnError: Throwable? = null
             val spawned = first.recoverCatching { error ->
-                if (!firstPlan.usingProroot) throw error
+                if (!firstPlan.usingExperimental) throw error
                 prorootSpawnError = error
-                selection.recordProrootFailure("${error::class.java.simpleName}: ${error.message}")
+                selection.recordEngineFailure("${error::class.java.simpleName}: ${error.message}")
                 val retry = selection.plan(
                     guestCommand = guestCommand,
                     cwd = guestWorkspace,
@@ -762,14 +788,14 @@ class PiEngineHost(private val appContext: Context) {
                 PiEngineSession.spawn(
                     argv = retry.argv,
                     env = retry.environment,
-                    cwd = paths.runtime,
+                    cwd = GuestCommandLine.hostCwd(paths, retry.engine),
                     scope = scope,
                 )
             }
 
             spawned.fold(
                 onSuccess = { session ->
-                    if (firstPlan.usingProroot) selection.recordProrootSuccess()
+                    if (firstPlan.usingExperimental) selection.recordEngineSuccess()
                     // The engine's own record-level problems (an event the flow could
                     // not deliver, a transcript fold that threw) are counted inside the
                     // session and read back by the diagnostic report; this is where they
@@ -830,7 +856,7 @@ class PiEngineHost(private val appContext: Context) {
                     // caller gets the session now and the UI reports 启动中 until the
                     // answer arrives, which is also what lets a first message be typed
                     // during the wait instead of being rejected.
-                    session.probeServing()
+                    session.startHost(launch.toOpenArgs(sessionDir = "$guestAgentDir/sessions"))
                     Boot.Ready(session)
                 },
                 onFailure = { error ->
@@ -1032,6 +1058,15 @@ class PiEngineHost(private val appContext: Context) {
             "scandir 兜底模块未能写入 ${target.absolutePath}：" +
                 "${error::class.java.simpleName}: ${error.message ?: "无消息"}"
         }
+    }
+
+    /** 把 `assets/guest/sdk-host/` 同步进 `<rootfs>/opt/pi/sdk-host/`；返回 `null` 或一句失败原因。 */
+    private fun installSdkHost(): String? = runCatching {
+        SdkHostInstaller(AndroidHostAssetSource(appContext.assets))
+            .install(File(paths.rootfs, SdkHostLaunch.GUEST_DIR.removePrefix("/")))
+        null
+    }.getOrElse { error ->
+        "sdk-host 未能写入 ${SdkHostLaunch.GUEST_DIR}：${error::class.java.simpleName}: ${error.message ?: "无消息"}"
     }
 
     /**

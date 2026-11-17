@@ -162,6 +162,9 @@ fun BlockRenderer(
 
         is HookMessage -> HookMessageBlock(item, modifier)
 
+        // 扩展自己的 `custom` 条目：有 `registerEntryRenderer` 才会进到这里（见 ChatScreen 的可见项过滤）。
+        is app.pi.rpc.ExtensionEntry -> ExtensionEntryBlock(item, modifier)
+
         // **pi does not draw `model_change` in the transcript, so neither does this.**
         // The entry exists in the session file (`core/session-manager.ts:64`, written
         // at `:1099`) and the reducer keeps projecting it, but pi's own view of a

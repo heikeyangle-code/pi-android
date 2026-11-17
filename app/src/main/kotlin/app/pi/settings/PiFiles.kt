@@ -1,7 +1,6 @@
 package app.pi.settings
 
 import app.pi.packages.PiJsonComments
-import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -10,7 +9,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * 「Pi 文件」屏的纯逻辑：两个根、可写档的判定、文件类型、以及写盘前的 JSON 校验。
+ * 资源文件 / 项目配置**写盘前的 JSON 校验**：文件类型判定与 pi 会抛异常的那些坏值（「Pi 文件」浏览器已删，
+ * 这里只留校验，由 `PiResourceFile.check` 与 `WorkspacePiWrite` 共用）。
  *
  * ## 为什么是这一套规则，而不是「除了凭据都能改」
  *
@@ -50,168 +50,11 @@ import kotlinx.serialization.json.JsonPrimitive
  * `app/src/test/kotlin/app/pi/settings/PiFilesCheck.kt` 能在裸 JVM 上跑。
  */
 
-/** pi 的两个根。`agent` 是 pi 真正读的那一份（`PI_CODING_AGENT_DIR`）。 */
-enum class PiFilesRootKind {
-    /** `getAgentDir()` —— 宿主是 `PiPaths.agentDir`，guest 里挂在 `/root/.pi/agent`。 */
-    AgentDir,
-
-    /** `getAgentDir()` 旁边的项目目录：`<cwd>/.pi`（`PiProjectConfig.root`）。 */
-    ProjectPi,
-}
-
-/**
- * 一个根，连同它给用户看的名字。
- *
- * `label` 只说人话，不带路径：屏幕上那行字不该出现 `~/.pi/agent` 这种机器拼法（与
- * 设置页的文案规则一致）。真正的位置在副行里以「相对这个根」的形式出现。
- */
-data class PiFilesRoot(
-    val kind: PiFilesRootKind,
-    val label: String,
-    val file: File,
-) {
-    val exists: Boolean get() = file.isDirectory
-}
-
-/**
- * 两个根，顺序固定。
- *
- * [agentDir] 与 [projectPi] 由调用方解析：宿主 `PiPaths.agentDir` 与
- * `PiProjectConfig.root(workspace)` —— 本文件**不**自己拼这两个路径，因为它们是这个仓库
- * 各自唯一的转录点（`app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt` 钉着它们）。
- */
-fun piFilesRoots(agentDir: File, projectPi: File): List<PiFilesRoot> = listOf(
-    PiFilesRoot(PiFilesRootKind.AgentDir, "agent 目录", agentDir),
-    PiFilesRoot(PiFilesRootKind.ProjectPi, "项目 .pi", projectPi),
-)
-
-/** 这一行/这个文件能不能改。判定见文件头。 */
-enum class PiFilesAccess { Writable, ReadOnly }
-
-/**
- * 可写的**根级文件名**：pi 会读、且 pi 自己从不重写的文档。
- *
- * 上下文的五个候选名是 pi 的发现顺序（`core/resource-loader.ts:72`：
- * `AGENTS.override.md`、`AGENTS.md`、`AGENTS.MD`、`CLAUDE.md`、`CLAUDE.MD`）；
- * `SYSTEM.md` / `APPEND_SYSTEM.md` 是系统提示的两份文件形态（`:1024`、`:1038`）。
- *
- * `mcp.json` 是 0.99.0 的新成员（`docs/mcp.md` 的「Configure servers」）：用户级
- * `<agentDir>/mcp.json` 与工程级 `.pi/mcp.json`。它满足这里的判据 —— pi 会读它，而 pi
- * 只在用户于 `/mcp` 里改 exposure 或启用状态时**定点改写那几个键**，不整份重写
- * （`docs/mcp.md:78-80`：「saved to the file that defines the server without replacing
- * unrelated content」），与 `settings.json` 的处境相同。所以它必须可写：这是手机上唯一
- * 能配 MCP 服务器的地方（`pi mcp add/list/login` 是 CLI 子命令，本应用不发）。
- */
-private val WRITABLE_ROOT_FILES: Set<String> = setOf(
-    "settings.json",
-    "models.json",
-    "mcp.json",
-    "AGENTS.override.md",
-    "AGENTS.md",
-    "AGENTS.MD",
-    "CLAUDE.md",
-    "CLAUDE.MD",
-    "SYSTEM.md",
-    "APPEND_SYSTEM.md",
-)
-
-/** 可写的**目录**（根下一层）：`extensions`/`skills`/`prompts`/`themes`，见 pi 的默认扫描目录。 */
-private val WRITABLE_DIRS: Set<String> = setOf("extensions", "skills", "prompts", "themes")
-
 /** 归一化：反斜杠当分隔符、去掉首尾斜杠与前导 `./`。判定与比较都走这个，免得 `./x` 与 `x` 分家。 */
 internal fun normalizePiRelative(relativePath: String): String {
     var path = relativePath.replace('\\', '/').trim().trim('/')
     while (path.startsWith("./")) path = path.removePrefix("./").trimStart('/')
     return path
-}
-
-/**
- * `proper-lockfile` 的锁是**目录** `<target>.lock`（`core/settings-manager.ts:243`），
- * 不是内容。它随时出现/消失，所以既不该被当文件打开，也不该被写。
- */
-fun isPiLockArtifact(name: String): Boolean = name.endsWith(".lock")
-
-/**
- * 路径 → 可写档。**默认只读**。
- *
- * @param relativePath 相对某个根的路径，`/` 分隔。带 `..` 的一律只读（它不是这个根里的
- *   东西，本屏也不该有机会写到外面去）。
- */
-fun piFilesAccessFor(relativePath: String): PiFilesAccess {
-    val path = normalizePiRelative(relativePath)
-    if (path.isEmpty()) return PiFilesAccess.ReadOnly
-    val segments = path.split('/')
-    if (segments.any { it == ".." || it == "." || it.isEmpty() }) return PiFilesAccess.ReadOnly
-    val name = segments.last()
-    if (isPiLockArtifact(name)) return PiFilesAccess.ReadOnly
-    if (segments.size == 1) {
-        return if (name in WRITABLE_ROOT_FILES) PiFilesAccess.Writable else PiFilesAccess.ReadOnly
-    }
-    val head = segments.first()
-    if (head !in WRITABLE_DIRS) return PiFilesAccess.ReadOnly
-    // 只有 `.json` 是 pi 会加载的主题（`core/resource-loader.ts` 只收 `*.json`）；往主题
-    // 目录里塞别的后缀，pi 不会读它，所以也不该由这一屏来写。
-    if (head == "themes" && !name.endsWith(".json")) return PiFilesAccess.ReadOnly
-    return PiFilesAccess.Writable
-}
-
-/**
- * 目录能不能改。只有白名单里的那四个根级目录算可写，其余（`sessions`/`npm`/`bin`/`tools`…）
- * 连同它们的子目录一律只读。
- *
- * 单独一个函数而不是对目录调 [piFilesAccessFor]：目录没有文件名，用文件的那条规则会得到
- * 一个「因为它是目录所以不可写」的假答案（例如 `themes` 自己不带 `.json` 后缀）。
- */
-fun piFilesDirIsWritable(relativePath: String): Boolean {
-    val path = normalizePiRelative(relativePath)
-    if (path.isEmpty()) return false
-    val segments = path.split('/')
-    if (segments.any { it == ".." || it == "." || it.isEmpty() }) return false
-    return segments.first() in WRITABLE_DIRS
-}
-
-/**
- * 只读时给用户的一句原因。分类与 `docs/settings-audit-pi-gap.md` §6.3 的「绝不手改」
- * 表一一对应；没被点名的路径落到最后那句通用解释。
- */
-fun piFilesReadOnlyReason(relativePath: String): String {
-    val path = normalizePiRelative(relativePath)
-    val name = path.substringAfterLast('/')
-    if (isPiLockArtifact(name)) {
-        return "这是 pi 的锁目录，不是内容：pi 或本应用正在写同一个文件时它会短暂存在，写完就删。"
-    }
-    val head = path.substringBefore('/', "")
-    return when {
-        name == "auth.json" ->
-            "这是凭据文件：pi 每次改 Key 都会整份重写它，而且按只有本人可读的方式创建。" +
-                "要改请回上一屏用「API Key」。"
-        name == "models-store.json" ->
-            "这是 pi 自己写的模型缓存，刷新时整份重写，手改没有意义。"
-        name == "mcp-auth.json" ->
-            // 键的形状在 pi 1.0.0 变过一次：0.99.x 是「仅服务器 URL」，1.0.0 起是
-            // 「服务器名|URL」（`extensions/mcp/oauth.ts` 的 `storeKeys()`），好让同一个 URL
-            // 下的不同服务器各登各的。旧的「仅 URL」条目会被第一个用到它的服务器接管，
-            // 其余同名 URL 的服务器要重新登录一次 —— 所以这句话不能再说「按 URL 存」。
-            "这是 MCP 服务器的 OAuth 凭据（按服务器名 + URL 存，`extensions/mcp/oauth.ts`），" +
-                "pi 在登录/刷新时整份重写。要登录请用命令面板里的 `/mcp login <服务器>`。"
-        name == "mcp.log" ->
-            "这是 MCP 扩展的运行日志（`extensions/mcp/log.ts` 追加写），不是配置；" +
-                "服务器配置在同目录的 mcp.json 里。"
-        name == "trust.json" ->
-            "项目信任决定的唯一真相是本应用的项目页与 pi 自己的信任流程；手改这里会和它们矛盾。"
-        name == "keybindings.json" ->
-            "这一份只影响在终端里运行的原版 pi TUI，不影响本应用的界面，本轮没有把它放进可写白名单。"
-        head == "sessions" ->
-            "会话文件是 pi 边跑边追加的（压缩或分叉时整份重写），手改会被覆盖，也会让会话列表读错。"
-        head == "npm" ->
-            "这是 pi 安装的包，安装与更新会覆盖它；要增删请用「资源包」。"
-        head == "bin" ->
-            "这是 pi 自己下载并覆盖的二进制（rg、fd）。"
-        else ->
-            "只读：可写白名单只包含 pi 会读、而 pi 自己不会重写的文档 —— " +
-                "settings.json、models.json、mcp.json、AGENTS.md、SYSTEM.md、APPEND_SYSTEM.md、" +
-                "以及 themes/、skills/、prompts/、extensions/ 里的文件。"
-    }
 }
 
 /** 这个文件按 pi 的读法属于哪一类 —— 决定编辑器怎么校验、以及写前的提示。 */
@@ -525,38 +368,3 @@ private fun checkPlainJson(text: String): PiFilesCheck {
 }
 
 // ------------------------------------------------------------------ 路径
-
-/**
- * [file] 相对 [root] 的路径，`/` 分隔；不在 [root] 里就是 null。
- *
- * 用逐段比较而不是 `startsWith`：`/a/bc` 不该被当成 `/a/b` 的子路径，而
- * `File(workspace, "../outside")` 这种拼法必须在**这一层**就被挡住（`PiProjectConfig.under`
- * 的 KDoc 说的是同一件事）。
- */
-fun piFilesRelativePath(root: File, file: File): String? {
-    val rootPath = root.absoluteFile.normalize().path
-    val filePath = file.absoluteFile.normalize().path
-    if (filePath == rootPath) return ""
-    val prefix = if (rootPath.endsWith(File.separator)) rootPath else rootPath + File.separator
-    if (!filePath.startsWith(prefix)) return null
-    return filePath.removePrefix(prefix).replace(File.separatorChar, '/')
-}
-
-/** 面包屑：根的名字 + 当前相对路径。空相对路径就是根自己。 */
-fun piFilesBreadcrumb(rootLabel: String, relativePath: String): String {
-    val path = normalizePiRelative(relativePath)
-    return if (path.isEmpty()) rootLabel else "$rootLabel / $path"
-}
-
-/** 父目录的相对路径；根下面一层返回空串。 */
-fun piFilesParent(relativePath: String): String {
-    val path = normalizePiRelative(relativePath)
-    val index = path.lastIndexOf('/')
-    return if (index <= 0) "" else path.substring(0, index)
-}
-
-/** 子目录的相对路径。 */
-fun piFilesChild(relativePath: String, name: String): String {
-    val path = normalizePiRelative(relativePath)
-    return if (path.isEmpty()) name else "$path/$name"
-}

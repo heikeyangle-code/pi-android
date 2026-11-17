@@ -316,19 +316,11 @@ object PiSettingsCatalog {
     /** Every registered key, in spec §6.4 order. */
     val settings: List<PiSetting> = listOf(
 
-        // 这个分组的入口是 App 侧的一页，不是一个 pi 设置：「模型与供应商」把"这台设备上
-        // 配了哪些厂商、有哪些模型、哪些已经生效"一次说清（`PiModelInventory`，实现见
-        // `ModelProviderScreen`，入口在设置首页最顶栏）。它是本分组的第一行是故意的——
-        // 在它之前，这个问题在设置页里没有
-        // 任何地方能回答，而"导入过的模型看不到"正是用户报的那个问题。
+        // 「模型与供应商」是 App 侧的一页（`ui/models/ModelsScreen`，数据来自宿主的 auth.* / models.config.*），
+        // 不是 pi 的设置键；本分组只放 settings.json 里的模型相关键，由通用行编辑器渲染。
         // ------------------------------------------------------------------
         // 1 模型与推理
         // ------------------------------------------------------------------
-        // 这四行 Action（已导入的模型 / 本地模型 / API Key / 订阅登录）曾经只是
-        // 「去别处」的指针，而 G_MODEL 分组页早被删除、没有任何界面渲染它们：
-        // 按用户裁定「注册表里没露出来的，就删掉」。四个目的地都仍然在——
-        // 「模型与供应商」一屏（设置首页最顶栏）就是它们的归宿，而且那一屏本身
-        // 就有导入、API Key、订阅账号三个入口，不需要注册表再转一道手。
         PiSetting(
             key = "defaultProvider",
             title = "默认厂商",
@@ -990,27 +982,6 @@ object PiSettingsCatalog {
             // row takes effect at once, which is also what pi's TUI does.
             effective = EffectiveKind.Immediate,
         ),
-        // Read-only on purpose, and an entry point rather than an editor. The
-        // array is written by the package manager: `pi install` records a source
-        // in `settings.packages` and also resolves, downloads and records what it
-        // installed (`core/package-manager.ts`; the app's own screen says the list
-        // it shows "is what `pi install` wrote into settings.json's packages",
-        // `packages/PiPackagesScreen.kt:309`). Letting a user hand-edit the array
-        // here would produce exactly the state that comment warns about — a spec
-        // that looks installed but was never fetched — so the row jumps to the
-        // package screen (`PiSettingsStack.hostActions`, entry key `packages`)
-        // instead of opening `PiListEditorSheet`.
-        PiSetting(
-            key = "packages",
-            title = "扩展包与项目信任",
-            description = "安装、更新、移除资源包与项目信任；逐条开关在 工作区 → 资源。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "扩展包",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            readOnly = true,
-        ),
         // ------------------------------------------------------------------
         // 9 外观
         // ------------------------------------------------------------------
@@ -1265,13 +1236,21 @@ object PiSettingsCatalog {
         // 会让用户以为还要自己动手，而那正是他要修掉的东西（「为什么还要退出软件重进呢」）。
         // ------------------------------------------------------------------
         PiSetting(
-            key = "app.runtime.proroot",
-            title = "运行时加速（实验性）",
-            description = "proroot 跑引擎；会探针并重启（闭源）。",
-            kind = PiRowKind.Switch,
+            key = "app.runtime.engine",
+            title = "运行时",
+            // 三选一，随时自由切换，选完当场探针并重启引擎。每个选项各自的状态写在下面
+            // 「各运行时状态」那一行里（选之前就能看到：可用 / 缺组件 / 探针没过 / 失败 N 次）。
+            // 装机、更新、维护永远用 proot，选的运行时不可用时也自动回退 proot。
+            description = "proot 最稳；proroot 闭源；tawcroot 开源。",
+            kind = PiRowKind.Value,
             group = G_RUNTIME,
             section = "运行时选择",
-            defaultValue = bool(false),
+            defaultValue = str("proot"),
+            options = choices(
+                "proot" to "proot（默认，最兼容）",
+                "proroot" to "proroot（闭源，实验性）",
+                "tawcroot" to "tawcroot（开源，实验性）",
+            ),
             effective = EffectiveKind.AutoRestartEngine,
         ),
         PiSetting(
@@ -1283,6 +1262,17 @@ object PiSettingsCatalog {
             // 不知道「探针未通过」到底卡在哪一步（缺陷原形：开关开着，行上只有半句话，
             // 唯一能看到证据的地方是导出的报告）。
             description = "这次用的运行时；没用上时括号里写原因。",
+            kind = PiRowKind.Text,
+            group = G_RUNTIME,
+            section = "运行时选择",
+            defaultValue = str("未读取"),
+            readOnly = true,
+        ),
+        PiSetting(
+            key = "app.runtime.engineMatrix",
+            title = "各运行时状态",
+            // 一行摘要，逐个运行时的明细（可用 / 缺组件 / 探针 / 失败次数）在行下面。
+            description = "三个运行时现在各自能不能用。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时选择",
@@ -1538,6 +1528,14 @@ object PiSettingsCatalog {
         "retry.provider.timeoutMs" to "pi 读：settings-manager.ts:949 → core/sdk.ts:315（厂商请求超时）",
         "retry.provider.maxRetries" to "pi 读：settings-manager.ts:949 → core/sdk.ts:315（厂商层重试次数）",
         "retry.provider.maxRetryDelayMs" to "pi 读：settings-manager.ts:949 → core/sdk.ts:371（厂商要求的长等待上限）",
+        // 模型四键：pi 自己读（`getDefaultProvider`/`getDefaultModel`/`getDefaultThinkingLevel`/
+        // `getEnabledModels`，core/settings-manager.js:538 起），App 侧不再有读取方 ——
+        // 模型与供应商页走宿主的 `models.config.*` / `auth.*`（SDK 的 ModelRuntime），
+        // 本页只保留为 settings.json 的通用行编辑器。
+        "defaultProvider" to "pi 读：settings-manager.js:538 getDefaultProvider → 建会话时选厂商；App 的模型页经宿主 models.config.* 写，不读这一行的值",
+        "defaultModel" to "pi 读：settings-manager.js 的 getDefaultModel → 建会话时选模型；App 的模型页经宿主 models.config.* 写",
+        "defaultThinkingLevel" to "pi 读：settings-manager.js 的 getDefaultThinkingLevel → 建会话时的思考等级；App 不再读",
+        "enabledModels" to "pi 读：agent-session.js:2050 getEnabledModels（模式匹配已启用模型）；App 不再读",
         "defaultTools" to "pi 读：settings-manager.ts:1319 → core/sdk.ts:257（建会话时的内建工具选择）",
         "images.autoResize" to "pi 读：settings-manager.ts:1289 → core/agent-session.ts:522 / :2792（附件与 read 的图片缩放）",
         "images.blockImages" to "pi 读：settings-manager.ts:1302 → core/sdk.ts:271（建会话时是否允许图片进入模型）",
@@ -1612,9 +1610,8 @@ object PiSettingsCatalog {
             }
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
-            // 只报 settings.json 里真实存在的包条数；逐条资源的清单是 pi 自己算的，
-            // 在 工作区 → 资源，这里不再放一份扫描出来的数字。
-            "${byKey["packages"]?.countIn(store) ?: 0} 个资源包"
+            // 数字（几个已加载、几个问题）是 pi 的 ResourceLoader 算的，要问宿主，首页不放一份猜出来的。
+            "扩展 · 技能 · 提示 · 主题 · 包 · 信任"
         },
         PiSettingsGroup(G_APPEARANCE, "外观", Icons.Filled.ColorLens) { store ->
             val themeValue = summaryText(store, "theme")

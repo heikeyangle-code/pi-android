@@ -252,42 +252,11 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
   return 0
 }
 
-# app.pi.packages: TrustFile's trust.json byte format + nearest-ancestor lookup,
-# ProjectTrust's resolution order, PiPackageSource classification, `pi list`
-# parsing and the restart state machine. Needs kotlinx.serialization (TrustFile)
-# and kotlinx.coroutines (ExtensionLifecycle's MutableStateFlow), plus :rpc's
-# pure ANSI stripper, which PiListOutput calls — and `PiProjectConfig.kt`, because
-# `ProjectTrust.CONFIG_DIR_NAME` reads the app's one transcription of pi's project
-# config directory instead of repeating the literal (a harness compile failure if
-# that file is ever left out, which is the point).
-run_harness packages \
-  app.pi.packages.PackagesPureLogicCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PackagesPureLogicCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/TrustFile.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/ProjectTrust.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiListOutput.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsMerge.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelCatalog.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
-
-# app.pi.packages: `pi update`'s argv shape, the refusal of pi's self-update targets
-# (`self`/`pi` would replace the pinned engine payload), which sources are updateable at
-# all, and the recognition of pi's own result line — the progress line must not be mistaken
-# for a result. Pure kotlin stdlib.
-run_harness pi-package-update \
-  app.pi.packages.PiPackageUpdateCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt"
+# app.pi.packages: App 与引擎对 guest agent 目录的约定（`PiAgentDirContract`）。纯 Kotlin。
+run_harness agent-dir-contract \
+  app.pi.packages.PiAgentDirContractCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiAgentDirContractCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiAgentDirContract.kt"
 
 # app.pi.packages: pi 的 mcp.json 编辑（`PiMcpConfig`）—— 校验规则、保留未知键、损坏文件不覆盖、
 # 项目覆盖、令牌/OAuth 互斥、从别的客户端导入的转换。Android/Compose-free。
@@ -296,18 +265,12 @@ run_harness pi-mcp-config \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiMcpConfigCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiMcpConfig.kt"
 
-# app.pi.packages: pi 资源清单（`PiResourceCatalog`）—— 解析 pi-resources.mjs 的输出：分组来源、
+# app.pi.packages: pi 资源清单（`PiResourceCatalog`）—— 解析宿主 resources.list 的 JSON：分组来源、
 # 项目三态、安装失败、报错与噪音行。Android/Compose-free。
 run_harness pi-resource-catalog \
   app.pi.packages.PiResourceCatalogCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiResourceCatalogCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceCatalog.kt"
-
-# app.pi.packages: `pi mcp list --json` 的解析（`PiMcpStatus`）。Android-free。
-run_harness pi-mcp-status \
-  app.pi.packages.PiMcpStatusCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiMcpStatusCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiMcpStatus.kt"
 
 # app.pi.bridge: the A3 guest→host candidate order. Pure string arithmetic, no
 # Android and no filesystem — see the file header.
@@ -409,7 +372,9 @@ run_harness guest-tool-probe \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TawcrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
 
 # app.pi.runtime: the opt-in proroot runtime's pure logic — the §2.3.1 argv/env mapping
@@ -437,6 +402,7 @@ run_harness proroot \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TawcrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRetry.kt" \
@@ -655,73 +621,10 @@ run_harness queue-restore \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/QueueRestoreCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/QueueRestore.kt"
 
-# app.pi.packages: 设置 → 模型 的那张清单（`PiModelInventory.kt`）与外部改动检测的判据
-# （`PiFileStamps.kt`）。为什么它必须在这里：清单要回答"导入过的模型为什么不在列表里"，而
-# 答案是一个**推断**（文件里有 + 有凭证 + 引擎没列 = 要重启），错在安静的那一侧就等于界面
-# 说"已经生效"而引擎从未读过那个文件 —— 正是 §M11/§M12 的形状。Compose 编译不了，所以判定
-# 必须留在纯对象里。文件本身不碰文件系统（四份文件原文由调用者传进来），只有 `PiFileStamps`
-# 用 `java.io.File` 做 mtime/大小判据。
-run_harness models-inventory \
-  app.pi.packages.PiModelInventoryCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiModelInventoryCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelInventory.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiFileStamps.kt"
 
-# app.pi.packages: 导入/编辑厂商时 settings.json 三个选择键的写入判定（`ModelSelectionPlan.kt`）。
-# 为什么必须在这里：用户报的「导入完了也有 bug」（B1）是旧 save() 每次无条件写
-# defaultProvider/defaultModel 并把 enabledModels 整表替换成只有本厂商的条目 —— 加一个模型
-# 默认模型被切走、导入第二个厂商冲掉第一个厂商的循环条目和手写 pattern。「勾选没动就不写」
-# 「别的厂商与手写 glob 必须活下来」是两条编译器看不见的条件判定，只能在这里钉住。
-# 纯 Kotlin stdlib：无 Android、无文件 IO。
-run_harness model-selection-plan \
-  app.pi.packages.ModelSelectionPlanCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/ModelSelectionPlanCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/ModelSelectionPlan.kt"
 
-# app.pi.packages: 厂商 `/models` 响应里**自愿给**的元数据（`PiScanVendorMeta.kt`）。为什么
-# 必须在这里：这些规则全是静默出错型 —— per-token→per-million 忘了乘，价格小一百万倍；
-# 图片能力读反，纯文本模型自称支持图片。屏幕上都只是一个数字或一个标签，编译器和肉眼都
-# 抓不到。用 OpenRouter 的真实字段形状钉住：有就给、没给就是 null（绝不写默认值）、
-# 非数字忽略。
-run_harness scan-vendor-meta \
-  app.pi.packages.PiScanVendorMetaCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiScanVendorMetaCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiScanVendorMeta.kt"
 
-# app.pi.packages: **models.dev 索引**（`PiModelsDev.kt`）—— 厂商 `/models` 从不发布的
-# 那部分能力的来源，尤其是思考档位（`thinkingLevelMap`）。为什么必须在这里：档位映射错了
-# 全是安静的（多给一个端点不认的档位 / 少给一个它能用的档位），而它正是 pi 从
-# `reasoning_options` 生成的那张表；这里用 models.dev 的真实形状（含只有中转站才有的裸 id）
-# 把 parse、精确/裸 id 两级查找、effort→档位映射钉住。纯逻辑 + kotlinx.serialization。
-run_harness models-dev \
-  app.pi.packages.PiModelsDevCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiModelsDevCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsDev.kt"
 
-# app.pi.packages: pi **官方随包发的模型目录**（`PiOfficialCatalog.kt`：41 份
-# `<provider>.json` + `.manifest.json` 的 SHA-256 校验）。为什么必须在这里：它取代了
-# App 手抄的提供商表 —— 读漏一份就是"提供商列表悄悄短一个"，正是用户要求"直读官方文件"
-# 的那个理由；而字段映射（`input`→图片能力、cost 的每百万单位、缺席≠不支持）全是静默
-# 出错型。每条失败路径都必须出 problem 行，而不是一个更短的列表。纯逻辑 + java.io +
-# java.security，无 Android。
-run_harness official-catalog \
-  app.pi.packages.PiOfficialCatalogCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
-
-# app.pi.packages: **官方目录在载荷里的位置**（`PiOfficialCatalog.ROOTFS_DATA_DIRECTORIES` /
-# `readFromRootfs`）。为什么必须在这里：那个目录的深度由 npm 的依赖树决定，而它已经搬过一次
-# —— `9fb65b7` 的载荷把 `@earendil-works/pi-ai` 嵌在 `pi-coding-agent/node_modules` 下，
-# pi 1.3.0 的 `tools/pi-engine.lock.json` 又把它提升到顶层。旧代码写死嵌套路径，于是升级后
-# 整张官方目录读不到，导入 sheet 的厂商列表塌成 App 自带的几档（用户报「已有厂商，再点导入
-# 模型，列表里只有三个」）。这条 harness 直接读 lock 文件里 pi-ai 的**实际**安装位置，断言
-# 候选目录覆盖它，并在临时目录里钉住「两种布局都在 → 提升的赢」「只有嵌套 → 仍然能读」
-# 「都读不到 → problems 逐个列出试过的路径」。纯逻辑 + java.io/nio + kotlinx.serialization。
-run_harness official-catalog-path \
-  app.pi.packages.PiOfficialCatalogPathCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogPathCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
 
 # :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
 # read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
@@ -818,6 +721,15 @@ run_harness runtime-space \
   app.pi.runtime.RuntimeSpaceBudgetCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimeSpaceBudgetCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeSpaceBudget.kt"
+
+# app.pi.ui.chat: which pi session entry a long-pressed transcript row is. Label / continue-from /
+# hide-from-context are all keyed on pi's entry id, and a row produced during this run carries a
+# synthetic key pi has never heard of, so the match (id first, then newest same-role text) is pinned
+# here. Imports nothing: the caller folds the raw JSON into `EntryText` before asking.
+run_harness message-entry-resolver \
+  app.pi.ui.chat.MessageEntryResolverCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/MessageEntryResolverCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/MessageEntryResolver.kt"
 
 # app.pi.runtime: the three decisions that keep an update from deleting the user's files.
 # ① The prune: `PayloadPrune.victims(old, new, present)` is what replaced "one global
@@ -1189,17 +1101,6 @@ run_harness settings-validation \
   "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsValidationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiSettingsValidation.kt"
 
-# app.pi.ui.settings: what the 「扩展与资源」group reports as *discovered*. The four rows that
-# used to list hand-written search paths were removed because pi finds resources by itself —
-# so this screen has to state what is actually there, with its sources, and it must never
-# invent a reading: a count, "nothing found yet", "could not read: why" and "not read yet"
-# are four different answers that must not impersonate each other (an empty directory and an
-# unreadable one look identical on disk, which is exactly the kind of lie this pins out).
-run_harness settings-resources \
-  app.pi.ui.settings.PiResourceFactsCheckKt \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt"
-
 # app.pi.settings: the settings document itself — deleting a key (pi's own "use the
 # default": writing `null` makes pi throw), one shared document per file, and the lock and
 # temp-file discipline around a write. Every property here answers a defect that shipped:
@@ -1214,10 +1115,7 @@ run_harness settings-resources \
 # only signal, so "no file" is the one way to say "not set", and (b) a file holding **only
 # whitespace** is *not* falsy — it really does replace the preamble with that whitespace, which
 # is exactly the state a user reaches by typing a space and saving.
-# `PiResourceFacts.kt` rides along because `PromptFileFacts` now reports all four prompt files in
-# that file's shape and **reuses its `DiscoverySource` labels** — pulling the enum in is how "the
-# same words as the four 「已发现的 …」 rows" becomes a construction guarantee instead of a
-# by-inspection one. It has no imports of its own, so the closure does not grow otherwise.
+# `DiscoverySource.kt` rides along because `PromptFileFacts` reuses its labels.
 run_harness settings-store \
   app.pi.settings.PiSettingsStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/settings/PiSettingsStoreCheck.kt" \
@@ -1225,7 +1123,7 @@ run_harness settings-store \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsLock.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/PromptFileSettingsStore.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/DiscoverySource.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SettingsDocument.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
@@ -1290,26 +1188,51 @@ run_harness notice-queue \
   "$ROOT/app/src/test/kotlin/app/pi/ui/extension/NoticeQueueCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/NoticeQueue.kt"
 
-# app.pi.ui.extension: what a `setWidget` line **is**. pi's RPC widget contract is
-# `widgetLines: string[]` and nothing else, so an extension that wants a richer panel sends a
-# **prefix plus a JSON object on one line** and expects the host to interpret it
-# (`pi-subagents`' `PI_SUBAGENT_ASYNC_JSON:`). Drawing every line verbatim made one 32 KB
-# payload occupy half the conversation and re-lay-out on every status tick, because pi's cap
-# counts *lines* (`MAX_WIDGET_LINES = 10`) — the same class of hole `ImageSizeCheck` closes for
-# a single long grep hit. Three properties here are invisible to a compiler: a folded label
-# never depends on the payload's volatile fields (that, and not a smaller font, is what removes
-# the flicker), no `Text` row ever exceeds `WIDGET_LINE_MAX_CHARS` (the bound on both layout and
-# `Ansi.parse`'s input), and prose is not swallowed (`FOO_JSON: hello` is text, only
-# `<PREFIX>:{` is a payload).
-run_harness widget-payload \
-  app.pi.ui.extension.WidgetPayloadCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/WidgetPayloadCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionWidgetLines.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionInfoRows.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+# app.pi.ui.extension: 扩展面板的纯规则：数组元素里的换行不能被悄悄吞掉（宿主最不该有的失败）、
+# 病态输入有上限、像素宽 → 终端列数落在宿主能收的范围（宿主据此重绘组件工厂的表面）。
+run_harness panel-rules \
+  app.pi.ui.extension.ExtensionPanelRulesCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/ExtensionPanelRulesCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionPanelRules.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionInfoRows.kt"
+
+# app.pi.models: 自定义供应商表单（`ProviderForm`，纯函数）：表单 ↔ models.json 的一个 provider。
+# 编译器看不见的是「不碰不认识的字段」——`input` 含 audio、模型的 `extra`、未知键都得原样带回去，
+# 否则编辑一个自定义供应商会悄悄丢字段；还有请求头的逐行解析与错误话术。
+run_harness provider-form \
+  app.pi.models.ProviderFormCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/models/ProviderFormCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/models/ProviderForm.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
+# app.pi.ui.models: 「模型与供应商」页的全部判断（`ModelsPresentation.kt`，纯函数）：连接状态
+# （订阅 ≠ 任意 OAuth）、供应商分区与搜索、模型分组、价格/上下文文案、刷新结果、新增 id 的校验。
+# 页面只画这里算好的东西。
+run_harness models-presentation \
+  app.pi.ui.models.ModelsPresentationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/models/ModelsPresentationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/models/ModelsPresentation.kt"
+
+# app.pi.ui.resources + app.pi.packages: 「扩展与资源」页的全部判断——宿主 `resources.loaded` 的解析
+# （形状取自真实宿主输出）、开关清单与实际加载按路径对上、概览与分段与搜索、SDK 诊断说成人话、
+# 项目信任（`project.trustState`）的说法与每个状态下真能做的动作。
+# 资源文件：宿主应答解析、新建名字规则（对照 SDK validateName）、SKILL.md 等的写前预检。
+run_harness resource-file \
+  app.pi.packages.PiResourceFileCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiResourceFileCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceFile.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiLoadedResources.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiFiles.kt"
+
+run_harness resources-presentation \
+  app.pi.ui.resources.ResourcesPresentationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/resources/ResourcesPresentationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/resources/ResourcesPresentation.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/models/ModelsPresentation.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiLoadedResources.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiProjectTrust.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceCatalog.kt"
 
 # app.pi.ui.extension: 扩展输出的两条**渲染判据**（`ExtensionTextLines.kt`，纯函数）：
 # 预格式化行（框线 / 列对齐双空格 / 超过 pi 默认 80 列的行 → 展开不换行 + 横向滚动）与
@@ -1334,13 +1257,8 @@ run_harness mentions-unavailable \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/MentionLookup.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
 
-# app.pi.ui.chat: in-session branch navigation (`navigateTree`), which pi's RPC surface
-# cannot reach directly — the app drives it through a command its own extension registers,
-# so "the prompt call returned" is the only completion signal there is, and the branch that
-# has to be *excluded* is the abandoned one (the session file keeps it; only the in-memory
-# leaf says which line is live). This pins the landing rules, the summary choice, the
-# command arguments, and the outcome classification — including the arms that must not
-# rebuild the transcript, because "reset with nothing to show" is its own bug.
+# app.pi.ui.chat: 会话树跳转的纯逻辑——摘要选项、叶子是否移动的判定（含「不该重建对话」那几支）、
+# 以及只取活动分支的过滤。跳转本身是 SDK 的 navigateTree（宿主 `session.navigate`）。
 run_harness tree-navigation \
   app.pi.ui.chat.PiTreeNavigationCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
@@ -1378,6 +1296,7 @@ run_harness proroot-status-text \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TawcrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
@@ -1397,6 +1316,7 @@ run_harness proroot-probe-detail \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TawcrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
@@ -1503,6 +1423,84 @@ run_harness streaming-cursor \
   app.pi.ui.render.StreamingCursorCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/StreamingCursorCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/StreamingCursor.kt"
+
+# app.pi.host: sdk-host 线协议 v1 的 Kotlin 客户端 —— epoch 过滤（旧会话的尾巴不许画进新会话）、
+# seq 跳号对账、命令/应答配对与超时/取消清理、状态按 (epoch,seq) 取最新、帧容错。另外**回放**
+# `tools/sdk-host/record.mjs` 从真宿主 + 真 pi 录下的一整段会话（app/src/test/resources/sdk-host/
+# session.jsonl），证明 Kotlin 解析的和 node 宿主真发的是同一种东西。宿主协议变了：重录 fixture。
+# 需要 :rpc 的 PiJson（严格 JSON 入口）；客户端本身不碰 Android。
+run_harness host-client \
+  app.pi.host.HostClientCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/host/HostClientCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
+
+# app.pi.engine: sdk-host 怎么进 rootfs、怎么被启动。安装器是「同步」而不是「复制」：内容相同不写、
+# 源里没了的目标里删（改名后的宿主不能留旧模块）、半个文件不交给 node；再用**真 assets**装一遍并用
+# node 把装出来的那份起一次，看它发 host.ready。启动命令的引用/转义也在这里钉。
+run_harness sdk-host-install \
+  app.pi.engine.SdkHostInstallerCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/SdkHostInstallerCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/SdkHostInstaller.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/SdkHostLaunch.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
+
+# app.pi.host.HostEngineApi: 旧的响应读取器（`PiResponses.*`）读得懂新宿主的**真**应答吗？
+# 把 record.mjs 录下的真宿主应答按命令名排队，调 API 的每一个方法并断言字段。形状对不上在界面
+# 上是安静的错（模型列表空、统计全 0），所以在这里钉死。需要整个 :rpc 的源码（读取器在里面）。
+run_harness host-api \
+  app.pi.host.HostApiCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/host/HostApiCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
+
+# app.pi.engine.PiEngineSession 接**真宿主 + 真 pi**：真进程、真管道、真状态机。握手后才 Ready、
+# 宿主拒绝变 Failed（不是永远转圈）、发后不管的命令失败变成 Response(success=false)、进程死时在等的
+# 命令立刻失败。缺 node 或 build/pi-contract 时 SKIP。PendingModelRestart 要 Android，这里换成空桩。
+run_harness host-session \
+  app.pi.engine.HostSessionCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/HostSessionCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionLibrary.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/PiEngineSession.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostAdvanced.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostAuth.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
+
+# app.pi.host.OpenArgsFactory: 启动前设置（PiLaunchOptions）→ session.open 参数。旧路径拼命令行 flag，
+# 现在是结构化参数；钉住资源开关、扩展 flag、以及「路径优先于 id 优先于 continue」的会话选择。
+run_harness host-launch \
+  app.pi.host.OpenArgsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/host/OpenArgsCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/OpenArgsFactory.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostFrame.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
+
+# app.pi.session.tree.TreeModel: 会话树视图模型（脊线 + 侧枝、三种过滤、搜索、活动路径、上下文编辑标记）。
+# 纯函数；5000 条直线不爆栈、不缩进。
+run_harness tree-model \
+  app.pi.session.tree.TreeModelCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/tree/TreeModelCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/tree/TreeModel.kt" \
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

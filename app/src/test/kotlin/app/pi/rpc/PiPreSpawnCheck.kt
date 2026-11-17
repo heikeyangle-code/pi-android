@@ -465,7 +465,6 @@ fun main() {
         "discardEmptySessionCreatedByRestart",
         "maybeResumeLastSession",
         "resumeAttempted",
-        "continueFrom",
     )) {
         check(
             "the post-hoc switch-back is gone: no `$gone`",
@@ -474,6 +473,13 @@ fun main() {
                 "用户在那几帧里发的消息就落进另一个文件了。",
         )
     }
+    // `continueFrom` 现在有第二个合法用法：消息操作的「从这条继续」（`continueFromMessage`）。
+    // 裸标识符仍然是那套"事后接回"的形状，按词边界禁；带后缀的不算。
+    check(
+        "the post-hoc switch-back is gone: no bare `continueFrom`",
+        !Regex("\\bcontinueFrom\\b").containsMatchIn(viewModel),
+        "事后接回只能由 argv 完成；再冒出一个 continueFrom 参数就是把旧机制带回来了。",
+    )
 
     // --------------------------------------------------------- the rule: no two truths
     val exposedFlags = APP_EXPOSED_PRE_SPAWN.flatMap { spellings(it.flag) }.toSet()

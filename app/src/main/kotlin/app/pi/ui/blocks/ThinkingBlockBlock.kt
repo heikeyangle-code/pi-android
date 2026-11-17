@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
@@ -39,6 +40,9 @@ import app.pi.ui.theme.numeric
  * to italic text in `thinkingText`. The level is always spelled out in words as
  * well, because colour must never be the only channel.
  */
+/** 扩展给折叠思考块定的标题（已去掉颜色码）；null = 用 App 自己的措辞。 */
+val LocalThinkingLabel = staticCompositionLocalOf<String?> { null }
+
 @Composable
 fun ThinkingBlockBlock(
     item: ThinkingBlock,
@@ -59,7 +63,10 @@ fun ThinkingBlockBlock(
     // (`ToolBlockChrome.toolHeaderReading` → `monoSmall`). Keeping the duration inside the
     // Chinese string was the odd one out: it changed the sentence's advance width as it
     // ticked, and it left the row with one voice per fragment.
-    val headline = if (item.streaming) "思考中…" else "思考"
+    // 扩展用 `ctx.ui.setHiddenThinkingLabel` 换掉折叠思考块的标题（pi 的同名接口）；
+    // 无扩展设置时仍是 App 自己的「思考中… / 思考」。
+    val custom = LocalThinkingLabel.current
+    val headline = custom ?: if (item.streaming) "思考中…" else "思考"
     val headlineDuration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
 
     BlockColumn(modifier) {

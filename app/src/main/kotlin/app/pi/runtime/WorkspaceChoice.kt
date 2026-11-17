@@ -29,7 +29,7 @@ package app.pi.runtime
 object WorkspaceChoice {
 
     /**
-     * 本应用创建的工作区目录名：`workspace-N`。
+     * 默认编号名 `workspace-N`（自动命名与排序用；根下合法目录名的判据是 [nameProblem]）。
      *
      * 刻意是模式而不是「任何子目录」：`pi/workspaces` 里也可能有用户自己放进去的目录，而
      * 这个名字集合同时是**删除的许可范围**（`WorkspaceStore.previewDelete`/`delete` 都先问
@@ -48,8 +48,33 @@ object WorkspaceChoice {
      */
     const val MAX_LABEL_CHARS: Int = 40
 
-    /** 名字是不是本应用创建的工作区（[OWNED]）。 */
-    fun isOwned(name: String): Boolean = OWNED.matches(name)
+    /** 用户起的目录名长度上限（一个目录名，不是路径）。 */
+    const val MAX_NAME_CHARS: Int = 64
+
+    /**
+     * 一个**项目目录名**能不能用，不能用就返回给人看的那句话，能用返回 null。
+     *
+     * pi 里项目就是一个目录（cwd）：会话头记它、信任库按它记，名字是用户的自由，所以这里
+     * 只挡真会出事的：路径分隔与控制字符（一个名字不能变成两级目录、也不能逃出根）、`.`/`..`、
+     * 前导点（`.pi` 这类隐藏目录是 pi 自己的）、首尾空白或结尾的点（同一个名字印出来看不见
+     * 差别）、超长。**不再**要求 `workspace-N` 的形状。
+     */
+    fun nameProblem(raw: String): String? = when {
+        raw.isEmpty() -> "名字不能为空。"
+        raw.any { it == '/' || it == '\\' || it == '\u0000' || it.isISOControl() } -> "名字里不能有 / \\ 或控制字符。"
+        raw == "." || raw == ".." -> "「$raw」不能当目录名。"
+        raw.startsWith('.') -> "不能以点开头（. 开头的是隐藏目录，pi 的 .pi 就在里面）。"
+        raw != raw.trim() || raw.endsWith('.') -> "名字首尾不能是空格，结尾也不能是点。"
+        raw.length > MAX_NAME_CHARS -> "名字最多 $MAX_NAME_CHARS 个字符。"
+        else -> null
+    }
+
+    /**
+     * 名字是不是**根目录下的一个项目目录**（[nameProblem] 通过）。外部目录登记的是绝对路径，
+     * 带 `/`，所以天然不是。这个判据同时是**删除的许可范围**：根下的东西都是本应用管的，
+     * 根外的（外部登记）永远只取消登记、不删文件。
+     */
+    fun isOwned(name: String): Boolean = nameProblem(name) == null
 
     /**
      * `workspace-7` 里的那个 7；不是我们的名字就是 null。

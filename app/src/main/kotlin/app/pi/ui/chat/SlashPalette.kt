@@ -43,7 +43,7 @@ import app.pi.ui.theme.PiTheme
  *
  * Every row here is runnable: the built-ins whose only outcome was a notice
  * ("no entry in this app" or "go to Settings") were **deleted**, not listed, so
- * there is no longer a state to explain. `PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`
+ * there is no longer a state to explain. `PiSlashCommands.CLIENT_BUILTINS`
  * records the seventeen built-ins that are not here and why.
  *
  * The list is capped in height so it never covers the transcript: on a phone the
@@ -135,7 +135,7 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
             // built-ins the app could not run (「仅终端」, then 「本应用：<设置路径>」);
             // every one of those rows was deleted instead, so there is nothing left
             // to annotate. Re-adding a note here means re-adding a row that cannot
-            // be run — see `PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`.
+            // be run — see `PiSlashCommands.CLIENT_BUILTINS`.
             val subtitle = command.description.orEmpty()
             if (subtitle.isNotEmpty()) {
                 Text(
@@ -252,7 +252,7 @@ sealed interface ComposerRoute {
  *
  * There is no longer a third outcome. `ComposerRoute.Unreachable` carried the
  * built-ins that only pi's TUI could run; every one of those rows was deleted
- * from the palette (`PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`) rather than
+ * from the palette (`PiSlashCommands.CLIENT_BUILTINS`) rather than
  * listed as a dead end, so every command in [commands] has a real action and a
  * typed `/name` reaches it exactly like a tap does.
  */

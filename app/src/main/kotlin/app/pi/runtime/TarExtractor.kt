@@ -496,10 +496,21 @@ class TarExtractor(
      * node named rather than quietly deleting their files.
      */
     private fun ensureDirectory(dir: File) {
-        if (dir.isDirectory && !isSymlink(dir)) return
-        unlinkIfPresent(dir)
-        dir.mkdirs()
+        // 已验证过的目录不再重复 stat：旧实现对**每个文件**的每一级父目录各做一次
+        // isDirectory + isSymbolicLink（两次系统调用），ubuntu/engine 合计约 2 万个文件、
+        // 平均深度 6 ⇒ 20 多万次无意义的 stat。缓存的失效点只有一个：该路径上的节点被
+        // [unlinkIfPresent] 摘掉（被文件/软链顶替）——非空目录本来就摘不掉，所以子孙
+        // 路径不会陈旧。
+        if (dir.path in verifiedDirs) return
+        if (!(dir.isDirectory && !isSymlink(dir))) {
+            unlinkIfPresent(dir)
+            dir.mkdirs()
+        }
+        verifiedDirs += dir.path
     }
+
+    /** Directories already proven to be real directories during this extraction. */
+    private val verifiedDirs = HashSet<String>()
 
     /** [ensureDirectory] for every component between [destination] and [target]'s parent. */
     private fun ensureParent(target: File) {
@@ -519,6 +530,7 @@ class TarExtractor(
      * a symlink (never its target), a regular file, or an empty directory.
      */
     private fun unlinkIfPresent(path: File) {
+        verifiedDirs.remove(path.path)
         if (isSymlink(path)) {
             runCatching { Files.deleteIfExists(path.toPath()) }
             return

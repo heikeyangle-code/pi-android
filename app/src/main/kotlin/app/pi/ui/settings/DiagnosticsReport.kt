@@ -341,16 +341,18 @@ object DiagnosticsReport {
                 // 「实际生效：Proot（proot（探针未通过）…）」，同一个答案说两遍，还一遍是
                 // Kotlin 枚举名。开关的状态在下一行单独报。
                 appendLine("  实际生效：${runtimeStatus.summary}")
-                appendLine("  开关：${if (runtimeStatus.enabled) "开" else "关"}" +
+                appendLine("  选择：${runtimeStatus.selected.name.lowercase()}" +
                     " · 连续失败：${runtimeStatus.failures}/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}")
                 // The 档 in force, named here rather than only implied by a probe verdict:
                 // it is what the probe's rules are relative to ("is an untranslated raw
                 // syscall disqualifying?") and what the cache key identifies. The `tag` is
                 // the machine-readable half and the disclosure is the user-readable one, so
                 // a report can be matched to a `ProrootProbeCache` file without guessing.
-                appendLine("  proroot 档：${runtimeStatus.mode.tag}（${runtimeStatus.mode.disclosure}）")
+                if (runtimeStatus.selected == app.pi.runtime.GuestEngine.Proroot) {
+                    appendLine("  proroot 档：${runtimeStatus.mode.tag}（${runtimeStatus.mode.disclosure}）")
+                }
                 appendLine(
-                    "  proroot 探针：" + when (runtimeStatus.probePassed) {
+                    "  ${runtimeStatus.selected.name.lowercase()} 探针：" + when (runtimeStatus.probePassed) {
                         true -> "已通过（缓存）"
                         false -> "未通过（缓存）"
                         null -> "尚未运行"
@@ -371,6 +373,7 @@ object DiagnosticsReport {
                     probeDetail = runtimeStatus.probeDetail,
                 ).forEach { appendLine("  $it") }
             }
+            pathLine(this, "tawcroot", paths.tawcrootBinary())
             pathLine(this, "proroot launcher", paths.prorootLauncher())
             pathLine(this, "proroot runtime", paths.prorootRuntimeHook())
             pathLine(this, "proroot linker", paths.prorootLinker())

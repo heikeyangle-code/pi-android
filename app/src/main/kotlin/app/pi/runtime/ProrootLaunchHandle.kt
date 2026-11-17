@@ -66,6 +66,8 @@ class ProrootLaunchHandle private constructor(
     private val before: Set<String>,
     /** The per-launch token this handle's candidates must carry; see the class KDoc. */
     private val launchToken: String?,
+    /** true = 没有 config 表可找（tawcroot）：按环境里的 token 扫 /proc，认「父进程是本 App」的那个。 */
+    private val scanProc: Boolean = false,
 ) {
 
     /** The pid of the launch this handle was armed for, once resolved. */
@@ -95,10 +97,14 @@ class ProrootLaunchHandle private constructor(
         while (true) {
             // Only a pid that *is* this launch can be selected: see the class KDoc for
             // why "the only new table" is not enough when two launches overlap.
-            val candidate = listNames()
-                .filter { it !in before }
-                .mapNotNull { ProrootConfigSweep.pidOf(it) }
-                .firstOrNull { carriesLaunchToken(it) }
+            val candidate = if (scanProc) {
+                scanForToken()
+            } else {
+                listNames()
+                    .filter { it !in before }
+                    .mapNotNull { ProrootConfigSweep.pidOf(it) }
+                    .firstOrNull { carriesLaunchToken(it) }
+            }
             if (candidate != null) {
                 launcherPid = candidate
                 launcherStartTime = readStartTime(candidate)
@@ -117,6 +123,26 @@ class ProrootLaunchHandle private constructor(
      * only an exact match does. An unreadable environ is **not** a match: falling back
      * to "probably mine" is exactly the guess that can reap another guest.
      */
+    /**
+     * tawcroot 没有 `.proroot-config-<pid>`，但它把**自己的环境原样交给 guest**，所以 launch token
+     * 就在 launcher（它 `execve` 之后就是 guest 本身）的 `/proc/<pid>/environ` 里。guest 的子孙也继承
+     * 同一份环境，所以再加一条：父进程是本 App 的那个才是 launcher。只能读到本 uid 的进程，
+     * 这正是我们要的范围。
+     */
+    private fun scanForToken(): Int? {
+        // `android.os.Process.myPid()` 是 Android API；这个文件被 `proroot` harness 在裸 JVM 上
+        // 编译（见 tools/run-app-pure-checks.sh），所以只能读 `/proc/self`。Android 也是 Linux，
+        // 同一个 uid 的 `/proc` 可读范围与原来一致。
+        val me = runCatching { File("/proc/self").canonicalFile.name.toInt() }.getOrNull() ?: return null
+        val pids = runCatching { File("/proc").list() }.getOrNull().orEmpty().mapNotNull { it.toIntOrNull() }
+        return pids.firstOrNull { pid -> pid != me && parentOf(pid) == me && carriesLaunchToken(pid) }
+    }
+
+    private fun parentOf(pid: Int): Int? = runCatching {
+        val stat = File("/proc/$pid/stat").readText()
+        stat.substring(stat.lastIndexOf(')') + 2).split(' ')[1].toInt()
+    }.getOrNull()
+
     private fun carriesLaunchToken(pid: Int): Boolean {
         val token = launchToken ?: return true
         val environ = runCatching { File("/proc/$pid/environ").readBytes() }.getOrNull() ?: return false
@@ -128,7 +154,8 @@ class ProrootLaunchHandle private constructor(
     }.getOrNull()
 
     /** The table this launch wrote, or null when the pid was never resolved. */
-    fun configFile(): File? = launcherPid?.let { File(directory, ProrootConfigSweep.name(it)) }
+    fun configFile(): File? =
+        if (scanProc) null else launcherPid?.let { File(directory, ProrootConfigSweep.name(it)) }
 
     /** Delete this launch's table. Safe when the pid was never resolved. */
     fun deleteConfig() {
@@ -171,6 +198,10 @@ class ProrootLaunchHandle private constructor(
          */
         fun environHasToken(environ: String, token: String): Boolean =
             environ.split('\u0000').any { it == "$TOKEN_ENV=$token" }
+
+        /** tawcroot 的句柄：没有 config 表，靠 token + 父进程找 launcher。 */
+        fun armByToken(launchToken: String): ProrootLaunchHandle =
+            ProrootLaunchHandle(directory = File("/"), before = emptySet(), launchToken = launchToken, scanProc = true)
 
         fun arm(directory: File, launchToken: String? = null): ProrootLaunchHandle = ProrootLaunchHandle(
             launchToken = launchToken,

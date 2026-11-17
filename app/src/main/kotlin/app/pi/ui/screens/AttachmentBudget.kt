@@ -181,8 +181,7 @@ internal object AttachmentBudget {
      * `inputLimits` lives in `models.json` and the user writes it there (the App's file screen
      * already edits that file: it is a document pi reads and never rewrites). Nothing in this
      * App writes the key today — deliberately. If a UI ever does, it must **read-modify-write
-     * the nested object**: `PiModelsMerge` carries over every key the App does not write, but
-     * inside a key the App *does* write, the written value wins whole — so replacing
+     * the nested object**: a writer that replaces a key wins whole — so replacing
      * `inputLimits` with a freshly built object silently drops the sub-keys the user set
      * (`docs/known-gaps.md` §M12 is that accident, one level up, and it shipped once already).
      *

@@ -270,3 +270,29 @@ internal fun runtimeDetailOverrides(status: RuntimeSelection.Status?): Map<Strin
     return if (text.isBlank()) emptyMap() else mapOf(AppOnlySettingsStore.KEY_STATUS to text)
 }
 
+
+/**
+ * 一个运行时的一词状态，给「各运行时状态」那一行的摘要用。纯字符串工作：输入是已经读好的
+ * `Status`（`statusFor(candidate)`），不碰文件也不起进程。
+ */
+internal fun engineTag(engine: app.pi.runtime.GuestEngine, status: RuntimeSelection.Status): String = when {
+    engine == app.pi.runtime.GuestEngine.Proot -> "可用（内置）"
+    status.missingComponents.isNotEmpty() -> "缺组件"
+    status.probePassed == false -> "探针未过"
+    status.failures > 0 -> "失败 ${status.failures} 次"
+    status.probePassed == true -> "探针通过"
+    else -> "未测"
+}
+
+/** 「各运行时状态」的一行摘要与行下的逐个明细，同出自同一份 [statuses]。 */
+internal fun engineMatrixOverrides(
+    statuses: Map<app.pi.runtime.GuestEngine, RuntimeSelection.Status>?,
+): Pair<String, String> {
+    if (statuses == null) return "未读取" to ""
+    val summary = statuses.entries.joinToString(" · ") { (e, st) -> "${e.name.lowercase()} ${engineTag(e, st)}" }
+    val detail = statuses.entries.joinToString("\n") { (e, st) ->
+        val missing = if (st.missingComponents.isNotEmpty()) "（缺：${st.missingComponents.joinToString("、")}）" else ""
+        "${e.name.lowercase()}：${engineTag(e, st)}$missing"
+    }
+    return summary to detail
+}

@@ -355,13 +355,13 @@ object WorkspaceStore {
             .filter { it.isDirectory && isOwned(it.name) }
             .filterNot { Files.isSymbolicLink(it.toPath()) }
             .map { entry(context, it.name, it, names[it.name], current) }
-            .sortedBy { WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }
+            .sortedWith(byNumberThenName)
             .toList()
         val owned = if (entries.none { it.name == DEFAULT_NAME }) {
             val dir = File(root, DEFAULT_NAME)
             dir.mkdirs()
             (entries + entry(context, DEFAULT_NAME, dir, names[DEFAULT_NAME], current))
-                .sortedBy { WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }
+                .sortedWith(byNumberThenName)
         } else {
             entries
         }
@@ -386,20 +386,24 @@ object WorkspaceStore {
     // ------------------------------------------------------------- mutating
 
     /**
-     * Create the next free `workspace-N` and return it. Never selects it: creating
+     * Create the project directory [requested] under the root (the name is the user's; blank
+     * = the next free `workspace-N`) and return it. Never selects it: creating
      * a directory and moving the engine into it are two different decisions, and
      * only the user makes the second one.
      */
-    fun create(context: Context): Create {
+    fun create(context: Context, requested: String? = null): Create {
         val root = root(context)
         if (!root.isDirectory && !root.mkdirs()) {
-            return Create.Failed("无法创建工作区目录：${root.absolutePath}（存储空间或权限问题）。")
+            return Create.Failed("无法创建项目根目录：${root.absolutePath}（存储空间或权限问题）。")
         }
-        val name = nextFreeName(root)
-            ?: return Create.Failed("无法分配新的工作区编号：${root.absolutePath} 下的 workspace-1 到 workspace-999999 都已被占用。")
+        val name = requested?.takeIf { it.isNotEmpty() } ?: (nextFreeName(root)
+            ?: return Create.Failed("无法分配新的项目编号：${root.absolutePath} 下的 workspace-1 到 workspace-999999 都已被占用。"))
+        WorkspaceChoice.nameProblem(name)?.let { return Create.Failed(it) }
         val dir = File(root, name)
+        // 大小写不敏感的文件系统上 `Foo` 与 `foo` 是同一个目录；exists() 已经替我们判了。
+        if (dir.exists()) return Create.Failed("已经有叫「$name」的项目了。")
         if (!dir.mkdirs() || !dir.isDirectory) {
-            return Create.Failed("无法创建工作区目录：${dir.absolutePath}（存储空间或权限问题）。")
+            return Create.Failed("无法创建项目目录：${dir.absolutePath}（存储空间或权限问题）。")
         }
         return Create.Ok(entry(context, name, dir))
     }
@@ -463,7 +467,7 @@ object WorkspaceStore {
     fun previewDelete(context: Context, name: String): Preview {
         val external = !isOwned(name)
         if (external && name !in externals(context)) {
-            return Preview.Refused("只能删除本应用创建的工作区（workspace-N），「$name」不是。")
+            return Preview.Refused("只能删除项目根目录下的项目，「$name」是外部登记的目录（可以取消登记，不会删文件）。")
         }
         val dir = if (external) File(name) else File(root(context), name)
         if (external) {
@@ -703,6 +707,10 @@ object WorkspaceStore {
         external = external,
         available = available,
     )
+
+    /** `workspace-2` < `workspace-10` < 用户起的名字（按名字）。 */
+    private val byNumberThenName: Comparator<Entry> =
+        compareBy<Entry>({ WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }, { it.name.lowercase() })
 
     private fun nextFreeName(root: File): String? =
         WorkspaceChoice.nextFreeName(root.listFiles().orEmpty().map { it.name })

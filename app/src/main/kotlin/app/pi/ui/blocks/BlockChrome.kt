@@ -219,24 +219,39 @@ internal fun BlockActionMenu(
         return
     }
     var open by remember { mutableStateOf(false) }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Box(
         modifier.combinedClickable(
             onClickLabel = null,
             onLongClickLabel = "更多操作",
-            onLongClick = { open = true },
+            onLongClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                open = true
+            },
             onClick = {},
         ),
     ) {
         content()
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            actions.forEach { action ->
-                DropdownMenuItem(
-                    text = { Text(action.label) },
-                    onClick = {
-                        open = false
-                        action.onSelect()
-                    },
-                )
+    }
+    // 和消息的长按面同一个形态（底部面板 + 触感），而不是一个没有触感、锚点会跳的下拉菜单。
+    if (open) {
+        app.pi.ui.components.PiSheet(onDismiss = { open = false }) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
+                actions.forEach { action ->
+                    Text(
+                        action.label,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                open = false
+                                action.onSelect()
+                            }
+                            .padding(vertical = PiSpacing.cardPadding),
+                        style = app.pi.ui.components.PiType.rowTitle,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                Spacer(Modifier.height(PiSpacing.unit))
             }
         }
     }
@@ -312,7 +327,7 @@ internal val BlockCardRowPadding = PaddingValues(horizontal = 10.dp, vertical = 
  *
  * It is a second constant rather than a change to [BlockCardRowPadding] because that one is
  * shared with the diff card and the two extension sub-page cards
- * (`ui/extension/ExtensionInfoCards.kt`, `ui/extension/ExtensionWidgetCard.kt`), and this
+ * (`ui/extension/ExtensionPanels.kt`), and this
  * decision is about the tool card's own geometry: v2 gives its rows `7px 10px` and the app
  * had 6, which on a one-row card is 2 dp of the height this pass buys back. The horizontal
  * number is v2's own and is the same in both constants.

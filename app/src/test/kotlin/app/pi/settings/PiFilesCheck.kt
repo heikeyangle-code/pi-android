@@ -19,8 +19,6 @@ package app.pi.settings
 // Android-free on purpose: `java.io.File`, kotlinx.serialization and the stdlib only.
 // No `main` argument is read except `pi.repo.root`, which this harness does not need.
 
-import java.io.File
-import java.nio.file.Files
 import kotlin.system.exitProcess
 
 private var failures = 0
@@ -34,92 +32,11 @@ private fun check(name: String, ok: Boolean, detail: String = "") {
     }
 }
 
-private fun writable(vararg paths: String) {
-    for (path in paths) {
-        val access = piFilesAccessFor(path)
-        check("可写：$path", access == PiFilesAccess.Writable, "得到 $access")
-    }
-}
-
-private fun readOnly(vararg paths: String) {
-    for (path in paths) {
-        val access = piFilesAccessFor(path)
-        check("只读：$path", access == PiFilesAccess.ReadOnly, "得到 $access")
-        check(
-            "只读有原因：$path",
-            piFilesReadOnlyReason(path).isNotBlank(),
-        )
-    }
-}
-
 private fun blockers(path: String, text: String): List<String> = checkPiFileWrite(path, text).blockers
 
 private fun accepted(path: String, text: String): Boolean = checkPiFileWrite(path, text).ok
 
 fun main() {
-    // ---------------------------------------------------------------- 根
-    val agent = File("/tmp/pi-files-check/agent")
-    val project = File("/tmp/pi-files-check/ws/.pi")
-    val roots = piFilesRoots(agent, project)
-    check("两个根，顺序固定", roots.size == 2 && roots[0].kind == PiFilesRootKind.AgentDir &&
-        roots[1].kind == PiFilesRootKind.ProjectPi)
-    check("根的文件就是传入的那个目录", roots[0].file == agent && roots[1].file == project)
-    check("根的标签是人话，不带路径", roots.none { it.label.contains("/") || it.label.contains("~") },
-        roots.joinToString { it.label })
-
-    // ---------------------------------------------------------------- 可写白名单
-    writable(
-        "settings.json",
-        "models.json",
-        "AGENTS.md",
-        "AGENTS.override.md",
-        "CLAUDE.md",
-        "SYSTEM.md",
-        "APPEND_SYSTEM.md",
-        "themes/my-theme.json",
-        "skills/review/SKILL.md",
-        "prompts/fix.md",
-        "extensions/hello/index.ts",
-    )
-    check("前导斜杠与 ./ 不影响判定", piFilesAccessFor("/settings.json") == PiFilesAccess.Writable &&
-        piFilesAccessFor("./settings.json") == PiFilesAccess.Writable)
-
-    // 默认拒绝：这些名字一个都不在 pi 的「用户文档」那一类里。
-    readOnly(
-        "auth.json",
-        "models-store.json",
-        "trust.json",
-        "keybindings.json",
-        "pi-debug.log",
-        "sessions/2026-01-01_x.jsonl",
-        "sessions/--workspace--/y.jsonl",
-        "npm/node_modules/pi-skills/index.js",
-        "bin/rg",
-        "tools/whatever.ts",
-        "themes/notes.txt",
-        "settings.json.lock",
-        "sessions.lock",
-        "unknown.json",
-        "../outside.json",
-        "themes/../settings.json",
-        "..",
-        "",
-    )
-    check("auth.json 的只读原因指向凭据页", piFilesReadOnlyReason("auth.json").contains("API Key"))
-    check(
-        "sessions 的只读原因说明 pi 会追加/重写",
-        piFilesReadOnlyReason("sessions/a.jsonl").contains("追加"),
-    )
-    check("锁目录的原因说明它是锁", piFilesReadOnlyReason("settings.json.lock").contains("锁"))
-    check("lock 判定按后缀", isPiLockArtifact("x.lock") && !isPiLockArtifact("x.lock.json"))
-    check(
-        "目录档：白名单里的四个可写，其余只读",
-        piFilesDirIsWritable("themes") && piFilesDirIsWritable("skills/a") &&
-            !piFilesDirIsWritable("sessions") && !piFilesDirIsWritable("npm") &&
-            !piFilesDirIsWritable("bin") && !piFilesDirIsWritable("") &&
-            !piFilesDirIsWritable("../themes"),
-    )
-
     // ---------------------------------------------------------------- 文档类别
     check("settings.json 是设置文档", piFilesDocFor("settings.json") == PiFilesDoc.Settings)
     check("models.json 是模型文档", piFilesDocFor("models.json") == PiFilesDoc.Models)
@@ -213,27 +130,7 @@ fun main() {
         checkPiFileWrite("extensions/a/index.ts", "x(").notices.isNotEmpty())
     check("markdown 不校验", accepted("SYSTEM.md", "# 任意文本\n\n-----") && accepted("skills/a/SKILL.md", "任意"))
 
-    // ---------------------------------------------------------------- 路径
-    val tmp = Files.createTempDirectory("pi-files-check").toFile()
-    val root = File(tmp, "agent").also { it.mkdirs() }
-    val inside = File(root, "themes/t.json").also { it.parentFile.mkdirs(); it.writeText("{}") }
-    val outside = File(tmp, "outside.json").also { it.writeText("{}") }
-    check("根内路径可解析", piFilesRelativePath(root, inside) == "themes/t.json", piFilesRelativePath(root, inside).toString())
-    check("根自己解析成空串", piFilesRelativePath(root, root) == "")
-    check("根外路径解析成 null", piFilesRelativePath(root, outside) == null)
-    check(
-        "前缀相同的兄弟目录不算根内",
-        piFilesRelativePath(File(tmp, "a"), File(tmp, "ab/x").also { it.parentFile.mkdirs(); it.writeText("") }) == null,
-    )
-    check("面包屑", piFilesBreadcrumb("agent 目录", "themes/t.json") == "agent 目录 / themes/t.json")
-    check("面包屑（根）", piFilesBreadcrumb("项目 .pi", "") == "项目 .pi")
-    check("父目录", piFilesParent("themes/t.json") == "themes" && piFilesParent("t.json") == "")
-    check("子路径", piFilesChild("themes", "t.json") == "themes/t.json" && piFilesChild("", "a") == "a")
-
-    println(
-        "\npi-files: 根 ${roots.size} 个 · 可写示例 ${piFilesAccessFor("settings.json")} · " +
-            "只读示例 ${piFilesAccessFor("auth.json")} · 7 类文档各有校验器",
-    )
+    println("\npi-files: 7 类文档各有校验器")
     println(if (failures == 0) "\nharness: OK" else "\nharness: FAILED ($failures)")
     if (failures != 0) exitProcess(1)
 }

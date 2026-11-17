@@ -268,6 +268,53 @@ fun main() {
         RuntimeSwitchAction.onWrite(true) == Step.Probing,
     )
 
+
+    // ------------------------------------------------ 7. 三选一（Target）
+    check(
+        "R1 proot needs no probe, the other two probe first",
+        RuntimeSwitchAction.onWrite(RuntimeSwitchAction.Target.Proot) == Step.RestartingToProot &&
+            RuntimeSwitchAction.onWrite(RuntimeSwitchAction.Target.Proroot) == Step.Probing &&
+            RuntimeSwitchAction.onWrite(RuntimeSwitchAction.Target.Tawcroot) == Step.Probing,
+    )
+    check(
+        "R2 only a passed probe for the still-selected target restarts onto it",
+        RuntimeSwitchAction.afterProbe(RuntimeSwitchAction.Target.Tawcroot, RuntimeSwitchAction.Target.Tawcroot, true) == Step.RestartingToTawcroot &&
+            RuntimeSwitchAction.afterProbe(RuntimeSwitchAction.Target.Proroot, RuntimeSwitchAction.Target.Proroot, true) == Step.RestartingToProroot &&
+            RuntimeSwitchAction.afterProbe(RuntimeSwitchAction.Target.Tawcroot, RuntimeSwitchAction.Target.Tawcroot, false) == Step.Idle,
+    )
+    check(
+        "R3 a selection that changed during the probe is stale, whatever the verdict",
+        RuntimeSwitchAction.Target.entries.all { sel -> RuntimeSwitchAction.Target.entries.filter { it != sel }.all { w ->
+            RuntimeSwitchAction.afterProbe(sel, w, true) == Step.Idle
+        } },
+    )
+    check(
+        "R4 a refused restart never leaves a non-proot selection behind",
+        RuntimeSwitchAction.Target.entries.all { RuntimeSwitchAction.settle(it, RestartResult.Refused) == RuntimeSwitchAction.Target.Proot },
+    )
+    check(
+        "R5 ok/failed keep what the user wrote",
+        RuntimeSwitchAction.Target.entries.all {
+            RuntimeSwitchAction.settle(it, RestartResult.Ok) == it &&
+                RuntimeSwitchAction.settle(it, RestartResult.Failed) == it
+        },
+    )
+    check(
+        "R6 only switching back to proot may interrupt a running turn",
+        RuntimeSwitchAction.allowInterrupt(RuntimeSwitchAction.Target.Proot) &&
+            !RuntimeSwitchAction.allowInterrupt(RuntimeSwitchAction.Target.Proroot) &&
+            !RuntimeSwitchAction.allowInterrupt(RuntimeSwitchAction.Target.Tawcroot),
+    )
+    check(
+        "R7 the probing line names the runtime under test",
+        RuntimeSwitchAction.statusLine(Step.Probing, RuntimeSwitchAction.Target.Tawcroot)?.contains("tawcroot") == true &&
+            RuntimeSwitchAction.statusLine(Step.Probing, RuntimeSwitchAction.Target.Proroot)?.contains("proroot") == true,
+    )
+    check(
+        "R8 restartingTo is a bijection onto the three restart steps",
+        RuntimeSwitchAction.Target.entries.map { RuntimeSwitchAction.restartingTo(it) }.toSet().size == 3,
+    )
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) exitProcess(1)
 }

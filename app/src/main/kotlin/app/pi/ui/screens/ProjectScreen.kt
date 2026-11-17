@@ -67,10 +67,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
 import app.pi.packages.AgentLayout
-import app.pi.packages.GuestCommand
-import app.pi.packages.PiResources
-import app.pi.packages.ProjectTrust
-import app.pi.packages.TrustRepository
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
@@ -81,7 +77,6 @@ import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.ui.BashRun
 import app.pi.ui.NavRequest
-import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
@@ -99,7 +94,6 @@ import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.components.PiType
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -113,7 +107,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * 工作区 —— 这个会话的**项目现场**，而且现在能动手。
@@ -175,7 +168,7 @@ fun ProjectScreen(
     // （`PtyLauncher.workspaceHost` 走 `WorkspaceStore.currentHost`，`WorkspaceStore.setCurrent`
     // 只改设置里的名字），而 Activity 的 context 不变 —— `remember(context)` 会把这一屏
     // 钉在首次组合时那个工作区上，切换之后一路读旧目录。`PiSettingsStack.kt:206-212` /
-    // `ModelProviderScreen.kt` 开头是同一手法（原来分属 PiModelsScreen / PiCredentialScreen
+    // `ModelsScreen.kt` 开头是同一手法（原来分属 PiModelsScreen / PiCredentialScreen
     // 两屏，现已合并成一屏）。
     // 路径是一次设置读取，不是一次目录扫描。
     val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
@@ -197,6 +190,13 @@ fun ProjectScreen(
     var workspaceEntries by remember { mutableStateOf<List<WorkspaceStore.Entry>>(emptyList()) }
     LaunchedEffect(refreshTick, state.workspace.revision) {
         workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
+    }
+    // 每个项目各自的信任结论（SDK 的信任库说了算，宿主 `project.trustOf`）：键是 guest 路径。
+    // 引擎没起就是空表，切换列表照常显示、只是不带徽标。
+    var projectTrust by remember { mutableStateOf<Map<String, Boolean?>>(emptyMap()) }
+    LaunchedEffect(workspaceEntries, state.workspace.revision) {
+        val access = session.extensionsAccess()
+        projectTrust = if (access == null) emptyMap() else access.resources.trustOf(workspaceEntries.map { it.guestPath })
     }
 
     // 当前工作区**叫什么**：一份真相，就是 ViewModel 发布的那份身份 —— 工作区**目录名**
@@ -298,9 +298,14 @@ fun ProjectScreen(
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
+    // pi 的 find / grep / `@` 补全都带 `--hidden`（点开头的照列），但**排除 `.git`**（补全里显式 `--exclude .git`，
+    // `find` 的兜底路径还排除 `node_modules`，`core/tools/find.js:79`），并遵守 .gitignore。这里照这个来：
+    // `.git` 与 `node_modules` 默认收起，其余（含 `.pi`、`.env`）照列；要看被忽略的，在排序菜单里打开。
+    // 不逐条解析 .gitignore —— 那是对 fd/rg 的近似，不是它们本身。
+    var showIgnored by rememberSaveable { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
-    val sortedEntries = remember(listing, sortMode, filterText) {
-        val all = listing.orEmpty()
+    val sortedEntries = remember(listing, sortMode, filterText, showIgnored) {
+        val all = listing.orEmpty().filter { showIgnored || !(it.isDirectory && it.name in PI_IGNORED_DIRS) }
         val q = filterText.trim()
         val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
         filtered.sortedWith(sortMode.comparator)
@@ -325,60 +330,23 @@ fun ProjectScreen(
         )
     }
 
-    // ------------------------------------------------------------ ⑤ 资源扫描
-    val resourceManager = remember(layout) {
-        ResourceManager(PiResources(context, layout, GuestCommand(layout)), layout, scope)
-    }
-    // 文件 / 资源两个分段：这一屏原来把两者摞在一条列表里，往下滚才看到资源，
-    // 像两个功能硬拼在一起。
-    var showResources by rememberSaveable { mutableStateOf(false) }
-    // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
-    var overflow by remember { mutableStateOf(false) }
-    var aboutOpen by remember { mutableStateOf(false) }
-    var projectUntrusted by remember { mutableStateOf(false) }
-    LaunchedEffect(refreshTick, workspace, projectUntrusted, showResources) {
-        if (showResources) resourceManager.refresh(!projectUntrusted)
-    }
-    LaunchedEffect(refreshTick, workspace, agentDir) {
-        withContext(Dispatchers.IO) {
-            // 信任：pi 只加载**受信任**项目的 `.pi` 资源（`interactive-mode.ts:3877`、
-            // `:3888-3907`），未受信任时它照旧启动但忽略这些目录 —— 而这一段照常把它们
-            // 列出来，所以必须说清哪些不会生效。
-            //
-            // 判据与设置里的「扩展包与项目信任」卡同源（`PiPackagesHost.readTrust`）：
-            // `trust.json` 的存档决定 + 设置里的 `defaultProjectTrust`，交给纯逻辑
-            // `ProjectTrust.resolve` 裁决。`hasTrustRequiringResources` 在这里用**宿主侧
-            // 同一批目录**判断（`.pi/` 下是否有东西），pi 还会额外看 `<cwd>/.agents/skills`；
-            // 漏掉那一处只会让提示**少出现**，不会凭空出现。
-            val requiresTrust = ProjectTrust.TRUST_REQUIRING_CONFIG_ENTRIES.any {
-                File(configDir, it).exists()
-            }
-            if (requiresTrust) {
-                val repository = TrustRepository(layout)
-                val saved = runCatching { repository.decisionFor(layout.guestWorkspace) }.getOrNull()
-                val defaultTrust = runCatching {
-                    (session.settingsStore.read("defaultProjectTrust") as? JsonPrimitive)?.content
-                }.getOrNull() ?: "ask"
-                projectUntrusted = runCatching {
-                    !ProjectTrust.resolve(
-                        ProjectTrust.Inputs(
-                            cwd = layout.guestWorkspace,
-                            hasTrustRequiringResources = true,
-                            savedDecision = saved,
-                            defaultProjectTrust = defaultTrust,
-                            // 这一屏不是那个对话框：不给答案（null），让 resolve 按存档
-                            // 与默认值裁决，而不是替用户点一个。
-                            hasUI = true,
-                            userAnswer = null,
-                        ),
-                    ).trusted
-                }.getOrDefault(false)
-            } else {
-                projectUntrusted = false
+    // ------------------------------------------------------------ ⑤ 资源
+    // 资源（扩展 / 技能 / 提示 / 主题 / 包 / 项目信任）统一在「设置 → 扩展与资源」，这里只放入口，不再复制一份。
+    // 入口行的副标题读宿主的项目信任结论（`project.trustState`，SDK 的信任库说了算）；读不到就退回静态文案。
+    var trustMeta by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refreshTick, state.workspace.revision) {
+        val r = session.extensionsAccess()?.resources?.trustState()
+        trustMeta = (r as? app.pi.packages.PiResourceCatalog.Parsed.Ok)?.value?.let { t ->
+            when {
+                t.trusted -> "本项目已信任：.pi 下的扩展、技能、提示会被加载"
+                t.undecided -> "本项目还没表态：.pi 下的资源暂不加载，点进去处理"
+                else -> "本项目不被信任：只加载全局资源"
             }
         }
     }
-
+    // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
+    var overflow by remember { mutableStateOf(false) }
+    var aboutOpen by remember { mutableStateOf(false) }
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
     // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
@@ -524,22 +492,16 @@ fun ProjectScreen(
     /**
      * 新建工作区。
      *
-     * 名字由引擎分配（下一个空闲的 `workspace-N`），**不在这里输入名字**：能改的只有
-     * 显示名（label），而那正是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
+     * 名字是用户起的**目录名**（`WorkspaceChoice.nameProblem` 裁决；留空 = 下一个空闲的
+     * `workspace-N`）；显示名（label）仍是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
      * 搬进它是两个决定，`WorkspaceStore.create` 的 KDoc 把这条写死了。
      */
-    fun createNewWorkspace(label: String = "") {
+    fun createNewWorkspace(dirName: String = "") {
         scope.launch {
-            when (val result = withContext(Dispatchers.IO) {
-                val created = session.createWorkspace()
-                // 起了名就顺手写上显示名（失败不影响建好的目录，名字之后还能在 ⋮ 里改）。
-                if (created is WorkspaceStore.Create.Ok && label.isNotBlank()) {
-                    session.renameWorkspace(created.entry.name, label.trim())
-                }
-                created
-            }) {
+            // 名字就是目录名（pi 里项目 = 目录，会话与信任都按这个路径记）；留空 = workspace-N。
+            when (val result = withContext(Dispatchers.IO) { session.createWorkspace(dirName.trim().ifEmpty { null }) }) {
                 is WorkspaceStore.Create.Ok -> {
-                    say("已新建工作区 · ${label.trim().ifEmpty { result.entry.displayName }}")
+                    say("已新建项目 · ${result.entry.displayName}")
                     refreshTick++
                     // 新建不自动切过去（那是另一个决定）；把切换面板重新打开，新工作区就在眼前、一点即到。
                     rootSheet = true
@@ -722,46 +684,21 @@ fun ProjectScreen(
                     }
                 },
             )
-            // **文件 / 资源两个分段**：这一屏原来把两者摞在一条列表里，往下滚才看见资源，
-            // 像两个功能硬拼在一起。分段在列表外面，滚动时不跟着走。
-            PiSeg(
-                options = listOf(WS_SEGMENT_FILES, WS_SEGMENT_RESOURCES),
-                selectedIndex = if (showResources) 1 else 0,
-                onSelect = { showResources = it == 1 },
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = WS_SEGMENT_TOP,
-                    bottom = WS_SEGMENT_BOTTOM,
-                ),
-            )
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = PiSpacing.scrollBottom),
             ) {
-                if (showResources) {
-                    // ---------------------------------------------------- 资源
-                    // 清单是 pi 自己算的（装的包、内置扩展、各层目录），逐条开关也由 pi 的
-                    // 逻辑写；这里不再扫目录去猜。
-                    resourceManagerItems(
-                        manager = resourceManager,
-                        projectUntrusted = projectUntrusted,
-                        onManagePackages = {
-                            session.requestNav(NavRequest.SettingsFocus("packages"))
-                        },
-                        onOpen = { item, file ->
-                            viewer = WorkspaceViewerTarget(
-                                relativePath = item.name,
-                                file = file,
-                                kind = WorkspaceFiles.kindOf(file),
-                                sizeBytes = file.length(),
-                                modifiedAt = file.lastModified(),
-                                editable = false,
-                                startInEdit = false,
+                run {
+                    item(key = "resources-entry") {
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "扩展与资源",
+                                meta = trustMeta ?: "扩展、技能、提示、主题、包，以及项目信任",
+                                trail = { Text("管理", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
                             )
-                        },
-                    )
-                } else {
+                        }
+                    }
                     // ---------------------------------------------------- 文件
                     if (engineDown) {
                         item {
@@ -937,6 +874,9 @@ fun ProjectScreen(
                                                         sortIndex = mode.ordinal
                                                         sortMenu = false
                                                     }
+                                                } + PiMenuItem(if (showIgnored) "收起 .git / node_modules" else "显示 .git / node_modules") {
+                                                    showIgnored = !showIgnored
+                                                    sortMenu = false
                                                 },
                                             )
                                         }
@@ -1172,6 +1112,7 @@ fun ProjectScreen(
     if (rootSheet) {
         WorkspaceRootSheet(
             entries = workspaceEntries,
+            trust = projectTrust,
             onClose = { rootSheet = false },
             // 面板先关，再决定切不切：`switchWorkspace` 的 `Refused` / `Failed` 那句话是
             // VM 推的 notice（主窗口里那一条 snackbar），面板是一层 `Dialog` 窗口，开着就
@@ -1206,8 +1147,8 @@ fun ProjectScreen(
                 rootSheet = false
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewWorkspace,
-                    title = "新建工作区",
-                    where = "App 私有目录",
+                    title = "新建项目",
+                    where = "项目目录名（留空自动编号）",
                     relativeParent = null,
                     absoluteParent = null,
                     initial = "",
@@ -1396,11 +1337,17 @@ fun ProjectScreen(
                     if (copied) StateTone.Muted else StateTone.Warning,
                 )
             },
-            onLocateInChat = {
+            onMention = {
                 menuFor = null
-                // 稿子的原型也只是关掉菜单；正式版要切到「对话」tab 并定位到那一步，
-                // 而这一屏拿不到导航句柄（`ProjectScreen` 只有 contentPadding + session）。
-                say("定位到对话需要切 tab 并滚动转录，这一批没接上。", StateTone.Warning)
+                // pi 的「引用文件」手势就是输入框里的 `@路径`（`PiFileMentions`）：写进草稿再切到对话，
+                // 用户接着打字就行。路径是相对项目的，与 `@` 补全给出的同一个写法。
+                val token = app.pi.ui.chat.PiFileMentions.buildCompletionValue(
+                    target.path + if (target.isDirectory) "/" else "",
+                    quoted = false,
+                )
+                val draft = session.composerDraft.text
+                draft.value = if (draft.value.isBlank()) "$token " else draft.value.trimEnd() + " $token "
+                session.requestNav(NavRequest.Chat)
             },
         )
     }
@@ -1446,7 +1393,7 @@ fun ProjectScreen(
                 // 裁决 —— 它的 `Failed.message` 就是给人看的那句话。
                 val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace ||
                     dialog.kind == WorkspaceInputKind.NewWorkspace
-                ) {
+                ) { // 新建项目的名字在对话框里已按目录名规则当场检查过，这里不再重复
                     null
                 } else {
                     WorkspaceFiles.nameProblem(typed)
@@ -1560,11 +1507,7 @@ private val WS_CHIP_TOP = 10.dp
 private val WS_CHIP_BOTTOM = 6.dp
 
 /** 「文件 / 资源」分段那一条的上下留白。 */
-private val WS_SEGMENT_TOP = 4.dp
-private val WS_SEGMENT_BOTTOM = 10.dp
 
-private const val WS_SEGMENT_FILES = "文件"
-private const val WS_SEGMENT_RESOURCES = "资源"
 
 @Composable
 private fun FolderGlyph() {
@@ -2159,6 +2102,9 @@ private fun WorkspaceEntryRow(
 }
 
 /** 文件列表的排序方式。除「最近修改」外，目录排在文件前面。 */
+/** pi 的文件发现（`@` 补全、`find`）默认排除的目录；其余点开头的项 pi 照列。 */
+private val PI_IGNORED_DIRS: Set<String> = setOf(".git", "node_modules")
+
 private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparator<WorkspaceEntry>) {
     Name("名称", { compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
     // 最近修改：目录和文件混排，真正最近动过的在最上面（默认）。
@@ -2484,6 +2430,8 @@ private fun EntryGlyph(kind: WorkspaceEntryKind) {
 @Composable
 private fun WorkspaceRootSheet(
     entries: List<WorkspaceStore.Entry>,
+    /** guest 路径 → 信任结论（`true` 信任 / `false` 不信任 / `null` 待表态）；没有这一项 = 不知道，不画徽标。 */
+    trust: Map<String, Boolean?>,
     onClose: () -> Unit,
     onPick: (WorkspaceStore.Entry) -> Unit,
     onNew: () -> Unit,
@@ -2491,17 +2439,17 @@ private fun WorkspaceRootSheet(
     onMenu: (WorkspaceStore.Entry) -> Unit,
 ) {
     WsSheet(
-        title = "切换工作区",
+        title = "切换项目",
         onClose = onClose,
-        subtitle = "App 私有目录和设备目录里的都可以当工作区。",
-        footer = "换工作区会新建一个 pi 会话，当前会话不会被删除。",
+        subtitle = "项目就是一个目录：App 私有目录和设备目录里的都可以。",
+        footer = "换项目会新建一个 pi 会话，当前会话不会被删除。项目信任按目录记在 pi 的信任库里。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
         // 两个入口放在最上面（工作区一多，「新建」会被挤到列表下面）：一张卡、两行，
         // 每行一句话说清「它会做什么」，比两颗并排的小胶囊好点、也好读。
         WsCard {
             WsRow(
-                title = "新建工作区",
+                title = "新建项目",
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = {
@@ -2512,7 +2460,7 @@ private fun WorkspaceRootSheet(
                         tint = PiTheme.palette.accent,
                     )
                 },
-                meta = "建在 App 私有目录里，建好可随时改名。",
+                meta = "起个目录名，建在 App 私有目录里；留空自动编号。",
                 onClick = onNew,
             )
             WsHairline(startInset = WsIconHairlineStart)
@@ -2535,7 +2483,7 @@ private fun WorkspaceRootSheet(
                 strong = true,
                 lead = { FolderGlyph() },
                 leadBackground = if (item.isCurrent) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
-                badge = if (renamed || item.isCurrent || item.external || !item.available) {
+                badge = if (renamed || item.isCurrent || item.external || !item.available || (item.guestPath in trust && trust[item.guestPath] != true)) {
                     {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -2552,6 +2500,15 @@ private fun WorkspaceRootSheet(
                             }
                             if (!item.available) {
                                 WsBadge(text = "读不到", tone = StateTone.Warning)
+                            }
+                            // 信任挂在目录路径上（pi 的 trust.json 按 cwd 记）；只标「不是默认好」的两种，
+                            // 已信任是常态，不画（一屏都是同一个徽标等于没有）。
+                            if (item.guestPath in trust) {
+                                when (trust[item.guestPath]) {
+                                    false -> WsBadge(text = "未信任", tone = StateTone.Warning)
+                                    null -> WsBadge(text = "待表态", tone = StateTone.Warning)
+                                    true -> Unit
+                                }
                             }
                             if (item.isCurrent) {
                                 WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
@@ -2643,7 +2600,7 @@ private data class WorkspaceMenuTarget(
      * 文本覆盖那些字节。
      */
     val kind: WorkspaceEntryKind,
-    /** 从 ③ 来的行多一项「看它在对话里的那一步」。 */
+    /** 这一行是从 ③「本次会话改过」点进来的（保留给以后区分来路用）。 */
     val fromSession: Boolean,
     val sizeBytes: Long,
     val modifiedAt: Long,
@@ -2664,7 +2621,7 @@ private fun menuTargetFor(path: String, file: File, fromSession: Boolean): Works
 /**
  * 行尾 ⋮ 的底部菜单。
  *
- * 稿子的动作表：③ 的行是「打开 / 编辑 / 重命名 / 删除 / 看它在对话里的那一步」，④ 的文件是
+ * 稿子的动作表：③ 的行与 ④ 一样，④ 的文件是
  * 「打开 / 编辑 / 重命名 / 删除 / 复制路径」，④ 的目录是「进入 / 重命名 / 删除 / 复制路径」。
  * 删除用错误色（它是唯一不可逆的那一个）。
  *
@@ -2696,7 +2653,7 @@ private fun WorkspaceMenuSheet(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onCopyPath: () -> Unit,
-    onLocateInChat: () -> Unit,
+    onMention: () -> Unit,
 ) {
     WsSheet(
         title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
@@ -2708,6 +2665,7 @@ private fun WorkspaceMenuSheet(
             MenuAction("进入", onEnter)
             MenuAction("重命名", onRename)
             MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            MenuAction("在对话里引用（@）", onMention)
             MenuAction("复制路径", onCopyPath)
         } else {
             MenuAction("打开", onOpen)
@@ -2720,11 +2678,8 @@ private fun WorkspaceMenuSheet(
             MenuAction("导出到 Download", onExport)
             MenuAction("重命名", onRename)
             MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-            if (target.fromSession) {
-                MenuAction("看它在对话里的那一步", onLocateInChat)
-            } else {
-                MenuAction("复制路径", onCopyPath)
-            }
+            MenuAction("在对话里引用（@）", onMention)
+            MenuAction("复制路径", onCopyPath)
         }
     }
 }
@@ -2888,8 +2843,11 @@ private fun WorkspaceNameDialog(
         val problem = when (dialog.kind) {
             // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
             WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
-            // 新建工作区：名字可以不填（用默认的 workspace-N）。
-            WorkspaceInputKind.NewWorkspace -> null
+            // 新建项目：名字就是目录名，可以不填（用 workspace-N）；填了就当场按目录名规则检查。
+            WorkspaceInputKind.NewWorkspace ->
+                if (trimmed.isEmpty()) null
+                else WorkspaceChoice.nameProblem(name)
+                    ?: if (java.io.File(WorkspaceStore.root(LocalContext.current), trimmed).exists()) "已经有叫「$trimmed」的项目了。" else null
             else -> WorkspaceFiles.nameProblem(name) ?: run {
                 // 同名在输入时就说，而不是提交后才报「已存在」。重命名成自己原来的名字不算冲突
                 // （按「确定」会因没有变化而什么也不做）。

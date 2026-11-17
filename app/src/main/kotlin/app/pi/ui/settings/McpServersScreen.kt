@@ -32,10 +32,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import app.pi.packages.AgentLayout
-import app.pi.packages.GuestCommand
-import app.pi.packages.PiMcpLogin
-import app.pi.runtime.PtyLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.packages.PiMcpConfig
 import app.pi.packages.PiMcpFile
-import app.pi.packages.PiMcpCheck
 import app.pi.packages.PiMcpStatus
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
@@ -79,20 +74,9 @@ internal fun McpServersScreen(
     onBack: () -> Unit,
     userFile: File,
     projectFile: File,
-    onRestartEngine: () -> Unit,
+    access: () -> app.pi.host.ExtensionsAccess?,
     onFilesWritten: () -> Unit,
 ) {
-    // 登录 / 退出登录：跑 pi 自己的 `pi mcp login|logout`（见 [PiMcpLogin]）。
-    val context = LocalContext.current
-    val hostWorkspace = PtyLauncher.workspaceHost(context)
-    val mcpLogin = remember(context, hostWorkspace.absolutePath) {
-        val layout = AgentLayout(context = context.applicationContext, hostWorkspace = hostWorkspace)
-        PiMcpLogin(layout, GuestCommand(layout))
-    }
-    val mcpCheck = remember(context, hostWorkspace.absolutePath) {
-        val layout = AgentLayout(context = context.applicationContext, hostWorkspace = hostWorkspace)
-        PiMcpCheck(layout, GuestCommand(layout))
-    }
     // 「检测连接」的结果：只在用户点了才去连服务器；改过配置后它就过期了，会被清掉。
     var status by remember { mutableStateOf<PiMcpStatus.Report?>(null) }
     var checking by remember { mutableStateOf(false) }
@@ -129,39 +113,101 @@ internal fun McpServersScreen(
         epoch++
     }
 
+    // 宿主在引擎进程里直接连服务器（`mcp.list`），不再另起一个 guest 进程。
     fun runCheck() {
         if (checking) return
+        val host = access()
+        if (host == null) {
+            checkFailure = "引擎还没起来，起来之后才能检测连接。"
+            return
+        }
         checking = true
         checkFailure = null
         scope.launch {
-            when (val result = withContext(Dispatchers.IO) { mcpCheck.run() }) {
-                is PiMcpCheck.Result.Ok -> status = result.report
-                is PiMcpCheck.Result.Failed -> checkFailure = result.message
+            try {
+                val reports = host.ext.mcpCheck()
+                status = PiMcpStatus.Report(
+                    servers = reports.map {
+                        PiMcpStatus.Server(
+                            name = it.name, scope = "", enabled = it.state != "disabled", state = it.state,
+                            tools = it.tools, toolExposure = emptyMap(), resources = it.resources, error = it.error,
+                        )
+                    },
+                    errors = emptyList(),
+                    note = null,
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                checkFailure = e.message ?: "检测失败"
             }
             checking = false
         }
     }
 
-    // 登录入口有两处：列表行上的「登录」（检测出需要登录时才出现）和编辑页里的「登录 / 重新登录」。
-    fun startLogin(name: String) {
-        loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, "")
+    // 「让改动生效」：热重载（`session.reload`），不重启引擎。
+    var reloading by remember { mutableStateOf(false) }
+    fun reload() {
+        val host = access() ?: run { error = "引擎还没起来；下次起来时会读到新配置。"; return }
+        if (reloading) return
+        reloading = true
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                mcpLogin.login(name) { url ->
-                    loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, url, "")
-                    scope.launch { runCatching { uriHandler.openUri(url) } }
-                }
+            try {
+                host.ext.reload()
+                pendingRestart = false
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "重新加载失败"
             }
-            loginUi = when (result) {
-                is PiMcpLogin.Result.Ok -> LoginUi(
-                    LoginUi.Kind.Login, name, LoginUi.Phase.Done, null,
-                    if (result.alreadySignedIn) "已经是登录状态，无需再登录。" else "登录成功。新会话里就能用它的工具了。",
-                )
-                is PiMcpLogin.Result.Failed -> LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Failed, null, result.message)
-            }
-            if (result is PiMcpLogin.Result.Ok) {
+            reloading = false
+        }
+    }
+
+    // 登录入口有两处：列表行上的「登录」（检测出需要登录时才出现）和编辑页里的「登录 / 重新登录」。
+    // OAuth 是 pi 的实现（动态注册、PKCE、刷新），宿主命令 `mcp.login` 在引擎进程里跑；授权网址走
+    // `mcp.auth` 事件，回调到不了时宿主会问「请贴回跳地址」（`mcp.redirect`），「不等了」真的会取消。
+    var loginJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var loginId by remember { mutableStateOf<String?>(null) }
+    fun startLogin(name: String) {
+        val host = access()
+        if (host == null) {
+            loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Failed, null, "引擎还没起来，起来之后才能登录。")
+            return
+        }
+        val id = "m${System.nanoTime().toString(36)}"
+        loginId = id
+        loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, "")
+        loginJob = scope.launch {
+            val watchers = listOf(
+                launch {
+                    host.events.collect { event ->
+                        app.pi.host.HostExtensions.authUrl(event)?.takeIf { it.loginId == id }?.let { auth ->
+                            loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, auth.url, "")
+                            runCatching { uriHandler.openUri(auth.url) }
+                        }
+                    }
+                },
+                launch {
+                    host.requests.collect { request ->
+                        app.pi.host.HostExtensions.redirectRequest(request)?.takeIf { it.first == id }?.let {
+                            loginUi = loginUi?.copy(redirectRequestId = request.id)
+                        }
+                    }
+                },
+            )
+            try {
+                val tools = host.ext.mcpLogin(name, id)
+                loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Done, null, "登录成功，${tools.size} 个工具可用。")
                 status = null
                 pendingRestart = true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: app.pi.host.HostException) {
+                loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Failed, null, e.message ?: e.code)
+            } finally {
+                watchers.forEach { it.cancel() }
+                loginId = null
             }
         }
     }
@@ -219,9 +265,9 @@ internal fun McpServersScreen(
                 item {
                     PiSettingsCard {
                         PiSettingsEntryRow(
-                            title = "让改动生效",
-                            supporting = "新会话会自动读取；想马上用，点这里重启引擎",
-                            onClick = onRestartEngine,
+                            title = if (reloading) "正在重新加载…" else "让改动生效",
+                            supporting = "新会话会自动读取；想马上用，点这里热重载（不重启引擎）",
+                            onClick = { reload() },
                         )
                     }
                 }
@@ -386,8 +432,50 @@ internal fun McpServersScreen(
                 if (waiting) ui.url?.let { uriHandler.openUri(it) } else loginUi = null
             },
             dismissalLabel = if (waiting) "不等了" else null,
-            onDismissButton = { loginUi = null },
+            onDismissButton = {
+                loginId?.let { id -> scope.launch { runCatching { access()?.ext?.mcpCancelLogin(id) } } }
+                loginUi = null
+            },
         )
+    }
+
+    loginUi?.takeIf { it.redirectRequestId != null }?.let { ui ->
+        var pasted by remember(ui.redirectRequestId) { mutableStateOf("") }
+        val requestId = ui.redirectRequestId.orEmpty()
+        fun answer(value: String?) {
+            loginUi = loginUi?.copy(redirectRequestId = null)
+            scope.launch {
+                runCatching {
+                    access()?.respond?.invoke(
+                        requestId,
+                        value?.let { kotlinx.serialization.json.JsonPrimitive(it) },
+                        value == null,
+                    )
+                }
+            }
+        }
+        PiSettingsSheet(onDismiss = { answer(null) }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSettingsMetrics.sheetHeadTop),
+                verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
+            ) {
+                Text("粘贴回跳地址", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    "授权后浏览器若停在一个打不开的页面，把地址栏里那串完整网址复制到这里。",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                )
+                PiEditorField(
+                    value = pasted,
+                    onValueChange = { pasted = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "回跳网址",
+                )
+                Button(onClick = { answer(pasted.trim()) }, enabled = pasted.isNotBlank()) { Text("提交") }
+            }
+        }
     }
 
     if (importing) {
@@ -438,10 +526,13 @@ internal fun McpServersScreen(
                     editing = null
                     loginUi = LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Waiting, null, "")
                     scope.launch {
-                        val result = withContext(Dispatchers.IO) { mcpLogin.logout(name) }
-                        loginUi = when (result) {
-                            is PiMcpLogin.Result.Ok -> LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Done, null, result.message)
-                            is PiMcpLogin.Result.Failed -> LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Failed, null, result.message)
+                        loginUi = try {
+                            val message = access()?.ext?.mcpLogout(name) ?: "已退出登录。"
+                            LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Done, null, message.ifBlank { "已退出登录。" })
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Failed, null, e.message ?: "退出失败")
                         }
                     }
                 }
@@ -464,6 +555,8 @@ private data class LoginUi(
     val phase: Phase,
     val url: String?,
     val message: String,
+    /** 宿主在问「请贴回跳地址」（浏览器回调到不了时）：这条提问的 id。 */
+    val redirectRequestId: String? = null,
 ) {
     enum class Kind { Login, Logout }
     enum class Phase { Waiting, Done, Failed }

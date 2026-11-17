@@ -4,91 +4,12 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * The pure half of pi's **in-session tree navigation** (`navigateTree`) — the one pi
- * behaviour the app had no path to until the `pi-android-bridge` extension exposed it as
- * a command.
+ * 会话树「跳转」的纯逻辑：摘要选项与「是否真的移动了」的判定。
  *
- * ## Why this file exists separate from the ViewModel
- *
- * Three decisions here are arithmetic over pi's own rules, not Android work:
- *
- *  1. **Where the leaf lands** for a chosen entry ([landingFor]);
- *  2. **Whether to ask about a summary**, and what the answer means
- *    ([wantsSummary] / [needsCustomInstructions] / [summaryPromptShown]);
- *  3. **the argument text** the command receives ([navigateCommandArgs]).
- *
- * All three are pinned by `app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt`,
- * which compiles this file without Android or Compose.
- *
- * ## pi's real semantics, transcribed
- *
- * `AgentSession.navigateTree(targetId, { summarize, customInstructions, replaceInstructions,
- * label })` (`packages/coding-agent/src/core/agent-session.ts:3915-4103`):
- *
- *  - it throws while streaming (`:3919-3921`) or while compacting (`:3922-3926`) — so the
- *    caller must be idle before it is asked;
- *  - a target that is a **user `message`** — or a `custom_message` — puts the leaf at that
- *    entry's **`parentId`**, and hands the entry's text back as `editorText`
- *    (`:4044-4046`；`custom_message` 是同一条规则的另一个入口，`:4047-4050`). Every other
- *    entry type puts the leaf **at the entry itself** (`:4052-4053`). That is the rule [landingFor] encodes, and it is why a row's action is
- *    "继续之前" rather than "继续于此" whenever the row is a user message;
- *  - `summarize` is only *acted on* when there is something to summarize — pi runs the
- *    summarizer under `options.summarize && entriesToSummarize.length > 0` (`:4008`);
- *    the app cannot know that length, so it does not try to;
- *  - the summary entry is appended **at the navigation target** and becomes the active
- *    leaf itself (`session-manager.ts:1600-1625` → `_appendEntry` sets
- *    `leafId = entry.id`, `:1194`), so the abandoned path is not in the new context;
- *  - `{ cancelled: true }` means an extension cancelled it in `session_before_tree`
- *    (`:3975-3985`); `{ aborted: true }` means the summarization was aborted
- *    (`:4021-4022`); `{ cancelled: false }` with no work means "already there"
- *    (`:3930-3933`).
- *
- * `packages/coding-agent/src/modes/interactive/interactive-mode.ts:5493-5625` is the
- * reference for the *user-facing* flow, and the app follows it: ask "Summarize branch?"
- * unless `branchSummary.skipPrompt` is set, abort a running response first, and re-render
- * the whole conversation afterwards. It is **not** a source of new behaviour.
+ * 跳转本身是 SDK 的 `navigateTree`（宿主命令 `session.navigate`），不再经任何桥接扩展。
+ * 这里只保留两件与 Android 无关、可在没有手机的机器上跑的判定，由
+ * `PiTreeNavigationCheck` 钉住：摘要问题怎么问/怎么答，以及两次读到的叶子说明了什么。
  */
-
-/** Where pi puts the session's leaf for a chosen entry. */
-internal enum class NavigateLanding {
-    /**
-     * `newLeafId = entry.parentId`, and pi returns the entry's own text as `editorText`
-     * (`agent-session.ts:4044-4046`).
-     *
-     * This is the "rewind to just before this message and let me re-say it" case, and it
-     * is also what `fork`'s default `position: "before"` does
-     * (`agent-session-runtime.ts:262-287`，`position` 的默认值在 `:266`) — the difference is that `fork` writes a
-     * new session file and `navigateTree` does not.
-     */
-    BeforeEntry,
-
-    /** `newLeafId = entry.id` (`agent-session.ts:4052-4053`). */
-    AtEntry,
-}
-
-/** `entry.type` as a string, or null when it is missing/not a string. */
-private fun typeOf(entry: JsonObject): String? =
-    (entry["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-
-/** `entry.message.role` as a string, or null. */
-private fun roleOf(entry: JsonObject): String? {
-    val message = entry["message"] as? JsonObject ?: return null
-    return (message["role"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-}
-
-/**
- * pi's leaf rule for [entry], verbatim from `agent-session.ts:4044-4053`.
- *
- * A `branch_summary` entry (what a previous navigation wrote) is **not** a user message
- * and not a `custom_message`, so it lands [NavigateLanding.AtEntry] — the leaf goes to the
- * summary itself, which is exactly where pi left it
- * (`session-manager.ts:1600-1625` → `:1194`).
- */
-internal fun landingFor(entry: JsonObject): NavigateLanding = when {
-    typeOf(entry) == "message" && roleOf(entry) == "user" -> NavigateLanding.BeforeEntry
-    typeOf(entry) == "custom_message" -> NavigateLanding.BeforeEntry
-    else -> NavigateLanding.AtEntry
-}
 
 /** The three answers pi's own `/tree` offers before navigating (`interactive-mode.ts:5526-5530`). */
 enum class BranchSummaryChoice {
@@ -122,85 +43,6 @@ internal fun wantsSummary(choice: BranchSummaryChoice, skipPromptSetting: Boolea
 /** Whether the answer needs the instructions editor before it can be dispatched. */
 internal fun needsCustomInstructions(choice: BranchSummaryChoice): Boolean =
     choice == BranchSummaryChoice.SummarizeWithPrompt
-
-/**
- * The `args` half of the extension command line, as JSON.
- *
- * ## Why JSON rather than `key=value`
- *
- * pi splits the command line on the **first space only**
- * (`agent-session.ts:2069-2075`: `text.indexOf(" ")`, then `text.slice(spaceIndex + 1)`),
- * so everything after the command name survives intact — including further spaces, quotes
- * and newlines. That makes a JSON object the one encoding with no escaping bugs on either
- * side: `customInstructions` is free text a user typed, and a positional grammar
- * (`id summarize text`) would be ambiguous the moment that text contains a space.
- *
- * Absent options are **omitted**, not sent as null: pi's own options object is
- * `{ summarize?, customInstructions?, replaceInstructions?, label? }`
- * (`agent-session.ts:3915-3918`) and `undefined` is not the same as `false` for
- * `replaceInstructions` (`:3954`、`:3996-3997`).
- *
- * ## What the field set deliberately does *not* include
- *
- * `editorText` — the target message's text that pi's TUI puts back in the editor
- * (`interactive-mode.ts:5601-5603`) — is **unreachable from RPC mode**, so there is no field for
- * it and the app does not pretend otherwise: the extension-facing wiring returns exactly
- * `{ cancelled: result.cancelled }` and drops `editorText`, `aborted` and `summaryEntry`
- * (`modes/rpc/rpc-mode.ts:329-335`), which is also all its declared type promises
- * (`core/extensions/types.ts:415-426`). The same omission is why an aborted summarization
- * cannot be told apart from a completed navigation out here. Both are pi's own gaps in RPC
- * mode; "跳转" itself — the leaf move and the summary — is unaffected.
- */
-internal fun navigateCommandArgs(
-    targetId: String,
-    summarize: Boolean,
-    customInstructions: String? = null,
-    replaceInstructions: Boolean? = null,
-    label: String? = null,
-): String = buildString {
-    append("{\"targetId\":")
-    append(quote(targetId))
-    append(",\"summarize\":")
-    append(if (summarize) "true" else "false")
-    customInstructions?.takeIf { it.isNotBlank() }?.let {
-        append(",\"customInstructions\":")
-        append(quote(it))
-    }
-    replaceInstructions?.let {
-        append(",\"replaceInstructions\":")
-        append(if (it) "true" else "false")
-    }
-    label?.takeIf { it.isNotBlank() }?.let {
-        append(",\"label\":")
-        append(quote(it))
-    }
-    append('}')
-}
-
-/**
- * JSON string quoting, restricted to what this builder needs.
- *
- * Only the two characters that can appear in a JSON string and break it are escaped
- * (`"` and `\`), plus the C0 controls, which JSON forbids raw. The input here is a pi
- * entry id (8 hex characters — `session-manager.ts:276-284` slices a UUID) or text a user
- * typed into a composer, so this is deliberately not a general-purpose encoder.
- */
-private fun quote(value: String): String = buildString(value.length + 2) {
-    append('"')
-    for (ch in value) {
-        when (ch) {
-            '"' -> append("\\\"")
-            '\\' -> append("\\\\")
-            '\n' -> append("\\n")
-            '\r' -> append("\\r")
-            '\t' -> append("\\t")
-            '\b' -> append("\\b")
-            '\u000C' -> append("\\f")
-            else -> if (ch < ' ') append("\\u%04x".format(ch.code)) else append(ch)
-        }
-    }
-    append('"')
-}
 
 /**
  * The two facts the app can observe after dispatching the command, and the three outcomes

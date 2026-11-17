@@ -698,8 +698,10 @@ object ProrootExecProbe {
             if (!line.startsWith(prefix)) {
                 // The launcher's own diagnostics — and anything else the shell said.
                 val text = line.trim()
+                // proroot 自己的诊断行，以及 tawcroot 的（`tawcroot: bind add failed …`）：
+                // 后者是 tawcroot 特有失败的唯一证据，丢掉它等于把根因扔掉。
                 if (text.isNotEmpty() && launch.size < ProrootRawProbe.MAX_LAUNCH_LINES &&
-                    text.startsWith(ProrootRawProbe.LAUNCHER_PREFIX)
+                    (text.startsWith(ProrootRawProbe.LAUNCHER_PREFIX) || text.startsWith("tawcroot:"))
                 ) {
                     launch += bound(text)
                 }

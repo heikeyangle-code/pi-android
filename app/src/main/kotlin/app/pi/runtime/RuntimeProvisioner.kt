@@ -442,7 +442,14 @@ class RuntimeProvisioner(
 
         for (payload in plan) {
             next()
-            extractPayloadOver(payload)
+            // 清单在这里读一次：解压进度要它的行数做分母，下面的 prune 与状态记录复用同一份。
+            val newList = packagedList(payload)
+            entryProgress = progressFor(steps[index], index, steps.size, newList?.size, onStep)
+            try {
+                extractPayloadOver(payload)
+            } finally {
+                entryProgress = null
+            }
             // ---------------------------------------------- the gate, per payload
             // **Before** the digest is recorded, and that order is the whole point. The
             // extractor now throws on a link it could not create, but "no exception" is
@@ -471,7 +478,6 @@ class RuntimeProvisioner(
             //
             // The packaged list is read once here and handed to both steps; the digest was
             // already read for the plan. One asset read per payload per attempt, never two.
-            val newList = packagedList(payload)
             prunePayload(payload, newList)
             val recordWarning = recordPayloadState(payload, packagedDigests[payload], newList)
             if (recordWarning != null) payloadWarnings += recordWarning
@@ -775,6 +781,29 @@ class RuntimeProvisioner(
      * and the extraction code have to agree, and a seventh payload added to [PAYLOADS]
      * without an arm here is a build-time list that silently does nothing on device.
      */
+    /**
+     * 解压中的细粒度进度：`(已解条目数)`→ 屏上的步骤文字。只在 [provision] 的解压循环里设置。
+     *
+     * 为什么要有：ubuntu 的解压在手机上要几十秒，而进度条是按 payload 分段的（`StepBar`），
+     * 整段时间纹丝不动，读起来就是卡死。分母取 payload 清单（`<name>.list`）的行数——它列的
+     * 正好是这个 payload 拥有的全部文件、软链和目录，与 tar 的条目数同量级，不需要为此多读一遍
+     * 压缩包。节流到每 ~150ms 一次，不把主线程刷爆。
+     */
+    private var entryProgress: ((Int) -> Unit)? = null
+
+    private fun progressFor(label: String, index: Int, total: Int, entries: Int?, onStep: (Step) -> Unit): ((Int) -> Unit)? {
+        if (entries == null || entries <= 0) return null
+        var last = 0L
+        return { seen ->
+            val now = System.nanoTime()
+            if (now - last >= 150_000_000L) {
+                last = now
+                val percent = (seen * 100L / entries).toInt().coerceIn(0, 99)
+                onStep(Step("$label · $percent%", index, total))
+            }
+        }
+    }
+
     private fun extractPayloadOver(payload: Payload) {
         when (payload.name) {
             UBUNTU_BASE -> extractAsset(UBUNTU_BASE, paths.rootfs)
@@ -1032,8 +1061,10 @@ class RuntimeProvisioner(
                 // Same two-tier creation as `guestSymlink`: HarmonyOS's `java.nio` symlink
                 // support is incomplete while the syscall works, and the extractor's
                 // copy fallback is the expensive last resort, not the first answer.
+                var seen = 0
                 val result = TarExtractor(
                     into,
+                    onEntry = entryProgress?.let { report -> { _: String -> report(++seen) } },
                     symlink = { link, target -> createLink(link.toFile(), target.toString())?.let { message ->
                         throw IOException(message)
                     } },
@@ -1337,7 +1368,13 @@ class RuntimeProvisioner(
             ?: throw ProvisioningException("node archive had no top-level directory")
         val target = File(paths.rootfs, "opt/node")
         target.parentFile?.mkdirs()
-        val notMerged = mergeTreeOver(top, target)
+        // 首次安装（目标还不存在）：整棵树**改名**过去，而不是逐文件复制。暂存目录和目标同在
+        // `paths.runtime` 之下、同一个文件系统，`rename(2)` 是一次元数据操作；旧实现在这里把
+        // 约 195 MB 解出来之后又整棵读-写一遍（File.copyTo），首次安装白白多写一份 node。
+        // 目标已存在（升级、或用户 `npm -g` 过）才走下面的覆盖合并——那条路径要保住用户的东西，
+        // 不能改名顶替。改名失败（极少数文件系统）同样落回合并，行为与此前一致。
+        val renamed = !existsWithoutFollowing(target) && top.renameTo(target)
+        val notMerged = if (renamed) emptyList() else mergeTreeOver(top, target)
         deleteTreeInsideVolatile(staging, "node 暂存目录")
         // 失败 ⇒ 不许记账。 `mergeTreeOver` used to swallow a copy or symlink it could not
         // perform (`runCatching { … }` with no result check), and `provision` then recorded

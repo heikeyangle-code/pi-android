@@ -11,11 +11,10 @@ import java.io.File
  *
  * `WorkspaceFiles.writeText` is a whole-file overwrite: `file.writeText(text)`, no lock, no
  * temp file, no validation. For a user document that is exactly what an editor is for. For
- * any path under `<workspace>/.pi/` it is a **second writer on files pi reads**: 「Pi 文件」
- * (`ui/screens/PiFilesScreen.kt`) writes those same paths through
- * `PiConfigFiles.withLock` + `PiConfigFiles.write` (pi's `proper-lockfile` semantics and a
- * temp-file rename), and checks the content with `checkPiFileWrite` first. Two writers, two
- * rules, one file — and the file is the one pi parses.
+ * any path under `<workspace>/.pi/` it is a **second writer on files pi reads**: the resource
+ * editor (`ui/resources/ResourceFileEditor.kt`, via the host's `resources.file.write`) writes
+ * those same paths atomically with a fingerprint check, and checks the content first. Two
+ * writers, two rules, one file — and the file is the one pi parses.
  *
  * This object is the missing half of the tree's side: the *decision* about when the tree has
  * to use pi's path, and *what* it has to check, as pure functions. The write itself stays
@@ -217,8 +216,8 @@ internal object WorkspacePiWrite {
      * A null [openedStamp] is "no baseline" (the viewer had not read the file yet), and no
      * baseline must not mean "refuse everything" — it means the check cannot run.
      * Otherwise any difference in `(size, mtime)` is a change: it is the same
-     * `"<size>:<mtime>"` fingerprint the 「Pi 文件」screen records at open time
-     * (`PiFilesScreen.kt`), and it deliberately is not meant to be unique — it only has to
+     * `"<size>:<mtime>"` fingerprint the resource editor records at open time
+     * (`ResourceFileEditor.kt`; the host compares `(size, mtime)`), and it deliberately is not meant to be unique — it only has to
      * notice that something moved.
      */
     fun stampChanged(openedStamp: String?, currentStamp: String): Boolean =
