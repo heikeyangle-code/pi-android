@@ -38,7 +38,6 @@ import kotlinx.serialization.json.JsonObject
 import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.ExecutionException
 import java.util.concurrent.RejectedExecutionException
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.InputStream
@@ -1483,51 +1482,8 @@ class PiEngineSession(
                 .directory(cwd)
                 .redirectErrorStream(false)
             builder.environment().putAll(env)
-            val process = forkOnDurableThread(builder)
+            val process = builder.start()
             return PiEngineSession(process, scope).also { it.start() }
-        }
-
-        /**
-         * 引擎**必须**从一条与 App 同寿命的线程上 fork，而不是从调用者线程上。
-         *
-         * tawcroot 在它自己的 `src/main.c:122` 给自己 arm 了
-         * `PR_SET_PDEATHSIG = SIGKILL`，而 Linux 的 pdeathsig 认的"父"是**线程**：
-         *
-         * > The parent-death signal is sent upon subsequent termination of the parent
-         * > thread…
-         * > — `prctl(2)`, `PR_SET_PDEATHSIG`
-         *
-         * [PiEngineHost.bootLocked] 在 `Dispatchers.IO` 上跑，`ProcessBuilder.start()`
-         * 因此是在 `CoroutineScheduler` 的池线程里 fork 的；池线程**空闲 60 秒就被回收**
-         * （`IDLE_WORKER_KEEP_ALIVE_NS`，kotlinx.coroutines 的默认值）。池线程一退休，
-         * 内核就把 SIGKILL 投给引擎 —— App 进程还活着、引擎以 **137** 退出、stderr 一个
-         * 字节都没有，然后被自动重启、再死一次；`proot` / `proroot` 从不 arm
-         * pdeathsig，所以只有 tawcroot 会这样。
-         *
-         * 137 只可能来自外部信号：tawcroot 自己的 `tawc_exit_group` 出口只有
-         * 2/50/60–95/159（`main.c`/`supervisor.c`/`handler.c`），没有任何一条产生 137。
-         *
-         * 这条 Executor 的 core 线程不超时（`allowCoreThreadTimeOut` 保持 false），
-         * 因此**永不退出**；App 进程一死它跟着死，内核顺手把整棵 guest 收掉 —— 那本来
-         * 就是 pdeathsig 的用途。
-         */
-        private fun forkOnDurableThread(builder: ProcessBuilder): Process {
-            val future = forkExecutor.submit(java.util.concurrent.Callable { builder.start() })
-            return try {
-                future.get()
-            } catch (error: ExecutionException) {
-                // `ProcessBuilder.start()` 的 IOException 必须原样抛给调用方：
-                // `PiEngineHost` 的第二层回退（proroot → proot）靠"spawn 抛出"判定进程
-                // 从未存在过。
-                throw error.cause ?: error
-            }
-        }
-
-        /** 见 [forkOnDurableThread]：懒创建，一条进程一条线程。 */
-        private val forkExecutor: ExecutorService by lazy {
-            Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "pi-engine-fork").apply { isDaemon = true }
-            }
         }
     }
 }
