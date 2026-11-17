@@ -30,15 +30,28 @@ A native Android experience for the Pi Coding Agent, built for developers who wa
 
 No root. No Termux. No remote machine. Your phone becomes the workspace.
 
-<p align="center">
-  <img src="docs/screenshots/chat-tools.jpg" width="240" alt="Chat with tool cards and an inline diff" />
-  &nbsp;
-  <img src="docs/screenshots/chat-markdown.jpg" width="240" alt="Markdown and LaTeX rendering in the transcript" />
-  &nbsp;
-  <img src="docs/screenshots/models-providers.jpg" width="240" alt="Model providers screen" />
-</p>
-
-<p align="center"><sub>Tool cards &amp; diffs · Markdown &amp; math · Model providers</sub></p>
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/chat-tools.jpg" width="280" alt="Tool cards and an inline diff in a conversation" /><br />
+      <sub><b>Tool cards &amp; inline diffs</b> — every call is a row; the edit shows the changed lines.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/workspace.jpg" width="280" alt="Workspace file list with this session's changes" /><br />
+      <sub><b>Workspace</b> — a real folder on the phone; this session's edits are collected at the top.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/chat-markdown.jpg" width="280" alt="Markdown and LaTeX rendering in the transcript" /><br />
+      <sub><b>Markdown &amp; math</b> — headings, code blocks and LaTeX render in place.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/models-providers.jpg" width="280" alt="Model providers screen" /><br />
+      <sub><b>Model providers</b> — 7 subscription logins plus 34 more, or any OpenAI-compatible endpoint.</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 

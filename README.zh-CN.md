@@ -30,15 +30,28 @@
 
 免 Root、免 Termux、不需要远程机器。手机就是工作区。
 
-<p align="center">
-  <img src="docs/screenshots/chat-tools.jpg" width="240" alt="对话里的工具卡与行内 diff" />
-  &nbsp;
-  <img src="docs/screenshots/chat-markdown.jpg" width="240" alt="对话里的 Markdown 与公式渲染" />
-  &nbsp;
-  <img src="docs/screenshots/models-providers.jpg" width="240" alt="模型与供应商设置页" />
-</p>
-
-<p align="center"><sub>工具卡与 diff · Markdown 与公式 · 模型与供应商</sub></p>
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/chat-tools.jpg" width="280" alt="对话里的工具卡与行内 diff" /><br />
+      <sub><b>工具卡与行内 diff</b> —— 每次调用占一行，改了哪几行就地展开。</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/workspace.jpg" width="280" alt="工作区文件列表与本次改动" /><br />
+      <sub><b>工作区</b> —— 手机上的真目录，本次会话改过的文件收在顶部。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/chat-markdown.jpg" width="280" alt="对话里的 Markdown 与公式渲染" /><br />
+      <sub><b>Markdown 与公式</b> —— 标题、代码块、LaTeX 都在原位渲染。</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/models-providers.jpg" width="280" alt="模型与供应商设置页" /><br />
+      <sub><b>模型与供应商</b> —— 7 家订阅账号登录，另有 34 家供应商，或任意 OpenAI 兼容接口。</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
