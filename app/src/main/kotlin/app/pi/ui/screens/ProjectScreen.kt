@@ -298,11 +298,14 @@ fun ProjectScreen(
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
-    // 点开头的（`.git`、`.pi`…）默认收起：pi 自己的 `@` 补全（fd）也是默认不列隐藏项；要看就在排序菜单里打开。
-    var showHidden by rememberSaveable { mutableStateOf(false) }
+    // pi 的 find / grep / `@` 补全都带 `--hidden`（点开头的照列），但**排除 `.git`**（补全里显式 `--exclude .git`，
+    // `find` 的兜底路径还排除 `node_modules`，`core/tools/find.js:79`），并遵守 .gitignore。这里照这个来：
+    // `.git` 与 `node_modules` 默认收起，其余（含 `.pi`、`.env`）照列；要看被忽略的，在排序菜单里打开。
+    // 不逐条解析 .gitignore —— 那是对 fd/rg 的近似，不是它们本身。
+    var showIgnored by rememberSaveable { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
-    val sortedEntries = remember(listing, sortMode, filterText, showHidden) {
-        val all = listing.orEmpty().filter { showHidden || !it.name.startsWith(".") }
+    val sortedEntries = remember(listing, sortMode, filterText, showIgnored) {
+        val all = listing.orEmpty().filter { showIgnored || !(it.isDirectory && it.name in PI_IGNORED_DIRS) }
         val q = filterText.trim()
         val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
         filtered.sortedWith(sortMode.comparator)
@@ -871,8 +874,8 @@ fun ProjectScreen(
                                                         sortIndex = mode.ordinal
                                                         sortMenu = false
                                                     }
-                                                } + PiMenuItem(if (showHidden) "隐藏 . 开头的项" else "显示 . 开头的项") {
-                                                    showHidden = !showHidden
+                                                } + PiMenuItem(if (showIgnored) "收起 .git / node_modules" else "显示 .git / node_modules") {
+                                                    showIgnored = !showIgnored
                                                     sortMenu = false
                                                 },
                                             )
@@ -2099,6 +2102,9 @@ private fun WorkspaceEntryRow(
 }
 
 /** 文件列表的排序方式。除「最近修改」外，目录排在文件前面。 */
+/** pi 的文件发现（`@` 补全、`find`）默认排除的目录；其余点开头的项 pi 照列。 */
+private val PI_IGNORED_DIRS: Set<String> = setOf(".git", "node_modules")
+
 private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparator<WorkspaceEntry>) {
     Name("名称", { compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
     // 最近修改：目录和文件混排，真正最近动过的在最上面（默认）。
