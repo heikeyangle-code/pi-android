@@ -65,6 +65,7 @@ internal fun ResourcesHubScreen(
     onOpenEngine: () -> Unit,
     onOpenCommandSettings: () -> Unit,
     onOpenTrustPolicy: () -> Unit,
+    startOnProject: Boolean = false,
 ) {
     // 页内层级：hub / ext / skills / prompts / themes / context / packages。它自己接返回键（组合顺序在设置栈之后，先收到）。
     var page by rememberSaveable { mutableStateOf("hub") }
@@ -77,7 +78,11 @@ internal fun ResourcesHubScreen(
     val host = access()
     val scope = rememberCoroutineScope()
     val model = remember(host) { host?.let { ResourcesModel(it, scope) } }
-    LaunchedEffect(model) { model?.refresh() }
+    LaunchedEffect(model) {
+        // 从项目页进来：直接落在项目层（项目没被信任时 effectiveLayer 仍回全局，页面照常说明原因）。
+        if (startOnProject) model?.layer = app.pi.packages.PiResourceCatalog.Layer.Project
+        model?.refresh()
+    }
     // 回到枢纽（例如从包页回来）时数字可能变了：重读一次。
     DisposableEffect(page) { onDispose { if (page != "hub") model?.refresh() } }
 

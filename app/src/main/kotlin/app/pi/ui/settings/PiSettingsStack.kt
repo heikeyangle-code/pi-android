@@ -173,6 +173,7 @@ fun PiSettingsStack(
     // 「扩展与资源」枢纽（`ui/resources/ResourcesHubScreen`）：扩展 / 技能 / 提示 / 主题 / 上下文 / 包 / MCP / 项目信任都从这里进。
     // 它跳去 MCP、Pi 文件、引擎、设置组时自己保持 true，所以那些页返回就回到枢纽，不用另记来路。
     var resources by rememberSaveable { mutableStateOf(false) }
+    var resourcesProject by rememberSaveable { mutableStateOf(false) }
     // 「模型与供应商」（`ui/models/ModelsScreen`）：一个层级，数据全在宿主（auth.* / models.config.*）。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
     // 从「模型与供应商」点进「默认模型与推理」（那一组行的页）时置位：从那一页退出要回到模型页，
@@ -386,8 +387,9 @@ fun PiSettingsStack(
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
-        if (key == "hub:resources") {
-            // 工作区「扩展与资源」入口：不是某一条设置，是枢纽页本身。
+        if (key == "hub:resources" || key == "hub:resources:project") {
+            // 项目页的「扩展与资源」入口：不是某一条设置，是枢纽页本身；`:project` 直接落在项目层。
+            resourcesProject = key.endsWith(":project")
             resources = true
         } else if (setting != null) {
             groupId = setting.group
@@ -586,6 +588,7 @@ fun PiSettingsStack(
 
             resources -> app.pi.ui.resources.ResourcesHubScreen(
                 contentPadding = contentPadding,
+                startOnProject = resourcesProject,
                 onBack = { resources = false },
                 access = extensionsAccess,
                 onOpenMcp = { mcp = true },

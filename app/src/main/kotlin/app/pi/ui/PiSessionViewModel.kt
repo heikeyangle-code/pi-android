@@ -1508,8 +1508,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun workspaceEntries(): List<WorkspaceStore.Entry> = WorkspaceStore.list(getApplication())
 
-    /** Create the next `workspace-N`. Does **not** switch to it; see [switchWorkspace]. */
-    fun createWorkspace(): WorkspaceStore.Create = WorkspaceStore.create(getApplication())
+    /** Create project directory [name] (blank = next `workspace-N`). Does **not** switch to it; see [switchWorkspace]. */
+    fun createWorkspace(name: String? = null): WorkspaceStore.Create = WorkspaceStore.create(getApplication(), name)
 
     /** Give a workspace a display label. Never moves the directory — see [WorkspaceStore.rename]. */
     fun renameWorkspace(name: String, label: String): WorkspaceStore.Rename =

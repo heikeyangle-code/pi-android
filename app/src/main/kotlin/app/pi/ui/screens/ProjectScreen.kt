@@ -320,6 +320,18 @@ fun ProjectScreen(
 
     // ------------------------------------------------------------ ⑤ 资源
     // 资源（扩展 / 技能 / 提示 / 主题 / 包 / 项目信任）统一在「设置 → 扩展与资源」，这里只放入口，不再复制一份。
+    // 入口行的副标题读宿主的项目信任结论（`project.trustState`，SDK 的信任库说了算）；读不到就退回静态文案。
+    var trustMeta by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refreshTick, state.workspace.revision) {
+        val r = session.extensionsAccess()?.resources?.trustState()
+        trustMeta = (r as? app.pi.packages.PiResourceCatalog.Parsed.Ok)?.value?.let { t ->
+            when {
+                t.trusted -> "本项目已信任：.pi 下的扩展、技能、提示会被加载"
+                t.undecided -> "本项目还没表态：.pi 下的资源暂不加载，点进去处理"
+                else -> "本项目不被信任：只加载全局资源"
+            }
+        }
+    }
     // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
     var overflow by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
@@ -468,22 +480,16 @@ fun ProjectScreen(
     /**
      * 新建工作区。
      *
-     * 名字由引擎分配（下一个空闲的 `workspace-N`），**不在这里输入名字**：能改的只有
-     * 显示名（label），而那正是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
+     * 名字是用户起的**目录名**（`WorkspaceChoice.nameProblem` 裁决；留空 = 下一个空闲的
+     * `workspace-N`）；显示名（label）仍是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
      * 搬进它是两个决定，`WorkspaceStore.create` 的 KDoc 把这条写死了。
      */
-    fun createNewWorkspace(label: String = "") {
+    fun createNewWorkspace(dirName: String = "") {
         scope.launch {
-            when (val result = withContext(Dispatchers.IO) {
-                val created = session.createWorkspace()
-                // 起了名就顺手写上显示名（失败不影响建好的目录，名字之后还能在 ⋮ 里改）。
-                if (created is WorkspaceStore.Create.Ok && label.isNotBlank()) {
-                    session.renameWorkspace(created.entry.name, label.trim())
-                }
-                created
-            }) {
+            // 名字就是目录名（pi 里项目 = 目录，会话与信任都按这个路径记）；留空 = workspace-N。
+            when (val result = withContext(Dispatchers.IO) { session.createWorkspace(dirName.trim().ifEmpty { null }) }) {
                 is WorkspaceStore.Create.Ok -> {
-                    say("已新建工作区 · ${label.trim().ifEmpty { result.entry.displayName }}")
+                    say("已新建项目 · ${result.entry.displayName}")
                     refreshTick++
                     // 新建不自动切过去（那是另一个决定）；把切换面板重新打开，新工作区就在眼前、一点即到。
                     rootSheet = true
@@ -675,9 +681,9 @@ fun ProjectScreen(
                         WsCardSlice(index = 0, lastIndex = 0) {
                             WsRow(
                                 title = "扩展与资源",
-                                meta = "扩展、技能、提示、主题、包，以及项目信任",
+                                meta = trustMeta ?: "扩展、技能、提示、主题、包，以及项目信任",
                                 trail = { Text("管理", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
-                                onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources")) },
+                                onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
                             )
                         }
                     }
@@ -1125,8 +1131,8 @@ fun ProjectScreen(
                 rootSheet = false
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewWorkspace,
-                    title = "新建工作区",
-                    where = "App 私有目录",
+                    title = "新建项目",
+                    where = "项目目录名（留空自动编号）",
                     relativeParent = null,
                     absoluteParent = null,
                     initial = "",
@@ -1365,7 +1371,7 @@ fun ProjectScreen(
                 // 裁决 —— 它的 `Failed.message` 就是给人看的那句话。
                 val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace ||
                     dialog.kind == WorkspaceInputKind.NewWorkspace
-                ) {
+                ) { // 新建项目的名字在对话框里已按目录名规则当场检查过，这里不再重复
                     null
                 } else {
                     WorkspaceFiles.nameProblem(typed)
@@ -2803,8 +2809,11 @@ private fun WorkspaceNameDialog(
         val problem = when (dialog.kind) {
             // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
             WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
-            // 新建工作区：名字可以不填（用默认的 workspace-N）。
-            WorkspaceInputKind.NewWorkspace -> null
+            // 新建项目：名字就是目录名，可以不填（用 workspace-N）；填了就当场按目录名规则检查。
+            WorkspaceInputKind.NewWorkspace ->
+                if (trimmed.isEmpty()) null
+                else WorkspaceChoice.nameProblem(name)
+                    ?: if (java.io.File(WorkspaceStore.root(LocalContext.current), trimmed).exists()) "已经有叫「$trimmed」的项目了。" else null
             else -> WorkspaceFiles.nameProblem(name) ?: run {
                 // 同名在输入时就说，而不是提交后才报「已存在」。重命名成自己原来的名字不算冲突
                 // （按「确定」会因没有变化而什么也不做）。

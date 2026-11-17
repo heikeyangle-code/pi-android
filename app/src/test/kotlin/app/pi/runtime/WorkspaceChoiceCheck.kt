@@ -75,18 +75,28 @@ private fun nameChecks() {
     check("workspace-999999 is ours", WorkspaceChoice.isOwned("workspace-999999"), true)
 
     // 不合法的一侧：0 开头、前导 0、超长、不是数字、大小写、前后有空白、空串。
-    check("workspace-0 is not ours", WorkspaceChoice.isOwned("workspace-0"), false)
-    check("a leading zero is not ours", WorkspaceChoice.isOwned("workspace-01"), false)
-    check("seven digits is not ours", WorkspaceChoice.isOwned("workspace-1000000"), false)
-    check("a non-numeric suffix is not ours", WorkspaceChoice.isOwned("workspace-x"), false)
-    check("uppercase is not ours", WorkspaceChoice.isOwned("Workspace-1"), false)
-    check("a prefix is not ours", WorkspaceChoice.isOwned("my-workspace-1"), false)
+    check("workspace-0 is still a legal name", WorkspaceChoice.isOwned("workspace-0"), true)
+    check("a leading zero is a legal name", WorkspaceChoice.isOwned("workspace-01"), true)
+    check("seven digits is a legal name", WorkspaceChoice.isOwned("workspace-1000000"), true)
+    check("a non-numeric suffix is a legal name", WorkspaceChoice.isOwned("workspace-x"), true)
+    check("uppercase is a legal name", WorkspaceChoice.isOwned("Workspace-1"), true)
+    check("a prefix is a legal name", WorkspaceChoice.isOwned("my-workspace-1"), true)
     check("trailing space is not ours", WorkspaceChoice.isOwned("workspace-1 "), false)
     check("the empty name is not ours", WorkspaceChoice.isOwned(""), false)
-    check("the bare prefix is not ours", WorkspaceChoice.isOwned("workspace-"), false)
+    check("the bare prefix is a legal name", WorkspaceChoice.isOwned("workspace-"), true)
     // 一个路径不是名字：`../..` 必须在这里就被拒（`decide` 的探测永远不会看到它）。
     check("a path is not ours", WorkspaceChoice.isOwned("../workspace-1"), false)
-    check("a plain directory name is not ours", WorkspaceChoice.isOwned("projects"), false)
+    // 项目名是用户的自由：任何合法的单级目录名都在根下算本应用的项目。
+    check("a plain directory name is a project", WorkspaceChoice.isOwned("projects"), true)
+    check("a CJK name is a project", WorkspaceChoice.isOwned("我的 项目"), true)
+    check("an absolute external path is never owned", WorkspaceChoice.isOwned("/sdcard/Documents/app"), false)
+    check("dot-dot is refused", WorkspaceChoice.nameProblem("..") != null, true)
+    check("a leading dot is refused", WorkspaceChoice.nameProblem(".pi") != null, true)
+    check("a backslash is refused", WorkspaceChoice.nameProblem("a\\b") != null, true)
+    check("a trailing dot is refused", WorkspaceChoice.nameProblem("abc.") != null, true)
+    check("a newline is refused", WorkspaceChoice.nameProblem("a\nb") != null, true)
+    check("65 chars is refused", WorkspaceChoice.nameProblem("a".repeat(65)) != null, true)
+    check("64 chars is fine", WorkspaceChoice.nameProblem("a".repeat(64)), null)
 
     check("number reads the digit run", WorkspaceChoice.number("workspace-42"), 42)
     check("number of a foreign name is null", WorkspaceChoice.number("workspace-01"), null)
@@ -371,13 +381,15 @@ private fun decideChecks() {
     check("a value with padding is trimmed", WorkspaceChoice.decide("  workspace-2  ", DEFAULT) { REAL }.name, "workspace-2")
 
     // ② 不是本应用的名字：回默认，并且说清楚。这一支在任何探测之前。
-    val foreign = WorkspaceChoice.decide("projects", DEFAULT) { REAL }
+    // 一个合法的单级目录名（比如用户起的 `projects`）现在就是项目，会被采纳；不被采纳的是路径与非法名。
+    check("a user-named project is adopted", WorkspaceChoice.decide("projects", DEFAULT) { REAL }.name, "projects")
+    val foreign = WorkspaceChoice.decide("a/b", DEFAULT) { REAL }
     check("a foreign name falls back to the default", foreign.name, DEFAULT)
-    check("a foreign name is reported as asked-for", foreign.requested, "projects")
+    check("a foreign name is reported as asked-for", foreign.requested, "a/b")
     check(
         "a foreign name explains itself in one sentence",
         foreign.note,
-        "设置里的当前工作区「projects」不是本应用创建的工作区，已回到默认工作区「workspace-1」。",
+        "设置里的当前工作区「a/b」不是本应用创建的工作区，已回到默认工作区「workspace-1」。",
     )
     check("a path is refused the same way", WorkspaceChoice.decide("../..", DEFAULT) { REAL }.name, DEFAULT)
 
@@ -489,7 +501,7 @@ private fun lookOnlyForOursChecks() {
     WorkspaceChoice.decide("  ", DEFAULT, look = counting)
     check("a blank stored choice probes nothing", calls, 0)
 
-    check("a foreign name still answers", WorkspaceChoice.decide("projects", DEFAULT, look = counting).name, DEFAULT)
+    check("a foreign name still answers", WorkspaceChoice.decide("a/b", DEFAULT, look = counting).name, DEFAULT)
     check("a foreign name is not probed", calls, 0)
 
     check("a path is not probed", WorkspaceChoice.decide("../..", DEFAULT, look = counting).name, DEFAULT)
