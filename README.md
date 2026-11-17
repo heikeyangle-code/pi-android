@@ -4,23 +4,31 @@
   <img src="./brand/pi-readme-icon.svg" alt="Pi for Android" width="104" />
 </p>
 
+<h1 align="center">Pi for Android</h1>
+
 <p align="center">
-  <b>A real coding agent. Running locally on your Android device.</b>
+  <b>Your coding agent. Now on Android.</b><br />
+  Native Android · Three runtimes · Local development environment
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+" />
+  <img src="https://img.shields.io/badge/ARM64-arm64--v8-555" alt="ARM64" />
+  <img src="https://img.shields.io/badge/pi-1.5.0-7C5CFF" alt="pi 1.5.0" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
 </p>
 
 <p align="center">
   <a href="https://github.com/heikeyangle-code/pi-android/releases">Latest Release</a> ·
   <a href="https://github.com/heikeyangle-code/pi-android/actions/workflows/ci.yml">Build Status</a> ·
-  Android 8.0+ · ARM64
+  <a href="https://github.com/heikeyangle-code/pi-android/issues">Issues</a>
 </p>
 
-Pi for Android brings the Pi Coding Agent to your phone.
+### Bring Pi to your phone.
 
-A native Android application with local project access, a bundled Linux environment, and three switchable runtime backends — giving you different ways to run the same coding agent directly on your device.
+A native Android experience for the Pi Coding Agent, built for developers who want to work with their agent directly on a mobile device — a real Linux userspace, the official Pi SDK, and three switchable runtimes.
 
-No root required. No separate Termux installation. No remote development machine required.
-
-Your phone becomes the workspace.
+No root. No Termux. No remote machine. Your phone becomes the workspace.
 
 ---
 
