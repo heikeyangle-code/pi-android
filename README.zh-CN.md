@@ -304,6 +304,13 @@ Pi for Android 正在持续开发。
 - 改进扩展 UI 支持。
 - 强化会话和工作区工作流。
 - 扩大不同 Android 版本和运行时方案的真机测试范围。
+- 抽出界面文案做本地化 —— 目前界面**只有中文**。
+
+### 界面语言
+
+应用界面目前**只有中文**。文案直接写在 Compose 代码里、没有走 `strings.xml`，所以"英文界面"是一次重构，不是补一份翻译：已经在计划里，但还没做。
+
+非常欢迎提 PR —— 做这件事、文案抽出后补翻译、改文档，或者修这份 README 的英文表述，都算。见[参与贡献](#参与贡献)。
 
 查看当前开发进度和已知问题，请访问 [GitHub Issues](https://github.com/heikeyangle-code/pi-android/issues)。
 
@@ -315,6 +322,7 @@ Pi for Android 正在持续开发。
 
 - 发现问题？[提交 Issue](https://github.com/heikeyangle-code/pi-android/issues)。
 - 希望参与开发？Fork 仓库并提交 Pull Request。
+- 想帮忙改界面语言或文档？这两块现在最缺人。
 
 修改运行时、通信协议或 Agent 集成代码时，请尽可能附带对应测试。
 

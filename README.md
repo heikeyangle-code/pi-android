@@ -304,6 +304,13 @@ Current development priorities include:
 - Improving extension UI support.
 - Strengthening session and workspace workflows.
 - Expanding device-level testing across supported Android versions and runtime backends.
+- Extracting UI copy for localisation — the interface is **Chinese only** today.
+
+### Interface language
+
+The app interface is currently **Chinese only**. The copy lives in the Compose code instead of in `strings.xml`, so an English interface is a refactor rather than a translation pass: it is planned, not shipped.
+
+Pull requests are very welcome — for that work, for translations once the strings are extracted, for the documentation, or for the English wording in this README. See [Contributing](#contributing).
 
 For current work and known issues, visit [GitHub Issues](https://github.com/heikeyangle-code/pi-android/issues).
 
@@ -315,6 +322,7 @@ Contributions, bug reports, ideas, and technical discussions are welcome.
 
 - Found a bug? [Open an issue](https://github.com/heikeyangle-code/pi-android/issues).
 - Want to contribute code? Fork the repository and submit a pull request.
+- Want to help with the interface language or the docs? Those are the two least flashy and most useful contributions right now.
 
 Please include relevant tests when modifying runtime, protocol, or agent integration code.
 
