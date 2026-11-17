@@ -298,9 +298,11 @@ fun ProjectScreen(
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
+    // 点开头的（`.git`、`.pi`…）默认收起：pi 自己的 `@` 补全（fd）也是默认不列隐藏项；要看就在排序菜单里打开。
+    var showHidden by rememberSaveable { mutableStateOf(false) }
     val sortMode = WorkspaceSort.entries[sortIndex.coerceIn(0, WorkspaceSort.entries.lastIndex)]
-    val sortedEntries = remember(listing, sortMode, filterText) {
-        val all = listing.orEmpty()
+    val sortedEntries = remember(listing, sortMode, filterText, showHidden) {
+        val all = listing.orEmpty().filter { showHidden || !it.name.startsWith(".") }
         val q = filterText.trim()
         val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
         filtered.sortedWith(sortMode.comparator)
@@ -869,6 +871,9 @@ fun ProjectScreen(
                                                         sortIndex = mode.ordinal
                                                         sortMenu = false
                                                     }
+                                                } + PiMenuItem(if (showHidden) "隐藏 . 开头的项" else "显示 . 开头的项") {
+                                                    showHidden = !showHidden
+                                                    sortMenu = false
                                                 },
                                             )
                                         }
@@ -1329,11 +1334,17 @@ fun ProjectScreen(
                     if (copied) StateTone.Muted else StateTone.Warning,
                 )
             },
-            onLocateInChat = {
+            onMention = {
                 menuFor = null
-                // 稿子的原型也只是关掉菜单；正式版要切到「对话」tab 并定位到那一步，
-                // 而这一屏拿不到导航句柄（`ProjectScreen` 只有 contentPadding + session）。
-                say("定位到对话需要切 tab 并滚动转录，这一批没接上。", StateTone.Warning)
+                // pi 的「引用文件」手势就是输入框里的 `@路径`（`PiFileMentions`）：写进草稿再切到对话，
+                // 用户接着打字就行。路径是相对项目的，与 `@` 补全给出的同一个写法。
+                val token = app.pi.ui.chat.PiFileMentions.buildCompletionValue(
+                    target.path + if (target.isDirectory) "/" else "",
+                    quoted = false,
+                )
+                val draft = session.composerDraft.text
+                draft.value = if (draft.value.isBlank()) "$token " else draft.value.trimEnd() + " $token "
+                session.requestNav(NavRequest.Chat)
             },
         )
     }
@@ -2583,7 +2594,7 @@ private data class WorkspaceMenuTarget(
      * 文本覆盖那些字节。
      */
     val kind: WorkspaceEntryKind,
-    /** 从 ③ 来的行多一项「看它在对话里的那一步」。 */
+    /** 这一行是从 ③「本次会话改过」点进来的（保留给以后区分来路用）。 */
     val fromSession: Boolean,
     val sizeBytes: Long,
     val modifiedAt: Long,
@@ -2604,7 +2615,7 @@ private fun menuTargetFor(path: String, file: File, fromSession: Boolean): Works
 /**
  * 行尾 ⋮ 的底部菜单。
  *
- * 稿子的动作表：③ 的行是「打开 / 编辑 / 重命名 / 删除 / 看它在对话里的那一步」，④ 的文件是
+ * 稿子的动作表：③ 的行与 ④ 一样，④ 的文件是
  * 「打开 / 编辑 / 重命名 / 删除 / 复制路径」，④ 的目录是「进入 / 重命名 / 删除 / 复制路径」。
  * 删除用错误色（它是唯一不可逆的那一个）。
  *
@@ -2636,7 +2647,7 @@ private fun WorkspaceMenuSheet(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onCopyPath: () -> Unit,
-    onLocateInChat: () -> Unit,
+    onMention: () -> Unit,
 ) {
     WsSheet(
         title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
@@ -2648,6 +2659,7 @@ private fun WorkspaceMenuSheet(
             MenuAction("进入", onEnter)
             MenuAction("重命名", onRename)
             MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            MenuAction("在对话里引用（@）", onMention)
             MenuAction("复制路径", onCopyPath)
         } else {
             MenuAction("打开", onOpen)
@@ -2660,11 +2672,8 @@ private fun WorkspaceMenuSheet(
             MenuAction("导出到 Download", onExport)
             MenuAction("重命名", onRename)
             MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-            if (target.fromSession) {
-                MenuAction("看它在对话里的那一步", onLocateInChat)
-            } else {
-                MenuAction("复制路径", onCopyPath)
-            }
+            MenuAction("在对话里引用（@）", onMention)
+            MenuAction("复制路径", onCopyPath)
         }
     }
 }
