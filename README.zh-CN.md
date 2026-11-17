@@ -30,6 +30,16 @@
 
 免 Root、免 Termux、不需要远程机器。手机就是工作区。
 
+<p align="center">
+  <img src="docs/screenshots/chat-tools.jpg" width="240" alt="对话里的工具卡与行内 diff" />
+  &nbsp;
+  <img src="docs/screenshots/chat-markdown.jpg" width="240" alt="对话里的 Markdown 与公式渲染" />
+  &nbsp;
+  <img src="docs/screenshots/models-providers.jpg" width="240" alt="模型与供应商设置页" />
+</p>
+
+<p align="center"><sub>工具卡与 diff · Markdown 与公式 · 模型与供应商</sub></p>
+
 ---
 
 ## 为什么选择 Pi for Android？

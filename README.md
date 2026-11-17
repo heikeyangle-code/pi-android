@@ -30,6 +30,16 @@ A native Android experience for the Pi Coding Agent, built for developers who wa
 
 No root. No Termux. No remote machine. Your phone becomes the workspace.
 
+<p align="center">
+  <img src="docs/screenshots/chat-tools.jpg" width="240" alt="Chat with tool cards and an inline diff" />
+  &nbsp;
+  <img src="docs/screenshots/chat-markdown.jpg" width="240" alt="Markdown and LaTeX rendering in the transcript" />
+  &nbsp;
+  <img src="docs/screenshots/models-providers.jpg" width="240" alt="Model providers screen" />
+</p>
+
+<p align="center"><sub>Tool cards &amp; diffs · Markdown &amp; math · Model providers</sub></p>
+
 ---
 
 ## Why Pi for Android?
