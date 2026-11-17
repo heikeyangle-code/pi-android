@@ -337,12 +337,14 @@ Pi for Android builds on the work of several upstream projects:
 - [Pi Coding Agent](https://github.com/earendil-works/pi) — the agent engine.
 - [Node.js](https://nodejs.org/) — the JavaScript runtime.
 - [Ubuntu](https://ubuntu.com/) — the Linux userspace.
-- [PRoot](https://proot-me.github.io/) — user-space Linux execution.
+- [PRoot](https://github.com/termux/proot) (Termux build) — user-space syscall translation; the default backend.
+- [Proroot](https://github.com/coderredlab/proroot) — the alternative runtime, shipped as a proprietary binary.
+- [TAWCROOT](https://github.com/wmww/tawc) (MIT, © Sophie Winter) — the single-process `seccomp` backend, built from a pinned upstream tag.
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — fast code search.
 - [fd](https://github.com/sharkdp/fd) — convenient file discovery.
 - [Android](https://developer.android.com/) — the native application platform.
 
-PRoot, Proroot, and TAWCROOT retain their respective upstream licenses and notices. Each third-party component retains its own license and copyright.
+Each runtime keeps its own upstream licence: PRoot is bundled from the Termux build, Proroot is a proprietary binary, TAWCROOT is MIT. Every third-party component retains its own licence and copyright; see [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/) for the bundled texts.
 
 ## License
 

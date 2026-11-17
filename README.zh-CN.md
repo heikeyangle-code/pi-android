@@ -337,12 +337,14 @@ Pi for Android 建立在多个优秀开源项目之上：
 - [Pi Coding Agent](https://github.com/earendil-works/pi)：Agent 引擎。
 - [Node.js](https://nodejs.org/)：JavaScript 运行环境。
 - [Ubuntu](https://ubuntu.com/)：Linux 用户态环境。
-- [PRoot](https://proot-me.github.io/)：用户态 Linux 执行环境。
+- [PRoot](https://github.com/termux/proot)（Termux 构建）：用户态系统调用翻译层，默认运行时。
+- [Proroot](https://github.com/coderredlab/proroot)：另一种运行时，以闭源二进制分发。
+- [TAWCROOT](https://github.com/wmww/tawc)（MIT，© Sophie Winter）：单进程 `seccomp` 运行时，从钉死的上游 tag 源码构建。
 - [ripgrep](https://github.com/BurntSushi/ripgrep)：高速代码搜索工具。
 - [fd](https://github.com/sharkdp/fd)：文件查找工具。
 - [Android](https://developer.android.com/)：原生应用平台。
 
-PRoot、Proroot 和 TAWCROOT 各自保留其上游许可和声明。所有第三方组件均保留各自的许可证和版权。
+三个运行时各自保留上游许可：PRoot 取自 Termux 构建，Proroot 是专有二进制，TAWCROOT 是 MIT。所有第三方组件均保留各自的许可证与版权，文本见 [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/)。
 
 ## 许可证
 
