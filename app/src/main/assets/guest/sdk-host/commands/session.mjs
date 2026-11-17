@@ -3,7 +3,7 @@
  * 语义逐条对照 pi 的 `modes/rpc/rpc-mode.js`（1.5.0），差异处有注释。
  */
 
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { DEFERRED } from "./registry.mjs";
@@ -17,17 +17,16 @@ function checkedCwd(cwd) {
   return abs;
 }
 
-/** 在 [cwd] 名下建一个空会话文件（只有头），返回路径。会话目录是平铺的，文件名规则同 SDK。 */
-function newSessionFileIn(controller, cwd, options) {
-  const abs = checkedCwd(cwd);
-  const id = randomUUID();
-  const timestamp = new Date().toISOString();
+/**
+ * 在会话目录里给一个**还不存在**的新会话文件挑个路径（平铺目录，文件名规则同 SDK：`<ISO>_<id>.jsonl`）。
+ * 不写任何东西：`SessionManager.open(不存在的路径, dir, cwdOverride)` 会按 `--session <path>` 的语义开一个
+ * 新会话（头里的 cwd = cwdOverride），**直到第一条 assistant 消息才落盘**（`_persist` 的 `flushed` 规则）——
+ * 和 pi 自己的新会话一样，用户没发过话就不会留下文件。
+ */
+function plannedSessionFile(controller) {
   const dir = controller.sessionDir;
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
-  const header = { type: "session", version: 3, id, timestamp, cwd: abs, ...(options?.parentSession ? { parentSession: options.parentSession } : {}) };
-  writeFileSync(file, `${JSON.stringify(header)}\n`);
-  return file;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return join(dir, `${timestamp}_${randomUUID()}.jsonl`);
 }
 
 export function register(reg, { controller }) {
@@ -105,10 +104,12 @@ export function register(reg, { controller }) {
     const options = optStr(args, "parentSession") ? { parentSession: args.parentSession } : undefined;
     const cwd = optStr(args, "cwd");
     if (cwd && resolve(cwd) !== resolve(controller.cwd)) {
-      // SDK 的 newSession 只在当前 cwd 里开。要在别的项目里开新会话：先落一个只有头的会话文件
-      // （和 SessionManager.newSession 写的头一模一样，cwd 记在头里），再 switchSession 过去 ——
-      // 这正是 pi 自己 /resume 跨项目的路径。
-      return withState(controller, await controller.runtime.switchSession(newSessionFileIn(controller, cwd, options)));
+      // SDK 的 `runtime.newSession` 只在当前 cwd 里开。别的项目里开新会话用它公开的另一条路：
+      // `switchSession(路径, { cwdOverride })` —— 路径指向一个还不存在的文件，SessionManager 就按
+      // `--session <path>` 的语义开新会话，cwd 记成 cwdOverride，且**不预先写文件**（见 plannedSessionFile）。
+      if (options) throw bad("跨项目新建会话不支持 parentSession（SDK 的 switchSession 没有这个参数）");
+      const target = checkedCwd(cwd);
+      return withState(controller, await controller.runtime.switchSession(plannedSessionFile(controller), { cwdOverride: target }));
     }
     return withState(controller, await controller.runtime.newSession(options));
   });

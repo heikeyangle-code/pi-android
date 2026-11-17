@@ -670,8 +670,12 @@ try {
   const moved = await bounce("session.new", { cwd: other });
   const there = (await h.call("session.snapshot")).data;
   expect("session.new{cwd} 在另一个项目里开新会话", moved.ok && there.cwd === other && there.sessionFile !== here0.sessionFile, JSON.stringify(moved.error ?? there.cwd));
-  const hdr = JSON.parse(readFileSync(there.sessionFile, "utf8").split("\n")[0]);
-  expect("新会话头里记的就是那个 cwd", hdr.type === "session" && hdr.cwd === other, JSON.stringify(hdr));
+  // 与 pi 自己的新会话一样：第一条 assistant 消息之前不落盘 —— 没发过话就不会在会话目录里留下文件。
+  expect("新会话在第一条消息之前不落盘（不留空会话文件）", !existsSync(there.sessionFile), there.sessionFile);
+  const allNow = await h.call("session.list", { all: true });
+  expect("session.list 里没有它（pi 列表里没有空会话）", allNow.ok && !allNow.data.sessions.some((x) => x.path === there.sessionFile), JSON.stringify(allNow.data?.sessions?.map((x) => x.path)));
+  const parented = await h.call("session.new", { cwd: other + "-x", parentSession: here0.sessionFile });
+  expect("跨项目 + parentSession → 如实拒绝", parented.error?.code === "bad_args", JSON.stringify(parented.error ?? parented.data));
   const listedHere = await h.call("session.list", {});
   expect("session.list（非 all）跟着当前 cwd 走", listedHere.ok && listedHere.data.sessions.every((x) => x.cwd === other), JSON.stringify(listedHere.data?.sessions?.map((x) => x.cwd)));
   const nocwd = await h.call("session.new", { cwd: join(h.root, "nope") });
