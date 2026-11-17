@@ -14,7 +14,8 @@
  * 后续替换由命令发起，命令本来就是异步应答，直接等。
  */
 
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { loadSdk, sdkVia } from "./sdk.mjs";
 import { ERR, HostError } from "./protocol.mjs";
 import { STATE_EVENTS, createStatePusher } from "./state.mjs";
@@ -171,20 +172,70 @@ export class Controller {
     };
   }
 
+  /**
+   * 这个项目信不信任——与官方 `resolveProjectTrusted`（`core/project-trust.ts`）同一个顺序：
+   *  1. 本次会话的表态（`--trust` 或「仅本次」）；
+   *  2. 信任库里**最近**的一条记录（`ProjectTrustStore.get` 会沿父目录往上找，所以信任一个父目录就覆盖整棵树）；
+   *  3. 项目里没有任何需要信任才加载的东西 → 信任（无所谓）；
+   *  4. 设置 `defaultProjectTrust`：`always` / `never` 直接定；
+   *  5. `ask`：先按「不信任」起，`undecided = true`，让 App 去问。
+   * 官方在 3 与 4 之间还会让扩展的 `project_trust` 事件表态；宿主在会话建好之前没有扩展可问，所以没有这一步。
+   * `source` 说明结论从哪来，界面据此写「为什么」。
+   */
   #projectTrusted(cwd) {
     const sdk = this.sdk;
-    if (this.trustOverride !== undefined && this.trustOverrideCwd === cwd) return { value: this.trustOverride, undecided: false };
+    if (this.trustOverride !== undefined && this.trustOverrideCwd === cwd) {
+      return { value: this.trustOverride, undecided: false, source: "session" };
+    }
     const stored = this.trustStore.get(cwd);
-    if (stored === true || stored === false) return { value: stored, undecided: false };
-    const needs = sdk.hasTrustRequiringProjectResources(cwd);
-    // 没有需要信任的东西：信任与否无关紧要，按 pi 自己的默认（信任）。
-    // 有而没表态：不信任，并通知 App 询问（`project.trust` 命令回写）。
-    return needs ? { value: false, undecided: true } : { value: true, undecided: false };
+    if (stored === true || stored === false) return { value: stored, undecided: false, source: "store" };
+    if (!sdk.hasTrustRequiringProjectResources(cwd)) return { value: true, undecided: false, source: "nothing-to-trust" };
+    const fallback = this.#defaultProjectTrust(cwd);
+    if (fallback === "always") return { value: true, undecided: false, source: "default" };
+    if (fallback === "never") return { value: false, undecided: false, source: "default" };
+    return { value: false, undecided: true, source: "ask" };
+  }
+
+  /** 全局设置 `defaultProjectTrust`（SDK 自己把非法值归成 `ask`）。读不到就当 `ask`：宁可多问一次。 */
+  #defaultProjectTrust(cwd) {
+    try {
+      return this.sdk.SettingsManager.create(cwd, this.cfg.agentDir, { projectTrusted: false }).getDefaultProjectTrust();
+    } catch {
+      return "ask";
+    }
   }
 
   /** 当前项目是否被信任（含 App 已表态的覆盖）。资源 / 包命令按它决定读不读项目层设置。 */
   isProjectTrusted() {
     return this.#projectTrusted(this.cwd).value;
+  }
+
+  /**
+   * 信任的完整读数：结论、来源、信任库里哪一条在起作用（可能是父目录的）、项目里有没有需要信任的东西。
+   * 「继承」= 起作用的记录不是这个目录自己的（比如信任了它的父目录）。
+   */
+  trustState() {
+    this.requireSession();
+    const cwd = this.cwd;
+    const t = this.#projectTrusted(cwd);
+    const entry = this.trustStore.getEntry(cwd);
+    let canonical = cwd;
+    try {
+      canonical = realpathSync(cwd);
+    } catch {
+      canonical = resolve(cwd);
+    }
+    const parent = dirname(canonical);
+    return {
+      cwd,
+      trusted: t.value,
+      undecided: t.undecided,
+      source: t.source,
+      entry: entry ? { path: entry.path, decision: entry.decision, inherited: entry.path !== canonical } : null,
+      needsTrust: this.sdk.hasTrustRequiringProjectResources(cwd),
+      defaultProjectTrust: this.#defaultProjectTrust(cwd),
+      parent: parent === canonical ? null : parent,
+    };
   }
 
   #pickSessionManager(sdk, cwd, sessionDir, sel) {
@@ -277,14 +328,67 @@ export class Controller {
     };
   }
 
-  /** 项目信任表态（App 的弹窗回答）：写回 pi 的信任库并重载。 */
-  async setProjectTrust(trusted) {
+  /**
+   * 项目信任表态：写进 pi 的信任库（`trust.json`），并让**已经在跑的会话**读到新结论。
+   *
+   * `remember`（对应官方弹窗的几个选项，`getProjectTrustOptions`）：
+   *  - `folder`：记在这个目录（信任 / 不信任）；
+   *  - `parent`：信任它的父目录并清掉这个目录自己的记录——只对「信任」有意义，官方也只给这一个选项；
+   *  - `session`：只管这一次，不写信任库；
+   *  - `reset`：清掉这个目录自己的记录，回到「没表态」（之后按 `defaultProjectTrust` 走）；
+   *  - `reset-inherited`：起作用的是父目录的记录时，清掉那一条。
+   *
+   * **必须把结论交给会话的 `SettingsManager.setProjectTrusted`**：`session.reload()` 明确「保留
+   * SettingsManager 当时的信任态」（`resource-loader.ts` reload 注释），只写信任库再 reload，
+   * 会话里项目层的设置与资源仍然按旧结论加载。
+   */
+  async setProjectTrust(trusted, remember = "folder") {
     const cwd = this.cwd;
-    this.trustStore.set(cwd, trusted);
-    this.trustOverride = trusted;
-    this.trustOverrideCwd = cwd;
-    await this.requireSession().reload();
-    return { trusted };
+    const parent = dirname(cwd);
+    switch (remember) {
+      case "folder":
+        this.trustStore.set(cwd, trusted);
+        this.#clearTrustOverride();
+        break;
+      case "parent":
+        if (!trusted) throw new HostError(ERR.BAD_ARGS, "「信任父目录」只用于信任。");
+        if (parent === cwd) throw new HostError(ERR.BAD_ARGS, "这个目录没有父目录。");
+        this.trustStore.setMany([
+          { path: parent, decision: true },
+          { path: cwd, decision: null },
+        ]);
+        this.#clearTrustOverride();
+        break;
+      case "session":
+        this.trustOverride = trusted;
+        this.trustOverrideCwd = cwd;
+        break;
+      case "reset":
+        this.trustStore.set(cwd, null);
+        this.#clearTrustOverride();
+        break;
+      case "reset-inherited": {
+        // 起作用的是父目录的记录：清掉那一条（会影响它下面所有没自己记录的项目，界面要把话说清）。
+        const entry = this.trustStore.getEntry(cwd);
+        if (!entry) throw new HostError(ERR.BAD_ARGS, "没有可清除的信任记录。");
+        this.trustStore.setMany([{ path: entry.path, decision: null }]);
+        this.#clearTrustOverride();
+        break;
+      }
+      default:
+        throw new HostError(ERR.BAD_ARGS, `未知的 remember：${remember}`);
+    }
+    const session = this.requireSession();
+    const now = this.#projectTrusted(cwd);
+    session.settingsManager.setProjectTrusted(now.value);
+    await session.reload();
+    if (now.undecided) this.hub.emit("project.trust.required", { cwd });
+    return this.trustState();
+  }
+
+  #clearTrustOverride() {
+    this.trustOverride = undefined;
+    this.trustOverrideCwd = undefined;
   }
 
   // ------------------------------------------------------------------ shutdown

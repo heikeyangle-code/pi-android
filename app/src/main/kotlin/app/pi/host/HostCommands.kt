@@ -178,8 +178,11 @@ class HostCommands(
 
     // ---- project ----
 
-    suspend fun setTrust(trusted: Boolean): HostReply =
-        reply("project.trust", obj { put("trusted", JsonPrimitive(trusted)) }, LONG_TIMEOUT_MS)
+    /** 项目信任的表态：[remember] 取 `folder` / `parent` / `session` / `reset` / `reset-inherited`（宿主校验）。应答是新的信任状态。 */
+    suspend fun setTrust(trusted: Boolean, remember: String = "folder"): HostReply =
+        reply("project.trust", obj { put("trusted", JsonPrimitive(trusted)); put("remember", JsonPrimitive(remember)) }, LONG_TIMEOUT_MS)
+
+    suspend fun trustState(): HostReply = reply("project.trustState")
 
     // ---- 通用口（升级的杠杆）----
 

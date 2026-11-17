@@ -19,8 +19,32 @@ function packageManager(controller) {
   });
 }
 
+/**
+ * 一个包来源「是什么」，交给官方的 `parseSource` 判断（npm / git / 本地；npm 的版本与是否固定，git 的 ref）。
+ * App 不自己猜：比如没有 `npm:` 前缀的 `foo` 在 pi 里是**本地路径**，只有官方解析器说了算。
+ * `parseSource` 在类型声明里是 private，但运行时就在原型上；契约测试盯着它，升级挪了位置会红。
+ * 固定（exact 版本 / git ref）的包 `pi update` 会跳过，所以 `pinned` 要让用户看见。
+ */
+export function describeSource(pm, source) {
+  try {
+    const p = pm.parseSource(source);
+    if (p.type === "npm") return { kind: "npm", name: p.name, version: p.version ?? null, pinned: p.pinned === true };
+    if (p.type === "git") return { kind: "git", name: `${p.host}/${p.path}`, version: p.ref ?? null, pinned: p.pinned === true };
+    return { kind: "local", name: p.path, version: null, pinned: false };
+  } catch {
+    return { kind: "unknown", name: source, version: null, pinned: false };
+  }
+}
+
+const withInfo = (pm, list) => list.map((p) => ({ ...p, info: describeSource(pm, p.source) }));
+
 export function register(reg, { controller, bus }) {
-  reg.add("packages.list", () => ({ packages: packageManager(controller).listConfiguredPackages() }));
+  reg.add("packages.list", () => {
+    const pm = packageManager(controller);
+    return { packages: withInfo(pm, pm.listConfiguredPackages()) };
+  });
+
+  reg.add("packages.inspect", (args) => ({ info: describeSource(packageManager(controller), str(args, "source").trim()) }));
 
   // 以前：`pi` 子进程 + 解析输出；现在：一次函数调用。
   reg.add("packages.updates", async () => ({
@@ -42,7 +66,7 @@ export function register(reg, { controller, bus }) {
     pm.setProgressCallback((event) => controller.hub.emit("packages.progress", { opId, ...event }));
     try {
       const result = await run(pm, { local: optStr(args, "scope") === "project" });
-      return { opId, ...(result ?? {}), packages: pm.listConfiguredPackages() };
+      return { opId, ...(result ?? {}), packages: withInfo(pm, pm.listConfiguredPackages()) };
     } catch (error) {
       if (error instanceof HostError) throw error;
       throw new HostError(ERR.INTERNAL, String(error?.message ?? error));

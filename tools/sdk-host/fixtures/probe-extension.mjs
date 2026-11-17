@@ -90,6 +90,10 @@ export default function probe(pi) {
       };
     });
 
+    // 热重载（`session.reload` / 项目信任改动）会等 session_start 的处理器跑完：下面这些故意不返回的
+    // 交互只属于「首次启动」，否则每次重载测试都会卡在没人回答的 custom 组件上。
+    if (event.reason === "reload") return;
+
     const picked = await ctx.ui.select("pick one", ["a", "b"]);
     ctx.ui.notify(`picked=${picked}`);
 

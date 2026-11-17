@@ -1,7 +1,11 @@
 package app.pi.host
 
+import app.pi.packages.PiLoadedResources
+import app.pi.packages.PiProjectTrust
 import app.pi.packages.PiResourceCatalog
+import app.pi.packages.PiResourceFile
 import app.pi.packages.PiResourceCatalog.Parsed
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -34,12 +38,66 @@ class HostResources(private val commands: () -> HostCommands?) {
     suspend fun updates(): Parsed<List<PiResourceCatalog.Update>> =
         run("packages.updates", JsonObject(emptyMap()), PiResourceCatalog::parseUpdates)
 
-    /** 项目信任的表态（官方弹窗的回答）：写进 pi 的信任库并重载会话。 */
-    suspend fun setTrust(trusted: Boolean): Parsed<Boolean> {
+    /** 此刻**实际加载**的资源：扩展（含注册了什么）、技能、提示、主题、上下文文件、系统提示，以及 SDK 的诊断。 */
+    suspend fun loaded(): Parsed<PiLoadedResources.Loaded> =
+        run("resources.loaded", JsonObject(emptyMap())) { text ->
+            val o = runCatching { Json.parseToJsonElement(text) as? JsonObject }.getOrNull()
+            if (o == null) Parsed.Error("宿主返回的资源清单读不懂。") else Parsed.Ok(PiLoadedResources.parse(o))
+        }
+
+    /** 项目信任的现状（`project.trustState`）：结论、来源、记录、默认策略。 */
+    suspend fun trustState(): Parsed<PiProjectTrust.State> = trust { it.trustState() }
+
+    /** 项目信任的表态（官方弹窗的回答）：写进 pi 的信任库（或只记本次）并重载会话；应答是新的状态。 */
+    suspend fun setTrust(option: PiProjectTrust.Option): Parsed<PiProjectTrust.State> =
+        trust { it.setTrust(option.trusted, option.remember.key) }
+
+    // ---- 资源文件：技能 / 提示 / 主题 / 扩展 / 上下文文件。位置白名单与「项目未信任不让动」在宿主判。 ----
+
+    suspend fun readFile(path: String): Parsed<PiResourceFile.Doc> =
+        fileCall("resources.file.read", mapOf("path" to JsonPrimitive(path))) { PiResourceFile.parseDoc(it) }
+
+    /** [stamp] 是打开时读到的指纹；宿主发现文件已被别处改过会拒绝（原话：「文件在你编辑期间被改过…」）。 */
+    suspend fun writeFile(path: String, text: String, stamp: PiResourceFile.Stamp?): Parsed<PiResourceFile.Stamp> =
+        fileCall(
+            "resources.file.write",
+            buildMap {
+                put("path", JsonPrimitive(path))
+                put("text", JsonPrimitive(text))
+                if (stamp != null) {
+                    put("expectSize", JsonPrimitive(stamp.size))
+                    put("expectMtimeMs", JsonPrimitive(stamp.mtimeMs))
+                }
+            },
+        ) { PiResourceFile.parseStamp(it) }
+
+    /** 新建一个资源文件（技能 / 提示 / 扩展 / 上下文）；返回它的路径。已存在会被拒绝。 */
+    suspend fun createFile(kind: PiResourceFile.Kind, project: Boolean, name: String?): Parsed<String> =
+        fileCall(
+            "resources.file.create",
+            buildMap {
+                put("kind", JsonPrimitive(kind.key))
+                put("scope", JsonPrimitive(if (project) "project" else "user"))
+                if (name != null) put("name", JsonPrimitive(name))
+            },
+        ) { (it["path"] as? JsonPrimitive)?.content.orEmpty() }
+
+    suspend fun deleteFile(path: String): Parsed<Unit> =
+        fileCall("resources.file.delete", mapOf("path" to JsonPrimitive(path))) { }
+
+    private suspend fun <T> fileCall(cmd: String, args: Map<String, kotlinx.serialization.json.JsonElement>, parse: (JsonObject) -> T): Parsed<T> {
         val c = commands() ?: return Parsed.Error(NO_ENGINE)
         return try {
-            c.setTrust(trusted)
-            Parsed.Ok(trusted)
+            Parsed.Ok(parse(c.call(cmd, JsonObject(args), HostCommands.LONG_TIMEOUT_MS).data))
+        } catch (e: HostException) {
+            Parsed.Error(e.message ?: e.code)
+        }
+    }
+
+    private suspend fun trust(call: suspend (HostCommands) -> HostReply): Parsed<PiProjectTrust.State> {
+        val c = commands() ?: return Parsed.Error(NO_ENGINE)
+        return try {
+            Parsed.Ok(PiProjectTrust.parse(call(c).data))
         } catch (e: HostException) {
             Parsed.Error(e.message ?: e.code)
         }

@@ -982,27 +982,6 @@ object PiSettingsCatalog {
             // row takes effect at once, which is also what pi's TUI does.
             effective = EffectiveKind.Immediate,
         ),
-        // Read-only on purpose, and an entry point rather than an editor. The
-        // array is written by the package manager: `pi install` records a source
-        // in `settings.packages` and also resolves, downloads and records what it
-        // installed (`core/package-manager.ts`; the app's own screen says the list
-        // it shows "is what `pi install` wrote into settings.json's packages",
-        // `packages/PiPackagesScreen.kt:309`). Letting a user hand-edit the array
-        // here would produce exactly the state that comment warns about — a spec
-        // that looks installed but was never fetched — so the row jumps to the
-        // package screen (`PiSettingsStack.hostActions`, entry key `packages`)
-        // instead of opening `PiListEditorSheet`.
-        PiSetting(
-            key = "packages",
-            title = "扩展包与项目信任",
-            description = "安装、更新、移除资源包与项目信任；逐条开关在 工作区 → 资源。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "扩展包",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            readOnly = true,
-        ),
         // ------------------------------------------------------------------
         // 9 外观
         // ------------------------------------------------------------------
@@ -1631,9 +1610,8 @@ object PiSettingsCatalog {
             }
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
-            // 只报 settings.json 里真实存在的包条数；逐条资源的清单是 pi 自己算的，
-            // 在 工作区 → 资源，这里不再放一份扫描出来的数字。
-            "${byKey["packages"]?.countIn(store) ?: 0} 个资源包"
+            // 数字（几个已加载、几个问题）是 pi 的 ResourceLoader 算的，要问宿主，首页不放一份猜出来的。
+            "扩展 · 技能 · 提示 · 主题 · 包 · 信任"
         },
         PiSettingsGroup(G_APPEARANCE, "外观", Icons.Filled.ColorLens) { store ->
             val themeValue = summaryText(store, "theme")

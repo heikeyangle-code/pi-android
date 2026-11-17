@@ -52,7 +52,16 @@ for (const m of ["session", "services", "diagnostics"]) check(`AgentSessionRunti
 const sm = sdk.SessionManager;
 for (const m of ["create", "open", "continueRecent", "findById", "list", "listAll"]) check(`SessionManager.${m}`, typeof sm?.[m] === "function");
 const pm = sdk.DefaultPackageManager?.prototype ?? {};
-for (const m of ["listConfiguredPackages", "checkForAvailableUpdates", "installAndPersist", "removeAndPersist", "update", "setProgressCallback", "resolve"]) check(`PackageManager.${m}`, has(pm, m));
+for (const m of ["listConfiguredPackages", "checkForAvailableUpdates", "installAndPersist", "removeAndPersist", "update", "setProgressCallback", "resolve", "parseSource"]) check(`PackageManager.${m}`, has(pm, m));
+
+// 项目信任与已加载资源（controller.mjs / resources.mjs）：全部是公开出口。
+const ts = sdk.ProjectTrustStore?.prototype ?? {};
+for (const m of ["get", "getEntry", "set", "setMany"]) check(`ProjectTrustStore.${m}`, has(ts, m));
+check("hasTrustRequiringProjectResources", typeof sdk.hasTrustRequiringProjectResources === "function");
+const stm = sdk.SettingsManager?.prototype ?? {};
+for (const m of ["setProjectTrusted", "isProjectTrusted", "getDefaultProjectTrust"]) check(`SettingsManager.${m}`, has(stm, m));
+const drl = sdk.DefaultResourceLoader?.prototype ?? {};
+for (const m of ["getExtensions", "getSkills", "getPrompts", "getThemes", "getAgentsFiles", "getSystemPromptSource", "getAppendSystemPromptSources"]) check(`ResourceLoader.${m}`, has(drl, m));
 
 // 认证（auth.mjs）：login 的第 4 个参数 / logout / 凭据列表。
 const mr = sdk.ModelRuntime?.prototype ?? {};

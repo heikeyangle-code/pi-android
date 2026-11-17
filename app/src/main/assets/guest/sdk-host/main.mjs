@@ -33,6 +33,7 @@ import * as uiCmds from "./commands/ui.mjs";
 import * as serviceCmds from "./commands/services.mjs";
 import * as authCmds from "./commands/auth.mjs";
 import * as resourceCmds from "./commands/resources.mjs";
+import * as resourceFileCmds from "./commands/resourcefiles.mjs";
 import * as mcpCmds from "./commands/mcp.mjs";
 import * as settingsCmds from "./commands/settings.mjs";
 import * as genericCmds from "./commands/generic.mjs";
@@ -83,7 +84,7 @@ controller.theme = themeHandle.theme;
 
 const reg = new Registry();
 const deps = { controller, hub, surfaces, ui, themeHandle, reg, bus: () => controller.bus };
-for (const mod of [hostCmds, sessionCmds, libraryCmds, agentCmds, modelConfigCmds, modelCmds, catalogCmds, uiCmds, serviceCmds, authCmds, resourceCmds, mcpCmds, settingsCmds, genericCmds]) mod.register(reg, deps);
+for (const mod of [hostCmds, sessionCmds, libraryCmds, agentCmds, modelConfigCmds, modelCmds, catalogCmds, uiCmds, serviceCmds, authCmds, resourceCmds, resourceFileCmds, mcpCmds, settingsCmds, genericCmds]) mod.register(reg, deps);
 
 hub.emit("host.ready", { pid: process.pid, node: process.version, cwd: cfg.cwd });
 

@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.ui.PiTopBar
-import app.pi.ui.screens.PiFilesScreen
 
 /**
  * Settings level 0 (spec §6.1), 按 v2 重排：当前模型卡 → 设备 / 扩展 / 关于 →
@@ -36,9 +35,7 @@ import app.pi.ui.screens.PiFilesScreen
  * [PiSettingsEntryRow]（图标 + 标题 + 一行说明 + chevron），与「设备能力」页同一个构件。
  *
  * The screen owns no routes: every destination is the caller's, which is why it takes
- * callbacks rather than owning navigation. The one exception is a fallback — the
- * 「Pi 文件」screen hosts itself here only when the caller passes no `onOpenPiFiles`
- * (the app passes one, from `PiSettingsStack`; see that parameter).
+ * callbacks rather than owning navigation.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,13 +47,6 @@ fun SettingsHome(
     onOpenGroup: (String) -> Unit,
     /** `null` hides the row, which is what a preview or a test wants. */
     onOpenDeviceCapabilities: (() -> Unit)? = null,
-    /**
-     * The package/extension manager ([app.pi.packages.PiPackagesHost]). `null`
-     * hides the row for the same reason as the capability one: pi has no package
-     * screen to mirror — `pi install` is CLI-only in this version — so the entry
-     * exists only where the host can mount it.
-     */
-    onOpenPackages: (() -> Unit)? = null,
     /**
      * The open-source licence notices ([LicensesScreen]). `null` hides the row.
      * This one is neither a pi setting nor a pi feature: publishing the licences of
@@ -96,17 +86,6 @@ fun SettingsHome(
      */
     onOpenDiagnostics: (() -> Unit)? = null,
     /**
-     * 设置 → 「Pi 文件」（[app.pi.ui.screens.PiFilesScreen]）。
-     *
-     * 本应用传的是 `PiSettingsStack` 的 `{ piFiles = true }`：这一屏是那个栈里的一个层级，
-     * 所以它的返回语义、层级与 `rememberSaveable` 状态都在栈里，与搜索 / 分组页同一套。
-     * 首页只把点击转上去。
-     *
-     * `null` 只留作**没有宿主时的退路**（预览、单屏测试）：那一屏由首页自己托管，点开就地
-     * 替换首页内容。行在两种情况下都在 —— 一个点了没反应的行比一个自托管的行更坏。
-     */
-    onOpenPiFiles: (() -> Unit)? = null,
-    /**
      * 让首页的读数在「有东西写过设置」之后重读 `store` 的 epoch —— 与
      * [SettingsGroupScreen.freshness] 同一个东西，
      * 由 `PiSettingsStack` 的 `rowsEpoch` 供给（外部改动 + 本进程写入）。
@@ -128,16 +107,6 @@ fun SettingsHome(
     onOpenEngine: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    // 退路用的自托管状态。放在早退之前，所以两个分支都走同一份 remember。
-    var piFilesOpen by remember { mutableStateOf(false) }
-    if (onOpenPiFiles == null && piFilesOpen) {
-        PiFilesScreen(
-            contentPadding = contentPadding,
-            onBack = { piFilesOpen = false },
-        )
-        return
-    }
-    val openPiFiles: () -> Unit = onOpenPiFiles ?: { piFilesOpen = true }
     // 手绘 `PiTopBar` 不吃状态栏 inset，而这一屏只消费 `contentPadding` 的底边 ——
     // 顶边在这里补一次（见 `settingsPageTopInset`）。
     var query by remember { mutableStateOf("") }

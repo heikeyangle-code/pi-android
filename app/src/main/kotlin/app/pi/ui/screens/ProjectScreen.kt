@@ -77,7 +77,6 @@ import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.ui.BashRun
 import app.pi.ui.NavRequest
-import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
@@ -95,7 +94,6 @@ import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.components.PiType
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -109,7 +107,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * 工作区 —— 这个会话的**项目现场**，而且现在能动手。
@@ -321,21 +318,11 @@ fun ProjectScreen(
         )
     }
 
-    // ------------------------------------------------------------ ⑤ 资源扫描
-    val resourceManager = remember(layout) {
-        ResourceManager(app.pi.host.HostResources { session.hostCommands() }, layout, scope)
-    }
-    // 文件 / 资源两个分段：这一屏原来把两者摞在一条列表里，往下滚才看到资源，
-    // 像两个功能硬拼在一起。
-    var showResources by rememberSaveable { mutableStateOf(false) }
+    // ------------------------------------------------------------ ⑤ 资源
+    // 资源（扩展 / 技能 / 提示 / 主题 / 包 / 项目信任）统一在「设置 → 扩展与资源」，这里只放入口，不再复制一份。
     // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
     var overflow by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
-    // 信任由宿主裁决（SDK 的 ProjectTrustStore），资源清单带回 `trusted`；这里不再自己读 trust.json 复刻判据。
-    val projectUntrusted = resourceManager.snapshot?.trusted == false
-    LaunchedEffect(refreshTick, workspace, state.workspace.revision, showResources, engine) {
-        if (showResources) resourceManager.refresh()
-    }
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
     // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
@@ -679,46 +666,21 @@ fun ProjectScreen(
                     }
                 },
             )
-            // **文件 / 资源两个分段**：这一屏原来把两者摞在一条列表里，往下滚才看见资源，
-            // 像两个功能硬拼在一起。分段在列表外面，滚动时不跟着走。
-            PiSeg(
-                options = listOf(WS_SEGMENT_FILES, WS_SEGMENT_RESOURCES),
-                selectedIndex = if (showResources) 1 else 0,
-                onSelect = { showResources = it == 1 },
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = WS_SEGMENT_TOP,
-                    bottom = WS_SEGMENT_BOTTOM,
-                ),
-            )
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = PiSpacing.scrollBottom),
             ) {
-                if (showResources) {
-                    // ---------------------------------------------------- 资源
-                    // 清单是 pi 自己算的（装的包、内置扩展、各层目录），逐条开关也由 pi 的
-                    // 逻辑写；这里不再扫目录去猜。
-                    resourceManagerItems(
-                        manager = resourceManager,
-                        projectUntrusted = projectUntrusted,
-                        onManagePackages = {
-                            session.requestNav(NavRequest.SettingsFocus("packages"))
-                        },
-                        onOpen = { item, file ->
-                            viewer = WorkspaceViewerTarget(
-                                relativePath = item.name,
-                                file = file,
-                                kind = WorkspaceFiles.kindOf(file),
-                                sizeBytes = file.length(),
-                                modifiedAt = file.lastModified(),
-                                editable = false,
-                                startInEdit = false,
+                run {
+                    item(key = "resources-entry") {
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "扩展与资源",
+                                meta = "扩展、技能、提示、主题、包，以及项目信任",
+                                trail = { Text("管理", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources")) },
                             )
-                        },
-                    )
-                } else {
+                        }
+                    }
                     // ---------------------------------------------------- 文件
                     if (engineDown) {
                         item {
@@ -1517,11 +1479,7 @@ private val WS_CHIP_TOP = 10.dp
 private val WS_CHIP_BOTTOM = 6.dp
 
 /** 「文件 / 资源」分段那一条的上下留白。 */
-private val WS_SEGMENT_TOP = 4.dp
-private val WS_SEGMENT_BOTTOM = 10.dp
 
-private const val WS_SEGMENT_FILES = "文件"
-private const val WS_SEGMENT_RESOURCES = "资源"
 
 @Composable
 private fun FolderGlyph() {

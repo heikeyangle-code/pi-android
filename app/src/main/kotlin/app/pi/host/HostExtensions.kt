@@ -18,9 +18,13 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 class HostExtensions(private val commands: HostCommands) {
 
-    data class Pkg(val source: String, val scope: String, val filtered: Boolean, val installedPath: String?) {
+    /** [info] 是宿主 `describeSource`（SDK `parseSource`）对这个来源的解读；旧宿主没有就是 null。 */
+    data class Pkg(val source: String, val scope: String, val filtered: Boolean, val installedPath: String?, val info: SourceInfo? = null) {
         val isProject get() = scope == "project"
     }
+
+    /** [kind]：npm / git / local / unknown。[pinned]：写死了版本 / ref，`update` 会跳过它。 */
+    data class SourceInfo(val kind: String, val name: String?, val version: String?, val pinned: Boolean)
 
     data class Update(val source: String, val name: String, val type: String, val scope: String)
 
@@ -49,6 +53,9 @@ class HostExtensions(private val commands: HostCommands) {
     // ---- 扩展包 ----
 
     suspend fun packages(): List<Pkg> = rows(commands.call("packages.list").data["packages"]).map(::pkg)
+
+    /** 装之前先问：这串来源 pi 会当成什么（npm / git / 本地路径）。纯解析，不联网。 */
+    suspend fun inspect(source: String): SourceInfo = info(commands.call("packages.inspect", JsonObject(mapOf("source" to JsonPrimitive(source)))).data["info"] as? JsonObject ?: JsonObject(emptyMap()))
 
     /** 官方 `checkForAvailableUpdates()`：只查不装，要联网。 */
     suspend fun updates(): List<Update> =
@@ -165,7 +172,14 @@ class HostExtensions(private val commands: HostCommands) {
         private fun str(e: JsonElement?): String? = (e as? JsonPrimitive)?.takeIf { it.isString }?.content
     }
 
-    private fun pkg(o: JsonObject) = Pkg(str(o["source"]).orEmpty(), str(o["scope"]).orEmpty(), (o["filtered"] as? JsonPrimitive)?.content == "true", str(o["installedPath"]))
+    private fun pkg(o: JsonObject) = Pkg(str(o["source"]).orEmpty(), str(o["scope"]).orEmpty(), (o["filtered"] as? JsonPrimitive)?.content == "true", str(o["installedPath"]), (o["info"] as? JsonObject)?.let(::info))
+
+    private fun info(o: JsonObject) = SourceInfo(
+        kind = str(o["kind"]) ?: "unknown",
+        name = str(o["name"]),
+        version = str(o["version"]),
+        pinned = (o["pinned"] as? JsonPrimitive)?.content == "true",
+    )
 
     private fun server(o: JsonObject) = McpServer(
         name = str(o["name"]).orEmpty(),

@@ -2240,6 +2240,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         renderInvalidateJob?.cancel()
         renderInvalidateJob = viewModelScope.launch {
             engine.hostEvents.collect { ev ->
+                if (ev.name == "project.trust.required") {
+                    // 官方弹窗：项目里有要信任才加载的东西、又没人表态。事件只发一次，
+                    // 错过（界面还没挂上）就再也问不到，所以状态存在这里，由 [ProjectTrustHost] 显示。
+                    refreshTrustPrompt()
+                }
                 if (ev.name == "render.invalidate") {
                     toolRenderCache.reset()
                     messageRenderCache.reset()
@@ -2247,6 +2252,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     _renderRev.value += 1
                 }
             }
+        }
+        // 事件可能在界面订阅之前就发过了：引擎就绪后主动问一次信任状态。
+        viewModelScope.launch {
+            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
+            if (session === engine) refreshTrustPrompt()
         }
         // 会话列表要宿主已 `session.open` 才读得到：引擎一就绪就补读一次（此前的读取会失败并保留旧列表）。
         viewModelScope.launch {
@@ -4220,6 +4230,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             respond = { id, value, cancelled -> s.client.respond(id, value, cancelled) },
         )
     }
+
+    private val _trustPrompt = MutableStateFlow<app.pi.packages.PiProjectTrust.State?>(null)
+
+    /** 要问用户「信任这个项目吗」时非空（项目里有 `.pi` 资源、没人表态、默认策略是 ask）。 */
+    val trustPrompt: StateFlow<app.pi.packages.PiProjectTrust.State?> = _trustPrompt.asStateFlow()
+
+    private fun refreshTrustPrompt() {
+        val c = session?.commands ?: return
+        viewModelScope.launch {
+            val st = runCatching { app.pi.packages.PiProjectTrust.parse(c.trustState().data) }.getOrNull()
+            _trustPrompt.value = st?.takeIf { it.undecided }
+        }
+    }
+
+    /** 用户在弹窗里选了一项。失败时返回宿主原话（弹窗保留，用户可重试）。 */
+    suspend fun answerTrust(option: app.pi.packages.PiProjectTrust.Option): String? {
+        val c = session?.commands ?: return "引擎没在运行。"
+        return try {
+            c.setTrust(option.trusted, option.remember.key)
+            _trustPrompt.value = null
+            null
+        } catch (e: app.pi.host.HostException) {
+            e.message ?: e.code
+        }
+    }
+
+    /** 先不决定：这次不再问（下次开这个项目还会问）。 */
+    fun dismissTrustPrompt() { _trustPrompt.value = null }
 
     /** 宿主命令入口（引擎没起来为 null）。资源 / 信任这类「问宿主」的界面用它，不自己开 guest 进程。 */
     fun hostCommands(): app.pi.host.HostCommands? = session?.commands

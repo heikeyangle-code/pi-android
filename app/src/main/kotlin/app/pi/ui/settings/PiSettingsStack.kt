@@ -24,12 +24,10 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
 import app.pi.ui.PromptFileFacts
 import app.pi.ui.device.DeviceCapabilityScreen
-import app.pi.ui.screens.PiFilesScreen
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
@@ -172,9 +170,9 @@ fun PiSettingsStack(
     // 设置首页的「其他」一屏：终端 / Pi 文件 / 设备能力 / 扩展包 / 安全与隐私 / 开源许可。
     var other by rememberSaveable { mutableStateOf(false) }
     var deviceCapabilities by rememberSaveable { mutableStateOf(false) }
-    // pi installs resources with `pi install`, which has no RPC command, so the
-    // app owns this UI; the screen is `app.pi.packages.PiPackagesHost`.
-    var packages by rememberSaveable { mutableStateOf(false) }
+    // 「扩展与资源」枢纽（`ui/resources/ResourcesHubScreen`）：扩展 / 技能 / 提示 / 主题 / 上下文 / 包 / MCP / 项目信任都从这里进。
+    // 它跳去 MCP、Pi 文件、引擎、设置组时自己保持 true，所以那些页返回就回到枢纽，不用另记来路。
+    var resources by rememberSaveable { mutableStateOf(false) }
     // 「模型与供应商」（`ui/models/ModelsScreen`）：一个层级，数据全在宿主（auth.* / models.config.*）。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
     // 从「模型与供应商」点进「默认模型与推理」（那一组行的页）时置位：从那一页退出要回到模型页，
@@ -189,12 +187,6 @@ fun PiSettingsStack(
     // 用户能亲眼看到退出码是空的、stderr 是空的、哪个载荷读不出来，再决定发不发。
     // 它不碰引擎，因此引擎已经退出时同样可用（这正是它存在的场景）。
     var diagnostics by rememberSaveable { mutableStateOf(false) }
-    // 设置首页「其他」里的「Pi 文件」（`app.pi.ui.screens.PiFilesScreen`）。它既不是 pi
-    // 的设置键也不是 pi 的功能，而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3），
-    // 所以与上面几页同一档：这个栈里的一个层级，而不是首页自己托管的一屏 —— 层级的
-    // 返回语义与 `rememberSaveable` 都归这里（自托管那条退路只在没有宿主时用，见
-    // `SettingsHome` 的 `onOpenPiFiles`）。
-    var piFiles by rememberSaveable { mutableStateOf(false) }
     // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器，与「模型与供应商」
     // 同类，是这个栈里的一个层级，返回语义与状态恢复和别的层级一致。
     var mcp by rememberSaveable { mutableStateOf(false) }
@@ -394,7 +386,10 @@ fun PiSettingsStack(
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
-        if (setting != null) {
+        if (key == "hub:resources") {
+            // 工作区「扩展与资源」入口：不是某一条设置，是枢纽页本身。
+            resources = true
+        } else if (setting != null) {
             groupId = setting.group
             highlightKey = key
         }
@@ -416,12 +411,6 @@ fun PiSettingsStack(
     // that would have to pretend every key is handled.
     val openModelFlow: () -> Unit = { modelFlow = true }
     val hostActions: Map<String, () -> Unit> = mapOf(
-        // The `packages` row is a read-only *view* of what `pi install` wrote
-        // (`PiSettingsRegistry.kt` says so on the row). Editing the array by hand
-        // bypasses the download/resolve step and can leave a spec that looks
-        // installed but was never fetched, so the row opens the manager status quo
-        // screen instead of a list editor — the same screen 设置首页 already links.
-        "packages" to { packages = true },
         // The 进程 section's three switches are pi's process configuration, so
         // they can only take effect in a new `pi --mode rpc` process. This row is
         // the next step the rows above point at.
@@ -430,9 +419,6 @@ fun PiSettingsStack(
         // 看不到 logcat。这一行把 App 此刻还能读到的一切汇总成一份纯文本交给用户，报告
         // 的抓取发生在引擎退出的一瞬间（`engineDiagnostics`），所以引擎死了也能导。
         "app.runtime.diagnostics" to { diagnostics = true },
-        // 「查看资源文件」：这一屏的出口，指向「Pi 文件」屏。它走的是本栈**已有**的层级
-        // `piFiles`（`SettingsHome` 的入口行用的是同一个），不新造导航；那一屏是目录浏览器，
-        // `skills/`、`prompts/`、`themes/`、`extensions/` 都在里面能看到和编辑。
     )
 
     // **一直启用**：底栏没了以后，设置首页的返回键必须回到对话，否则按一下直接退出
@@ -440,13 +426,7 @@ fun PiSettingsStack(
     // 与覆盖层那条的关系：它们在 `PiRoot` 里，覆盖层 handler 组合顺序在后 ⇒ LIFO 先
     // 接到按键，所以覆盖层开着时按返回关的是覆盖层，不是这一屏。
     BackHandler(enabled = true) {
-        // `piFiles` 排在最前：它是这一栈里最深的一层，返回键先关它（回到设置首页），
-        // 而不是继续往外退。正常情况下 `PiFilesScreen` 自己那个 `BackHandler` 会先拿到
-        // 按键（组合顺序在后 → `OnBackPressedDispatcher` 的 LIFO），在那里"返回"是**退到
-        // 上一级目录**、到根才是 `onBack()`；这一支是它不在组合里时的兜底。
-        if (piFiles) {
-            piFiles = false
-        } else if (engineOpen) {
+        if (engineOpen) {
             engineOpen = false
         } else if (mcp) {
             mcp = false
@@ -457,8 +437,6 @@ fun PiSettingsStack(
         } else if (modelFlow) {
             // 与屏自己的 onBack 同一套复位（四个状态一起清），两条退出路径不留半开状态。
             modelFlow = false
-        } else if (packages) {
-            packages = false
         } else if (deviceCapabilities) {
             deviceCapabilities = false
         } else if (other) {
@@ -470,30 +448,17 @@ fun PiSettingsStack(
                 defaultsFromModels = false
                 modelFlow = true
             }
+        } else if (resources) {
+            resources = false
         } else {
             // 首页：底栏没了，这一下退到对话。
             onBack()
         }
     }
 
-    // `SettingsManager.getDefaultProjectTrust()` reads this key and coerces a
-    // missing value to `"ask"` (`settings-manager.ts:85`, `:1014-1017`); the
-    // package screen asks the same question when a project declares resources.
-    val defaultProjectTrust =
-        (effectiveStore.read("defaultProjectTrust") as? JsonPrimitive)?.content ?: "ask"
-
     val currentGroup = groupId
     Box(Modifier.fillMaxSize()) {
         when {
-            // 设置首页「其他 → Pi 文件」的目的地。放在最前与 BackHandler 的判定同序：
-            // 它是这一栈里最深的一层。入口由 `SettingsHome` 的 `onOpenPiFiles` 传来
-            // （见下面那处 `else ->`），所以这一屏的返回语义、层级与 `rememberSaveable`
-            // 状态都留在这个栈里，与搜索 / 分组页同一套。
-            piFiles -> PiFilesScreen(
-                contentPadding = contentPadding,
-                onBack = { piFiles = false },
-            )
-
             engineOpen -> EngineScreen(
                 contentPadding = contentPadding,
                 onBack = { engineOpen = false },
@@ -541,12 +506,6 @@ fun PiSettingsStack(
                 },
             )
 
-            packages -> ExtensionPackagesScreen(
-                contentPadding = contentPadding,
-                onBack = { packages = false },
-                access = extensionsAccess,
-            )
-
             deviceCapabilities -> DeviceCapabilityScreen(
                 store = DeviceCapabilityStore.get(LocalContext.current),
                 onBack = { deviceCapabilities = false },
@@ -562,17 +521,10 @@ fun PiSettingsStack(
                         open()
                     }
                 },
-                onOpenPiFiles = {
-                    other = false
-                    piFiles = true
-                },
                 onOpenDeviceCapabilities = {
                     other = false
                     deviceCapabilities = true
                 },
-                // 扩展包与项目信任的入口只留在「扩展与资源」那一组里（`packages` 行）：
-                // 以前这里再放一个同名入口，用户就有两处在管同一件事。
-                onOpenPackages = null,
                 onOpenSecurity = {
                     other = false
                     groupId = "security"
@@ -632,6 +584,22 @@ fun PiSettingsStack(
                 onRestartEngine = { restartPrompt = true },
             )
 
+            resources -> app.pi.ui.resources.ResourcesHubScreen(
+                contentPadding = contentPadding,
+                onBack = { resources = false },
+                access = extensionsAccess,
+                onOpenMcp = { mcp = true },
+                onOpenEngine = { engineOpen = true },
+                onOpenCommandSettings = {
+                    groupId = "resources"
+                    highlightKey = null
+                },
+                onOpenTrustPolicy = {
+                    groupId = "security"
+                    highlightKey = "defaultProjectTrust"
+                },
+            )
+
             else -> SettingsHome(
                 store = effectiveStore,
                 contentPadding = contentPadding,
@@ -641,20 +609,20 @@ fun PiSettingsStack(
                 // 「外观 → 主题 dark」那类摘要会停在旧值上。
                 freshness = rowsEpoch,
                 onOpenGroup = { id ->
-                    groupId = id
-                    highlightKey = null
+                    if (id == "resources") {
+                        resources = true
+                    } else {
+                        groupId = id
+                        highlightKey = null
+                    }
                 },
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
-                onOpenPackages = { packages = true },
                 onOpenLicenses = { licenses = true },
                 onOpenTerminal = onOpenTerminal,
                 // 首页顶栏的「模型与供应商」与分组页里那两条 Action 行是同一个目的地
                 // （`openModelFlow`），所以这里只是把已有的状态开关接上去，不多开任何一页。
                 onOpenModels = openModelFlow,
                 onOpenDiagnostics = { diagnostics = true },
-                // 首页「其他」里的第三行。走这个栈自己的层级（`piFiles`），所以它的返回
-                // 语义与状态恢复与上面几页完全一致；`SettingsHome` 只是把点击转上来。
-                onOpenPiFiles = { piFiles = true },
                 onOpenOther = { other = true },
                 onOpenMcp = { mcp = true },
                 onOpenEngine = { engineOpen = true },

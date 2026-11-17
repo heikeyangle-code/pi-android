@@ -218,5 +218,7 @@ export function register(reg, { controller }) {
   });
 
   // ---- 项目信任 -------------------------------------------------------------
-  reg.add("project.trust", (args) => controller.setProjectTrust(bool(args, "trusted")));
+  // `remember`：folder（默认）/ parent / session / reset，含义见 `controller.setProjectTrust`。
+  reg.add("project.trust", (args) => controller.setProjectTrust(bool(args, "trusted"), optStr(args, "remember") ?? "folder"));
+  reg.add("project.trustState", () => controller.trustState());
 }

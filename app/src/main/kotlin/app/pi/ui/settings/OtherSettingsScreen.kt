@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -28,9 +26,7 @@ internal fun OtherSettingsScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     onOpenTerminal: (() -> Unit)?,
-    onOpenPiFiles: () -> Unit,
     onOpenDeviceCapabilities: (() -> Unit)?,
-    onOpenPackages: (() -> Unit)?,
     onOpenSecurity: () -> Unit,
     onOpenLicenses: (() -> Unit)?,
 ) {
@@ -44,12 +40,8 @@ internal fun OtherSettingsScreen(
                 if (onOpenTerminal != null) add(
                     Triple(Icons.Filled.Terminal, "终端", { onOpenTerminal() }),
                 )
-                add(Triple(Icons.AutoMirrored.Filled.InsertDriveFile, "Pi 文件", onOpenPiFiles))
                 if (onOpenDeviceCapabilities != null) add(
                     Triple(Icons.Filled.PhoneAndroid, "设备能力", { onOpenDeviceCapabilities() }),
-                )
-                if (onOpenPackages != null) add(
-                    Triple(Icons.Filled.Extension, "扩展包与项目信任", { onOpenPackages() }),
                 )
                 add(Triple(Icons.Filled.Lock, "安全与隐私", onOpenSecurity))
                 if (onOpenLicenses != null) add(

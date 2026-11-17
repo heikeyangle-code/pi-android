@@ -405,6 +405,112 @@ try {
   expect("整份 set 可以修好损坏的文件", (await h.call("models.config.set", { config: { providers: {} } })).ok);
   expect("models.config.setProvider 缺 id → bad_args", (await h.call("models.config.setProvider", { provider: good })).error?.code === "bad_args");
 
+  // ---- 6d. 已加载资源与项目信任（对照 SDK：resource-loader / trust-manager / project-trust） ----
+  mkdirSync(join(h.agentDir, "skills", "user-skill"), { recursive: true });
+  writeFileSync(join(h.agentDir, "skills", "user-skill", "SKILL.md"), "---\nname: user-skill\ndescription: 用户级技能\n---\n正文\n");
+  mkdirSync(join(h.agentDir, "prompts"), { recursive: true });
+  writeFileSync(join(h.agentDir, "prompts", "user-prompt.md"), "---\ndescription: 用户级提示\nargument-hint: <x>\n---\n你好 $1\n");
+  await h.call("session.reload", {}, 60000);
+  const ld = await h.call("resources.loaded");
+  const lx = ld.data?.extensions?.find((e) => (e.commands ?? []).some((c) => c.name === "probe-ping"));
+  expect("resources.loaded：扩展带出它注册的命令 / 工具 / flag", ld.ok && lx && lx.tools.length > 0 && lx.flags.some((f) => f.name === "probe-mode" && f.type === "string"), JSON.stringify(ld.error ?? lx));
+  const lsk = ld.data?.skills?.find((k) => k.name === "user-skill");
+  expect("resources.loaded：技能带描述 / 路径 / 来源 / 是否禁止模型自动调用", lsk && lsk.description === "用户级技能" && lsk.filePath.endsWith("SKILL.md") && lsk.source?.scope === "user" && lsk.disableModelInvocation === false, JSON.stringify(lsk));
+  const lpr = ld.data?.prompts?.find((p) => p.name === "user-prompt");
+  expect("resources.loaded：提示模板带参数提示与正文预览", lpr && lpr.argumentHint === "<x>" && lpr.body.text.includes("你好") && lpr.body.truncated === false, JSON.stringify(lpr));
+  expect("resources.loaded：诊断三类都是数组", ["skillDiagnostics", "promptDiagnostics", "themeDiagnostics", "extensionErrors", "extensionWarnings", "contextFiles", "appendSystemPrompt"].every((k) => Array.isArray(ld.data?.[k])));
+
+  const ts0 = await h.call("project.trustState");
+  expect("project.trustState：没有需要信任的项目资源 → 信任，来源 nothing-to-trust", ts0.ok && ts0.data.trusted === true && ts0.data.needsTrust === false && ts0.data.source === "nothing-to-trust" && ts0.data.entry === null, JSON.stringify(ts0.error ?? ts0.data));
+  mkdirSync(join(h.work, ".pi", "skills", "proj-skill"), { recursive: true });
+  writeFileSync(join(h.work, ".pi", "skills", "proj-skill", "SKILL.md"), "---\nname: proj-skill\ndescription: 项目级技能\n---\n正文\n");
+  const ts1 = await h.call("project.trustState");
+  expect("项目里出现 .pi/skills 且没表态 → 未信任并待询问", ts1.data?.needsTrust === true && ts1.data.undecided === true && ts1.data.trusted === false && ts1.data.source === "ask", JSON.stringify(ts1.data));
+  const skillNames = async () => (await h.call("resources.loaded")).data.skills.map((k) => k.name);
+  const trustYes = await h.call("project.trust", { trusted: true, remember: "folder" }, 60000);
+  expect("project.trust folder：写进信任库，结论 true", trustYes.ok && trustYes.data.trusted === true && trustYes.data.entry?.decision === true && trustYes.data.entry?.inherited === false && trustYes.data.source === "store", JSON.stringify(trustYes.error ?? trustYes.data));
+  expect("信任后**已在跑的会话**立刻加载项目技能（SettingsManager 信任态已更新）", (await skillNames()).includes("proj-skill"));
+  const trustNo = await h.call("project.trust", { trusted: false, remember: "folder" }, 60000);
+  expect("改为不信任 → 项目技能立刻卸掉", trustNo.ok && trustNo.data.trusted === false && !(await skillNames()).includes("proj-skill"));
+  const trustSess = await h.call("project.trust", { trusted: true, remember: "session" }, 60000);
+  expect("project.trust session：只管这一次，信任库里仍是上次的「不信任」", trustSess.data?.trusted === true && trustSess.data.source === "session" && trustSess.data.entry?.decision === false && (await skillNames()).includes("proj-skill"), JSON.stringify(trustSess.data));
+  const trustReset = await h.call("project.trust", { trusted: false, remember: "reset" }, 60000);
+  expect("project.trust reset：清掉记录，回到待询问", trustReset.data?.entry === null && trustReset.data.undecided === true && trustReset.data.trusted === false, JSON.stringify(trustReset.error ?? trustReset.data));
+  const trustParent = await h.call("project.trust", { trusted: true, remember: "parent" }, 60000);
+  expect("project.trust parent：记在父目录，本目录是「继承」", trustParent.ok && trustParent.data.trusted === true && trustParent.data.entry?.inherited === true && trustParent.data.entry.path === trustParent.data.parent, JSON.stringify(trustParent.error ?? trustParent.data));
+  expect("「信任父目录」不能用于不信任 → bad_args", (await h.call("project.trust", { trusted: false, remember: "parent" })).error?.code === "bad_args");
+  expect("未知 remember → bad_args", (await h.call("project.trust", { trusted: true, remember: "forever" })).error?.code === "bad_args");
+  const clearInh = await h.call("project.trust", { trusted: false, remember: "reset-inherited" }, 60000);
+  expect("project.trust reset-inherited：清掉父目录那条记录", clearInh.ok && clearInh.data.entry === null && clearInh.data.undecided === true, JSON.stringify(clearInh.error ?? clearInh.data));
+  expect("没有记录时 reset-inherited → bad_args", (await h.call("project.trust", { trusted: false, remember: "reset-inherited" })).error?.code === "bad_args");
+  const settingsPath = join(h.agentDir, "settings.json");
+  const settingsNow = JSON.parse(readFileSync(settingsPath, "utf8"));
+  writeFileSync(settingsPath, JSON.stringify({ ...settingsNow, defaultProjectTrust: "always" }));
+  const dfAlways = await h.call("project.trustState");
+  expect("defaultProjectTrust=always：没表态也信任，来源 default", dfAlways.data?.trusted === true && dfAlways.data.undecided === false && dfAlways.data.source === "default" && dfAlways.data.defaultProjectTrust === "always", JSON.stringify(dfAlways.data));
+  writeFileSync(settingsPath, JSON.stringify({ ...settingsNow, defaultProjectTrust: "never" }));
+  const dfNever = await h.call("project.trustState");
+  expect("defaultProjectTrust=never：没表态直接不信任，不再询问", dfNever.data?.trusted === false && dfNever.data.undecided === false && dfNever.data.source === "default", JSON.stringify(dfNever.data));
+  writeFileSync(settingsPath, JSON.stringify(settingsNow));
+  await h.call("project.trust", { trusted: false, remember: "reset" }, 60000);
+
+  // ---- 6d2. 资源文件：读 / 改 / 建 / 删（位置表照 SDK resource-loader） ----
+  {
+    // 前面信任测试最后一步是「信任父目录」，项目层此刻可写。
+    const skillPath = join(h.agentDir, "skills", "user-skill", "SKILL.md");
+    const rd = await h.call("resources.file.read", { path: skillPath });
+    expect("resources.file.read：技能文件带内容、指纹、类型、可写", rd.ok && rd.data.text.includes("用户级技能") && rd.data.kind === "skill" && rd.data.scope === "user" && rd.data.writable === true && typeof rd.data.mtimeMs === "number" && rd.data.rel === "user-skill/SKILL.md", JSON.stringify(rd.error ?? rd.data));
+    const wr = await h.call("resources.file.write", { path: skillPath, text: rd.data.text.replace("正文", "改过的正文"), expectSize: rd.data.size, expectMtimeMs: rd.data.mtimeMs });
+    expect("resources.file.write：指纹对得上就写，返回新指纹", wr.ok && readFileSync(skillPath, "utf8").includes("改过的正文"), JSON.stringify(wr.error ?? wr.data));
+    const stale = await h.call("resources.file.write", { path: skillPath, text: "x", expectSize: rd.data.size, expectMtimeMs: rd.data.mtimeMs });
+    expect("resources.file.write：文件被别处改过（指纹不符）→ busy，不盖", stale.error?.code === "busy" && readFileSync(skillPath, "utf8").includes("改过的正文"), JSON.stringify(stale.error ?? stale.data));
+    for (const bad of [join(h.agentDir, "settings.json"), join(h.agentDir, "models.json"), join(h.agentDir, "auth.json"), join(h.agentDir, "sessions", "x.jsonl"), join(h.agentDir, "prompts", "sub", "a.md"), join(h.agentDir, "prompts", "a.txt"), join(h.agentDir, "themes", "a.md"), "/etc/passwd", join(h.agentDir, "skills", "..", "settings.json")]) {
+      const w = await h.call("resources.file.write", { path: bad, text: "{}" });
+      expect(`resources.file.write 拒绝白名单之外：${bad.replace(h.agentDir, "<agent>")}`, w.error?.code === "rejected", JSON.stringify(w.error ?? w.data));
+    }
+    const rdBad = await h.call("resources.file.read", { path: join(h.agentDir, "auth.json") });
+    expect("resources.file.read 也不给读凭据", rdBad.error?.code === "rejected", JSON.stringify(rdBad.error ?? rdBad.data));
+
+    const mk = async (args) => h.call("resources.file.create", { scope: "user", ...args });
+    for (const [n, label] of [["Bad", "大写"], ["a--b", "连续连字符"], ["-a", "开头连字符"], ["a b", "空格"], ["", "空"]]) {
+      expect(`新建技能：非法名（${label}）→ bad_args`, (await mk({ kind: "skill", name: n })).error?.code === "bad_args");
+    }
+    const sk = await mk({ kind: "skill", name: "made-skill" });
+    expect("新建技能：写出带 name/description 的 SKILL.md", sk.ok && readFileSync(sk.data.path, "utf8").startsWith("---\nname: made-skill\ndescription:"), JSON.stringify(sk.error ?? sk.data));
+    expect("新建同名 → rejected", (await mk({ kind: "skill", name: "made-skill" })).error?.code === "rejected");
+    const pr = await mk({ kind: "prompt", name: "made-prompt" });
+    const ex = await mk({ kind: "extension", name: "made-ext" });
+    const cx = await mk({ kind: "context", name: "AGENTS.md" });
+    const sy = await mk({ kind: "context", name: "SYSTEM.md" });
+    expect("新建提示 / 扩展 / 上下文 / 系统提示：路径按 SDK 位置", pr.data?.path === join(h.agentDir, "prompts", "made-prompt.md") && ex.data?.path === join(h.agentDir, "extensions", "made-ext.ts") && cx.data?.path === join(h.agentDir, "AGENTS.md") && sy.data?.path === join(h.agentDir, "SYSTEM.md"), JSON.stringify([pr, ex, cx, sy].map((r) => r.error ?? r.data?.path)));
+    expect("新建上下文：只认 AGENTS/CLAUDE/SYSTEM/APPEND_SYSTEM", (await mk({ kind: "context", name: "settings.json" })).error?.code === "bad_args");
+    await h.call("session.reload", {}, 60000);
+    const after = (await h.call("resources.loaded")).data;
+    expect("新建的技能 / 提示 / 扩展 / 上下文 / 系统提示，pi 重载后真的加载了", after.skills.some((k) => k.name === "made-skill") && after.prompts.some((k) => k.name === "made-prompt") && after.extensions.some((e) => e.path.endsWith("made-ext.ts")) && after.contextFiles.some((f) => f.path === join(h.agentDir, "AGENTS.md")) && typeof after.systemPrompt === "string", JSON.stringify({ s: after.skills.map((k) => k.name), x: after.extensionErrors }));
+    const dl = await h.call("resources.file.delete", { path: sk.data.path });
+    expect("删技能：删掉整个技能目录", dl.ok && dl.data.removed === "directory" && !existsSync(dirname(sk.data.path)), JSON.stringify(dl.error ?? dl.data));
+    const dp = await h.call("resources.file.delete", { path: pr.data.path });
+    expect("删提示：只删文件", dp.ok && dp.data.removed === "file" && !existsSync(pr.data.path));
+    for (const p of [ex.data.path, cx.data.path, sy.data.path]) await h.call("resources.file.delete", { path: p });
+    expect("删不存在的 → not_found", (await h.call("resources.file.delete", { path: pr.data.path })).error?.code === "not_found");
+    expect("删白名单之外 → rejected", (await h.call("resources.file.delete", { path: join(h.agentDir, "settings.json") })).error?.code === "rejected");
+
+    // 项目层：未信任时不让动
+    const projSkill = join(h.work, ".pi", "skills", "proj-skill", "SKILL.md");
+    await h.call("project.trust", { trusted: false, remember: "session" }, 60000);
+    const pw = await h.call("resources.file.write", { path: projSkill, text: "---\nname: proj-skill\ndescription: x\n---\n" });
+    expect("项目未信任：改项目资源 → rejected", pw.error?.code === "rejected", JSON.stringify(pw.error ?? pw.data));
+    expect("项目未信任：新建项目资源 → rejected", (await h.call("resources.file.create", { kind: "skill", scope: "project", name: "p2" })).error?.code === "rejected");
+    await h.call("project.trust", { trusted: true, remember: "session" }, 60000);
+    const pw2 = await h.call("resources.file.write", { path: projSkill, text: "---\nname: proj-skill\ndescription: 改了\n---\n" });
+    expect("信任后可改项目资源", pw2.ok && readFileSync(projSkill, "utf8").includes("改了"), JSON.stringify(pw2.error ?? pw2.data));
+    const pk = await h.call("resources.file.create", { kind: "context", scope: "project", name: "AGENTS.md" });
+    expect("项目 AGENTS.md 放项目根（pi 从 cwd 往上找）", pk.ok && pk.data.path === join(h.work, "AGENTS.md"), JSON.stringify(pk.error ?? pk.data));
+    const ps = await h.call("resources.file.create", { kind: "context", scope: "project", name: "SYSTEM.md" });
+    expect("项目 SYSTEM.md 放 .pi 里", ps.ok && ps.data.path === join(h.work, ".pi", "SYSTEM.md"), JSON.stringify(ps.error ?? ps.data));
+    for (const p of [pk.data.path, ps.data.path]) await h.call("resources.file.delete", { path: p });
+  }
+
   // ---- 6e. 扩展 flag / 诊断 / 工具详情 ----
   const fl = await h.call("catalog.flags");
   const fm = fl.data?.flags?.find((f) => f.name === "probe-mode");
@@ -419,6 +525,13 @@ try {
   expect("catalog.tools 带 exposure / sourceInfo / parameters", ctl.ok && tool0 && "exposure" in tool0 && tool0.sourceInfo && "parameters" in tool0 && Array.isArray(ctl.data.callable), JSON.stringify(tool0)?.slice(0, 160));
 
   // ---- 7. 进程内服务 ----------------------------------------------------
+  const insp = async (source) => (await h.call("packages.inspect", { source })).data?.info;
+  const iNpm = await insp("npm:@scope/pkg@1.2.3"), iRange = await insp("npm:pkg@^1.0.0"), iBare = await insp("npm:pkg");
+  expect("packages.inspect：npm 的名字 / 版本 / 是否固定由官方解析器说了算", iNpm?.kind === "npm" && iNpm.name === "@scope/pkg" && iNpm.version === "1.2.3" && iNpm.pinned === true && iRange?.pinned === false && iBare?.version === null, JSON.stringify([iNpm, iRange, iBare]));
+  const iGit = await insp("git:github.com/user/repo@v1"), iHttps = await insp("https://github.com/user/repo");
+  expect("packages.inspect：git 与 ref（带 ref 即固定）", iGit?.kind === "git" && iGit.name === "github.com/user/repo" && iGit.version === "v1" && iGit.pinned === true && iHttps?.kind === "git" && iHttps.pinned === false, JSON.stringify([iGit, iHttps]));
+  const iLocal = await insp("./local-pkg"), iNaked = await insp("some-name");
+  expect("packages.inspect：没有 npm:/git 前缀的名字是本地路径", iLocal?.kind === "local" && iNaked?.kind === "local" && iNaked.name === "some-name", JSON.stringify([iLocal, iNaked]));
   const pk = await h.call("packages.list");
   expect("packages.list（进程内，不起子进程）", pk.ok && Array.isArray(pk.data.packages), JSON.stringify(pk.error));
 

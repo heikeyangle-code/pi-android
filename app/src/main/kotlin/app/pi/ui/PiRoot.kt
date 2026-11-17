@@ -869,6 +869,7 @@ fun PiRoot() {
             // 底距必须活过 `calculateBottomPadding()` 返回 0 的情况：正常时它等于
             // 系统导航条 inset（底栏拆掉之后不再有 56dp），再加 8dp 的呼吸；
             // `maxOf` 兜住「再也报告不出来」那一下，否则 snackbar 落到手势条下面。
+            app.pi.ui.resources.ProjectTrustHost(session)
             ExtensionUiHost(
                 session = session,
                 snackbarBottomPadding = maxOf(

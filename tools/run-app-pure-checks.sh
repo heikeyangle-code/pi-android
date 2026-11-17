@@ -1213,6 +1213,27 @@ run_harness models-presentation \
   "$ROOT/app/src/test/kotlin/app/pi/ui/models/ModelsPresentationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/models/ModelsPresentation.kt"
 
+# app.pi.ui.resources + app.pi.packages: 「扩展与资源」页的全部判断——宿主 `resources.loaded` 的解析
+# （形状取自真实宿主输出）、开关清单与实际加载按路径对上、概览与分段与搜索、SDK 诊断说成人话、
+# 项目信任（`project.trustState`）的说法与每个状态下真能做的动作。
+# 资源文件：宿主应答解析、新建名字规则（对照 SDK validateName）、SKILL.md 等的写前预检。
+run_harness resource-file \
+  app.pi.packages.PiResourceFileCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiResourceFileCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceFile.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiLoadedResources.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiFiles.kt"
+
+run_harness resources-presentation \
+  app.pi.ui.resources.ResourcesPresentationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/resources/ResourcesPresentationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/resources/ResourcesPresentation.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/models/ModelsPresentation.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiLoadedResources.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiProjectTrust.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceCatalog.kt"
+
 # app.pi.ui.extension: 扩展输出的两条**渲染判据**（`ExtensionTextLines.kt`，纯函数）：
 # 预格式化行（框线 / 列对齐双空格 / 超过 pi 默认 80 列的行 → 展开不换行 + 横向滚动）与
 # select 改开底部 sheet 的阈值（9 个选项起、或任一标签 > 36 列）。为什么必须在这里：两条

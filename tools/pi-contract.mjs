@@ -1774,6 +1774,10 @@ function checkAppTables(piDir) {
 	// gone stale (pi removed the key, or the app started exposing it) fails too, so the
 	// list cannot rot into a description of a state that cannot happen.
 	const UNEXPOSED_SETTINGS_DECISIONS = {
+		// Superseded by a dedicated surface: the 「扩展与资源 → 扩展包」page installs / updates /
+		// removes through the SDK's DefaultPackageManager (host `packages.*`), which is what
+		// writes this array. A row that edits the array by hand would skip the download step.
+		packages: "由「扩展与资源 → 扩展包」页经 SDK PackageManager 读写（宿主 packages.*）；手改数组会跳过下载这一步",
 		// TUI-only: the original terminal interface's own presentation and input
 		// details, which this app re-implements in Compose. Changing them changes
 		// nothing a phone shows.
