@@ -218,7 +218,7 @@ export function register(reg, { controller }) {
     let text = str(args, "markdown");
     if (!transformers.length) return { markdown: text, changed: false, count: 0 };
     const context = {
-      messageType: ["user", "assistant", "assistant-thinking"].includes(args.messageType) ? args.messageType : "assistant",
+      messageType: ["user", "assistant", "assistant-thinking", "custom", "summary", "changelog"].includes(args.messageType) ? args.messageType : "assistant",
       isStreaming: Boolean(args.isStreaming),
       availableWidth: Number(args.width) || controller.surfaces.width,
       ...(typeof args.messageId === "string" ? { messageId: args.messageId } : {}),

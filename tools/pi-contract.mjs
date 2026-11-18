@@ -134,43 +134,15 @@ function distText(piDir) {
 
 function checkSurface(piDir) {
 	const dist = distText(piDir);
-	// `Commands.kt` builds its records two ways, and both are commands pi must still
-	// understand: `buildJsonObject { put("type", …) }` for the ones that carry fields,
-	// and the `simple(id, type)` helper for the field-less ones. Scanning only the
-	// first form (as this did at 0.85.1) asserted 19 of the 34 records and left a
-	// rename in `abort`, `get_state`, `cycle_model`, `clone`, `get_tree` and eleven
-	// others invisible — which is the one thing this group exists to catch.
-	//
-	// `image` is excluded: the `put("type", "image")` inside `putImages` is an
-	// `ImageContent` element of a `prompt`'s `images` array (`rpc-types.ts`'s
-	// `ImageContent`), not an RPC command, and asserting it would pass vacuously
-	// because the string `image` appears in the engine for many other reasons.
-	const commands = [
-		...appLiterals("rpc/src/main/kotlin/app/pi/rpc/Commands.kt", /put\("type", "([a-z_]+)"\)/g),
-		...appLiterals("rpc/src/main/kotlin/app/pi/rpc/Commands.kt", /simple\(id, "([a-z_]+)"\)/g),
-	].filter((command) => command !== "image");
-	// The app answers the extension UI sub-protocol in two places, because pi's eight
-	// methods have two shapes: four are dialogs that need an answer
-	// (`ExtensionUi.kt`'s method enum), four are fire-and-forget chrome
-	// (`PiSessionViewModel.onExtensionChrome`'s dispatch). Both are scanned — a rename
-	// in either would leave an extension's request unanswered.
+	// All engine commands now go through `sdk-host` (checked by `tools/sdk-host/contract.mjs`).
+	// Here we keep the extension UI method bridge under assertion so renames in upstream
+	// `RpcExtensionUIRequest` still fail loudly.
 	const uiMethods = [
 		...appLiterals("app/src/main/kotlin/app/pi/ui/extension/ExtensionUi.kt", /[A-Za-z]+\("([a-zA-Z]+)"\)/g),
-		...appLiterals("app/src/main/kotlin/app/pi/ui/PiSessionViewModel.kt", /"([a-zA-Z]+)" -> pushNotice|\n\s*"([a-zA-Z]+)" -> (?:setExtension|_state)/g).filter(Boolean),
-		...appLiterals("app/src/main/kotlin/app/pi/ui/PiSessionViewModel.kt", /"(notify|setStatus|setWidget|setTitle)" ->/g),
+		...appLiterals("app/src/main/kotlin/app/pi/engine/PiEngineSession.kt", /put\("method", JsonPrimitive\("([a-zA-Z_]+)"\)\)/g),
 	];
-	for (const command of new Set(commands)) {
-		check(
-			`RPC command still exists in the pinned engine: ${command}`,
-			dist.includes(`"${command}"`),
-			`app.pi sends this command (rpc/.../Commands.kt). If pi renamed or removed it, ` +
-				`find the new name in the pinned rpc-types.ts and update Commands.kt + its callers.`,
-		);
-	}
 	// `set_editor_text` is the ninth method (`rpc-types.ts`'s RpcExtensionUIRequest) and
-	// the one that is neither a dialog nor chrome: the app applies it to the composer
-	// (`PiSessionViewModel`'s `"set_editor_text" ->` arm). It was missing from this list
-	// at 0.85.1, so a rename of the only method that fills the composer was unasserted.
+	// the one that is neither a dialog nor chrome: the app applies it to the composer.
 	const knownUiMethods = [
 		"confirm",
 		"input",
@@ -190,7 +162,7 @@ function checkSurface(piDir) {
 				`extension's dialog would never be answered — check rpc-types.ts's RpcExtensionUIRequest.`,
 		);
 	}
-	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers)`);
+	console.log(`   (sdk-host boundary, ${uiMethods.length} local UI handlers)`);
 	checkMentionArgv(dist);
 	checkPreSpawnFlags(dist);
 	checkProjectConfigDir(piDir);
@@ -938,69 +910,42 @@ function runPi(piDir, agentDir, requests, seconds = 60) {
 }
 
 /**
- * The **packed** entry the app launches, asserted end to end.
+ * The **packed** SDK entry the host loads (`PiEngineHost.EngineEntry`), asserted end to end.
  *
- * `PiEngineHost` prefers `dist/bundle/rpc-entry.js` (upstream's
- * `exports["./rpc-entry"]`, which forces `--mode rpc` itself) and falls back to
- * the unpacked `dist/cli.js` — the packed build is what takes engine startup from
- * ~18–20 s to ~1 s, and the fallback exists so that a future payload without it
- * only gets slower. Those two are complementary and both have to stay asserted:
- * this check is the one that fails *loudly* on the next version bump if the bundle
- * disappears, while the app's fallback is what keeps a user's phone working.
- *
- * The risk the entry change carries is a real turn, not a `--version` print, so the
- * assertion is a served `get_state` over the packed entry with no `--mode rpc` on
- * the command line.
+ * `PiEngineHost` resolves `dist/bundle/index.js` (`EngineEntry.BUNDLE`) and falls back to
+ * `dist/index.js` (`EngineEntry.DIST`). Checking both exist and importing the bundled SDK
+ * entry ensures the fast-boot bundle stays valid on every pi version bump.
  */
 function checkBundledEntry(piDir) {
-	const bundled = join(piDir, "dist/bundle/rpc-entry.js");
-	const cli = join(piDir, "dist/bundle/cli.js");
+	const bundled = join(piDir, "dist/bundle/index.js");
+	const distIndex = join(piDir, "dist/index.js");
 	check(
-		"the payload contains the packed rpc entry the app launches",
-		existsSync(bundled) && existsSync(cli),
-		"PiEngineHost prefers dist/bundle/rpc-entry.js (package.json `exports[\"./rpc-entry\"]`). " +
-			"It falls back to dist/cli.js, so the app still starts — just ~20x slower. If upstream " +
-			"really dropped the bundle, update PiEngineHost's candidate list and this check together.",
+		"the payload contains the packed SDK entry (dist/bundle/index.js) and unpacked fallback (dist/index.js)",
+		existsSync(bundled) && existsSync(distIndex),
+		"PiEngineHost / sdk-host prefers dist/bundle/index.js and falls back to dist/index.js. " +
+			"If upstream moved or dropped the bundle, update PiEngineHost.EngineEntry, sdk-host, and this check together.",
 	);
 	if (!existsSync(bundled)) return;
 
-	const probe = mkdtempSync(join(tmpdir(), "pi-contract-bundle-"));
-	mkdirSync(join(probe, "sessions"), { recursive: true });
-	const out = execFileSync(
+	const probeOut = execFileSync(
 		"node",
-		[bundled, "--session-dir", join(probe, "sessions")],
+		[
+			"--input-type=module",
+			"-e",
+			`import { pathToFileURL } from "node:url"; const m = await import(pathToFileURL(${JSON.stringify(bundled)}).href); console.log(JSON.stringify({ ok: typeof m.createAgentSessionRuntime === "function" && typeof m.SessionManager === "function" && typeof m.SettingsManager === "function" && typeof m.ModelRuntime === "function" }));`,
+		],
 		{
-			input: JSON.stringify({ id: "b", type: "get_state" }) + "\n",
 			encoding: "utf8",
 			timeout: 60_000,
-			env: {
-				...process.env,
-				PI_CODING_AGENT_DIR: probe,
-				PI_SKIP_VERSION_CHECK: "1",
-				PI_OFFLINE: "1",
-			},
-			stdio: ["pipe", "pipe", "pipe"],
+			stdio: ["ignore", "pipe", "pipe"],
 		},
-	);
-	const answer = out
-		.split("\n")
-		.filter(Boolean)
-		.flatMap((line) => {
-			try {
-				return [JSON.parse(line)];
-			} catch {
-				return [];
-			}
-		})
-		.find((event) => event.type === "response" && event.id === "b");
+	).trim();
+	const parsed = JSON.parse(probeOut.split("\n").filter(Boolean).pop() ?? "{}");
 	check(
-		"the packed entry serves a get_state without --mode rpc",
-		answer?.success === true,
-		"rpc-entry.js is supposed to inject `--mode rpc` itself. If it no longer does, the app's " +
-			"launch line (PiEngineHost's guestCommand) is what breaks — it deliberately omits the flag " +
-			"for this entry.",
+		"the packed SDK entry imports cleanly and exports runtime factories",
+		parsed.ok === true,
+		"dist/bundle/index.js must export createAgentSessionRuntime, SessionManager, SettingsManager, and ModelRuntime.",
 	);
-	rmSync(probe, { recursive: true, force: true });
 }
 
 function availableModels(piDir, agentDir) {

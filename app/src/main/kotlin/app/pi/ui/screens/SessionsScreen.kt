@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -173,7 +174,6 @@ enum class SessionsView(val label: String) {
  * 它的底是 [SESSIONS_LIST_BOTTOM_RESERVE]，最后一条会话永远能滚到按钮上方。位置与可达性
  * 分开给，两条同时成立 —— 见那段 KDoc 里两个加数各自管什么。
  *
- * @param onOpenChat 选中一行之后：关掉覆盖层，并落在对话页。
  * @param onBack 顶栏左侧的返回箭头。系统返回键走 `PiRoot` 那一处 `BackHandler`，同一个动作。
  *   返回键从右边挪到左边是用户裁决：右侧要腾给搜索/工作区/设置/「⋯」四个图标，
  *   而且它和各屏顶栏的返回箭头统一成一个位置。
@@ -185,7 +185,6 @@ enum class SessionsView(val label: String) {
 fun SessionsScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
-    onOpenChat: () -> Unit,
     onBack: () -> Unit,
     /**
      * 工作区 / 设置。底栏拆掉之后这两屏只剩两条门：这一屏顶栏的图标，和对话页的「⋯」
@@ -199,6 +198,9 @@ fun SessionsScreen(
     // True only while the first scan is still running with nothing to show; see
     // `PiSessionViewModel.sessionsLoading`.
     val loading by session.sessionsLoading.collectAsState()
+    val progress by session.sessionsProgress.collectAsState()
+    val preview by session.sessionPreview.collectAsState()
+    val cwdMissing by session.cwdMissing.collectAsState()
     // 第三种状态：这一次读取失败了（见 `PiSessionViewModel.sessionsFailed`）。它**不是**
     // 「还没有会话」——那句断言在旧代码里来自一个被吞掉的异常。
     val sessionsFailed by session.sessionsFailed.collectAsState()
@@ -599,7 +601,7 @@ fun SessionsScreen(
                     // vocabulary, and it disappears the moment the list arrives.
                     PiEmptyStateTopAnchored(
                         icon = Icons.Filled.Refresh,
-                        title = "正在读取会话…",
+                        title = progress?.let { "正在读取会话（${it.loaded}/${it.total}）…" } ?: "正在读取会话…",
                         body = "会话文件较多时需要几秒，读完后列表会显示在这里。",
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -676,7 +678,6 @@ fun SessionsScreen(
                                     commonModel = commonModel,
                                     onOpen = {
                                         session.switchSession(summary)
-                                        onOpenChat()
                                     },
                                     onLongPress = { actions = summary },
                                 )
@@ -703,7 +704,6 @@ fun SessionsScreen(
                                     hit = hit,
                                     onOpen = {
                                         session.switchSession(hit.session)
-                                        onOpenChat()
                                     },
                                     onLongPress = { actions = hit.session },
                                 )
@@ -713,7 +713,7 @@ fun SessionsScreen(
                         // 而不是搜索框下面：它说的是行上的操作，读完列表才用得上。
                         item(key = "hint") {
                             Text(
-                                "长按一行：重命名、新建子会话、删除。当前会话要切换后才能删除。",
+                                "长按一行：预览内容、分支到当前工作区、重命名、新建子会话、删除。当前会话要切换后才能删除。",
                                 modifier = Modifier.padding(
                                     start = PiSettingsMetrics.pageHorizontal,
                                     end = PiSettingsMetrics.pageHorizontal,
@@ -760,7 +760,6 @@ fun SessionsScreen(
                 ) {
                     NewSessionButton {
                         session.newSession()
-                        onOpenChat()
                     }
                 }
             }
@@ -805,6 +804,20 @@ fun SessionsScreen(
                 )
             }
             SessionActionRow(
+                label = "预览内容",
+                tone = MaterialTheme.colorScheme.onSurface,
+            ) {
+                actions = null
+                session.previewSession(acting)
+            }
+            SessionActionRow(
+                label = "分支到当前工作区",
+                tone = MaterialTheme.colorScheme.onSurface,
+            ) {
+                actions = null
+                session.forkSessionToCurrentWorkspace(acting)
+            }
+            SessionActionRow(
                 label = "重命名",
                 tone = MaterialTheme.colorScheme.onSurface,
             ) {
@@ -829,6 +842,108 @@ fun SessionsScreen(
                 label = "取消",
                 tone = MaterialTheme.colorScheme.onSurface,
             ) { actions = null }
+        }
+    }
+
+    val currentPreview = preview
+    if (currentPreview != null) {
+        val summary = when (currentPreview) {
+            is PiSessionViewModel.SessionPreviewState.Loading -> currentPreview.summary
+            is PiSessionViewModel.SessionPreviewState.Ready -> currentPreview.summary
+            is PiSessionViewModel.SessionPreviewState.Failed -> currentPreview.summary
+        }
+        PiSettingsSheet(onDismiss = { session.dismissSessionPreview() }, fullHeight = true) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = PiSettingsMetrics.pageHorizontal,
+                        end = PiSettingsMetrics.pageHorizontal,
+                        top = PiSettingsMetrics.sheetHeadTop,
+                        bottom = PiSettingsMetrics.sheetFooterBottom,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
+            ) {
+                Text(
+                    summary.displayName,
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "只读预览最近分支（共 ${summary.messageCount} 条消息）",
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                ) {
+                    when (currentPreview) {
+                        is PiSessionViewModel.SessionPreviewState.Loading -> {
+                            Text("正在读取会话内容…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        }
+                        is PiSessionViewModel.SessionPreviewState.Failed -> {
+                            Text(currentPreview.message, style = PiTheme.text.meta, color = PiTheme.palette.error)
+                        }
+                        is PiSessionViewModel.SessionPreviewState.Ready -> {
+                            if (currentPreview.turns.isEmpty()) {
+                                Text("这条分支还没有可预览的对话内容。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            } else {
+                                currentPreview.turns.forEach { turn ->
+                                    val roleLabel = when (turn.role) {
+                                        "user" -> "你"
+                                        "assistant" -> "助手"
+                                        else -> turn.role
+                                    }
+                                    Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny)) {
+                                        Text(
+                                            roleLabel,
+                                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                            color = PiTheme.palette.accent,
+                                        )
+                                        Text(
+                                            turn.text,
+                                            style = PiTheme.text.prose,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 8,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    HorizontalDivider(
+                                        thickness = PiSettingsMetrics.hairline,
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline, Alignment.End),
+                ) {
+                    PiSettingsChip(
+                        text = "分支到当前工作区",
+                        onClick = {
+                            session.dismissSessionPreview()
+                            session.forkSessionToCurrentWorkspace(summary)
+                        },
+                    )
+                    PiSettingsChip(
+                        text = "打开会话",
+                        active = true,
+                        onClick = {
+                            session.dismissSessionPreview()
+                            session.switchSession(summary)
+                        },
+                    )
+                }
+            }
         }
     }
 
@@ -886,6 +1001,43 @@ fun SessionsScreen(
                     label = "取消",
                     primary = false,
                     onClick = { confirming = null },
+                )
+            }
+        }
+    }
+
+    val missingPrompt = cwdMissing
+    if (missingPrompt != null) {
+        PiDialog(onDismissRequest = { session.dismissCwdMissing() }) {
+            PiDialogTitle(
+                title = "原工作目录不可用",
+                glyph = "!",
+                glyphTone = PiTheme.palette.warning,
+            )
+            PiDialogBody(
+                buildString {
+                    append(missingPrompt.reason)
+                    missingPrompt.issue?.takeIf { it.isNotBlank() }?.let {
+                        append("\n\n").append(it)
+                    }
+                    append("\n\n可在当前工作区继续打开，或分支一份新会话到当前工作区。")
+                },
+            )
+            PiDialogActions {
+                PiDialogAction(
+                    label = "取消",
+                    primary = false,
+                    onClick = { session.dismissCwdMissing() },
+                )
+                PiDialogAction(
+                    label = "继续打开",
+                    primary = false,
+                    onClick = { session.resolveCwdMissingContinue() },
+                )
+                PiDialogAction(
+                    label = "分支到此",
+                    primary = true,
+                    onClick = { session.resolveCwdMissingFork() },
                 )
             }
         }

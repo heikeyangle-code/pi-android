@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.host.ExtCustom
 import app.pi.ui.components.PiSheet
 import app.pi.ui.settings.PiEditorField
+import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -53,6 +54,9 @@ fun ExtensionSurfaceHost(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("扩展界面", style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.weight(1f))
                 PiSettingsChip(text = "关闭", onClick = { onClose(id) })
+            }
+            custom.blocked?.takeIf { it.isNotBlank() }?.let { reason ->
+                PiInfoNote(reason, tone = PiTheme.palette.warning)
             }
             val rows = remember(custom.lines) { panelRows(custom.lines) }
             Column(

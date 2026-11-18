@@ -396,8 +396,8 @@ sealed interface PiEvent {
      * because a field it did not expect was missing).
      *
      * Blocking methods (`select`/`confirm`/`input`/`editor`) must be answered
-     * with `PiCommands.extensionUi*`; note [timeoutMs] — pi resolves on its own
-     * when it elapses, so the UI has to count down.
+     * via `ui.respond` (`PiEngineSession.respondUi`); note [timeoutMs] — pi
+     * resolves on its own when it elapses, so the UI has to count down.
      */
     data class ExtensionUiRequest(
         val uiId: String,

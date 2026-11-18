@@ -29,10 +29,16 @@ data class SessionSummary(
     val displayName: String get() = name?.takeIf { it.isNotBlank() } ?: title
 }
 
-class SessionHit(val session: SessionSummary, val snippet: String)
+data class SessionHit(val session: SessionSummary, val snippet: String)
+
+data class SessionPreviewTurn(
+    val role: String,
+    val text: String,
+    val timestamp: Long?,
+)
 
 /**
- * 会话库：列表 / 搜索 / 改名 / 删除，**全部经宿主命令**（SDK 的 `SessionManager`）。
+ * 会话库：列表 / 搜索 / 预览 / 改名 / 删除，**全部经宿主命令**（SDK 的 `SessionManager`）。
  * 取代 `PiSessionStore` 等约 2800 行「自己扫盘、自己解析 JSONL」的代码（docs/sdk-host/sessions.md §1）。
  *
  * 路径换算：宿主只认 guest 路径（`<guestAgentDir>/sessions/…`），App 持有的是宿主机路径
@@ -49,17 +55,53 @@ class SessionLibrary(
     private val hostRoot: String get() = File(hostAgentDir, "sessions").absolutePath
     private val guestRoot: String get() = "$guestAgentDir/sessions"
 
-    suspend fun list(): List<SessionSummary> {
-        val data = requireCommands().call("session.list", obj("all" to JsonPrimitive(true))).data
+    suspend fun list(opId: String? = null): List<SessionSummary> {
+        val args = if (opId != null) {
+            obj("all" to JsonPrimitive(true), "opId" to JsonPrimitive(opId))
+        } else {
+            obj("all" to JsonPrimitive(true))
+        }
+        val data = requireCommands().call("session.list", args).data
         return rows(data["sessions"]).mapNotNull(::summaryOf)
     }
 
-    suspend fun search(query: String, limit: Int = 50): List<SessionHit> {
-        val data = requireCommands().call("session.search", obj("query" to JsonPrimitive(query), "all" to JsonPrimitive(true), "limit" to JsonPrimitive(limit))).data
+    suspend fun search(query: String, limit: Int = 50, opId: String? = null): List<SessionHit> {
+        val args = JsonObject(
+            buildMap {
+                put("query", JsonPrimitive(query))
+                put("all", JsonPrimitive(true))
+                put("limit", JsonPrimitive(limit))
+                opId?.let { put("opId", JsonPrimitive(it)) }
+            },
+        )
+        val data = requireCommands().call("session.search", args).data
         return rows(data["matches"]).mapNotNull { m ->
             val s = (m["session"] as? JsonObject)?.let(::summaryOf) ?: return@mapNotNull null
             SessionHit(s, str(m, "snippet").orEmpty())
         }
+    }
+
+    /** 只读预览指定会话的当前分支消息（宿主 `session.read { mode: "branch" }`）。 */
+    suspend fun preview(file: File, limit: Int = 40): List<SessionPreviewTurn> {
+        val path = guestPathOf(file) ?: return emptyList()
+        val data = requireCommands().call(
+            "session.read",
+            obj("path" to JsonPrimitive(path), "mode" to JsonPrimitive("branch")),
+        ).data
+        return rows(data["entries"])
+            .filter { str(it, "type") == "message" }
+            .mapNotNull { entry ->
+                val raw = entry["message"] as? JsonObject ?: return@mapNotNull null
+                val parsed = app.pi.rpc.parsePiMessage(raw)
+                val text = parsed.text.trim()
+                if (text.isEmpty()) return@mapNotNull null
+                SessionPreviewTurn(
+                    role = parsed.role,
+                    text = text,
+                    timestamp = millis(str(entry, "timestamp")),
+                )
+            }
+            .takeLast(limit)
     }
 
     /** @return 是否成功；宿主拒绝（路径越界、文件没了）都是 false，不抛。 */
@@ -122,4 +164,17 @@ class SessionLibrary(
     private fun str(o: JsonObject, k: String): String? = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
     private fun millis(iso: String?): Long? = iso?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
     private fun obj(vararg kv: Pair<String, JsonPrimitive>) = JsonObject(mapOf(*kv))
+
+    data class ListProgress(val opId: String, val loaded: Int, val total: Int)
+
+    companion object {
+        fun listProgress(event: app.pi.host.HostSignal.Event): ListProgress? {
+            if (event.name != "session.list.progress") return null
+            val d = event.data as? JsonObject ?: return null
+            val opId = (d["opId"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val loaded = (d["loaded"] as? JsonPrimitive)?.content?.toIntOrNull() ?: return null
+            val total = (d["total"] as? JsonPrimitive)?.content?.toIntOrNull() ?: return null
+            return ListProgress(opId, loaded, total)
+        }
+    }
 }

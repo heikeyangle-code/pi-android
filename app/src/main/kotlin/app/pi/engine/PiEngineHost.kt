@@ -337,25 +337,17 @@ class PiEngineHost(private val appContext: Context) {
         private set
 
     /**
-     * Which of pi's two entries this process was launched on.
+     * Which of pi's two SDK entries this process was launched on.
      *
-     * It is a value rather than a path so the diagnostic report can say **which** entry was
-     * used without re-parsing a string, and so a future third candidate cannot be added
-     * without saying what it is. The two are the preference order [entryCandidates] states:
-     * the bundled `dist/bundle/rpc-entry.js` (fast — it forces `--mode rpc` itself) and the
-     * unpacked `dist/cli.js` fallback (slow — thousands of modules at boot, needs the flag).
-     *
-     * Why the report needs it: until now the only way to tell which entry a run used was to
-     * guess from the startup time, and the two differ by an order of magnitude (2.0 s against
-     * 18–20 s measured on the workstation). A startup measurement with no entry beside it is
-     * an ambiguous reading.
+     * Matches `tools/sdk-host/sdk.mjs`: `dist/bundle/index.js` first (packed SDK entry)
+     * and `dist/index.js` fallback (package `exports["."]`).
      */
     enum class EngineEntry(val relativePath: String, val label: String) {
-        /** `package.json`'s `exports["./rpc-entry"]` — the packed build. */
-        Bundled("dist/bundle/rpc-entry.js", "打包入口 dist/bundle/rpc-entry.js"),
+        /** Packed SDK entry loaded first by `sdk-host/sdk.mjs`. */
+        Bundled("dist/bundle/index.js", "打包 SDK 入口 dist/bundle/index.js"),
 
-        /** The unpacked entry, which is also the one `NODE_COMPILE_CACHE` was measured on. */
-        Unpacked("dist/cli.js", "解包兜底入口 dist/cli.js（慢）"),
+        /** Unpacked package entry (`exports["."]`) used as fallback. */
+        Unpacked("dist/index.js", "解包兜底入口 dist/index.js（慢）"),
     }
 
     sealed interface Boot {
@@ -585,30 +577,10 @@ class PiEngineHost(private val appContext: Context) {
             workspace.mkdirs()
             val guestWorkspace = guestPathFor(workspace)
 
-            // The two engines pi ships, in preference order.
-            //
-            // `dist/bundle/rpc-entry.js` first: it is the entry upstream *promises*
-            // for this use (`package.json` maps `exports["./rpc-entry"]` to it) and it
-            // forces `--mode rpc` itself. It is also the **packed** build, and that
-            // is where the startup time comes from — measured on this workstation
-            // (node 24.19.0, no proot): `dist/bundle/cli.js --version` 1.0 s, and a
-            // bundled `get_state` round trip 2.0 s, against ~18–20 s for the
-            // unpacked entry, which loads thousands of modules at boot.
-            //
-            // It is preferred, not assumed. This is a dependency the *user* upgrades
-            // (`tools/fetch-runtime.mjs` pins the version, CI's contract run re-checks
-            // it), so an upstream rename or a dropped bundle must degrade to "slower",
-            // never to "the engine cannot start". Hence the fallback — the unpacked
-            // entry, which needs `--mode rpc` spelled out — and a fatal failure only
-            // when neither exists, with both candidates named so the report says what
-            // was looked for.
-            //
-            // **Keep shipping the whole `dist/` tree.** The bundle is not
-            // self-contained: `config.ts:389-431` (`getExportTemplateDir()`,
-            // `getThemesDir()`) resolves the package root from `__dirname` and then
-            // reads `dist/core/export-html` and its siblings. Trimming the payload to
-            // `dist/bundle/**` would break those paths at runtime, in the export and
-            // theme features rather than at startup.
+            // The two SDK entries pi ships, matching `sdk-host/sdk.mjs`:
+            // `dist/bundle/index.js` first (packed SDK build) and `dist/index.js` fallback.
+            // **Keep shipping the whole `dist/` tree.** The bundle is not self-contained
+            // (templates, themes, extensions, and internal modules resolve relative to dist/).
             val engineRoot = "$ENGINE_GUEST_ROOT/node_modules/$PI_PACKAGE"
             val entryCandidates = listOf(
                 EngineEntry.Bundled to "$engineRoot/${EngineEntry.Bundled.relativePath}",

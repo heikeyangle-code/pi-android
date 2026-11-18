@@ -50,7 +50,7 @@ for (const m of ["newSession", "switchSession", "fork", "setRebindSession", "dis
 for (const m of ["session", "services", "diagnostics"]) check(`AgentSessionRuntime.${m}`, has(rt, m));
 
 const sm = sdk.SessionManager;
-for (const m of ["create", "open", "continueRecent", "findById", "list", "listAll"]) check(`SessionManager.${m}`, typeof sm?.[m] === "function");
+for (const m of ["create", "open", "continueRecent", "findById", "list", "listAll", "forkFrom"]) check(`SessionManager.${m}`, typeof sm?.[m] === "function");
 const pm = sdk.DefaultPackageManager?.prototype ?? {};
 for (const m of ["listConfiguredPackages", "checkForAvailableUpdates", "installAndPersist", "removeAndPersist", "update", "setProgressCallback", "resolve", "parseSource"]) check(`PackageManager.${m}`, has(pm, m));
 
@@ -68,13 +68,14 @@ const mr = sdk.ModelRuntime?.prototype ?? {};
 for (const m of ["getProviders", "getProvider", "login", "logout", "listCredentials", "hasConfiguredAuth", "isUsingOAuth", "getProviderAuthStatus", "refresh"]) check(`ModelRuntime.${m}`, has(mr, m));
 check("SettingsManager.getOrCreateDeviceId（OAuth 登录要设备 ID）", has(sdk.SettingsManager?.prototype ?? {}, "getOrCreateDeviceId"));
 
-// 宿主伸进 pi **非公开路径**的全部地方（resources.mjs / mcp.mjs）。这里红了 = pi 升级挪了位置：
+// 宿主伸进 pi **非公开路径**的全部地方（resources.mjs / mcp.mjs / catalog.mjs）。这里红了 = pi 升级挪了位置：
 // 先修宿主，别在 App 里绕。每一项都写明谁在用。
 const internals = [
   ["modes/interactive/components/config-selector.js", ["ConfigSelectorComponent"], "resources.mjs"],
   ["extensions/index.js", ["builtInExtensions"], "resources.mjs（可选，取不到有后备名单）"],
   ["extensions/mcp/cli.js", ["runMcpCommand"], "mcp.mjs"],
-  ["extensions/mcp/config.js", ["loadMcpConfig", "updateMcpServerConfig"], "mcp.mjs"],
+  ["extensions/mcp/config.js", ["loadMcpConfig", "updateMcpServerConfig", "addMcpServerConfig", "removeMcpServerConfig"], "mcp.mjs"],
+  ["core/mcp-servers.js", ["validateMcpServerConfig"], "mcp.mjs"],
   ["extensions/mcp/runtime.js", ["McpServerConnection", "createDefaultTransport", "McpOAuthCredentialStore", "McpServerLog", "McpSignInCancelledError", "signInMcpServer"], "mcp.mjs"],
 ];
 for (const [rel, names, who] of internals) {

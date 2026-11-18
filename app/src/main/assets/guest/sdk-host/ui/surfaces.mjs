@@ -32,9 +32,9 @@ export class Surfaces {
    * 挂载一个组件。`build(tui)` 返回组件（custom() 允许返回 Promise）。
    * @returns {Promise<any>} surface
    */
-  async mount({ mode, key, overlay = false, build, onClose }) {
+  async mount({ mode, key, overlay = false, blocked = null, build, onClose }) {
     if (key) this.closeKey(key);
-    const surface = { id: randomUUID(), mode, key: key ?? null, overlay, component: null, rev: 0, timer: null, closed: false, onClose };
+    const surface = { id: randomUUID(), mode, key: key ?? null, overlay, blocked, component: null, rev: 0, timer: null, closed: false, onClose };
     const surfaces = this;
     const tui = {
       requestRender() {
@@ -75,6 +75,7 @@ export class Surfaces {
       key: surface.key,
       mode: surface.mode,
       overlay: surface.overlay,
+      blocked: surface.blocked ?? null,
       rev: ++surface.rev,
       interactive: typeof surface.component.handleInput === "function",
       width: this.width,

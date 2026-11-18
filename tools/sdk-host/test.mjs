@@ -131,7 +131,7 @@ try {
   expect("超时的 confirm 回落为 false", true);
 
   const custom = await h.waitFor(h.evt("ui.surface", (d) => d.mode === "custom"));
-  expect("custom() 出表面", custom.data.lines[0].startsWith("custom width="));
+  expect("custom() 出表面（含 options.blocked）", custom.data.lines[0].startsWith("custom width=") && custom.data.blocked === "probe-blocked");
   const resized = await h.call("ui.resize", { width: 60 });
   const wider = await h.waitFor(h.evt("ui.surface", (d, f) => d.surfaceId === custom.data.surfaceId && d.rev > custom.data.rev && d.lines[0].includes("width=60")), 5000);
   expect("ui.resize 按新宽度重绘", resized.ok && !!wider);
@@ -212,6 +212,8 @@ try {
   expect("没有渲染器的 custom 条目 → no_renderer（和 pi 一样什么也不画）", re2.ok && re2.data.lines === null && re2.data.reason === "no_renderer", JSON.stringify(re2));
   const rmd = await h.call("render.markdown", { markdown: "a PROBE b", messageType: "assistant", isStreaming: false, width: 50 });
   expect("render.markdown 走扩展的 markdown transformer，带 messageType / isStreaming 上下文", rmd.ok && rmd.data.markdown === "a [assistant:false] b" && rmd.data.count >= 1 && rmd.data.changed === true, JSON.stringify(rmd));
+  const rmdCustom = await h.call("render.markdown", { markdown: "x PROBE y", messageType: "custom", isStreaming: false, width: 50 });
+  expect("render.markdown 支持 custom / summary / changelog", rmdCustom.ok && rmdCustom.data.markdown === "x [custom:false] y", JSON.stringify(rmdCustom));
 
   // 宿主持状态：open 之后主动推一份完整快照，变更类命令的应答里带最新状态（App 不用再 get_xxx）。
   const pushed = await h.waitFor(h.evt("state", (d) => d.state?.sessionId), 5000);
@@ -274,9 +276,10 @@ try {
     mkEntry("e2", "e1", "assistant", "这样用"),
     mkEntry("e3", "e2", "user", "再来一个分支问题"),
   ].map((x) => JSON.stringify(x)).join("\n") + "\n");
-  const listed = await h.call("session.list", { all: true });
+  const listed = await h.call("session.list", { all: true, opId: "L-1" });
   const row = listed.data.sessions?.find((x) => x.id === "lib-fixture-1");
   expect("session.list 能列出（宿主用 SessionManager，不靠 App 扫盘）且默认不带全文", !!row && !("allMessagesText" in row), JSON.stringify(listed.error ?? listed.data).slice(0, 200));
+  expect("session.list 带 opId 时推 session.list.progress", h.frames.some(h.evt("session.list.progress", (d) => d.opId === "L-1" && typeof d.loaded === "number")));
   const found = await h.call("session.search", { query: "ZEBRA-quartz", all: true });
   expect("session.search 全文命中（大小写不敏感）并带片段", found.ok && found.data.matches.some((m) => m.session.id === "lib-fixture-1" && m.snippet.includes("zebra-quartz")), JSON.stringify(found.error ?? found.data).slice(0, 200));
   expect("session.search 空词 → bad_args", (await h.call("session.search", { query: " " })).error?.code === "bad_args");
@@ -642,6 +645,17 @@ try {
   expect("未知服务器 → not_found", !mcpMissing.ok && mcpMissing.error.code === "not_found");
   const mcpRm = await h.call("mcp.remove", { name: "echo" }, 60000);
   expect("mcp.remove", mcpRm.ok && !readFileSync(join(h.agentDir, "mcp.json"), "utf8").includes('"echo"'));
+  const mcpSave = await h.call("mcp.save", { name: "saved-srv", config: { command: "node", args: [join(here, "fixtures/mcp-echo.mjs")] } });
+  expect("mcp.save 经官方校验落盘", mcpSave.ok && (await h.call("mcp.servers")).data.servers.some((s) => s.name === "saved-srv"), JSON.stringify(mcpSave.error ?? mcpSave.data));
+  const mcpBadSave = await h.call("mcp.save", { name: "bad*name", config: { command: "node" } });
+  expect("mcp.save 非法配置被官方 rejected", !mcpBadSave.ok && mcpBadSave.error.code === "rejected", JSON.stringify(mcpBadSave));
+  const mcpImp = await h.call("mcp.import", { text: JSON.stringify({ mcpServers: { imp1: { url: "https://example.com/mcp" }, "saved_srv": { url: "https://dup.example/mcp" } } }) });
+  expect("mcp.import 新增不冲突项并跳过重名项", mcpImp.ok && mcpImp.data.added.includes("imp1") && mcpImp.data.skipped.length === 1, JSON.stringify(mcpImp));
+  const mcpCodemodeOff = await h.call("mcp.setAutoEnableCodemode", { enabled: false });
+  expect("mcp.setAutoEnableCodemode 读写", mcpCodemodeOff.ok && (await h.call("mcp.servers")).data.autoEnableCodemode === false);
+  await h.call("mcp.setAutoEnableCodemode", { enabled: true });
+  await h.call("mcp.remove", { name: "saved-srv" }, 60000);
+  await h.call("mcp.remove", { name: "imp1" }, 60000);
 
   // ---- 7e. 设置 ---------------------------------------------------------------
   const st0 = await h.call("settings.get");
@@ -680,6 +694,12 @@ try {
   writeFileSync(homeFile, JSON.stringify({ type: "session", version: 3, id: "home-fixture", timestamp: new Date().toISOString(), cwd: here0.cwd }) + "\n");
   const back = await bounce("session.switch", { sessionPath: homeFile });
   expect("session.switch 回到原项目，cwd 随之回来", back.ok && (await h.call("session.snapshot")).data.cwd === here0.cwd, JSON.stringify([back.error, back.data?.cancelled, (await h.call("session.snapshot")).data.cwd, here0.cwd]));
+  const goneFile = join(dir, "2026-02-02T00-00-00-000Z_gone-fixture.jsonl");
+  writeFileSync(goneFile, JSON.stringify({ type: "session", version: 3, id: "gone-fixture", timestamp: new Date().toISOString(), cwd: join(h.root, "deleted-dir") }) + "\n");
+  const missingRes = await h.call("session.switch", { sessionPath: goneFile });
+  expect("session.switch 原 cwd 不存在 → cwd_missing + details.issue", !missingRes.ok && missingRes.error.code === "cwd_missing" && missingRes.error.details?.issue?.sessionCwd?.endsWith("deleted-dir"), JSON.stringify(missingRes));
+  const forked = await bounce("session.forkFrom", { sourcePath: goneFile, cwd: here0.cwd });
+  expect("session.forkFrom 到当前 cwd 并切换", forked.ok && !forked.data.cancelled && typeof forked.data.sessionFile === "string", JSON.stringify(forked));
 
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");

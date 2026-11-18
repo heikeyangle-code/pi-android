@@ -54,7 +54,6 @@ fun main() {
     parsing()
     rules()
     commands()
-    bridge()
     widgets()
     replay()
     if (failures > 0) { println("harness: FAILED ($failures)"); exitProcess(1) }
@@ -236,25 +235,6 @@ private fun commands() = runBlocking {
     c.onLine(ok("c4", """{"result":{"x":1}}"""))
     check("sdkCall 结果", sc.await()["result"], obj("""{"x":1}"""))
     check("sdkCall 命令", obj(sent.last())["cmd"], JsonPrimitive("sdk.call"))
-}
-
-private fun bridge() {
-    fun req(method: String, params: String) = HostRequest("r1", method, obj(params))
-    val sel = HostUiBridge.requestToLegacy(req("ui.select", """{"title":"选一个","options":["a","b"],"timeout":5000}"""))!!
-    check("select 对话框", listOf(sel.uiId, sel.method, sel.title, sel.options, sel.timeoutMs), listOf("r1", "select", "选一个", listOf("a", "b"), 5000L))
-    val conf = HostUiBridge.requestToLegacy(req("ui.confirm", """{"title":"t","message":"确定吗"}"""))!!
-    check("confirm 对话框", conf.method to conf.message, "confirm" to "确定吗")
-    val ed = HostUiBridge.requestToLegacy(req("ui.editor", """{"title":"t","prefill":"初始"}"""))!!
-    check("editor 预填文本", ed.text, "初始")
-    val inp = HostUiBridge.requestToLegacy(req("ui.input", """{"title":"t","placeholder":"ph","timeout":null}"""))!!
-    check("input：timeout=null 不当成 0", inp.timeoutMs to inp.placeholder, null to "ph")
-    check("auth.prompt 不是旧对话框 → null", HostUiBridge.requestToLegacy(req("auth.prompt", """{"prompt":{}}""")), null)
-
-    val n = HostUiBridge.eventToLegacy("ui.notify", obj("""{"message":"hi","tone":"warning"}"""))!!
-    check("notify", n.method to n.notifyType, "notify" to "warning")
-    check("setTitle", HostUiBridge.eventToLegacy("ui.title", obj("""{"title":"标题"}"""))!!.title, "标题")
-    check("set_editor_text", HostUiBridge.eventToLegacy("ui.editorText", obj("""{"text":"x"}"""))!!.text, "x")
-    check("不认识的事件 → null", HostUiBridge.eventToLegacy("ui.working", obj("""{"message":"m"}""")), null)
 }
 
 private fun widgets() {

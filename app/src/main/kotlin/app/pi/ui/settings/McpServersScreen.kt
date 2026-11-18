@@ -24,20 +24,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import app.pi.host.HostExtensions
 import app.pi.packages.PiMcpConfig
 import app.pi.packages.PiMcpFile
 import app.pi.packages.PiMcpStatus
@@ -46,6 +44,10 @@ import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
@@ -82,11 +84,11 @@ internal fun McpServersScreen(
     var checking by remember { mutableStateOf(false) }
     var checkFailure by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val uriHandler = LocalUriHandler.current
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     var loginUi by remember { mutableStateOf<LoginUi?>(null) }
     val userStore = remember(userFile) { PiMcpFile(userFile) }
     val projectStore = remember(projectFile) { PiMcpFile(projectFile) }
-    // 每次写盘后 +1：文件不是快照状态，靠这个让界面重读（与 `PiSettingsStack.writeEpoch` 同理）。
+    // 每次改动后 +1，重读宿主配置（或未启动时的磁盘文件）。
     var epoch by remember { mutableIntStateOf(0) }
     var project by remember { mutableStateOf(false) }
     var pendingRestart by remember { mutableStateOf(false) }
@@ -96,13 +98,28 @@ internal fun McpServersScreen(
     var importNote by remember { mutableStateOf<String?>(null) }
     // 正在编辑：`oldName == null` 表示新增。
     var editing by remember { mutableStateOf<Editing?>(null) }
+    var hostCfg by remember { mutableStateOf<HostExtensions.McpConfig?>(null) }
+
+    val hostNow = access()
+    LaunchedEffect(hostNow, epoch) {
+        hostCfg = hostNow?.ext?.let { runCatching { it.mcpConfig() }.getOrNull() }
+    }
+    LaunchedEffect(hostNow) {
+        val h = hostNow ?: return@LaunchedEffect
+        h.events.collect { event ->
+            if (HostExtensions.mcpChanged(event) != null) {
+                status = null
+                epoch++
+            }
+        }
+    }
 
     val activeStore = if (project) projectStore else userStore
-    // `epoch` 在这里被读，所以它一变这两份就重读磁盘。
+    // 未接通宿主时的本地兜底；接通宿主后主视图读 hostCfg。
     val userDoc = remember(userStore, epoch) { userStore.read() }
     val doc = remember(activeStore, epoch) { activeStore.read() }
 
-    fun write(transform: (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject) {
+    fun write(transform: (JsonObject) -> JsonObject) {
         val failure = activeStore.update(transform)
         error = failure
         if (failure == null) {
@@ -111,6 +128,33 @@ internal fun McpServersScreen(
             onFilesWritten()
         }
         epoch++
+    }
+
+    fun updateServerEnabled(name: String, enabled: Boolean, isInheritedOverride: Boolean = false, globalEnabled: Boolean = true) {
+        val host = access()
+        if (host != null) {
+            scope.launch {
+                try {
+                    host.ext.mcpUpdate(name, enabled = enabled, project = project)
+                    error = null
+                    status = null
+                    pendingRestart = true
+                    onFilesWritten()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    error = e.message ?: "更新失败"
+                }
+                epoch++
+            }
+            return
+        }
+        if (!doc.corrupt) {
+            write {
+                if (isInheritedOverride) PiMcpConfig.setProjectOverride(it, name, enabled, globalEnabled)
+                else PiMcpConfig.setEnabled(it, name, enabled)
+            }
+        }
     }
 
     // 宿主在引擎进程里直接连服务器（`mcp.list`），不再另起一个 guest 进程。
@@ -258,6 +302,23 @@ internal fun McpServersScreen(
                     )
                 }
             }
+            val cfgNow = hostCfg
+            if (project && cfgNow != null && !cfgNow.projectTrusted) {
+                item {
+                    PiInfoNote(
+                        "当前项目尚未被信任，pi 会忽略 .pi/mcp.json；保存的条目在信任项目后才会加载。",
+                        tone = PiTheme.palette.warning,
+                    )
+                }
+            }
+            if (cfgNow != null && cfgNow.errors.isNotEmpty()) {
+                item {
+                    PiInfoNote(
+                        cfgNow.errors.joinToString("\n"),
+                        tone = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
             error?.let { message ->
                 item { PiInfoNote(message, tone = MaterialTheme.colorScheme.error) }
             }
@@ -299,7 +360,15 @@ internal fun McpServersScreen(
                 }
             }
             // 本项目页里的服务器是「完整定义」；覆盖条目（只含 enabled/exposure）单独显示在下面。
-            val definitions = doc.servers.filter { !project || it.kind != PiMcpConfig.Kind.Override }
+            val definitions = if (cfgNow != null) {
+                if (project) {
+                    cfgNow.servers.filter { it.isProject && it.override == null }.map(::hostServerToConfig)
+                } else {
+                    cfgNow.globalServers.filter { it.scope != "extension" }.map(::hostServerToConfig)
+                }
+            } else {
+                doc.servers.filter { !project || it.kind != PiMcpConfig.Kind.Override }
+            }
             item {
                 if (definitions.isEmpty()) {
                     PiSettingsCard {
@@ -320,9 +389,7 @@ internal fun McpServersScreen(
                                 onOpen = {
                                     editing = Editing(server.name, PiMcpConfig.toDraft(server))
                                 },
-                                onToggle = { on ->
-                                    if (!doc.corrupt) write { PiMcpConfig.setEnabled(it, server.name, on) }
-                                },
+                                onToggle = { on -> updateServerEnabled(server.name, on) },
                             )
                         }
                     }
@@ -330,25 +397,66 @@ internal fun McpServersScreen(
             }
 
             importNote?.let { note -> item { PiInfoNote(note) } }
+            val autoCodemodeChecked = cfgNow?.let {
+                if (project) it.autoEnableCodemode else it.globalAutoEnableCodemode
+            } ?: PiMcpConfig.autoEnableCodemode(doc.root)
             item {
                 PiSettingsCard {
                     PiSettingsToggleRow(
                         title = "自动启用代码模式",
                         supporting = "有服务器连上时自动打开 codemode；关掉则需自己在工具里启用",
-                        checked = PiMcpConfig.autoEnableCodemode(doc.root),
+                        checked = autoCodemodeChecked,
                         onCheckedChange = { on ->
-                            if (!doc.corrupt) write { PiMcpConfig.setAutoEnableCodemode(it, on) }
+                            val host = access()
+                            if (host != null) {
+                                scope.launch {
+                                    try {
+                                        host.ext.mcpSetAutoEnableCodemode(on, project)
+                                        error = null
+                                        status = null
+                                        pendingRestart = true
+                                        onFilesWritten()
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        error = e.message ?: "更新失败"
+                                    }
+                                    epoch++
+                                }
+                            } else if (!doc.corrupt) {
+                                write { PiMcpConfig.setAutoEnableCodemode(it, on) }
+                            }
                         },
                     )
                 }
             }
             if (project) {
                 // 全局服务器在这个项目里的开关：写一条只含 enabled 的覆盖。
-                val inherited = userDoc.servers.filter { global ->
-                    global.kind != PiMcpConfig.Kind.Override &&
-                        doc.server(global.name)?.kind.let { it == null || it == PiMcpConfig.Kind.Override }
+                val inheritedRows: List<Triple<String, Boolean, Boolean>> = if (cfgNow != null) {
+                    val fullProjectNames = cfgNow.servers.filter { it.isProject && it.override == null }.map { it.name }.toSet()
+                    val mergedByName = cfgNow.servers.associateBy { it.name }
+                    cfgNow.globalServers
+                        .filter { it.scope != "extension" && it.name !in fullProjectNames }
+                        .map { global ->
+                            val merged = mergedByName[global.name]
+                            val effective = merged?.enabled ?: global.enabled
+                            val overridden = merged?.override != null || doc.server(global.name)?.config?.containsKey("enabled") == true
+                            Triple(global.name, effective, overridden)
+                        }
+                } else {
+                    userDoc.servers.filter { global ->
+                        global.kind != PiMcpConfig.Kind.Override &&
+                            doc.server(global.name)?.kind.let { it == null || it == PiMcpConfig.Kind.Override }
+                    }.map { global ->
+                        val override = doc.server(global.name)
+                        val effective = override?.config?.get("enabled")
+                            ?.let { (it as? JsonPrimitive)?.content != "false" }
+                            ?: global.enabled
+                        val overridden = override != null && override.config.containsKey("enabled")
+                        Triple(global.name, effective, overridden)
+                    }
                 }
-                if (inherited.isNotEmpty()) {
+                if (inheritedRows.isNotEmpty()) {
                     item {
                         Column {
                             Text(
@@ -361,26 +469,15 @@ internal fun McpServersScreen(
                                 ),
                             )
                             PiSettingsCard {
-                                inherited.forEachIndexed { index, global ->
+                                inheritedRows.forEachIndexed { index, (name, effective, overridden) ->
                                     if (index > 0) PiSettingsHairline()
-                                    val override = doc.server(global.name)
-                                    val effective = override?.config?.get("enabled")
-                                        ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content != "false" }
-                                        ?: global.enabled
+                                    val globalEnabled = userDoc.server(name)?.enabled ?: true
                                     PiSettingsToggleRow(
-                                        title = global.name,
-                                        supporting = if (override != null && override.config.containsKey("enabled")) {
-                                            "本项目已覆盖"
-                                        } else {
-                                            "沿用全局设置"
-                                        },
+                                        title = name,
+                                        supporting = if (overridden) "本项目已覆盖" else "沿用全局设置",
                                         checked = effective,
                                         onCheckedChange = { on ->
-                                            if (!doc.corrupt) {
-                                                write {
-                                                    PiMcpConfig.setProjectOverride(it, global.name, on, global.enabled)
-                                                }
-                                            }
+                                            updateServerEnabled(name, on, isInheritedOverride = true, globalEnabled = globalEnabled)
                                         },
                                     )
                                 }
@@ -482,38 +579,84 @@ internal fun McpServersScreen(
         McpImportSheet(
             onDismiss = { importing = false },
             onImport = { text ->
-                var result: PiMcpConfig.Imported? = null
-                write { root ->
-                    PiMcpConfig.importJson(root, text, "imported").also { result = it }.root
-                }
-                val r = result
-                importNote = when {
-                    r == null -> null
-                    r.error != null -> r.error
-                    else -> buildString {
-                        append(if (r.added.isEmpty()) "没有新增。" else "已添加：${r.added.joinToString("、")}。")
-                        if (r.skipped.isNotEmpty()) append("\n跳过：").append(r.skipped.joinToString("；"))
+                val host = access()
+                if (host != null) {
+                    scope.launch {
+                        try {
+                            val r = host.ext.mcpImport(text, project, "imported")
+                            error = null
+                            status = null
+                            pendingRestart = true
+                            onFilesWritten()
+                            epoch++
+                            importNote = buildString {
+                                append(if (r.added.isEmpty()) "没有新增。" else "已添加：${r.added.joinToString("、")}。")
+                                if (r.skipped.isNotEmpty()) append("\n跳过：").append(r.skipped.joinToString("；"))
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            importNote = e.message ?: "导入失败"
+                        }
+                        importing = false
                     }
+                } else {
+                    var result: PiMcpConfig.Imported? = null
+                    write { root ->
+                        PiMcpConfig.importJson(root, text, "imported").also { result = it }.root
+                    }
+                    val r = result
+                    importNote = when {
+                        r == null -> null
+                        r.error != null -> r.error
+                        else -> buildString {
+                            append(if (r.added.isEmpty()) "没有新增。" else "已添加：${r.added.joinToString("、")}。")
+                            if (r.skipped.isNotEmpty()) append("\n跳过：").append(r.skipped.joinToString("；"))
+                        }
+                    }
+                    importing = false
                 }
-                importing = false
             },
         )
     }
 
     editing?.let { current ->
+        val editServers = definitions
         McpEditSheet(
             initial = current.draft,
             state = current.oldName?.let { status?.of(it) },
             isNew = current.oldName == null,
-            otherNames = doc.servers.map { it.name }.filter { it != current.oldName },
+            otherNames = editServers.map { it.name }.filter { it != current.oldName },
             onDismiss = { editing = null },
             onSave = { draft ->
-                val base = current.oldName?.let { doc.server(it)?.config }
+                val base = current.oldName?.let { name -> editServers.firstOrNull { it.name == name }?.config ?: doc.server(name)?.config }
                 val config = PiMcpConfig.toConfig(draft, base)
-                write { PiMcpConfig.upsert(it, current.oldName, draft.name.trim(), config) }
-                editing = null
-                // 新加的网址式服务器：马上检测一次，要登录的话列表行上直接出现「登录」。
-                if (current.oldName == null && draft.http && !activeStore.read().corrupt) runCheck()
+                val targetName = draft.name.trim()
+                val host = access()
+                if (host != null) {
+                    scope.launch {
+                        try {
+                            host.ext.mcpSave(targetName, current.oldName, config, project)
+                            error = null
+                            status = null
+                            pendingRestart = true
+                            onFilesWritten()
+                            epoch++
+                            editing = null
+                            if (current.oldName == null && draft.http) runCheck()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            error = e.message ?: "保存失败"
+                            editing = null
+                        }
+                    }
+                } else {
+                    write { PiMcpConfig.upsert(it, current.oldName, targetName, config) }
+                    editing = null
+                    // 新加的网址式服务器：马上检测一次，要登录的话列表行上直接出现「登录」。
+                    if (current.oldName == null && draft.http && !activeStore.read().corrupt) runCheck()
+                }
             },
             onLogin = current.oldName?.takeIf { current.draft.http }?.let { name ->
                 {
@@ -527,7 +670,7 @@ internal fun McpServersScreen(
                     loginUi = LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Waiting, null, "")
                     scope.launch {
                         loginUi = try {
-                            val message = access()?.ext?.mcpLogout(name) ?: "已退出登录。"
+                            val message = access()?.ext?.mcpLogout(name, project) ?: "已退出登录。"
                             LoginUi(LoginUi.Kind.Logout, name, LoginUi.Phase.Done, null, message.ifBlank { "已退出登录。" })
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
@@ -539,12 +682,52 @@ internal fun McpServersScreen(
             },
             onDelete = current.oldName?.let { name ->
                 {
-                    write { PiMcpConfig.remove(it, name) }
-                    editing = null
+                    val host = access()
+                    if (host != null) {
+                        scope.launch {
+                            try {
+                                host.ext.mcpRemove(name, project)
+                                error = null
+                                status = null
+                                pendingRestart = true
+                                onFilesWritten()
+                                epoch++
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                error = e.message ?: "删除失败"
+                            }
+                            editing = null
+                        }
+                    } else {
+                        write { PiMcpConfig.remove(it, name) }
+                        editing = null
+                    }
                 }
             },
         )
     }
+}
+
+private fun hostServerToConfig(server: HostExtensions.McpServer): PiMcpConfig.Server {
+    val map = LinkedHashMap<String, JsonElement>()
+    server.type?.let { map["type"] = JsonPrimitive(it) }
+    server.command?.let { map["command"] = JsonPrimitive(it) }
+    if (server.args.isNotEmpty()) map["args"] = JsonArray(server.args.map(::JsonPrimitive))
+    server.env?.let { map["env"] = it }
+    server.cwd?.let { map["cwd"] = JsonPrimitive(it) }
+    server.url?.let { map["url"] = JsonPrimitive(it) }
+    server.headers?.let { map["headers"] = it }
+    server.auth?.let { map["auth"] = JsonPrimitive(it) }
+    server.oauth?.let { map["oauth"] = it }
+    server.description?.let { map["description"] = JsonPrimitive(it) }
+    server.timeout?.let {
+        map["timeout"] = if (it == kotlin.math.floor(it)) JsonPrimitive(it.toLong()) else JsonPrimitive(it)
+    }
+    if (!server.enabled) map["enabled"] = JsonPrimitive(false)
+    if (server.exposure != "codemode") map["exposure"] = JsonPrimitive(server.exposure)
+    server.toolExposure?.let { map["toolExposure"] = it }
+    return PiMcpConfig.Server(server.name, JsonObject(map))
 }
 
 private data class Editing(val oldName: String?, val draft: PiMcpConfig.Draft)

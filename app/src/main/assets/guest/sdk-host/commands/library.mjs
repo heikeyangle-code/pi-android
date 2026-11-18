@@ -22,13 +22,25 @@ import { withState } from "../state.mjs";
 
 const SNIPPET = 80;
 
+export function makeListProgress(controller, opId) {
+  if (!opId) return undefined;
+  let lastEmit = 0;
+  return (loaded, total) => {
+    const now = Date.now();
+    if (loaded === total || now - lastEmit >= 120) {
+      lastEmit = now;
+      controller.hub.emit("session.list.progress", { opId, loaded, total });
+    }
+  };
+}
+
 /**
  * 列会话。`session.open` 总是把一个显式目录交给 SessionManager（App 传 --session-dir，否则 <agentDir>/sessions），
  * 所以会话文件平铺在 `controller.sessionDir` 里：用 `listAll(dir)`。`all=false` 只要当前 cwd 的。
  */
-export function listInfos(sdk, controller, all) {
+export function listInfos(sdk, controller, all, onProgress) {
   const dir = controller.sessionDir ?? controller.cfg.sessionDir;
-  return all ? sdk.SessionManager.listAll(dir) : sdk.SessionManager.list(controller.cwd, dir);
+  return all ? sdk.SessionManager.listAll(dir, onProgress) : sdk.SessionManager.list(controller.cwd, dir, onProgress);
 }
 
 /** 去掉大字段，列表行不需要整段对话文本。 */
@@ -69,7 +81,8 @@ export function register(reg, { controller }) {
     if (!query) throw bad("query 不能为空");
     const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 500);
     const s = sdk();
-    const infos = await listInfos(s, controller, bool(args, "all", false));
+    const opId = optStr(args, "opId");
+    const infos = await listInfos(s, controller, bool(args, "all", false), makeListProgress(controller, opId));
     const matches = [];
     for (const info of infos) {
       const hay = `${info.name ?? ""}\n${info.firstMessage ?? ""}\n${info.allMessagesText ?? ""}`;

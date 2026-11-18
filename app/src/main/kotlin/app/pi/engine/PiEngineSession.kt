@@ -9,7 +9,6 @@ import app.pi.host.HostEngineApi
 import app.pi.host.HostException
 import app.pi.host.HostRequest
 import app.pi.host.HostSignal
-import app.pi.host.HostUiBridge
 import app.pi.host.OpenArgs
 import app.pi.host.PiHostClient
 import app.pi.rpc.JsonlFramer
@@ -34,6 +33,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import java.io.BufferedWriter
 import java.io.File
@@ -53,7 +54,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * A conversation with one pi engine process.
  *
- * pi runs as `pi --mode rpc`, speaking LF-delimited JSONL over stdin/stdout. The
+ * pi runs inside `sdk-host`, speaking LF-delimited JSONL over stdin/stdout. The
  * process is a child of the foreground service, not of an Activity, so a turn
  * keeps running when the user leaves the screen
  * (docs/pi-android-app-design.md §7.1).
@@ -207,7 +208,7 @@ class PiEngineSession(
      *
      * One thread preserves the ordering pi's protocol depends on (commands carry ids
      * and pi answers in order), and it moves *both* halves out of the caller:
-     * `PiCommands.encode` builds the whole JSON line, which for an attachment is the
+     * frame serialization builds the whole JSON line, which for an attachment is the
      * multi-megabyte string itself.
      */
     private val writeQueue: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
@@ -721,7 +722,7 @@ class PiEngineSession(
                     "state" -> commands.stateStore.offerEvent(signal.data)
                     else -> {
                         extUiReducer.apply(signal.name, signal.data)?.let { _extUi.value = it }
-                        HostUiBridge.eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
+                        eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
                     }
                 }
             }
@@ -749,7 +750,7 @@ class PiEngineSession(
     /** 宿主的提问：旧对话框认识的走旧事件，其余只在 [hostRequests] 上。 */
     private fun onHostRequest(request: HostRequest) {
         _hostRequests.tryEmit(request)
-        HostUiBridge.requestToLegacy(request)?.let { emitEvent(it) }
+        requestToLegacy(request)?.let { emitEvent(it) }
     }
 
     private fun undeliverable(event: PiEvent) {
@@ -1466,6 +1467,61 @@ class PiEngineSession(
          * follows is the thing that ends the wait.
          */
         private const val WRITER_DRAIN_TIMEOUT_MS = 1_000L
+
+        internal fun requestToLegacy(request: HostRequest): PiEvent.ExtensionUiRequest? {
+            val method = when (request.method) {
+                "ui.select" -> "select"
+                "ui.confirm" -> "confirm"
+                "ui.input" -> "input"
+                "ui.editor" -> "editor"
+                else -> return null
+            }
+            val p = request.params
+            return legacyParse(
+                legacyObj {
+                    put("type", JsonPrimitive("extension_ui_request"))
+                    put("id", JsonPrimitive(request.id))
+                    put("method", JsonPrimitive(method))
+                    p["title"]?.let { put("title", it) }
+                    p["message"]?.let { put("message", it) }
+                    p["options"]?.let { put("options", it) }
+                    p["placeholder"]?.let { put("placeholder", it) }
+                    p["prefill"]?.let { put("prefill", it) }
+                    p["timeout"]?.takeIf { it !is JsonNull }?.let { put("timeout", it) }
+                },
+            )
+        }
+
+        internal fun eventToLegacy(name: String, data: JsonElement?): PiEvent.ExtensionUiRequest? {
+            val d = data as? JsonObject ?: return null
+            val body: JsonObject = when (name) {
+                "ui.notify" -> legacyObj {
+                    put("method", JsonPrimitive("notify"))
+                    d["message"]?.let { put("message", it) }
+                    d["tone"]?.let { put("notifyType", it) }
+                }
+                "ui.title" -> legacyObj {
+                    put("method", JsonPrimitive("setTitle"))
+                    d["title"]?.let { put("title", it) }
+                }
+                "ui.paste" -> legacyObj {
+                    put("method", JsonPrimitive("paste_editor_text"))
+                    d["text"]?.let { put("text", it) }
+                }
+                "ui.editorText" -> legacyObj {
+                    put("method", JsonPrimitive("set_editor_text"))
+                    d["text"]?.let { put("text", it) }
+                }
+                else -> return null
+            }
+            return legacyParse(JsonObject(body + ("type" to JsonPrimitive("extension_ui_request"))))
+        }
+
+        private fun legacyParse(o: JsonObject): PiEvent.ExtensionUiRequest? =
+            PiEvents.parse(o.toString()) as? PiEvent.ExtensionUiRequest
+
+        private inline fun legacyObj(build: MutableMap<String, JsonElement>.() -> Unit): JsonObject =
+            JsonObject(LinkedHashMap<String, JsonElement>().apply(build))
 
         /**
          * Start an engine described by a command line that already includes

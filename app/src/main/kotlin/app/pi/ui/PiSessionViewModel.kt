@@ -21,7 +21,6 @@ import app.pi.host.HostCommandException
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.asOutcome
 import app.pi.rpc.Notice
-import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
 import app.pi.rpc.PiImage
 import app.pi.rpc.PiLaunchOptions
@@ -49,6 +48,7 @@ import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.SessionHit
 import app.pi.session.SessionLibrary
+import app.pi.session.SessionPreviewTurn
 import app.pi.session.SessionSummary
 import app.pi.session.ResumeTarget
 import app.pi.session.SessionExportNaming
@@ -740,6 +740,38 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val _sessionsFailed = MutableStateFlow(false)
     val sessionsFailed: StateFlow<Boolean> = _sessionsFailed.asStateFlow()
 
+    data class SessionListProgress(val loaded: Int, val total: Int)
+
+    private val _sessionsProgress = MutableStateFlow<SessionListProgress?>(null)
+    val sessionsProgress: StateFlow<SessionListProgress?> = _sessionsProgress.asStateFlow()
+
+    sealed interface SessionPreviewState {
+        data class Loading(val summary: SessionSummary) : SessionPreviewState
+        data class Ready(val summary: SessionSummary, val turns: List<SessionPreviewTurn>) : SessionPreviewState
+        data class Failed(val summary: SessionSummary, val message: String) : SessionPreviewState
+    }
+
+    private val _sessionPreview = MutableStateFlow<SessionPreviewState?>(null)
+    val sessionPreview: StateFlow<SessionPreviewState?> = _sessionPreview.asStateFlow()
+    private var previewJob: Job? = null
+
+    sealed interface CwdMissingAction {
+        data class Switch(val summary: SessionSummary, val guestPath: String) : CwdMissingAction
+        data class Import(val stagedFile: File, val guestPath: String, val displayName: String) : CwdMissingAction
+    }
+
+    data class CwdMissingPrompt(
+        val reason: String,
+        val issue: String?,
+        val action: CwdMissingAction,
+    )
+
+    private val _cwdMissing = MutableStateFlow<CwdMissingPrompt?>(null)
+    val cwdMissing: StateFlow<CwdMissingPrompt?> = _cwdMissing.asStateFlow()
+
+    private val sessionOpSeq = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile private var activeListOpId: String? = null
+
     // 合并连发（与 refreshTree 同一个理由）：进入会话屏的 LaunchedEffect、刷新钮、
     // 回合尾的事件流会叠在一起 —— N 次 = N 遍全目录扫描 + N 次 state 发布。打开
     // 会话树时的「疯狂刷新好几秒」里有一半是它；飞行中的要求折叠成一次补扫。
@@ -763,7 +795,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         searchJob = viewModelScope.launch {
             kotlinx.coroutines.delay(250) // 防抖：边打字边搜会让宿主读几百个文件
-            val read = runCatching { sessionLibrary.search(q) }
+            val opId = "search-${sessionOpSeq.incrementAndGet()}"
+            val read = runCatching { sessionLibrary.search(q, opId = opId) }
             read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
             // 失败（引擎没开等）就当没有命中：本地标题/名字筛选照常工作，不弹错。
             _searchHits.value = read.getOrDefault(emptyList())
@@ -777,9 +810,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         sessionsRefreshInFlight = true
         viewModelScope.launch {
+            val opId = "sessions-${sessionOpSeq.incrementAndGet()}"
+            activeListOpId = opId
             _sessionsLoading.value = _sessions.value.isEmpty()
+            _sessionsProgress.value = null
             try {
-                val read = runCatching { sessionLibrary.list() }
+                val read = runCatching { sessionLibrary.list(opId = opId) }
                 // 协程被取消不是「读取失败」：照旧抛出去（`finally` 仍然会清 loading），否则一次
                 // 正常的取消会被写成一条「读不到会话列表」。
                 read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
@@ -794,6 +830,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     },
                 )
             } finally {
+                if (activeListOpId == opId) {
+                    activeListOpId = null
+                    _sessionsProgress.value = null
+                }
                 _sessionsLoading.value = false
                 sessionsRefreshInFlight = false
                 if (sessionsRefreshQueued) {
@@ -802,6 +842,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    fun previewSession(summary: SessionSummary) {
+        previewJob?.cancel()
+        _sessionPreview.value = SessionPreviewState.Loading(summary)
+        previewJob = viewModelScope.launch {
+            val res = runCatching { sessionLibrary.preview(summary.file) }
+            res.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            _sessionPreview.value = res.fold(
+                onSuccess = { turns -> SessionPreviewState.Ready(summary, turns) },
+                onFailure = { err ->
+                    val msg = (err as? HostCommandException)?.reason ?: err.message ?: "读取预览失败"
+                    SessionPreviewState.Failed(summary, msg)
+                },
+            )
+        }
+    }
+
+    fun dismissSessionPreview() {
+        previewJob?.cancel()
+        previewJob = null
+        _sessionPreview.value = null
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -1048,19 +1110,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun onSettingWritten(key: String) {
         if (key == "theme") {
             refreshTheme()
+            syncEngineSettings()
             return
         }
         // The four agent-level switches whose settings rows are a second editor of
         // a value the chat screen already changes live. Writing `settings.json`
         // alone would not reach the running process: pi loads its `SettingsManager`
-        // once per process **and** once per session (`settings-manager.ts:311-355`
-        // `create` → `fromStorageWithPaths`; `agent-session-runtime.ts:236-252`
-        // rebuilds the runtime, `main.ts:731` builds a fresh manager), so a file
-        // write is invisible to the process that is talking to us. The RPC surface
-        // is the only live path — `set_steering_mode`/`set_follow_up_mode`
-        // (`rpc-mode.ts:521-530`) and `set_auto_compaction`/`set_auto_retry`
-        // (`rpc-mode.ts:532-540`) — and pi persists the same key it was given
-        // (`agent-session.ts:1902-1917`), so the two writers cannot drift apart.
+        // once per process **and** once per session, so a file write is invisible
+        // to the running session unless forwarded or reloaded via `settings.reload`.
         when (key) {
             "steeringMode" -> queueModeOf(settingsStore.readString(key))?.let(::setSteeringMode)
             "followUpMode" -> queueModeOf(settingsStore.readString(key))?.let(::setFollowUpMode)
@@ -1092,6 +1149,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 见 [applyRuntimeSwitch] 与 `RuntimeSwitchAction`。
             applyRuntimeSwitch()
         }
+        if (
+            key != "steeringMode" &&
+            key != "followUpMode" &&
+            key != "compaction.enabled" &&
+            key != "retry.enabled" &&
+            !key.startsWith("app.")
+        ) {
+            syncEngineSettings()
+        }
+    }
+
+    private fun syncEngineSettings() {
+        val c = session?.commands ?: return
+        viewModelScope.launch { runCatching { c.settingsReload() } }
     }
 
     // ------------------------------------------------- 运行时加速开关（当场生效）
@@ -1994,8 +2065,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Which of pi's two entries this process's engine was last launched on, as
-     * `PiEngineHost.EngineEntry.label` (`dist/bundle/rpc-entry.js` or the unpacked
-     * `dist/cli.js` fallback), or null before the first launch.
+     * `PiEngineHost.EngineEntry.label` (`dist/bundle/index.js` or the unpacked
+     * `dist/index.js` fallback), or null before the first launch.
      *
      * The host records it at launch; the diagnostic report prints it **whether or not the
      * engine has exited**, which is the whole point — a startup-time figure with no entry
@@ -2250,6 +2321,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     messageRenderCache.reset()
                     entryRenderCache.reset()
                     _renderRev.value += 1
+                }
+                SessionLibrary.listProgress(ev)?.let { prog ->
+                    if (prog.opId == activeListOpId) {
+                        _sessionsProgress.value = SessionListProgress(prog.loaded, prog.total)
+                    }
+                }
+                if (ev.name == "settings.changed") {
+                    invalidateSettingsCache()
+                    refreshPrefs()
+                    refreshTheme()
+                    refreshCommands()
+                    seedAutoRetryFromSettings()
                 }
             }
         }
@@ -3036,11 +3119,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * `value` for a confirm, or `confirmed` for an input, is a protocol error pi
      * cannot recover from, and the only safe handling is to refuse to send it.
      */
+    private sealed interface UiAnswer {
+        data class Value(val value: String) : UiAnswer
+        data class Confirmed(val confirmed: Boolean) : UiAnswer
+        data object Cancelled : UiAnswer
+    }
+
     fun answerDialog(id: String, answer: ExtensionAnswer) {
         val dialog = dialogs.active ?: return
         if (dialog.id != id) return
-        val command = buildAnswer(dialog, answer) ?: return
-        settleDialog(dialog, command)
+        val resolved = buildAnswer(dialog, answer) ?: return
+        settleDialog(dialog, resolved)
     }
 
     /**
@@ -3054,7 +3143,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * from a `prefill`, and editing them here would change the user's own answer
      * rather than decline to paint a label.
      */
-    private fun buildAnswer(dialog: ExtensionDialog, answer: ExtensionAnswer): JsonObject? = when (answer) {
+    private fun buildAnswer(dialog: ExtensionDialog, answer: ExtensionAnswer): UiAnswer? = when (answer) {
         is ExtensionAnswer.Value ->
             if (dialog.method == ExtensionDialogMethod.Confirm) {
                 null
@@ -3064,20 +3153,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     answer.value
                 }
-                PiCommands.extensionUiValue(dialog.id, value)
+                UiAnswer.Value(value)
             }
 
         is ExtensionAnswer.Confirmed ->
             if (dialog.method == ExtensionDialogMethod.Confirm) {
-                PiCommands.extensionUiConfirmed(dialog.id, answer.confirmed)
+                UiAnswer.Confirmed(answer.confirmed)
             } else {
                 null
             }
 
-        ExtensionAnswer.Cancelled -> PiCommands.extensionUiCancelled(dialog.id)
+        ExtensionAnswer.Cancelled -> UiAnswer.Cancelled
     }
 
-    private fun settleDialog(dialog: ExtensionDialog, command: JsonObject) {
+    private fun settleDialog(dialog: ExtensionDialog, answer: UiAnswer) {
         // Remove the entry FIRST. The queue is the single source of truth for
         // "still answerable", so a second tap, a Compose frame already queued
         // behind this one, or the countdown firing in the same millisecond can no
@@ -3086,7 +3175,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (dialogs.remove(dialog.id) == null) return
         // Promoting the next request also re-arms the countdown for it.
         publishDialogs()
-        sendExtensionResponse(command)
+        sendExtensionResponse(dialog.id, answer)
     }
 
     /** Apply one `set_editor_text` to the composer, then forget it. */
@@ -3207,7 +3296,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         dialogTimeoutJob = null
         armedDialogId = null
         publishDialogState()
-        pending.forEach { sendExtensionResponse(PiCommands.extensionUiCancelled(it.id)) }
+        pending.forEach { sendExtensionResponse(it.id, UiAnswer.Cancelled) }
     }
 
     /** Forget per-session chrome that a gone engine can no longer maintain. */
@@ -3224,24 +3313,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private fun sendExtensionResponse(command: JsonObject) {
+    private fun sendExtensionResponse(id: String, answer: UiAnswer) {
         val engine = session ?: return
         // Best effort by design: the engine can die between a request and its
         // answer, and `send` writes to a pipe that is then closed. A broken pipe
         // must not crash the UI thread — the response only matters to a live pi.
-        //
-        // Racing pi's own timer is safe in both directions. pi deletes the
-        // pending entry before resolving (`rpc-mode.ts` `createDialogPromise`),
-        // and a response whose id is no longer pending is looked up, missed and
-        // silently dropped (`rpc-mode.ts` input handler) — so a late reply cannot
-        // corrupt the stream, and an early one resolves to the same documented
-        // default pi would have chosen.
         runCatching {
-            val id = (command["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@runCatching
-            val cancelled = (command["cancelled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
-            val confirmed = (command["confirmed"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull()
-            val value = (command["value"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-            engine.respondUi(id, value = value, confirmed = confirmed, cancelled = cancelled)
+            when (answer) {
+                is UiAnswer.Value -> engine.respondUi(id, value = answer.value)
+                is UiAnswer.Confirmed -> engine.respondUi(id, confirmed = answer.confirmed)
+                UiAnswer.Cancelled -> engine.respondUi(id, cancelled = true)
+            }
         }
     }
 
@@ -4686,7 +4768,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * streamingBehavior: "followUp" })` (`interactive-mode.js:3674`), which
      * reaches `_queueFollowUp(expandedText, currentImages)`
      * (`core/agent-session.js:1639-1642`). F21's investigation in
-     * `docs/gap-disposition.md` §10 found that `PiCommands.followUp` already had the
+     * `docs/gap-disposition.md` §10 found that the wire command already had the
      * parameter and this signature did not, so the 后续 chip silently dropped an
      * attachment the user had added — a visible action with no effect, the same
      * class of bug F19 removed elsewhere.
@@ -5079,9 +5161,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 两个字段在引擎死亡那条路上是**反序**置空的，所以窗口只是变窄、没有关掉（用户的新读数
         // 是「点 1 次、2 次、3 次」）。现在两者判同一个字段，见 [parkUntilAttached] 的 KDoc。
         if (parkUntilAttached { newSession(parentSession) }) {
-            // **排队也要看得见。** 会话列表那枚「＋ 新建会话」点完就关掉覆盖层（`onOpenChat`），
+            // **排队也要看得见。** 会话列表那枚「＋ 新建会话」点完就关掉覆盖层，
             // 用户落在对话页上；没有这句话，他看到的还是「点了没反应」—— 那正是这次要消灭的形状。
             pushNotice("引擎还在启动：新建会话已经排队，启动完成后会立刻执行。", Notice.Tone.Info)
+            requestNav(NavRequest.Chat)
             return
         }
         call("新建会话") { api ->
@@ -5153,35 +5236,146 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             fail("找不到会话文件：${summary.file.name}")
             return
         }
-        // 认领工作区用的「代」号：每点一次会话 +1，认领跑完发现号变了就丢弃。
-        // 以前拿 `meta.sessionFile` 与我们自己拼的 guest 路径做字符串相等判断，pi 报回来的路径
-        // 拼法只要有一点不同（符号链接、`//`、挂载点前缀），认领就会**静默**放弃 ——
-        // 用户看到的就是「点了别的工作区的对话，芯片不跟着变」。
         val generation = ++sessionOpenGeneration
         call("切换会话") { api ->
-            // The file is known here and nowhere else on this path: pi's `get_state`
-            // only reports it after the switch has been answered, and waiting for
-            // that would add a round trip to every open. `replayHistory` consumes
-            // the hint, and `resolveSessionFile` still cross-checks the header's id
-            // against `meta.sessionId` before trusting any *other* path.
             SessionHints.file = summary.file
-            val result = api.switchSession(path)
+            val result = try {
+                api.switchSession(path)
+            } catch (error: HostCommandException) {
+                if (error.code == "cwd_missing") {
+                    SessionHints.file = null
+                    val issue = ((error.details as? JsonObject)?.get("issue") as? JsonPrimitive)
+                        ?.takeIf { it.isString }?.content
+                    _cwdMissing.value = CwdMissingPrompt(
+                        reason = error.reason,
+                        issue = issue,
+                        action = CwdMissingAction.Switch(summary, path),
+                    )
+                    return@call
+                }
+                throw error
+            }
             if (result.cancelled) {
                 SessionHints.file = null
                 pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced()
-            // **先跳转，再认领工作区。** 认领要读会话文件头、可能还要写设置/重载主题；
-            // 把它放在 `requestNav` 前面会让"点一行 → 看到对话"多等它那一段 IO（用户在
-            // 2026-11-03 报的"从列表点进对话变慢"）。跳转不等它，认领在后台完成 ——
-            // 芯片晚一两帧才变，但对话立刻出来。
             requestNav(NavRequest.Chat)
-            // **认领这段会话所属的工作区。** pi 的 `switch_session` 会"用会话自己的 cwd
-            // 重建整套 cwd 相关服务"（`agent-session-runtime.ts:204-224`）——也就是说引擎
-            // 已经在那段会话的工作区里干活了，而工作区芯片、终端、`@` 补全、包命令还停在
-            // 原来的工作区：两个真相。这里把 App 那一半对齐，**不重启引擎**（pi 已经切好）。
             viewModelScope.launch { adoptSessionWorkspace(summary, generation) }
+        }
+    }
+
+    /** 从任意会话文件在当前工作区创建分支并切换进去（SDK `SessionManager.forkFrom`）。 */
+    fun forkSessionToCurrentWorkspace(summary: SessionSummary) {
+        val path = guestSessionPath(summary.file)
+        if (path == null) {
+            fail("找不到会话文件：${summary.file.name}")
+            return
+        }
+        call("分支会话") { api ->
+            val result = api.forkFrom(path, guestWorkspace())
+            if (result.cancelled) {
+                pushNotice("扩展取消了分支会话", Notice.Tone.Warning)
+                return@call
+            }
+            SessionHints.file = hostSessionFile(result.sessionFile)
+            afterSessionReplaced()
+            requestNav(NavRequest.Chat)
+            pushNotice("已分支到当前工作区", Notice.Tone.Info)
+        }
+    }
+
+    fun resolveCwdMissingContinue() {
+        val prompt = _cwdMissing.value ?: return
+        _cwdMissing.value = null
+        when (val action = prompt.action) {
+            is CwdMissingAction.Switch -> {
+                val generation = ++sessionOpenGeneration
+                call("继续会话") { api ->
+                    SessionHints.file = action.summary.file
+                    val result = api.switchSession(action.guestPath, cwd = guestWorkspace())
+                    if (result.cancelled) {
+                        SessionHints.file = null
+                        pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
+                        return@call
+                    }
+                    afterSessionReplaced()
+                    requestNav(NavRequest.Chat)
+                    viewModelScope.launch { adoptSessionWorkspace(action.summary, generation) }
+                }
+            }
+            is CwdMissingAction.Import -> {
+                val api = this.api ?: run {
+                    runCatching { action.stagedFile.delete() }
+                    fail("引擎还没有就绪，请重试导入。")
+                    return
+                }
+                viewModelScope.launch {
+                    val token = claimBusy("导入会话")
+                    try {
+                        val result = api.importSessionFile(action.guestPath, cwd = guestWorkspace())
+                        if (result.cancelled) {
+                            pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
+                        } else {
+                            afterSessionReplaced()
+                            requestNav(NavRequest.Chat)
+                            pushNotice("已导入会话：${action.displayName}", Notice.Tone.Info)
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        fail(SessionImport.failureSentence((error as? HostCommandException)?.reason ?: error.message))
+                    } finally {
+                        runCatching { action.stagedFile.delete() }
+                        releaseBusy(token)
+                    }
+                }
+            }
+        }
+    }
+
+    fun resolveCwdMissingFork() {
+        val prompt = _cwdMissing.value ?: return
+        _cwdMissing.value = null
+        when (val action = prompt.action) {
+            is CwdMissingAction.Switch -> forkSessionToCurrentWorkspace(action.summary)
+            is CwdMissingAction.Import -> {
+                val api = this.api ?: run {
+                    runCatching { action.stagedFile.delete() }
+                    fail("引擎还没有就绪，请重试导入。")
+                    return
+                }
+                viewModelScope.launch {
+                    val token = claimBusy("分支会话")
+                    try {
+                        val result = api.forkFrom(action.guestPath, guestWorkspace())
+                        if (result.cancelled) {
+                            pushNotice("扩展取消了分支会话", Notice.Tone.Warning)
+                        } else {
+                            SessionHints.file = hostSessionFile(result.sessionFile)
+                            afterSessionReplaced()
+                            requestNav(NavRequest.Chat)
+                            pushNotice("已从导入文件分支到当前工作区", Notice.Tone.Info)
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        fail(error.message ?: "分支会话失败")
+                    } finally {
+                        runCatching { action.stagedFile.delete() }
+                        releaseBusy(token)
+                    }
+                }
+            }
+        }
+    }
+
+    fun dismissCwdMissing() {
+        val prompt = _cwdMissing.value ?: return
+        _cwdMissing.value = null
+        if (prompt.action is CwdMissingAction.Import) {
+            runCatching { prompt.action.stagedFile.delete() }
         }
     }
 
@@ -5279,22 +5473,40 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * file can be hundreds of megabytes.
      */
     fun importSession(source: Uri) {
-        // `this.api` is null exactly while no engine is attached. Bound to a non-null
-        // local so the coroutine below captures a value the compiler can see is
-        // never null.
         val api = this.api ?: run {
             fail("引擎还没有就绪，等它启动完成后再导入。")
             return
         }
         viewModelScope.launch {
             val importToken = claimBusy("导入会话")
+            var stagedFile: File? = null
+            var deferCleanup = false
             try {
                 when (val prepared = withContext(Dispatchers.IO) { prepareImport(source) }) {
                     is ImportPrep.Rejected -> fail(prepared.sentence)
 
                     is ImportPrep.Ready -> {
-                        SessionHints.file = hostSessionFile(prepared.guestPath)
-                        val result = api.switchSession(prepared.guestPath)
+                        stagedFile = prepared.stagedFile
+                        val result = try {
+                            api.importSessionFile(prepared.guestPath)
+                        } catch (error: HostCommandException) {
+                            if (error.code == "cwd_missing") {
+                                val issue = ((error.details as? JsonObject)?.get("issue") as? JsonPrimitive)
+                                    ?.takeIf { it.isString }?.content
+                                _cwdMissing.value = CwdMissingPrompt(
+                                    reason = error.reason,
+                                    issue = issue,
+                                    action = CwdMissingAction.Import(
+                                        stagedFile = prepared.stagedFile,
+                                        guestPath = prepared.guestPath,
+                                        displayName = prepared.displayName,
+                                    ),
+                                )
+                                deferCleanup = true
+                                return@launch
+                            }
+                            throw error
+                        }
                         if (result.cancelled) {
                             pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
                         } else {
@@ -5307,45 +5519,37 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                // pi's raw text is not echoed: two of its three shapes carry a
-                // filesystem path, and user-visible copy here never shows one.
                 fail(SessionImport.failureSentence((error as? HostCommandException)?.reason ?: error.message))
             } finally {
+                if (!deferCleanup) {
+                    runCatching { stagedFile?.delete() }
+                }
                 releaseBusy(importToken)
             }
         }
     }
 
-    /** What [importSession] decided before it touches pi. */
+    /** What [importSession] decided before it hands the staged path to pi's `session.import`. */
     private sealed interface ImportPrep {
-        data class Ready(val guestPath: String, val displayName: String) : ImportPrep
+        data class Ready(val stagedFile: File, val guestPath: String, val displayName: String) : ImportPrep
         data class Rejected(val sentence: String) : ImportPrep
     }
 
     /**
-     * Read the picked document's head, decide whether it is a session, and copy it
-     * into pi's session directory under pi's own naming rule.
-     *
-     * Runs on IO; see [importSession] for the pipeline this reproduces.
+     * Read the picked document's head, decide whether it is a session, and stage it into
+     * `<agentDir>/tmp-import/` so pi's official `importFromJsonl` copies and opens it.
      */
     private fun prepareImport(source: Uri): ImportPrep {
         val resolver = getApplication<Application>().contentResolver
-        val sessionsRoot = File(host.paths().agentDir, "sessions")
+        val tmpDir = File(host.paths().agentDir, "tmp-import")
         val sourceName = displayNameOf(source)
 
-        // pi's usage string is `/import <path.jsonl>` (`interactive-mode.ts:6109`)
-        // and a session file that is not named `.jsonl` is not listed by pi's own
-        // picker (`session-manager.ts:825`), so a name that would produce an
-        // invisible session is refused with what to pick instead. A provider that
-        // exposes no display name at all gets a generated one and is judged on its
-        // content alone.
         if (sourceName != null && !sourceName.endsWith(SessionImport.SUFFIX, ignoreCase = true)) {
             return ImportPrep.Rejected(SessionImport.wrongSuffixSentence(sourceName))
         }
         val destinationSeed = sourceName
             ?: "session-import-${System.currentTimeMillis()}${SessionImport.SUFFIX}"
 
-        // Step 1: pi's header rule, applied to a bounded head (`SessionImport`).
         val head = runCatching {
             resolver.openInputStream(source)?.use { input ->
                 String(readBoundedBytes(input, SessionImport.HEAD_SCAN_CHARS), Charsets.UTF_8)
@@ -5355,36 +5559,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return ImportPrep.Rejected(SessionImport.failureSentence("not a valid"))
         }
 
-        // Step 2: pi's destination name (`agent-session-runtime.ts:371-379`).
-        sessionsRoot.mkdirs()
-        val destination = SessionImport.destinationName(destinationSeed) { candidate ->
-            File(sessionsRoot, candidate).exists()
-        } ?: return ImportPrep.Rejected(SessionImport.noFreeNameSentence(destinationSeed))
-        val target = File(sessionsRoot, destination)
+        tmpDir.mkdirs()
+        val keepPath = (_cwdMissing.value?.action as? CwdMissingAction.Import)?.stagedFile?.absolutePath
+        tmpDir.listFiles()?.forEach { old ->
+            if (old.isFile && old.absolutePath != keepPath) runCatching { old.delete() }
+        }
+        val stagedName = "${sessionOpSeq.incrementAndGet()}-${destinationSeed.substringAfterLast('/')}"
+        val stagedFile = File(tmpDir, stagedName)
 
-        // Step 3: the copy pi does with `COPYFILE_EXCL`
-        // (`agent-session-runtime.ts:387`). The name was chosen not to exist, so a
-        // plain create is the same guarantee; a partial write is removed rather than
-        // left where the session list would offer an unopenable row.
         val copied = runCatching {
             val input = resolver.openInputStream(source) ?: return@runCatching false
             input.use { from ->
-                target.outputStream().use { to -> from.copyTo(to) }
+                stagedFile.outputStream().use { to -> from.copyTo(to) }
             }
             true
         }.getOrDefault(false)
         if (!copied) {
-            runCatching { target.delete() }
+            runCatching { stagedFile.delete() }
             return ImportPrep.Rejected(SessionImport.unreadableSentence())
         }
 
-        val guestPath = guestSessionPath(target)
-        return if (guestPath == null) {
-            runCatching { target.delete() }
-            ImportPrep.Rejected(SessionImport.unreadableSentence())
-        } else {
-            ImportPrep.Ready(guestPath = guestPath, displayName = destination)
-        }
+        val guestPath = "${host.guestAgentDir}/tmp-import/$stagedName"
+        return ImportPrep.Ready(stagedFile = stagedFile, guestPath = guestPath, displayName = destinationSeed)
     }
 
     /**

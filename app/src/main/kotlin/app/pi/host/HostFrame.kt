@@ -37,6 +37,7 @@ sealed interface HostFrame {
                             code = it.str("code") ?: "internal",
                             message = it.str("message") ?: "",
                             detail = it.str("detail"),
+                            details = it["details"],
                         )
                     }
                     Res(id, ok, obj["data"], if (ok) null else err ?: HostError("internal", "宿主返回失败但没有 error"))
@@ -62,11 +63,21 @@ sealed interface HostFrame {
 }
 
 /** 协议里的错误体。App 按 [code] 分支，不要匹配 [message] 文案。 */
-data class HostError(val code: String, val message: String, val detail: String? = null)
+data class HostError(
+    val code: String,
+    val message: String,
+    val detail: String? = null,
+    val details: JsonElement? = null,
+)
 
 /** 命令失败。[code] 是协议错误码，外加客户端自己的 `timeout` / `closed` / `io`。 */
-class HostException(val code: String, message: String, val detail: String? = null) : Exception(message) {
-    constructor(error: HostError) : this(error.code, error.message, error.detail)
+class HostException(
+    val code: String,
+    message: String,
+    val detail: String? = null,
+    val details: JsonElement? = null,
+) : Exception(message) {
+    constructor(error: HostError) : this(error.code, error.message, error.detail, error.details)
 
     companion object {
         const val TIMEOUT = "timeout"

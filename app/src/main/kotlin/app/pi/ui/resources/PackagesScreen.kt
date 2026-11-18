@@ -86,7 +86,12 @@ internal fun PackagesScreen(
         access.events.collect { event ->
             val p = HostExtensions.progress(event) ?: return@collect
             if (p.opId != currentOp) return@collect
-            val line = listOfNotNull(actionLabel(p.action), p.source.takeIf { it.isNotEmpty() }, p.message).joinToString(" · ")
+            if (p.type == "complete" && p.message.isNullOrBlank()) return@collect
+            val line = listOfNotNull(
+                actionLabel(p.action),
+                p.source.takeIf { it.isNotEmpty() },
+                p.message?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
             if (line.isNotEmpty() && log.lastOrNull() != line) log.add(line)
         }
     }

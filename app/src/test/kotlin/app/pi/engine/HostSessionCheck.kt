@@ -44,6 +44,7 @@ private fun flag(name: String, ok: Boolean, detail: String = "") = check(name + 
 private suspend fun <T> within(ms: Long, block: suspend () -> T): T? = runCatching { withTimeout(ms) { block() } }.getOrNull()
 
 fun main() {
+    bridge()
     val root = File(System.getProperty("pi.repo.root") ?: ".")
     val piDir = root.resolve("build/pi-contract/node_modules/@earendil-works/pi-coding-agent")
     val hostMain = root.resolve("app/src/main/assets/guest/sdk-host/main.mjs")
@@ -51,6 +52,7 @@ fun main() {
         runCatching { ProcessBuilder(it, "--version").redirectErrorStream(true).start().also { p -> p.waitFor() }.exitValue() == 0 }.getOrDefault(false)
     }
     if (node == null || !piDir.isDirectory || !hostMain.isFile) {
+        if (failures > 0) { println("harness: FAILED ($failures)"); exitProcess(1) }
         println("SKIP host-session：需要 node 与 build/pi-contract（$piDir）")
         return
     }
@@ -62,6 +64,26 @@ fun main() {
     }
     if (failures > 0) { println("harness: FAILED ($failures)"); exitProcess(1) }
     println("harness: OK (host-session)")
+}
+
+private fun bridge() {
+    fun obj(text: String): JsonObject = Json {}.parseToJsonElement(text) as JsonObject
+    fun req(method: String, params: String) = HostRequest("r1", method, obj(params))
+    val sel = PiEngineSession.requestToLegacy(req("ui.select", """{"title":"选一个","options":["a","b"],"timeout":5000}"""))!!
+    check("select 对话框", listOf(sel.uiId, sel.method, sel.title, sel.options, sel.timeoutMs), listOf("r1", "select", "选一个", listOf("a", "b"), 5000L))
+    val conf = PiEngineSession.requestToLegacy(req("ui.confirm", """{"title":"t","message":"确定吗"}"""))!!
+    check("confirm 对话框", conf.method to conf.message, "confirm" to "确定吗")
+    val ed = PiEngineSession.requestToLegacy(req("ui.editor", """{"title":"t","prefill":"初始"}"""))!!
+    check("editor 预填文本", ed.text, "初始")
+    val inp = PiEngineSession.requestToLegacy(req("ui.input", """{"title":"t","placeholder":"ph","timeout":null}"""))!!
+    check("input：timeout=null 不当成 0", inp.timeoutMs to inp.placeholder, null to "ph")
+    check("auth.prompt 不是旧对话框 → null", PiEngineSession.requestToLegacy(req("auth.prompt", """{"prompt":{}}""")), null)
+
+    val n = PiEngineSession.eventToLegacy("ui.notify", obj("""{"message":"hi","tone":"warning"}"""))!!
+    check("notify", n.method to n.notifyType, "notify" to "warning")
+    check("setTitle", PiEngineSession.eventToLegacy("ui.title", obj("""{"title":"标题"}"""))!!.title, "标题")
+    check("set_editor_text", PiEngineSession.eventToLegacy("ui.editorText", obj("""{"text":"x"}"""))!!.text, "x")
+    check("不认识的事件 → null", PiEngineSession.eventToLegacy("ui.working", obj("""{"message":"m"}""")), null)
 }
 
 private fun spawn(node: String, hostMain: File, piDir: File, tmp: File, name: String): PiEngineSession {

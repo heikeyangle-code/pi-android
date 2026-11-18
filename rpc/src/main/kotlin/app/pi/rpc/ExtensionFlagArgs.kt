@@ -50,14 +50,10 @@ package app.pi.rpc
  *   (`core/extensions/loader.ts:288-292`). **For any other name pi does not stay
  *   quiet — it exits 1.** The registered set is resolved during startup, an
  *   unregistered `--name` becomes a diagnostic at `type: "error"`
- *   (`core/agent-session-services.ts:36-41`, the wording is
- *   `Unknown option: --bogus-flag`), and `main.ts`'s `hasRuntimeErrors` turns an error
- *   diagnostic into `process.exit(1)` (`dist/main.js:744-755`) — **before any RPC
- *   reply is written**. Measured on the pinned engine by piping one `get_state`
- *   request in at `node dist/bundle/rpc-entry.js --session-dir <dir> --bogus-flag`:
- *   exit code 1, stderr `Error: Unknown option: --bogus-flag`, stdout **empty**
- *   (identical on 1.1.0, 1.2.0 and 1.3.0). The control run without the unknown flag
- *   exits 0 and answers `{"type":"response",…}` on stdout.
+ *   (`core/agent-session-services.ts`), and `sdk-host`'s `session.open` surfaces
+ *   flag errors before the session becomes usable. Measured on the pinned engine:
+ *   an unregistered `--bogus-flag` causes exit code 1 with stderr
+ *   `Error: Unknown option: --bogus-flag` (whereas a valid run starts cleanly).
  *
  *   So this row is **input that can keep the engine from starting**, and the parser
  *   above draws its line exactly where it can: it decides only whether the text can

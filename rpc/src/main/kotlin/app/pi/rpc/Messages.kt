@@ -6,6 +6,24 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+/** An image attached to a prompt, in pi's `ImageContent` shape. */
+data class PiImage(val base64: String, val mimeType: String)
+
+/** How a message submitted mid-stream is delivered (pi requires this). */
+enum class StreamingBehavior(val wire: String) {
+    /** Injected after the current turn finishes executing its tool calls. */
+    Steer("steer"),
+
+    /** Injected only once the agent has finished all work. */
+    FollowUp("followUp"),
+}
+
+/** pi's queue draining policy, settable per queue. */
+enum class QueueMode(val wire: String) {
+    OneAtATime("one-at-a-time"),
+    All("all"),
+}
+
 /**
  * Where an extension command, prompt template or skill was loaded from.
  *

@@ -30,4 +30,7 @@ fun PiLaunchOptions.toOpenArgs(sessionDir: String? = null, trust: Boolean? = nul
     noThemes = noThemes,
     noContextFiles = noContextFiles,
     trust = trust,
+    tools = tools,
+    excludeTools = excludeTools,
+    noTools = noTools,
 )

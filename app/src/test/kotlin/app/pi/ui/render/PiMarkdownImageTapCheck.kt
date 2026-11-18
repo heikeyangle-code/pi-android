@@ -2,7 +2,7 @@ package app.pi.ui.render
 
 // 正文图片"点一下打开查看器"这条接线在裸 JVM 上的检查。由
 // `tools/run-app-pure-checks.sh` 的一项运行（闭包：本文件 + `PiMarkdownImageTap.kt` +
-// `:rpc` 的 `Commands.kt`，也就是 `PiImage` 那一行）。
+// `:rpc` 的 `Messages.kt`，也就是 `PiImage` 那一行）。
 //
 // 为什么要有它：用户报的是「URL 的图能渲染，为什么点不了」。修法只有一句话 —— 把
 // "这张图的字节"变成查看器要的 `PiImage(base64, mimeType)`，然后交给**已经存在**的那个出口
@@ -27,7 +27,7 @@ package app.pi.ui.render
 //     -jvm-target 17 -classpath "$LIB_CP" -d /tmp/pitap/out \
 //     app/src/test/kotlin/app/pi/ui/render/PiMarkdownImageTapCheck.kt \
 //     app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt \
-//     rpc/src/main/kotlin/app/pi/rpc/Commands.kt
+//     rpc/src/main/kotlin/app/pi/rpc/Messages.kt
 //   java -Dpi.repo.root=. -cp "/tmp/pitap/out:$LIB_CP" app.pi.ui.render.PiMarkdownImageTapCheckKt
 
 import java.io.File
