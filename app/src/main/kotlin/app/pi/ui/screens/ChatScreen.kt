@@ -1541,7 +1541,9 @@ internal fun ChatBody(
     val fill = state.composerFill
     LaunchedEffect(fill?.seq) {
         if (fill != null) {
-            draft = if (fill.append) draft + fill.text else fill.text
+            if (!(fill.onlyIfEmpty && draft.isNotBlank())) {
+                draft = if (fill.append) draft + fill.text else fill.text
+            }
             session.consumeComposerFill(fill.seq)
         }
     }

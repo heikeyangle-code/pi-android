@@ -45,17 +45,12 @@ internal fun needsCustomInstructions(choice: BranchSummaryChoice): Boolean =
     choice == BranchSummaryChoice.SummarizeWithPrompt
 
 /**
- * The two facts the app can observe after dispatching the command, and the three outcomes
- * they can add up to.
+ * 跳转之后 App 必须自己判断的一件事：**要不要重建对话**。
  *
- * The **extension** knows more than this (`aborted` / `cancelled` / "already there"), and
- * says so through pi's own channels — `ctx.ui.notify` for the sentence, `setEditorText` for
- * the rewind text. What the app must decide on its own is narrower and has to be exact:
- * **should the conversation be rebuilt?** pi sends no event for a navigation (it emits the
- * *extension* event `session_tree`, `agent-session.ts:4091-4095`, which RPC does not
- * forward — `rpc-mode.ts:356` subscribes to `AgentSessionEvent` only), so the leaf moving is
- * the only authoritative signal, and it comes from `get_tree`/`get_entries`, both of which
- * report the **in-memory** leaf (`rpc-mode.ts:646`、`:651`).
+ * SDK 的 `navigateTree` 不发事件（`session_tree` 是扩展事件，不转发给客户端），
+ * 所以叶子有没有动是唯一的权威信号：`get_tree` / `get_entries` 报的都是**内存里**的叶子。
+ * 结果里的 `aborted` / `cancelled` / `editorText` 由宿主原样带回，`PiSessionViewModel.navigateTo`
+ * 逐项处理（对照 `interactive-mode.js` 的 `showTreeSelector`）。
  */
 internal enum class NavigateOutcome {
     /** The leaf moved: rebuild the conversation from the new branch. */
@@ -71,14 +66,8 @@ internal enum class NavigateOutcome {
     NoMove,
 
     /**
-     * The command never ran. Only two causes, and both are the app's: the bridge extension
-     * is not loaded, or the engine is not ready.
-     *
-     * This is the **dangerous** one to get wrong. `_tryExecuteExtensionCommand` returns
-     * `false` for an unregistered name (`agent-session.ts:2069`), and `prompt` then falls
-     * through to `_runInputHandlers` and sends the text to the model as an ordinary user
-     * turn (`:1930-1937` 之后继续走完 `prompt` 本身). So the app must never dispatch a command it has not seen in
-     * `get_commands` (`rpc-mode.ts:685-690`).
+     * 调用方说「没有跳」：SDK 返回 `cancelled`（扩展的 `session_before_tree` 取消了）。
+     * 与 [NoMove] 的区别只在提示语，重建对话都不需要。
      */
     Refused,
 }

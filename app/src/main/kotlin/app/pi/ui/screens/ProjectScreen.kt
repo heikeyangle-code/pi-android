@@ -1066,6 +1066,19 @@ fun ProjectScreen(
                               }
                             }
                         }
+                        // 收起了东西就当面说出来、一点就开：文件管理不能让人找不到文件。
+                        val foldedAway = if (showIgnored) 0 else entries.count { it.isDirectory && it.name in PI_IGNORED_DIRS }
+                        if (foldedAway > 0 && filterText.isBlank()) {
+                            item(key = "folded-ignored") {
+                                WsCardSlice(index = 0, lastIndex = 0) {
+                                    WsRow(
+                                        title = "已收起 $foldedAway 项（.git / node_modules，pi 的文件发现也不列）",
+                                        trail = { Text("显示", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                        onClick = { showIgnored = true },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -203,7 +203,13 @@ data class ExtensionNotice(
  * clears the slot once consumed. Without that, leaving and re-entering the Chat
  * destination would re-run the effect and overwrite whatever the user typed since.
  */
-data class ComposerFill(val seq: Long, val text: String, val append: Boolean = false)
+data class ComposerFill(
+    val seq: Long,
+    val text: String,
+    val append: Boolean = false,
+    /** pi 的 `/tree`：`result.editorText && !editor.getText().trim()` —— 输入框里已经有字就不覆盖。 */
+    val onlyIfEmpty: Boolean = false,
+)
 
 /**
  * `notifyType` -> tone. `docs/rpc.md`: the field is `info` / `warning` / `error`

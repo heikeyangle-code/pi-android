@@ -4,31 +4,104 @@ import app.pi.rpc.PiJson
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.SessionTreeNode
 import app.pi.rpc.parseSessionEntry
+import app.pi.rpc.parseSessionTreeNode
+import java.io.File
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import kotlin.system.exitProcess
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
-// 会话树视图模型：脊线 + 侧枝布局、三种过滤、搜索、活动路径、上下文编辑标记。纯函数，真跑。
+// 会话树视图模型 vs pi 官方 `/tree` 组件。
+//
+// 标准答案 `app/src/test/resources/pi-tree-fixtures/tree.json` 由 `tools/collect-tree-fixtures.mjs`
+// 用 SDK 自己的 TreeSelectorComponent 生成（可见行、顺序、缩进、连线、竖线、整行文字、光标落点），
+// 这里把同样的树喂给 Kotlin 的 TreeModel，逐行比对。不是「我觉得 SDK 是这样」，是「SDK 说它是这样」。
 private var failures = 0
+private var passes = 0
 private fun check(name: String, actual: Any?, expected: Any?) {
-    if (actual == expected) println("PASS $name")
+    if (actual == expected) passes++
     else { failures++; println("FAIL $name\n  expected: $expected\n  actual:   $actual") }
 }
 
+private fun filterOf(wire: String) = TreeFilter.entries.first { it.wire == wire }
+
+private data class Row(val id: String, val indent: Int, val connector: Boolean, val last: Boolean, val virtualRoot: Boolean, val gutters: List<Pair<Int, Boolean>>, val foldable: Boolean, val line: String)
+
+private fun goldenRows(arr: JsonArray) = arr.map {
+    val o = it.jsonObject
+    Row(
+        o["id"]!!.jsonPrimitive.content, o["indent"]!!.jsonPrimitive.int, o["showConnector"]!!.jsonPrimitive.boolean,
+        o["isLast"]!!.jsonPrimitive.boolean, o["virtualRoot"]!!.jsonPrimitive.boolean,
+        o["gutters"]!!.jsonArray.map { g -> g.jsonArray[0].jsonPrimitive.int to g.jsonArray[1].jsonPrimitive.boolean },
+        o["foldable"]!!.jsonPrimitive.boolean, o["line"]!!.jsonPrimitive.content,
+    )
+}
+
+private fun goldenCheck(root: File) {
+    val file = File(root, "app/src/test/resources/pi-tree-fixtures/tree.json")
+    if (!file.isFile) { failures++; println("FAIL 标准答案缺失：$file（node tools/collect-tree-fixtures.mjs --pi <pi 目录>）"); return }
+    val g = Json.parseToJsonElement(file.readText()).jsonObject
+    val now = LocalDateTime.ofInstant(Instant.parse(g["now"]!!.jsonPrimitive.content), ZoneOffset.UTC)
+    val home = g["home"]!!.jsonPrimitive.content
+    var scenarios = 0
+    for (fx in g["fixtures"]!!.jsonArray) {
+        val fo = fx.jsonObject
+        val name = fo["name"]!!.jsonPrimitive.content
+        val leaf = fo["leafId"]!!.jsonPrimitive.content
+        val tree = fo["tree"]!!.jsonArray.map { parseSessionTreeNode(it.jsonObject) }
+        for (sc in fo["scenarios"]!!.jsonArray) {
+            val so = sc.jsonObject
+            val filter = filterOf(so["filter"]!!.jsonPrimitive.content)
+            val query = so["query"]!!.jsonPrimitive.content
+            val folded = so["folded"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet()
+            val stamps = so["timestamps"]!!.jsonPrimitive.boolean
+            val label = "$name / ${filter.wire} / q='$query' / folded=$folded / ts=$stamps"
+            val want = goldenRows(so["rows"]!!.jsonArray)
+            val view = TreeModel.view(tree, leaf, filter, query, folded, home)
+            val got = view.rows.map {
+                Row(
+                    it.item.id, it.indent, it.showConnector, it.isLast, it.isVirtualRootChild, it.gutters.map { g2 -> g2.position to g2.show },
+                    it.item.foldable, it.plainLine(stamps, now, ZoneOffset.UTC).trimEnd(),
+                )
+            }
+            scenarios++
+            check("$label：可见行的 id 与顺序", got.map { it.id }, want.map { it.id })
+            if (got.map { it.id } == want.map { it.id }) {
+                for ((i, w) in want.withIndex()) check("$label：第 ${i + 1} 行（${w.id}）", got[i], w)
+            }
+            val nearest = so["nearest"]
+            if (nearest is JsonPrimitive && nearest.isString) check("$label：光标落点", view.nearestToLeafId, nearest.content)
+        }
+    }
+    for (t in g["labelTimestamps"]!!.jsonArray) {
+        val o = t.jsonObject
+        check("标签时间 ${o["iso"]!!.jsonPrimitive.content}", TreeModel.formatLabelTimestamp(o["iso"]!!.jsonPrimitive.content, now, ZoneOffset.UTC), o["text"]!!.jsonPrimitive.content)
+    }
+    println("  对照 pi ${g["engineVersion"]!!.jsonPrimitive.content}：${g["fixtures"]!!.jsonArray.size} 棵树、$scenarios 个场景")
+}
+
+// ---- 下面几项 SDK 组件不直接给出（是 App 在它之上的判断），单独钉住 ----
 private fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 private fun entry(json: String): SessionEntry = parseSessionEntry(PiJson.parseObjectOrNull(json)!!)
-private fun user(id: String, parent: String?, text: String) = entry("""{"type":"message","id":"$id","parentId":${parent?.let { "\"$it\"" } ?: "null"},"timestamp":"t","message":{"role":"user","content":[{"type":"text","text":"${esc(text)}"}],"timestamp":1}}""")
-private fun asst(id: String, parent: String?, text: String, tools: List<String> = emptyList()) = entry(
-    """{"type":"message","id":"$id","parentId":${parent?.let { "\"$it\"" } ?: "null"},"timestamp":"t","message":{"role":"assistant","content":[""" +
-        (listOfNotNull(if (text.isNotEmpty()) """{"type":"text","text":"${esc(text)}"}""" else null) + tools.map { """{"type":"toolCall","id":"c","name":"$it","arguments":{}}""" }).joinToString(",") +
-        """],"stopReason":"stop","timestamp":2}}""",
-)
-private fun toolRes(id: String, parent: String?) = entry("""{"type":"message","id":"$id","parentId":"$parent","timestamp":"t","message":{"role":"toolResult","toolCallId":"c","toolName":"read","content":[{"type":"text","text":"ok"}],"isError":false,"timestamp":3}}""")
+private fun q(s: String?) = s?.let { "\"$it\"" } ?: "null"
+private fun user(id: String, parent: String?, text: String) = entry("""{"type":"message","id":"$id","parentId":${q(parent)},"timestamp":"t","message":{"role":"user","content":[{"type":"text","text":"${esc(text)}"}],"timestamp":1}}""")
+private fun asst(id: String, parent: String?, text: String) = entry("""{"type":"message","id":"$id","parentId":${q(parent)},"timestamp":"t","message":{"role":"assistant","content":[{"type":"text","text":"${esc(text)}"}],"stopReason":"stop","timestamp":2}}""")
 private fun node(e: SessionEntry, vararg kids: SessionTreeNode, label: String? = null) = SessionTreeNode(e, kids.toList(), label, null)
 
-private fun ids(v: TreeView) = v.rows.map { when (it) { is TreeRow.Node -> it.item.id; is TreeRow.Branch -> "⑂" + it.headId } }
-private fun depths(v: TreeView) = v.rows.map { it.depth }
-
 fun main() {
-    // 1. 长直线不缩进、不爆栈
+    val root = File(System.getProperty("pi.repo.root") ?: ".")
+    goldenCheck(root)
+
+    // 长会话：5000 条直线不爆栈、同一列
     var chain: SessionTreeNode? = null
     for (i in 4999 downTo 0) {
         val e = if (i % 2 == 0) user("n$i", if (i == 0) null else "n${i - 1}", "m$i") else asst("n$i", "n${i - 1}", "r$i")
@@ -36,82 +109,32 @@ fun main() {
     }
     val longView = TreeModel.view(listOf(chain!!), "n4999", TreeFilter.All, "", emptySet())
     check("5000 条直线：全部可见、没爆栈", longView.rows.size, 5000)
-    check("直线所有行同一列（不随祖先数缩进）", depths(longView).toSet(), setOf(0))
+    check("直线所有行同一列", longView.rows.map { it.indent }.toSet(), setOf(0))
 
-    // 2. 分叉：主线 = 含当前位置的那支，侧枝折叠成一行，并排在主线继续之前
-    //    u1 → a1 → { u2a → a2a(leaf), u2b → a2b → u3b }
-    val tree = node(
-        user("u1", null, "第一问"),
-        node(asst("a1", "u1", "第一答"),
-            node(user("u2a", "a1", "走这条"), node(asst("a2a", "u2a", "答A"))),
-            node(user("u2b", "a1", "另一条 zebra"), node(asst("a2b", "u2b", "答B"), node(user("u3b", "a2b", "追问B")))),
-        ),
+    // 条目的动作语义（SDK navigateTree / getUserMessagesForForking）
+    val t = node(
+        user("u1", null, "问"),
+        node(asst("a1", "u1", "答"), node(entry("""{"type":"custom_message","id":"cm","parentId":"a1","timestamp":"t","customType":"x","content":"c","display":true}"""))),
     )
-    val v = TreeModel.view(listOf(tree), "a2a", TreeFilter.Conversation, "", emptySet())
-    check("侧枝折叠：先出侧枝入口，主线继续", ids(v), listOf("u1", "a1", "⑂u2b", "u2a", "a2a"))
-    val br = v.rows[2] as TreeRow.Branch
-    check("侧枝入口：条数、预览、未展开", Triple(br.nodeCount, br.preview, br.expanded), Triple(3, "另一条 zebra", false))
-    check("侧枝入口缩进一级", br.depth, 1)
-    val items = v.rows.filterIsInstance<TreeRow.Node>().map { it.item }
-    check("活动路径与当前位置", items.map { it.id to (it.onPath to it.isLeaf) }, listOf("u1" to (true to false), "a1" to (true to false), "u2a" to (true to false), "a2a" to (true to true)))
-    check("分叉点记录孩子数", items.first { it.id == "a1" }.childCount, 2)
-    check("只有用户消息能分叉", items.map { it.forkable }, listOf(true, false, true, false))
+    val items = TreeModel.view(listOf(t), "cm", TreeFilter.All, "", emptySet()).rows.map { it.item }.associateBy { it.id }
+    check("用户消息：可分叉、跳转会退到它之前", items["u1"]!!.forkable to items["u1"]!!.rewinds, true to true)
+    check("助手消息：不分叉、跳转就是它自己", items["a1"]!!.forkable to items["a1"]!!.rewinds, false to false)
+    check("扩展消息：不分叉，但跳转同样退到之前", items["cm"]!!.forkable to items["cm"]!!.rewinds, false to true)
+    check("复制文字", items["u1"]!!.copyText to items["cm"]!!.copyText, "问" to "c")
+    check("当前位置 / 活动路径", items.values.map { it.id to (it.onPath to it.isLeaf) }.toSet(), setOf("u1" to (true to false), "a1" to (true to false), "cm" to (true to true)))
 
-    // 3. 展开侧枝：内容缩进一级，位置在入口之后、主线之前
-    val ex = TreeModel.view(listOf(tree), "a2a", TreeFilter.Conversation, "", setOf("u2b"))
-    check("展开后的顺序", ids(ex), listOf("u1", "a1", "⑂u2b", "u2b", "a2b", "u3b", "u2a", "a2a"))
-    check("展开后的层级：侧枝内 +1，主线回到原列", depths(ex), listOf(0, 0, 1, 1, 1, 1, 0, 0))
-    check("入口标成已展开", (ex.rows[2] as TreeRow.Branch).expanded, true)
-
-    // 4. 当前位置不在任何一支里 → 主线取最后一个孩子（最新的）
-    val noLeaf = TreeModel.view(listOf(tree), null, TreeFilter.All, "", emptySet())
-    check("没有当前位置：主线是最后一个孩子", ids(noLeaf).drop(2).first(), "⑂u2a")
-
-    // 5. 过滤
-    val rich = node(
-        user("r1", null, "问"),
-        node(asst("r2", "r1", "", listOf("read")),
-            node(toolRes("r3", "r2"),
-                node(entry("""{"type":"model_change","id":"r4","parentId":"r3","timestamp":"t","provider":"p","modelId":"m"}"""),
-                    node(entry("""{"type":"usage","id":"r5","parentId":"r4","timestamp":"t","kind":"cache_warm","provider":"p","model":"m","usage":{"totalTokens":120}}"""),
-                        node(entry("""{"type":"context_edit","id":"r6","parentId":"r5","timestamp":"t","targetId":"r1","replacement":null}"""),
-                            node(asst("r7", "r6", "最后"), label = "里程碑"),
-                        ),
-                    ),
-                    label = null,
-                ),
-            ),
-        ),
+    // 被 context_edit 隐藏的条目
+    val ce = node(
+        user("u", null, "x"),
+        node(asst("a", "u", "y")),
+        node(entry("""{"type":"context_edit","id":"e","parentId":"u","timestamp":"t","targetId":"a","replacement":null}""")),
     )
-    check("对话视图：只留对话 + 带标签的 + 当前位置", ids(TreeModel.view(listOf(rich), "r7", TreeFilter.Conversation, "", emptySet())), listOf("r1", "r2", "r7"))
-    check("全部视图：含工具结果、模型切换、用量、上下文编辑", ids(TreeModel.view(listOf(rich), "r7", TreeFilter.All, "", emptySet())), listOf("r1", "r2", "r3", "r4", "r5", "r6", "r7"))
-    val bm = TreeModel.view(listOf(rich), "r7", TreeFilter.Bookmarks, "", emptySet())
-    check("书签视图：只有带标签的（当前位置恰是它）", ids(bm), listOf("r7"))
-    check("书签计数", bm.bookmarkCount, 1)
-    val all = TreeModel.view(listOf(rich), "r7", TreeFilter.All, "", emptySet()).rows.filterIsInstance<TreeRow.Node>().map { it.item }.associateBy { it.id }
-    check("上下文编辑把目标标成「不再发给模型」", all["r1"]?.hiddenFromContext, true)
-    check("别的条目没被牵连", all["r2"]?.hiddenFromContext, false)
-    check("SDK 1.5 的 usage / context_edit 认得出来，不是未知", all["r5"]?.kind to all["r6"]?.kind, TreeKind.Usage to TreeKind.ContextEdit)
-    check("usage 文字带 kind 与 tokens", all["r5"]?.text, "cache_warm · m · 120 tokens")
-    check("上下文编辑文字", all["r6"]?.text, "不再发给模型 → r1")
-    check("只有消息能被编辑上下文", all.values.filter { it.contextEditable }.map { it.id }.sorted(), listOf("r1", "r2", "r3", "r7"))
-    check("助手只调工具时的文字", all["r2"]?.text, "调用 read")
-    check("标签文字来自 SDK 解析后的 label", all["r7"]?.label, "里程碑")
+    val hidden = TreeModel.view(listOf(ce), "a", TreeFilter.All, "", emptySet()).rows.associate { it.item.id to it.item.hiddenFromContext }
+    check("被省略的消息标记为隐藏出上下文", hidden, mapOf("u" to false, "a" to true, "e" to false))
 
-    // 6. 搜索：全部词命中、展开全部、平铺
-    val sv = TreeModel.view(listOf(tree), "a2a", TreeFilter.Conversation, "zebra  另一条", emptySet())
-    check("搜索只留命中的行，且自动展开侧枝", ids(sv), listOf("u2b"))
-    check("搜索结果平铺", depths(sv), listOf(0))
-    check("多个词必须全部命中", ids(TreeModel.view(listOf(tree), "a2a", TreeFilter.Conversation, "zebra 不存在的词", emptySet())).filter { it != "a2a" }, emptyList<String>())
-    check("搜索不区分大小写", ids(TreeModel.view(listOf(tree), "a2a", TreeFilter.All, "ZEBRA", emptySet())), listOf("u2b"))
+    // 过滤名与设置值
+    check("设置值 → 过滤器", listOf("default", "no-tools", "user-only", "labeled-only", "all", "bogus", null).map { TreeFilter.fromWire(it).wire }, listOf("default", "no-tools", "user-only", "labeled-only", "all", "default", "default"))
 
-    // 7. 活动路径遇到环不死循环
-    val a = node(user("x", "y", "x")); val b = node(user("y", "x", "y"))
-    check("parentId 成环也能停", TreeModel.activePath(mapOf("x" to a, "y" to b), "x"), setOf("x", "y"))
-
-    // 8. 空树
-    check("空树", TreeModel.view(emptyList(), null, TreeFilter.All, "", emptySet()).rows, emptyList<TreeRow>())
-
-    if (failures > 0) { println("harness: FAILED ($failures)"); exitProcess(1) }
-    println("harness: OK (tree-model)")
+    if (failures > 0) { println("tree-model: $failures FAILED / ${passes + failures}"); exitProcess(1) }
+    println("tree-model: all $passes checks passed")
 }
