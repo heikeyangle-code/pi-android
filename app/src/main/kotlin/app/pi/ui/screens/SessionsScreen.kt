@@ -503,6 +503,7 @@ fun SessionsScreen(
                 leafId = state.tree?.leafId,
                 busy = state.busy?.takeIf { it == NAVIGATE_BUSY_LABEL },
                 streaming = state.streaming,
+                homeDir = app.pi.packages.AgentLayout.GUEST_HOME,
                 initialFilter = remember { session.treeFilterMode() },
                 reselect = treeReselect,
                 onReselected = { treeReselect = null },

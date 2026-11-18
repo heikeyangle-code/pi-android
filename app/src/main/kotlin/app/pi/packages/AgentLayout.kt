@@ -46,7 +46,7 @@ class AgentLayout(
      * trusted user one (`trust-manager.ts:186-188`), so the value has to come from
      * there rather than from Android's notion of home.
      */
-    val guestHome: String = "/root"
+    val guestHome: String = GUEST_HOME
 
     /**
      * The agent dir. Same directory as [agentMirrorDir]; the name survives from when the
@@ -115,4 +115,9 @@ class AgentLayout(
 
     /** True when the engine cli.js the guest will exec exists on the host side. */
     fun engineInstalled(): Boolean = File(paths.rootfs, guestEngineCli.removePrefix("/")).isFile
+
+    companion object {
+        /** pi 在 guest 里的家目录（会话树等界面把它缩成 `~`，同 SDK `shortenHomePath`）。 */
+        const val GUEST_HOME = "/root"
+    }
 }
