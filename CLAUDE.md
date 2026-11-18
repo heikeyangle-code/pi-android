@@ -6,6 +6,7 @@
 - 做事前先说一句要做什么；多步任务用任务列表；完成后只讲结果、一个自然的下一步、以及没验证的部分。
 - 任何关于 SDK 行为的陈述，先 Grep / Read `build/pi-contract/node_modules/@earendil-works/pi-coding-agent/dist/` 再说。上一轮自己写的结论也要重新核。
 - 判断一个需求时严格按 AGENTS.md 里「SDK 有 → 薄命令；只在 TUI → 移植 + 官方组件标准答案；没有 → App 自己做并注明」的顺序，并在回复里说明这一次落在哪一类。
+- **界面的美观和手感是第一等的要求**：好看、有层次、有质感、顺手，不能简陋（AGENTS.md「手机端的 UI 和操作」开头那几条）。功能接对只是及格，交付前自问它像不像一个有设计感的手机 App。
 - 接到 App 层的功能要同时做好手机 UI 和操作（AGENTS.md「手机端的 UI 和操作」），语义照官方，形态按手机；动界面前先读 `docs/sdk-host/ui-redesign.md`。
 - Compose 改动一律声明「本机未编译」。汇报验证时写清跑了哪些、没跑哪些。
 - 提交时按系统给出的署名要求加尾注；先 `git fetch` + 合并 `origin/feat/sdk-host` 再推。
