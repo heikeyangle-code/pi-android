@@ -337,9 +337,26 @@ export class Controller {
       }),
       switchSession: async (sessionPath, options) => runtime.switchSession(sessionPath, options),
       reload: async () => {
-        await this.session.reload();
+        await this.reloadSession();
       },
     };
+  }
+
+  /**
+   * **所有**重载都走这一个口：`session.reload()` 会重建扩展 runner、重读技能 / 提示模板 / 主题 /
+   * 上下文文件，于是**命令表、工具表、资源目录都可能变了**，而 App 缓存着它们（命令面板）。
+   * 此前 App 的四个入口（命令面板的 /reload、包管理、资源中心、MCP）和扩展自己调的 `ctx.reload()`
+   * 各自重载、各自忘了刷新，面板就一直显示旧命令（包管理页是现读，所以那边看得到）。
+   * 现在重载一完成就发 `catalog.changed`，谁触发的重载都一样刷新。
+   */
+  async reloadSession() {
+    const session = this.requireSession();
+    try {
+      await session.reload();
+    } finally {
+      // 失败也发：reload 中途抛错时 runner 可能已经换了一半，让 App 读到真实现状而不是旧缓存。
+      this.hub.emit("catalog.changed", { reason: "reload" });
+    }
   }
 
   /**
@@ -395,7 +412,7 @@ export class Controller {
     const session = this.requireSession();
     const now = this.#projectTrusted(cwd);
     session.settingsManager.setProjectTrusted(now.value);
-    await session.reload();
+    await this.reloadSession();
     if (now.undecided) this.hub.emit("project.trust.required", { cwd });
     return this.trustState();
   }

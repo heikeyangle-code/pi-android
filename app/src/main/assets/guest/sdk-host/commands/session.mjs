@@ -187,7 +187,7 @@ export function register(reg, { controller }) {
   reg.add("session.compact", async (args) => withState(controller, await controller.requireSession().compact(optStr(args, "customInstructions"))));
   reg.add("session.export", async (args) => ({ path: await controller.requireSession().exportToHtml(optStr(args, "outputPath")) }));
   reg.add("session.reload", async () => {
-    await controller.requireSession().reload();
+    await controller.reloadSession();
     return withState(controller);
   });
 

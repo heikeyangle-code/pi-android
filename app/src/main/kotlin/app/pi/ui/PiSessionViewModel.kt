@@ -2245,6 +2245,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     // 错过（界面还没挂上）就再也问不到，所以状态存在这里，由 [ProjectTrustHost] 显示。
                     refreshTrustPrompt()
                 }
+                if (ev.name == "catalog.changed") {
+                    // 宿主重载了（扩展 runner 重建、技能 / 模板 / 主题重读）：命令表、工具表、资源都可能变了。
+                    // 任何入口触发的重载都走到这里，面板不再只在 attach / agent_settled 才更新。
+                    refreshCommands()
+                    refreshModels() // 扩展可以注册供应商 / 模型
+                    refreshState() // 工具表、扩展绑定都在宿主的状态快照里
+                }
                 if (ev.name == "render.invalidate") {
                     toolRenderCache.reset()
                     messageRenderCache.reset()

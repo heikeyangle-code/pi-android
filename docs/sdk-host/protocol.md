@@ -95,6 +95,7 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | `host.fatal` / `host.log` | `{code?,message}` | 致命 / 日志 |
 | `session.bound` | `{sessionId,sessionFile,first}` | 会话绑定（epoch 已 +1，这条事件带着新 epoch） |
 | `ext.bound` | `{ok,first,error?}` | 扩展绑定完成（含所有 `session_start` 处理器） |
+| `catalog.changed` | `{reason:"reload"}` | 宿主完成了一次 `session.reload()`（命令面板、包管理、资源中心、MCP、扩展的 `ctx.reload()` 都走同一处）：命令表 / 工具表 / 资源目录可能变了，**App 重读**。失败的重载也发 |
 | `ext.error` | `{extensionPath,event,error}` | 扩展处理器抛错 |
 | `state` | `{reason, state}` | **宿主持有的完整状态快照**（会话、模型、思考等级、工具、上下文用量、token、成本、消息计数、扩展绑定）。会改变快照的 agent 事件触发，100 ms 合并推送；`open` 后、扩展绑定完成后、会话替换后也推。**App 的 UI 状态直接吃它，不要自己攒字段** |
 | `agent` | **pi 的 `AgentSessionEvent` 原样**（`message_update` 去掉 `partial`） | 对话、工具执行、队列、压缩、重试、`agent_settled`… |

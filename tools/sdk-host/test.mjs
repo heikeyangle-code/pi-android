@@ -410,7 +410,13 @@ try {
   writeFileSync(join(h.agentDir, "skills", "user-skill", "SKILL.md"), "---\nname: user-skill\ndescription: 用户级技能\n---\n正文\n");
   mkdirSync(join(h.agentDir, "prompts"), { recursive: true });
   writeFileSync(join(h.agentDir, "prompts", "user-prompt.md"), "---\ndescription: 用户级提示\nargument-hint: <x>\n---\n你好 $1\n");
+  // 重载一完成就发 `catalog.changed`，并且 `catalog.commands` 立刻读到刚加的技能：
+  // App 的命令面板靠这条事件刷新（此前四个重载入口各自忘了刷新，面板一直显示旧命令）。
+  const changed = h.waitFor(h.evt("catalog.changed", (d) => d.reason === "reload"), 60000);
   await h.call("session.reload", {}, 60000);
+  expect("session.reload 之后发出 catalog.changed", !!(await changed.catch(() => null)));
+  const cat = await h.call("catalog.commands");
+  expect("重载后命令表里立刻有新技能", cat.ok && cat.data.commands.some((c) => c.name === "skill:user-skill"), JSON.stringify(cat.error ?? cat.data?.commands?.map((c) => c.name)));
   const ld = await h.call("resources.loaded");
   const lx = ld.data?.extensions?.find((e) => (e.commands ?? []).some((c) => c.name === "probe-ping"));
   expect("resources.loaded：扩展带出它注册的命令 / 工具 / flag", ld.ok && lx && lx.tools.length > 0 && lx.flags.some((f) => f.name === "probe-mode" && f.type === "string"), JSON.stringify(ld.error ?? lx));
