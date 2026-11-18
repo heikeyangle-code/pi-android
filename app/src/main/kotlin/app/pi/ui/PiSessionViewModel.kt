@@ -5809,54 +5809,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------- pi 的会话内跳转（`navigateTree`）
 
     /**
-     * pi's **in-session** tree navigation: move the leaf to an earlier point and continue
-     * there, optionally writing a summary of the path being abandoned.
+     * `/tree` 里选中一个点并确认：SDK `AgentSession.navigateTree`（宿主 `session.navigate`），
+     * 流程逐步对照 `interactive-mode.js` 的 `showTreeSelector`：
      *
-     * ## Why this is not `fork`
+     *  1. 选中的就是当前叶子 → 只提示 "Already at this point"，不调用 SDK。
+     *  2. 摘要问题由界面问完（含 `branchSummary.skipPrompt`），答案经 [choice] 传进来。
+     *  3. 「用户已经决定要跳了」：正在输出就先停（`restoreQueuedMessagesToEditor` + `abort`，
+     *     即 [stopAndDrainQueue]）——SDK 的 `navigateTree` 自己在流式中会直接抛错，TUI 才会先停。
+     *  4. 结果：`aborted`（摘要被中止）→ 提示并 [onAborted]（TUI 回到树、保持选中）；
+     *     `cancelled`（扩展取消）→ 提示；否则重建对话、刷新树，`editorText`
+     *     （跳到用户消息 / 扩展消息时，SDK 把它的文字交回来）**仅在输入框为空时**填入。
      *
-     * `fork` writes a **new session file** (`agent-session-runtime.ts:289-352`) and that is
-     * all the RPC protocol offers for the tree (`rpc-types.ts:20-74`). `navigateTree` moves
-     * the leaf **inside the current file** — its own doc comment says so
-     * (`core/agent-session.ts:3126-3127`) — and RPC exposes no command for it. The way in is
-     * the one `rpc-mode.ts` does wire: `commandContextActions.navigateTree` (`:329-335`),
-     * reachable from an extension command as `ctx.navigateTree` (`extensions/types.ts:375`).
-     * The shipped bridge extension registers `pi-android-navigate` for exactly this, and
-     * [navigateTo] dispatches it as a `prompt` whose text starts with `/`
-     * (`core/agent-session.ts:1183-1184`).
-     *
-     * ## The two things that make that dispatch safe
-     *
-     *  1. **The command must exist.** `_tryExecuteExtensionCommand` returns `false` for an
-     *     unregistered name (`:1338`) and `prompt` then sends the text to the model as an
-     *     ordinary user turn (`:1198-1218`) — the user would see an
-     *     `/pi-android-navigate {...}` sentence in the conversation and pay for it. So the
-     *     existence check against `get_commands` happens first, and a missing command is
-     *     reported instead of dispatched.
-     *  2. **There is no event when it finishes.** pi emits the *extension* event
-     *     `session_tree` (`:3315-3321`) and RPC forwards `AgentSessionEvent` only
-     *     (`rpc-mode.ts:356`). What the response *does* give is completion: the handler is
-     *     awaited before `preflightResult(true)` (`:1184-1188`), which is what emits the
-     *     `prompt` response (`rpc-mode.ts:401-406`). So the response is the "navigation is
-     *     over" signal, and the leaf is re-read afterwards to learn whether it moved.
-     *
-     * ## Preconditions are pi's, not ours
-     *
-     * No local streaming guard: `navigateTree` refuses on its own while a turn is streaming
-     * (`:3140-3142`) or while compacting (`:3143-3147`), and the extension turns that thrown
-     * sentence into a notice. (pi's *TUI* aborts the running turn first,
-     * `interactive-mode.ts:5266-5269` — that is a UI convenience on top of the core rule,
-     * and aborting a user's in-flight turn without asking is not something this app does
-     * implicitly.) The summary question is asked by the caller with pi's own three answers;
-     * see [BranchSummaryChoice] and [summaryPromptShown].
-     *
-     * @param entryId pi's entry id, straight from `get_tree` — never resolved here.
-     * @param choice the answer to pi's "Summarize branch?" question.
-     * @param customInstructions the text from the "Summarize with custom prompt" form.
+     * 「有没有移动」仍以 `get_tree` 的叶子为准（[navigateOutcome]）：SDK 不发事件，叶子是唯一的权威信号。
      */
     fun navigateTo(
         entryId: String,
         choice: BranchSummaryChoice,
         customInstructions: String? = null,
+        onAborted: () -> Unit = {},
     ) {
         val engine = session
         if (engine == null) {
@@ -5866,31 +5836,53 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (entryId.isBlank()) return
         call(NAVIGATE_BUSY_LABEL, errorText = ::navigateFailureText) { api ->
             val before = api.getTree().leafId
-            // 官方 `navigateTree`（宿主 `session.navigate`）：直接方法，不再绕 pi-android-bridge 扩展命令，
-            // 也就没有「命令不存在时文字被当成用户消息发给模型」那条风险。
+            if (before == entryId) {
+                pushNotice("已经在这个位置", Notice.Tone.Info)
+                return@call
+            }
+            if (engine.transcript.streaming) {
+                val restored = runCatching { engine.stopAndDrainQueue() }.getOrDefault(emptyList())
+                if (restored.isNotEmpty()) {
+                    composerFillSeq += 1
+                    _state.value = _state.value.copy(
+                        composerFill = ComposerFill(composerFillSeq, restored.joinToString("\n\n"), append = true),
+                    )
+                }
+                syncTranscript(engine, engine.publication.value)
+            }
+            val summarize = wantsSummary(choice, branchSummarySkipPrompt())
             val result = engine.commands.navigate(
                 targetId = entryId,
-                summarize = wantsSummary(choice, branchSummarySkipPrompt()),
+                summarize = summarize,
                 customInstructions = customInstructions,
             )
-            val refused = (result.data["cancelled"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+            fun flag(key: String) = (result.data[key] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+            if (flag("aborted")) {
+                pushNotice("已取消分支摘要", Notice.Tone.Info)
+                onAborted()
+                return@call
+            }
+            val cancelled = flag("cancelled")
+            if (cancelled) pushNotice("跳转已取消", Notice.Tone.Warning)
 
-            // The only authoritative "did it move": both `get_tree` and `get_entries`
-            // report pi's **in-memory** leaf (`rpc-mode.ts:653`, `:648`), which is what
-            // `branch()`/`branchWithSummary()` just changed.
-            when (navigateOutcome(before, api.getTree().leafId, refused = refused)) {
+            // 唯一权威的「动没动」：`get_tree` / `get_entries` 报的是内存里的叶子。
+            when (navigateOutcome(before, api.getTree().leafId, refused = cancelled)) {
                 NavigateOutcome.Moved -> {
                     replayActiveBranch(engine)
-                    // The tree's own view is a second surface of the same fact, and the
-                    // summary it now contains is a new row (pi appends a `branch_summary`
-                    // entry, `session-manager.ts:1395-1416`).
+                    // 树是同一件事的第二个视图；摘要会多一条 `branch_summary` 条目。
                     refreshTree()
-                    // `contextUsage` is the current branch's reading, so it moved too.
+                    // `contextUsage` 是当前分支的读数，也跟着变。
                     refreshStats()
+                    val editorText = (result.data["editorText"] as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() }
+                    if (editorText != null) {
+                        composerFillSeq += 1
+                        _state.value = _state.value.copy(
+                            composerFill = ComposerFill(composerFillSeq, editorText, onlyIfEmpty = true),
+                        )
+                    }
+                    pushNotice("已跳转到所选位置", Notice.Tone.Info)
                 }
-                // The extension has already said why through pi's own notice channel
-                // ("already there" / cancelled / aborted). Rebuilding here would be the
-                // half-screen-of-stale-data bug in reverse: a reset with nothing to show.
                 NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit
             }
         }
@@ -5952,6 +5944,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * user has already turned off. Reading it (rather than exposing it) is the same
      * treatment `ProjectScreen` gives `defaultProjectTrust`.
      */
+    /** pi 的 `settings.treeFilterMode`：打开会话树时的初始过滤（`getTreeFilterMode`，非法值回 default）。 */
+    fun treeFilterMode(): app.pi.session.tree.TreeFilter =
+        app.pi.session.tree.TreeFilter.fromWire(
+            (settingsStore.read("treeFilterMode") as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content,
+        )
+
     fun branchSummarySkipPrompt(): Boolean =
         settingsStore.readBoolean("branchSummary.skipPrompt") ?: false
 

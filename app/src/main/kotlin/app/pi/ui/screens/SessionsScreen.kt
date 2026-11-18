@@ -205,6 +205,7 @@ fun SessionsScreen(
     // 「还没有会话」——那句断言在旧代码里来自一个被吞掉的异常。
     val sessionsFailed by session.sessionsFailed.collectAsState()
     val state by session.state.collectAsState()
+    var treeReselect by remember { mutableStateOf<String?>(null) }
     val searchHits by session.searchHits.collectAsState()
 
     var query by rememberSaveable { mutableStateOf("") }
@@ -503,12 +504,20 @@ fun SessionsScreen(
                 roots = state.tree?.tree.orEmpty(),
                 leafId = state.tree?.leafId,
                 busy = state.busy?.takeIf { it == NAVIGATE_BUSY_LABEL },
+                streaming = state.streaming,
+                homeDir = app.pi.packages.AgentLayout.GUEST_HOME,
+                initialFilter = remember { session.treeFilterMode() },
+                reselect = treeReselect,
+                onReselected = { treeReselect = null },
                 onFork = { entryId ->
                     session.forkFrom(entryId)
                     onBack()
                 },
                 // 跳转留在本层：落回用户正在看的对话，摘要卡片也还看得见（fork 才会替换对话并关闭本层）。
-                onNavigate = { entryId, choice, instructions -> session.navigateTo(entryId, choice, instructions) },
+                onNavigate = { entryId, choice, instructions ->
+                    // 摘要被中止：TUI 回到树、选中同一条（`showTreeSelector(entryId)`）。
+                    session.navigateTo(entryId, choice, instructions, onAborted = { treeReselect = entryId })
+                },
                 onLabel = { entryId, label -> session.setEntryLabel(entryId, label) },
                 onHideFromContext = { entryId -> session.hideEntryFromContext(entryId) },
                 onReplaceInContext = { entryId, text -> session.replaceEntryInContext(entryId, text) },

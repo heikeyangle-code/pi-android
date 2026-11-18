@@ -1489,7 +1489,8 @@ run_harness host-launch \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
-# app.pi.session.tree.TreeModel: 会话树视图模型（脊线 + 侧枝、三种过滤、搜索、活动路径、上下文编辑标记）。
+# app.pi.session.tree.TreeModel: 会话树视图模型，pi `/tree`（tree-selector.js）的移植。校验对照 SDK 真组件生成的标准答案
+# （app/src/test/resources/pi-tree-fixtures/tree.json，tools/collect-tree-fixtures.mjs 生成）逐行比对。
 # 纯函数；5000 条直线不爆栈、不缩进。
 run_harness tree-model \
   app.pi.session.tree.TreeModelCheckKt \

@@ -491,6 +491,11 @@ jobs:
       - name: Assert the committed tool fixtures match the pinned engine
         run: node tools/collect-tool-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
 
+      # 会话树：`TreeModel.kt` 是 SDK `/tree` 的移植，标准答案由 SDK 自己的 TreeSelectorComponent 生成。
+      # 这一步断言标准答案仍是固定版本的引擎会产出的；引擎升级改了树的规则，这里先红，再去改移植。
+      - name: Assert the committed session-tree fixture matches the pinned engine
+        run: node tools/collect-tree-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
+
   # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
   # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,
   # the outer comment stays open, and the compiler swallows the rest of the file. The

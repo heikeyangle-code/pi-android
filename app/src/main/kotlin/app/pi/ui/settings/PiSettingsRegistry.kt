@@ -279,6 +279,15 @@ private val deliveryOptions = choices(
     "all" to "全部",
 )
 
+/** `/tree` 的五种过滤（`settings-manager.js getTreeFilterMode` 的合法值，顺序同 `tree-selector.js`）。 */
+private val treeFilterOptions = choices(
+    "default" to "默认（隐藏设置类条目）",
+    "no-tools" to "无工具结果",
+    "user-only" to "仅用户消息",
+    "labeled-only" to "仅书签",
+    "all" to "全部",
+)
+
 private val trustOptions = choices(
     "ask" to "询问",
     "always" to "总是信任",
@@ -556,6 +565,16 @@ object PiSettingsCatalog {
             section = "会话",
             defaultValue = str("one-at-a-time"),
             options = deliveryOptions,
+        ),
+        PiSetting(
+            key = "treeFilterMode",
+            title = "会话树默认过滤",
+            description = "打开会话树时先用哪种过滤；在树里可随时切换。",
+            kind = PiRowKind.Value,
+            group = G_MESSAGES,
+            section = "会话",
+            defaultValue = str("default"),
+            options = treeFilterOptions,
         ),
         PiSetting(
             key = "transport",
