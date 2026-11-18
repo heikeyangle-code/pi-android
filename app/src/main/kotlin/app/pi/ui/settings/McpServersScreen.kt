@@ -256,6 +256,18 @@ internal fun McpServersScreen(
         }
     }
 
+    val cfgNow = hostCfg
+    // 本项目页里的服务器是「完整定义」；覆盖条目（只含 enabled/exposure）单独显示在下面。
+    val definitions = if (cfgNow != null) {
+        if (project) {
+            cfgNow.servers.filter { it.isProject && it.override == null }.map(::hostServerToConfig)
+        } else {
+            cfgNow.globalServers.filter { it.scope != "extension" }.map(::hostServerToConfig)
+        }
+    } else {
+        doc.servers.filter { !project || it.kind != PiMcpConfig.Kind.Override }
+    }
+
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = "MCP 服务器",
@@ -302,7 +314,6 @@ internal fun McpServersScreen(
                     )
                 }
             }
-            val cfgNow = hostCfg
             if (project && cfgNow != null && !cfgNow.projectTrusted) {
                 item {
                     PiInfoNote(
@@ -358,16 +369,6 @@ internal fun McpServersScreen(
                         )
                     }
                 }
-            }
-            // 本项目页里的服务器是「完整定义」；覆盖条目（只含 enabled/exposure）单独显示在下面。
-            val definitions = if (cfgNow != null) {
-                if (project) {
-                    cfgNow.servers.filter { it.isProject && it.override == null }.map(::hostServerToConfig)
-                } else {
-                    cfgNow.globalServers.filter { it.scope != "extension" }.map(::hostServerToConfig)
-                }
-            } else {
-                doc.servers.filter { !project || it.kind != PiMcpConfig.Kind.Override }
             }
             item {
                 if (definitions.isEmpty()) {
