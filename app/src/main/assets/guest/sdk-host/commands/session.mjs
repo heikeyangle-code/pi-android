@@ -168,7 +168,13 @@ export function register(reg, { controller }) {
       replaceInstructions: args.replaceInstructions,
       label: args.label,
     });
-    return withState(controller, { cancelled: result.cancelled === true, ...(result.editorText !== undefined ? { editorText: result.editorText } : {}) });
+    // 与 SDK 的结果字段一一对应：aborted = 摘要被用户中止（TUI 此时回到树、保持选中）；
+    // cancelled 但没 aborted = 扩展的 session_before_tree 取消了。
+    return withState(controller, {
+      cancelled: result.cancelled === true,
+      ...(result.aborted === true ? { aborted: true } : {}),
+      ...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
+    });
   });
   reg.add("session.import", async (args) => controller.runtime.importFromJsonl(str(args, "path"), optStr(args, "cwd")));
 

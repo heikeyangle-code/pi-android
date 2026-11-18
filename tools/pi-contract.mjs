@@ -1841,7 +1841,6 @@ function checkAppTables(piDir) {
 			"pi 装包用的 npm argv：原「终端与 Shell」组的行已删除（终端页退役）；已有值照旧生效",
 		warnings: "pi 的警告开关（anthropicExtraUsage）",
 		sessionDir: "会话目录：App 在命令行上固定它（--session-dir），见 G_SESSIONS 的分组摘要",
-		treeFilterMode: "/tree 的默认过滤器：App 的会话树有自己的筛选",
 		// 1.3.0's one new top-level key. Its only runtime reader is the TUI's `/share`
 		// (modes/interactive/session-share.js): `auto` picks between a Radius artifact
 		// and a secret gist. This app has no `/share` entry point at all — its slash

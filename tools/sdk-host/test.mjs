@@ -685,6 +685,33 @@ try {
   const back = await bounce("session.switch", { sessionPath: homeFile });
   expect("session.switch 回到原项目，cwd 随之回来", back.ok && (await h.call("session.snapshot")).data.cwd === here0.cwd, JSON.stringify([back.error, back.data?.cancelled, (await h.call("session.snapshot")).data.cwd, here0.cwd]));
 
+  // ---- 7b. 会话树导航（`navigateTree`）的结果字段 ----------------------------
+  // 真 SDK、真会话文件：到当前叶子 = 空操作；到用户消息 = 叶子退到父节点并交回 editorText；不存在的 id = 报错。
+  {
+    const navFile = join(dir, "2026-03-01T00-00-00-000Z_nav-fixture.jsonl");
+    const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+    const um = (id, parent, text, n) => ({ type: "message", id, parentId: parent, timestamp: new Date(Date.UTC(2026, 2, 1, 0, 0, n)).toISOString(), message: { role: "user", content: text, timestamp: n } });
+    const am = (id, parent, text, n) => ({ type: "message", id, parentId: parent, timestamp: new Date(Date.UTC(2026, 2, 1, 0, 0, n)).toISOString(), message: { role: "assistant", content: [{ type: "text", text }], api: "openai-completions", provider: "probe", model: "probe-model", usage, stopReason: "stop", timestamp: n } });
+    writeFileSync(navFile, [
+      { type: "session", version: 3, id: "nav-fixture", timestamp: new Date().toISOString(), cwd: here0.cwd },
+      um("u1", null, "first question", 1), am("a1", "u1", "first answer", 2),
+      um("u2", "a1", "second question", 3), am("a2", "u2", "second answer", 4),
+    ].map((x) => JSON.stringify(x)).join("\n") + "\n");
+    const sw = await bounce("session.switch", { sessionPath: navFile });
+    expect("导航夹具会话可以打开", sw.ok, JSON.stringify(sw.error ?? sw.data?.cancelled));
+    const leaf0 = (await h.call("session.tree")).data.leafId;
+    const same = await h.call("session.navigate", { targetId: leaf0 });
+    expect("到当前叶子：cancelled=false，没有 editorText / aborted", same.ok && same.data.cancelled === false && !("editorText" in same.data) && !("aborted" in same.data), JSON.stringify(same.error ?? same.data));
+    const rewind = await h.call("session.navigate", { targetId: "u2" });
+    const after = (await h.call("session.tree")).data.leafId;
+    expect("到用户消息：editorText 是它的文字", rewind.ok && rewind.data.editorText === "second question" && rewind.data.cancelled === false, JSON.stringify(rewind.error ?? rewind.data));
+    expect("到用户消息：叶子退到它的父节点", after === "a1", String(after));
+    const jump = await h.call("session.navigate", { targetId: "a2" });
+    expect("到助手消息：叶子就是它自己，没有 editorText", jump.ok && !("editorText" in jump.data) && (await h.call("session.tree")).data.leafId === "a2", JSON.stringify(jump.error ?? jump.data));
+    const missing = await h.call("session.navigate", { targetId: "nope" });
+    expect("不存在的 id → 报错并带 pi 的原话", !missing.ok && /not found/.test(missing.error?.message ?? ""), JSON.stringify(missing.error ?? missing.data));
+  }
+
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");
   const code = await new Promise((r) => (h.child.exitCode !== null ? r(h.child.exitCode) : h.child.once("exit", r)));
