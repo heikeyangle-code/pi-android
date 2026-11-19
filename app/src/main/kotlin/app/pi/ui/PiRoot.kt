@@ -513,6 +513,19 @@ fun PiRoot() {
         }
     }
 
+    // 会话列表选中一行 / 新建会话之后走这一支：`SessionsScreen.onOpenChat` 的约定就是
+    // 「关掉覆盖层，并落在对话页」（`SessionsScreen.kt:136`），而列表本身是覆盖层，所以
+    // 只换目的地会把对话页盖在它下面 —— 与上面两个门同一套动作，`closeOverlay` 幂等。
+    // 必须 `remember`：父级每收到一次 `UiState` 发布就重组（流式期间约 200 ms 一次），
+    // 字面量 lambda 每次都换新实例，`SessionsScreen` 的参数按 `===` 比较，整屏（含列表行）
+    // 都得跟着重算。
+    val openChatFromOverlay: () -> Unit = remember {
+        {
+            closeOverlay()
+            destinationName = PiDestination.Chat.name
+        }
+    }
+
     // The theme picker lists what pi would load, not only what the `themes`
     // setting names, and the active theme's caveats are shown with it. Both come
     // from the ViewModel, which is the one place that reads pi's theme files.
@@ -782,6 +795,7 @@ fun PiRoot() {
                             SessionsScreen(
                                 contentPadding = padding,
                                 session = session,
+                                onOpenChat = openChatFromOverlay,
                                 onBack = onCloseSessionList,
                                 onOpenWorkspace = openWorkspace,
                                 onOpenSettings = openSettings,
