@@ -10,8 +10,7 @@ package app.pi.ui.chat
  * 不写在 `SessionsScreen.kt` 里的原因 —— 那一屏是 Compose，本机编译不了，判定也就无从被跑
  * 到。它也**不依赖 `SessionSummary`**：那个类型住在 `session` 目录（本机 harness 同样
  * 不编译它），而这条判定要的只有两个字段，投影成 [SessionFileRow] 就够了 —— 代价是它
- * **看不见会话 `id`**，好处也正是这一点：`list()` 里同一个 `id` 两行（劈开的两半，
- * [PiSessionStore.mergeSameIdRow] 的 `PrefixRelation.Disjoint`）对它没有任何影响（见下）。
+ * **看不见会话 `id`**，好处也正是这一点：会话列表里同一个 `id` 两行（劈开的两半；SDK `SessionManager.list` 一个文件一行、不按 id 去重）对它没有任何影响（见下）。
  *
  * ## 这条关系是 pi 自己记的，不是本应用推出来的
  *
@@ -45,9 +44,8 @@ package app.pi.ui.chat
  *
  * ### 一个 `id` 两行，与这条判定无关（2026-10-04 追加）
  *
- * `PiSessionStore.list()` 现在按 pi 的做法**一个 `.jsonl` 一行**，同一个 `id` 可以留下两行 ——
- * 当两份文件**互不为前缀**时（[PiSessionStore.mergeSameIdRow] 的 `PrefixRelation.Disjoint`），
- * 也就是「一段对话被劈成两个文件」那个形态；互为前缀的旧快照仍并成一行。
+ * 会话列表（SDK `SessionManager.list`）是**一个 `.jsonl` 一行**，同一个 `id` 可以留下两行 ——
+ * 也就是「一段对话被劈成两个文件」那个形态。
  *
  * **这个歧义到不了这里，因为这条判定的键是文件名，不是 `id`。** 两层理由：
  *
@@ -59,14 +57,13 @@ package app.pi.ui.chat
  *     那一半。这也是这条判定比「按 `id` 找」更强的地方：按 `id` 找才会在两半之间二选一。
  *
  * 唯一的同名情形是**同一个文件名出现在两个目录布局里**（pi 默认的分组目录 + 另一份拷贝），
- * 那时按 [rows] 的顺序取**第一个** —— 确定、无随机，且 `PiSessionStore.list()` 已经先按会话
- * 身份做过合并。见 `SessionForkLabelCheck` 的 5.1 与 6.x。
+ * 那时按 [rows] 的顺序取**第一个** —— 确定、无随机，且列表不按 id 合并，顺序就是宿主给的顺序。见 `SessionForkLabelCheck` 的 5.1 与 6.x。
  *
  * 返回 null 的两种情形都是**正常的**，调用方各有各的说法，但**都不许**拿文件名当会话名：
  *
  *  - 这一行没有父（`parentSession` 缺席或空）；
  *  - 有父，但父不在 [rows] 里 —— 父被删了、在磁盘上改了名、或者落在
- *    `PiSessionStore.list(limit)` 之外。这时只能说「这是一条有父的会话」。
+ *    当前这批行之外（例如「当前文件夹」范围看不到别的文件夹里的父）。这时只能说「这是一条有父的会话」。
  */
 data class SessionFileRow(val fileName: String, val displayName: String)
 

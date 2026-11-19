@@ -162,33 +162,6 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     fun payloadStateDir(): File = File(runtime, ".payloads")
 
     /**
-     * 会话列表那份摘要索引：`<files>/pi/runtime/.session-index.json`。
-     *
-     * 落在**易失树**的根、与 [rootfs] 同级。它是**纯缓存**，可以被随时删掉：丢了只是下一次
-     * 进会话列表回到全量扫描，列出的一行一个字段都不会不同（`PiSessionIndex` 的 KDoc 解释了
-     * 为什么）。所以它和 `image-cache/`（另一个纯缓存）是同一个先例，只是那个落在了 [home] 下。
-     *
-     * 三个"不要放"各有各的理由：
-     *
-     *  - **不进 [rootfs] 里的 `.pi/agent`**：那是 pi 自己的扫描面，pi 会 `readdir` 它，
-     *    往里放一个 App 自己的缓存文件等于给 pi 塞了一个它不认识的邻居。
-     *  - **不进会话目录**（`<agentDir>/sessions`）：那是会话文件的目录，读它的人按 `.jsonl`
-     *    过滤 —— 往"列表读数的输入集"里加文件，无论过滤得多严都是在动那个集合。
-     *  - **不进持久区 [persist]**：`persist` 是"必须活过一次升级"的东西（启动审计）。
-     *    这份索引不需要：它活不过一次升级的代价是**一次**全量扫描，而它每次进列表都会把自己
-     *    重新写热。
-     *
-     * 落在这里的代价明写：`wipe()` —— 唯一会整棵删 [runtime] 的地方，**只有显式「修复」**
-     * （`RuntimeProvisioner.ensureReady(rebuild = true)`，唯一调用点是启动失败卡上那个按钮）
-     * 能到 —— 会把它一起删掉。载荷版本变化**不会**：那条路是逐载荷覆盖解压，从不删树
-     * （`provision` 的 `plan` 分支）。那正是缓存该有的归宿：整棵树都重建了，索引里那些
-     * 绝对路径也已经没有意义。日常重启与使用都不会删它。
-     *
-     * 前导点与 `.payloads` 同一个意思：这不是载荷、也不是给人翻的文件。
-     */
-    fun sessionIndexFile(): File = File(runtime, ".session-index.json")
-
-    /**
      * 客体**必要配置**的一个落点：相对 [rootfs] 的一条路径，以及它应该是文件还是目录。
      *
      * 抽成值而不是两处字面量，是因为它同时被两个地方读，而两处一旦漂移，失败是**静默**的：

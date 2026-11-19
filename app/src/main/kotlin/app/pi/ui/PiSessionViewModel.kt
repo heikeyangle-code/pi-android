@@ -1785,7 +1785,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (engine != null) attach(engine)
         refreshPrefs()
         refreshTheme()
-        refreshSessions()
         publishWorkspaceState(name, note = null, bumped = true)
     }
 
@@ -1981,9 +1980,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * ③ 文件是 `--session-dir` 那一层的直接子文件**（`core/session-manager.js:1421-1441`、
      * `:441-443`）。三条里漏一条它不是报错，而是**用同一个 id 新建一个文件**
      * （`dist/main.js:344-351`），此后每条消息都写进那个新文件 —— 于是一段对话变成两个文件、
-     * 两个都顶着同一个 id。列表**两行都留**（`PiSessionStore.mergeSameIdRow`：两份互不为前缀就
-     * 不合并），名字各取自己文件里的第一条 user 消息 —— 这正是用户看到的「名字变成半截开头的
-     * 那条」；而在这一条 argv 修好之前，列表按 id 只留一行，剩下的那半截看上去就是整段对话
+     * 两个都顶着同一个 id。列表**两行都留**（SDK `SessionManager.list` 一个文件一行、不按 id 去重），名字各取自己文件里的第一条 user 消息 —— 这正是用户看到的「名字变成半截开头的
+     * 那条」；而在这一条 argv 修好之前，旧版本的列表按 id 只留一行，剩下的那半截看上去就是整段对话
      * （「往上翻，翻到头也没有了」「转录顶部没有『加载更早』」—— 那个文件确实是从那儿开始的）。
      *
      * 第 ② 条在真机上真的会漏：proroot 的 `getcwd()` 会泄漏宿主拼写
@@ -2321,11 +2319,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
             if (session === engine) refreshTrustPrompt()
         }
-        // 会话列表要宿主已 `session.open` 才读得到：引擎一就绪就补读一次（此前的读取会失败并保留旧列表）。
-        viewModelScope.launch {
-            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
-            if (session === engine) refreshSessions()
-        }
+        // 不在引擎就绪时预读会话列表：官方 `/resume` 每次打开都重读，列表屏挂载时自己读
+        // （`SessionsScreen` 的 `LaunchedEffect`）；这里预读的结果没有读者，还要在启动那几秒和引擎抢 CPU。
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
@@ -5116,19 +5111,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // --------------------------------------------------------- session actions
 
     /**
-     * `new_session`.
-     *
-     * [parentSession] is pi's optional field (`rpc-types.ts:27`): the **guest path**
-     * of an existing session file, written verbatim into the new session's header as
-     * `parentSession` (`session-manager.ts:938` in `SessionManager.new`). pi does
-     * nothing else with it — its session selector rebuilds a tree from that field
-     * (`components/session-selector.ts:206-231`), and our own [SessionSummary]
-     * already reads it back (`parentSession`), which is why a child session shows up
-     * with the 「来自〈父会话名〉」 line. No grouping or tag of our own is involved.
+     * 新建会话（宿主 `session.new` → SDK `newSession`）。官方 `/new` 不带父会话参数，这里也不带。
      *
      * pi answers `cancelled` when an extension vetoes it.
      */
-    fun newSession(parentSession: String? = null) {
+    fun newSession() {
         // **引擎还没 attach 时，这一次点击排到 attach 之后重放，而不是交给 `call` 的未就绪分支。**
         //
         // 用户原话：「我新建对话，点第一下新建不了，再点第二下。」根因就是这个窗口：`Boot.Idle`
@@ -5141,14 +5128,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 2026-09-23 补：当时 [parkUntilAttached] 判的是 `session` 而 `call` 判的是 `api`，
         // 两个字段在引擎死亡那条路上是**反序**置空的，所以窗口只是变窄、没有关掉（用户的新读数
         // 是「点 1 次、2 次、3 次」）。现在两者判同一个字段，见 [parkUntilAttached] 的 KDoc。
-        if (parkUntilAttached { newSession(parentSession) }) {
+        if (parkUntilAttached { newSession() }) {
             // **排队也要看得见。** 会话列表那枚「＋ 新建会话」点完就关掉覆盖层（`onOpenChat`），
             // 用户落在对话页上；没有这句话，他看到的还是「点了没反应」—— 那正是这次要消灭的形状。
             pushNotice("引擎还在启动：新建会话已经排队，启动完成后会立刻执行。", Notice.Tone.Info)
             return
         }
         call("新建会话") { api ->
-            val result = api.newSession(parentSession)
+            val result = api.newSession()
             if (result.cancelled) {
                 pushNotice("扩展取消了新建会话", Notice.Tone.Warning)
                 return@call
@@ -5156,22 +5143,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             afterSessionReplaced(brandNew = true)
             requestNav(NavRequest.Chat)
         }
-    }
-
-    /**
-     * `new_session` parented to one of the sessions in the on-disk index.
-     *
-     * The conversion host path → guest path is the same one [switchSession] uses;
-     * pi resolves `parentSession` inside the guest, so handing it a host path would
-     * record a parent that does not exist from pi's side.
-     */
-    fun newChildSession(summary: SessionSummary) {
-        val path = guestSessionPath(summary.file)
-        if (path == null) {
-            fail("找不到会话文件：${summary.file.name}")
-            return
-        }
-        newSession(path)
     }
 
     /**
@@ -5258,8 +5229,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 打开一段**别的工作区**的会话之后，把 App 的当前工作区改到它所属的那个。
      *
-     * 为什么需要：[`PiSessionStore.list()`] 把**所有** cwd 的会话按 cwd 分组列出来
-     * （`SessionsScreen` 的 `groupBy { it.cwd }`），所以用户可以在 B 的引擎里点开一段
+     * 为什么需要：「全部」范围（官方 `listAll`）列出**所有** cwd 的会话，所以用户可以在 B 的引擎里点开一段
      * cwd=A 的会话。pi 自己会切（见调用点），App 不跟就会说两套话。
      *
      * 为什么**不重启引擎**：pi 已经按会话的 cwd 重建了运行时，重启没有任何信息可补，
@@ -5268,8 +5238,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *  2. 把 `GuestWorkspacePath.RELATIVE` 指向新工作区（`setCurrent` 内部顺带）；
      *  3. 让设置/主题缓存失效、把工作区状态发布给界面（芯片、`@`、包命令随之而变）。
      *
-     * 会话列表**不重读**：它是按 cwd 分组的全量列表，当前工作区变了也不影响分组；
-     * 重读一次只会多扫一遍磁盘。
+     * 会话列表**不重读**：「全部」范围不随当前工作区变；「当前文件夹」范围由宿主按它自己的 cwd
+     * 判断，宿主的 cwd 已由 pi 切好。
      *
      * 映射不出来（用户自己在会话里 `cd` 出去的目录、别的安装留下的会话）就**什么都不做** ——
      * 宁可保持现状，也不要猜一个工作区。
@@ -5277,8 +5247,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun adoptSessionWorkspace(summary: SessionSummary, generation: Long) {
         // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
         //
-        // `Summary.cwd` 本来就是**从会话文件头里读出来的**（`PiSessionStore` 的第 622/744 行
-        // 读 header 的 `cwd`），所以为了认领再开一次文件是多余的 IO。用户的原话：
+        // `SessionSummary.cwd` 本来就是宿主从会话文件头里读出来的（SDK `SessionInfo.cwd`），所以为了认领再开一次文件是多余的 IO。用户的原话：
         // 「大多数时候点的都是当下选择的工作区的会话」—— 那就一条内存里的字符串映射搞定：
         //
         //  - 映射结果 == 当前工作区 → 直接返回（同工作区的点击，**零 IO**）；
@@ -5868,13 +5837,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(
                 meta = _state.value.meta.copy(sessionName = name.trim()),
             )
-            refreshSessions()
         }
     }
 
     /**
      * 会话列表里长按「重命名」：当前正在用的会话走 RPC（引擎正往它的文件里追加，不能同时写），
-     * 其余会话直接往文件末尾追加一条 `session_info`（[PiSessionStore.rename]）。
+     * 其余会话由宿主用 `SessionManager.open(path).appendSessionInfo(name)` 追加一条 `session_info`（[SessionLibrary.rename]）。
      */
     fun renameSessionFromList(summary: SessionSummary, name: String) {
         val open = _state.value.meta.sessionFile?.substringAfterLast('/')

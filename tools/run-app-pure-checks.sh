@@ -415,34 +415,13 @@ run_harness proroot \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootLaunchHandle.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
-# app.pi.session: which on-disk files count as sessions, in which of pi's two
-# layouts, in what order, and which one `-c` would resume. It exists because the
-# reader had exactly one layout wired in (the grouped one) while the engine writes
-# the other one (flat, since `--session-dir` is passed): the list came back empty on
-# the device and nothing in the build could notice. Android-free — the store uses
-# `java.io.File`, kotlinx.serialization (through `:rpc`'s PiJson) and
-# kotlinx.coroutines only.
-#
-# `SessionFileScan.kt` is in the same closure because it is what makes the store's
-# 1 MiB scan an actual bound: a session file's lines are messages, one of which can be
-# a multi-megabyte tool result or an inline image, and `BufferedReader.readLine()`
-# returns such a line in full before any budget can be consulted. The harness drives
-# the scanner directly (over-long line dropped, budget bounded, terminator handling)
-# and through `list()`.
-#
-# `SessionImport.kt` / `SessionExportNaming.kt` joined it for the same reason one
-# layer up: `/import` and `/export` both hinge on **pi's own rules** — which first
-# line makes a file a session (`session-manager.ts:551-556`), how an imported copy is
-# named when the name is taken (`agent-session-runtime.ts:371-379`), and which
-# argument suffix picks which writer (`interactive-mode.ts:6062-6066`) — and none of
-# that can be executed while it lives in `PiSessionViewModel`, which imports Android
-# and Compose. Both files are Android-free (java.io/kotlinx.serialization only).
-run_harness sessions \
-  app.pi.session.PiSessionStoreCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/session/PiSessionStoreCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionIndex.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileScan.kt" \
+# app.pi.session: `/import` 与 `/export` 的纯规则（`SessionImport.kt`、`SessionExportNaming.kt`）。
+# 哪一行首行算会话、导入重名怎么取名、哪种后缀走哪个导出写手、失败句子不带内部路径 —— 都是 pi 自己的
+# 规则，不能放在要 import Android / Compose 的 `PiSessionViewModel` 里（那样就跑不起来）。
+# 会话**列表**不在这里：它由宿主（SDK `SessionManager`）负责，见 `session-list-model`。
+run_harness session-import \
+  app.pi.session.SessionImportCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/SessionImportCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionImport.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionExportNaming.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
@@ -467,25 +446,6 @@ run_harness session-resume \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionFlagArgs.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt"
 
-# app.pi.session: **一段对话只有一行**。`PiSessionStore.list()` 分别遍历 pi 的两个布局（引擎
-# 平铺写的 `sessions/<ISO>_<id>.jsonl` 与 pi 默认的 `sessions/--<cwd>--/…`），而同一个会话可以
-# 在两边各留一份 —— 组目录里的快照、`/import` 只换名字不改 header 的拷贝
-# （`PiSessionViewModel.prepareImport`，工作树 `:4738-4750`）都带着同一个 `id`，于是同一段对话会列成两行（用户报的
-# 「就那么一个对话……出现了好几个版本，就像被切开一样」）。这个 harness 用 8 个文件、5 段对话的
-# 夹具钉三件事：去重的键是**会话身份**（`Summary.id`）而不是显示名 —— 两段不同的对话共用标题
-# 「继续」时必须留两行；留下哪一份是一个全序（内容更新 > 平铺布局 > 文件 mtime > 路径），夹具
-# 故意让 mtime 与正确答案相反，所以「按 mtime 选」或「按布局选」的简化实现会红；`limit` 数的是
-# 会话，副本不许占掉一行的位置。Android-free：`PiSessionStore` 只用 `java.io.File`、
-# kotlinx.serialization（经 `:rpc` 的 `PiJson`）与 kotlinx.coroutines。
-run_harness session-identity \
-  app.pi.session.SessionIdentityCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/session/SessionIdentityCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionIndex.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileScan.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
-
 # app.pi.session: the open-a-session cost, and the equivalence the new replay source
 # rests on. Registered here for the two reasons the other harnesses are: the numbers
 # in the change report have to be reproducible (`kotlinc` + a JVM, no device and no
@@ -500,9 +460,7 @@ run_harness session-identity \
 #
 # `SessionFileReader` is Android-free by construction (java.io + kotlinx.serialization
 # through `:rpc`'s `PiJson`); if it ever grows an Android import, this compile fails,
-# which is the point. `SessionFileScan` is deliberately **not** in this closure: the
-# replay reader counts bytes per line, which that scanner cannot report, so it has
-# its own LF loop and the two are compared by the `sessions` harness's fixtures.
+# which is the point.
 run_harness session-replay-cost \
   app.pi.session.SessionReplayCostCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/session/SessionReplayCostCheck.kt" \
@@ -1272,9 +1230,8 @@ run_harness tree-navigation \
 # 不了，也就无从被跑到；搬出来之后这一项钉住五件事：父的名字取 pi 的会话名或那一行自己的显示名、
 # 父不在列表里时**降级成 null 而不是拿文件名冒充名字**、只比文件名末段（`parentSession` 是 guest
 # 路径，与主机的 `File` 前缀不同）、结果里**不含任何动作词**（文件不记是 `fork` 还是 `clone`，
-# 所以界面也只许说「来自谁」）、以及**一个 `id` 两行**（`PiSessionStore.list()` 的
-# `mergeSameIdRow`：两份互不为前缀的「劈开的两半」同 id 并存）时**不去两半之间挑** —— 判定看不见
-# `id`，而两半是不同的文件名、`parentSession` 只记一条路径，所以写下来的那一半赢。Android-free：
+# 所以界面也只许说「来自谁」）、以及**同一个 `id` 出现两行**时**不去两行之间挑** —— 判定看不见
+# `id`，而两行是不同的文件名、`parentSession` 只记一条路径，所以写下来的那一行赢。Android-free：
 # 这个文件一个 import 都没有。
 run_harness session-fork-label \
   app.pi.ui.chat.SessionForkLabelCheckKt \

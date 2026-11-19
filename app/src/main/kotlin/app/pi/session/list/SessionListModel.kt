@@ -57,3 +57,21 @@ fun rightText(cwdShort: String, messageCount: Int, ageMs: Long, showCwd: Boolean
     val base = "$messageCount ${formatSessionDate(ageMs)}"
     return if (showCwd && cwdShort.isNotEmpty()) "$cwdShort $base" else base
 }
+
+/**
+ * 手机上的年龄说法：数值与档位**就是** [formatSessionDate]（官方规则的唯一实现），这里只把单位换成中文，
+ * 不另算一遍。`now`→刚刚，`3h`→3小时前，`2mo`→2个月前。
+ */
+fun sessionAgeLabel(ageMs: Long): String {
+    val short = formatSessionDate(ageMs)
+    if (short == "now") return "刚刚"
+    val digits = short.takeWhile { it.isDigit() }
+    return when (short.removePrefix(digits)) {
+        "m" -> "${digits}分钟前"
+        "h" -> "${digits}小时前"
+        "d" -> "${digits}天前"
+        "w" -> "${digits}周前"
+        "mo" -> "${digits}个月前"
+        else -> "${digits}年前"
+    }
+}

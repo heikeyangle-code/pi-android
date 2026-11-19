@@ -148,7 +148,7 @@ fun main() {
 
     // ---------------------------------------------- 9. 文件不在平铺层
     // `findById` 只 `readdirSync(dir)` 一次，不看 `--<cwd>--` 分组目录 —— 而 App 的读取器**两种都读**
-    // （`PiSessionStore.list`）。这个不对称本身就是一条劈开的通道。
+    // （SDK `SessionManager.list`）。这个不对称本身就是一条劈开的通道。
     check(
         "9 文件在分组目录里（pi 不看那一层）→ 换成路径",
         target(flatChildOfSessionDir = false),

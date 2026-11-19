@@ -56,6 +56,9 @@ fun main(args: Array<String>) {
     check("6d", formatSessionDate(6 * 86_400_000L), "6d"); check("1w", formatSessionDate(7 * 86_400_000L), "1w")
     check("4w", formatSessionDate(29 * 86_400_000L), "4w"); check("1mo", formatSessionDate(30 * 86_400_000L), "1mo")
     check("12mo", formatSessionDate(364 * 86_400_000L), "12mo"); check("1y", formatSessionDate(365 * 86_400_000L), "1y")
+    check("age now", sessionAgeLabel(10_000), "刚刚"); check("age 3h", sessionAgeLabel(3 * 3_600_000L + 5), "3小时前")
+    check("age 2mo", sessionAgeLabel(61 * 86_400_000L), "2个月前"); check("age 1y", sessionAgeLabel(400 * 86_400_000L), "1年前")
+    check("age 5m", sessionAgeLabel(5 * 60_000L), "5分钟前"); check("age 2w", sessionAgeLabel(14 * 86_400_000L), "2周前")
     println(if (failures == 0) "harness: OK (session-list-model, $passes checks)" else "$failures FAILED")
     if (failures != 0) exitProcess(1)
 }

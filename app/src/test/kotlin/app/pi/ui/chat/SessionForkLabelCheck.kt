@@ -26,7 +26,7 @@ package app.pi.ui.chat
 //     exists so a future edit cannot quietly start claiming "forked" for a copy.
 //  5. **Blank/absent fields are null, not an empty name** — an empty `parentSession`, a
 //     trailing separator, or no field at all.
-//  6. **One `id` in two rows cannot confuse it.** `PiSessionStore.list()` now keeps both
+//  6. **One `id` in two rows cannot confuse it.** the session list (SDK `SessionManager.list`, one file per row) keeps both
 //     halves of a split conversation under one id (`mergeSameIdRow`'s
 //     `PrefixRelation.Disjoint`). This rule's input has no `id` at all, and the two
 //     halves are two different *file names* while `parentSession` records one *path* — so
@@ -113,7 +113,7 @@ fun main() {
 
     // 5. Duplicate file names (the same conversation copied into both of pi's layouts):
     //    the first row wins, deterministically — the caller passes its own order, and
-    //    `PiSessionStore.list` has already deduplicated by session identity.
+    //    the session list gives one row per file.
     check(
         "5.1 同名两行：按调用方给的顺序取第一个，结果是确定的",
         forkParentNameOf(
@@ -123,7 +123,7 @@ fun main() {
         "第一份",
     )
 
-    // 6. **One `id`, two rows** — the shape `PiSessionStore.list()` now keeps
+    // 6. **One `id`, two rows** — the shape the session list (one row per file) keeps
     //    (`mergeSameIdRow`'s `PrefixRelation.Disjoint`: a conversation split into two
     //    files that are not prefixes of each other). The rule is deliberately immune:
     //    its input is `(fileName, displayName)` and has **no `id` field at all**, and
