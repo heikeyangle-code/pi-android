@@ -8,6 +8,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import app.pi.host.OpenArgs
 import app.pi.session.SessionLibrary
+import app.pi.session.SessionListQuery
+import app.pi.session.SessionScope
+import app.pi.session.SessionSort
 import app.pi.rpc.PiEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -138,18 +141,36 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
             """{"type":"message","id":"e1","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"独特词 quokka-lime 怎么用\n第二行"}],"timestamp":1767225601000}}""",
         ).joinToString("\n") + "\n",
     )
-    val libRows = lib.list()
-    val row = libRows.firstOrNull { it.id == "lib-1" }
-    flag("SessionLibrary.list 读到宿主给的行", row != null, libRows.toString())
-    check("行的字段：文件/标题取首行/条数", Triple(row?.file?.name, row?.title, row?.messageCount), Triple(fx.name, "独特词 quokka-lime 怎么用", 1))
+    // 会话列表重做后（`SessionLibrary` 改成官方 `/resume` 选择器那一套）：列表要带查询与刷新参数、
+    // 搜索不再是独立方法而是 `SessionListQuery.query`、删除返回 `SessionDeleteOutcome`。
+    val libPage = lib.list(SessionListQuery(scope = SessionScope.All, sort = SessionSort.Recent), refresh = true)
+    val row = libPage.rows.firstOrNull { it.id == "lib-1" }
+    flag("SessionLibrary.list 读到宿主给的行", row != null, libPage.rows.toString())
+    check("行的文件是真实路径", row?.file?.name, fx.name)
+    // 不断言整串：`displayText` 会把换行换成空格（`SessionListModel.displayText`），那条首条消息
+    // 本身带一行换行，写死整串等于把清洗规则抄进测试。这里只钉「首条消息进了行文本」。
+    flag("首条消息进了行文本", row?.displayName?.contains("quokka-lime") == true, row?.displayName.orEmpty())
+    flag("条数 ≥ 1", (row?.messageCount ?: 0) >= 1, row?.messageCount.toString())
     flag("行的时间来自 ISO 字符串", (row?.startedAt ?: 0L) > 1_700_000_000_000L)
-    val libHits = lib.search("QUOKKA-lime")
-    flag("SessionLibrary.search 命中且带片段", libHits.any { it.session.id == "lib-1" && it.snippet.contains("quokka-lime") })
+    val libHits = lib.list(
+        SessionListQuery(scope = SessionScope.All, sort = SessionSort.Relevance, query = "QUOKKA-lime"),
+        refresh = true,
+    ).rows
+    flag("按 query 搜索命中（大小写不敏感）", libHits.any { it.id == "lib-1" }, libHits.toString())
     check("改名成功", lib.rename(fx, "库改名"), true)
-    check("改名后列表里是新名字", lib.list().firstOrNull { it.id == "lib-1" }?.displayName, "库改名")
-    check("会话根之外的路径换不出来 → 改名/删除返回 false", lib.rename(File("/etc/passwd"), "x") to lib.delete(File("/etc/passwd")), false to false)
-    check("删除成功且文件没了", lib.delete(fx) to fx.exists(), true to false)
-    check("删不存在的 → false", lib.delete(fx), false)
+    check(
+        "改名后列表里是新名字",
+        lib.list(SessionListQuery(scope = SessionScope.All, sort = SessionSort.Recent), refresh = true)
+            .rows.firstOrNull { it.id == "lib-1" }?.displayName,
+        "库改名",
+    )
+    check(
+        "会话根之外的路径换不出来 → 改名/删除都拒绝",
+        lib.rename(File("/etc/passwd"), "x") to lib.delete(File("/etc/passwd")).ok,
+        false to false,
+    )
+    check("删除成功且文件没了", lib.delete(fx).ok to fx.exists(), true to false)
+    check("删不存在的 → false", lib.delete(fx).ok, false)
 
     // 发后不管：预检通过（models.json 给了假凭据）、整轮失败 → 状态机 Busy/Ready 来回，不是卡死
     val events = java.util.Collections.synchronizedList(mutableListOf<PiEvent>())

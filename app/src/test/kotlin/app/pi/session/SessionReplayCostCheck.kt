@@ -1369,10 +1369,16 @@ fun main() {
         attachRefresh >= 0 && attachReplay >= 0 && attachRefresh < attachReplay,
         "refresh=$attachRefresh replay=$attachReplay",
     )
-    checkTrue(
-        "attach 里不再有 fire-and-forget 的 refreshState()",
-        !attachReplayBody.contains("refreshState()"),
-    )
+    // 2026-11-19：删掉原来那条「attach 里不再有 fire-and-forget 的 refreshState()」。
+    //
+    // 它判的是**整段 attach 文本**（窗口 24000 字符），而 `attach` 现在在 replay 之前就先注册了
+    // `hostEvents.collect { … }`；其中的 `catalog.changed` 分支必须 fire-and-forget 地刷命令表 /
+    // 模型 / 状态（`sources/ui/PiSessionViewModel.kt` 里 `ef868bb` 那条修复：宿主任何重载都发这个
+    // 事件，面板不能等到 attach / agent_settled 才更新）。那段代码在文本上位于 replay 之前、在
+    // 运行时位于 replay 之后，所以文本窗口把它算成了「接回会话用的 refreshState」—— 误判。
+    //
+    // 真正要钉的顺序是上一句（`refreshStateNow` 在 `replayHistory` 之前），那一句还在；这条没有
+    // 可文本判定的独立含义，留着只会继续误判。
     val replacedReplayBody = viewModelText
         .substringAfter("private suspend fun afterSessionReplaced(", "")
         .take(6000)
