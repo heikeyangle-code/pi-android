@@ -136,5 +136,5 @@ fun main() {
     check("设置值 → 过滤器", listOf("default", "no-tools", "user-only", "labeled-only", "all", "bogus", null).map { TreeFilter.fromWire(it).wire }, listOf("default", "no-tools", "user-only", "labeled-only", "all", "default", "default"))
 
     if (failures > 0) { println("tree-model: $failures FAILED / ${passes + failures}"); exitProcess(1) }
-    println("tree-model: all $passes checks passed")
+    println("harness: OK (tree-model — all $passes checks passed)")
 }

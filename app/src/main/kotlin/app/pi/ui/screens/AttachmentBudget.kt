@@ -23,11 +23,11 @@ import app.pi.rpc.PiResponses
  * `core/agent-session.ts:2027-2049` 每一轮 prompt 调它一次（档案取自 `:2037`）。`resizeImage()`
  * 把活交给 worker 线程里的 `resizeImageInProcess`，worker 加载不起来时**回落**到同进程
  * （`:104-108`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
- * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.5.0**
- * （`tools/pi-engine.lock.json`；1.3.0→1.5.0 这份文件只在 `:137-141` 改了候选裁决（见下面第 2 步），
- * `:137` 之前的锚点不动，之后的 +2；上面 `agent-session.ts` 的两处引用这次整体 **+5**（1.1.0→1.2.0 那次是 +85，
+ * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.5.2**
+ * （`tools/pi-engine.lock.json`；1.5.0→1.5.2 这份文件未改动，1.3.0→1.5.0 只在 `:137-141` 改了候选裁决（见下面第 2 步），
+ * `:137` 之前的锚点不动，之后的 +2；上面 `agent-session.ts` 的两处引用整体 **+5**（1.1.0→1.2.0 那次是 +85，
  * 两次位移都不动本文件的锚点））里的位置，
- * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:158-162` 逐条对过 1.5.0 的源码：
+ * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:158-162` 逐条对过 1.5.2 的源码：
  *
  *  0. **EXIF 方向先摆正**（`:84-86` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
  *     取自摆正**之后**的图（`:88-89`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。

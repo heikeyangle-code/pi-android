@@ -1023,7 +1023,7 @@ run_harness markdown-image-tap \
   app.pi.ui.render.PiMarkdownImageTapCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiMarkdownImageTapCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt"
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # （这里曾经有一项 `image-links`，验的是"裸图片 URL → `![](...)`"的改写规则。用户裁定撤销：
 # `![]()` 才是图、链接就是链接，所以那个模块与这一项一起删掉了，见

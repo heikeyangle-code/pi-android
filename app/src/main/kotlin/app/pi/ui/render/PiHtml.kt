@@ -95,22 +95,30 @@ internal object PiHtml {
     fun handlesBlock(typeName: String): Boolean = typeName == BLOCK_TYPE
 
     /**
-     * pi 的块级分支：`applyDefaultStyle(token.raw.trim())`，`applyDefaultStyle` 在默认文本
+     * pi 1.5.2 的块级分支：`applyDefaultStyle(stripHtmlComments(token.raw).trim())`，`applyDefaultStyle` 在默认文本
      * 样式下是恒等（只有颜色/粗斜体等下划线才会动它）。
      *
-     * 不做任何"看起来更像 HTML"的事：不解析、不折叠空白、不改大小写、不补换行。
+     * 不做任何"看起来更像 HTML"的事：不解析、不折叠空白、不改大小写、不补换行；
+     * 只跟 pi 1.5.2（#11710）一样剥掉 `<!-- ... -->` 注释（含未闭合注释到末尾）。
      */
     fun blockTextAt(content: String, startOffset: Int, endOffset: Int): String =
-        trimJs(normalizeJsSource(content.substring(startOffset, endOffset)))
+        trimJs(stripHtmlComments(normalizeJsSource(content.substring(startOffset, endOffset))))
 
     /**
-     * pi 的行内分支：`applyTextWithNewlines(token.raw)` —— `applyText` 是默认文本样式，
-     * 在 App 这一侧对应的就是"原样 append 进这一段的 `AnnotatedString`"。
+     * pi 1.5.2 的行内分支：注释（`<!--...`）隐藏为空，其余 `applyTextWithNewlines(token.raw)`。
      *
      * 与块级不同的是**不 trim**：行内标签两侧的空格属于周围的文本，不是标签的。
      */
-    fun inlineTextAt(content: String, startOffset: Int, endOffset: Int): String =
-        normalizeJsSource(content.substring(startOffset, endOffset))
+    fun inlineTextAt(content: String, startOffset: Int, endOffset: Int): String {
+        val normalized = normalizeJsSource(content.substring(startOffset, endOffset))
+        return if (normalized.startsWith("<!--")) "" else normalized
+    }
+
+    /** pi 1.5.2 `stripHtmlComments(html)`（`components/markdown.js:172-175`）。 */
+    fun stripHtmlComments(html: String): String =
+        if (html.contains("<!--")) HTML_COMMENT_REGEX.replace(html, "") else html
+
+    private val HTML_COMMENT_REGEX = Regex("<!--[\\s\\S]*?(?:-->|\$)")
 
     /**
      * pi 词法分析前对整篇源文本的两步归一，作用在一片切片上：
