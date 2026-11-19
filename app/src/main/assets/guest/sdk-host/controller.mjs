@@ -139,7 +139,18 @@ export class Controller {
           noContextFiles: resources.noContextFiles,
         },
       });
-      const created = await sdk.createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+      const created = await sdk.createAgentSessionFromServices({
+        services,
+        sessionManager,
+        sessionStartEvent,
+        ...(Array.isArray(args.tools) ? { tools: args.tools.map(String) } : {}),
+        ...(Array.isArray(args.excludeTools) ? { excludeTools: args.excludeTools.map(String) } : {}),
+        ...(args.noTools === true || args.noTools === "all"
+          ? { noTools: "all" }
+          : args.noTools === "builtin"
+            ? { noTools: "builtin" }
+            : {}),
+      });
       if (trusted.undecided) {
         // 项目里有需要信任才加载的资源，而用户还没表态：先按「不信任」起，让 App 去问。
         this.hub.emit("project.trust.required", { cwd: targetCwd });

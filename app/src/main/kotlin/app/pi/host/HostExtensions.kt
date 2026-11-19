@@ -39,13 +39,38 @@ class HostExtensions(private val commands: HostCommands) {
         val command: String?,
         val args: List<String>,
         val description: String?,
+        val env: JsonObject? = null,
+        val cwd: String? = null,
+        val headers: JsonObject? = null,
+        val timeout: Double? = null,
+        val toolExposure: JsonObject? = null,
+        val oauth: JsonObject? = null,
+        val auth: String? = null,
+        val type: String? = null,
     ) {
         val isProject get() = scope == "project"
         /** 一行说明它怎么连：网址或命令行。 */
         val transport get() = url ?: listOfNotNull(command).plus(args).joinToString(" ")
     }
 
-    data class McpConfig(val servers: List<McpServer>, val errors: List<String>)
+    data class McpConfig(
+        val servers: List<McpServer>,
+        val errors: List<String>,
+        val autoEnableCodemode: Boolean = true,
+        val globalAutoEnableCodemode: Boolean = true,
+        val globalServers: List<McpServer> = emptyList(),
+        val projectTrusted: Boolean = true,
+    )
+
+    data class McpImportResult(val added: List<String>, val skipped: List<String>, val path: String?)
+
+    data class McpChanged(
+        val action: String,
+        val name: String?,
+        val local: Boolean,
+        val enabled: Boolean?,
+        val added: List<String>,
+    )
 
     /** `mcp.list` 的一行：真的连过之后的状态。[state]：connected / needs-auth / error / disabled … */
     data class McpReport(val name: String, val state: String, val tools: List<String>, val error: String?, val resources: Boolean)
@@ -85,7 +110,15 @@ class HostExtensions(private val commands: HostCommands) {
     /** 只读配置，不连任何服务器（秒回）。 */
     suspend fun mcpConfig(): McpConfig {
         val d = commands.call("mcp.servers").data
-        return McpConfig(rows(d["servers"]).map(::server), (d["errors"] as? JsonArray).orEmpty().map { str(it) ?: it.toString() })
+        val global = d["global"] as? JsonObject
+        return McpConfig(
+            servers = rows(d["servers"]).map(::server),
+            errors = (d["errors"] as? JsonArray).orEmpty().map { str(it) ?: it.toString() },
+            autoEnableCodemode = (d["autoEnableCodemode"] as? JsonPrimitive)?.content != "false",
+            globalAutoEnableCodemode = (global?.get("autoEnableCodemode") as? JsonPrimitive)?.content != "false",
+            globalServers = rows(global?.get("servers")).map(::server),
+            projectTrusted = (d["projectTrusted"] as? JsonPrimitive)?.content != "false",
+        )
     }
 
     /** 真的连每个已启用的服务器（可能要几秒到几十秒），只在用户点「检测」时调。 */
@@ -112,6 +145,36 @@ class HostExtensions(private val commands: HostCommands) {
         }), LONG)
     }
 
+    /** 保存一条服务器（新增 / 改名 / 编辑）：由宿主调官方 `validateMcpServerConfig` + `addMcpServerConfig`。 */
+    suspend fun mcpSave(name: String, oldName: String?, config: JsonObject, project: Boolean): JsonObject =
+        commands.call("mcp.save", JsonObject(buildMap {
+            put("name", JsonPrimitive(name))
+            oldName?.let { put("oldName", JsonPrimitive(it)) }
+            put("local", JsonPrimitive(project))
+            put("config", config)
+        }), LONG).data
+
+    /** 粘贴导入外部客户端的 MCP JSON，转换与冲突检查由宿主处理。 */
+    suspend fun mcpImport(text: String, project: Boolean, fallbackName: String = "imported"): McpImportResult {
+        val d = commands.call("mcp.import", JsonObject(mapOf(
+            "text" to JsonPrimitive(text),
+            "local" to JsonPrimitive(project),
+            "fallbackName" to JsonPrimitive(fallbackName),
+        )), LONG).data
+        return McpImportResult(
+            added = (d["added"] as? JsonArray).orEmpty().mapNotNull(::str),
+            skipped = (d["skipped"] as? JsonArray).orEmpty().mapNotNull(::str),
+            path = str(d["path"]),
+        )
+    }
+
+    suspend fun mcpSetAutoEnableCodemode(enabled: Boolean, project: Boolean) {
+        commands.call("mcp.setAutoEnableCodemode", JsonObject(mapOf(
+            "enabled" to JsonPrimitive(enabled),
+            "local" to JsonPrimitive(project),
+        )), LONG)
+    }
+
     suspend fun mcpUpdate(name: String, enabled: Boolean? = null, exposure: String? = null, project: Boolean = false) {
         commands.call("mcp.update", JsonObject(buildMap {
             put("name", JsonPrimitive(name))
@@ -136,8 +199,11 @@ class HostExtensions(private val commands: HostCommands) {
     suspend fun mcpCancelLogin(loginId: String): Boolean =
         (commands.call("mcp.cancel", JsonObject(mapOf("loginId" to JsonPrimitive(loginId)))).data["cancelled"] as? JsonPrimitive)?.content == "true"
 
-    suspend fun mcpLogout(name: String): String? =
-        str(commands.call("mcp.logout", JsonObject(mapOf("name" to JsonPrimitive(name))), LONG).data["message"])
+    suspend fun mcpLogout(name: String, project: Boolean = false): String? =
+        str(commands.call("mcp.logout", JsonObject(buildMap {
+            put("name", JsonPrimitive(name))
+            if (project) put("local", JsonPrimitive(true))
+        }), LONG).data["message"])
 
     // ---- 事件 / 提问 ----
 
@@ -161,6 +227,18 @@ class HostExtensions(private val commands: HostCommands) {
             if (event.name != "mcp.auth") return null
             val d = event.data as? JsonObject ?: return null
             return McpAuth(str(d["loginId"]).orEmpty(), str(d["name"]).orEmpty(), str(d["url"]).orEmpty()).takeIf { it.url.isNotEmpty() }
+        }
+
+        fun mcpChanged(event: HostSignal.Event): McpChanged? {
+            if (event.name != "mcp.changed") return null
+            val d = event.data as? JsonObject ?: return null
+            return McpChanged(
+                action = str(d["action"]).orEmpty(),
+                name = str(d["name"]),
+                local = (d["local"] as? JsonPrimitive)?.content == "true",
+                enabled = (d["enabled"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull(),
+                added = (d["added"] as? JsonArray).orEmpty().mapNotNull(::str),
+            )
         }
 
         /** `mcp.redirect` 提问 → (loginId, 服务器名)；答复用 `PiHostClient.respond(request.id, JsonPrimitive(回跳地址))`。 */
@@ -192,6 +270,14 @@ class HostExtensions(private val commands: HostCommands) {
         command = str(o["command"]),
         args = (o["args"] as? JsonArray).orEmpty().mapNotNull { str(it) },
         description = str(o["description"]),
+        env = o["env"] as? JsonObject,
+        cwd = str(o["cwd"]),
+        headers = o["headers"] as? JsonObject,
+        timeout = (o["timeout"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+        toolExposure = o["toolExposure"] as? JsonObject,
+        oauth = o["oauth"] as? JsonObject,
+        auth = str(o["auth"]),
+        type = str(o["type"]),
     )
 
     private fun rows(e: JsonElement?): List<JsonObject> = (e as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()

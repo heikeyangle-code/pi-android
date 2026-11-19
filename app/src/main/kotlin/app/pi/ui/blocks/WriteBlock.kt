@@ -74,7 +74,7 @@ internal fun WriteBlock(
                     expanded = expanded,
                     expandable = hasBody,
                 )
-                if (expanded || failed) {
+                if (expanded) {
                     if (body.lines.isEmpty()) {
                         if (failed) {
                             // pi's result half on an error (`renderers/write.ts:134-142`). The

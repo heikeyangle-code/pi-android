@@ -26,14 +26,16 @@ export const ERR = Object.freeze({
   BUSY: "busy", //                      当前状态不允许（如压缩中提交）
   NOT_FOUND: "not_found", //            模型 / 条目 / 会话文件不存在
   REJECTED: "rejected", //              pi 自己拒绝（例如 prompt 预检失败）
+  CWD_MISSING: "cwd_missing", //        会话头里记录的 cwd 在当前设备上不存在
   UNSUPPORTED: "unsupported", //        本宿主 / 本 pi 版本没有这项能力
   INTERNAL: "internal",
 });
 
 export class HostError extends Error {
-  constructor(code, message) {
+  constructor(code, message, details = null) {
     super(message);
     this.code = code;
+    this.details = details;
   }
 }
 

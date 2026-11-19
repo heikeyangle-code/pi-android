@@ -776,29 +776,12 @@ fun PiRoot() {
                 ) {
                     when (shown) {
                         OverlaySlot.SessionList -> {
-                            // **两个回调的 identity 固定下来。** 它们只调 `session.closeOverlay()` /
-                            // 写 `destinationName` 这个 `MutableState`（在本组合的整个生命周期里是
-                            // 同一个对象），所以 `remember` 之后**行为逐字不变** —— 而这一屏的
-                            // 父级每收到一次 `UiState` 发布（流式期间约 200 ms 一次）就重组，从前的
-                            // 字面量 lambda 每次都换新实例，`SessionsScreen` 的参数按 `===` 比较
-                            // 因此不等，整屏（与列表里的行）都得跟着重算。同一条机制与证据写在
-                            // `ChatScreen` 的 `onForkFromMessage` 上（`docs/scroll-perf-list.md` §2.1）。
-                            val onOpenChat: () -> Unit = remember {
-                                {
-                                    closeOverlay()
-                                    destinationName = PiDestination.Chat.name
-                                }
-                            }
                             // 关掉这一层就走 [closeOverlay]：它同时把「打开哪一屏」复位成列表，
                             // 所以下一次进来不会又被拉回会话树（见那个 lambda 的 KDoc）。
                             val onCloseSessionList: () -> Unit = remember { closeOverlay }
                             SessionsScreen(
                                 contentPadding = padding,
                                 session = session,
-                                // A pick switches the session and lands on it. The
-                                // overlay closes because otherwise the user stays on
-                                // the list they just answered.
-                                onOpenChat = onOpenChat,
                                 onBack = onCloseSessionList,
                                 onOpenWorkspace = openWorkspace,
                                 onOpenSettings = openSettings,

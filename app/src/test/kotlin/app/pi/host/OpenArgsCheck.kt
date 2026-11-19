@@ -24,6 +24,11 @@ fun main() {
     check("给了路径：只按路径开（不再按 id）", byPath["session"].toString(), """{"file":"/s/a.jsonl"}""")
     check("没路径有 id：按 id", PiLaunchOptions(continueSessionId = "id1", continueMostRecent = true).toOpenArgs().toJson()["session"].toString(), """{"id":"id1"}""")
     check("都没有：续最近", PiLaunchOptions(continueMostRecent = true).toOpenArgs().toJson()["session"].toString(), """{"continue":true}""")
+    val toolArgs = PiLaunchOptions(tools = listOf("read", "bash"), excludeTools = listOf("write"), noTools = "all").toOpenArgs().toJson()
+    check("tools", toolArgs["tools"].toString(), """["read","bash"]""")
+    check("excludeTools", toolArgs["excludeTools"].toString(), """["write"]""")
+    check("noTools (all)", toolArgs["noTools"].toString(), "\"all\"")
+    check("noTools (builtin)", PiLaunchOptions(noTools = "builtin").toOpenArgs().toJson()["noTools"].toString(), "\"builtin\"")
     if (failures > 0) { println("harness: FAILED ($failures)"); exitProcess(1) }
     println("harness: OK (host-launch)")
 }

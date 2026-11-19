@@ -126,10 +126,17 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
           if (surfaceRef) surfaces.close(surfaceRef.id);
           resolve(value);
         };
+        const blocked =
+          typeof options?.blocked === "string"
+            ? options.blocked || null
+            : typeof options?.blocked?.message === "string" && options.blocked.message
+              ? options.blocked.message
+              : null;
         surfaces
           .mount({
             mode: "custom",
             overlay: Boolean(options?.overlay),
+            blocked,
             // 被外部关掉（用户点了 ✕ / 会话被替换）：以 undefined 结束，扩展的 await 不能悬着。
             onClose: () => finish(undefined),
             build: (tui, surface) => {

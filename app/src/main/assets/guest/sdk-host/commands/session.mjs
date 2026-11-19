@@ -3,12 +3,19 @@
  * 语义逐条对照 pi 的 `modes/rpc/rpc-mode.js`（1.5.0），差异处有注释。
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { DEFERRED } from "./registry.mjs";
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { snapshotOf, withState } from "../state.mjs";
+
+function rethrowSessionCwdError(error) {
+  if (error?.name === "MissingSessionCwdError") {
+    throw new HostError(ERR.CWD_MISSING, String(error.message ?? error), { issue: error.issue ?? null });
+  }
+  throw error;
+}
 
 function checkedCwd(cwd) {
   const abs = resolve(cwd);
@@ -115,7 +122,32 @@ export function register(reg, { controller }) {
   reg.add("session.switch", async (args) => {
     const cwd = optStr(args, "cwd");
     const options = cwd ? { cwdOverride: checkedCwd(cwd) } : undefined;
-    return withState(controller, await controller.runtime.switchSession(str(args, "sessionPath"), options));
+    try {
+      return withState(controller, await controller.runtime.switchSession(str(args, "sessionPath"), options));
+    } catch (error) {
+      rethrowSessionCwdError(error);
+    }
+  });
+  reg.add("session.forkFrom", async (args) => {
+    const sdk = controller.sdk;
+    if (!sdk) throw new HostError(ERR.NOT_OPEN, "先 session.open");
+    const sourcePath = str(args, "sourcePath");
+    const targetCwd = checkedCwd(optStr(args, "cwd") ?? controller.cwd);
+    const forked = sdk.SessionManager.forkFrom(sourcePath, targetCwd, controller.sessionDir);
+    const forkFile = forked.getSessionFile();
+    if (!forkFile) throw new HostError(ERR.INTERNAL, "未能生成分支会话文件");
+    const result = await controller.runtime.switchSession(forkFile);
+    if (result.cancelled) {
+      try {
+        unlinkSync(forkFile);
+      } catch {
+        // ignore cleanup error if already absent
+      }
+    }
+    return withState(controller, {
+      cancelled: result.cancelled === true,
+      sessionFile: result.cancelled ? null : forkFile,
+    });
   });
   reg.add("session.fork", async (args) => {
     const result = await controller.runtime.fork(str(args, "entryId"));
@@ -166,7 +198,13 @@ export function register(reg, { controller }) {
       ...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
     });
   });
-  reg.add("session.import", async (args) => controller.runtime.importFromJsonl(str(args, "path"), optStr(args, "cwd")));
+  reg.add("session.import", async (args) => {
+    try {
+      return withState(controller, await controller.runtime.importFromJsonl(str(args, "path"), optStr(args, "cwd")));
+    } catch (error) {
+      rethrowSessionCwdError(error);
+    }
+  });
 
   reg.add("session.name", (args) => {
     const name = str(args, "name").trim();

@@ -65,6 +65,12 @@ export class Registry {
 }
 
 export function toWire(error) {
-  if (error instanceof HostError) return { code: error.code, message: error.message };
+  if (error instanceof HostError) {
+    return {
+      code: error.code,
+      message: error.message,
+      ...(error.details != null ? { details: error.details } : {}),
+    };
+  }
   return { code: ERR.INTERNAL, message: String(error?.message ?? error), detail: String(error?.stack ?? "") };
 }

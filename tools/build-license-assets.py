@@ -175,7 +175,7 @@ def verify_engine_payload_versions() -> None:
 #   minimatch   BlueOak-1.0.0  (ships its own LICENSE.md, so no entry here)
 NPM_LICENCE_FILES = [
     ("0BSD.txt", "tslib", "2.9.1", "LICENSE.txt"),
-    ("BlueOak-1.0.0.txt", "lru-cache", "11.4.0", "LICENSE.md"),
+    ("BlueOak-1.0.0.txt", "lru-cache", "11.5.3", "LICENSE.md"),
 ]
 
 # JetBrains Mono 2.304 (OFL-1.1) — the machine-language typeface, compiled into the
@@ -350,9 +350,9 @@ PI_ENGINE_NO_LICENCE_TEXT = [
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
-    ("@aws-sdk/credential-provider-http", "3.972.84", "Apache-2.0"),
-    ("@aws-sdk/credential-provider-login", "3.972.89", "Apache-2.0"),
-    ("@aws-sdk/nested-clients", "3.998.1", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-http", "3.972.86", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.92", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.998.3", "Apache-2.0"),
 ]
 
 # Where the notice for each of those packages can actually be found, and what was
@@ -1364,7 +1364,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("pi 引擎的依赖包", f"见 pi {engine_version()} 的依赖锁定", "MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
     ("highlight.js", "10.7.3", "BSD-3-Clause", "Linux 运行时（首次启动解包）", "https://highlightjs.org/"),
     ("tslib", "2.9.1", "0BSD", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/tslib"),
-    ("lru-cache / minimatch", "11.4.0 / 11.0.3", "BlueOak-1.0.0", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/lru-cache"),
+    ("lru-cache / minimatch", "11.5.3 / 11.0.3", "BlueOak-1.0.0", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/lru-cache"),
     # JVM side
     (
         "AndroidX / Jetpack Compose（core-ktx、activity-compose、lifecycle、compose-ui、"

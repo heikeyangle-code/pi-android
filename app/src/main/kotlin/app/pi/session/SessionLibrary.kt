@@ -66,7 +66,7 @@ class SessionLoadProgress(val scope: SessionScope, val loaded: Int, val total: I
 class SessionDeleteOutcome(val ok: Boolean, val method: String?, val error: String?)
 
 /**
- * 会话库：列表 / 搜索 / 改名 / 删除，**全部经宿主命令**（SDK 的 `SessionManager`）。
+ * 会话库：列表 / 搜索 / 预览 / 改名 / 删除，**全部经宿主命令**（SDK 的 `SessionManager`）。
  * 取代 `PiSessionStore` 等约 2800 行「自己扫盘、自己解析 JSONL」的代码（docs/sdk-host/sessions.md §1）。
  *
  * 排序、成树、过滤、搜索（含 `re:` / `"短语"`）都在宿主里用官方实现算好，这里只发命令、换算路径、

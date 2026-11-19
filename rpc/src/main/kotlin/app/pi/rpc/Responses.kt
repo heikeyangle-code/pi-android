@@ -86,8 +86,11 @@ object PiResponses {
     data class CommandCompletion(val value: String, val label: String, val description: String?)
 
     fun commandCompletions(response: PiEvent.Response): List<CommandCompletion> =
-        dataArray(response, "items").mapNotNull { element ->
-            val obj = element as? JsonObject ?: return@mapNotNull null
+        commandCompletions(response.data)
+
+    fun commandCompletions(element: JsonElement?): List<CommandCompletion> =
+        dataArray(element, "items").mapNotNull { elementItem ->
+            val obj = elementItem as? JsonObject ?: return@mapNotNull null
             val value = obj.str("value") ?: return@mapNotNull null
             CommandCompletion(value, obj.str("label") ?: value, obj.str("description"))
         }
@@ -101,16 +104,19 @@ object PiResponses {
     /** [slashCommands] + 宿主随同给出的内建表；内建表读不到时为空（见宿主 `loadBuiltins`）。 */
     data class CommandCatalog(val commands: List<SlashCommand>, val builtins: List<BuiltinCommand>)
 
-    fun commandCatalog(response: PiEvent.Response): CommandCatalog {
-        val builtins = dataArray(response, "builtins").mapNotNull { element ->
-            val obj = element as? JsonObject ?: return@mapNotNull null
+    fun commandCatalog(response: PiEvent.Response): CommandCatalog =
+        commandCatalog(response.data)
+
+    fun commandCatalog(element: JsonElement?): CommandCatalog {
+        val builtins = dataArray(element, "builtins").mapNotNull { elementItem ->
+            val obj = elementItem as? JsonObject ?: return@mapNotNull null
             BuiltinCommand(
                 name = obj.str("name") ?: return@mapNotNull null,
                 description = obj.str("description"),
                 argumentHint = obj.str("argumentHint"),
             )
         }
-        return CommandCatalog(slashCommands(response), builtins)
+        return CommandCatalog(slashCommands(element), builtins)
     }
 
     /** `RpcSessionState`. */
@@ -315,14 +321,20 @@ object PiResponses {
      * a reader failed to understand.
      */
     fun dataIsNull(response: PiEvent.Response): Boolean =
-        response.data == null || response.data is JsonNull
+        dataIsNull(response.data)
+
+    fun dataIsNull(element: JsonElement?): Boolean =
+        element == null || element is JsonNull
 
     // ------------------------------------------------------------------ readers
 
-    fun slashCommands(response: PiEvent.Response): List<SlashCommand> {
-        val commands = dataArray(response, "commands")
-        return commands.mapNotNull { element ->
-            val obj = element as? JsonObject ?: return@mapNotNull null
+    fun slashCommands(response: PiEvent.Response): List<SlashCommand> =
+        slashCommands(response.data)
+
+    fun slashCommands(element: JsonElement?): List<SlashCommand> {
+        val commands = dataArray(element, "commands")
+        return commands.mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
             val name = obj.str("name") ?: return@mapNotNull null
             val sourceInfo = obj.obj("sourceInfo")
             SlashCommand(
@@ -346,8 +358,11 @@ object PiResponses {
         }
     }
 
-    fun sessionState(response: PiEvent.Response): SessionState? {
-        val obj = dataObject(response) ?: return null
+    fun sessionState(response: PiEvent.Response): SessionState? =
+        sessionState(response.data)
+
+    fun sessionState(element: JsonElement?): SessionState? {
+        val obj = dataObject(element) ?: return null
         return SessionState(
             model = model(obj["model"]),
             thinkingLevel = obj.str("thinkingLevel"),
@@ -364,8 +379,11 @@ object PiResponses {
         )
     }
 
-    fun sessionStats(response: PiEvent.Response): SessionStats? {
-        val obj = dataObject(response) ?: return null
+    fun sessionStats(response: PiEvent.Response): SessionStats? =
+        sessionStats(response.data)
+
+    fun sessionStats(element: JsonElement?): SessionStats? {
+        val obj = dataObject(element) ?: return null
         val tokens = obj.obj("tokens")?.let {
             TokenTotals(
                 input = it.long("input") ?: 0,
@@ -398,17 +416,25 @@ object PiResponses {
 
     /** `get_available_models` → `{ models: Model[] }`. */
     fun availableModels(response: PiEvent.Response): List<ModelInfo> =
-        dataArray(response, "models").mapNotNull(::model)
+        availableModels(response.data)
+
+    fun availableModels(element: JsonElement?): List<ModelInfo> =
+        dataArray(element, "models").mapNotNull(::model)
 
     /**
      * `set_model` → the full `Model` object itself, not a wrapper
      * (`rpc-mode.ts` `success(id, "set_model", model)`).
      */
-    fun setModel(response: PiEvent.Response): ModelInfo? = model(response.data)
+    fun setModel(response: PiEvent.Response): ModelInfo? = setModel(response.data)
+
+    fun setModel(element: JsonElement?): ModelInfo? = model(element)
 
     /** `cycle_model` → `{ model, thinkingLevel, isScoped }`, or null data. */
-    fun cycleModel(response: PiEvent.Response): CycleModelResult? {
-        val obj = dataObject(response) ?: return null
+    fun cycleModel(response: PiEvent.Response): CycleModelResult? =
+        cycleModel(response.data)
+
+    fun cycleModel(element: JsonElement?): CycleModelResult? {
+        val obj = dataObject(element) ?: return null
         return CycleModelResult(
             model = model(obj["model"]),
             thinkingLevel = obj.str("thinkingLevel"),
@@ -418,13 +444,19 @@ object PiResponses {
 
     /** `get_available_thinking_levels` → `{ levels: ThinkingLevel[] }`. */
     fun thinkingLevels(response: PiEvent.Response): List<String> =
-        (dataObject(response)?.get("levels") as? JsonArray)
+        thinkingLevels(response.data)
+
+    fun thinkingLevels(element: JsonElement?): List<String> =
+        (dataObject(element)?.get("levels") as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.content }
             ?: emptyList()
 
     /** `cycle_thinking_level` → `{ level }`, or null data when unsupported. */
-    fun cycleThinkingLevel(response: PiEvent.Response): CycleThinkingResult? {
-        val obj = dataObject(response) ?: return null
+    fun cycleThinkingLevel(response: PiEvent.Response): CycleThinkingResult? =
+        cycleThinkingLevel(response.data)
+
+    fun cycleThinkingLevel(element: JsonElement?): CycleThinkingResult? {
+        val obj = dataObject(element) ?: return null
         return CycleThinkingResult(level = obj.str("level"))
     }
 
@@ -452,8 +484,11 @@ object PiResponses {
     }
 
     /** `bash` → `BashResult`. */
-    fun bashResult(response: PiEvent.Response): BashResult? {
-        val obj = dataObject(response) ?: return null
+    fun bashResult(response: PiEvent.Response): BashResult? =
+        bashResult(response.data)
+
+    fun bashResult(element: JsonElement?): BashResult? {
+        val obj = dataObject(element) ?: return null
         return BashResult(
             output = obj.str("output").orEmpty(),
             exitCode = obj.int("exitCode"),
@@ -464,8 +499,11 @@ object PiResponses {
     }
 
     /** `clear_queue` → `{ steering, followUp }`. */
-    fun clearQueueResult(response: PiEvent.Response): ClearQueueResult? {
-        val obj = dataObject(response) ?: return null
+    fun clearQueueResult(response: PiEvent.Response): ClearQueueResult? =
+        clearQueueResult(response.data)
+
+    fun clearQueueResult(element: JsonElement?): ClearQueueResult? {
+        val obj = dataObject(element) ?: return null
         return ClearQueueResult(
             steering = obj.strList("steering"),
             followUp = obj.strList("followUp"),
@@ -473,14 +511,20 @@ object PiResponses {
     }
 
     /** `new_session` / `switch_session` / `clone` → `{ cancelled }`. */
-    fun cancelledResult(response: PiEvent.Response): CancelledResult? {
-        val obj = dataObject(response) ?: return null
+    fun cancelledResult(response: PiEvent.Response): CancelledResult? =
+        cancelledResult(response.data)
+
+    fun cancelledResult(element: JsonElement?): CancelledResult? {
+        val obj = dataObject(element) ?: return null
         return CancelledResult(cancelled = obj.bool("cancelled") ?: false)
     }
 
     /** `fork` → `{ text, cancelled }`. `text` is `selectedText`, which is optional. */
-    fun forkResult(response: PiEvent.Response): ForkResult? {
-        val obj = dataObject(response) ?: return null
+    fun forkResult(response: PiEvent.Response): ForkResult? =
+        forkResult(response.data)
+
+    fun forkResult(element: JsonElement?): ForkResult? {
+        val obj = dataObject(element) ?: return null
         return ForkResult(
             text = obj.str("text"),
             cancelled = obj.bool("cancelled") ?: false,
@@ -489,8 +533,11 @@ object PiResponses {
 
     /** `get_fork_messages` → `{ messages: [{ entryId, text }] }`. */
     fun forkMessages(response: PiEvent.Response): List<ForkMessage> =
-        dataArray(response, "messages").mapNotNull { element ->
-            val obj = element as? JsonObject ?: return@mapNotNull null
+        forkMessages(response.data)
+
+    fun forkMessages(element: JsonElement?): List<ForkMessage> =
+        dataArray(element, "messages").mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
             // entryId is what `fork` takes; without it the row cannot be used.
             val entryId = obj.str("entryId") ?: return@mapNotNull null
             ForkMessage(entryId = entryId, text = obj.str("text").orEmpty())
@@ -506,8 +553,11 @@ object PiResponses {
      * match any entry id — a caller passing a stale cursor gets an error, not a
      * silently empty result.
      */
-    fun sessionEntries(response: PiEvent.Response): EntriesPage? {
-        val obj = dataObject(response) ?: return null
+    fun sessionEntries(response: PiEvent.Response): EntriesPage? =
+        sessionEntries(response.data)
+
+    fun sessionEntries(element: JsonElement?): EntriesPage? {
+        val obj = dataObject(element) ?: return null
         val entries = (obj["entries"] as? JsonArray)
             ?.mapNotNull { it as? JsonObject }
             ?.map(::parseSessionEntry)
@@ -516,8 +566,11 @@ object PiResponses {
     }
 
     /** `get_tree` → `{ tree, leafId }`. */
-    fun tree(response: PiEvent.Response): TreePage? {
-        val obj = dataObject(response) ?: return null
+    fun tree(response: PiEvent.Response): TreePage? =
+        tree(response.data)
+
+    fun tree(element: JsonElement?): TreePage? {
+        val obj = dataObject(element) ?: return null
         val nodes = (obj["tree"] as? JsonArray)
             ?.mapNotNull { it as? JsonObject }
             ?.map(::parseSessionTreeNode)
@@ -527,25 +580,40 @@ object PiResponses {
 
     /** `get_last_assistant_text` → `{ text: string | null }`. */
     fun lastAssistantText(response: PiEvent.Response): String? =
-        dataObject(response)?.str("text")
+        lastAssistantText(response.data)
+
+    fun lastAssistantText(element: JsonElement?): String? =
+        dataObject(element)?.str("text")
 
     /** `get_messages` → `{ messages: AgentMessage[] }`. */
     fun messages(response: PiEvent.Response): List<PiMessage> =
-        dataArray(response, "messages").mapNotNull { (it as? JsonObject)?.let(::parsePiMessage) }
+        messages(response.data)
+
+    fun messages(element: JsonElement?): List<PiMessage> =
+        dataArray(element, "messages").mapNotNull { (it as? JsonObject)?.let(::parsePiMessage) }
 
     /** `export_html` → `{ path: string }`. */
     fun exportPath(response: PiEvent.Response): String? =
-        dataObject(response)?.str("path")
+        exportPath(response.data)
+
+    fun exportPath(element: JsonElement?): String? =
+        dataObject(element)?.str("path")
 
     /** `export_html` → typed wrapper. */
-    fun exportResult(response: PiEvent.Response): ExportResult? {
-        val obj = dataObject(response) ?: return null
+    fun exportResult(response: PiEvent.Response): ExportResult? =
+        exportResult(response.data)
+
+    fun exportResult(element: JsonElement?): ExportResult? {
+        val obj = dataObject(element) ?: return null
         return ExportResult(path = obj.str("path"))
     }
 
     /** `new_session` / `switch_session` / `clone` → `{ cancelled: boolean }`. */
     fun cancelled(response: PiEvent.Response): Boolean =
-        dataObject(response)?.bool("cancelled") ?: false
+        cancelled(response.data)
+
+    fun cancelled(element: JsonElement?): Boolean =
+        dataObject(element)?.bool("cancelled") ?: false
 
     /**
      * `get_entries` → the raw entry objects.
@@ -553,8 +621,11 @@ object PiResponses {
      * Kept as an escape hatch for callers that want the bytes; prefer
      * [sessionEntries], which returns typed entries.
      */
-    fun entries(response: PiEvent.Response): List<JsonObject> {
-        val entries = dataObject(response)?.get("entries") as? JsonArray ?: return emptyList()
+    fun entries(response: PiEvent.Response): List<JsonObject> =
+        entries(response.data)
+
+    fun entries(element: JsonElement?): List<JsonObject> {
+        val entries = dataObject(element)?.get("entries") as? JsonArray ?: return emptyList()
         return entries.mapNotNull { it as? JsonObject }
     }
 
@@ -630,8 +701,8 @@ object PiResponses {
         baseDir = obj.str("baseDir"),
     )
 
-    private fun dataObject(response: PiEvent.Response): JsonObject? = response.data as? JsonObject
+    private fun dataObject(element: JsonElement?): JsonObject? = element as? JsonObject
 
-    private fun dataArray(response: PiEvent.Response, key: String): JsonArray =
-        dataObject(response)?.get(key) as? JsonArray ?: JsonArray(emptyList())
+    private fun dataArray(element: JsonElement?, key: String): JsonArray =
+        dataObject(element)?.get(key) as? JsonArray ?: JsonArray(emptyList())
 }

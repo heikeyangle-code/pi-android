@@ -427,20 +427,15 @@ object PiSettingsCatalog {
             kind = PiRowKind.Value,
             group = G_MODEL,
             section = "行为",
-            defaultValue = str("streaming"),
-            // 0.86.0 新键。pi 的取值器是活的（`core/sdk.ts:307-312` 把
-            // `() => settingsManager.getCacheWarmingMode()` 交给 CacheWarmer，
-            // `core/cache-warmer.ts:184` 起每次决策读一次），但它读的是 SettingsManager
-            // 内存里的 globalSettings；外部改 settings.json 要到一次 settings 重读才生效，
-            // 而 pi 的 `ctx.reload()` 正是这条路径（`modes/rpc/rpc-mode.ts:341` →
-            // `core/resource-loader.ts:387-403` → `core/settings-manager.ts:539` 重读全局设置）。
-            // 所以这一行不是 NewSession 也不是 RestartEngine，而是 Reload ——
-            // 与 `app.extensions.*` 那两行同一个徽标。
+            defaultValue = str("idle"),
+            // 0.86.0 新键，1.5.2 官方默认改为 `idle`（`SETTINGS_DEFAULTS.cacheWarming = "idle"`）。
+            // pi 的取值器是活的（把 `() => settingsManager.getCacheWarmingMode()` 交给 CacheWarmer，
+            // 每次决策读一次），外部改 settings.json 靠宿主 `settings.reload` / `ctx.reload()` 同步。
             effective = EffectiveKind.Reload,
             options = listOf(
                 PiOption("off", "关闭"),
-                PiOption("streaming", "仅流式中（默认）"),
-                PiOption("idle", "含空闲时段"),
+                PiOption("streaming", "仅流式中"),
+                PiOption("idle", "含空闲时段（默认）"),
             ),
         ),
         PiSetting(

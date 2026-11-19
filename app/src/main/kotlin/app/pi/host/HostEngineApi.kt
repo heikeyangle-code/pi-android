@@ -1,6 +1,5 @@
 package app.pi.host
 
-import app.pi.rpc.PiEvent
 import app.pi.rpc.PiMessage
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
@@ -15,17 +14,18 @@ class HostCommandException(
     val command: String?,
     val reason: String,
     val code: String? = null,
+    val details: JsonElement? = null,
 ) : Exception("${command ?: "host"}: $reason")
 
 /**
  * 聊天界面用的「引擎 API」：一条宿主命令一个具名 suspend 函数，返回**已有的**结果类型
  * （`PiResponses.*`），所以 ViewModel 只换类型、不重写调用点。
  *
- * 数据形状不是靠猜的：宿主命令的返回与旧读取器期望的 `data` 形状逐条对过，
+ * 数据形状不是靠猜的：宿主命令的返回与 `PiResponses` 的读取器期望的 `data` 形状逐条对过，
  * 见 `HostApiCheck`（回放真宿主录下的应答，让 `PiResponses` 的读取器去读）。
  * 对不上的两处在这里适配，且都在注释里写明：
- *  - `model.cycle` 的 `result` 对应旧 `data`；
- *  - `thinking.cycle` 的 `level` 对应旧 `data.level`（为 null = 只有一个等级）。
+ *  - `model.cycle` 的 `result` 对应 `PiResponses.cycleModel`；
+ *  - `thinking.cycle` 的 `level` 为 null 表示只有一个可选等级。
  *
  * 状态：`getState` 从宿主的 `state` 快照取，**不是**轮询 —— 宿主已经主动推（[HostCommands.stateStore]）。
  */
@@ -36,10 +36,10 @@ class HostEngineApi(private val commands: HostCommands) {
     /** 现在的会话状态。其实是一次对账（`session.snapshot`），UI 平时应直接吃 `stateStore`。 */
     suspend fun getState(): PiResponses.SessionState {
         val snap = guarded("get_state") { commands.snapshot() }
-        // 宿主快照用 messageCounts.total，旧读取器读 messageCount。
+        // 宿主快照用 messageCounts.total，读取器读 messageCount。
         val total = (snap["messageCounts"] as? JsonObject)?.get("total")
         val shaped = JsonObject(snap + ("messageCount" to (total ?: JsonPrimitive(0))))
-        return required("get_state", PiResponses.sessionState(response("get_state", shaped)))
+        return required("get_state", PiResponses.sessionState(shaped))
     }
 
     suspend fun getMessages(): List<PiMessage> = PiResponses.messages(read("session.messages"))
@@ -109,8 +109,8 @@ class HostEngineApi(private val commands: HostCommands) {
             put("provider", JsonPrimitive(provider)); put("modelId", JsonPrimitive(modelId))
             if (persist) put("persist", JsonPrimitive(true))
         })
-        // 宿主应答 {model, state}；旧读取器直接读 model 对象。
-        return required("set_model", PiResponses.setModel(response("set_model", r.data["model"])))
+        // 宿主应答 {model, state}；读取器直接读 model 对象。
+        return required("set_model", PiResponses.setModel(r.data["model"]))
     }
 
     /** 只有一个可选模型时为 null。 */
@@ -118,7 +118,7 @@ class HostEngineApi(private val commands: HostCommands) {
         val r = write("model.cycle")
         val result = r.data["result"]
         if (result == null || result is JsonNull) return null
-        return required("cycle_model", PiResponses.cycleModel(response("cycle_model", result)))
+        return required("cycle_model", PiResponses.cycleModel(result))
     }
 
     suspend fun setThinkingLevel(level: String) { write("thinking.set", obj { put("level", JsonPrimitive(level)) }) }
@@ -126,14 +126,14 @@ class HostEngineApi(private val commands: HostCommands) {
     suspend fun cycleThinkingLevel(): PiResponses.CycleThinkingResult? {
         val level = write("thinking.cycle").data["level"]
         if (level == null || level is JsonNull) return null
-        return required("cycle_thinking_level", PiResponses.cycleThinkingLevel(response("cycle_thinking_level", obj { put("level", level) })))
+        return required("cycle_thinking_level", PiResponses.cycleThinkingLevel(obj { put("level", level) }))
     }
 
     suspend fun setSteeringMode(mode: QueueMode) { write("queue.steeringMode", obj { put("mode", JsonPrimitive(mode.wire)) }) }
     suspend fun setFollowUpMode(mode: QueueMode) { write("queue.followUpMode", obj { put("mode", JsonPrimitive(mode.wire)) }) }
 
     suspend fun clearQueue(): PiResponses.ClearQueueResult =
-        required("clear_queue", PiResponses.clearQueueResult(write("session.clearQueue").asResponse("clear_queue")))
+        required("clear_queue", PiResponses.clearQueueResult(write("session.clearQueue").data))
 
     // ---- 压缩 / 重试 ----
 
@@ -141,8 +141,7 @@ class HostEngineApi(private val commands: HostCommands) {
         required(
             "compact",
             PiResponses.compactionResult(
-                write("session.compact", obj { customInstructions?.let { put("customInstructions", JsonPrimitive(it)) } }, HostCommands.LONG_TIMEOUT_MS)
-                    .asResponse("compact"),
+                write("session.compact", obj { customInstructions?.let { put("customInstructions", JsonPrimitive(it)) } }, HostCommands.LONG_TIMEOUT_MS).data,
             ),
         )
 
@@ -163,7 +162,7 @@ class HostEngineApi(private val commands: HostCommands) {
                         excludeFromContext?.let { put("excludeFromContext", JsonPrimitive(it)) }
                     },
                     HostCommands.LONG_TIMEOUT_MS,
-                ).asResponse("bash"),
+                ).data,
             ),
         )
 
@@ -184,37 +183,50 @@ class HostEngineApi(private val commands: HostCommands) {
         required("new_session", PiResponses.cancelledResult(write("session.new", obj {
             parentSession?.let { put("parentSession", JsonPrimitive(it)) }
             cwd?.let { put("cwd", JsonPrimitive(it)) }
-        }, HostCommands.LONG_TIMEOUT_MS).asResponse("new_session")))
+        }, HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun switchSession(sessionPath: String, cwd: String? = null): PiResponses.CancelledResult =
         required("switch_session", PiResponses.cancelledResult(write("session.switch", obj {
             put("sessionPath", JsonPrimitive(sessionPath))
             cwd?.let { put("cwd", JsonPrimitive(it)) }
-        }, HostCommands.LONG_TIMEOUT_MS).asResponse("switch_session")))
+        }, HostCommands.LONG_TIMEOUT_MS).data))
+
+    data class ForkFromResult(val cancelled: Boolean, val sessionFile: String?)
+
+    /** 从任意会话文件创建分支并切换到新会话（SDK `SessionManager.forkFrom` + `switchSession`）。 */
+    suspend fun forkFrom(sourcePath: String, cwd: String? = null): ForkFromResult {
+        val data = write("session.forkFrom", obj {
+            put("sourcePath", JsonPrimitive(sourcePath))
+            cwd?.let { put("cwd", JsonPrimitive(it)) }
+        }, HostCommands.LONG_TIMEOUT_MS).data
+        return ForkFromResult(
+            cancelled = (data["cancelled"] as? JsonPrimitive)?.content == "true",
+            sessionFile = (data["sessionFile"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
+        )
+    }
+
+    /** 导入外部 `.jsonl` 会话文件并切换到它（SDK `runtime.importFromJsonl`）。 */
+    suspend fun importSessionFile(path: String, cwd: String? = null): PiResponses.CancelledResult =
+        required("import_session", PiResponses.cancelledResult(write("session.import", obj {
+            put("path", JsonPrimitive(path))
+            cwd?.let { put("cwd", JsonPrimitive(it)) }
+        }, HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun fork(entryId: String): PiResponses.ForkResult =
-        required("fork", PiResponses.forkResult(write("session.fork", obj { put("entryId", JsonPrimitive(entryId)) }, HostCommands.LONG_TIMEOUT_MS).asResponse("fork")))
+        required("fork", PiResponses.forkResult(write("session.fork", obj { put("entryId", JsonPrimitive(entryId)) }, HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun cloneSession(): PiResponses.CancelledResult =
-        required("clone", PiResponses.cancelledResult(write("session.clone", timeoutMs = HostCommands.LONG_TIMEOUT_MS).asResponse("clone")))
+        required("clone", PiResponses.cancelledResult(write("session.clone", timeoutMs = HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun setSessionName(name: String) { write("session.name", obj { put("name", JsonPrimitive(name)) }) }
 
     // ---- 内部 ----
 
-    private suspend fun read(cmd: String, args: JsonObject = EMPTY, timeoutMs: Long? = null): PiEvent.Response {
-        val data = guarded(cmd) { commands.client.callObject(cmd, args, timeoutMs) }
-        return response(cmd, data)
-    }
+    private suspend fun read(cmd: String, args: JsonObject = EMPTY, timeoutMs: Long? = null): JsonElement? =
+        guarded(cmd) { commands.client.callObject(cmd, args, timeoutMs) }
 
     private suspend fun write(cmd: String, args: JsonObject = EMPTY, timeoutMs: Long? = null): HostReply =
         guarded(cmd) { commands.call(cmd, args, timeoutMs) }
-
-    private fun HostReply.asResponse(cmd: String): PiEvent.Response = response(cmd, data)
-
-    /** 旧读取器认的是 `PiEvent.Response`；宿主的 `res.data` 装进去即可。 */
-    private fun response(cmd: String, data: JsonElement?): PiEvent.Response =
-        PiEvent.Response(id = null, command = cmd, success = true, error = null, data = data)
 
     private fun <T : Any> required(cmd: String, value: T?): T =
         value ?: throw HostCommandException(cmd, "宿主的应答里没有可读的数据")
@@ -222,7 +234,7 @@ class HostEngineApi(private val commands: HostCommands) {
     private suspend fun <T> guarded(cmd: String, block: suspend () -> T): T = try {
         block()
     } catch (e: HostException) {
-        throw HostCommandException(cmd, e.message ?: e.code, e.code)
+        throw HostCommandException(cmd, e.message ?: e.code, e.code, e.details)
     }
 
     companion object {

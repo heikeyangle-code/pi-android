@@ -22,6 +22,7 @@ data class ExtCustom(
     val overlay: Boolean,
     val interactive: Boolean,
     val lines: List<String>,
+    val blocked: String? = null,
 )
 
 data class ExtWorking(
@@ -56,7 +57,13 @@ class ExtUiReducer {
     var state = ExtUiState()
         private set
 
-    private class Frame(val rev: Long, val lines: List<String>, val overlay: Boolean, val interactive: Boolean)
+    private class Frame(
+        val rev: Long,
+        val lines: List<String>,
+        val overlay: Boolean,
+        val interactive: Boolean,
+        val blocked: String? = null,
+    )
 
     private val frames = HashMap<String, Frame>()
     private val widgetSurface = HashMap<String, String>()
@@ -154,7 +161,7 @@ class ExtUiReducer {
         val mode = str(d["mode"]) ?: return
         val rev = (d["rev"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
         if ((frames[id]?.rev ?: -1L) >= rev) return
-        val frame = Frame(rev, linesOf(d["lines"]), bool(d["overlay"], false), bool(d["interactive"], false))
+        val frame = Frame(rev, linesOf(d["lines"]), bool(d["overlay"], false), bool(d["interactive"], false), str(d["blocked"]))
         frames[id] = frame
         when (mode) {
             "widget" -> {
@@ -162,7 +169,7 @@ class ExtUiReducer {
                 if (widgetSurface[key] == id) setWidget(key, frame.lines, widgetPlacement[key])
             }
             "header", "footer" -> if (slotSurface[mode] == id) setSlot(mode, ExtPanel(mode, frame.lines))
-            "custom" -> state = state.copy(custom = ExtCustom(id, frame.overlay, frame.interactive, frame.lines))
+            "custom" -> state = state.copy(custom = ExtCustom(id, frame.overlay, frame.interactive, frame.lines, frame.blocked))
         }
     }
 

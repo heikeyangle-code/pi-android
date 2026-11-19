@@ -149,6 +149,7 @@ fun SessionsScreen(
     initialView: SessionsView = SessionsView.List,
 ) {
     val list by session.sessionList.collectAsState()
+    val cwdMissing by session.cwdMissing.collectAsState()
     val state by session.state.collectAsState()
     var treeReselect by remember { mutableStateOf<String?>(null) }
 
@@ -583,6 +584,31 @@ fun SessionsScreen(
                     },
                 )
                 PiDialogAction(label = "取消", primary = false, onClick = { confirming = null })
+            }
+        }
+    }
+
+    // 官方 `/resume` 的缺失 cwd 流程（`session-cwd.js`）：会话记录的目录在这台设备上不存在时先问，
+    // 再按用户的选择以当前工作区重试或分支。状态在 VM（`cwdMissing`），这里只画确认框。
+    val missingPrompt = cwdMissing
+    if (missingPrompt != null) {
+        PiDialog(onDismissRequest = { session.dismissCwdMissing() }) {
+            PiDialogTitle(
+                title = "原工作目录不可用",
+                glyph = "!",
+                glyphTone = PiTheme.palette.warning,
+            )
+            PiDialogBody(
+                buildString {
+                    append(missingPrompt.reason)
+                    missingPrompt.issue?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(it) }
+                    append("\n\n可在当前工作区继续打开，或分支一份新会话到当前工作区。")
+                },
+            )
+            PiDialogActions {
+                PiDialogAction(label = "取消", primary = false, onClick = { session.dismissCwdMissing() })
+                PiDialogAction(label = "继续打开", primary = false, onClick = { session.resolveCwdMissingContinue() })
+                PiDialogAction(label = "分支到此", primary = true, onClick = { session.resolveCwdMissingFork() })
             }
         }
     }

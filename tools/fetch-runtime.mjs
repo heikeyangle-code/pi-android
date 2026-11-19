@@ -604,7 +604,7 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *     100 → 120）、`grep` 工具加 `--no-config`、缩放图片先试更小的编码、会话写盘失败时回滚内存条目、
  *     路径比较在 Windows 上不分大小写（Linux guest 无影响）。读取器都不用动。
  */
-const PI_VERSION = "1.5.0";
+const PI_VERSION = "1.5.2";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

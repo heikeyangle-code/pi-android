@@ -37,6 +37,9 @@ data class OpenArgs(
     val builtins: Map<String, Boolean> = emptyMap(),
     /** null = 让宿主按 pi 的信任库决定；true/false = 用户已决定。 */
     val trust: Boolean? = null,
+    val tools: List<String>? = null,
+    val excludeTools: List<String>? = null,
+    val noTools: String? = null,
 ) {
     fun toJson(): JsonObject = obj {
         val session = obj {
@@ -57,6 +60,9 @@ data class OpenArgs(
         if (resources.isNotEmpty()) put("resources", resources)
         if (builtins.isNotEmpty()) put("builtins", JsonObject(builtins.mapValues { JsonPrimitive(it.value) }))
         trust?.let { put("trust", JsonPrimitive(it)) }
+        tools?.let { put("tools", JsonArray(it.map(::JsonPrimitive))) }
+        excludeTools?.let { put("excludeTools", JsonArray(it.map(::JsonPrimitive))) }
+        noTools?.let { put("noTools", JsonPrimitive(it)) }
     }
 }
 
@@ -205,6 +211,16 @@ class HostCommands(
     suspend fun busSubscribe(names: List<String>) {
         client.call("bus.subscribe", obj { put("names", JsonArray(names.map { JsonPrimitive(it) })) })
     }
+
+    /** 调运行时 `SettingsManager` 的 setter（`settings.set`），改完立刻 flush 并广播 `settings.changed`。 */
+    suspend fun settingsSet(method: String, params: List<JsonElement> = emptyList()): JsonObject =
+        client.callObject("settings.set", obj {
+            put("method", JsonPrimitive(method))
+            put("params", JsonArray(params))
+        })
+
+    /** 让运行中会话的 `SettingsManager` 从盘上重读 `settings.json`（`settings.reload`）。 */
+    suspend fun settingsReload(): JsonObject = client.callObject("settings.reload")
 
     // ---- ui 回路 ----
 

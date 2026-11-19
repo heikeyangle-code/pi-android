@@ -208,6 +208,12 @@ data class PiLaunchOptions(
      * heuristic (mtime), so the exact answer wins.
      */
     val continueMostRecent: Boolean = false,
+    /** SDK `tools` whitelist (non-null = emitted into `session.open` `args.tools`). */
+    val tools: List<String>? = null,
+    /** SDK `excludeTools` blacklist (non-null = emitted into `session.open` `args.excludeTools`). */
+    val excludeTools: List<String>? = null,
+    /** SDK `noTools`: `"all"` / `"builtin"`, or null when omitted. */
+    val noTools: String? = null,
 ) {
 
     /**
@@ -328,6 +334,9 @@ data class PiLaunchOptions(
             resumeSessionPath: String? = null,
             /** [PiLaunchOptions.continueMostRecent], normally the `app.sessions.resumeLast` switch. */
             continueMostRecent: Boolean = false,
+            tools: List<String>? = null,
+            excludeTools: List<String>? = null,
+            noTools: String? = null,
         ): PiLaunchOptions {
             val parsed = ExtensionFlagArgs.parse(extensionArgs)
             return PiLaunchOptions(
@@ -343,6 +352,9 @@ data class PiLaunchOptions(
                 continueSessionId = continueSessionId,
                 resumeSessionPath = resumeSessionPath,
                 continueMostRecent = continueMostRecent,
+                tools = tools,
+                excludeTools = excludeTools,
+                noTools = noTools,
             )
         }
 

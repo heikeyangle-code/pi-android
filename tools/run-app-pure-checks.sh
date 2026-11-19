@@ -486,7 +486,6 @@ run_harness session-replay-cost \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
 
@@ -513,7 +512,6 @@ run_harness session-entry-detail \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
 
@@ -551,7 +549,6 @@ run_harness image-attachment-budget \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
 
@@ -996,7 +993,7 @@ run_harness markdown-image-tap \
   app.pi.ui.render.PiMarkdownImageTapCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiMarkdownImageTapCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt"
+  $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
 # （这里曾经有一项 `image-links`，验的是"裸图片 URL → `![](...)`"的改写规则。用户裁定撤销：
 # `![]()` 才是图、链接就是链接，所以那个模块与这一项一起删掉了，见
@@ -1405,7 +1402,6 @@ run_harness host-client \
   "$ROOT/app/src/main/kotlin/app/pi/host/PiHostClient.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
@@ -1445,7 +1441,6 @@ run_harness host-session \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostCommands.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostEngineApi.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/host/HostUiBridge.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/ExtUiState.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAdvanced.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/host/HostAuth.kt" \

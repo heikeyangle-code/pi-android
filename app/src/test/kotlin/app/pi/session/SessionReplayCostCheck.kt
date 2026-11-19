@@ -1103,12 +1103,12 @@ fun main() {
     val viewModelText = if (viewModelFile != null && viewModelFile.isFile) viewModelFile.readText() else ""
     checkTrue("读到了 PiSessionViewModel.kt（读不到这一节就没有意义）", viewModelText.isNotEmpty())
     val newSessionBody = viewModelText
-        .substringAfter("fun newSession(parentSession: String? = null) {", "")
+        .substringAfter("fun newSession() {", "")
         .take(2000)
     checkTrue("找到了 newSession 的函数体", newSessionBody.isNotEmpty(), "marker not found")
     checkTrue(
         "没有引擎时「新建会话」排到 attach 之后，而不是丢给 call 的未就绪分支",
-        newSessionBody.contains("parkUntilAttached { newSession(parentSession) }"),
+        newSessionBody.contains("parkUntilAttached { newSession() }"),
     )
     // 顺序也要钉：排队必须在 `call` 之前，否则第一次点击仍然不执行（这正是那条缺陷）。
     val parkAt = newSessionBody.indexOf("parkUntilAttached {")

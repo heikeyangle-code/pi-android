@@ -13,7 +13,10 @@ export default function probe(pi) {
     render: () => [theme.fg("accent", `entry<${JSON.stringify(entry.data)}> expanded=${options.expanded} key=${typeof options.keyHint}`)],
     invalidate: () => {},
   }));
-  pi.registerMarkdownTransformer?.((markdown, context) => markdown.replaceAll("PROBE", `[${context.messageType}:${context.isStreaming}]`));
+  pi.registerMarkdownTransformer?.(
+    (markdown, context) => markdown.replaceAll("PROBE", `[${context.messageType}:${context.isStreaming}]`),
+    { messageTypes: ["user", "assistant", "assistant-thinking", "custom", "summary", "changelog"] },
+  );
 
   // 带自定义渲染器的工具：测 render.tool 把 renderCall / renderResult 渲成行，且同一次调用共享 state。
   pi.registerTool?.({
@@ -107,7 +110,7 @@ export default function probe(pi) {
         if (data === "\r" || data === "\n") resolve("entered");
       },
       dispose: () => {},
-    }));
+    }), { blocked: "probe-blocked" });
     ctx.ui.notify(`custom=${done}`);
   });
 }
