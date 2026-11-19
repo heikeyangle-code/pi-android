@@ -496,6 +496,11 @@ jobs:
       - name: Assert the committed session-tree fixture matches the pinned engine
         run: node tools/collect-tree-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
 
+      # 会话列表：宿主 `sessionlist.mjs` 与 Kotlin `SessionListModel.kt` 移植了 `/resume` 选择器的树与行文字，
+      # 标准答案由 SDK 自己的 SessionSelectorComponent 生成。
+      - name: Assert the committed session-list fixture matches the pinned engine
+        run: node tools/collect-session-list-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
+
   # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
   # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,
   # the outer comment stays open, and the compiler swallows the rest of the file. The

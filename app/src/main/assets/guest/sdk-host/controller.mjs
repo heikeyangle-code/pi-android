@@ -351,8 +351,13 @@ export class Controller {
    */
   async reloadSession() {
     const session = this.requireSession();
+    // 官方 `handleReloadCommand`（interactive-mode.js）先拦两种情况：流式中 / 压缩中不重载，只提示。
+    // `AgentSession.reload()` 自己没有这道闸，重建 runner 会撞上正在跑的一轮，所以所有入口共用这里的判断。
+    if (session.isStreaming) return { reloaded: false, reason: "Wait for the current response to finish before reloading." };
+    if (session.isCompacting) return { reloaded: false, reason: "Wait for compaction to finish before reloading." };
     try {
       await session.reload();
+      return { reloaded: true };
     } finally {
       // 失败也发：reload 中途抛错时 runner 可能已经换了一半，让 App 读到真实现状而不是旧缓存。
       this.hub.emit("catalog.changed", { reason: "reload" });

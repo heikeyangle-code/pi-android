@@ -10,7 +10,7 @@
  */
 import { dirname, join, resolve } from "node:path";
 import { createServer } from "node:http";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { startHost } from "./client.mjs";
 
@@ -274,12 +274,16 @@ try {
     mkEntry("e2", "e1", "assistant", "这样用"),
     mkEntry("e3", "e2", "user", "再来一个分支问题"),
   ].map((x) => JSON.stringify(x)).join("\n") + "\n");
-  const listed = await h.call("session.list", { all: true });
-  const row = listed.data.sessions?.find((x) => x.id === "lib-fixture-1");
-  expect("session.list 能列出（宿主用 SessionManager，不靠 App 扫盘）且默认不带全文", !!row && !("allMessagesText" in row), JSON.stringify(listed.error ?? listed.data).slice(0, 200));
-  const found = await h.call("session.search", { query: "ZEBRA-quartz", all: true });
-  expect("session.search 全文命中（大小写不敏感）并带片段", found.ok && found.data.matches.some((m) => m.session.id === "lib-fixture-1" && m.snippet.includes("zebra-quartz")), JSON.stringify(found.error ?? found.data).slice(0, 200));
-  expect("session.search 空词 → bad_args", (await h.call("session.search", { query: " " })).error?.code === "bad_args");
+  const listed = await h.call("session.list", { scope: "all", refresh: true });
+  const row = listed.data.rows?.find((x) => x.id === "lib-fixture-1");
+  expect("session.list 能列出（宿主用 SessionManager，不靠 App 扫盘）且不带全文", !!row && !("allMessagesText" in row) && row.depth === 0, JSON.stringify(listed.error ?? listed.data).slice(0, 200));
+  const found = await h.call("session.list", { scope: "all", sortMode: "relevance", query: "ZEBRA-quartz" });
+  expect("session.list 搜索（官方 filterAndSortSessions）命中且大小写不敏感", found.ok && found.data.rows.length === 1 && found.data.rows[0].id === "lib-fixture-1", JSON.stringify(found.error ?? found.data).slice(0, 200));
+  const badRe = await h.call("session.list", { scope: "all", query: "re:(" });
+  expect("session.list 坏正则 → 空表并带 queryError（官方此时返回空）", badRe.ok && badRe.data.rows.length === 0 && !!badRe.data.queryError, JSON.stringify(badRe.data).slice(0, 200));
+  expect("session.list 非法 sortMode → bad_args", (await h.call("session.list", { sortMode: "x" })).error?.code === "bad_args");
+  const cur = await h.call("session.list", { scope: "all", sortMode: "recent" });
+  expect("session.list 标出当前会话（isCurrent）", cur.ok && cur.data.rows.filter((r) => r.isCurrent).length <= 1 && cur.data.rows.every((r) => typeof r.cwdShort === "string"), JSON.stringify(cur.data?.rows?.map((r) => r.isCurrent)));
   const sum = await h.call("session.read", { path: libFile });
   expect("session.read 摘要（不切换会话）", sum.ok && sum.data.entryCount === 3 && sum.data.leafId === "e3", JSON.stringify(sum.error ?? sum.data).slice(0, 200));
   const br = await h.call("session.read", { path: libFile, mode: "branch", fromId: "e2" });
@@ -289,11 +293,12 @@ try {
   expect("session.read 拒绝会话目录外的路径", (await h.call("session.read", { path: "/etc/passwd" })).error?.code === "bad_args");
   expect("session.read 拒绝 .. 逃逸", (await h.call("session.read", { path: join(dir, "..", "..", "auth.json") })).error?.code === "bad_args");
   const rn = await h.call("session.rename", { path: libFile, name: "库里改的名" });
-  const row2 = (await h.call("session.list", { all: true })).data.sessions.find((x) => x.id === "lib-fixture-1");
+  const row2 = (await h.call("session.list", { scope: "all" })).data.rows.find((x) => x.id === "lib-fixture-1");
   expect("session.rename 非当前会话", rn.ok && row2?.name === "库里改的名", JSON.stringify(row2));
   expect("session.delete 不许删当前会话", (await h.call("session.delete", { path: curFile })).error?.code === "busy");
   const del = await h.call("session.delete", { path: libFile });
-  expect("session.delete", del.ok && !existsSync(libFile));
+  expect("session.delete（官方：trash 不可用则 unlink）并报告 method", del.ok && !existsSync(libFile) && ["trash", "unlink"].includes(del.data.method), JSON.stringify(del.data));
+  expect("删除后缓存作废：列表不再有它", !(await h.call("session.list", { scope: "all" })).data.rows.some((r) => r.id === "lib-fixture-1"));
   expect("session.delete 不存在 → not_found", (await h.call("session.delete", { path: libFile })).error?.code === "not_found");
   expect("session.label 条目不存在 → not_found", (await h.call("session.label", { entryId: "nope", label: "x" })).error?.code === "not_found");
   const pathNow = await h.call("session.path");
@@ -678,12 +683,12 @@ try {
   expect("session.new{cwd} 在另一个项目里开新会话", moved.ok && there.cwd === other && there.sessionFile !== here0.sessionFile, JSON.stringify(moved.error ?? there.cwd));
   // 与 pi 自己的新会话一样：第一条 assistant 消息之前不落盘 —— 没发过话就不会在会话目录里留下文件。
   expect("新会话在第一条消息之前不落盘（不留空会话文件）", !existsSync(there.sessionFile), there.sessionFile);
-  const allNow = await h.call("session.list", { all: true });
-  expect("session.list 里没有它（pi 列表里没有空会话）", allNow.ok && !allNow.data.sessions.some((x) => x.path === there.sessionFile), JSON.stringify(allNow.data?.sessions?.map((x) => x.path)));
+  const allNow = await h.call("session.list", { scope: "all", refresh: true });
+  expect("session.list 里没有它（pi 列表里没有空会话）", allNow.ok && !allNow.data.rows.some((x) => x.path === there.sessionFile), JSON.stringify(allNow.data?.rows?.map((x) => x.path)));
   const parented = await h.call("session.new", { cwd: other + "-x", parentSession: here0.sessionFile });
   expect("跨项目 + parentSession → 如实拒绝", parented.error?.code === "bad_args", JSON.stringify(parented.error ?? parented.data));
-  const listedHere = await h.call("session.list", {});
-  expect("session.list（非 all）跟着当前 cwd 走", listedHere.ok && listedHere.data.sessions.every((x) => x.cwd === other), JSON.stringify(listedHere.data?.sessions?.map((x) => x.cwd)));
+  const listedHere = await h.call("session.list", { scope: "current", refresh: true });
+  expect("session.list（current）跟着当前 cwd 走", listedHere.ok && listedHere.data.rows.every((x) => x.cwd === other), JSON.stringify(listedHere.data?.rows?.map((x) => x.cwd)));
   const nocwd = await h.call("session.new", { cwd: join(h.root, "nope") });
   expect("cwd 不存在 → bad_args，当前会话不动", nocwd.error?.code === "bad_args" && (await h.call("session.snapshot")).data.cwd === other, JSON.stringify(nocwd.error));
   const homeFile = join(dir, "2026-02-01T00-00-00-000Z_home-fixture.jsonl");
@@ -716,6 +721,28 @@ try {
     expect("到助手消息：叶子就是它自己，没有 editorText", jump.ok && !("editorText" in jump.data) && (await h.call("session.tree")).data.leafId === "a2", JSON.stringify(jump.error ?? jump.data));
     const missing = await h.call("session.navigate", { targetId: "nope" });
     expect("不存在的 id → 报错并带 pi 的原话", !missing.ok && /not found/.test(missing.error?.message ?? ""), JSON.stringify(missing.error ?? missing.data));
+  }
+
+  // ---- 7z. 会话列表对照官方组件 ------------------------------------------
+  // list.json 由真 SessionSelectorComponent 生成（tools/collect-session-list-fixtures.mjs）；
+  // 这里用宿主的 viewOf（移植的 buildSessionTree / flattenSessionTree + 官方 filterAndSortSessions）
+  // 喂同一批会话，要求行序与树元数据逐项相同。
+  {
+    const { viewOf } = await import(pathToFileURL(join(hostDir, "commands/sessionlist.mjs")).href);
+    const dist = (...p) => pathToFileURL(join(pi, "dist", ...p)).href;
+    const search = await import(dist("modes/interactive/components/session-selector-search.js"));
+    const paths = await import(dist("utils/paths.js"));
+    const o = { ...search, ...paths };
+    const gold = JSON.parse(readFileSync(join(repo, "app/src/test/resources/pi-session-list-fixtures/list.json"), "utf8"));
+    const now = Date.now();
+    const infos = gold.sessions.map((x) => ({ ...x, created: new Date(now - x.agoMs - 1000), modified: new Date(now - x.agoMs), allMessagesText: `${x.name ?? ""} ${x.firstMessage}` }));
+    for (const c of gold.cases) {
+      const pool = c.scope === "current" ? infos.filter((i) => i.cwd === gold.cwd) : infos;
+      const got = viewOf(o, pool, { sortMode: c.sort, nameFilter: c.named, query: c.query });
+      const same = JSON.stringify(got.map((n) => n.session.path)) === JSON.stringify(c.paths)
+        && JSON.stringify(got.map((n) => ({ depth: n.depth, isLast: n.isLast, ancestorContinues: n.ancestorContinues }))) === JSON.stringify(c.nodes);
+      expect(`会话列表对照官方组件：${c.name}`, same, JSON.stringify(got.map((n) => n.session.id)));
+    }
   }
 
   // ---- 8. 退出 ----------------------------------------------------------

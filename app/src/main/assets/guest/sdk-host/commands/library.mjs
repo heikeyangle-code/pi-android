@@ -6,43 +6,22 @@
  * appendLabelChange …，宿主只做适配：路径必须在 sessionDir 之内（宿主不是通用文件读写口），
  * 读用 `SessionManager.open`（只读，不追加），写只做 SDK 提供的追加类写入或删文件。
  *
- *   session.search   全文搜索（SessionInfo.allMessagesText）
  *   session.read     只读预览任意会话：摘要 / 当前分支 / 条目分页
  *   session.rename   改名（当前会话走 setSessionName，其他会话追加 session_info）
- *   session.delete   删文件（不许删当前会话）
+ *   session.delete   删会话（官方 deleteSessionFile：先 trash，再 unlink；不许删当前会话）
+ *
+ * 列表 / 搜索 / 排序在 sessionlist.mjs（`session.list`）。
  *   session.label    给条目打 / 清标签（会话树书签）
  *   session.path     当前分支（叶到根）的条目
  *   session.contextEdit  追加「上下文编辑」：隐藏或替换更早的条目对模型的可见内容
  */
 
 import { join, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { unlink } from "node:fs/promises";
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { withState } from "../state.mjs";
-
-const SNIPPET = 80;
-
-/**
- * 列会话。`session.open` 总是把一个显式目录交给 SessionManager（App 传 --session-dir，否则 <agentDir>/sessions），
- * 所以会话文件平铺在 `controller.sessionDir` 里：用 `listAll(dir)`。`all=false` 只要当前 cwd 的。
- */
-export function listInfos(sdk, controller, all) {
-  const dir = controller.sessionDir ?? controller.cfg.sessionDir;
-  return all ? sdk.SessionManager.listAll(dir) : sdk.SessionManager.list(controller.cwd, dir);
-}
-
-/** 去掉大字段，列表行不需要整段对话文本。 */
-function slim(info) {
-  const { allMessagesText, ...rest } = info;
-  return rest;
-}
-
-function snippetOf(text, needle) {
-  const i = text.toLowerCase().indexOf(needle);
-  if (i < 0) return "";
-  const from = Math.max(0, i - SNIPPET / 2);
-  return (from > 0 ? "…" : "") + text.slice(from, from + SNIPPET + needle.length).replace(/\s+/g, " ");
-}
 
 export function register(reg, { controller }) {
   const sdk = () => {
@@ -61,24 +40,6 @@ export function register(reg, { controller }) {
     const f = controller.session?.sessionManager?.getSessionFile?.();
     return f ? resolve(f) : undefined;
   };
-
-  // 覆盖 session.list 的返回：默认不带 allMessagesText（手机上列几百个会话，每个带全文是浪费）
-  // —— session.list 仍在 session.mjs 里，这里只加 search。
-  reg.add("session.search", async (args) => {
-    const query = str(args, "query").trim().toLowerCase();
-    if (!query) throw bad("query 不能为空");
-    const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 500);
-    const s = sdk();
-    const infos = await listInfos(s, controller, bool(args, "all", false));
-    const matches = [];
-    for (const info of infos) {
-      const hay = `${info.name ?? ""}\n${info.firstMessage ?? ""}\n${info.allMessagesText ?? ""}`;
-      if (!hay.toLowerCase().includes(query)) continue;
-      matches.push({ session: slim(info), snippet: snippetOf(hay, query) });
-      if (matches.length >= limit) break;
-    }
-    return { query, matches, total: infos.length };
-  });
 
   reg.add("session.read", (args) => {
     const path = inside(str(args, "path"));
@@ -103,23 +64,36 @@ export function register(reg, { controller }) {
     const path = inside(str(args, "path"));
     if (path === currentFile()) {
       controller.requireSession().setSessionName(name);
+      controller.invalidateSessionList?.();
       return withState(controller, { path });
     }
     const sm = sdk().SessionManager.open(path, sessionDir());
     sm.appendSessionInfo(name);
+    controller.invalidateSessionList?.();
     return { path };
   });
 
+  // 官方 `session-selector.js` 的 `deleteSessionFile`：先试 `trash` 命令；它成功、或文件已不在，算成功；
+  // 否则 unlink。返回 method 让 App 说「已移到回收站」还是「已删除」（官方的两句提示）。
   reg.add("session.delete", async (args) => {
     const path = inside(str(args, "path"));
     if (path === currentFile()) throw new HostError(ERR.BUSY, "不能删除当前会话");
-    try {
-      await unlink(path);
-    } catch (error) {
-      if (error?.code === "ENOENT") throw new HostError(ERR.NOT_FOUND, `会话文件不存在：${path}`);
-      throw error;
+    if (!existsSync(path)) throw new HostError(ERR.NOT_FOUND, `会话文件不存在：${path}`);
+    const trash = spawnSync("trash", path.startsWith("-") ? ["--", path] : [path], { encoding: "utf-8" });
+    let method;
+    if (trash.status === 0 || !existsSync(path)) {
+      method = "trash";
+    } else {
+      try {
+        await unlink(path);
+        method = "unlink";
+      } catch (error) {
+        const hint = [trash.error?.message, trash.stderr?.trim().split("\n")[0]].filter(Boolean).join(" · ");
+        throw new HostError(ERR.REJECTED, `${error?.message ?? error}${hint ? ` (trash: ${hint.slice(0, 200)})` : ""}`);
+      }
     }
-    return { path };
+    controller.invalidateSessionList?.();
+    return { path, method };
   });
 
   reg.add("session.label", (args) => {

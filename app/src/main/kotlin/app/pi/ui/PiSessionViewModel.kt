@@ -47,8 +47,10 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
-import app.pi.session.SessionHit
 import app.pi.session.SessionLibrary
+import app.pi.session.SessionListQuery
+import app.pi.session.SessionScope
+import app.pi.session.SessionSort
 import app.pi.session.SessionSummary
 import app.pi.session.ResumeTarget
 import app.pi.session.SessionExportNaming
@@ -662,7 +664,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 不再自己扫目录、解析 JSONL（docs/sdk-host/sessions.md）。需要引擎已打开。
      */
     private val sessionLibrary: SessionLibrary by lazy {
-        SessionLibrary(host.paths().agentDir, host.guestAgentDir) { session?.commands }
+        SessionLibrary(
+            host.paths().agentDir,
+            host.guestAgentDir,
+            java.io.File(getApplication<Application>().filesDir, "pi/session-list-cache.json"),
+        ) { session?.commands }
     }
 
     /**
@@ -703,105 +709,152 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var lastMentionFailure: String? = null
 
-    private val _sessions = MutableStateFlow<List<SessionSummary>>(emptyList())
-    val sessions: StateFlow<List<SessionSummary>> = _sessions.asStateFlow()
+    /**
+     * 会话列表（官方 `/resume` 选择器）的整个状态。排序 / 成树 / 过滤 / 搜索都由宿主用官方实现算好
+     * （`commands/sessionlist.mjs`），这里只存「现在是什么视图、手上是哪些行、读到哪了」。
+     *
+     * 对照 `session-selector.js`：
+     *  - [rows] 与 [loading] 分开：加载中也先画已有的行（官方 `onProgress` 的部分结果、上次的缓存），
+     *    读完无声替换 —— 已经有行可看时不盖一层转圈；
+     *  - [loaded] / [loadTotal] 就是官方头部的 `Loading n/m`；
+     *  - [failed] 只在这一次没读到**且手上没有可显示的行**时才让界面说「读不到」，不把「没读到」说成「没有会话」；
+     *  - [queryError]：搜索语法错（坏正则）。官方此时列表为空，这里多带一句原因。
+     */
+    data class SessionListState(
+        val query: SessionListQuery = SessionListQuery(),
+        val showPath: Boolean = false,
+        val rows: List<SessionSummary> = emptyList(),
+        /** 当前范围内、过滤前的会话总数（空态要区分「一个都没有」与「被过滤光了」）。 */
+        val total: Int = 0,
+        val loading: Boolean = false,
+        val loaded: Int = 0,
+        val loadTotal: Int = 0,
+        /** [rows] 是上次存下来的（宿主还没读完），读完会换掉。 */
+        val fromCache: Boolean = false,
+        val failed: Boolean = false,
+        val queryError: String? = null,
+    )
+
+    private val _sessionList = MutableStateFlow(SessionListState())
+    val sessionList: StateFlow<SessionListState> = _sessionList.asStateFlow()
+
+    /** 每发一次请求 +1；旧请求回来时发现号变了就丢弃（官方 `isActive` 守卫）。主线程读写。 */
+    private var sessionListGeneration = 0L
+    private var sessionListJob: kotlinx.coroutines.Job? = null
+    private var sessionListPrimed = false
 
     /**
-     * Whether a [refreshSessions] scan is in flight **and has nothing to show yet**.
-     *
-     * The scan itself is cached per file and serialised inside [PiSessionStore], but
-     * the *first* one still walks every session file, which is seconds on a phone.
-     * Without this flag the screen had exactly two states — the list and "还没有会话"
-     * — so the honest "still reading" moment rendered as **"you have no sessions"**,
-     * and then the list appeared on its own.
-     *
-     * Deliberately false once [sessions] is non-empty: a refresh of a list that is
-     * already on screen must not replace it with a spinner.
+     * 冷启动：宿主要几秒才起得来、SDK 还要逐个解析会话文件，这段时间先画**上次的列表**
+     * （`SessionLibrary.writeCache`）。只在手上还没有行时用；宿主读完会换成新的。
      */
-    private val _sessionsLoading = MutableStateFlow(false)
-    val sessionsLoading: StateFlow<Boolean> = _sessionsLoading.asStateFlow()
-
-    /**
-     * 最近一次会话列表读取**失败**了。
-     *
-     * 为什么要有这个状态：旧写法是 `runCatching { sessionLibrary.list() }.getOrDefault(emptyList())`
-     * —— 读不到就把列表**换成空**，而 `sessionsLoading` 那一刻已经是 false，于是 `SessionsScreen`
-     * 落到「还没有会话」那一支：**一句关于用户数据、却没有校验过的断言**。会话屏本来已经区分了
-     * 「正在读取」，缺的就是这第三种状态。
-     *
-     * 屏幕只在「这次失败**且**手上没有可显示的行」时用它（见 `SessionsScreen` 的三支空态）：
-     * 刷新失败而手上还有上一次读到的行时，列表照旧显示，不新增任何可见变化。
-     *
-     * 失败原因不外传：异常类名与消息是设备/实现的细节（可能是权限、可能是 IO），用户要的是
-     * 「刚才那次没读到」与「可以再试一次」，所以这是一个布尔而不是一个字符串。`PiSessionStore.list()`
-     * 自己那条「`listFiles()` 为 null 与目录不存在都算空」的裁决不动（它写在那个对象的 KDoc 里，
-     * 是设计决定，不是这里要改的事）。
-     */
-    private val _sessionsFailed = MutableStateFlow(false)
-    val sessionsFailed: StateFlow<Boolean> = _sessionsFailed.asStateFlow()
-
-    // 合并连发（与 refreshTree 同一个理由）：进入会话屏的 LaunchedEffect、刷新钮、
-    // 回合尾的事件流会叠在一起 —— N 次 = N 遍全目录扫描 + N 次 state 发布。打开
-    // 会话树时的「疯狂刷新好几秒」里有一半是它；飞行中的要求折叠成一次补扫。
-    private var sessionsRefreshInFlight = false
-    private var sessionsRefreshQueued = false
-
-    /**
-     * 会话正文的全文搜索结果（宿主 `session.search`，SDK 的 `SessionInfo.allMessagesText`）。
-     * 只含用户与助手的文字，**不含工具结果**（与桌面 pi 一致）。查询少于 2 个字符不搜。
-     */
-    private val _searchHits = MutableStateFlow<List<SessionHit>>(emptyList())
-    val searchHits: StateFlow<List<SessionHit>> = _searchHits.asStateFlow()
-    private var searchJob: kotlinx.coroutines.Job? = null
-
-    fun searchSessionText(query: String) {
-        searchJob?.cancel()
-        val q = query.trim()
-        if (q.length < 2) {
-            _searchHits.value = emptyList()
-            return
-        }
-        searchJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(250) // 防抖：边打字边搜会让宿主读几百个文件
-            val read = runCatching { sessionLibrary.search(q) }
-            read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
-            // 失败（引擎没开等）就当没有命中：本地标题/名字筛选照常工作，不弹错。
-            _searchHits.value = read.getOrDefault(emptyList())
+    private fun primeSessionList() {
+        if (sessionListPrimed) return
+        sessionListPrimed = true
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) { sessionLibrary.readCache(_sessionList.value.query) } ?: return@launch
+            if (_sessionList.value.rows.isEmpty() && !_sessionList.value.loading) {
+                _sessionList.value = _sessionList.value.copy(rows = cached.rows, total = cached.total, fromCache = true)
+            }
         }
     }
 
-    fun refreshSessions() {
-        if (sessionsRefreshInFlight) {
-            sessionsRefreshQueued = true
-            return
+    /** 重读磁盘（进入这一屏、变更之后、手动刷新）。 */
+    fun refreshSessions() = loadSessionList(refresh = true)
+
+    /** 切范围 / 排序 / 命名过滤：宿主有缓存就只重算视图，没有（第一次进这个范围）才读磁盘。 */
+    fun setSessionScope(scope: SessionScope) = changeSessionQuery(_sessionList.value.query.copy(scope = scope))
+    fun setSessionSort(sort: SessionSort) = changeSessionQuery(_sessionList.value.query.copy(sort = sort))
+    fun setSessionNamedOnly(named: Boolean) = changeSessionQuery(_sessionList.value.query.copy(namedOnly = named))
+    fun toggleSessionPath() {
+        _sessionList.value = _sessionList.value.copy(showPath = !_sessionList.value.showPath)
+    }
+
+    private var sessionQueryJob: kotlinx.coroutines.Job? = null
+
+    /** 搜索词（官方语法：`re:<正则>`、`"短语"`、模糊词）。输入防抖，宿主读的是缓存，所以很快。 */
+    fun setSessionQuery(text: String) {
+        val next = _sessionList.value.query.copy(query = text)
+        _sessionList.value = _sessionList.value.copy(query = next)
+        sessionQueryJob?.cancel()
+        sessionQueryJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(180)
+            loadSessionList(refresh = false)
         }
-        sessionsRefreshInFlight = true
-        viewModelScope.launch {
-            _sessionsLoading.value = _sessions.value.isEmpty()
-            try {
-                val read = runCatching { sessionLibrary.list() }
-                // 协程被取消不是「读取失败」：照旧抛出去（`finally` 仍然会清 loading），否则一次
-                // 正常的取消会被写成一条「读不到会话列表」。
-                read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
-                read.fold(
-                    onSuccess = { rows ->
-                        _sessions.value = rows
-                        _sessionsFailed.value = false
-                    },
-                    onFailure = {
-                        // **保留手上那份列表**：读失败不该把已经显示出来的行也拿走。
-                        _sessionsFailed.value = true
-                    },
-                )
-            } finally {
-                _sessionsLoading.value = false
-                sessionsRefreshInFlight = false
-                if (sessionsRefreshQueued) {
-                    sessionsRefreshQueued = false
-                    refreshSessions()
+    }
+
+    private fun changeSessionQuery(next: SessionListQuery) {
+        val prev = _sessionList.value.query
+        if (next == prev) return
+        // 范围变了：手上的行属于另一个范围，先清空（官方切范围时 `setSessions(别的范围的行)`），
+        // 缓存里有同一视图就先画缓存。
+        val scopeChanged = next.scope != prev.scope
+        _sessionList.value = _sessionList.value.copy(
+            query = next,
+            rows = if (scopeChanged) emptyList() else _sessionList.value.rows,
+            total = if (scopeChanged) 0 else _sessionList.value.total,
+            fromCache = false,
+        )
+        if (scopeChanged) {
+            viewModelScope.launch {
+                val cached = withContext(Dispatchers.IO) { sessionLibrary.readCache(next) }
+                if (cached != null && _sessionList.value.query == next && _sessionList.value.rows.isEmpty()) {
+                    _sessionList.value = _sessionList.value.copy(rows = cached.rows, total = cached.total, fromCache = true)
                 }
             }
         }
+        loadSessionList(refresh = false)
+    }
+
+    private fun loadSessionList(refresh: Boolean) {
+        val generation = ++sessionListGeneration
+        val requested = _sessionList.value.query
+        sessionListJob?.cancel()
+        _sessionList.value = _sessionList.value.copy(loading = true, loaded = 0, loadTotal = 0)
+        sessionListJob = viewModelScope.launch {
+            val read = runCatching { sessionLibrary.list(requested, refresh) }
+            // 取消不是「读失败」；被新请求取代也不是（宿主对被取代的加载回 busy）。
+            read.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            if (generation != sessionListGeneration) return@launch
+            read.fold(
+                onSuccess = { page ->
+                    _sessionList.value = _sessionList.value.copy(
+                        rows = page.rows,
+                        total = page.total,
+                        loading = false,
+                        fromCache = false,
+                        failed = false,
+                        queryError = page.queryError,
+                    )
+                    withContext(Dispatchers.IO) { sessionLibrary.writeCache(requested, page.raw, page.total) }
+                },
+                onFailure = {
+                    // **保留手上那份列表**：读失败不该把已经显示出来的行也拿走。
+                    _sessionList.value = _sessionList.value.copy(loading = false, failed = true)
+                },
+            )
+        }
+    }
+
+    /** 离开列表时中止宿主的加载（官方 `cancelLoads`）：手机上不让一次没人看的全量读取占着 CPU。 */
+    fun cancelSessionListLoad() {
+        if (!_sessionList.value.loading) return
+        sessionListGeneration++
+        sessionListJob?.cancel()
+        _sessionList.value = _sessionList.value.copy(loading = false)
+        viewModelScope.launch { sessionLibrary.cancelLoad() }
+    }
+
+    /** 宿主的 `sessions.progress`：官方 `onProgress(loaded, total, partial)`。 */
+    private fun onSessionLoadProgress(p: app.pi.session.SessionLoadProgress) {
+        val cur = _sessionList.value
+        if (!cur.loading || p.scope != cur.query.scope) return
+        _sessionList.value = cur.copy(
+            loaded = p.loaded,
+            loadTotal = p.total,
+            // 部分结果只在还没有「新鲜」行可看时采用（有缓存行时它会让列表在读的过程中跳）。
+            rows = if (p.rows != null && (cur.rows.isEmpty() || cur.fromCache)) p.rows else cur.rows,
+            fromCache = if (p.rows != null && (cur.rows.isEmpty() || cur.fromCache)) false else cur.fromCache,
+        )
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -2244,6 +2297,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     // 官方弹窗：项目里有要信任才加载的东西、又没人表态。事件只发一次，
                     // 错过（界面还没挂上）就再也问不到，所以状态存在这里，由 [ProjectTrustHost] 显示。
                     refreshTrustPrompt()
+                }
+                if (ev.name == "sessions.progress") {
+                    sessionLibrary.parseProgress(ev.data)?.let(::onSessionLoadProgress)
                 }
                 if (ev.name == "catalog.changed") {
                     // 宿主重载了（扩展 runner 重建、技能 / 模板 / 主题重读）：命令表、工具表、资源都可能变了。
@@ -5132,14 +5188,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun deleteSession(summary: SessionSummary) {
         viewModelScope.launch {
-            val removed = withContext(Dispatchers.IO) {
-                sessionLibrary.delete(summary.file)
-            }
-            if (removed) {
-                pushNotice("已删除：${summary.displayName}", Notice.Tone.Info)
+            val outcome = withContext(Dispatchers.IO) { sessionLibrary.delete(summary.file) }
+            if (outcome.ok) {
+                // 官方两句提示：Session moved to trash / Session deleted（trash 命令可用与否决定）。
+                pushNotice(
+                    (if (outcome.method == "trash") "已移到回收站：" else "已删除：") + summary.displayName,
+                    Notice.Tone.Info,
+                )
+                // 先把这一行从手上的列表拿掉（官方 `onDeleteSession` 同样先过滤再重读），再让宿主重读。
+                _sessionList.value = _sessionList.value.copy(
+                    rows = _sessionList.value.rows.filter { it.file != summary.file },
+                    total = (_sessionList.value.total - 1).coerceAtLeast(0),
+                )
                 refreshSessions()
             } else {
-                pushNotice("删除失败：${summary.file.name}", Notice.Tone.Warning)
+                pushNotice("删除失败：${outcome.error ?: summary.file.name}", Notice.Tone.Warning)
             }
         }
     }
@@ -6206,6 +6269,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     init {
         val resolved = WorkspaceStore.reconcile(getApplication())
         publishWorkspaceState(resolved.name, resolved.note, bumped = resolved.note != null)
+        primeSessionList()
     }
 
     /**

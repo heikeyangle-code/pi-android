@@ -1503,6 +1503,13 @@ run_harness tree-model \
   "$ROOT/app/src/main/kotlin/app/pi/session/tree/TreeModel.kt" \
   $(find "$ROOT/rpc/src/main/kotlin" -name '*.kt' | sort | tr '\n' ' ')
 
+# app.pi.session.list.SessionListModel: 会话列表行文字（树前缀 / 年龄 / 右侧文字 / 显示文本），pi `/resume`
+# （session-selector.js）的移植。对照 SDK 真组件生成的标准答案（pi-session-list-fixtures/list.json）逐行比对。
+run_harness session-list-model \
+  app.pi.session.list.SessionListModelCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/list/SessionListModelCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/list/SessionListModel.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

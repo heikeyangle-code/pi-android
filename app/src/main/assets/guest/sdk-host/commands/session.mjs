@@ -9,7 +9,6 @@ import { join, resolve } from "node:path";
 import { DEFERRED } from "./registry.mjs";
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { snapshotOf, withState } from "../state.mjs";
-import { listInfos } from "./library.mjs";
 
 function checkedCwd(cwd) {
   const abs = resolve(cwd);
@@ -149,15 +148,6 @@ export function register(reg, { controller }) {
   reg.add("session.stats", () => controller.requireSession().getSessionStats());
   reg.add("session.lastText", () => ({ text: controller.requireSession().getLastAssistantText() ?? null }));
   reg.add("session.forkMessages", () => ({ messages: controller.requireSession().getUserMessagesForForking() }));
-  reg.add("session.list", async (args) => {
-    // 列会话：直接用 SessionManager，不再让 App 去读目录。
-    const sdk = controller.sdk;
-    if (!sdk) throw new HostError(ERR.NOT_OPEN, "先 session.open");
-    const infos = await listInfos(sdk, controller, bool(args, "all", false));
-    // 默认不带 allMessagesText（整段对话文本，列表行用不上；全文搜索走 session.search）。
-    return { sessions: bool(args, "text", false) ? infos : infos.map(({ allMessagesText, ...rest }) => rest) };
-  });
-
   // ---- 写 -----------------------------------------------------------------
   // 会话树导航（`/tree`）：RPC 没有这条，旧 App 靠 pi-android-bridge 扩展里的命令绕；SDK 里是直接方法。
   reg.add("session.navigate", async (args) => {
@@ -187,7 +177,8 @@ export function register(reg, { controller }) {
   reg.add("session.compact", async (args) => withState(controller, await controller.requireSession().compact(optStr(args, "customInstructions"))));
   reg.add("session.export", async (args) => ({ path: await controller.requireSession().exportToHtml(optStr(args, "outputPath")) }));
   reg.add("session.reload", async () => {
-    await controller.reloadSession();
+    const r = await controller.reloadSession();
+    if (!r.reloaded) throw new HostError(ERR.BUSY, r.reason);
     return withState(controller);
   });
 
