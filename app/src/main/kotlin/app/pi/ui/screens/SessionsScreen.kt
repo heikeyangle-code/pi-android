@@ -53,6 +53,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -120,7 +123,7 @@ enum class SessionsView(val label: String) {
  *
  *  - 范围 current / all（官方 Tab）、排序 threaded / recent / relevance（Ctrl+S）、仅命名（Ctrl+N）、
  *    显示路径（Ctrl+P）、搜索语法 `re:正则` / `"短语"` / 模糊词；
- *  - 加载进度（官方头部的 `Loading n/m`）与部分结果；离开时中止加载（官方 `cancelLoads`）；
+ *  - 加载进度（官方头部的 `Loading n/m`）与部分结果；
  *  - 官方的三种空态各有自己的话，并带上官方给的下一步（「按 Tab 看全部」→ 一个「查看全部」按钮）；
  *  - 单个会话的操作只有官方那三件：恢复（点一行）、重命名、删除（先确认；当前会话不可删）。
  *    官方选择器没有的动作不加。
@@ -176,14 +179,21 @@ fun SessionsScreen(
 
     // 平铺视图里「来自 X」：`parentSession` 是官方记在文件头里的事实；父会话不在当前这批行里就不猜名字。
     val forkParentNames = remember(list.rows) {
-        val rows = list.rows.map { SessionFileRow(it.file.name, it.displayName) }
-        list.rows.associate { it.file.absolutePath to forkParentNameOf(it.parentSession, rows) }
+        // 文件名 → 显示名只建一次（首个同名行优先，同 `forkParentNameOf`），逐行查表是 O(n)，不是 O(n²)。
+        val nameOf = HashMap<String, String>(list.rows.size)
+        for (r in list.rows) nameOf.putIfAbsent(r.file.name, r.displayName)
+        list.rows.associate { r ->
+            r.file.absolutePath to r.parentSession?.takeIf { it.isNotBlank() }?.substringAfterLast('/')?.takeIf { it.isNotEmpty() }?.let(nameOf::get)
+        }
     }
 
     // 分组头用工作区页同一套名字（`WorkspaceChoice.sessionGroupLabel`）。读设置文件有成本，
     // 只在列表换了一批行时重取，不随每次重组重算。
     val context = LocalContext.current
-    val workspaceLabels = remember(list.rows) { WorkspaceStore.labels(context) }
+    val labelsKey = list.rows.size
+    val workspaceLabels by produceState(emptyMap<String, String>(), labelsKey) {
+        value = withContext(Dispatchers.IO) { WorkspaceStore.labels(context) }
+    }
     val workspacesRoot = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.ROOT_RELATIVE
     // 当前工作区在会话文件头里的 cwd 写法：自带工作区是 guest 路径，设备目录是它自己的路径。
     val currentCwds = remember(state.workspace.relative, state.workspace.hostPath) {

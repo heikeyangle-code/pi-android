@@ -746,26 +746,76 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 成功读完过一次：之后打开列表屏直接用手上的行（秒开），变更靠 [watchSessionListChanges] 在后台补。 */
     private var sessionListLoadedOnce = false
 
-    /** 没读过才读：列表屏挂载、引擎就绪都走这里。官方 `/resume` 每次打开都重读，手机上改成「读一次，变了才补」。 */
+    /**
+     * 没读过才读：列表屏挂载走这里。引擎还没起来时什么都不做 —— 宿主没打开，读必失败，
+     * 还会把屏幕带进「失败」态；引擎就绪那一刻（见下方 `engine.state.first`）自会开读。
+     */
     fun ensureSessionList() {
-        if (!sessionListLoadedOnce && !_sessionList.value.loading) loadSessionList(refresh = false)
+        val up = session?.state?.value.let { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
+        if (up && !sessionListLoadedOnce && !_sessionList.value.loading) loadSessionList(refresh = false)
     }
 
     /**
-     * 「现在在哪个会话 / 工作区」变了（新会话落盘、切了工作区）→ 后台静默重读，
-     * 不依赖列表屏开着。`messageCount` 只取到 2：每条消息都重读整个目录太贵，
-     * 而「文件出现」只发生在最开头那一两条。
+     * 「现在在哪个会话 / 工作区」变了，列表要**立刻**跟上，而不是等一遍整盘重读：
+     *  - 工作区换了：后台重读（别的目录的会话要进来）。
+     *  - 当前会话换了 / 新会话有了第一轮对话：先在本地把它标成「当前」、没有这一行就垫一行置顶
+     *    （[applyActiveRow]），再安排**一次**后台重读去换成宿主算的真数据。
+     * `messageCount` 取到 2：会话文件在第一条助手回复后才落盘（官方懒落盘），之前没有可列的行。
      */
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun watchSessionListChanges() {
         viewModelScope.launch {
+            var lastRevision = _state.value.workspace.revision
             _state
                 .map { Triple(it.meta.sessionFile, it.workspace.revision, it.meta.messageCount.coerceAtMost(2)) }
                 .distinctUntilChanged()
                 .drop(1)
-                .debounce(500)
-                .collect { if (sessionListLoadedOnce) refreshSessions() }
+                .debounce(120)
+                .collect { (_, revision, _) ->
+                    if (!sessionListLoadedOnce) return@collect
+                    if (revision != lastRevision) {
+                        lastRevision = revision
+                        refreshSessions()
+                    } else if (applyActiveRow()) {
+                        sessionListReconcileJob?.cancel()
+                        sessionListReconcileJob = viewModelScope.launch {
+                            kotlinx.coroutines.delay(800)
+                            refreshSessions()
+                        }
+                    }
+                }
         }
+    }
+
+    private var sessionListReconcileJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * 把当前会话反映到手上的行里：重算 `isCurrent`；落盘了（≥2 条消息）而行里没有就垫一行置顶。
+     * 垫的行只是占位，宿主下一次读完会换成官方算的那一行（名称 / 消息数 / 时间）。
+     * @return 是否垫了行（调用方据此安排一次对账重读）。
+     */
+    private fun applyActiveRow(): Boolean {
+        val st = _state.value
+        val guestFile = st.meta.sessionFile ?: return false
+        val hostFile = sessionLibrary.hostFileOf(guestFile) ?: return false
+        val cur = _sessionList.value
+        var rows = cur.rows.map { it.copy(isCurrent = it.file.absolutePath == hostFile.absolutePath) }
+        var added = false
+        if (st.meta.messageCount >= 2 && rows.none { it.isCurrent }) {
+            val now = System.currentTimeMillis()
+            val first = st.transcript.firstNotNullOfOrNull { (it as? TranscriptItem.UserMessage)?.text }.orEmpty()
+            val cwd = guestWorkspace()
+            rows = listOf(
+                SessionSummary(
+                    file = hostFile, id = st.meta.sessionId.orEmpty(), cwd = cwd, cwdShort = cwd, pathShort = guestFile,
+                    startedAt = now, lastActivityAt = now, name = st.meta.sessionName, firstMessage = first,
+                    messageCount = st.meta.messageCount, parentSession = null, isCurrent = true,
+                ),
+            ) + rows
+            added = true
+        }
+        _sessionList.value = cur.copy(rows = rows, total = if (added) cur.total + 1 else cur.total)
+        return added
     }
 
     /**
@@ -835,6 +885,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         failed = false,
                         queryError = page.queryError,
                     )
+                    applyActiveRow()
                     withContext(Dispatchers.IO) { sessionLibrary.writeCache(requested, page.raw, page.total) }
                 },
                 onFailure = {
@@ -843,15 +894,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
-    }
-
-    /** 离开列表时中止宿主的加载（官方 `cancelLoads`）：手机上不让一次没人看的全量读取占着 CPU。 */
-    fun cancelSessionListLoad() {
-        if (!_sessionList.value.loading) return
-        sessionListGeneration++
-        sessionListJob?.cancel()
-        _sessionList.value = _sessionList.value.copy(loading = false)
-        viewModelScope.launch { sessionLibrary.cancelLoad() }
     }
 
     /** 宿主的 `sessions.progress`：官方 `onProgress(loaded, total, partial)`。 */

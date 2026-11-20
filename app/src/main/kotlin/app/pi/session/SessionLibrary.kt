@@ -110,11 +110,6 @@ class SessionLibrary(
         )
     }
 
-    /** 中止宿主在途的加载（官方 `cancelLoads`）。 */
-    suspend fun cancelLoad() {
-        runCatching { requireCommands().call("session.list.cancel") }
-    }
-
     fun parseProgress(data: JsonElement?): SessionLoadProgress? {
         val o = data as? JsonObject ?: return null
         val scope = SessionScope.entries.firstOrNull { it.wire == str(o, "scope") } ?: return null
@@ -141,7 +136,8 @@ class SessionLibrary(
     /** 只在**完整读完**、**无查询**时写；原样存宿主给的行（所以读回来走同一个解析）。 */
     fun writeCache(q: SessionListQuery, rawRows: JsonArray?, total: Int) {
         val f = cacheFile ?: return
-        if (q.query.isNotBlank() || rawRows == null) return
+        // 只存默认视图：用户切过排序 / 命名过滤后重启，缓存键对不上就会白屏，所以别用「当时的视图」当键。
+        if (q.query.isNotBlank() || rawRows == null || q != SessionListQuery()) return
         runCatching {
             f.parentFile?.mkdirs()
             val tmp = File(f.parentFile, f.name + ".tmp")

@@ -286,6 +286,16 @@ try {
   expect("session.list 非法 sortMode → bad_args", (await h.call("session.list", { sortMode: "x" })).error?.code === "bad_args");
   const cur = await h.call("session.list", { scope: "all", sortMode: "recent" });
   expect("session.list 标出当前会话（isCurrent）", cur.ok && cur.data.rows.filter((r) => r.isCurrent).length <= 1 && cur.data.rows.every((r) => typeof r.cwdShort === "string"), JSON.stringify(cur.data?.rows?.map((r) => r.isCurrent)));
+  // 共享加载 / 重读不清缓存：重读（refresh）与后续视图请求并发时，两边都成功；重读结束后缓存仍在，毫秒级回答。
+  const [rfl, v1, v2] = await Promise.all([
+    h.call("session.list", { scope: "all", refresh: true }),
+    h.call("session.list", { scope: "all", sortMode: "recent" }),
+    h.call("session.list", { scope: "all", sortMode: "relevance", query: "ZEBRA-quartz" }),
+  ]);
+  expect("重读与视图请求并发：都成功，不互相报 busy", rfl.ok && v1.ok && v2.ok && v2.data.rows.length === 1, JSON.stringify([rfl.error, v1.error, v2.error]));
+  const tCache = Date.now();
+  const again = await h.call("session.list", { scope: "all", sortMode: "recent" });
+  expect("读完后换视图走缓存（不再读盘）", again.ok && again.data.rows.length === rfl.data.rows.length && Date.now() - tCache < 500, `${Date.now() - tCache}ms`);
   const sum = await h.call("session.read", { path: libFile });
   expect("session.read 摘要（不切换会话）", sum.ok && sum.data.entryCount === 3 && sum.data.leafId === "e3", JSON.stringify(sum.error ?? sum.data).slice(0, 200));
   const br = await h.call("session.read", { path: libFile, mode: "branch", fromId: "e2" });

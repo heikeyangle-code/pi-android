@@ -153,7 +153,7 @@ function queryError(o, query) {
 }
 
 export function register(reg, { controller }) {
-  /** @type {{key:string, current?:any[], all?:any[], load?:{scope:string, abort:AbortController}}} */
+  /** @type {{key:string, current?:any[], all?:any[], load?:{scope:string, abort:AbortController, superseded:boolean, promise:Promise<any[]>}}} */
   const state = { key: "" };
   controller.sessionListState = state;
 
@@ -167,7 +167,7 @@ export function register(reg, { controller }) {
   const syncKey = () => {
     const k = keyOf();
     if (state.key !== k) {
-      state.load?.abort.abort();
+      abortLoad();
       state.key = k;
       state.current = undefined;
       state.all = undefined;
@@ -175,10 +175,18 @@ export function register(reg, { controller }) {
     }
   };
 
+  /** 终止在途的加载，并标明「是被换掉的」：等着它的视图请求据此改去等新的那个，而不是报错。 */
+  const abortLoad = () => {
+    if (state.load) {
+      state.load.superseded = true;
+      state.load.abort.abort();
+      state.load = undefined;
+    }
+  };
+
   /** 变更（改名 / 删除 / 新会话落盘）之后：缓存作废，下一次 session.list 重读。官方 `refreshSessionsAfterMutation`。 */
   controller.invalidateSessionList = () => {
-    state.load?.abort.abort();
-    state.load = undefined;
+    abortLoad();
     state.current = undefined;
     state.all = undefined;
   };
@@ -195,10 +203,33 @@ export function register(reg, { controller }) {
 
   reg.add("session.list.cancel", () => {
     const had = Boolean(state.load);
-    state.load?.abort.abort();
-    state.load = undefined;
+    abortLoad();
     return { cancelled: had };
   });
+
+  /**
+   * 开一次读盘。读的过程中发 `sessions.progress`；读完才写缓存（被换掉的加载不写）。
+   * 加载是**共享**的：同一时刻只有一个，视图请求（没有缓存时）直接等它，不再各自重起一遍整盘读取。
+   */
+  const startLoad = (scope, render) => {
+    abortLoad();
+    const ctl = new AbortController();
+    const mine = { scope, abort: ctl, superseded: false, promise: undefined };
+    const onProgress = (loaded, total, partial) => {
+      if (state.load !== mine) return;
+      controller.hub.emit("sessions.progress", { scope, loaded, total, rows: partial ? render(partial) : undefined });
+    };
+    mine.promise = (async () => {
+      const sessions = await loader(scope, onProgress, ctl.signal);
+      if (state.load !== mine) throw new HostError(ERR.BUSY, "加载已被新的请求取代");
+      state[scope] = sessions;
+      state.load = undefined;
+      return sessions;
+    })();
+    mine.promise.catch(() => {}); // 没人等的加载被换掉不算未处理的拒绝
+    state.load = mine;
+    return mine;
+  };
 
   reg.add("session.list", async (args) => {
     const scope = optStr(args, "scope") ?? "current";
@@ -212,35 +243,26 @@ export function register(reg, { controller }) {
     syncKey();
     const view = { sortMode, nameFilter, query, groupByCwd: bool(args, "groupByCwd", false) };
     const render = (sessions) => viewOf(o, sessions, view).map((n) => rowOf(o, n, currentKeyOf(o)));
+    const answer = (sessions) => ({ scope, rows: render(sessions), total: sessions.length, queryError: queryError(o, query) });
+    const refresh = bool(args, "refresh", false);
 
-    if (bool(args, "refresh", false)) {
-      state[scope] = undefined;
-    }
-    if (state[scope]) {
-      const rows = render(state[scope]);
-      return { scope, rows, total: state[scope].length, queryError: queryError(o, query) };
-    }
+    // 有缓存且不要求重读：立刻答。**重读期间也一样** —— 重读不清缓存，读完才换，
+    // 所以后台刷新时切排序 / 搜索仍是毫秒级（旧缓存只会落后于磁盘，不会让界面空着）。
+    if (!refresh && state[scope]) return answer(state[scope]);
 
-    // 只允许一个加载在途；换范围 / 重读就中止旧的（官方 `cancelLoads` 与 `loadScope` 的 isActive 守卫）。
-    state.load?.abort.abort();
-    const ctl = new AbortController();
-    const mine = { scope, abort: ctl };
-    state.load = mine;
-    const onProgress = (loaded, total, partial) => {
-      if (state.load !== mine) return;
-      controller.hub.emit("sessions.progress", { scope, loaded, total, rows: partial ? render(partial) : undefined });
-    };
-    try {
-      const sessions = await loader(scope, onProgress, ctl.signal);
-      if (state.load !== mine) throw new HostError(ERR.BUSY, "加载已被新的请求取代");
-      state[scope] = sessions;
-      state.load = undefined;
-      return { scope, rows: render(sessions), total: sessions.length, queryError: queryError(o, query) };
-    } catch (e) {
-      if (state.load === mine) state.load = undefined;
-      if (e instanceof HostError) throw e;
-      if (ctl.signal.aborted) throw new HostError(ERR.BUSY, "加载已中止");
-      throw e;
+    for (;;) {
+      let load = state.load?.scope === scope ? state.load : undefined;
+      // 要求重读：磁盘可能在在途那次开始之后又变了，所以重起一次（正确性优先于省这一遍）。
+      if (refresh || !load) load = startLoad(scope, render);
+      try {
+        return answer(await load.promise);
+      } catch (e) {
+        // 视图请求等的加载被换掉了（重读 / 变更）：改等新的那个。
+        if (!refresh && load.superseded && state.load) continue;
+        if (e instanceof HostError) throw e;
+        if (load.abort.signal.aborted) throw new HostError(ERR.BUSY, "加载已中止");
+        throw e;
+      }
     }
   });
 }
