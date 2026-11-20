@@ -24,6 +24,8 @@ fun main() {
     check("列数：太窄取下限", columnsFor(widthPx = 50, chromePx = 100, charPx = 10) == MIN_COLUMNS)
     check("列数：太宽取上限", columnsFor(widthPx = 100_000, chromePx = 0, charPx = 10) == MAX_COLUMNS)
     check("列数：字符宽为 0 不除零", columnsFor(widthPx = 1000, chromePx = 0, charPx = 0) == MAX_COLUMNS)
+    check("浮点列数：小数宽向下取整不裁右边缘", columnsForFloat(widthPx = 500, chromePx = 20, charPx = 6.4f) == 75)
+    check("浮点列数：字宽<=0不除零", columnsForFloat(widthPx = 500, chromePx = 0, charPx = 0f) == MAX_COLUMNS)
 
     check("Esc 是单个 ESC 字符", SurfaceKeys.ESC == "\u001b" && SurfaceKeys.ESC.length == 1)
     check("方向键是 CSI 序列", listOf(SurfaceKeys.UP, SurfaceKeys.DOWN, SurfaceKeys.RIGHT, SurfaceKeys.LEFT) == listOf("\u001b[A", "\u001b[B", "\u001b[C", "\u001b[D"))

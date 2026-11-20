@@ -228,6 +228,8 @@ object PiResponses {
         val outputCost: Double?,
         val cacheReadCost: Double?,
         val cacheWriteCost: Double?,
+        /** 该模型真实支持的思考等级列表（来自 `@earendil-works/pi-ai` `getSupportedThinkingLevels`）。 */
+        val supportedThinkingLevels: List<String> = emptyList(),
     )
 
     /**
@@ -658,6 +660,9 @@ object PiResponses {
             outputCost = cost?.dbl("output"),
             cacheReadCost = cost?.dbl("cacheRead"),
             cacheWriteCost = cost?.dbl("cacheWrite"),
+            supportedThinkingLevels = (obj["supportedThinkingLevels"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                ?: emptyList(),
         )
     }
 

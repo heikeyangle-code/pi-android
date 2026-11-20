@@ -55,6 +55,8 @@ data class ExtUiState(
     val toolsExpanded: Boolean? = null,
     /** 扩展通过 `ctx.ui.addAutocompleteProvider` 注册的补全提供者数量。 */
     val autocompleteCount: Int = 0,
+    /** 终端响铃（BEL `\x07` / OSC 通知）单调计数，用于触发原生提示音。 */
+    val bellSeq: Long = 0L,
 ) {
     /** 当前最顶层且未被 `OverlayHandle.setHidden(true)` 隐藏的 custom 表面。 */
     val custom: ExtCustom? get() = customStack.lastOrNull { !it.hidden }
@@ -112,6 +114,7 @@ class ExtUiReducer {
             "ui.autocomplete" -> state = state.copy(
                 autocompleteCount = (d["registered"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
             )
+            "ui.bell" -> state = state.copy(bellSeq = state.bellSeq + 1L)
             else -> return null
         }
         return state.takeIf { it != before }
@@ -126,7 +129,7 @@ class ExtUiReducer {
         widgetSurface.clear()
         widgetPlacement.clear()
         slotSurface.clear()
-        state = ExtUiState(toolsExpanded = state.toolsExpanded)
+        state = ExtUiState(toolsExpanded = state.toolsExpanded, bellSeq = state.bellSeq)
     }
 
     private fun status(d: JsonObject) {

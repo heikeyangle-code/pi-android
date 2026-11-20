@@ -59,6 +59,14 @@ fun ExtensionUiHost(
 ) {
     val state by session.state.collectAsState()
     val hostState = remember { SnackbarHostState() }
+    var bellMuted by remember { mutableStateOf(false) }
+
+    // 响应扩展终端响铃（BEL `\x07` / OSC 通知触发的 `ui.bell`）。
+    LaunchedEffect(state.ext.bellSeq) {
+        if (state.ext.bellSeq > 0L && !bellMuted) {
+            ExtensionSound.playBell()
+        }
+    }
 
     // The tone of the message currently on screen. Kept outside the state flow
     // because it is presentation, not engine state: once the notice is consumed
@@ -130,6 +138,8 @@ fun ExtensionUiHost(
         ExtensionSurfaceHost(
             custom = state.ext.custom,
             stackCount = state.ext.customStack.count { !it.hidden },
+            soundMuted = bellMuted,
+            onToggleSound = { bellMuted = !bellMuted },
             onInput = session::sendSurfaceInput,
             onMouse = session::sendSurfaceMouse,
             onResize = session::resizeSurface,

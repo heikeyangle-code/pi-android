@@ -209,10 +209,19 @@ private fun choices(vararg pairs: Pair<String, String>): List<PiOption> =
  * `ModelThinkingLevel`（思考档位映射）里。写 `off` 到这两个键 pi 不报错，只是静默
  * 回退到默认值 —— 界面上是一个「选了但不生效」的选项。
  */
+private val thinkingLevelDescriptions = mapOf(
+    "minimal" to "最少推理（约 1k token 预算）",
+    "low" to "轻量推理（约 2k token 预算）",
+    "medium" to "均衡推理（约 8k token 预算）",
+    "high" to "深度推理（约 16k token 预算）",
+    "xhigh" to "极深推理（约 32k token 预算，仅部分模型支持）",
+    "max" to "最大推理深度（仅部分模型支持）",
+)
+
 private val thinkingLevelOptions: List<PiOption> =
     PiThinkingLevel.entries
         .filter { it != PiThinkingLevel.Off }
-        .map { PiOption(it.wire, it.label) }
+        .map { PiOption(it.wire, it.label, thinkingLevelDescriptions[it.wire]) }
 
 private val transportOptions = choices(
     "auto" to "自动",

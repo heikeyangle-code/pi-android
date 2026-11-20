@@ -1,32 +1,157 @@
 /**
  * 「表面」：一个扩展组件（`Component`）在 App 里的投影。
  *
- * 对照 Pi 官方 `packages/tui/src/tui.ts`：
- *  - 组件渲染 `render(width) → string[]`，键盘输入 `handleInput(data)`，鼠标点击 `handleMouse(event)`；
- *  - 支持 `tui.requestRender()` 定时/动画重绘、`tui.setFocus()`、`tui.showOverlay()` / `hideOverlay()` / `hasOverlay()`；
+ * 对照 Pi 官方 `packages/tui/src/tui.ts` 与 `packages/tui/src/terminal.ts`：
+ *  - 组件渲染 `render(width) → string[]`，键盘输入 `handleInput(data)`，鼠标事件 `handleMouse(event)`；
+ *  - 支持 `tui.requestRender()` / `tui.renderNow(force)`、`tui.setFocus()`、`tui.addInputListener()` / `removeInputListener()`、
+ *    `tui.showOverlay()` / `hideOverlay()` / `hasOverlay()`、`tui.terminal.write()` / `setTitle()` / `setProgress()`；
  *  - 维护 `Focusable.focused` 属性（`Input`/`Editor` 等组件靠它决定是否画光标、接输入）；
  *  - 渲染输出剥离 `CURSOR_MARKER`（`\x1b_pi:c\x07`），将 `FAKE_CURSOR`（`\x1b_pi:fc\x07...\x1b_pi:/fc\x07`）
- *    转为反白 SGR（`\x1b[7m...\x1b[27m`），避免控制序列泄漏并在手机上清晰显示光标；
- *  - 支持 `OverlayHandle`（`hide` / `setHidden` / `isHidden` / `focus` / `unfocus` / `isFocused`），
- *    供 `ctx.ui.custom(factory, { overlay: true, onHandle })` 完整控制浮层显隐与焦点。
+ *    转为反白 SGR（`\x1b[7m...\x1b[27m`），同时捕获独立 BEL（`\x07`）并发出 `ui.bell` 提示音事件；
+ *  - 捕获扩展通过 `tui.terminal.write()` 或 `process.stdout.write()` 发出的 BEL（`\x07`）、OSC 777/99/9 通知、
+ *    OSC 0/2 标题与 OSC 9;4 进度指示，分别转为 `ui.bell` / `ui.notify` / `ui.title` / `ui.workingVisible`；
+ *  - 完整支持 `OverlayHandle`（`hide` / `setHidden` / `isHidden` / `focus` / `unfocus` / `isFocused` / `getBounds`）
+ *    与 `OverlayOptions`（`visible(w, h)` / `nonCapturing` / 尺寸与锚点）。
  */
 
 import { randomUUID } from "node:crypto";
 
-const DEFAULT_WIDTH = 40;
+// 默认按标准 80×24 终端启动，避免首帧在 App 回传 `ui.resize` 前被压成 40 列导致截断。
+const DEFAULT_WIDTH = 80;
 const DEFAULT_HEIGHT = 24;
 const REPAINT_DELAY_MS = 16;
+const BELL_THROTTLE_MS = 60;
 
 // 与 `packages/tui/src/tui.ts` 一致的零宽光标标记。
 const CURSOR_MARKER_RE = /\x1b_pi:c\x07/g;
 const FAKE_CURSOR_RE = /\x1b_pi:fc\x07(.*?)(?:\x1b_pi:\/fc\x07|$)/gs;
 
-export function sanitizeRenderedLine(raw) {
-  const s = String(raw);
-  if (!s.includes("\x1b_pi:")) return s;
-  return s
-    .replace(CURSOR_MARKER_RE, "")
-    .replace(FAKE_CURSOR_RE, (_m, inner) => `\x1b[7m${inner || " "}\x1b[27m`);
+/**
+ * 扫描原始字符串中的独立 BEL（`\x07`）：排除作为 OSC (`\x1b]...`) 或 APC (`\x1b_...`) 终止符的 `\x07`。
+ * 返回 `{ text, bellCount }`，其中 `text` 已移除独立 `\x07`（避免在客户端渲染出缺字方块）。
+ */
+function stripStandaloneBell(s) {
+  if (!s.includes("\x07")) return { text: s, bellCount: 0 };
+  let out = "";
+  let bellCount = 0;
+  let i = 0;
+  while (i < s.length) {
+    const ch = s.charCodeAt(i);
+    if (ch === 0x1b && i + 1 < s.length && (s[i + 1] === "]" || s[i + 1] === "_")) {
+      // OSC 或 APC 序列：保留到 BEL 或 ST (`\x1b\\`)，其中的 BEL 是终止符而非响铃。
+      const start = i;
+      i += 2;
+      while (i < s.length) {
+        if (s.charCodeAt(i) === 0x07) {
+          i += 1;
+          break;
+        }
+        if (s.charCodeAt(i) === 0x1b && i + 1 < s.length && s[i + 1] === "\\") {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+      out += s.slice(start, i);
+      continue;
+    }
+    if (ch === 0x07) {
+      bellCount += 1;
+      i += 1;
+      continue;
+    }
+    out += s[i];
+    i += 1;
+  }
+  return { text: out, bellCount };
+}
+
+export function sanitizeRenderedLine(raw, onBell) {
+  let s = String(raw);
+  if (s.includes("\x1b_pi:")) {
+    s = s
+      .replace(CURSOR_MARKER_RE, "")
+      .replace(FAKE_CURSOR_RE, (_m, inner) => `\x1b[7m${inner || " "}\x1b[27m`);
+  }
+  if (s.includes("\x07")) {
+    const { text, bellCount } = stripStandaloneBell(s);
+    if (bellCount > 0) onBell?.("render");
+    s = text;
+  }
+  return s;
+}
+
+/**
+ * 解析扩展直接写入终端的控制序列（`tui.terminal.write(...)` 或 `process.stdout.write(...)`）：
+ *  - OSC 777: `\x1b]777;notify;<title>;<body>(\x07|\x1b\\)` → 通知 + 提示音（官方 `notify.ts`）
+ *  - OSC 99:  Kitty 通知 `\x1b]99;...;<text>(\x07|\x1b\\)` → 通知 + 提示音
+ *  - OSC 9;4: 终端进度条 `\x1b]9;4;<state>(;<pct>)?(\x07|\x1b\\)` → workingVisible
+ *  - OSC 9:   iTerm2 通知 `\x1b]9;<message>(\x07|\x1b\\)` → 通知 + 提示音
+ *  - OSC 0/2: 窗口标题 `\x1b](0|2);<title>(\x07|\x1b\\)` → ui.title
+ *  - 独立 `\x07` BEL → ui.bell
+ */
+export function inspectTerminalOutput(raw, handlers) {
+  const s = String(raw ?? "");
+  if (!s) return;
+  let i = 0;
+  let sawBell = false;
+  while (i < s.length) {
+    const ch = s.charCodeAt(i);
+    if (ch === 0x1b && i + 1 < s.length && (s[i + 1] === "]" || s[i + 1] === "_")) {
+      const isOsc = s[i + 1] === "]";
+      const bodyStart = i + 2;
+      i = bodyStart;
+      let bodyEnd = s.length;
+      while (i < s.length) {
+        if (s.charCodeAt(i) === 0x07) {
+          bodyEnd = i;
+          i += 1;
+          break;
+        }
+        if (s.charCodeAt(i) === 0x1b && i + 1 < s.length && s[i + 1] === "\\") {
+          bodyEnd = i;
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+      if (!isOsc) continue;
+      const body = s.slice(bodyStart, bodyEnd);
+      if (body.startsWith("0;") || body.startsWith("2;")) {
+        handlers?.onTitle?.(body.slice(2));
+      } else if (body.startsWith("777;notify;")) {
+        const rest = body.slice("777;notify;".length);
+        const sep = rest.indexOf(";");
+        const title = sep >= 0 ? rest.slice(0, sep) : rest;
+        const msg = sep >= 0 ? rest.slice(sep + 1) : "";
+        const combined = [title, msg].filter(Boolean).join("：") || "通知";
+        handlers?.onNotify?.(combined, "info");
+        sawBell = true;
+      } else if (body.startsWith("99;")) {
+        const sep = body.indexOf(";", 3);
+        const text = sep >= 0 ? body.slice(sep + 1) : "";
+        if (text) {
+          handlers?.onNotify?.(text, "info");
+          sawBell = true;
+        }
+      } else if (body.startsWith("9;4;")) {
+        const stateCode = Number(body.slice(4).split(";")[0]);
+        if (Number.isFinite(stateCode)) handlers?.onProgress?.(stateCode !== 0);
+      } else if (body.startsWith("9;")) {
+        const text = body.slice(2);
+        if (text) {
+          handlers?.onNotify?.(text, "info");
+          sawBell = true;
+        }
+      }
+      continue;
+    }
+    if (ch === 0x07) {
+      sawBell = true;
+    }
+    i += 1;
+  }
+  if (sawBell) handlers?.onBell?.();
 }
 
 function setComponentFocus(component, focused) {
@@ -40,18 +165,27 @@ function setComponentFocus(component, focused) {
   }
 }
 
-function resolveOverlayOptions(opts) {
-  if (!opts) return null;
+function resolveOverlayOptions(opts, termWidth, termHeight) {
+  if (!opts) return { options: null, visible: true, nonCapturing: false };
   try {
     const raw = typeof opts === "function" ? opts() : opts;
-    if (!raw || typeof raw !== "object") return null;
+    if (!raw || typeof raw !== "object") return { options: null, visible: true, nonCapturing: false };
+    let visible = true;
+    if (typeof raw.visible === "function") {
+      try {
+        visible = Boolean(raw.visible(termWidth, termHeight));
+      } catch {
+        visible = true;
+      }
+    }
+    const nonCapturing = Boolean(raw.nonCapturing);
     const out = {};
-    for (const k of ["width", "minWidth", "maxHeight", "anchor", "margin"]) {
+    for (const k of ["width", "minWidth", "maxHeight", "anchor", "margin", "offsetX", "offsetY", "row", "col", "nonCapturing"]) {
       if (raw[k] !== undefined) out[k] = raw[k];
     }
-    return Object.keys(out).length ? out : null;
+    return { options: Object.keys(out).length ? out : null, visible, nonCapturing };
   } catch {
-    return null;
+    return { options: null, visible: true, nonCapturing: false };
   }
 }
 
@@ -66,6 +200,25 @@ export class Surfaces {
     this.width = DEFAULT_WIDTH;
     this.height = DEFAULT_HEIGHT;
     this.focusedId = null;
+    this.lastBellAt = 0;
+  }
+
+  /** 向 App 发送一次终端响铃事件（带 60ms 节流，防止游戏高频触发刷爆协议流）。 */
+  emitBell(source = "terminal") {
+    const now = Date.now();
+    if (now - this.lastBellAt < BELL_THROTTLE_MS) return;
+    this.lastBellAt = now;
+    this.hub.emit("ui.bell", { source, ts: now });
+  }
+
+  /** 处理来自 `tui.terminal.write` 或 `process.stdout.write` 的终端控制序列。 */
+  handleTerminalOutput(data, source = "terminal") {
+    inspectTerminalOutput(data, {
+      onBell: () => this.emitBell(source),
+      onNotify: (message, tone) => this.hub.emit("ui.notify", { message, tone }),
+      onTitle: (title) => this.hub.emit("ui.title", { title }),
+      onProgress: (visible) => this.hub.emit("ui.workingVisible", { visible }),
+    });
   }
 
   /**
@@ -89,6 +242,11 @@ export class Surfaces {
       closed: false,
       onClose,
       childOverlays: new Set(),
+      inputListeners: new Set(),
+      lastLineCount: 0,
+      fullRedraws: 0,
+      showHardwareCursor: false,
+      clearOnShrink: false,
     };
     const surfaces = this;
 
@@ -122,12 +280,61 @@ export class Surfaces {
         }
       },
       isFocused: () => !surface.closed && !surface.hidden && surfaces.focusedId === surface.id,
+      getBounds: () => ({
+        row: 0,
+        col: 0,
+        width: surfaces.width,
+        height: surface.lastLineCount || surfaces.height,
+      }),
     };
     surface.handle = handle;
 
+    const terminal = {
+      get columns() {
+        return surfaces.width;
+      },
+      get rows() {
+        return surfaces.height;
+      },
+      get kittyProtocolActive() {
+        return false;
+      },
+      write(data) {
+        surfaces.handleTerminalOutput(data, "terminal");
+      },
+      setTitle(title) {
+        surfaces.hub.emit("ui.title", { title: String(title ?? "") });
+      },
+      setProgress(active) {
+        surfaces.hub.emit("ui.workingVisible", { visible: Boolean(active) });
+      },
+      hideCursor() {},
+      showCursor() {},
+      clearLine() {},
+      clearFromCursor() {},
+      clearScreen() {},
+      moveBy() {},
+      start() {},
+      stop() {},
+      drainInput: () => Promise.resolve(),
+    };
+
     const tui = {
-      requestRender() {
-        surfaces.#schedule(surface);
+      mode: "regular",
+      get fullRedraws() {
+        return surface.fullRedraws;
+      },
+      requestRender(force = false) {
+        if (force) {
+          surface.lastFrameKey = null;
+          surfaces.paint(surface);
+        } else {
+          surfaces.#schedule(surface);
+        }
+      },
+      renderNow(force = false) {
+        if (force) surface.lastFrameKey = null;
+        surfaces.paint(surface);
       },
       setFocus(component) {
         if (surface.closed) return;
@@ -137,6 +344,24 @@ export class Surfaces {
           setComponentFocus(component, true);
         }
       },
+      addInputListener(listener) {
+        if (typeof listener !== "function") return () => {};
+        surface.inputListeners.add(listener);
+        return () => surface.inputListeners.delete(listener);
+      },
+      removeInputListener(listener) {
+        surface.inputListeners.delete(listener);
+      },
+      getShowHardwareCursor: () => surface.showHardwareCursor,
+      setShowHardwareCursor(enabled) {
+        surface.showHardwareCursor = Boolean(enabled);
+      },
+      getClearOnShrink: () => surface.clearOnShrink,
+      setClearOnShrink(enabled) {
+        surface.clearOnShrink = Boolean(enabled);
+      },
+      onTerminalColorSchemeChange: () => () => {},
+      queryTerminalColors: () => Promise.resolve(null),
       showOverlay(component, opts) {
         // 允许组件内部通过 `tui.showOverlay(child, opts)` 叠加二级浮层，关闭父表面时一并清理。
         let childHandle = null;
@@ -150,6 +375,7 @@ export class Surfaces {
           focus: () => childHandle?.focus(),
           unfocus: () => childHandle?.unfocus(),
           isFocused: () => (childHandle ? childHandle.isFocused() : false),
+          getBounds: () => (childHandle ? childHandle.getBounds() : { row: 0, col: 0, width: surfaces.width, height: surfaces.height }),
         };
         void surfaces
           .mount({
@@ -180,7 +406,7 @@ export class Surfaces {
       start() {},
       stop() {},
       get terminal() {
-        return { columns: surfaces.width, rows: surfaces.height };
+        return terminal;
       },
       get columns() {
         return surfaces.width;
@@ -198,7 +424,8 @@ export class Surfaces {
     }
     this.byId.set(surface.id, surface);
     if (key) this.byKey.set(key, surface.id);
-    if (mode === "custom") {
+    const resolvedOpts = resolveOverlayOptions(surface.overlayOptions, this.width, this.height);
+    if (mode === "custom" && !resolvedOpts.nonCapturing) {
       this.#setFocusId(surface.id);
     }
     if (typeof onHandle === "function") {
@@ -241,18 +468,21 @@ export class Surfaces {
   paint(surface) {
     if (surface.closed) return;
     let lines;
+    const onBell = (src) => this.emitBell(src);
     try {
       const raw = surface.component.render(this.width) ?? [];
-      lines = Array.isArray(raw) ? raw.map(sanitizeRenderedLine) : [];
+      lines = Array.isArray(raw) ? raw.map((line) => sanitizeRenderedLine(line, onBell)) : [];
     } catch (error) {
       lines = [`[render failed] ${error?.message ?? error}`];
     }
-    const overlayOptions = resolveOverlayOptions(surface.overlayOptions);
+    surface.lastLineCount = lines.length;
+    const { options: overlayOptions, visible } = resolveOverlayOptions(surface.overlayOptions, this.width, this.height);
+    const effectiveHidden = surface.hidden || !visible;
     const interactive = typeof surface.component.handleInput === "function" || typeof surface.component.handleMouse === "function";
     const frameKey = JSON.stringify([
       surface.overlay,
       overlayOptions,
-      surface.hidden,
+      effectiveHidden,
       surface.focused,
       surface.blocked ?? null,
       interactive,
@@ -261,13 +491,14 @@ export class Surfaces {
     ]);
     if (surface.lastFrameKey === frameKey) return;
     surface.lastFrameKey = frameKey;
+    surface.fullRedraws += 1;
     this.hub.emit("ui.surface", {
       surfaceId: surface.id,
       key: surface.key,
       mode: surface.mode,
       overlay: surface.overlay,
       overlayOptions,
-      hidden: surface.hidden,
+      hidden: effectiveHidden,
       focused: surface.focused,
       blocked: surface.blocked ?? null,
       rev: ++surface.rev,
@@ -307,6 +538,7 @@ export class Surfaces {
     if (surface.timer) clearTimeout(surface.timer);
     for (const childId of [...surface.childOverlays]) this.close(childId);
     surface.childOverlays.clear();
+    surface.inputListeners.clear();
     this.byId.delete(surface.id);
     if (surface.key && this.byKey.get(surface.key) === surface.id) this.byKey.delete(surface.key);
     if (this.focusedId === surface.id) {
@@ -334,15 +566,29 @@ export class Surfaces {
     }
   }
 
-  /** App → 组件键盘输入。返回是否有组件接了这次输入。 */
+  /** App → 组件键盘输入。先过 `tui.addInputListener` 链，再交给 `component.handleInput`。 */
   input(id, data) {
     const surface = this.byId.get(id);
-    if (!surface || surface.closed || typeof surface.component?.handleInput !== "function") return false;
+    if (!surface || surface.closed) return false;
+    let payload = String(data);
+    for (const listener of surface.inputListeners) {
+      try {
+        const res = listener(payload);
+        if (res?.consume) {
+          if (!surface.closed) this.paint(surface);
+          return true;
+        }
+        if (typeof res?.data === "string") payload = res.data;
+      } catch (error) {
+        process.stderr.write(`[host] inputListener failed: ${error?.stack ?? error}\n`);
+      }
+    }
+    if (typeof surface.component?.handleInput !== "function") return false;
     if (surface.mode === "custom" && this.focusedId !== surface.id) {
       this.#setFocusId(surface.id);
     }
     try {
-      surface.component.handleInput(String(data));
+      surface.component.handleInput(payload);
     } catch (error) {
       process.stderr.write(`[host] handleInput failed: ${error?.stack ?? error}\n`);
     }

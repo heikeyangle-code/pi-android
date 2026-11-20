@@ -23,6 +23,11 @@ internal fun widgetCaption(key: String): String? =
 internal fun columnsFor(widthPx: Int, chromePx: Int, charPx: Int): Int =
     ((widthPx - chromePx) / charPx.coerceAtLeast(1)).coerceIn(MIN_COLUMNS, MAX_COLUMNS)
 
+/** 浮点精确字宽换算列数，避免小字号下整型截断把列数多算 5%–15% 导致右边缘被裁。 */
+internal fun columnsForFloat(widthPx: Int, chromePx: Int, charPx: Float): Int =
+    if (charPx <= 0f) MAX_COLUMNS
+    else kotlin.math.floor(((widthPx - chromePx).coerceAtLeast(0)) / charPx).toInt().coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+
 internal const val COLLAPSED_ROWS = 3
 internal const val MAX_PANEL_ROWS = 200
 internal const val MIN_COLUMNS = 20

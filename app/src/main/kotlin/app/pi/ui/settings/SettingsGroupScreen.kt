@@ -110,6 +110,8 @@ fun SettingsGroupScreen(
      * `PiEffectiveDialog` call.
      */
     onRestartEngine: (() -> Unit)? = null,
+    availableModels: List<app.pi.rpc.PiResponses.ModelInfo> = emptyList(),
+    onLoadAvailableModels: () -> Unit = {},
 ) {
     val group = PiSettingsCatalog.group(groupId)
     val sections = remember(groupId, freshness) { buildGroupSections(groupId) }
@@ -208,6 +210,8 @@ fun SettingsGroupScreen(
             knownThemes = knownThemes,
             themeNotes = themeNotes,
             themeError = themeError,
+            availableModels = availableModels,
+            onLoadAvailableModels = onLoadAvailableModels,
             onDismiss = { editing = null },
             // Every write is announced, not just the theme: several keys
             // (`hideThinkingBlock`, the `app.appearance.*` rows) are read by the

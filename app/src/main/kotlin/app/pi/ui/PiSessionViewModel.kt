@@ -1185,7 +1185,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun onSettingWritten(key: String) {
         if (key == "theme") {
             refreshTheme()
-            syncEngineSettings()
+            syncEngineSetting(key)
             return
         }
         // The four agent-level switches whose settings rows are a second editor of
@@ -1236,13 +1236,54 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             key != "retry.enabled" &&
             !key.startsWith("app.")
         ) {
-            syncEngineSettings()
+            syncEngineSetting(key)
         }
     }
 
-    private fun syncEngineSettings() {
+    /**
+     * 将设置变更同步给运行中的 SDK `SettingsManager`：
+     * 优先走宿主 `settings.set`（与 Pi TUI `SettingsSelectorComponent` 相同路径，带 SDK 校验、实时同步与 flush），
+     * 键被删除或没有直接 setter 时走 `settings.reload` 让宿主从盘上重读最新文档。
+     */
+    private fun syncEngineSetting(key: String? = null) {
         val c = session?.commands ?: return
-        viewModelScope.launch { runCatching { c.settingsReload() } }
+        val sdkCall = key?.let { sdkSetterFor(it) }
+        viewModelScope.launch {
+            if (sdkCall != null) {
+                val (method, params) = sdkCall
+                val ok = runCatching { c.settingsSet(method, params) }.isSuccess
+                if (ok) {
+                    settingsStore.invalidate()
+                    return@launch
+                }
+            }
+            runCatching { c.settingsReload() }
+        }
+    }
+
+    private fun sdkSetterFor(key: String): Pair<String, List<JsonElement>>? {
+        val raw = settingsStore.read(key) ?: return null
+        return when (key) {
+            "theme" -> (raw as? JsonPrimitive)?.content?.let { "setTheme" to listOf(JsonPrimitive(it)) }
+            "defaultThinkingLevel" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultThinkingLevel" to listOf(JsonPrimitive(it)) }
+            "treeFilterMode" -> (raw as? JsonPrimitive)?.content?.let { "setTreeFilterMode" to listOf(JsonPrimitive(it)) }
+            "transport" -> (raw as? JsonPrimitive)?.content?.let { "setTransport" to listOf(JsonPrimitive(it)) }
+            "httpIdleTimeoutMs" -> (raw as? JsonPrimitive)?.content?.toIntOrNull()?.let { "setHttpIdleTimeoutMs" to listOf(JsonPrimitive(it)) }
+            "websocketConnectTimeoutMs" -> (raw as? JsonPrimitive)?.content?.toIntOrNull()?.let { "setWebSocketConnectTimeoutMs" to listOf(JsonPrimitive(it)) }
+            "cacheWarming" -> (raw as? JsonPrimitive)?.content?.let { "setCacheWarmingMode" to listOf(JsonPrimitive(it)) }
+            "showCacheMissNotices" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setShowCacheMissNotices" to listOf(JsonPrimitive(it)) }
+            "hideThinkingBlock" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setHideThinkingBlock" to listOf(JsonPrimitive(it)) }
+            "enableSkillCommands" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableSkillCommands" to listOf(JsonPrimitive(it)) }
+            "quietStartup" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setQuietStartup" to listOf(JsonPrimitive(it)) }
+            "collapseChangelog" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setCollapseChangelog" to listOf(JsonPrimitive(it)) }
+            "defaultProjectTrust" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultProjectTrust" to listOf(JsonPrimitive(it)) }
+            "shellPath" -> (raw as? JsonPrimitive)?.content?.let { "setShellPath" to listOf(JsonPrimitive(it)) }
+            "shellCommandPrefix" -> (raw as? JsonPrimitive)?.content?.let { "setShellCommandPrefix" to listOf(JsonPrimitive(it)) }
+            "branchSummary.skipPrompt" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setBranchSummarySkipPrompt" to listOf(JsonPrimitive(it)) }
+            "markdown.mermaid" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setMarkdownMermaidEnabled" to listOf(JsonPrimitive(it)) }
+            "enabledModels" -> (raw as? JsonArray)?.let { arr -> "setEnabledModels" to listOf(arr) }
+            else -> null
+        }
     }
 
     // ------------------------------------------------- 运行时加速开关（当场生效）
@@ -4622,6 +4663,38 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             setThinking = { level ->
                 api.setThinkingLevel(level)
                 _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevel = level))
+            },
+            setDefaultThinkingLevel = { level ->
+                engine.commands.settingsSet("setDefaultThinkingLevel", listOf(JsonPrimitive(level)))
+                settingsStore.invalidate()
+            },
+            setModelThinkingLevel = { provider, modelId, level ->
+                engine.commands.settingsSet(
+                    "setModelThinkingLevel",
+                    listOf(JsonPrimitive(provider), JsonPrimitive(modelId), JsonPrimitive(level)),
+                )
+                settingsStore.invalidate()
+            },
+            removeModelThinkingLevel = { provider, modelId ->
+                engine.commands.settingsSet(
+                    "removeModelThinkingLevel",
+                    listOf(JsonPrimitive(provider), JsonPrimitive(modelId)),
+                )
+                settingsStore.invalidate()
+            },
+            setEnabledModels = { patterns ->
+                val params = if (patterns.isNullOrEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(JsonArray(patterns.map { JsonPrimitive(it) }))
+                }
+                engine.commands.settingsSet("setEnabledModels", params)
+                settingsStore.invalidate()
+            },
+            setShowCacheMissNotices = { show ->
+                engine.commands.settingsSet("setShowCacheMissNotices", listOf(JsonPrimitive(show)))
+                settingsStore.invalidate()
+                refreshPrefs()
             },
         )
     }

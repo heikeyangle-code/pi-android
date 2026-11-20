@@ -633,3 +633,541 @@ private fun LoginProgress(
 
 /** 一家的模型多到这个数才显示搜索框。 */
 private const val MODEL_SEARCH_THRESHOLD = 12
+
+// ------------------------------------------------------------------ 统一作用域 / 循环模型选择器（对齐官方 ScopedModelsSelectorComponent）
+
+/**
+ * 统一「作用域与循环模型」选择器：对照 Pi 官方 `modes/interactive/components/scoped-models-selector.js`。
+ *
+ * 支持搜索、逐项勾选、按供应商一键全选/取消、调整循环顺序（↑/↓）、全选/清空，
+ * 并在底部明确提供两条官方路径：
+ *  - **「仅本会话应用」**：调用 SDK `models.setScoped` 立即切换当前会话循环列表；
+ *  - **「应用并设为默认」**：同时调用 `models.setScoped` 与 `settings.set("setEnabledModels", ...)` 落盘持久化。
+ */
+@Composable
+internal fun ScopedModelsSheet(
+    host: () -> ModelsHost?,
+    models: List<app.pi.rpc.PiResponses.ModelInfo>,
+    providerNames: Map<String, String>,
+    initialScoped: List<app.pi.host.HostAdvanced.ModelRef>,
+    persistedPatterns: List<String>,
+    onDismiss: () -> Unit,
+    onApplied: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var working by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val modelByKey = remember(models) {
+        models.associateBy { "${it.provider.orEmpty()}/${it.id}" }
+    }
+    // 初始顺序：优先采用当前会话已激活的作用域模型，其次按持久化精确 pattern 匹配。
+    var selectedKeys by remember(initialScoped, persistedPatterns, models) {
+        val seed = if (initialScoped.isNotEmpty()) {
+            initialScoped.map { "${it.provider}/${it.id}" }
+        } else {
+            persistedPatterns.filter { it in modelByKey }
+        }
+        mutableStateOf(seed.distinct())
+    }
+    val selectedSet = remember(selectedKeys) { selectedKeys.toSet() }
+
+    val filtered = remember(models, providerNames, query) {
+        val facts = models.map { it.facts() }
+        val matched = searchModels(facts, providerNames, query)
+        groupModels(matched, providerNames, currentProvider = null)
+    }
+
+    fun toggleKey(key: String) {
+        selectedKeys = if (key in selectedSet) selectedKeys.filterNot { it == key } else selectedKeys + key
+    }
+
+    fun moveSelected(index: Int, delta: Int) {
+        val target = index + delta
+        if (target !in selectedKeys.indices) return
+        val mutable = selectedKeys.toMutableList()
+        val item = mutable.removeAt(index)
+        mutable.add(target, item)
+        selectedKeys = mutable
+    }
+
+    fun toggleProvider(providerId: String, providerModelKeys: List<String>) {
+        val allSelected = providerModelKeys.isNotEmpty() && providerModelKeys.all { it in selectedSet }
+        selectedKeys = if (allSelected) {
+            selectedKeys.filterNot { it in providerModelKeys }
+        } else {
+            (selectedKeys + providerModelKeys).distinct()
+        }
+    }
+
+    fun applySelection(persist: Boolean) {
+        val h = host() ?: run { error = "引擎没在运行。"; return }
+        scope.launch {
+            working = true
+            error = null
+            val refs = selectedKeys.mapNotNull { key ->
+                val m = modelByKey[key]
+                val p = m?.provider ?: key.substringBefore('/', "")
+                val id = m?.id ?: key.substringAfter('/', key)
+                if (p.isBlank() || id.isBlank()) null else app.pi.host.HostAdvanced.ModelRef(p, id, m?.name ?: id)
+            }
+            val result = runCatching {
+                h.advanced.setScopedModels(refs)
+                if (persist) {
+                    h.setEnabledModels(selectedKeys.takeIf { it.isNotEmpty() })
+                }
+            }
+            result.onSuccess {
+                val msg = when {
+                    refs.isEmpty() && persist -> "已清空作用域与默认循环模型（将循环全部可用模型）。"
+                    refs.isEmpty() -> "已清空当前会话作用域模型。"
+                    persist -> "已应用并设为默认循环模型（${refs.size} 个）。"
+                    else -> "已应用到当前会话作用域模型（${refs.size} 个）。"
+                }
+                onApplied(msg)
+                onDismiss()
+            }.onFailure {
+                error = "应用失败：${it.message}"
+                working = false
+            }
+        }
+    }
+
+    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text("作用域与循环模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
+            Text(
+                if (selectedKeys.isEmpty()) "未选中任何模型 = 循环切换全部可用模型" else "已选 ${selectedKeys.size} 个模型（按顺序循环）",
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.dim,
+            )
+            if (persistedPatterns.any { it.contains('*') }) {
+                Text(
+                    "当前配置含通配符：${persistedPatterns.joinToString(", ")}；点「应用并设为默认」将按所选模型覆盖。",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.warning,
+                )
+            }
+        }
+        PiEditorField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small * 2),
+            placeholder = "搜索模型或供应商",
+            height = PiSettingsMetrics.searchFieldHeight,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PiSettingsChip(
+                text = "全选可见",
+                onClick = {
+                    val visibleKeys = filtered.flatMap { g -> g.models.map { "${it.provider}/${it.id}" } }
+                    selectedKeys = (selectedKeys + visibleKeys).distinct()
+                },
+            )
+            PiSettingsChip(
+                text = "清空",
+                enabled = selectedKeys.isNotEmpty(),
+                onClick = { selectedKeys = emptyList() },
+            )
+        }
+        LazyColumn(Modifier.weight(1f)) {
+            if (selectedKeys.isNotEmpty() && query.isBlank()) {
+                item(key = "selected-head") {
+                    ModelsSectionLabel("已选顺序（${selectedKeys.size}）", Modifier.padding(top = 10.dp, bottom = 4.dp))
+                }
+                items(selectedKeys.size, key = { idx -> "sel:${selectedKeys[idx]}" }) { idx ->
+                    val key = selectedKeys[idx]
+                    val info = modelByKey[key]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${idx + 1}. ${info?.name?.ifBlank { null } ?: key.substringAfter('/')}",
+                                style = PiTheme.text.prose,
+                                color = PiTheme.palette.text,
+                                maxLines = 1,
+                            )
+                            Text(key, style = PiTheme.text.monoSmall, color = PiTheme.palette.dim, maxLines = 1)
+                        }
+                        PiSettingsChip(text = "↑", enabled = idx > 0, onClick = { moveSelected(idx, -1) })
+                        PiSettingsChip(text = "↓", enabled = idx < selectedKeys.lastIndex, onClick = { moveSelected(idx, 1) })
+                        PiSettingsChip(text = "移除", onClick = { toggleKey(key) })
+                    }
+                }
+            }
+
+            filtered.forEach { g ->
+                val providerKeys = g.models.map { "${it.provider}/${it.id}" }
+                val allIn = providerKeys.isNotEmpty() && providerKeys.all { it in selectedSet }
+                item(key = "grp:${g.providerId}") {
+                    ModelsSectionLabel(
+                        "${g.providerName} · ${g.models.size}",
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                        trailing = {
+                            PiSettingsChip(
+                                text = if (allIn) "取消全选" else "全选该供应商",
+                                active = allIn,
+                                onClick = { toggleProvider(g.providerId, providerKeys) },
+                            )
+                        },
+                    )
+                }
+                items(g.models, key = { "m:${it.provider}/${it.id}" }) { m ->
+                    val key = "${m.provider}/${m.id}"
+                    val checked = key in selectedSet
+                    ModelRow(
+                        model = m,
+                        current = false,
+                        selected = checked,
+                        onClick = { toggleKey(key) },
+                    )
+                }
+            }
+            if (filtered.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        if (models.isEmpty()) "还没有可用模型——先连接一个供应商。" else "没有匹配「${query.trim()}」的模型。",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.dim,
+                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small, vertical = 12.dp),
+                    )
+                }
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                PrimaryAction("仅本会话应用", enabled = !working, onClick = { applySelection(persist = false) })
+                PiSettingsChip(text = "应用并设为默认", enabled = !working, onClick = { applySelection(persist = true) })
+                PiSettingsChip(text = "取消", onClick = onDismiss)
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ 官方两步「逐模型思考等级」选择器（对齐 settings-selector.js:392-485）
+
+private val OFFICIAL_THINKING_META = mapOf(
+    "minimal" to ("极简" to "最少推理（约 1k token 预算）"),
+    "low" to ("低" to "轻量推理（约 2k token 预算）"),
+    "medium" to ("中" to "均衡推理（约 8k token 预算）"),
+    "high" to ("高" to "深度推理（约 16k token 预算）"),
+    "xhigh" to ("超高" to "极深推理（约 32k token 预算）"),
+    "max" to ("最高" to "最大推理深度"),
+)
+
+/**
+ * 逐模型思考等级设置面板：对照 Pi 官方 `settings-selector.js` 的两步子菜单。
+ *
+ *  - 第 1 步：列出全部可用推理模型（已覆盖的排在前面，并保留配置中可能存在的离线/自定义覆盖项），支持搜索；
+ *  - 第 2 步：点击模型后，仅展示**该模型真实支持的思考等级**（来自 `@earendil-works/pi-ai` 的 `getSupportedThinkingLevels`），
+ *    外加「恢复跟随全局默认」，直接调用 SDK `setModelThinkingLevel` / `removeModelThinkingLevel` 落盘。
+ */
+@Composable
+internal fun ModelThinkingLevelsSheet(
+    host: () -> ModelsHost?,
+    models: List<app.pi.rpc.PiResponses.ModelInfo>,
+    providerNames: Map<String, String>,
+    overrides: Map<String, String>,
+    defaultLevel: String,
+    onDismiss: () -> Unit,
+    onChanged: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var selectedModel by remember { mutableStateOf<app.pi.rpc.PiResponses.ModelInfo?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var liveOverrides by remember(overrides) { mutableStateOf(overrides) }
+
+    val reasoningModels = remember(models, liveOverrides, query, providerNames) {
+        val pool = models.filter { it.reasoning || it.supportedThinkingLevels.isNotEmpty() || "${it.provider.orEmpty()}/${it.id}" in liveOverrides }
+        val q = query.trim()
+        val hit = if (q.isEmpty()) {
+            pool
+        } else {
+            pool.filter { m ->
+                val pName = providerNames[m.provider.orEmpty()].orEmpty()
+                matches(q, m.name, m.id, m.provider.orEmpty(), pName)
+            }
+        }
+        hit.sortedWith(
+            compareByDescending<app.pi.rpc.PiResponses.ModelInfo> { "${it.provider.orEmpty()}/${it.id}" in liveOverrides }
+                .thenBy { (providerNames[it.provider.orEmpty()] ?: it.provider.orEmpty()).lowercase() }
+                .thenBy { it.name.lowercase() },
+        )
+    }
+
+    val modelKeys = remember(models) { models.map { "${it.provider.orEmpty()}/${it.id}" }.toSet() }
+    val orphanOverrides = remember(liveOverrides, modelKeys) {
+        liveOverrides.filterKeys { it !in modelKeys }
+    }
+
+    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+        val active = selectedModel
+        if (active == null) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("逐模型思考等级", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                Text(
+                    "全局默认：${OFFICIAL_THINKING_META[defaultLevel]?.first ?: defaultLevel} · 已单独覆盖 ${liveOverrides.size} 个模型",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.dim,
+                )
+            }
+            PiEditorField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small * 2),
+                placeholder = "搜索推理模型",
+                height = PiSettingsMetrics.searchFieldHeight,
+            )
+            error?.let {
+                Text(
+                    it,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.error,
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
+                )
+            }
+            LazyColumn(Modifier.weight(1f)) {
+                if (orphanOverrides.isNotEmpty() && query.isBlank()) {
+                    item(key = "orphan-head") {
+                        ModelsSectionLabel("其他已配置覆盖（未连接供应商）", Modifier.padding(top = 6.dp, bottom = 4.dp))
+                    }
+                    orphanOverrides.entries.forEach { (key, lvl) ->
+                        item(key = "orphan:$key") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(key, style = PiTheme.text.monoSmall, color = PiTheme.palette.text)
+                                    Text(
+                                        "当前覆盖：${OFFICIAL_THINKING_META[lvl]?.first ?: lvl}",
+                                        style = PiTheme.text.meta,
+                                        color = PiTheme.palette.accent,
+                                    )
+                                }
+                                PiSettingsChip(
+                                    text = "移除",
+                                    enabled = !busy,
+                                    onClick = {
+                                        val h = host() ?: return@PiSettingsChip
+                                        val p = key.substringBefore('/')
+                                        val id = key.substringAfter('/')
+                                        scope.launch {
+                                            busy = true
+                                            runCatching { h.removeModelThinkingLevel(p, id) }
+                                                .onSuccess {
+                                                    liveOverrides = liveOverrides - key
+                                                    onChanged("已移除 $key 的思考等级覆盖。")
+                                                }
+                                                .onFailure { error = "移除失败：${it.message}" }
+                                            busy = false
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                items(reasoningModels, key = { "${it.provider.orEmpty()}/${it.id}" }) { m ->
+                    val key = "${m.provider.orEmpty()}/${m.id}"
+                    val currentLvl = liveOverrides[key]
+                    val pLabel = providerNames[m.provider.orEmpty()] ?: m.provider.orEmpty()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedModel = m
+                                error = null
+                            }
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(m.name.ifBlank { m.id }, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1)
+                            Text(
+                                buildString {
+                                    append(pLabel)
+                                    if (m.supportedThinkingLevels.isNotEmpty()) {
+                                        append(" · 支持 ")
+                                        append(m.supportedThinkingLevels.joinToString("/") { OFFICIAL_THINKING_META[it]?.first ?: it })
+                                    }
+                                },
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.dim,
+                                maxLines = 1,
+                            )
+                        }
+                        Text(
+                            currentLvl?.let { OFFICIAL_THINKING_META[it]?.first ?: it } ?: "跟随默认",
+                            style = PiTheme.text.meta,
+                            color = if (currentLvl != null) PiTheme.palette.accent else PiTheme.palette.muted,
+                        )
+                        Text("›", style = PiTheme.text.prose, color = PiTheme.palette.dim)
+                    }
+                }
+                if (reasoningModels.isEmpty()) {
+                    item(key = "no-reasoning") {
+                        Text(
+                            if (models.isEmpty()) "还没有可用模型——先连接一个供应商。" else "没有找到支持推理的模型。",
+                            style = PiTheme.text.meta,
+                            color = PiTheme.palette.dim,
+                            modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small, vertical = 12.dp),
+                        )
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                PiSettingsChip(text = "完成", onClick = onDismiss)
+            }
+        } else {
+            // 第 2 步：选该模型真实支持的思考等级
+            val key = "${active.provider.orEmpty()}/${active.id}"
+            val currentLvl = liveOverrides[key]
+            val levels = active.supportedThinkingLevels.ifEmpty { listOf("minimal", "low", "medium", "high") }
+
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(active.name.ifBlank { active.id }, style = PiTheme.text.prose, color = PiTheme.palette.text)
+                Text(
+                    "$key · 选择该模型新会话启动时的默认思考等级",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.dim,
+                )
+            }
+            error?.let {
+                Text(
+                    it,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.error,
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small, vertical = 4.dp),
+                )
+            }
+            LazyColumn(Modifier.weight(1f).padding(top = 8.dp)) {
+                item(key = "follow-default") {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 4.dp)
+                            .clickable(enabled = !busy) {
+                                val h = host() ?: run { error = "引擎没在运行。"; return@clickable }
+                                scope.launch {
+                                    busy = true
+                                    error = null
+                                    runCatching { h.removeModelThinkingLevel(active.provider.orEmpty(), active.id) }
+                                        .onSuccess {
+                                            liveOverrides = liveOverrides - key
+                                            onChanged("${active.name.ifBlank { active.id }} 已恢复跟随全局默认。")
+                                            selectedModel = null
+                                        }
+                                        .onFailure { error = "保存失败：${it.message}" }
+                                    busy = false
+                                }
+                            },
+                        shape = PiShapes.card,
+                        color = if (currentLvl == null) PiTheme.palette.selectedBg else MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(
+                            1.dp,
+                            if (currentLvl == null) PiTheme.palette.accent else MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                (if (currentLvl == null) "✓ " else "") + "跟随全局默认（${OFFICIAL_THINKING_META[defaultLevel]?.first ?: defaultLevel}）",
+                                style = PiTheme.text.prose,
+                                color = if (currentLvl == null) PiTheme.palette.accent else PiTheme.palette.text,
+                            )
+                            Text("不为此模型单独覆盖，使用全局默认思考等级。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                        }
+                    }
+                }
+                items(levels, key = { it }) { lvl ->
+                    val meta = OFFICIAL_THINKING_META[lvl]
+                    val activeLevel = currentLvl == lvl
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 4.dp)
+                            .clickable(enabled = !busy) {
+                                val h = host() ?: run { error = "引擎没在运行。"; return@clickable }
+                                scope.launch {
+                                    busy = true
+                                    error = null
+                                    runCatching { h.setModelThinkingLevel(active.provider.orEmpty(), active.id, lvl) }
+                                        .onSuccess {
+                                            liveOverrides = liveOverrides + (key to lvl)
+                                            onChanged("${active.name.ifBlank { active.id }} 思考等级已设为 ${meta?.first ?: lvl}。")
+                                            selectedModel = null
+                                        }
+                                        .onFailure { error = "保存失败：${it.message}" }
+                                    busy = false
+                                }
+                            },
+                        shape = PiShapes.card,
+                        color = if (activeLevel) PiTheme.palette.selectedBg else MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(
+                            1.dp,
+                            if (activeLevel) PiTheme.palette.accent else MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                (if (activeLevel) "✓ " else "") + (meta?.first ?: lvl) + " ($lvl)",
+                                style = PiTheme.text.prose,
+                                color = if (activeLevel) PiTheme.palette.accent else PiTheme.palette.text,
+                            )
+                            meta?.second?.let { desc ->
+                                Text(desc, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PiSettingsChip(text = "← 返回模型列表", enabled = !busy, onClick = { selectedModel = null; error = null })
+            }
+        }
+    }
+}

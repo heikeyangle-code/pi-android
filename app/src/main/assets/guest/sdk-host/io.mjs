@@ -17,12 +17,28 @@ import { StringDecoder } from "node:string_decoder";
 const RETRY_DELAY_MS = 10;
 const HIGH_WATER_BYTES = 256 * 1024;
 
+let stdoutHook = null;
+
+/** 注册 stdout 旁路钩子（用于捕获扩展直写 stdout 的 BEL `\x07` / OSC 通知 / 标题等终端控制序列）。 */
+export function setStdoutHook(fn) {
+  stdoutHook = typeof fn === "function" ? fn : null;
+}
+
 /** 必须在加载任何别的模块之前调用。返回原始 stdout 的写函数。 */
 export function takeOverStdout() {
   const rawWrite = process.stdout.write.bind(process.stdout);
   const errWrite = process.stderr.write.bind(process.stderr);
-  process.stdout.write = (chunk, encodingOrCb, cb) =>
-    errWrite(String(chunk), typeof encodingOrCb === "function" ? encodingOrCb : cb);
+  process.stdout.write = (chunk, encodingOrCb, cb) => {
+    const text = typeof chunk === "string" ? chunk : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    if (stdoutHook && (text.includes("\x07") || text.includes("\x1b]"))) {
+      try {
+        stdoutHook(text);
+      } catch {
+        // 钩子异常不能破坏 stdout 重定向
+      }
+    }
+    return errWrite(text, typeof encodingOrCb === "function" ? encodingOrCb : cb);
+  };
   return rawWrite;
 }
 

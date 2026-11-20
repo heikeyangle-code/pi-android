@@ -28,7 +28,6 @@ import app.pi.host.HostAuth
 import app.pi.models.ProviderForm
 import app.pi.rpc.PiResponses
 import app.pi.ui.PiTopBar
-import app.pi.ui.components.PiSheet
 import app.pi.ui.settings.G_MODELS_SCREEN
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
@@ -85,6 +84,7 @@ fun ModelsScreen(
     var form by remember { mutableStateOf<FormRequest?>(null) }
     var editingSetting by remember { mutableStateOf<PiSetting?>(null) }
     var pickingScoped by remember { mutableStateOf(false) }
+    var pickingModelThinking by remember { mutableStateOf(false) }
 
     LaunchedEffect(reload) {
         val h = host()
@@ -282,20 +282,93 @@ fun ModelsScreen(
                 }
             }
 
-            // ---- 推理、作用域与缓存（整合原「模型与推理」与「引擎」里的推理/作用域/缓存能力） ----
-            item(key = "l:reasoning") { ModelsSectionLabel("推理与缓存") }
+            // ---- 推理、作用域与缓存（100% 对齐 Pi SDK，不再混用旧版纯文本编辑器或重复行） ----
+            item(key = "l:reasoning") { ModelsSectionLabel("推理、作用域与缓存") }
             item(key = "c:reasoning") {
+                val settingByKey = remember(modelSettings) { modelSettings.associateBy { it.key } }
+                val defaultThinkingSetting = settingByKey["defaultThinkingLevel"]
+                val budgetsSetting = settingByKey["thinkingBudgets"]
+                val cacheWarmingSetting = settingByKey["cacheWarming"]
+                val cacheMissSetting = settingByKey["showCacheMissNotices"]
+
+                val persistedEnabledModels = remember(store, freshness, reload) {
+                    (store.read("enabledModels") as? kotlinx.serialization.json.JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                        .orEmpty()
+                }
+                val perModelOverrides = remember(store, freshness, reload) {
+                    (store.read("modelThinkingLevels") as? kotlinx.serialization.json.JsonObject)
+                        ?.mapNotNull { (k, v) ->
+                            val lvl = (v as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            if (lvl != null) k to lvl else null
+                        }
+                        ?.toMap()
+                        .orEmpty()
+                }
+
                 ModelsCard {
                     Column {
-                        // 实时缓存预热控制（直接走 SDK cache.setMode，并同步设置文档）
-                        d.cache?.let { cache ->
+                        // 1. 统一「作用域与循环模型」（合并原重复的「当前会话作用域模型」+「循环模型」纯文本项）
+                        val scopedSummary = when {
+                            d.scoped.isNotEmpty() -> "当前会话 ${d.scoped.size} 个模型" +
+                                if (persistedEnabledModels.isNotEmpty()) " · 默认规则 ${persistedEnabledModels.size} 项" else ""
+                            persistedEnabledModels.isNotEmpty() -> "默认规则 ${persistedEnabledModels.size} 项（新会话生效）"
+                            else -> "未限制（循环全部可用模型）"
+                        }
+                        PiSettingsEntryRow(
+                            title = "作用域与循环模型",
+                            supporting = scopedSummary,
+                            onClick = { onLoadAvailableModels(); pickingScoped = true },
+                        )
+
+                        // 2. 全局默认思考等级（新会话默认）
+                        defaultThinkingSetting?.let { setting ->
+                            ModelsDivider()
+                            val summary = remember(store, setting.key, freshness, reload) {
+                                setting.display(setting.current(store))
+                            }
+                            PiSettingsEntryRow(
+                                title = setting.title,
+                                supporting = "$summary · ${setting.description}",
+                                onClick = { editingSetting = setting },
+                            )
+                        }
+
+                        // 3. 逐模型思考等级（官方两步选择器：真实模型列表 → 该模型真实支持的思考等级，直走 SDK setter）
+                        ModelsDivider()
+                        PiSettingsEntryRow(
+                            title = "逐模型思考等级",
+                            supporting = if (perModelOverrides.isEmpty()) {
+                                "未覆盖 · 按模型真实支持的档位覆盖新会话默认等级"
+                            } else {
+                                "已单独覆盖 ${perModelOverrides.size} 个模型 · 点击管理"
+                            },
+                            onClick = { onLoadAvailableModels(); pickingModelThinking = true },
+                        )
+
+                        // 4. 思考预算（结构化四档 token 预算编辑器）
+                        budgetsSetting?.let { setting ->
+                            ModelsDivider()
+                            val summary = remember(store, setting.key, freshness, reload) {
+                                setting.display(setting.current(store))
+                            }
+                            PiSettingsEntryRow(
+                                title = setting.title,
+                                supporting = "$summary · ${setting.description}",
+                                onClick = { editingSetting = setting },
+                            )
+                        }
+
+                        // 5. 实时缓存预热（直走 SDK cache.setMode，无实时状态时退回设置选择器）
+                        if (d.cache != null) {
+                            ModelsDivider()
                             Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("实时缓存预热", style = PiTheme.text.prose, color = PiTheme.palette.text)
                                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                                     for ((mode, label) in listOf("off" to "关", "streaming" to "流式时", "idle" to "空闲时")) {
                                         PiSettingsChip(
                                             text = label,
-                                            active = cache.mode == mode,
+                                            active = d.cache.mode == mode,
                                             onClick = {
                                                 val h = host() ?: return@PiSettingsChip
                                                 scope.launch {
@@ -312,89 +385,56 @@ fun ModelsScreen(
                                     }
                                 }
                                 val statusLine = listOfNotNull(
-                                    cache.state?.let { "状态：$it" },
-                                    cache.reason,
-                                    cache.nextWarmAt?.let { "下次预热 $it" },
+                                    d.cache.state?.let { "状态：$it" },
+                                    d.cache.reason,
+                                    d.cache.nextWarmAt?.let { "下次预热 $it" },
                                 ).joinToString(" · ")
                                 if (statusLine.isNotEmpty()) {
                                     Text(statusLine, style = PiTheme.text.meta, color = PiTheme.palette.dim)
                                 }
                             }
+                        } else if (cacheWarmingSetting != null) {
                             ModelsDivider()
+                            val summary = remember(store, cacheWarmingSetting.key, freshness, reload) {
+                                cacheWarmingSetting.display(cacheWarmingSetting.current(store))
+                            }
+                            PiSettingsEntryRow(
+                                title = cacheWarmingSetting.title,
+                                supporting = "$summary · ${cacheWarmingSetting.description}",
+                                onClick = { editingSetting = cacheWarmingSetting },
+                            )
                         }
 
-                        // 当前会话作用域模型（快速循环切换列表，直接走 SDK models.setScoped）
-                        Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("当前会话作用域模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
-                                    Text(
-                                        if (d.scoped.isEmpty()) "未限制（循环切换时在全部可用模型里转）" else "仅在这 ${d.scoped.size} 个模型之间循环切换",
-                                        style = PiTheme.text.meta,
-                                        color = PiTheme.palette.dim,
-                                    )
-                                }
-                                PiSettingsChip(text = "添加…", onClick = { onLoadAvailableModels(); pickingScoped = true })
-                            }
-                            if (d.scoped.isNotEmpty()) {
-                                Row(
-                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-                                ) {
-                                    d.scoped.forEachIndexed { idx, m ->
-                                        PiSettingsChip(
-                                            text = "${m.name ?: m.id} ×",
-                                            onClick = {
-                                                val h = host() ?: return@PiSettingsChip
-                                                scope.launch {
-                                                    runCatching { h.advanced.setScopedModels(d.scoped.filterIndexed { j, _ -> j != idx }) }
-                                                        .onSuccess { reload++ }
-                                                        .onFailure { notice = "更新作用域模型失败：${it.message}" }
+                        // 6. 缓存未命中提示（直走 SDK setShowCacheMissNotices）
+                        cacheMissSetting?.let { setting ->
+                            ModelsDivider()
+                            val checked = remember(store, setting.key, freshness, reload) { setting.boolIn(store) }
+                            PiSettingsToggleRow(
+                                title = setting.title,
+                                supporting = setting.description,
+                                checked = checked,
+                                onCheckedChange = { on ->
+                                    val h = host()
+                                    if (h != null) {
+                                        scope.launch {
+                                            runCatching { h.setShowCacheMissNotices(on) }
+                                                .onSuccess {
+                                                    onSettingWritten(setting.key)
+                                                    reload++
                                                 }
-                                            },
-                                        )
-                                    }
-                                    PiSettingsChip(
-                                        text = "清空",
-                                        onClick = {
-                                            val h = host() ?: return@PiSettingsChip
-                                            scope.launch {
-                                                runCatching { h.advanced.setScopedModels(emptyList()) }
-                                                    .onSuccess { reload++ }
-                                                    .onFailure { notice = "清空作用域模型失败：${it.message}" }
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-                        }
-
-                        // settings.json 中的持久推理与缓存设置项（原 G_MODEL 的剩余有效配置）
-                        modelSettings.forEach { setting ->
-                            // 缓存预热在上方已有实时切换器，这里保留其余设置项（或引擎无缓存状态时也显示它）。
-                            if (setting.key == "cacheWarming" && d.cache != null) return@forEach
-                            ModelsDivider()
-                            val summary = remember(store, setting.key, freshness) {
-                                setting.display(setting.current(store))
-                            }
-                            if (setting.kind == PiRowKind.Switch) {
-                                val checked = remember(store, setting.key, freshness) { setting.boolIn(store) }
-                                PiSettingsToggleRow(
-                                    title = setting.title,
-                                    supporting = setting.description,
-                                    checked = checked,
-                                    onCheckedChange = { on ->
+                                                .onFailure {
+                                                    store.write(setting.key, JsonPrimitive(on))
+                                                    onSettingWritten(setting.key)
+                                                    reload++
+                                                }
+                                        }
+                                    } else {
                                         store.write(setting.key, JsonPrimitive(on))
                                         onSettingWritten(setting.key)
-                                    },
-                                )
-                            } else {
-                                PiSettingsEntryRow(
-                                    title = setting.title,
-                                    supporting = "$summary · ${setting.description}",
-                                    onClick = { editingSetting = setting },
-                                )
-                            }
+                                        reload++
+                                    }
+                                },
+                            )
                         }
                     }
                 }
@@ -496,38 +536,47 @@ fun ModelsScreen(
 
         if (pickingScoped) {
             val pool = d.models.ifEmpty { availableModels }
-            val have = d.scoped.map { it.provider to it.id }.toSet()
-            val options = pool.filter { (it.provider.orEmpty() to it.id) !in have }
-            PiSheet(onDismiss = { pickingScoped = false }, fullHeight = true) {
-                Text(
-                    "添加到当前会话作用域模型",
-                    style = PiTheme.text.prose,
-                    color = PiTheme.palette.text,
-                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
-                )
-                LazyColumn(Modifier.weight(1f)) {
-                    if (options.isEmpty()) {
-                        item { PiInfoNote("没有更多可添加的模型（先连接供应商或刷新目录）。") }
-                    }
-                    items(options.size) { i ->
-                        val m = options[i]
-                        PiSettingsEntryRow(
-                            title = m.name.ifBlank { m.id },
-                            supporting = m.provider,
-                            onClick = {
-                                pickingScoped = false
-                                val h = host() ?: return@PiSettingsEntryRow
-                                scope.launch {
-                                    val next = d.scoped + HostAdvanced.ModelRef(m.provider.orEmpty(), m.id, m.name)
-                                    runCatching { h.advanced.setScopedModels(next) }
-                                        .onSuccess { reload++ }
-                                        .onFailure { notice = "添加作用域模型失败：${it.message}" }
-                                }
-                            },
-                        )
-                    }
+            val persisted = (store.read("enabledModels") as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                .orEmpty()
+            ScopedModelsSheet(
+                host = host,
+                models = pool,
+                providerNames = names,
+                initialScoped = d.scoped,
+                persistedPatterns = persisted,
+                onDismiss = { pickingScoped = false },
+                onApplied = { msg ->
+                    notice = msg
+                    onSettingWritten("enabledModels")
+                    reload++
+                },
+            )
+        }
+
+        if (pickingModelThinking) {
+            val pool = d.models.ifEmpty { availableModels }
+            val overrides = (store.read("modelThinkingLevels") as? kotlinx.serialization.json.JsonObject)
+                ?.mapNotNull { (k, v) ->
+                    val lvl = (v as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    if (lvl != null) k to lvl else null
                 }
-            }
+                ?.toMap()
+                .orEmpty()
+            val defaultLvl = (store.read("defaultThinkingLevel") as? JsonPrimitive)?.takeIf { it.isString }?.content ?: "medium"
+            ModelThinkingLevelsSheet(
+                host = host,
+                models = pool,
+                providerNames = names,
+                overrides = overrides,
+                defaultLevel = defaultLvl,
+                onDismiss = { pickingModelThinking = false },
+                onChanged = { msg ->
+                    notice = msg
+                    onSettingWritten("modelThinkingLevels")
+                    reload++
+                },
+            )
         }
     }
 }

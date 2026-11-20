@@ -587,6 +587,8 @@ fun PiSettingsStack(
                         mapOf(AppOnlySettingsStore.KEY_MATRIX to engineMatrix.second)
                     }),
                 onRestartEngine = { restartPrompt = true },
+                availableModels = availableModels,
+                onLoadAvailableModels = onLoadAvailableModels,
             )
 
             resources -> app.pi.ui.resources.ResourcesHubScreen(

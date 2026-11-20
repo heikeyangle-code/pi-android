@@ -14,7 +14,7 @@
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { Transport, readLines, takeOverStdout } from "./io.mjs";
+import { Transport, readLines, setStdoutHook, takeOverStdout } from "./io.mjs";
 import { Hub } from "./hub.mjs";
 import { ERR } from "./protocol.mjs";
 import { Registry } from "./commands/registry.mjs";
@@ -79,6 +79,7 @@ if (!existsSync(cfg.cwd)) {
 
 const themeHandle = createTheme();
 const surfaces = new Surfaces(hub, themeHandle.theme);
+setStdoutHook((text) => surfaces.handleTerminalOutput(text, "stdout"));
 const ui = createUiContext({ hub, surfaces, theme: themeHandle.theme, flags: {} });
 const controller = new Controller({ hub, transport, ui, surfaces, cfg });
 controller.theme = themeHandle.theme;

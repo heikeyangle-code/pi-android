@@ -26,10 +26,14 @@ export function register(reg, { controller, hub }) {
 
   reg.add("settings.get", () => view(manager()));
 
+  const ALLOWED_SETTINGS_METHODS = new Set(["removeModelThinkingLevel"]);
+
   reg.add("settings.set", async (args) => {
     const sm = manager();
     const method = str(args, "method");
-    if (!/^set[A-Z]\w*$/.test(method) || typeof sm[method] !== "function") throw bad(`SettingsManager 没有这个设置方法：${method}`);
+    if ((!/^set[A-Z]\w*$/.test(method) && !ALLOWED_SETTINGS_METHODS.has(method)) || typeof sm[method] !== "function") {
+      throw bad(`SettingsManager 没有这个设置方法：${method}`);
+    }
     const params = Array.isArray(args.params) ? args.params : [];
     sm.drainErrors(); // 丢掉之前的残留，只报这一次写入的错
     try {
@@ -41,6 +45,19 @@ export function register(reg, { controller, hub }) {
     const errors = sm.drainErrors();
     if (errors.length) throw new HostError(ERR.REJECTED, errors.map((e) => String(e?.error?.message ?? e?.message ?? e)).join("; "));
     if (method === "setHttpProxy" || method === "setHttpIdleTimeoutMs") await controller.applyHttpSettings?.();
+    // 与 Pi 官方 `settings-selector.js` 一致：同步运行中会话的实时状态。
+    const session = controller.session;
+    if (session) {
+      try {
+        if (method === "setSteeringMode" && typeof params[0] === "string") session.setSteeringMode?.(params[0]);
+        else if (method === "setFollowUpMode" && typeof params[0] === "string") session.setFollowUpMode?.(params[0]);
+        else if (method === "setCompactionEnabled" && typeof params[0] === "boolean") session.setAutoCompactionEnabled?.(params[0]);
+        else if (method === "setRetryEnabled" && typeof params[0] === "boolean") session.setAutoRetryEnabled?.(params[0]);
+        else if (method === "setCacheWarmingMode" && typeof params[0] === "string") session.setCacheWarmingMode?.(params[0]);
+      } catch {
+        // 会话尚未就绪或不支持该运行时方法时不阻塞设置落盘
+      }
+    }
     hub.emit("settings.changed", { method });
     return view(sm);
   });

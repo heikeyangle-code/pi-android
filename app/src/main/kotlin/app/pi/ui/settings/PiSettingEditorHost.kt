@@ -57,6 +57,9 @@ fun PiSettingEditorSheet(
     pickerClearLabel: String? = null,
     /** 选项标签是「分组 / 名字」时按分组排版（默认模型）。 */
     pickerGrouped: Boolean = false,
+    /** 来自 SDK `model.list` 的可用模型列表，供 `compaction.modelOverrides` 等结构化选择器使用。 */
+    availableModels: List<app.pi.rpc.PiResponses.ModelInfo> = emptyList(),
+    onLoadAvailableModels: () -> Unit = {},
     onWritten: (PiSetting) -> Unit = {},
 ) {
     when (setting.kind) {
@@ -158,43 +161,49 @@ fun PiSettingEditorSheet(
             onDismiss = onDismiss,
         )
 
-        PiRowKind.List -> PiListEditorSheet(
-            setting = setting,
-            initialEntries = setting.editableEntries(store.read(setting.key) ?: setting.defaultValue),
-            // pi's own rules for the object-valued rows, applied **before** the write:
-            // `compaction.modelOverrides` with a non-integer value makes pi throw on every
-            // turn's compaction check (`core/settings-manager.ts:854-880` →
-            // `core/agent-session.ts:540`), so saving it silently is the bug
-            // (`docs/settings-audit-impl.md` §B5). `validateEntries` returns the sentence to
-            // show instead of saving, or null when the lines are acceptable.
-            validate = { entries -> setting.validateEntries(entries) },
-            // An empty list **removes the key** instead of writing `[]` / `{}`.
-            //
-            // Writing the empty container is a *value* in pi, and for one row it means the
-            // opposite of what the row's label promises (`docs/settings-audit-impl.md` §11):
-            //
-            //  - `defaultTools`: pi does `configuredDefaultToolNames ?? defaultActiveToolNames`
-            //    (`core/sdk.ts:256-262`), so `[]` means **no built-in tool at all**, while the
-            //    row is labelled 「默认 read/bash/edit/write」. Clearing it used to disable every
-            //    tool while the screen said "default" — the row was lying.
-            //  - everything else here treats empty as unset already, so removing is
-            //    behaviour-identical and leaves pi's document sparse: `enabledModels`
-            //    (`main.ts:788`: `length > 0` else cycle all models), `npmCommand`
-            //    (`core/package-manager.ts:1747-1753`: empty → `npm`), the three object rows
-            //    (`?.` / `?? {}` lookups), and the app's own `app.terminal.keyBar`
-            //    (`TerminalSettings.keyBarOf`: absent *and* empty both mean the default bar).
-            //
-            // A user who genuinely wants pi's "no built-in tools" reads it from `settings.json`
-            // itself in the 「Pi 文件」 screen; the row's description says so.
-            onSet = { entries ->
+        PiRowKind.List -> {
+            val initialEntries = setting.editableEntries(store.read(setting.key) ?: setting.defaultValue)
+            val saveEntries: (List<String>) -> Unit = { entries ->
+                // An empty list **removes the key** instead of writing `[]` / `{}`.
                 if (entries.isEmpty()) {
                     store.remove(setting.key)
                 } else {
                     store.write(setting.key, setting.elementFromEntries(entries))
                 }
                 onWritten(setting)
-            },
-            onDismiss = onDismiss,
-        )
+            }
+            when (setting.key) {
+                "thinkingBudgets" -> PiThinkingBudgetsSheet(
+                    title = setting.title,
+                    description = setting.description,
+                    initialEntries = initialEntries,
+                    onSet = saveEntries,
+                    onDismiss = onDismiss,
+                )
+                "defaultTools" -> PiDefaultToolsSheet(
+                    title = setting.title,
+                    description = setting.description,
+                    initialEntries = initialEntries,
+                    onSet = saveEntries,
+                    onDismiss = onDismiss,
+                )
+                "compaction.modelOverrides" -> PiCompactionOverridesSheet(
+                    title = setting.title,
+                    description = setting.description,
+                    initialEntries = initialEntries,
+                    availableModels = availableModels,
+                    onLoadAvailableModels = onLoadAvailableModels,
+                    onSet = saveEntries,
+                    onDismiss = onDismiss,
+                )
+                else -> PiListEditorSheet(
+                    setting = setting,
+                    initialEntries = initialEntries,
+                    validate = { entries -> setting.validateEntries(entries) },
+                    onSet = saveEntries,
+                    onDismiss = onDismiss,
+                )
+            }
+        }
     }
 }

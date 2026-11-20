@@ -922,6 +922,61 @@ try {
     await h.call("session.delete", { path: idxFixture });
   }
 
+  // ---- 7b. SDK-native settings.set (removeModelThinkingLevel) + model.list supportedThinkingLevels + TUI bell/getBounds/inputListener ----
+  {
+    const setLvl = await h.call("settings.set", { method: "setModelThinkingLevel", params: ["anthropic", "claude-sonnet-4-5", "high"] });
+    expect("settings.set setModelThinkingLevel 成功写入", setLvl.ok && setLvl.data?.effective?.modelThinkingLevels?.["anthropic/claude-sonnet-4-5"] === "high", JSON.stringify(setLvl.data?.effective?.modelThinkingLevels));
+    const rmLvl = await h.call("settings.set", { method: "removeModelThinkingLevel", params: ["anthropic", "claude-sonnet-4-5"] });
+    expect("settings.set removeModelThinkingLevel 成功移除", rmLvl.ok && !rmLvl.data?.effective?.modelThinkingLevels?.["anthropic/claude-sonnet-4-5"], JSON.stringify(rmLvl.data?.effective?.modelThinkingLevels));
+
+    const allModels = await h.call("model.list", { all: true });
+    const sampleReasoning = allModels.data?.models?.find((m) => m.reasoning === true);
+    const sampleNonReasoning = allModels.data?.models?.find((m) => m.reasoning === false);
+    expect(
+      "model.list 附带 supportedThinkingLevels（推理模型非空、非推理模型为空数组）",
+      allModels.ok &&
+        Array.isArray(sampleReasoning?.supportedThinkingLevels) &&
+        sampleReasoning.supportedThinkingLevels.length > 0 &&
+        (!sampleNonReasoning || (Array.isArray(sampleNonReasoning.supportedThinkingLevels) && sampleNonReasoning.supportedThinkingLevels.length === 0)),
+      JSON.stringify({ r: sampleReasoning?.supportedThinkingLevels, nr: sampleNonReasoning?.supportedThinkingLevels }),
+    );
+
+    // 直接单元测试 Surfaces 的终端声音/OSC/OverlayHandle.getBounds/tui.addInputListener
+    const { Surfaces, sanitizeRenderedLine, inspectTerminalOutput } = await import(
+      pathToFileURL(join(here, "../../app/src/main/assets/guest/sdk-host/ui/surfaces.mjs")).href
+    );
+    const emitted = [];
+    const fakeHub = { emit: (name, data) => emitted.push({ name, data }) };
+    const surf = new Surfaces(fakeHub, {});
+    let boundsSeen = null;
+    let receivedInput = null;
+    const mounted = await surf.mount({
+      mode: "custom",
+      overlay: true,
+      onHandle: (handle) => { boundsSeen = handle.getBounds(); },
+      build: (tui) => {
+        tui.addInputListener((d) => (d === "x" ? { data: "X!" } : undefined));
+        tui.terminal.write("\x07");
+        tui.terminal.write("\x1b]777;notify;Game;Level Up\x07");
+        return {
+          render: () => ["Hello\x07World"],
+          handleInput: (d) => { receivedInput = d; },
+        };
+      },
+    });
+    surf.input(mounted.id, "x");
+    const renderedBellCleaned = sanitizeRenderedLine("A\x07B\x1b]8;;https://pi.dev\x07link\x1b]8;;\x07");
+    expect("tui.terminal.write BEL 触发 ui.bell", emitted.some((e) => e.name === "ui.bell"), JSON.stringify(emitted));
+    expect("OSC 777 通知转为 ui.notify", emitted.some((e) => e.name === "ui.notify" && e.data?.message?.includes("Level Up")), JSON.stringify(emitted));
+    expect("sanitizeRenderedLine 移除独立 BEL 但保留 OSC 8 终止符", renderedBellCleaned === "AB\x1b]8;;https://pi.dev\x07link\x1b]8;;\x07", JSON.stringify(renderedBellCleaned));
+    expect("OverlayHandle.getBounds() 返回有效尺寸", boundsSeen && boundsSeen.width === 80 && boundsSeen.height > 0, JSON.stringify(boundsSeen));
+    expect("tui.addInputListener 改写后传给 handleInput", receivedInput === "X!", JSON.stringify(receivedInput));
+    let osc9Progress = null;
+    inspectTerminalOutput("\x1b]9;4;1;50\x07", { onProgress: (v) => { osc9Progress = v; } });
+    expect("OSC 9;4 进度序列解析为 workingVisible", osc9Progress === true, String(osc9Progress));
+    surf.closeAll();
+  }
+
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");
   const code = await new Promise((r) => (h.child.exitCode !== null ? r(h.child.exitCode) : h.child.once("exit", r)));

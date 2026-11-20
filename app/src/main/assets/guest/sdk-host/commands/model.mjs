@@ -5,6 +5,48 @@ import { withState } from "../state.mjs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 
+const THINKING_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+let cachedGetSupportedThinkingLevels = undefined;
+
+async function resolveSupportedThinkingLevelsFn(piDir) {
+  if (cachedGetSupportedThinkingLevels !== undefined) return cachedGetSupportedThinkingLevels;
+  const candidates = [
+    join(piDir, "..", "pi-ai", "dist", "models.js"),
+    join(piDir, "node_modules", "@earendil-works", "pi-ai", "dist", "models.js"),
+  ];
+  for (const p of candidates) {
+    try {
+      const mod = await import(pathToFileURL(p).href);
+      if (typeof mod.getSupportedThinkingLevels === "function") {
+        cachedGetSupportedThinkingLevels = mod.getSupportedThinkingLevels;
+        return cachedGetSupportedThinkingLevels;
+      }
+    } catch {
+      // try next
+    }
+  }
+  cachedGetSupportedThinkingLevels = null;
+  return null;
+}
+
+function supportedThinkingLevelsOf(model, sdkFn) {
+  if (!model || !model.reasoning) return [];
+  if (typeof sdkFn === "function") {
+    try {
+      const levels = sdkFn(model);
+      if (Array.isArray(levels)) return levels;
+    } catch {
+      // fallback below
+    }
+  }
+  const map = model.thinkingLevelMap;
+  if (map && typeof map === "object") {
+    const mapped = THINKING_ORDER.filter((lvl) => lvl in map);
+    if (mapped.length > 0) return mapped;
+  }
+  return ["minimal", "low", "medium", "high"];
+}
+
 export function register(reg, { controller }) {
   /**
    * 模型目录。默认 = 此刻**可用**的（`getAvailableSnapshot`：已配置凭据的供应商的模型，登录/退出后
@@ -12,13 +54,27 @@ export function register(reg, { controller }) {
    *
    * `all: true` = 目录里**全部**（`getModels`，含还没配置凭据的供应商），每条多一个 `available`
    * （`hasConfiguredAuth`）。供应商页要在登录**之前**就让人看到它有哪些模型；`provider` 只取一家。
+   * 每条模型同时附带官方 `supportedThinkingLevels`（与 `pi-ai/dist/models.js` 一致），供「逐模型思考等级」
+   * 选择器直接展示该模型真实支持的档位。
    */
-  reg.add("model.list", (args) => {
+  reg.add("model.list", async (args) => {
     const rt = controller.requireSession().modelRuntime;
-    if (!bool(args, "all", false)) return { models: rt.getAvailableSnapshot() };
+    const sdkFn = await resolveSupportedThinkingLevelsFn(controller.cfg.piDir);
+    if (!bool(args, "all", false)) {
+      return {
+        models: rt.getAvailableSnapshot().map((m) => ({
+          ...m,
+          supportedThinkingLevels: supportedThinkingLevelsOf(m, sdkFn),
+        })),
+      };
+    }
     const provider = optStr(args, "provider");
     return {
-      models: rt.getModels(provider).map((m) => ({ ...m, available: rt.hasConfiguredAuth(m.provider) })),
+      models: rt.getModels(provider).map((m) => ({
+        ...m,
+        available: rt.hasConfiguredAuth(m.provider),
+        supportedThinkingLevels: supportedThinkingLevelsOf(m, sdkFn),
+      })),
     };
   });
 
