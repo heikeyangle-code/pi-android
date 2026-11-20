@@ -229,7 +229,7 @@ private fun SelectSheetBody(
         ) {
             DialogHeading(dialog)
             DialogMessage(dialog.message)
-            if (dialog.options.size >= 8) {
+            if (dialog.options.size >= 6) {
                 Spacer(Modifier.height(DialogControlGap))
                 PiEditorField(
                     value = query,
@@ -278,6 +278,7 @@ private fun EditorSheetBody(
     onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
     val lines = remember(draft) { if (draft.isEmpty()) 0 else draft.count { it == '\n' } + 1 }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
         Column(
             Modifier
@@ -311,15 +312,28 @@ private fun EditorSheetBody(
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.dim,
                 )
-                if (draft.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "清空",
+                        "粘贴",
                         modifier = Modifier
-                            .clickable(role = Role.Button) { onDraftChange("") }
+                            .clickable(role = Role.Button) {
+                                val clip = clipboard.getText()?.text
+                                if (!clip.isNullOrEmpty()) onDraftChange(if (draft.isEmpty()) clip else draft + clip)
+                            }
                             .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
                         style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
+                        color = PiTheme.palette.accent,
                     )
+                    if (draft.isNotEmpty()) {
+                        Text(
+                            "清空",
+                            modifier = Modifier
+                                .clickable(role = Role.Button) { onDraftChange("") }
+                                .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
+                            style = PiTheme.text.meta,
+                            color = PiTheme.palette.muted,
+                        )
+                    }
                 }
             }
             DialogActions(dialog, draft, onAnswer)

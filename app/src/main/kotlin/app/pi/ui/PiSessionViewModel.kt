@@ -126,6 +126,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
@@ -758,40 +759,51 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var sessionListLoadedOnce = false
 
     /**
-     * 没读过才读：列表屏挂载走这里。引擎还没起来时什么都不做 —— 宿主没打开，读必失败，
-     * 还会把屏幕带进「失败」态；引擎就绪那一刻（见下方 `engine.state.first`）自会开读。
+     * 列表屏挂载时立刻把当前活动会话叠加到列表头部（即使刚新建、尚无助手回复未落盘），
+     * 并在引擎就绪时走增量索引静默刷新一次（~10ms，有缓存时不转圈、不清行），保证列表永远与现状同步。
      */
     fun ensureSessionList() {
+        applyActiveRow()
         val up = session?.state?.value.let { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
-        if (up && !sessionListLoadedOnce && !_sessionList.value.loading) loadSessionList(refresh = false)
+        if (up && !_sessionList.value.loading) loadSessionList(refresh = sessionListLoadedOnce)
     }
 
     /**
      * 「现在在哪个会话 / 工作区」变了，列表要**立刻**跟上，而不是等一遍整盘重读：
      *  - 工作区换了：后台重读（别的目录的会话要进来）。
-     *  - 当前会话换了 / 新会话有了第一轮对话：先在本地把它标成「当前」、没有这一行就垫一行置顶
-     *    （[applyActiveRow]），再安排**一次**后台重读去换成宿主算的真数据。
-     * `messageCount` 取到 2：会话文件在第一条助手回复后才落盘（官方懒落盘），之前没有可列的行。
+     *  - 当前会话换了 / 新会话新建或命名 / 首轮对话落盘：立刻通过 [applyActiveRow] 更新当前行，
+     *    再安排一次后台增量重读换成宿主算的真数据。
      */
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun watchSessionListChanges() {
         viewModelScope.launch {
             var lastRevision = _state.value.workspace.revision
             _state
-                .map { Triple(it.meta.sessionFile, it.workspace.revision, it.meta.messageCount.coerceAtMost(2)) }
+                .map {
+                    listOf(
+                        it.meta.sessionFile,
+                        it.meta.sessionId,
+                        it.meta.sessionName,
+                        it.workspace.revision,
+                        it.meta.messageCount.coerceAtMost(2),
+                    )
+                }
                 .distinctUntilChanged()
                 .drop(1)
                 .debounce(120)
-                .collect { (_, revision, _) ->
-                    if (!sessionListLoadedOnce) return@collect
+                .collect {
+                    val revision = _state.value.workspace.revision
                     if (revision != lastRevision) {
                         lastRevision = revision
-                        refreshSessions()
-                    } else if (applyActiveRow()) {
-                        sessionListReconcileJob?.cancel()
-                        sessionListReconcileJob = viewModelScope.launch {
-                            kotlinx.coroutines.delay(800)
-                            refreshSessions()
+                        if (sessionListLoadedOnce) refreshSessions() else applyActiveRow()
+                    } else {
+                        val changed = applyActiveRow()
+                        if (changed && sessionListLoadedOnce) {
+                            sessionListReconcileJob?.cancel()
+                            sessionListReconcileJob = viewModelScope.launch {
+                                kotlinx.coroutines.delay(500)
+                                refreshSessions()
+                            }
                         }
                     }
                 }
@@ -801,32 +813,70 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var sessionListReconcileJob: kotlinx.coroutines.Job? = null
 
     /**
-     * 把当前会话反映到手上的行里：重算 `isCurrent`；落盘了（≥2 条消息）而行里没有就垫一行置顶。
-     * 垫的行只是占位，宿主下一次读完会换成官方算的那一行（名称 / 消息数 / 时间）。
-     * @return 是否垫了行（调用方据此安排一次对账重读）。
+     * 把当前会话反映到手上的行里：重算 `isCurrent` 与实时标题/消息数；
+     * 即使刚点击「新建会话」尚无消息（官方懒落盘，磁盘上还没有 `.jsonl` 文件），也立刻在当前工作区置顶展示，
+     * 避免出现「点了新建对话，列表里却找不到，重启 App 才能看见」的问题。
+     * @return 是否有新增或更新（调用方据此决定是否安排后台对账重读）。
      */
     private fun applyActiveRow(): Boolean {
         val st = _state.value
-        val guestFile = st.meta.sessionFile ?: return false
-        val hostFile = sessionLibrary.hostFileOf(guestFile) ?: return false
         val cur = _sessionList.value
-        var rows = cur.rows.map { it.copy(isCurrent = it.file.absolutePath == hostFile.absolutePath) }
+        val guestFile = st.meta.sessionFile
+        val hostFile = guestFile?.let { sessionLibrary.hostFileOf(it) }
+        val activeId = st.meta.sessionId?.takeIf { it.isNotBlank() }
+        if (hostFile == null && activeId == null) return false
+
+        fun isRowCurrent(row: SessionSummary): Boolean =
+            (hostFile != null && row.file.absolutePath == hostFile.absolutePath) ||
+                (activeId != null && row.id.isNotBlank() && row.id == activeId)
+
+        var rows = cur.rows.map { row ->
+            val current = isRowCurrent(row)
+            if (current) {
+                row.copy(
+                    isCurrent = true,
+                    name = st.meta.sessionName ?: row.name,
+                    messageCount = maxOf(row.messageCount, st.meta.messageCount),
+                )
+            } else if (row.isCurrent) {
+                row.copy(isCurrent = false)
+            } else {
+                row
+            }
+        }
+
+        // 在非搜索状态下（以及未开启「仅命名」或当前会话已命名时），确保当前活动会话始终可见。
+        val visibleUnderFilter = cur.query.query.isBlank() &&
+            (!cur.query.namedOnly || !st.meta.sessionName.isNullOrBlank())
         var added = false
-        if (st.meta.messageCount >= 2 && rows.none { it.isCurrent }) {
+        if (visibleUnderFilter && rows.none { it.isCurrent }) {
             val now = System.currentTimeMillis()
-            val first = st.transcript.firstNotNullOfOrNull { (it as? UserMessage)?.text }.orEmpty()
+            val first = st.transcript.firstNotNullOfOrNull { (it as? UserMessage)?.text }?.trim().orEmpty()
             val cwd = guestWorkspace()
+            val syntheticFile = hostFile ?: File(File(host.paths().agentDir, "sessions"), "${activeId ?: "current"}.jsonl")
             rows = listOf(
                 SessionSummary(
-                    file = hostFile, id = st.meta.sessionId.orEmpty(), cwd = cwd, cwdShort = cwd, pathShort = guestFile,
-                    startedAt = now, lastActivityAt = now, name = st.meta.sessionName, firstMessage = first,
-                    messageCount = st.meta.messageCount, parentSession = null, isCurrent = true,
+                    file = syntheticFile,
+                    id = activeId.orEmpty(),
+                    cwd = cwd,
+                    cwdShort = cwd,
+                    pathShort = guestFile ?: syntheticFile.name,
+                    startedAt = now,
+                    lastActivityAt = now,
+                    name = st.meta.sessionName,
+                    firstMessage = first.ifEmpty { "新对话" },
+                    messageCount = st.meta.messageCount,
+                    parentSession = null,
+                    isCurrent = true,
                 ),
             ) + rows
             added = true
         }
-        _sessionList.value = cur.copy(rows = rows, total = if (added) cur.total + 1 else cur.total)
-        return added
+        if (rows != cur.rows) {
+            _sessionList.value = cur.copy(rows = rows, total = if (added) cur.total + 1 else cur.total)
+            return true
+        }
+        return false
     }
 
     /**
@@ -1253,7 +1303,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 val (method, params) = sdkCall
                 val ok = runCatching { c.settingsSet(method, params) }.isSuccess
                 if (ok) {
-                    settingsStore.invalidate()
+                    invalidateSettingsCache()
                     return@launch
                 }
             }
@@ -4339,16 +4389,37 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var reloadingResources = false
+
     /**
      * 重新加载扩展、技能、提示词模板和主题（pi 的 `/reload`，宿主的 `session.reload`）。
      * 不重启引擎：host 在进程内重建资源加载器，对话和进行中的会话都不受影响。
+     * 启动尚未完成时自动排队（避免要点两次），执行期间带明确忙碌提示并主动刷新命令表与状态。
      */
     fun reloadResources() {
+        if (parkUntilAttached { reloadResources() }) {
+            pushNotice("引擎还在启动：重新加载已排队，启动完成后会自动执行。", Notice.Tone.Info)
+            return
+        }
+        if (reloadingResources) return
         val ext = extensionsAccess()?.ext ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有重新加载。", Notice.Tone.Warning)
+        reloadingResources = true
         viewModelScope.launch {
-            runCatching { ext.reload() }
-                .onSuccess { pushNotice("已重新加载扩展、技能、提示词和主题。", Notice.Tone.Info) }
-                .onFailure { pushNotice("重新加载失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+            val token = claimBusy("正在重新加载扩展与资源")
+            try {
+                runCatching { ext.reload() }
+                    .onSuccess {
+                        refreshCommands()
+                        refreshState()
+                        refreshPrefs()
+                        refreshTheme()
+                        pushNotice("已重新加载扩展、技能、提示词和主题。", Notice.Tone.Info)
+                    }
+                    .onFailure { pushNotice("重新加载失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+            } finally {
+                reloadingResources = false
+                releaseBusy(token)
+            }
         }
     }
 
@@ -4666,21 +4737,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             },
             setDefaultThinkingLevel = { level ->
                 engine.commands.settingsSet("setDefaultThinkingLevel", listOf(JsonPrimitive(level)))
-                settingsStore.invalidate()
+                invalidateSettingsCache()
             },
             setModelThinkingLevel = { provider, modelId, level ->
                 engine.commands.settingsSet(
                     "setModelThinkingLevel",
                     listOf(JsonPrimitive(provider), JsonPrimitive(modelId), JsonPrimitive(level)),
                 )
-                settingsStore.invalidate()
+                invalidateSettingsCache()
             },
             removeModelThinkingLevel = { provider, modelId ->
                 engine.commands.settingsSet(
                     "removeModelThinkingLevel",
                     listOf(JsonPrimitive(provider), JsonPrimitive(modelId)),
                 )
-                settingsStore.invalidate()
+                invalidateSettingsCache()
             },
             setEnabledModels = { patterns ->
                 val params = if (patterns.isNullOrEmpty()) {
@@ -4689,11 +4760,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     listOf(JsonArray(patterns.map { JsonPrimitive(it) }))
                 }
                 engine.commands.settingsSet("setEnabledModels", params)
-                settingsStore.invalidate()
+                invalidateSettingsCache()
             },
             setShowCacheMissNotices = { show ->
                 engine.commands.settingsSet("setShowCacheMissNotices", listOf(JsonPrimitive(show)))
-                settingsStore.invalidate()
+                invalidateSettingsCache()
                 refreshPrefs()
             },
         )
@@ -6473,6 +6544,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         replayHistory(engine, brandNew)
         refreshStats()
         refreshCommands()
+        // 立刻把当前新会话/切换后的会话更新到会话列表（哪怕是刚新建的 0 消息会话也马上置顶可见）。
+        applyActiveRow()
+        if (sessionListLoadedOnce && !_sessionList.value.loading) refreshSessions()
         // 会话换了之后的列表更新不在这里调：`watchSessionListChanges` 盯着「当前会话文件 / 工作区 /
         // 消息数（到 2 为止）」，变了就在后台静默重读，不论列表屏开没开。
         //

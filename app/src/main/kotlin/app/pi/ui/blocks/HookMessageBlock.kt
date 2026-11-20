@@ -69,9 +69,8 @@ fun HookMessageBlock(
                     app.pi.ui.extension.RenderedAnsiBlock(
                         lines = renderedLines,
                         expanded = expanded,
-                        collapsedLimit = COLLAPSED_RENDER_LINES,
+                        collapsedLimit = Int.MAX_VALUE,
                         modifier = Modifier.padding(top = PiSpacing.tiny),
-                        expandHint = { hidden -> "… 还有 $hidden 行，点卡片展开" },
                     )
                 } else if (expanded || !collapsible) {
                 // Expanded (or short enough that there is nothing to collapse):
@@ -110,6 +109,3 @@ fun HookMessageBlock(
 
 /** The collapsed preview length this block already used for a long hook message. */
 private const val COLLAPSED_MESSAGE_LINES = 4
-
-/** 扩展渲染器给的消息，折叠态最多画几行。 */
-private const val COLLAPSED_RENDER_LINES = 5

@@ -117,21 +117,24 @@ export function register(reg, { controller }) {
   reg.add("session.new", async (args) => {
     const options = optStr(args, "parentSession") ? { parentSession: args.parentSession } : undefined;
     const cwd = optStr(args, "cwd");
+    let result;
     if (cwd && resolve(cwd) !== resolve(controller.cwd)) {
-      // SDK 的 `runtime.newSession` 只在当前 cwd 里开。别的项目里开新会话用它公开的另一条路：
-      // `switchSession(路径, { cwdOverride })` —— 路径指向一个还不存在的文件，SessionManager 就按
-      // `--session <path>` 的语义开新会话，cwd 记成 cwdOverride，且**不预先写文件**（见 plannedSessionFile）。
       if (options) throw bad("跨项目新建会话不支持 parentSession（SDK 的 switchSession 没有这个参数）");
       const target = checkedCwd(cwd);
-      return withState(controller, await controller.runtime.switchSession(plannedSessionFile(controller), { cwdOverride: target }));
+      result = await controller.runtime.switchSession(plannedSessionFile(controller), { cwdOverride: target });
+    } else {
+      result = await controller.runtime.newSession(options);
     }
-    return withState(controller, await controller.runtime.newSession(options));
+    controller.invalidateSessionList?.();
+    return withState(controller, result);
   });
   reg.add("session.switch", async (args) => {
     const cwd = optStr(args, "cwd");
     const options = cwd ? { cwdOverride: checkedCwd(cwd) } : undefined;
     try {
-      return withState(controller, await controller.runtime.switchSession(str(args, "sessionPath"), options));
+      const result = await controller.runtime.switchSession(str(args, "sessionPath"), options);
+      controller.invalidateSessionList?.();
+      return withState(controller, result);
     } catch (error) {
       rethrowSessionCwdError(error);
     }
@@ -151,6 +154,8 @@ export function register(reg, { controller }) {
       } catch {
         // ignore cleanup error if already absent
       }
+    } else {
+      controller.invalidateSessionList?.();
     }
     return withState(controller, {
       cancelled: result.cancelled === true,
@@ -159,12 +164,14 @@ export function register(reg, { controller }) {
   });
   reg.add("session.fork", async (args) => {
     const result = await controller.runtime.fork(str(args, "entryId"));
+    if (!result.cancelled) controller.invalidateSessionList?.();
     return withState(controller, { text: result.selectedText, cancelled: result.cancelled });
   });
   reg.add("session.clone", async () => {
     const leafId = controller.requireSession().sessionManager.getLeafId();
     if (!leafId) throw new HostError(ERR.BUSY, "没有当前条目，无法克隆");
     const result = await controller.runtime.fork(leafId, { position: "at" });
+    if (!result.cancelled) controller.invalidateSessionList?.();
     return withState(controller, { cancelled: result.cancelled });
   });
 
@@ -208,7 +215,9 @@ export function register(reg, { controller }) {
   });
   reg.add("session.import", async (args) => {
     try {
-      return withState(controller, await controller.runtime.importFromJsonl(str(args, "path"), optStr(args, "cwd")));
+      const result = await controller.runtime.importFromJsonl(str(args, "path"), optStr(args, "cwd"));
+      if (!result?.cancelled) controller.invalidateSessionList?.();
+      return withState(controller, result);
     } catch (error) {
       rethrowSessionCwdError(error);
     }
@@ -218,6 +227,7 @@ export function register(reg, { controller }) {
     const name = str(args, "name").trim();
     if (!name) throw bad("会话名不能为空");
     controller.requireSession().setSessionName(name);
+    controller.invalidateSessionList?.();
     return withState(controller);
   });
   reg.add("session.compact", async (args) => withState(controller, await controller.requireSession().compact(optStr(args, "customInstructions"))));

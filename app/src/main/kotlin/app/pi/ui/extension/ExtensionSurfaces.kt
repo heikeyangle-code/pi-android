@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -99,8 +100,12 @@ private enum class SurfaceControlMode { Gamepad, Keyboard }
 fun ExtensionSurfaceHost(
     custom: ExtCustom?,
     stackCount: Int = if (custom != null) 1 else 0,
+    minimized: Boolean = false,
+    minimizedBottomPadding: androidx.compose.ui.unit.Dp = 72.dp,
     soundMuted: Boolean = false,
     onToggleSound: () -> Unit = {},
+    onMinimize: () -> Unit = {},
+    onRestore: () -> Unit = {},
     onInput: (surfaceId: String, data: String) -> Unit,
     onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int) -> Unit = { _, _, _, _, _ -> },
     onResize: (columns: Int, rows: Int) -> Unit = { _, _ -> },
@@ -110,8 +115,64 @@ fun ExtensionSurfaceHost(
     val id = custom.surfaceId
     val inferred = remember(custom.lines) { inferSurfaceTitle(custom.lines) }
     val title = inferred ?: "扩展交互面板"
+    if (minimized) {
+        // 最小化态：贴边低调半透明小胶囊，不挡对话与输入；点一下秒回原界面，点 ✕ 才真正关闭。
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 12.dp, bottom = minimizedBottomPadding),
+            contentAlignment = Alignment.BottomEnd,
+        ) {
+            val palette = PiTheme.palette
+            val shape = RoundedCornerShape(999.dp)
+            Row(
+                modifier = Modifier
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
+                    .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.7f), shape)
+                    .clickable(role = Role.Button, onClickLabel = "恢复扩展面板", onClick = onRestore)
+                    .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent),
+                )
+                Text(
+                    text = title,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 150.dp),
+                )
+                if (stackCount > 1) {
+                    SurfaceMetaBadge(text = "$stackCount", tint = palette.accent)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable(role = Role.Button, onClickLabel = "关闭扩展面板") { onClose(id) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = palette.dim,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
+        }
+        return
+    }
     val useFullHeight = custom.interactive || !custom.overlay || custom.lines.size > FULL_HEIGHT_LINE_THRESHOLD
-    PiSheet(onDismiss = { onClose(id) }, fullHeight = useFullHeight) {
+    // 下滑把手 / 点遮罩 = 最小化（后台保留扩展运行状态，不杀死进程/游戏）；点右上角 ✕ 才真正关闭。
+    PiSheet(onDismiss = onMinimize, fullHeight = useFullHeight) {
         SurfaceSheetBody(
             surfaceId = id,
             title = title,
@@ -122,6 +183,7 @@ fun ExtensionSurfaceHost(
             useFullHeight = useFullHeight,
             soundMuted = soundMuted,
             onToggleSound = onToggleSound,
+            onMinimize = onMinimize,
             onInput = onInput,
             onMouse = onMouse,
             onResize = onResize,
@@ -159,6 +221,7 @@ fun ExtensionWidgetSurfaceSheet(
             useFullHeight = useFullHeight,
             soundMuted = false,
             onToggleSound = {},
+            onMinimize = null,
             onInput = onInput,
             onMouse = onMouse,
             onResize = onResize,
@@ -178,6 +241,7 @@ private fun SurfaceSheetBody(
     useFullHeight: Boolean,
     soundMuted: Boolean,
     onToggleSound: () -> Unit,
+    onMinimize: (() -> Unit)?,
     onInput: (surfaceId: String, data: String) -> Unit,
     onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int) -> Unit,
     onResize: (columns: Int, rows: Int) -> Unit,
@@ -318,6 +382,24 @@ private fun SurfaceSheetBody(
                 active = !soundMuted,
                 onClick = onToggleSound,
             )
+            if (onMinimize != null) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .border(PiSpacing.hairline, palette.borderMuted, CircleShape)
+                        .clickable(role = Role.Button, onClickLabel = "最小化", onClick = onMinimize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "—",
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Bold),
+                        color = palette.muted,
+                        maxLines = 1,
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
                     .size(30.dp)

@@ -501,10 +501,21 @@ fun ProjectScreen(
             // 名字就是目录名（pi 里项目 = 目录，会话与信任都按这个路径记）；留空 = workspace-N。
             when (val result = withContext(Dispatchers.IO) { session.createWorkspace(dirName.trim().ifEmpty { null }) }) {
                 is WorkspaceStore.Create.Ok -> {
-                    say("已新建项目 · ${result.entry.displayName}")
+                    val entry = result.entry
+                    say("已新建项目 · ${entry.displayName}")
                     refreshTick++
-                    // 新建不自动切过去（那是另一个决定）；把切换面板重新打开，新工作区就在眼前、一点即到。
-                    rootSheet = true
+                    // 建完项目直接切入（若当前回合正跑着则走统一的打断确认，避免建完还要再点一次切换）。
+                    when (
+                        WorkspaceChoice.decidePick(
+                            isCurrent = entry.isCurrent,
+                            turnRunning = session.wouldInterruptTurn(),
+                            available = entry.available,
+                        )
+                    ) {
+                        WorkspaceChoice.Pick.Switch -> switchWorkspaceTo(entry)
+                        WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
+                        else -> rootSheet = true
+                    }
                 }
                 is WorkspaceStore.Create.Failed -> say(result.message, StateTone.Warning)
             }
@@ -674,6 +685,32 @@ fun ProjectScreen(
                             placement = PiMenuPlacement.Below,
                             items = buildList {
                                 add(
+                                    PiMenuItem("切换 / 新建项目") {
+                                        overflow = false
+                                        rootSheet = true
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("从设备目录打开项目") {
+                                        overflow = false
+                                        externalPicker = true
+                                    },
+                                )
+                                if (!insideWorkspace || crumbs != homeCrumbs) {
+                                    add(
+                                        PiMenuItem("回到工作区根目录") {
+                                            overflow = false
+                                            crumbs = homeCrumbs
+                                        },
+                                    )
+                                }
+                                add(
+                                    PiMenuItem("项目扩展、资源与信任") {
+                                        overflow = false
+                                        session.requestNav(NavRequest.SettingsFocus("hub:resources:project"))
+                                    },
+                                )
+                                add(
                                     PiMenuItem("关于工作区") {
                                         overflow = false
                                         aboutOpen = true
@@ -689,33 +726,7 @@ fun ProjectScreen(
                 contentPadding = PaddingValues(bottom = PiSpacing.scrollBottom),
             ) {
                 run {
-                    item(key = "resources-entry") {
-                        WsCardSlice(index = 0, lastIndex = 0) {
-                            WsRow(
-                                title = "扩展与资源",
-                                meta = trustMeta ?: "扩展、技能、提示、主题、包，以及项目信任",
-                                trail = { Text("管理", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
-                                onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
-                            )
-                        }
-                    }
-                    // ---------------------------------------------------- 文件
-                    if (engineDown) {
-                        item {
-                            WsNotice(
-                                text = "引擎没起来：正在跑与本次会话改过没有数据；下面的文件照常可用，" +
-                                    "文件照样能打开 · 编辑 · 删除。",
-                                tone = StateTone.Warning,
-                                glyph = "!",
-                            )
-                        }
-                    }
-                    state.workspace.note?.let { note ->
-                        item { WsNotice(text = note, tone = StateTone.Warning, glyph = "!") }
-                    }
-
-                    // 一条路径条同时回答「哪个工作区」「在第几层」：药丸 = 工作区（点名字回到工作区根，
-                    // 在根上时点它切换；右边 ⌄ 永远是切换），药丸后面接工作区内的子路径。
+                    // 工作区路径条置顶：进工作区第一眼就看清当前项目与路径层级，一键切换/新建项目。
                     item(key = "path-bar") {
                         WorkspacePathBar(
                             workspaceName = workspaceName,
@@ -730,6 +741,18 @@ fun ProjectScreen(
                             onUp = { crumbs = crumbs.dropLast(1) },
                             onGo = { index -> crumbs = crumbs.take(index) },
                         )
+                    }
+                    if (engineDown) {
+                        item {
+                            WsNotice(
+                                text = "引擎未运行：文件仍可直接浏览、编辑与新建。",
+                                tone = StateTone.Warning,
+                                glyph = "!",
+                            )
+                        }
+                    }
+                    state.workspace.note?.let { note ->
+                        item { WsNotice(text = note, tone = StateTone.Warning, glyph = "!") }
                     }
 
                     if (runs.isNotEmpty()) {
@@ -1078,6 +1101,17 @@ fun ProjectScreen(
                                     )
                                 }
                             }
+                        }
+                    }
+                    item(key = "resources-footer") {
+                        WsSectionHeader(label = "项目资源与信任")
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "扩展、技能、提示词与项目信任",
+                                meta = trustMeta ?: "管理本项目的 .pi 资源与信任状态",
+                                trail = { Text("管理", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
+                            )
                         }
                     }
                 }
@@ -2458,8 +2492,17 @@ private fun WorkspaceRootSheet(
         footer = "换项目会新建一个 pi 会话，当前会话不会被删除。项目信任按目录记在 pi 的信任库里。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
-        // 两个入口放在最上面（工作区一多，「新建」会被挤到列表下面）：一张卡、两行，
-        // 每行一句话说清「它会做什么」，比两颗并排的小胶囊好点、也好读。
+        var projectQuery by remember { mutableStateOf("") }
+        val filteredEntries = remember(entries, projectQuery) {
+            val q = projectQuery.trim()
+            if (q.isEmpty()) entries
+            else entries.filter {
+                it.displayName.contains(q, ignoreCase = true) ||
+                    it.name.contains(q, ignoreCase = true) ||
+                    it.relative.contains(q, ignoreCase = true)
+            }
+        }
+        // 两个入口放在最上面：新建并自动切入 / 选择设备文件夹。
         WsCard {
             WsRow(
                 title = "新建项目",
@@ -2473,7 +2516,7 @@ private fun WorkspaceRootSheet(
                         tint = PiTheme.palette.accent,
                     )
                 },
-                meta = "起个目录名，建在 App 私有目录里；留空自动编号。",
+                meta = "创建新项目目录并立即切入；留空自动编号。",
                 onClick = onNew,
             )
             WsHairline(startInset = WsIconHairlineStart)
@@ -2482,8 +2525,14 @@ private fun WorkspaceRootSheet(
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = { FolderGlyph() },
-                meta = "把手机上已有的文件夹当工作区，文件不会被复制。",
+                meta = "直接把手机已有文件夹设为项目，不复制文件。",
                 onClick = onPickExternal,
+            )
+        }
+        if (entries.size >= 5) {
+            WorkspaceFilterField(
+                value = projectQuery,
+                onChange = { projectQuery = it },
             )
         }
 
@@ -2538,20 +2587,31 @@ private fun WorkspaceRootSheet(
             )
         }
         // 「当前」与「其它」分成两段：当前那一个单独成卡、不再混在列表里靠颜色认。
-        val current = remember(entries) { entries.firstOrNull { it.isCurrent } }
-        val others = remember(entries) { entries.filter { !it.isCurrent } }
+        val current = remember(filteredEntries) { filteredEntries.firstOrNull { it.isCurrent } }
+        val others = remember(filteredEntries) { filteredEntries.filter { !it.isCurrent } }
         if (current != null) {
             WsSectionHeader(label = "当前")
             WsCard { entryRow(current) }
         }
         if (others.isNotEmpty()) {
-            WsSectionHeader(label = "其它工作区", count = "${others.size}")
+            WsSectionHeader(label = "其它项目", count = "${others.size}")
             WsCard {
                 others.forEachIndexed { index, item ->
                     if (index > 0) WsHairline(startInset = WsIconHairlineStart)
                     entryRow(item)
                 }
             }
+        }
+        if (current == null && others.isEmpty() && projectQuery.isNotBlank()) {
+            Text(
+                "没有匹配「${projectQuery.trim()}」的项目。",
+                modifier = Modifier.padding(
+                    horizontal = PiSettingsMetrics.pageHorizontal,
+                    vertical = PiSettingsMetrics.groupGap,
+                ),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+            )
         }
         Text(
             "设备目录不会被复制或移动；取消登记只是不再列在这里，文件留在设备上。设备目录需要「所有文件访问」授权。",

@@ -1,7 +1,10 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
@@ -12,8 +15,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -35,6 +40,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.host.HostExtensions
 import app.pi.packages.PiMcpConfig
@@ -43,6 +51,7 @@ import app.pi.packages.PiMcpStatus
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiType
+import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.serialization.json.JsonArray
@@ -303,19 +312,71 @@ internal fun McpServersScreen(
                 )
             }
             item {
-                PiInfoNote(
-                    if (project) {
-                        "写入本项目的 .pi/mcp.json，只有项目被信任时 pi 才会读它；同名条目会整条替换全局的。"
-                    } else {
-                        "写入全局的 mcp.json，所有项目共用。改完可点上方「让改动生效」热重载，或在新会话自动生效。"
-                    },
-                )
+                val enabledCount = definitions.count { it.enabled }
+                val connectedSummary = status?.let { report ->
+                    val enabled = report.servers.filter { it.enabled }
+                    val ok = enabled.count { it.connected }
+                    val auth = enabled.count { it.needsAuth }
+                    "$ok/${enabled.size} 已连接" + if (auth > 0) " · $auth 个待登录" else ""
+                }
+                PiSettingsCard {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                vertical = PiSettingsMetrics.rowPaddingVertical,
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    if (project) "本项目 · .pi/mcp.json" else "全局 · mcp.json",
+                                    style = PiType.rowTitle,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    connectedSummary ?: "已启用 $enabledCount / ${definitions.size} 个服务器",
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                            if (project && cfgNow != null && !cfgNow.projectTrusted) {
+                                McpBadgePill(text = "未信任", tint = PiTheme.palette.warning)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PiSettingsChip(
+                                text = if (checking) "检测中…" else "检测连接",
+                                active = status != null,
+                                onClick = { runCheck() },
+                            )
+                            PiSettingsChip(
+                                text = "＋ 添加",
+                                active = true,
+                                onClick = { picking = true },
+                            )
+                            PiSettingsChip(
+                                text = "导入 JSON",
+                                onClick = { importing = true },
+                            )
+                        }
+                    }
+                }
             }
             if (doc.corrupt) {
                 item {
                     PiInfoNote(
-                        "这份 mcp.json 不是合法的 JSON，为了不弄丢里面的内容，这里不会改它。" +
-                            "请到「其他 → Pi 文件」里修好或删掉。",
+                        "这份 mcp.json 不是合法的 JSON，请到「其他 → Pi 文件」修复后再编辑。",
                         tone = MaterialTheme.colorScheme.error,
                     )
                 }
@@ -323,7 +384,7 @@ internal fun McpServersScreen(
             if (project && cfgNow != null && !cfgNow.projectTrusted) {
                 item {
                     PiInfoNote(
-                        "当前项目尚未被信任，pi 会忽略 .pi/mcp.json；保存的条目在信任项目后才会加载。",
+                        "当前项目尚未被信任，pi 暂不加载 .pi/mcp.json；信任项目后即生效。",
                         tone = PiTheme.palette.warning,
                     )
                 }
@@ -342,27 +403,34 @@ internal fun McpServersScreen(
             if (pendingRestart) {
                 item {
                     PiSettingsCard {
-                        PiSettingsEntryRow(
-                            title = if (reloading) "正在重新加载…" else "让改动生效",
-                            supporting = "新会话会自动读取；想马上用，点这里热重载（不重启引擎）",
-                            onClick = { reload() },
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(PiTheme.palette.accent.copy(alpha = 0.08f))
+                                .padding(
+                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "配置已保存，尚未重载",
+                                    style = PiType.rowTitle,
+                                    color = PiTheme.palette.accent,
+                                )
+                                Text(
+                                    "热重载立即生效（不重启引擎）",
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                            Button(enabled = !reloading, onClick = { reload() }) {
+                                Text(if (reloading) "重载中…" else "立即生效")
+                            }
+                        }
                     }
-                }
-            }
-
-            item {
-                PiSettingsCard {
-                    PiSettingsEntryRow(
-                        title = if (checking) "正在检测…" else "检测连接",
-                        supporting = status?.let { report ->
-                            val enabled = report.servers.filter { it.enabled }
-                            val ok = enabled.count { it.connected }
-                            val auth = enabled.count { it.needsAuth }
-                            "上次检测：$ok/${enabled.size} 已连接" + if (auth > 0) "，$auth 个需要登录" else ""
-                        } ?: "真的去连每个已启用的服务器，看连没连上、有哪些工具、失败原因",
-                        onClick = { runCheck() },
-                    )
                 }
             }
             checkFailure?.let { message -> item { PiInfoNote(message, tone = MaterialTheme.colorScheme.error) } }
@@ -379,11 +447,46 @@ internal fun McpServersScreen(
             item {
                 if (definitions.isEmpty()) {
                     PiSettingsCard {
-                        PiSettingsEntryRow(
-                            title = "还没有服务器",
-                            supporting = "点右上角 ＋：选 Sentry / GitHub，或填自己的网址、命令",
-                            onClick = { picking = true },
-                        )
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        ) {
+                            Text(
+                                "还没有配置 MCP 服务器",
+                                style = PiType.rowTitle,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                "快速接入常用服务，或粘贴 Claude / Cursor / VS Code 的 mcpServers JSON。",
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                                verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                            ) {
+                                PiMcpConfig.TEMPLATES.take(4).forEach { tpl ->
+                                    PiSettingsChip(
+                                        text = "＋ ${tpl.title}",
+                                        onClick = { editing = Editing(null, tpl.draft) },
+                                    )
+                                }
+                                PiSettingsChip(
+                                    text = "粘贴 JSON 导入",
+                                    active = true,
+                                    onClick = { importing = true },
+                                )
+                                PiSettingsChip(
+                                    text = "全部模板…",
+                                    onClick = { picking = true },
+                                )
+                            }
+                        }
                     }
                 } else {
                     PiSettingsCard {
@@ -752,7 +855,8 @@ private data class LoginUi(
     enum class Phase { Waiting, Done, Failed }
 }
 
-/** 一行：名字 + 一行小字（命令或网址 · 暴露方式）+ 开关；点行进编辑。 */
+/** 状态圆点 + 名称 + 协议/暴露/工具数徽标 + 开关；点行进编辑。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun McpServerRow(
     server: PiMcpConfig.Server,
@@ -761,6 +865,15 @@ private fun McpServerRow(
     onOpen: () -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
+    val palette = PiTheme.palette
+    val dotColor = when {
+        !server.enabled -> palette.dim.copy(alpha = 0.45f)
+        state == null -> palette.accent.copy(alpha = 0.6f)
+        state.connected -> palette.success
+        state.needsAuth -> palette.warning
+        else -> palette.error
+    }
+    val isHttp = server.config.containsKey("url")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -772,19 +885,45 @@ private fun McpServerRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
-        Column(Modifier.weight(1f)) {
+        Box(
+            modifier = Modifier
+                .size(PiSpacing.inline)
+                .clip(CircleShape)
+                .background(dotColor),
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+            ) {
+                Text(
+                    server.name,
+                    style = PiType.rowTitle,
+                    color = if (server.enabled) MaterialTheme.colorScheme.onSurface else palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                McpBadgePill(
+                    text = if (isHttp) "HTTP" else "命令",
+                    tint = palette.muted,
+                )
+                if (server.exposure != "codemode") {
+                    McpBadgePill(
+                        text = exposureLabel(server.exposure).substringBefore('（'),
+                        tint = palette.accent,
+                    )
+                }
+                if (state?.connected == true && state.tools.isNotEmpty()) {
+                    McpBadgePill(
+                        text = "${state.tools.size} 工具",
+                        tint = palette.success,
+                    )
+                }
+            }
             Text(
-                server.name,
-                style = PiType.rowTitle,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val exposure = if (server.exposure == "codemode") "" else " · ${exposureLabel(server.exposure)}"
-            Text(
-                server.summary + exposure,
-                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                style = PiTheme.text.mono,
+                server.summary,
+                style = PiTheme.text.monoSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -792,16 +931,39 @@ private fun McpServerRow(
             if (state != null) {
                 Text(
                     PiMcpStatus.stateLabel(state),
-                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                     style = PiTheme.text.meta,
-                    color = if (state.connected || !state.enabled) PiTheme.palette.muted else MaterialTheme.colorScheme.error,
+                    color = when {
+                        state.connected -> palette.success
+                        state.needsAuth -> palette.warning
+                        !state.enabled -> palette.muted
+                        else -> MaterialTheme.colorScheme.error
+                    },
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         if (state?.needsAuth == true && server.enabled) {
-            TextButton(onClick = onLogin) { Text("登录") }
+            PiSettingsChip(text = "去登录", active = true, onClick = onLogin)
         }
         PiSettingsSwitch(checked = server.enabled, onCheckedChange = onToggle)
+    }
+}
+
+@Composable
+private fun McpBadgePill(text: String, tint: Color) {
+    Box(
+        modifier = Modifier
+            .clip(PiShapes.badge)
+            .background(tint.copy(alpha = 0.14f))
+            .padding(horizontal = PiSpacing.small, vertical = PiSpacing.hairline * 2),
+    ) {
+        Text(
+            text = text,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = tint,
+            maxLines = 1,
+        )
     }
 }
 
@@ -924,10 +1086,11 @@ private fun McpEditSheet(
                 placeholder = "filesystem",
                 height = PiNumberFieldHeight,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                PiSettingsChip(text = "命令式", active = !draft.http, onClick = { draft = draft.copy(http = false) })
-                PiSettingsChip(text = "网址式", active = draft.http, onClick = { draft = draft.copy(http = true) })
-            }
+            app.pi.ui.PiSeg(
+                options = listOf("本地命令 (STDIO)", "远程服务 (HTTP)"),
+                selectedIndex = if (draft.http) 1 else 0,
+                onSelect = { draft = draft.copy(http = it == 1) },
+            )
             if (draft.http) {
                 PiEditorField(
                     value = draft.url,

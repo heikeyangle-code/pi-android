@@ -425,6 +425,10 @@ export class Controller {
     this.unsubscribe = session.subscribe((event) => {
       hub.emit("agent", toJsonEvent(event));
       if (STATE_EVENTS.has(event.type)) this.pushState(event.type);
+      if (event.type === "agent_end" || event.type === "agent_settled") {
+        // 新会话在首条助手回复后落盘，老会话也会增长消息数/修改时间；使列表缓存失效，确保立刻可见。
+        this.invalidateSessionList?.();
+      }
       if (event.type === "agent_settled" && this.shutdownRequested) void this.shutdown(0);
     });
     // 事件产生得比管道消化得快时，让 agent 停一停，而不是在内存里堆帧。
@@ -446,26 +450,35 @@ export class Controller {
     this.firstBind = false;
 
     if (!background) {
-      await bind();
+      this.bindPromise = bind().finally(() => {
+        this.bindPromise = null;
+      });
+      await this.bindPromise;
       this.extensionsBound = true;
       this.pushState("rebind");
       return;
     }
     // `setImmediate`：`bindExtensions` 的同步段会加载扩展并跑 `session_start`，实测能把
     // 紧随其后的应答推迟 8 秒。让 `open` 的应答先写出去。
-    setImmediate(() => {
-      bind()
-        .then(() => {
-          this.extensionsBound = true;
-          hub.emit("ext.bound", { ok: true, first: wasFirst });
-          this.pushState("extensions");
-          // 扩展绑定完成后在后台配置官方 http-dispatcher（undici），不占用 open/bind 关键路径。
-          setImmediate(() => void this.ensureHttpSettings());
-        })
-        .catch((error) => {
-          hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) });
-          setImmediate(() => void this.ensureHttpSettings());
-        });
+    this.bindPromise = new Promise((resolveBind) => {
+      setImmediate(() => {
+        bind()
+          .then(() => {
+            this.extensionsBound = true;
+            hub.emit("ext.bound", { ok: true, first: wasFirst });
+            this.pushState("extensions");
+            // 扩展绑定完成后在后台配置官方 http-dispatcher（undici），不占用 open/bind 关键路径。
+            setImmediate(() => void this.ensureHttpSettings());
+          })
+          .catch((error) => {
+            hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) });
+            setImmediate(() => void this.ensureHttpSettings());
+          })
+          .finally(() => {
+            this.bindPromise = null;
+            resolveBind();
+          });
+      });
     });
   }
 
@@ -501,17 +514,38 @@ export class Controller {
    */
   async reloadSession() {
     const session = this.requireSession();
+    if (this.reloading) return { reloaded: false, reason: "正在重新加载扩展与资源，请稍候。" };
+    // 若启动后的首次后台 `bindExtensions()` 尚未结束，先等它完成，避免 `session.reload()` 时
+    // `hasBindings` 为 false 而跳过 `session_start(reason="reload")`（这正是此前要点两次才生效的根因）。
+    if (this.bindPromise) {
+      try {
+        await this.bindPromise;
+      } catch {
+        // 首次绑定失败也不阻止手动重载
+      }
+    }
     // 官方 `handleReloadCommand`（interactive-mode.js）先拦两种情况：流式中 / 压缩中不重载，只提示。
     // `AgentSession.reload()` 自己没有这道闸，重建 runner 会撞上正在跑的一轮，所以所有入口共用这里的判断。
     if (session.isStreaming) return { reloaded: false, reason: "Wait for the current response to finish before reloading." };
     if (session.isCompacting) return { reloaded: false, reason: "Wait for compaction to finish before reloading." };
+    this.reloading = true;
     // 官方 `handleReloadCommand` 在 reload 之前先 `resetExtensionUI()`：reload 会换掉所有扩展，旧扩展挂的东西要先收。
     this.ui.reset();
     this.hub.emit("ui.reset", {});
     try {
       await session.reload();
+      this.extensionsBound = true;
+      try {
+        this.keybindings?.reload?.();
+      } catch {
+        // ignore keybindings reload error
+      }
+      this.syncFooterProviders();
+      await this.applyHttpSettings?.();
+      this.pushState("reload");
       return { reloaded: true };
     } finally {
+      this.reloading = false;
       // 失败也发：reload 中途抛错时 runner 可能已经换了一半，让 App 读到真实现状而不是旧缓存。
       this.hub.emit("catalog.changed", { reason: "reload" });
     }

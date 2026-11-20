@@ -220,8 +220,7 @@ fun ToolCallBlock(
                         app.pi.ui.extension.RenderedAnsiBlock(
                             lines = combined,
                             expanded = expanded,
-                            collapsedLimit = selfRender.call.orEmpty().size + COLLAPSED_RENDER_RESULT_LINES,
-                            expandHint = { hidden -> "… 还有 $hidden 行，点卡片展开" },
+                            collapsedLimit = Int.MAX_VALUE,
                         )
                         ToolImages(item.images, onImageClick)
                     }
@@ -315,8 +314,8 @@ fun ToolCallBlock(
                 // argument under the title (`render-utils.js:60-79`); the collapsed title cell
                 // can only carry one ellipsized line, so an MCP or extension tool's parameters
                 // were unreadable there. Same body budget and the same admission as the script.
-                // 扩展渲染器的 call / result 分段呈现：普通文案自动换行适配手机，表格/框线才横向滚；
-                // call 与 result 同时存在时用细线隔开，层次分明。
+                // 扩展渲染器的 call / result 分段呈现：直接完整展示官方 ToolExecutionComponent 按 expanded
+                // 渲染出来的行（不再二次截断或硬编码「还有 N 行，点标题展开」）。
                 rendered?.let { r ->
                     val callLines = r.call.orEmpty()
                     val resultLines = r.result.orEmpty()
@@ -324,13 +323,8 @@ fun ToolCallBlock(
                         app.pi.ui.extension.RenderedAnsiBlock(
                             lines = callLines,
                             expanded = expanded,
-                            collapsedLimit = if (expanded) Int.MAX_VALUE else COLLAPSED_RENDER_CALL_LINES,
+                            collapsedLimit = Int.MAX_VALUE,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
-                            expandHint = if (resultLines.isEmpty()) {
-                                { hidden -> "… 还有 $hidden 行，点标题展开" }
-                            } else {
-                                null
-                            },
                         )
                     }
                     if (callLines.isNotEmpty() && resultLines.isNotEmpty()) {
@@ -346,9 +340,8 @@ fun ToolCallBlock(
                         app.pi.ui.extension.RenderedAnsiBlock(
                             lines = resultLines,
                             expanded = expanded,
-                            collapsedLimit = COLLAPSED_RENDER_RESULT_LINES,
+                            collapsedLimit = Int.MAX_VALUE,
                             modifier = Modifier.padding(top = if (callLines.isEmpty()) PiSpacing.tiny else PiSpacing.hairline),
-                            expandHint = { hidden -> "… 还有 $hidden 行，点标题展开" },
                         )
                     }
                 }
@@ -507,10 +500,6 @@ fun ToolCallBlock(
  * information.
  */
 private const val COLLAPSED_OUTPUT_LINES = 200
-
-/** 扩展渲染器的调用/结果在折叠态最多画几行；pi 终端里同样只给紧凑样式。 */
-private const val COLLAPSED_RENDER_CALL_LINES = 4
-private const val COLLAPSED_RENDER_RESULT_LINES = 5
 
 /** 有原生卡的内置工具：不向宿主要扩展渲染（SDK 给它们的渲染器是终端版，手机用原生卡）。 */
 private val NATIVE_TOOL_NAMES = setOf("read", "write", "edit", "grep", "find", "ls", "bash", "powershell", "codemode")

@@ -82,7 +82,6 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeScope
 import app.pi.ui.theme.PiThinkingLevel
-import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Level-2 editors for the settings stack (spec §6.1).

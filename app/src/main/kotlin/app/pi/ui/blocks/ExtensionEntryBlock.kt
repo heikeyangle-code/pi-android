@@ -12,8 +12,6 @@ import app.pi.ui.extension.LocalEntryRenderer
 import app.pi.ui.extension.RenderedAnsiBlock
 import app.pi.ui.theme.PiTheme
 
-private const val COLLAPSED_ENTRY_LINES = 5
-
 /**
  * 扩展自己的 `custom` 会话条目：只按扩展用 `registerEntryRenderer` 注册的渲染器画（宿主的官方
  * `CustomEntryComponent` 出行，手机把行画成原生文本）。没有渲染器的条目转录列表里根本不会放进来
@@ -40,13 +38,12 @@ fun ExtensionEntryBlock(
             ToggleContent(
                 expanded = expanded,
                 onToggle = { expanded = !expanded },
-                enabled = shown.size > COLLAPSED_ENTRY_LINES,
+                enabled = true,
             ) {
                 RenderedAnsiBlock(
                     lines = shown,
                     expanded = expanded,
-                    collapsedLimit = COLLAPSED_ENTRY_LINES,
-                    expandHint = { hidden -> "… 还有 $hidden 行，点卡片展开" },
+                    collapsedLimit = Int.MAX_VALUE,
                 )
             }
         }

@@ -60,6 +60,15 @@ fun ExtensionUiHost(
     val state by session.state.collectAsState()
     val hostState = remember { SnackbarHostState() }
     var bellMuted by remember { mutableStateOf(false) }
+    var minimizedSurfaceId by remember { mutableStateOf<String?>(null) }
+
+    // 新表面打开或原表面关闭时自动清除最小化状态，确保新弹出的扩展界面正常展开。
+    val activeSurfaceId = state.ext.custom?.surfaceId
+    LaunchedEffect(activeSurfaceId) {
+        if (activeSurfaceId == null || activeSurfaceId != minimizedSurfaceId) {
+            minimizedSurfaceId = null
+        }
+    }
 
     // 响应扩展终端响铃（BEL `\x07` / OSC 通知触发的 `ui.bell`）。
     LaunchedEffect(state.ext.bellSeq) {
@@ -138,12 +147,19 @@ fun ExtensionUiHost(
         ExtensionSurfaceHost(
             custom = state.ext.custom,
             stackCount = state.ext.customStack.count { !it.hidden },
+            minimized = activeSurfaceId != null && minimizedSurfaceId == activeSurfaceId,
+            minimizedBottomPadding = snackbarBottomPadding + SnackbarBarGap + 56.dp,
             soundMuted = bellMuted,
             onToggleSound = { bellMuted = !bellMuted },
+            onMinimize = { activeSurfaceId?.let { minimizedSurfaceId = it } },
+            onRestore = { minimizedSurfaceId = null },
             onInput = session::sendSurfaceInput,
             onMouse = session::sendSurfaceMouse,
             onResize = session::resizeSurface,
-            onClose = session::closeSurface,
+            onClose = { id ->
+                if (minimizedSurfaceId == id) minimizedSurfaceId = null
+                session.closeSurface(id)
+            },
         )
     }
 }
