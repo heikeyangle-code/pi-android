@@ -86,6 +86,25 @@ export default function probe(pi) {
     handler: async (_args, ctx) => ctx.ui.notify("pong"),
   });
 
+  pi.registerShortcut?.("ctrl+shift+p", {
+    description: "probe shortcut",
+    handler: async (ctx) => ctx.ui.notify("shortcut-fired:ctrl+shift+p"),
+  });
+
+  pi.registerCommand?.("probe-theme", {
+    description: "test ctx.ui.getAllThemes / setTheme",
+    handler: async (args, ctx) => {
+      const target = String(args || "").trim();
+      if (!target) {
+        const names = ctx.ui.getAllThemes().map((t) => t.name).join(",");
+        ctx.ui.notify(`themes=${names}`);
+        return;
+      }
+      const res = ctx.ui.setTheme(target);
+      ctx.ui.notify(`setTheme=${res.success}:${res.error ?? "ok"}`);
+    },
+  });
+
   // 测试 Phase 1 补齐的完整 TUI / ExtensionUIContext 能力：
   // KeybindingsManager、OverlayHandle、Focusable、FAKE_CURSOR/CURSOR_MARKER、handleMouse、FooterDataProvider。
   pi.registerCommand?.("probe-tui", {

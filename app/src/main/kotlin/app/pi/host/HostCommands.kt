@@ -418,6 +418,19 @@ class HostCommands(
         client.call("ui.palette", obj { put("palette", JsonObject(palette.mapValues { JsonPrimitive(it.value) })) })
     }
 
+    /** 触发扩展通过 `pi.registerShortcut(shortcut, ...)` 注册的快捷键动作。 */
+    suspend fun triggerShortcut(shortcut: String) {
+        client.call("catalog.triggerShortcut", obj { put("shortcut", JsonPrimitive(shortcut)) })
+    }
+
+    /** 将一段原始终端输入送过扩展通过 `ctx.ui.onTerminalInput` 注册的监听链。 */
+    suspend fun uiTerminalInput(data: String): Pair<Boolean, String> {
+        val res = client.callObject("ui.terminalInput", obj { put("data", JsonPrimitive(data)) })
+        val consumed = (res["consumed"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+        val next = res.str("data") ?: data
+        return consumed to next
+    }
+
     // ---- 内部 ----
 
     private suspend fun reply(cmd: String, args: JsonObject = JsonObject(emptyMap()), timeoutMs: Long? = null): HostReply {

@@ -136,21 +136,36 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 val invocation = command.invocation
+                val isShortcut = command.source == PiCommandSource.Shortcut
                 val slash = invocation.startsWith("/")
-                Text(
-                    text = buildAnnotatedString {
-                        if (slash) {
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f))) { append("/") }
-                        }
-                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                            append(if (slash) invocation.drop(1) else invocation)
-                        }
-                    },
-                    style = PiTheme.text.mono,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (isShortcut) {
+                    Text(
+                        text = invocation,
+                        modifier = Modifier
+                            .clip(PiShapes.badge)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    Text(
+                        text = buildAnnotatedString {
+                            if (slash) {
+                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f))) { append("/") }
+                            }
+                            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                                append(if (slash) invocation.drop(1) else invocation)
+                            }
+                        },
+                        style = PiTheme.text.mono,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 command.argumentHint?.let { hint ->
                     Text(
                         text = hint,

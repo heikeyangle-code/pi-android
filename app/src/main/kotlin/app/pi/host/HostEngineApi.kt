@@ -95,8 +95,13 @@ class HostEngineApi(private val commands: HostCommands) {
             read("catalog.commandCompletions", obj { put("name", JsonPrimitive(name)); put("prefix", JsonPrimitive(prefix)) }),
         )
 
-    /** 命令面板的全部原料：扩展/模板/技能命令，加 pi 自己的内建命令表（一次请求）。 */
+    /** 命令面板的全部原料：扩展/模板/技能命令，加 pi 自己的内建命令表 + 扩展快捷键表（一次请求）。 */
     suspend fun getCommandCatalog(): PiResponses.CommandCatalog = PiResponses.commandCatalog(read("catalog.commands"))
+
+    /** 触屏触发扩展通过 `pi.registerShortcut` 注册的快捷键处理器。 */
+    suspend fun triggerShortcut(shortcut: String) {
+        guarded("catalog.triggerShortcut") { commands.triggerShortcut(shortcut) }
+    }
 
     // ---- 模型 / 思考 / 队列 ----
 

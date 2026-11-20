@@ -1579,6 +1579,10 @@ internal fun ChatBody(
                 sheet = ChatSheet.Context
             }
             ChatAction.ToolsSheet -> sheet = ChatSheet.Tools
+            ChatAction.TriggerShortcut -> {
+                val key = command?.shortcutKey ?: command?.name
+                if (!key.isNullOrBlank()) session.triggerExtensionShortcut(key)
+            }
             ChatAction.Unsupported ->
                 session.notifyUser(unsupportedReason(command?.name.orEmpty()), warning = true)
         }

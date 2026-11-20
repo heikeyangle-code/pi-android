@@ -1011,6 +1011,71 @@ try {
       antNotice?.includes("Anthropic") && antNotice.includes("signature_mismatch"),
       String(antNotice),
     );
+
+    // ---- 7c. 扩展快捷键 / ctx.ui.setTheme / getAllThemes / ui.terminalInput 事件 / toolComponents 缓存清理 ----
+    const cmdsWithSc = await h.call("catalog.commands");
+    expect(
+      "catalog.commands 附带扩展注册的 shortcuts",
+      cmdsWithSc.ok && Array.isArray(cmdsWithSc.data?.shortcuts) &&
+        cmdsWithSc.data.shortcuts.some((s) => s.shortcut === "ctrl+shift+p" && s.description === "probe shortcut"),
+      JSON.stringify(cmdsWithSc.data?.shortcuts),
+    );
+    const scOnly = await h.call("catalog.shortcuts");
+    expect(
+      "catalog.shortcuts 独立查询可用",
+      scOnly.ok && scOnly.data?.shortcuts?.some((s) => s.shortcut === "ctrl+shift+p"),
+      JSON.stringify(scOnly.data),
+    );
+    const mSc = h.frames.length;
+    const trig = await h.call("catalog.triggerShortcut", { shortcut: "ctrl+shift+p" });
+    const scNote = await h.waitFor(
+      (f) => h.frames.indexOf(f) >= mSc && h.evt("ui.notify", (d) => d.message === "shortcut-fired:ctrl+shift+p")(f),
+      5000,
+    ).catch(() => null);
+    expect("catalog.triggerShortcut 触发扩展快捷键处理器", trig.ok && trig.data?.triggered === true && !!scNote, JSON.stringify(trig));
+    const trigMissing = await h.call("catalog.triggerShortcut", { shortcut: "ctrl+alt+nope" });
+    expect("catalog.triggerShortcut 未注册快捷键返回 not_found", !trigMissing.ok && trigMissing.error?.code === "not_found");
+
+    // ui.terminalInput 注册计数事件已在 session_start 时发出
+    expect(
+      "onTerminalInput 注册时发出 ui.terminalInput 计数事件",
+      h.frames.some(h.evt("ui.terminalInput", (d) => typeof d.registered === "number" && d.registered >= 1)),
+    );
+
+    // ctx.ui.getAllThemes / setTheme
+    const mTh = h.frames.length;
+    await h.call("chat.send", { message: "/probe-theme" });
+    const thList = await h.waitFor(
+      (f) => h.frames.indexOf(f) >= mTh && h.evt("ui.notify", (d) => d.message?.startsWith("themes="))(f),
+      5000,
+    ).catch(() => null);
+    expect(
+      "ctx.ui.getAllThemes 返回内置主题列表（含 dark / light）",
+      thList?.data?.message?.includes("dark") && thList?.data?.message?.includes("light"),
+      String(thList?.data?.message),
+    );
+    const mThSet = h.frames.length;
+    await h.call("chat.send", { message: "/probe-theme light" });
+    const thSet = await h.waitFor(
+      (f) => h.frames.indexOf(f) >= mThSet && h.evt("ui.notify", (d) => d.message === "setTheme=true:ok")(f),
+      5000,
+    ).catch(() => null);
+    const thChanged = await h.waitFor(
+      (f) => h.frames.indexOf(f) >= mThSet && h.evt("settings.changed")(f),
+      5000,
+    ).catch(() => null);
+    expect("ctx.ui.setTheme('light') 落盘并广播 settings.changed", !!thSet && !!thChanged, JSON.stringify({ thSet, thChanged }));
+    await h.call("chat.send", { message: "/probe-theme dark" });
+
+    // toolComponents 缓存随 session.reload 清空（同 toolCallId 重载前递增，重载后重建并回落到初始计数）
+    const r1 = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "reload-cache-id", args: { q: "r1" }, width: 50 });
+    const r2 = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "reload-cache-id", args: { q: "r1" }, width: 50 });
+    const n1 = Number(/n=(\d+)/.exec(r1.data?.call?.[0] ?? "")?.[1] ?? 0);
+    const n2 = Number(/n=(\d+)/.exec(r2.data?.call?.[0] ?? "")?.[1] ?? 0);
+    await h.call("session.reload", {}, 60000);
+    const rAfter = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "reload-cache-id", args: { q: "r1" }, width: 50 });
+    const nAfter = Number(/n=(\d+)/.exec(rAfter.data?.call?.[0] ?? "")?.[1] ?? 0);
+    expect("session.reload 清空 toolComponents 缓存（避免旧渲染器与内存泄漏）", n1 >= 1 && n2 > n1 && nAfter === n1, `n1=${n1} n2=${n2} after=${nAfter}`);
   }
 
   // ---- 8. 退出 ----------------------------------------------------------

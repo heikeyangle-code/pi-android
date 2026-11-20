@@ -55,11 +55,20 @@ fun ExtensionUiHost(
     val hostState = remember { SnackbarHostState() }
     var bellMuted by remember { mutableStateOf(false) }
     var minimizedSurfaceId by remember { mutableStateOf<String?>(null) }
+    var promotedFloatingId by remember { mutableStateOf<String?>(null) }
 
-    val activeSurfaceId = state.ext.custom?.surfaceId
+    val floatingCustom = state.ext.nonCapturingCustom
+    val activeCustom = state.ext.custom
+        ?: floatingCustom?.takeIf { it.surfaceId == promotedFloatingId }
+    val activeSurfaceId = activeCustom?.surfaceId
     LaunchedEffect(activeSurfaceId) {
         if (activeSurfaceId == null || activeSurfaceId != minimizedSurfaceId) {
             minimizedSurfaceId = null
+        }
+    }
+    LaunchedEffect(floatingCustom?.surfaceId) {
+        if (floatingCustom == null || floatingCustom.surfaceId != promotedFloatingId) {
+            promotedFloatingId = null
         }
     }
 
@@ -117,20 +126,40 @@ fun ExtensionUiHost(
             onAnswer = { id, answer -> session.answerDialog(id, answer) },
         )
 
+        // 非拦截型悬浮 HUD（OverlayOptions.nonCapturing = true）：不遮挡聊天和输入框；点开可升格成全功能面板。
+        if (floatingCustom != null && activeCustom?.surfaceId != floatingCustom.surfaceId) {
+            ExtensionFloatingOverlayCard(
+                custom = floatingCustom,
+                bottomPadding = snackbarBottomPadding + MinimizedSurfaceClearance,
+                onExpand = { promotedFloatingId = floatingCustom.surfaceId },
+                onClose = { id ->
+                    if (promotedFloatingId == id) promotedFloatingId = null
+                    session.closeSurface(id)
+                },
+            )
+        }
+
         ExtensionSurfaceHost(
-            custom = state.ext.custom,
-            stackCount = state.ext.customStack.count { !it.hidden },
+            custom = activeCustom,
+            stackCount = state.ext.customStack.count { !it.hidden && !it.nonCapturing }.coerceAtLeast(if (activeCustom != null) 1 else 0),
             minimized = activeSurfaceId != null && minimizedSurfaceId == activeSurfaceId,
             minimizedBottomPadding = snackbarBottomPadding + MinimizedSurfaceClearance,
             soundMuted = bellMuted,
             onToggleSound = { bellMuted = !bellMuted },
-            onMinimize = { activeSurfaceId?.let { minimizedSurfaceId = it } },
+            onMinimize = {
+                if (activeCustom != null && activeCustom.nonCapturing) {
+                    promotedFloatingId = null
+                } else {
+                    activeSurfaceId?.let { minimizedSurfaceId = it }
+                }
+            },
             onRestore = { minimizedSurfaceId = null },
             onInput = session::sendSurfaceInput,
             onMouse = session::sendSurfaceMouse,
             onResize = session::resizeSurface,
             onClose = { id ->
                 if (minimizedSurfaceId == id) minimizedSurfaceId = null
+                if (promotedFloatingId == id) promotedFloatingId = null
                 session.closeSurface(id)
             },
         )

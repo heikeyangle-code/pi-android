@@ -4320,6 +4320,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         catalog.commands,
                         builtins = builtinRows(catalog.builtins),
                         skillCommandsEnabled = skillCommands,
+                        shortcuts = catalog.shortcuts,
                     )
                 },
                 commandsLoaded = true,
@@ -4707,6 +4708,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun setToolsExpandedRemote(expanded: Boolean) {
         val commands = session?.commands ?: return
         viewModelScope.launch { runCatching { commands.uiSetToolsExpanded(expanded) } }
+    }
+
+    /** 触屏触发扩展通过 `pi.registerShortcut(shortcut, ...)` 注册的快捷键。 */
+    fun triggerExtensionShortcut(shortcut: String) {
+        call("执行快捷键") { api -> api.triggerShortcut(shortcut) }
+    }
+
+    /** 将终端按键序列送过扩展 `ctx.ui.onTerminalInput` 监听器链。 */
+    fun sendTerminalInput(data: String) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch { runCatching { commands.uiTerminalInput(data) } }
     }
 
     /** 用户点 ✕：先 Esc（组件自己收尾、自己 `done()`），它不理就强关；强关会让扩展的 await 以 undefined 返回。 */

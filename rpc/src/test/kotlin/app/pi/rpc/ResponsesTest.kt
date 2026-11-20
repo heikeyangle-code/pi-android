@@ -163,4 +163,21 @@ class ResponsesTest {
         assertEquals("ok", commands[0].name)
         assertEquals(PiResponses.CommandSource.Unknown, commands[0].source)
     }
+
+    @Test
+    fun `command catalog reads builtins and extension shortcuts`() {
+        val catalog = PiResponses.commandCatalog(
+            response(
+                "catalog.commands",
+                """{"commands":[],"builtins":[{"name":"settings","description":"Open settings"}],
+                    "shortcuts":[{"shortcut":"ctrl+shift+p","description":"Run probe","extensionPath":"/ext.ts"}]}"""
+                    .trimIndent().replace("\n", ""),
+            ),
+        )
+        assertEquals(1, catalog.builtins.size)
+        assertEquals("settings", catalog.builtins[0].name)
+        assertEquals(1, catalog.shortcuts.size)
+        assertEquals("ctrl+shift+p", catalog.shortcuts[0].shortcut)
+        assertEquals("Run probe", catalog.shortcuts[0].description)
+    }
 }

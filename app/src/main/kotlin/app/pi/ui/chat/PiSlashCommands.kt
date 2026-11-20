@@ -54,6 +54,9 @@ enum class ChatAction {
     /** 菜单用：「会话与队列」面板。 */
     ToolsSheet,
 
+    /** 扩展通过 `pi.registerShortcut(shortcut, { description, handler })` 注册的快捷键动作。 */
+    TriggerShortcut,
+
     /** pi 有这个命令，这个客户端做不了：点一下说明原因（[UNSUPPORTED_BUILTIN_REASONS]），不假装。 */
     Unsupported,
 }
@@ -71,6 +74,9 @@ enum class PiCommandSource(val label: String) {
 
     /** `source: "skill"` — a `SKILL.md`, invoked as `/skill:<name>`. */
     Skill("技能"),
+
+    /** `pi.registerShortcut(...)` — extension keyboard shortcuts surfaced as 1-tap touch actions. */
+    Shortcut("快捷"),
 }
 
 /**
@@ -110,9 +116,11 @@ data class PiSlashCommand(
      * 一行只会说「不行」的命令放在列表里是噪音，敲全名时才出现并说明原因（`filterPalette`）。
      */
     val listed: Boolean = true,
+    /** 仅当 [source] == [PiCommandSource.Shortcut] 时非空，保存注册的快捷键名（如 `ctrl+shift+p`）。 */
+    val shortcutKey: String? = null,
 ) {
-    /** What the user types to invoke it. */
-    val invocation: String get() = "/$name"
+    /** What the user types to invoke it (or keycap label for shortcuts). */
+    val invocation: String get() = if (source == PiCommandSource.Shortcut) name else "/$name"
 }
 
 /**
@@ -293,6 +301,7 @@ private fun groupRank(source: PiCommandSource): Int = when (source) {
     PiCommandSource.Prompt -> 1
     PiCommandSource.Extension -> 2
     PiCommandSource.Skill -> 3
+    PiCommandSource.Shortcut -> 4
 }
 
 /** 输入框里「命令名已写完、正在写参数」的状态：哪条命令、参数写到哪了。 */
@@ -316,6 +325,7 @@ fun piCommandPalette(
     commands: List<PiResponses.SlashCommand>,
     builtins: List<PiSlashCommand> = builtinRows(emptyList()),
     skillCommandsEnabled: Boolean = true,
+    shortcuts: List<PiResponses.ExtensionShortcut> = emptyList(),
 ): List<PiSlashCommand> {
     val taken = builtins.mapTo(HashSet()) { it.name }
     val fromPi = commands.mapNotNull { command ->
@@ -338,7 +348,19 @@ fun piCommandPalette(
             completes = command.hasCompletions,
         )
     }
-    return builtins + fromPi.sortedBy { tuiGroupRank(it.source) }
+    val fromShortcuts = shortcuts.mapNotNull { sc ->
+        val key = sc.shortcut.trim()
+        if (key.isEmpty()) return@mapNotNull null
+        PiSlashCommand(
+            name = key,
+            description = sc.description?.takeIf { it.isNotBlank() } ?: "触发扩展快捷键",
+            source = PiCommandSource.Shortcut,
+            sourceTag = null,
+            action = ChatAction.TriggerShortcut,
+            shortcutKey = key,
+        )
+    }
+    return builtins + fromPi.sortedBy { tuiGroupRank(it.source) } + fromShortcuts
 }
 
 /**
@@ -354,6 +376,7 @@ private fun tuiGroupRank(source: PiCommandSource): Int = when (source) {
     PiCommandSource.Prompt -> 1
     PiCommandSource.Extension -> 2
     PiCommandSource.Skill -> 3
+    PiCommandSource.Shortcut -> 4
 }
 
 /**

@@ -101,8 +101,19 @@ object PiResponses {
      */
     data class BuiltinCommand(val name: String, val description: String?, val argumentHint: String?)
 
-    /** [slashCommands] + 宿主随同给出的内建表；内建表读不到时为空（见宿主 `loadBuiltins`）。 */
-    data class CommandCatalog(val commands: List<SlashCommand>, val builtins: List<BuiltinCommand>)
+    /** 扩展通过 `pi.registerShortcut(shortcut, { description, handler })` 注册的快捷键，由宿主 `catalog.commands` 带来。 */
+    data class ExtensionShortcut(
+        val shortcut: String,
+        val description: String?,
+        val extensionPath: String?,
+    )
+
+    /** [slashCommands] + 宿主随同给出的内建表 + 扩展快捷键表；读不到时为空。 */
+    data class CommandCatalog(
+        val commands: List<SlashCommand>,
+        val builtins: List<BuiltinCommand>,
+        val shortcuts: List<ExtensionShortcut> = emptyList(),
+    )
 
     fun commandCatalog(response: PiEvent.Response): CommandCatalog =
         commandCatalog(response.data)
@@ -116,7 +127,15 @@ object PiResponses {
                 argumentHint = obj.str("argumentHint"),
             )
         }
-        return CommandCatalog(slashCommands(element), builtins)
+        val shortcuts = dataArray(element, "shortcuts").mapNotNull { elementItem ->
+            val obj = elementItem as? JsonObject ?: return@mapNotNull null
+            ExtensionShortcut(
+                shortcut = obj.str("shortcut") ?: return@mapNotNull null,
+                description = obj.str("description"),
+                extensionPath = obj.str("extensionPath"),
+            )
+        }
+        return CommandCatalog(slashCommands(element), builtins, shortcuts)
     }
 
     /** `RpcSessionState`. */

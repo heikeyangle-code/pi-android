@@ -129,6 +129,11 @@ export class Controller {
       ensureKeybindings: () => this.ensureKeybindings(),
       ensureFooterData: () => this.ensureFooterData(),
     });
+    this.ui.setSessionHooks?.({
+      getResourceLoader: () => this.session?.resourceLoader ?? null,
+      getSettingsManager: () => this.session?.settingsManager ?? null,
+      emitThemeChanged: (name) => this.hub.emit("settings.changed", { key: "theme", value: name }),
+    });
   }
 
   /** 延迟加载官方 KeybindingsManager：仅在扩展打开 custom TUI / editor 时加载，避免启动阻塞 ~1.3s（proot 下 5-15s）。 */
@@ -498,6 +503,7 @@ export class Controller {
     this.unsubscribeBackpressure?.();
     this.extensionsBound = false;
     this.ui.reset();
+    this.clearToolRenderCache?.();
     this.footerData?.setCwd?.(this.cwd);
     this.syncFooterProviders();
     hub.bumpEpoch();
@@ -621,6 +627,7 @@ export class Controller {
     this.reloading = true;
     // 官方 `handleReloadCommand` 在 reload 之前先 `resetExtensionUI()`：reload 会换掉所有扩展，旧扩展挂的东西要先收。
     this.ui.reset();
+    this.clearToolRenderCache?.();
     this.hub.emit("ui.reset", {});
     try {
       await session.reload();

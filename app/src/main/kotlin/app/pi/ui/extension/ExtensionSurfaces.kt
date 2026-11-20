@@ -193,6 +193,115 @@ fun ExtensionSurfaceHost(
 }
 
 /**
+ * 非拦截型悬浮 HUD（官方 `OverlayOptions.nonCapturing = true`）：
+ * 贴在右下角（输入框上方），**绝不铺遮罩、绝不抢占聊天滚动与输入焦点**。
+ * 最多展示 6 行紧凑 ANSI 输出；若组件支持交互，点卡身可一键展开完整操控面板，点 ✕ 直接关闭。
+ */
+@Composable
+fun ExtensionFloatingOverlayCard(
+    custom: ExtCustom?,
+    bottomPadding: androidx.compose.ui.unit.Dp = 72.dp,
+    onExpand: (() -> Unit)? = null,
+    onClose: (surfaceId: String) -> Unit,
+) {
+    if (custom == null) return
+    val palette = PiTheme.palette
+    val id = custom.surfaceId
+    val rows = remember(custom.lines) { trimEmptyEdgeLines(panelRows(custom.lines)) }
+    val title = remember(custom.lines) { inferSurfaceTitle(custom.lines) } ?: "悬浮信息"
+    val previewRows = if (rows.size > 6) rows.take(6) else rows
+    val shape = RoundedCornerShape(14.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 16.dp, end = 12.dp, bottom = bottomPadding),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(min = 180.dp, max = 320.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f))
+                .border(PiSpacing.hairline, palette.borderAccent.copy(alpha = 0.45f), shape)
+                .then(
+                    if (onExpand != null) {
+                        Modifier.clickable(role = Role.Button, onClickLabel = "展开悬浮面板", onClick = onExpand)
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent),
+                )
+                Text(
+                    text = title,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onExpand != null && custom.interactive) {
+                    Text(
+                        text = "操控",
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                        color = palette.accent,
+                        maxLines = 1,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable(role = Role.Button, onClickLabel = "关闭悬浮面板") { onClose(id) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = palette.dim,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
+            if (previewRows.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 140.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
+                    previewRows.forEach { line ->
+                        PanelLine(raw = line, wrap = !isPreformatted(line))
+                    }
+                    if (rows.size > previewRows.size) {
+                        Text(
+                            text = "…还有 ${rows.size - previewRows.size} 行",
+                            style = PiTheme.text.meta,
+                            color = palette.dim,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * 可交互工厂组件（`ctx.ui.setWidget(key, factory)`、`setHeader`、`setFooter` 带 `handleInput` / `handleMouse`）的交互面板。
  */
 @Composable

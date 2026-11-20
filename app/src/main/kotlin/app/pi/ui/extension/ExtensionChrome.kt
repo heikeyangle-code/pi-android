@@ -6,13 +6,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import app.pi.rpc.Ansi
 import app.pi.ui.theme.PiTheme
@@ -67,15 +70,16 @@ fun ExtensionSpans(
         buildAnnotatedString {
             spans.forEach { span ->
                 val resolvedFg = tokenColorFor(span, tokens) ?: if (span.link != null) palette.mdLink else defaultColor
-                if (!richStyle) {
-                    withStyle(
-                        SpanStyle(
-                            color = resolvedFg,
-                            textDecoration = if (span.link != null) TextDecoration.Underline else null,
-                        ),
-                    ) {
-                        append(span.text)
-                    }
+                val safeUrl = span.link?.trim()?.takeIf {
+                    it.startsWith("https://", ignoreCase = true) ||
+                        it.startsWith("http://", ignoreCase = true) ||
+                        it.startsWith("mailto:", ignoreCase = true)
+                }
+                val spanStyle = if (!richStyle) {
+                    SpanStyle(
+                        color = resolvedFg,
+                        textDecoration = if (span.link != null) TextDecoration.Underline else null,
+                    )
                 } else {
                     val resolvedBg = backgroundColorFor(span, tokens)
                     val fg = if (span.inverse) (resolvedBg ?: surfaceBg) else resolvedFg
@@ -90,15 +94,25 @@ fun ExtensionSpans(
                         span.strikethrough -> TextDecoration.LineThrough
                         else -> null
                     }
-                    withStyle(
-                        SpanStyle(
-                            color = finalFg,
-                            background = bg,
-                            fontWeight = if (span.bold) FontWeight.SemiBold else null,
-                            fontStyle = if (span.italic) FontStyle.Italic else null,
-                            textDecoration = decoration,
+                    SpanStyle(
+                        color = finalFg,
+                        background = bg,
+                        fontWeight = if (span.bold) FontWeight.SemiBold else null,
+                        fontStyle = if (span.italic) FontStyle.Italic else null,
+                        textDecoration = decoration,
+                    )
+                }
+                if (safeUrl != null) {
+                    withLink(
+                        LinkAnnotation.Url(
+                            url = safeUrl,
+                            styles = TextLinkStyles(style = spanStyle),
                         ),
                     ) {
+                        append(span.text)
+                    }
+                } else {
+                    withStyle(spanStyle) {
                         append(span.text)
                     }
                 }

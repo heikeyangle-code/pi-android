@@ -63,7 +63,46 @@ export function register(reg, { controller }) {
     for (const k of s.resourceLoader.getSkills().skills) {
       commands.push({ name: `skill:${k.name}`, description: k.description, source: "skill", sourceInfo: k.sourceInfo });
     }
-    return { commands, ...(await loadBuiltins(controller)) };
+    return { commands, ...(await loadBuiltins(controller)), shortcuts: listExtensionShortcuts(controller) };
+  });
+
+  /** 扩展通过 `pi.registerShortcut` 注册的快捷键：手机没有物理键盘，暴露给 App 作为一键快捷动作。 */
+  function listExtensionShortcuts(ctrl) {
+    const s = ctrl.requireSession();
+    const runner = s.extensionRunner;
+    if (typeof runner?.getShortcuts !== "function") return [];
+    const kbConfig = ctrl.ui?.keybindings?.getEffectiveConfig?.() ?? {};
+    const map = runner.getShortcuts(kbConfig);
+    return [...map.entries()].map(([shortcut, entry]) => ({
+      shortcut: String(entry.shortcut ?? shortcut),
+      description: entry.description ?? null,
+      extensionPath: entry.extensionPath ?? null,
+    }));
+  }
+
+  reg.add("catalog.shortcuts", () => ({ shortcuts: listExtensionShortcuts(controller) }));
+
+  reg.add("catalog.triggerShortcut", async (args) => {
+    const s = controller.requireSession();
+    const runner = s.extensionRunner;
+    const requested = str(args, "shortcut").trim().toLowerCase();
+    const kbConfig = controller.ui?.keybindings?.getEffectiveConfig?.() ?? {};
+    const map = typeof runner?.getShortcuts === "function" ? runner.getShortcuts(kbConfig) : new Map();
+    const entry = map.get(requested);
+    if (!entry || typeof entry.handler !== "function") {
+      throw new HostError(ERR.NOT_FOUND, `未找到扩展快捷键：${args.shortcut}`);
+    }
+    try {
+      await entry.handler(runner.createContext());
+      return { triggered: true, shortcut: String(entry.shortcut ?? requested) };
+    } catch (error) {
+      controller.hub.emit("ext.error", {
+        extensionPath: entry.extensionPath ?? "",
+        event: `shortcut:${requested}`,
+        error: String(error?.stack ?? error),
+      });
+      throw new HostError(ERR.INTERNAL, String(error?.message ?? error));
+    }
   });
 
   // 扩展命令的参数补全（pi TUI 敲 `/name ` 之后出的那份）。`name` 是调用名（带 `:1` 后缀的那种），
@@ -271,7 +310,11 @@ export function register(reg, { controller }) {
   });
 
   // 一个 toolCallId 对应一个官方组件（它持有 renderer state / lastComponent），封顶免得长会话无限长。
+  // 会话切换或 /reload 时必须清空，避免残留旧扩展闭包或旧渲染器。
   const toolComponents = new Map();
+  controller.clearToolRenderCache = () => {
+    toolComponents.clear();
+  };
   const componentFor = (id, name, def, callArgs, cwd) => {
     let c = toolComponents.get(id);
     if (!c) {

@@ -66,7 +66,7 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 `model.list` · `model.set {provider,modelId}` · `model.cycle` · `thinking.levels` · `thinking.set {level}` · `thinking.cycle` · `queue.steeringMode {mode}` · `queue.followUpMode {mode}`
 
 ### catalog
-`catalog.commands`（扩展命令 + 提示模板 + 技能）· `catalog.tools` · `catalog.setTools {names}` · `render.message {customType,message,width,expanded?}`（官方 `CustomMessageComponent`）· `render.tool {toolName,toolCallId,args,result?,isPartial?,argsComplete?,…}`（官方 `ToolExecutionComponent`，经 `resolveToolRenderers`）· `render.entry {customType,id,data,width,expanded?}`（扩展 `registerEntryRenderer`，官方 `CustomEntryComponent`）· `render.markdown {markdown,messageType,isStreaming,width}`（扩展 `registerMarkdownTransformer` 链）；事件 `render.invalidate`（官方组件 `requestRender`，App 重取）
+`catalog.commands`（扩展命令 + 提示模板 + 技能 + 内建命令表 + 扩展快捷键 `shortcuts`）· `catalog.shortcuts`（扩展注册的快捷键表）· `catalog.triggerShortcut {shortcut}`（触发扩展 `pi.registerShortcut` 处理器）· `catalog.tools` · `catalog.setTools {names}` · `render.message {customType,message,width,expanded?}`（官方 `CustomMessageComponent`）· `render.tool {toolName,toolCallId,args,result?,isPartial?,argsComplete?,…}`（官方 `ToolExecutionComponent`，经 `resolveToolRenderers`，重载/切会话自动清空缓存）· `render.entry {customType,id,data,width,expanded?}`（扩展 `registerEntryRenderer`，官方 `CustomEntryComponent`）· `render.markdown {markdown,messageType,isStreaming,width}`（扩展 `registerMarkdownTransformer` 链）；事件 `render.invalidate`（官方组件 `requestRender`，App 重取）
 
 ### ui（App → 宿主的 UI 回路）
 | 命令 | 参数 | 说明 |
@@ -120,7 +120,8 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | `ui.surface` | `{surfaceId,key,mode,overlay,rev,interactive,width,lines[]}` | 组件的一次渲染，`lines` 含 ANSI。`rev` 递增，只画最新的 |
 | `ui.close` | `{surfaceId,key,mode}` | 表面关闭 |
 | `ui.cancel` | `{id}` | 宿主收回了一个提问（超时 / abort / 会话替换）：**App 把对应对话框收掉** |
-| `ui.autocomplete` | `{registered}` | 有扩展注册了补全（暂未映射） |
+| `ui.autocomplete` | `{registered}` | 扩展通过 `addAutocompleteProvider` 注册的补全提供者数量 |
+| `ui.terminalInput` | `{registered}` | 扩展通过 `onTerminalInput` 注册的终端输入监听器数量 |
 
 ## 宿主向 App 的提问（`req.method`）
 

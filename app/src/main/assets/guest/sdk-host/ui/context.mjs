@@ -69,6 +69,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
   let activeKeybindings = createFallbackKeybindings();
   let activeFooterData = null;
   let lazyLoaders = {};
+  let sessionHooks = {};
 
   // 代理到当前生效的真实 `KeybindingsManager`，确保扩展在 `open` 期间拿到的引用也会自动升级。
   const keybindings = {
@@ -261,19 +262,58 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     },
     onTerminalInput(handler) {
       state.terminalInputHandlers.add(handler);
-      return () => state.terminalInputHandlers.delete(handler);
+      hub.emit("ui.terminalInput", { registered: state.terminalInputHandlers.size });
+      return () => {
+        state.terminalInputHandlers.delete(handler);
+        hub.emit("ui.terminalInput", { registered: state.terminalInputHandlers.size });
+      };
     },
 
     // ---- 主题 -----------------------------------------------------------
     get theme() {
       return theme;
     },
-    getAllThemes: () => [{ name: theme.name ?? "app", path: undefined }],
-    getTheme: (name) => {
-      if (!name || name === theme.name || name === "app" || name === "dark" || name === "light") return theme;
+    getAllThemes() {
+      const seen = new Set(["dark", "light", "system"]);
+      const out = [
+        { name: "dark", path: undefined },
+        { name: "light", path: undefined },
+        { name: "system", path: undefined },
+      ];
+      try {
+        const themes = sessionHooks.getResourceLoader?.()?.getThemes?.()?.themes ?? [];
+        for (const t of themes) {
+          const name = typeof t?.name === "string" ? t.name : null;
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          out.push({ name, path: t.sourcePath ?? t.path ?? undefined });
+        }
+      } catch {
+        // ignore if resourceLoader unavailable
+      }
+      return out;
+    },
+    getTheme(name) {
+      if (!name) return theme;
+      const all = this.getAllThemes();
+      if (all.some((t) => t.name === name) || name === theme.name || name === "app") return theme;
       return undefined;
     },
-    setTheme: () => ({ success: false, error: "主题由 App 管理（命令 ui.palette）" }),
+    setTheme(themeOrName) {
+      const name = typeof themeOrName === "string" ? themeOrName.trim() : typeof themeOrName?.name === "string" ? themeOrName.name.trim() : "";
+      if (!name) return { success: false, error: "主题名不能为空" };
+      const sm = sessionHooks.getSettingsManager?.();
+      if (!sm || typeof sm.setTheme !== "function") {
+        return { success: false, error: "会话尚未就绪，无法切换主题" };
+      }
+      try {
+        sm.setTheme(name);
+        sessionHooks.emitThemeChanged?.(name);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: String(error?.message ?? error) };
+      }
+    },
   };
 
   function mountChrome(slot, build) {
@@ -341,6 +381,9 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     setLazyLoaders(loaders) {
       lazyLoaders = loaders ?? {};
     },
+    setSessionHooks(hooks) {
+      sessionHooks = hooks ?? {};
+    },
     setKeybindings(kb) {
       if (kb && typeof kb.matches === "function") activeKeybindings = kb;
     },
@@ -371,6 +414,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
       state.customEditorFactory = undefined;
       composedAutocomplete = null;
       hub.emit("ui.autocomplete", { registered: 0 });
+      hub.emit("ui.terminalInput", { registered: 0 });
     },
   };
 }

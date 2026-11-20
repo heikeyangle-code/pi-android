@@ -31,6 +31,8 @@ data class ExtCustom(
     val blocked: String? = null,
     val hidden: Boolean = false,
     val focused: Boolean = true,
+    /** 官方 `OverlayOptions.nonCapturing`：非拦截型悬浮层，不抢占聊天视口和输入焦点。 */
+    val nonCapturing: Boolean = false,
 )
 
 data class ExtWorking(
@@ -55,11 +57,16 @@ data class ExtUiState(
     val toolsExpanded: Boolean? = null,
     /** 扩展通过 `ctx.ui.addAutocompleteProvider` 注册的补全提供者数量。 */
     val autocompleteCount: Int = 0,
+    /** 扩展通过 `ctx.ui.onTerminalInput` 注册的终端输入监听器数量。 */
+    val terminalInputCount: Int = 0,
     /** 终端响铃（BEL `\x07` / OSC 通知）单调计数，用于触发原生提示音。 */
     val bellSeq: Long = 0L,
 ) {
-    /** 当前最顶层且未被 `OverlayHandle.setHidden(true)` 隐藏的 custom 表面。 */
-    val custom: ExtCustom? get() = customStack.lastOrNull { !it.hidden }
+    /** 当前最顶层、可见、且为拦截型（非 nonCapturing）的 custom 表面。 */
+    val custom: ExtCustom? get() = customStack.lastOrNull { !it.hidden && !it.nonCapturing }
+
+    /** 当前最顶层、可见、且为非拦截型（`overlayOptions.nonCapturing = true`）的悬浮 HUD 表面。 */
+    val nonCapturingCustom: ExtCustom? get() = customStack.lastOrNull { !it.hidden && it.nonCapturing }
 }
 
 /**
@@ -83,6 +90,7 @@ class ExtUiReducer {
         val blocked: String? = null,
         val hidden: Boolean = false,
         val focused: Boolean = true,
+        val nonCapturing: Boolean = false,
     )
 
     private val frames = HashMap<String, Frame>()
@@ -113,6 +121,9 @@ class ExtUiReducer {
             "ui.toolsExpanded" -> state = state.copy(toolsExpanded = bool(d["expanded"], false))
             "ui.autocomplete" -> state = state.copy(
                 autocompleteCount = (d["registered"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+            )
+            "ui.terminalInput" -> state = state.copy(
+                terminalInputCount = (d["registered"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
             )
             "ui.bell" -> state = state.copy(bellSeq = state.bellSeq + 1L)
             else -> return null
@@ -206,6 +217,7 @@ class ExtUiReducer {
         val mode = str(d["mode"]) ?: return
         val rev = (d["rev"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
         if ((frames[id]?.rev ?: -1L) >= rev) return
+        val overlayOpts = d["overlayOptions"] as? JsonObject
         val frame = Frame(
             rev = rev,
             lines = linesOf(d["lines"]),
@@ -214,6 +226,7 @@ class ExtUiReducer {
             blocked = str(d["blocked"]),
             hidden = bool(d["hidden"], false),
             focused = bool(d["focused"], true),
+            nonCapturing = bool(overlayOpts?.get("nonCapturing"), false),
         )
         frames[id] = frame
         when (mode) {
@@ -235,6 +248,7 @@ class ExtUiReducer {
                     blocked = frame.blocked,
                     hidden = frame.hidden,
                     focused = frame.focused,
+                    nonCapturing = frame.nonCapturing,
                 )
                 val stack = state.customStack
                 val updated = if (stack.any { it.surfaceId == id }) {
