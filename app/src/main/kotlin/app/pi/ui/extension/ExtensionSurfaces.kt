@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -171,7 +172,13 @@ private fun SurfaceSheetBody(
     val charPx = cellSize.width.coerceAtLeast(1)
     val linePx = cellSize.height.coerceAtLeast(1)
     val viewportPadHPx = with(density) { (ViewportPadH * 2).roundToPx() }
-    val maxHeightPx = with(density) { SURFACE_MAX_HEIGHT.roundToPx() }
+    // 视口高度 = 屏幕高度扣掉标题栏 / 操控坞 / 把手等固定部分，而不是写死的一个数：
+    // 官方终端里组件的高度不受内部滚动限制（overlay 的 maxHeight 默认是终端行数），
+    // 写死 430dp 会让一块本来放得下的棋盘（≈30 行）在屏幕下半截空着的情况下仍要上下滚。
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val maxViewport = (screenHeight - (if (interactive) SURFACE_CHROME_INTERACTIVE else SURFACE_CHROME_READONLY))
+        .coerceAtLeast(SURFACE_MIN_HEIGHT)
+    val maxHeightPx = with(density) { maxViewport.roundToPx() }
 
     var viewportWidthPx by remember { mutableIntStateOf(0) }
     var measuredCols by remember { mutableIntStateOf(40) }
@@ -313,7 +320,7 @@ private fun SurfaceSheetBody(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = SURFACE_MAX_HEIGHT),
+                        .heightIn(max = maxViewport),
                 ) {
                     itemsIndexed(rows) { rowIndex, line ->
                         SurfaceRowItem(
@@ -335,7 +342,7 @@ private fun SurfaceSheetBody(
                 val vScroll = rememberScrollState()
                 val innerModifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = SURFACE_MAX_HEIGHT)
+                    .heightIn(max = maxViewport)
                     .verticalScroll(vScroll)
                     .then(if (needsHorizontalScroll) Modifier.horizontalScroll(hScroll) else Modifier)
                 Column(modifier = innerModifier) {
@@ -754,5 +761,8 @@ private fun inferSurfaceTitle(lines: List<String>): String? {
 
 private val ViewportPadH = 10.dp
 private val ViewportPadV = 8.dp
-private val SURFACE_MAX_HEIGHT = 430.dp
+/** 视口之外的固定部分（把手 + 标题栏 + 间距；可交互的再加操控坞两行）。 */
+private val SURFACE_CHROME_INTERACTIVE = 300.dp
+private val SURFACE_CHROME_READONLY = 190.dp
+private val SURFACE_MIN_HEIGHT = 320.dp
 private const val LAZY_SURFACE_THRESHOLD = 48
