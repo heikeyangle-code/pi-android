@@ -399,29 +399,7 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                "/app/files" -> withCapability(DeviceCapability.Basic) {
-                    DeviceSafStore.get(context).describe()
-                }
-
-                "/app/files/list" -> withCapability(DeviceCapability.Basic) {
-                    DeviceSafStore.get(context).list(params.str("path"))
-                }
-
-                "/app/files/read" -> withCapability(DeviceCapability.Basic) {
-                    DeviceSafStore.get(context).read(
-                        path = params.strRequired("path"),
-                        maxBytes = params.int("maxBytes", 1024 * 1024),
-                    )
-                }
-
-                "/app/files/write" -> withCapability(DeviceCapability.Basic) {
-                    DeviceSafStore.get(context).write(
-                        path = params.strRequired("path"),
-                        text = params.str("content"),
-                        base64 = params.str("base64"),
-                        mimeType = params.str("mimeType") ?: "text/plain",
-                    )
-                }
+                // SAF `/app/files*` 已移除：App 与工作区已直接具备手机存储访问能力，无需 SAF 代理。
 
                 // -------------------------------------------- 通知监听（并入「基础」组）----
                 //
@@ -704,11 +682,6 @@ class DeviceBridgeRouter(
             put("note", "不按命令拒绝任何东西：命令名不检查、写入不限路径、替换不检查。唯一策略点 hardBlocks 为空。")
             put("blocked", JSONArray(DeviceShellGuard.blockedSummary()))
             put("elevatedBackend", DeviceShellGuard.hasElevatedBackend())
-        })
-        put("saf", JSONObject().apply {
-            val grants = DeviceSafStore.get(context).grants()
-            put("count", grants.size)
-            put("roots", org.json.JSONArray(grants.map { it.name }))
         })
         put("shellBackends", JSONArray().apply {
             for (backend in DeviceShellGuard.backends()) {
@@ -1024,10 +997,6 @@ class DeviceBridgeRouter(
             "POST /app/torch",
             "POST /app/export",
             "POST /app/import",
-            "GET  /app/files",
-            "POST /app/files/list",
-            "POST /app/files/read",
-            "POST /app/files/write",
             "POST /app/shell",
             "POST /app/gate/report",
             // 通知监听并入「基础」组（契约规定，不另开开关）

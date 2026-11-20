@@ -258,50 +258,6 @@ interface SensorSampleData {
 	values: number[];
 	units: string;
 }
-interface ExportData {
-	uri: string;
-	displayName: string;
-	location: string;
-	bytes: number;
-}
-interface ImportData {
-	displayName: string;
-	bytes: number;
-	truncated: boolean;
-	text?: string;
-	base64?: string;
-}
-interface SafRoot {
-	name: string;
-	uri: string;
-	exists: boolean;
-}
-interface SafRootsData {
-	count: number;
-	roots: SafRoot[];
-	note: string;
-}
-interface SafListData {
-	path: string;
-	count: number;
-	truncated: boolean;
-	entries: Array<{ name: string; directory: boolean; bytes: number; lastModified: number; uri: string }>;
-}
-interface SafReadData {
-	path: string;
-	uri: string;
-	bytes: number;
-	truncated: boolean;
-	text?: string;
-	base64?: string;
-}
-interface SafWriteData {
-	path: string;
-	uri: string;
-	bytes: number;
-	created: boolean;
-	mimeType: string;
-}
 interface ShellData {
 	stdout: string;
 	stderr: string;
@@ -374,7 +330,6 @@ function shellFailureStatus(data: ShellData): string | null {
 
 const SCREEN_ACTIONS = ["look", "tap", "type", "swipe", "key", "wait", "idle", "shot", "steps"] as const;
 const APP_ACTIONS = ["list", "launch", "stop"] as const;
-const FILE_ACTIONS = ["dirs", "list", "read", "write", "export", "import", "download"] as const;
 const COMM_ACTIONS = [
 	"clipboard",
 	"notify",
@@ -424,19 +379,6 @@ const ScreenAction = Type.Union(
 const AppAction = Type.Union([Type.Literal("list"), Type.Literal("launch"), Type.Literal("stop")], {
 	description: "list · launch · stop",
 });
-
-const FileAction = Type.Union(
-	[
-		Type.Literal("dirs"),
-		Type.Literal("list"),
-		Type.Literal("read"),
-		Type.Literal("write"),
-		Type.Literal("export"),
-		Type.Literal("import"),
-		Type.Literal("download"),
-	],
-	{ description: "dirs · list · read · write · export · import · download" },
-);
 
 const CommAction = Type.Union(
 	[
@@ -1122,104 +1064,6 @@ async function appAction(params: Record<string, unknown>): Promise<ToolOutcome> 
 
 // -------------------------------------------------------------------- 文件 ----
 
-interface FileParams {
-	action?: string;
-	path?: string;
-	name?: string;
-	content?: string;
-	base64?: string;
-	mimeType?: string;
-	maxBytes?: number;
-}
-
-async function filesAction(params: Record<string, unknown>): Promise<ToolOutcome> {
-	return guarded(async () => {
-		const p = params as FileParams;
-		const action = typeof p.action === "string" ? p.action : "";
-		if (action === "dirs") {
-			const data = await bridgeGet<SafRootsData>("/app/files");
-			const lines = data.roots.map((root) => `- ${root.name}${root.exists ? "" : "（授权已失效）"}`);
-			if (lines.length === 0) lines.push("（还没有授权任何目录）");
-			return textResult(`已授权目录（${data.count}）：\n\n${lines.join("\n")}\n\n${data.note}`, {
-				count: data.count,
-			});
-		}
-		if (action === "list") {
-			const data = await bridgePost<SafListData>("/app/files/list", { path: p.path });
-			const lines = data.entries.map(
-				(entry) => `${entry.directory ? "[目录]" : `[${formatSize(entry.bytes)}]`} ${entry.name}`,
-			);
-			if (lines.length === 0) lines.push("（空目录）");
-			return textResult(
-				truncateForModel(
-					`${data.path}：\n\n${lines.join("\n")}\n\n共 ${data.count} 项${data.truncated ? "（已截断）" : ""}`,
-					"目录列表",
-				),
-				{ path: data.path, count: data.count },
-			);
-		}
-		if (action === "read") {
-			requireText("android_files", "read", params, ["path"]);
-			const data = await bridgePost<SafReadData>("/app/files/read", { path: p.path, maxBytes: p.maxBytes });
-			if (typeof data.text === "string") {
-				return textResult(
-					`已读入 ${data.path}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
-						truncateForModel(data.text, "文件内容"),
-					{ path: data.path, bytes: data.bytes },
-				);
-			}
-			return textResult(
-				`已读入 ${data.path}（${formatSize(data.bytes)}），它是二进制文件，以 base64 返回：\n\n` +
-					truncateForModel(data.base64 ?? "", "base64"),
-				{ path: data.path, bytes: data.bytes, binary: true },
-			);
-		}
-		if (action === "write") {
-			requireText("android_files", "write", params, ["path"]);
-			const data = await bridgePost<SafWriteData>("/app/files/write", {
-				path: p.path,
-				content: p.content,
-				base64: p.base64,
-				mimeType: p.mimeType,
-			});
-			return textResult(
-				`已${data.created ? "创建" : "覆盖"} ${data.path}（${formatSize(data.bytes)}，${data.mimeType}）\nURI：${data.uri}`,
-				{ path: data.path, bytes: data.bytes, created: data.created },
-			);
-		}
-		if (action === "export" || action === "download") {
-			requireText("android_files", action, params, ["name"]);
-			const data = await bridgePost<ExportData>("/app/export", {
-				name: p.name,
-				content: p.content,
-				base64: p.base64,
-				mimeType: p.mimeType,
-			});
-			return textResult(
-				`已导出到 ${data.location}/${data.displayName}（${formatSize(data.bytes)}）\nURI：${data.uri}`,
-				{ displayName: data.displayName, bytes: data.bytes },
-			);
-		}
-		if (action === "import") {
-			requireText("android_files", "import", params, ["name"]);
-			const data = await bridgePost<ImportData>("/app/import", { name: p.name, maxBytes: p.maxBytes });
-			if (typeof data.text === "string") {
-				return textResult(
-					`已读入 ${data.displayName}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
-						truncateForModel(data.text, "文件内容"),
-					{ displayName: data.displayName, bytes: data.bytes },
-				);
-			}
-			return textResult(
-				`已读入 ${data.displayName}（${formatSize(data.bytes)}），它是二进制文件。` +
-					"要看内容可以在 guest 里用 bash 处理。",
-				{ displayName: data.displayName, bytes: data.bytes, binary: true },
-			);
-		}
-		throw badParam("android_files", "action", [...FILE_ACTIONS], p.action);
-	});
-}
-
 // ------------------------------------------------------------------ Shell ----
 
 interface ShellParams {
@@ -1655,23 +1499,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		run: (params) => appAction(params),
 	},
 	{
-		name: "android_files",
-		capability: "basic",
-		label: "文件",
-		description: "Files: dirs, list, read, write, export, import, download.",
-		promptSnippet: "SAF + Download files",
-		parameters: Type.Object({
-			action: FileAction,
-			path: Type.Optional(Type.String({ description: "\"root/relative\"; omit on list for root names" })),
-			name: Type.Optional(Type.String({ description: "Download file name, e.g. report.md" })),
-			content: Type.Optional(Type.String({ description: "text content" })),
-			base64: Type.Optional(Type.String({ description: "binary as base64, not with content" })),
-			mimeType: Type.Optional(Type.String({ description: "MIME, default text/plain" })),
-			maxBytes: Type.Optional(Type.Number({ description: "bytes to read, default 1MB, cap 4MB" })),
-		}),
-		run: (params) => filesAction(params),
-	},
-	{
 		name: "android_shell",
 		capability: "shell",
 		label: "设备 Shell",
@@ -1761,8 +1588,7 @@ function skillFiles(usable: ReadonlySet<string>): Record<string, string> {
 	}
 	if (basic) {
 		bullets.push(
-			"- Files: `android_files` dirs/list/read/write on authorized dirs; export/import on public Download.",
-			"- Notifications, clipboard, vibration, share, links: `android_comm`; battery, torch, location, sensors: `android_device`.",
+			"- Apps, notifications, clipboard, vibration, share, links: `android_app` & `android_comm`; battery, torch, location, sensors: `android_device`.",
 		);
 	}
 	if (shell) {
@@ -1841,11 +1667,10 @@ When the user declines, stop — do not route around it.
 | path | what it is |
 |---|---|
 | /workspace | the workspace (engine and terminal mount it separately) |
-| /sdcard | shared phone storage; public Download goes through \`android_files\` export |
+| /sdcard | shared phone storage (directly accessible via \`read\`/\`write\`/\`bash\`) |
 | ~/.pi/agent | pi's agent dir (SYSTEM.md, skills/, device-bridge.json) |
 
-- Guest work (git, npm, builds) uses pi's \`bash\`, never \`android_shell\`.
-- Files outside the authorized dirs: export to public Download, or have the user authorize a dir.
+- Guest work (git, npm, builds, local files) uses pi's standard \`read\`/\`write\`/\`bash\`, never \`android_shell\`.
 ${shellSection}`;
 
 	const files: Record<string, string> = { "SKILL.md": skill, "references/env.md": env };

@@ -27,22 +27,22 @@ enum class DeviceCapability(
 ) {
     Basic(
         id = "basic",
-        title = "基础",
-        summary = "剪贴板、通知、打开链接、分享、提示音与语音，以及文件、定位、传感器、电量与手电筒",
+        title = "系统交互",
+        summary = "应用启动、剪贴板、通知收发与回复、分享、打开链接、语音、定位、手电筒与传感器",
         defaultEnabled = false,
     ),
 
     Accessibility(
         id = "accessibility",
-        title = "屏幕",
-        summary = "读屏/点按/输入/滑动/按键/截图",
+        title = "屏幕自动化",
+        summary = "读屏、锚点点击、输入、滑动、按键与编号标注截图",
         defaultEnabled = false,
     ),
 
     Shell(
         id = "shell",
-        title = "Shell",
-        summary = "在设备上执行受策略守卫限制的命令（默认关闭；危险操作第一次确认后可选择本会话不再询问）",
+        title = "设备 Shell",
+        summary = "本机命令行（接入 Shizuku 可免电脑提权至 ADB 级；危险命令需审批）",
         defaultEnabled = false,
     ),
 

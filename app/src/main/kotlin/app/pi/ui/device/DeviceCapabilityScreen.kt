@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,13 +23,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.TouchApp
@@ -59,8 +56,8 @@ import app.pi.bridge.DeviceApprovalLedger
 import app.pi.bridge.DeviceCapability
 import app.pi.bridge.DeviceCapabilityState
 import app.pi.bridge.DeviceCapabilityStore
-import app.pi.bridge.DeviceSafStore
 import app.pi.bridge.DeviceShizuku
+import app.pi.bridge.PiNotificationListener
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiType
 import app.pi.ui.rememberPiScreenVisible
@@ -78,8 +75,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * 设备能力控制台：系统就绪仪表盘、上下文 Token 占用实时状态、3 组精细化能力开关（支持本会话暂停）、
- * SAF 授权目录管理与危险操作审批账本。
+ * 设备能力控制台（精简重构版）：
+ *  - 顶部 0-Token 上下文占用横幅（开启任意能力时支持「全部关闭」一键归零）
+ *  - 2×2 系统服务与权限就绪面板（无障碍、通知使用权、Shizuku 提权、通知发送权限）
+ *  - 3 组清晰能力开关（屏幕自动化、系统交互与硬件、设备 Shell），均支持本会话暂停
+ *  - 已彻底移除冗余的 SAF 目录代理与 `android_files`（工作区与 `/sdcard` 已可直访）
  */
 @Composable
 fun DeviceCapabilityScreen(
@@ -88,24 +88,19 @@ fun DeviceCapabilityScreen(
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val context = LocalContext.current
-    val safStore = remember { DeviceSafStore.get(context) }
     var accessibility by remember { mutableStateOf(DeviceAccessibilityService.stateName(context)) }
+    var notifyListener by remember { mutableStateOf(PiNotificationListener.stateName(context)) }
     var shizuku by remember { mutableStateOf(DeviceShizuku.status(context)) }
     var notification by remember { mutableStateOf(store.hasNotificationPermission()) }
-    var grants by remember { mutableStateOf(safStore.grants()) }
+    var hasLocation by remember { mutableStateOf(store.hasLocationPermission()) }
+    var hasCamera by remember { mutableStateOf(store.hasCameraPermission()) }
     var ledgerLines by remember { mutableStateOf(DeviceApprovalLedger.summaryLines()) }
     var revision by remember { mutableIntStateOf(0) }
 
-    val directoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            safStore.add(uri, null)
-            grants = safStore.grants()
-        }
-    }
-    val notificationRequester = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+    val permissionRequester = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         notification = store.hasNotificationPermission()
-    }
-    val storageRequester = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        hasLocation = store.hasLocationPermission()
+        hasCamera = store.hasCameraPermission()
         revision += 1
     }
 
@@ -115,9 +110,11 @@ fun DeviceCapabilityScreen(
         while (true) {
             withContext(Dispatchers.IO) {
                 accessibility = DeviceAccessibilityService.stateName(context)
+                notifyListener = PiNotificationListener.stateName(context)
                 shizuku = DeviceShizuku.status(context)
                 notification = store.hasNotificationPermission()
-                grants = safStore.grants()
+                hasLocation = store.hasLocationPermission()
+                hasCamera = store.hasCameraPermission()
                 ledgerLines = DeviceApprovalLedger.summaryLines()
             }
             delay(1500L)
@@ -135,15 +132,14 @@ fun DeviceCapabilityScreen(
     val openAccessibility: () -> Unit = {
         runCatching { context.startActivity(DeviceAccessibilityService.settingsIntent()) }
     }
+    val openNotificationListener: () -> Unit = {
+        runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+    }
     val requestShizuku: () -> Unit = {
         when {
             !DeviceShizuku.isInstalled(context) -> Unit
-            !DeviceShizuku.binderAlive() -> {
-                openShizukuManager(context)
-            }
-            else -> {
-                DeviceShizuku.requestPermission()
-            }
+            !DeviceShizuku.binderAlive() -> openShizukuManager(context)
+            else -> DeviceShizuku.requestPermission()
         }
     }
     val openNotification: () -> Unit = {
@@ -155,7 +151,7 @@ fun DeviceCapabilityScreen(
                 )
             }
         } else {
-            notificationRequester.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+            permissionRequester.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
         }
     }
 
@@ -169,19 +165,23 @@ fun DeviceCapabilityScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
-            // 1. 上下文占用实时横幅：让「关闭即 0 Token」可见可验证
+            // 1. 0 Token 占用横幅 + 一键全关
             item(key = "context-footprint") {
                 ContextFootprintBanner(
                     usableCount = usableCount,
                     enabledCount = enabledCount,
                     totalCount = allStates.size,
+                    onDisableAll = {
+                        DeviceCapability.entries.forEach { store.setEnabled(it, false) }
+                        revision += 1
+                    },
                 )
             }
 
-            // 2. 系统就绪度 2×2 仪表盘
+            // 2. 系统服务与权限 2×2 就绪面板（均为真服务/真权限）
             item(key = "readiness") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    DeviceSectionLabel("系统就绪状态")
+                    DeviceSectionLabel("系统服务与权限")
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -205,6 +205,24 @@ fun DeviceCapabilityScreen(
                                 onClick = openAccessibility,
                                 modifier = Modifier.weight(1f),
                             )
+                            ReadinessTile(
+                                icon = Icons.Filled.NotificationsActive,
+                                title = "通知使用权",
+                                status = when (notifyListener) {
+                                    "connected" -> "已连接"
+                                    "enabled_not_connected" -> "重连中"
+                                    else -> "未开启"
+                                },
+                                ready = notifyListener == "connected",
+                                accent = palette.mdLink,
+                                onClick = openNotificationListener,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             val shizukuReady = shizuku.optBoolean("ready")
                             val shizukuInstalled = DeviceShizuku.isInstalled(context)
                             ReadinessTile(
@@ -221,27 +239,13 @@ fun DeviceCapabilityScreen(
                                 onClick = requestShizuku,
                                 modifier = Modifier.weight(1f),
                             )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
                             ReadinessTile(
                                 icon = Icons.Filled.Notifications,
-                                title = "通知权限",
+                                title = "发送通知",
                                 status = if (notification) "已开启" else "点击授权",
                                 ready = notification,
                                 accent = palette.success,
                                 onClick = openNotification,
-                                modifier = Modifier.weight(1f),
-                            )
-                            ReadinessTile(
-                                icon = Icons.Filled.Folder,
-                                title = "SAF 目录",
-                                status = if (grants.isEmpty()) "点击添加" else "${grants.size} 个已授权",
-                                ready = grants.isNotEmpty(),
-                                accent = palette.accent,
-                                onClick = { directoryPicker.launch(null) },
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -249,16 +253,16 @@ fun DeviceCapabilityScreen(
                 }
             }
 
-            // 3. 三组能力控制卡（含独立本会话暂停 & 前置一键跳转）
+            // 3. 三组能力控制卡（按组动态热同步挂载工具）
             item(key = "capabilities") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    DeviceSectionLabel("能力开关 · 按组动态挂载工具")
+                    DeviceSectionLabel("能力开关 · 按组动态挂载")
                     PiSettingsCard {
                         CapabilityCardRow(
                             icon = Icons.Filled.TouchApp,
                             iconTint = palette.accent,
                             title = "屏幕自动化",
-                            description = "读屏、锚点智能点击、输入、滑动、编号标注截图",
+                            description = "读屏、增量对比、编号标注截图、锚点点击、输入与滑动",
                             state = screen,
                             onToggle = {
                                 store.setEnabled(DeviceCapability.Accessibility, it)
@@ -269,7 +273,7 @@ fun DeviceCapabilityScreen(
                                 revision += 1
                             },
                             issueHint = if (screen.enabled && screen.enabledForSession && !screen.usable) {
-                                if (accessibility == "enabled_not_connected") "无障碍服务正在重连，请稍候" else "需要开启系统无障碍服务"
+                                if (accessibility == "enabled_not_connected") "无障碍服务正在重连" else "需先开启系统无障碍服务"
                             } else {
                                 null
                             },
@@ -277,13 +281,11 @@ fun DeviceCapabilityScreen(
                             onAction = openAccessibility,
                         )
                         PiSettingsHairline()
-                        val needLegacyStorage = basic.enabled && basic.enabledForSession && !basic.usable &&
-                            store.legacyStoragePermissions().isNotEmpty()
                         CapabilityCardRow(
-                            icon = Icons.Filled.FolderOpen,
+                            icon = Icons.Filled.PhoneAndroid,
                             iconTint = palette.success,
-                            title = "系统与文件",
-                            description = "SAF 授权目录读写、剪贴板、系统通知、分享与下载",
+                            title = "系统交互与硬件",
+                            description = "启动应用、剪贴板、通知收发/回复、分享、语音、电量/手电筒/定位",
                             state = basic,
                             onToggle = {
                                 store.setEnabled(DeviceCapability.Basic, it)
@@ -293,11 +295,39 @@ fun DeviceCapabilityScreen(
                                 store.setSessionDisabled(DeviceCapability.Basic, paused)
                                 revision += 1
                             },
-                            issueHint = if (needLegacyStorage) "旧版 Android 导出文件需要存储权限" else null,
-                            actionLabel = "授予权限",
-                            onAction = {
-                                val perms = store.legacyStoragePermissions().toTypedArray()
-                                if (perms.isNotEmpty()) storageRequester.launch(perms)
+                            extraFooter = if (basic.enabled && basic.enabledForSession) {
+                                {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        PiSettingsChip(
+                                            text = if (hasLocation) "定位已授" else "授予定位",
+                                            active = hasLocation,
+                                            onClick = {
+                                                if (!hasLocation) {
+                                                    permissionRequester.launch(
+                                                        arrayOf(
+                                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                                                        ),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                        PiSettingsChip(
+                                            text = if (hasCamera) "手电筒已授" else "授予相机(手电筒)",
+                                            active = hasCamera,
+                                            onClick = {
+                                                if (!hasCamera) {
+                                                    permissionRequester.launch(arrayOf(Manifest.permission.CAMERA))
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            } else {
+                                null
                             },
                         )
                         PiSettingsHairline()
@@ -305,7 +335,7 @@ fun DeviceCapabilityScreen(
                             icon = Icons.Filled.Terminal,
                             iconTint = palette.error,
                             title = "设备 Shell",
-                            description = "Shizuku / ADB 级命令行（高危 · 每次会话需审批）",
+                            description = "Shizuku / 本机 Shell（高危 · 危险命令需每次会话审批）",
                             state = shell,
                             danger = true,
                             onToggle = {
@@ -317,7 +347,7 @@ fun DeviceCapabilityScreen(
                                 revision += 1
                             },
                             issueHint = if (shell.enabled && shell.enabledForSession && !shizuku.optBoolean("ready")) {
-                                "Shizuku 未就绪，仅限应用沙箱内命令"
+                                "Shizuku 未就绪，仅以应用沙箱身份运行"
                             } else {
                                 null
                             },
@@ -328,8 +358,8 @@ fun DeviceCapabilityScreen(
                 }
             }
 
-            // 4. 已授权 SAF 目录管理
-            item(key = "saf-grants") {
+            // 4. 会话审批账本
+            item(key = "approval-ledger") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                     Row(
                         modifier = Modifier
@@ -338,123 +368,26 @@ fun DeviceCapabilityScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "已授权目录（SAF）",
+                            "会话审批记录",
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                             color = palette.muted,
                             modifier = Modifier.weight(1f),
                         )
-                        Surface(
-                            onClick = { directoryPicker.launch(null) },
-                            shape = RoundedCornerShape(50),
-                            color = palette.accent.copy(alpha = 0.14f),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Icon(Icons.Filled.Add, null, tint = palette.accent, modifier = Modifier.size(14.dp))
-                                Text(
-                                    "添加目录",
-                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                    color = palette.accent,
-                                )
-                            }
-                        }
-                    }
-                    PiSettingsCard {
-                        if (grants.isEmpty()) {
-                            Column(
+                        if (ledgerLines.size > 1) {
+                            Text(
+                                "清空",
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                                        vertical = PiSettingsMetrics.rowPaddingVertical,
-                                    ),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    "尚未授权任何外部文件夹",
-                                    style = PiType.rowTitle,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    "授权后，Agent 可在「系统与文件」开启时读写所选目录内的文件（不支持删除操作）。",
-                                    style = PiTheme.text.meta,
-                                    color = palette.muted,
-                                )
-                            }
-                        } else {
-                            grants.forEachIndexed { index, grant ->
-                                if (index > 0) PiSettingsHairline()
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(
-                                            horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                                            vertical = 10.dp,
-                                        ),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(RoundedCornerShape(9.dp))
-                                            .background(palette.accent.copy(alpha = 0.12f)),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Folder,
-                                            contentDescription = null,
-                                            tint = palette.accent,
-                                            modifier = Modifier.size(18.dp),
-                                        )
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        DeviceApprovalLedger.clear()
+                                        ledgerLines = DeviceApprovalLedger.summaryLines()
                                     }
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            grant.name,
-                                            style = PiType.rowTitle,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            "读写权限 · 持久化",
-                                            style = PiTheme.text.meta,
-                                            color = palette.muted,
-                                            maxLines = 1,
-                                        )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(30.dp)
-                                            .clip(CircleShape)
-                                            .background(palette.error.copy(alpha = 0.10f))
-                                            .clickable {
-                                                safStore.remove(grant.uri)
-                                                grants = safStore.grants()
-                                            },
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Close,
-                                            contentDescription = "移除授权",
-                                            tint = palette.error,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                    }
-                                }
-                            }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = palette.accent,
+                            )
                         }
                     }
-                }
-            }
-
-            // 5. 危险操作审批账本
-            item(key = "approval-ledger") {
-                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    DeviceSectionLabel("会话安全审批账本")
                     PiSettingsCard {
                         Column(
                             modifier = Modifier
@@ -463,7 +396,7 @@ fun DeviceCapabilityScreen(
                                     horizontal = PiSettingsMetrics.rowPaddingHorizontal,
                                     vertical = PiSettingsMetrics.rowPaddingVertical,
                                 ),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             ledgerLines.forEach { line ->
                                 Text(
@@ -477,48 +410,44 @@ fun DeviceCapabilityScreen(
                 }
             }
 
-            // 6. 权限与零上下文指引卡（可折叠）
+            // 5. 极简折叠说明
             item(key = "guide") {
                 var guideOpen by remember { mutableStateOf(false) }
-                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    DeviceSectionLabel("权限与架构说明")
-                    PiSettingsCard {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { guideOpen = !guideOpen }
-                                .padding(
-                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                                    vertical = PiSettingsMetrics.rowPaddingVertical,
-                                ),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                PiSettingsCard {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { guideOpen = !guideOpen }
+                            .padding(
+                                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                vertical = PiSettingsMetrics.rowPaddingVertical,
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    "免 ADB 授权流程与 0 Token 机制",
-                                    style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    if (guideOpen) "收起" else "展开",
-                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                    color = palette.accent,
-                                )
-                            }
-                            if (guideOpen) {
-                                Text(
-                                    "• 屏幕自动化：仅需开启系统无障碍服务，无需电脑或 ADB。\n" +
-                                        "• 系统与文件：通过 Android SAF 授权指定目录读写，无需 ADB。\n" +
-                                        "• 设备 Shell：默认以沙箱身份运行；安装 Shizuku 并通过本机无线调试激活后，即可免电脑提权至 ADB 级（uid=2000）。\n" +
-                                        "• 零上下文占用：每轮对话前实时同步此处开关，全部关闭后自动摘除全部设备工具与提示词，严格 0 Token 占用，无需重启引擎。",
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                            Text(
+                                "免 ADB 与 0 Token 说明",
+                                style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                if (guideOpen) "收起" else "展开",
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = palette.accent,
+                            )
+                        }
+                        if (guideOpen) {
+                            Text(
+                                "• 屏幕自动化与通知收发仅需开启对应系统服务，全程免电脑免 ADB。\n" +
+                                    "• 设备文件与 `/sdcard` 已可由模型自带工具直接访问，不再需要 SAF 目录代理。\n" +
+                                    "• 全部关闭后下一条消息自动摘除全部 `android_*` 工具与提示，严格 0 Token。",
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -528,7 +457,7 @@ fun DeviceCapabilityScreen(
 }
 
 /**
- * 设置首页入口行（保持原有函数签名）。
+ * 设置入口行（保持原有函数签名）。
  */
 @Composable
 fun DeviceCapabilityEntryRow(store: DeviceCapabilityStore, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -567,7 +496,7 @@ fun DeviceCapabilityEntryRow(store: DeviceCapabilityStore, onClick: () -> Unit, 
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                if (usable == 0) "已停用 · 0 Token 上下文占用" else "$usable/${states.size} 组就绪 · 屏幕、文件与 Shell",
+                if (usable == 0) "已停用 · 0 Token 上下文占用" else "$usable/${states.size} 组就绪 · 屏幕、交互与 Shell",
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -601,6 +530,7 @@ private fun ContextFootprintBanner(
     usableCount: Int,
     enabledCount: Int,
     totalCount: Int,
+    onDisableAll: () -> Unit,
 ) {
     val palette = PiTheme.palette
     val zeroToken = usableCount == 0
@@ -636,25 +566,24 @@ private fun ContextFootprintBanner(
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = if (zeroToken) {
-                        "0 Token 上下文占用"
-                    } else {
-                        "已激活 $usableCount / $totalCount 组 · 极简提示模式"
-                    },
+                    text = if (zeroToken) "0 Token 上下文占用" else "已激活 $usableCount / $totalCount 组 · 极简提示",
                     style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
                     color = tone,
                 )
                 Text(
                     text = when {
-                        zeroToken && enabledCount == 0 ->
-                            "所有设备能力已关停，不向模型暴露任何设备工具、系统提示或技能，下一条消息实时生效。"
-                        zeroToken ->
-                            "开关已开但系统前置未就绪，当前仍保持 0 Token 上下文占用。"
-                        else ->
-                            "仅挂载已开启组的精简工具与极短路由提示；随时关闭即可在下一轮零成本释放。"
+                        zeroToken && enabledCount == 0 -> "全部能力已停用，不注入任何设备工具或提示词。"
+                        zeroToken -> "开关已开但系统服务未就绪，当前仍保持 0 Token。"
+                        else -> "仅按组热挂载所需工具，关闭后下一轮自动归零。"
                     },
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (enabledCount > 0) {
+                PiSettingsChip(
+                    text = "全部关闭",
+                    onClick = onDisableAll,
                 )
             }
         }
@@ -743,6 +672,7 @@ private fun CapabilityCardRow(
     issueHint: String? = null,
     actionLabel: String = "",
     onAction: () -> Unit = {},
+    extraFooter: (@Composable () -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val sessionPaused = state.enabled && !state.enabledForSession
@@ -806,22 +736,38 @@ private fun CapabilityCardRow(
                         Text(
                             statusText,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                            style = PiTheme.text.monoSmall,
                             color = statusTone,
                             maxLines = 1,
                         )
+                    }
+                    if (danger) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = palette.error.copy(alpha = 0.14f),
+                        ) {
+                            Text(
+                                "高危",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = PiTheme.text.monoSmall,
+                                color = palette.error,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
                 Text(
                     description,
                     style = PiTheme.text.meta,
-                    color = if (danger && state.enabled) palette.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             PiSettingsSwitch(checked = state.enabled, onCheckedChange = onToggle)
         }
 
-        if (state.enabled || issueHint != null) {
+        if (state.enabled) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -829,26 +775,31 @@ private fun CapabilityCardRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (state.enabled) {
+                PiSettingsChip(
+                    text = if (sessionPaused) "恢复本会话" else "本会话暂停",
+                    active = sessionPaused,
+                    onClick = { onToggleSessionPause(!sessionPaused) },
+                )
+                if (issueHint != null && actionLabel.isNotEmpty()) {
                     PiSettingsChip(
-                        text = if (sessionPaused) "恢复本会话" else "本会话暂停",
-                        active = sessionPaused,
-                        onClick = { onToggleSessionPause(!sessionPaused) },
+                        text = actionLabel,
+                        active = true,
+                        onClick = onAction,
                     )
                 }
-                if (issueHint != null) {
-                    Text(
-                        issueHint,
-                        style = PiTheme.text.meta,
-                        color = palette.warning,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (actionLabel.isNotEmpty()) {
-                        PiSettingsChip(text = actionLabel, active = true, onClick = onAction)
-                    }
+            }
+            if (extraFooter != null) {
+                Box(Modifier.padding(start = 50.dp)) {
+                    extraFooter()
                 }
+            }
+            if (issueHint != null) {
+                Text(
+                    text = issueHint,
+                    modifier = Modifier.padding(start = 50.dp),
+                    style = PiTheme.text.meta,
+                    color = palette.warning,
+                )
             }
         }
     }
@@ -858,15 +809,18 @@ private fun CapabilityCardRow(
 private fun DeviceSectionLabel(text: String) {
     Text(
         text,
+        modifier = Modifier.padding(
+            start = PiSettingsMetrics.pageHorizontal + PiSpacing.small,
+            end = PiSettingsMetrics.pageHorizontal,
+        ),
         style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
         color = PiTheme.palette.muted,
-        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
     )
 }
 
-private fun openShizukuManager(context: android.content.Context): Boolean = runCatching {
-    val intent = context.packageManager.getLaunchIntentForPackage(DeviceShizuku.MANAGER_PACKAGE) ?: return false
-    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
-    true
-}.getOrDefault(false)
+private fun openShizukuManager(context: android.content.Context) {
+    val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+    if (launch != null) {
+        runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+}

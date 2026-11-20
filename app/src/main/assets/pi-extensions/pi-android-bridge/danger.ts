@@ -65,7 +65,6 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	android_status: "read",
 	android_screen: "control",
 	android_app: "control",
-	android_files: "control",
 	android_comm: "control",
 	android_device: "control",
 	android_shell: "dangerous",

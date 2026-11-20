@@ -215,23 +215,9 @@ class DeviceCapabilityStore private constructor(context: Context) {
                 )
             }
 
-        // 原「位置 · 传感器 · 相机」组并入 基础：那一组本来就没有组级前置（位置与
-        // 手电筒都是端点级，见 [cameraPrecondition]），所以合并后唯一带过来的组级
-        // 检查是旧「存储」组的 pre-API-29 存储权限。
-        DeviceCapability.Basic ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // API 29+ has MediaStore, which needs no storage permission for the
-                // app's own exports; SAF grants cover everything else.
-                null
-            } else if (hasLegacyStoragePermission()) {
-                null
-            } else {
-                DeviceDenial(
-                    code = DeviceDenial.NO_PERMISSION,
-                    reason = "Android ${Build.VERSION.RELEASE} 导出需要存储权限。",
-                    hint = "让用户在「设置 → 设备能力 → 基础」点「授予存储权限」。",
-                )
-            }
+        // 系统交互组（剪贴板、应用启动、电量、分享等）不设强制存储前置；
+        // 通知使用权、定位、相机（手电筒）均按端点各自按需检查。
+        DeviceCapability.Basic -> null
     }
 
     /** True when the app already holds the location runtime permission. */
