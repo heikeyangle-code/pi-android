@@ -71,7 +71,7 @@ import app.pi.ui.theme.PiTheme
  * 扩展自绘的整块界面（`ctx.ui.custom()` / `tui.showOverlay()`）——手机原生触屏适配版。
  *
  * 相比旧版「纯终端输出 + 两排 16 枚平铺按钮」：
- *  - **顶部信息栏**：状态圆点、智能提取标题、多层计数徽标、**标准/紧凑列宽切换**（动态重算列数并回传 `ui.resize`，
+ *  - **顶部信息栏**：状态圆点、智能提取标题、多层计数徽标、**适配宽度 / 标准字号切换**（默认把 80 列缩进视口，动态重算列数并回传 `ui.resize`，
  *    让 60–80 列的宽 TUI 界面也能一屏放下，不再左右乱滚）、圆形关闭钮。
  *  - **沉降式视口容器**：圆角描边卡片承载扩展渲染行，完整 SGR 样式；按实际触控点像素坐标精确换算 `(col, row)`
  *    触发 `ui.mouse`；仅在存在超宽行时开启横向滚动，普通宽度界面纵向顺滑不晃动；超长表面走 `LazyColumn`。
@@ -159,19 +159,26 @@ private fun SurfaceSheetBody(
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
 
-    var compactScale by remember(surfaceId) { mutableStateOf(false) }
+    // 默认「适配宽度」：把官方终端的标准宽度（80 列）塞进手机视口，字号按需缩小到下限；
+    // 再窄就让扩展按实际能放下的列数自己排版（宿主回传 `ui.resize`）。扩展拿到多少列就按多少列画，
+    // 列数不够它会自己截断成 "..."（pi-tui 的 truncateToWidth），所以「少报列数」才是内容被切的根因。
+    var fitWidth by remember(surfaceId) { mutableStateOf(true) }
+    var viewportWidthPx by remember { mutableIntStateOf(0) }
+    val viewportPadHPx = with(density) { (ViewportPadH * 2).roundToPx() }
     val baseMono = PiTheme.text.monoSmall
-    val monoStyle = remember(baseMono, compactScale) {
-        if (!compactScale) baseMono
-        else baseMono.copy(
-            fontSize = baseMono.fontSize * 0.84f,
-            lineHeight = baseMono.lineHeight * 0.86f,
-        )
+    val baseCharPx = remember(measurer, baseMono) { measurer.measure("0", baseMono).size.width.coerceAtLeast(1) }
+    val fitScale = if (fitWidth && viewportWidthPx > 0) {
+        ((viewportWidthPx - viewportPadHPx).toFloat() / (STANDARD_TERMINAL_COLS * baseCharPx)).coerceIn(MIN_FIT_SCALE, 1f)
+    } else {
+        1f
+    }
+    val monoStyle = remember(baseMono, fitScale) {
+        if (fitScale >= 0.999f) baseMono
+        else baseMono.copy(fontSize = baseMono.fontSize * fitScale, lineHeight = baseMono.lineHeight * fitScale)
     }
     val cellSize = remember(measurer, monoStyle) { measurer.measure("0", monoStyle).size }
     val charPx = cellSize.width.coerceAtLeast(1)
     val linePx = cellSize.height.coerceAtLeast(1)
-    val viewportPadHPx = with(density) { (ViewportPadH * 2).roundToPx() }
     // 视口高度 = 屏幕高度扣掉标题栏 / 操控坞 / 把手等固定部分，而不是写死的一个数：
     // 官方终端里组件的高度不受内部滚动限制（overlay 的 maxHeight 默认是终端行数），
     // 写死 430dp 会让一块本来放得下的棋盘（≈30 行）在屏幕下半截空着的情况下仍要上下滚。
@@ -180,7 +187,6 @@ private fun SurfaceSheetBody(
         .coerceAtLeast(SURFACE_MIN_HEIGHT)
     val maxHeightPx = with(density) { maxViewport.roundToPx() }
 
-    var viewportWidthPx by remember { mutableIntStateOf(0) }
     var measuredCols by remember { mutableIntStateOf(40) }
     var measuredRows by remember { mutableIntStateOf(24) }
 
@@ -247,11 +253,11 @@ private fun SurfaceSheetBody(
                     maxLines = 1,
                 )
             }
-            // 标准 / 紧凑列宽切换
+            // 适配宽度（默认）/ 标准字号 切换
             SurfaceToolbarPill(
-                label = if (compactScale) "标准字号" else "紧凑列宽",
-                active = compactScale,
-                onClick = { compactScale = !compactScale },
+                label = if (fitWidth) "标准字号" else "适配宽度",
+                active = !fitWidth,
+                onClick = { fitWidth = !fitWidth },
             )
             // 圆形关闭按钮
             Box(
@@ -765,4 +771,10 @@ private val ViewportPadV = 8.dp
 private val SURFACE_CHROME_INTERACTIVE = 300.dp
 private val SURFACE_CHROME_READONLY = 190.dp
 private val SURFACE_MIN_HEIGHT = 320.dp
+
+/** 官方终端的标准宽度；适配宽度时以它为目标列数。 */
+private const val STANDARD_TERMINAL_COLS = 80
+
+/** 适配宽度时字号缩放的下限，再小就读不清了（此时列数不足 80，由扩展按实际列数重排）。 */
+private const val MIN_FIT_SCALE = 0.62f
 private const val LAZY_SURFACE_THRESHOLD = 48
