@@ -102,6 +102,7 @@ class PiSettingsFileStore(
             // appearance setting on upgrade would be worse than one extra lookup.
             return lookup(appLocal.load(), key) ?: lookup(global.load(), key)
         }
+        if (isGlobalOnlyKey(key)) return lookup(global.load(), key)
         return lookup(merged(), key)
     }
 
@@ -134,6 +135,10 @@ class PiSettingsFileStore(
         // `mkdirs()` the directory back and write every cached project key plus the
         // one being changed — resurrecting an override the user deleted, which then
         // shadows the global value in pi.
+        if (isGlobalOnlyKey(key)) {
+            update(global) { SettingsDocument.setPath(it, key, value) }
+            return
+        }
         val inProject = project != null && projectFile?.isFile == true &&
             lookup(project.load(), key) != null
         update(if (inProject) project ?: global else global) { SettingsDocument.setPath(it, key, value) }
@@ -156,6 +161,10 @@ class PiSettingsFileStore(
         if (isAppLocalKey(key)) {
             update(appLocal) { SettingsDocument.removePath(it, key) }
             dropLegacyCopy(key)
+            return
+        }
+        if (isGlobalOnlyKey(key)) {
+            update(global) { SettingsDocument.removePath(it, key) }
             return
         }
         val inProject = project != null && projectFile?.isFile == true && lookup(project.load(), key) != null
@@ -242,6 +251,9 @@ class PiSettingsFileStore(
     private fun isAppLocalKey(key: String): Boolean =
         key.startsWith(APP_KEY_PREFIX) || key.contains("[]")
 
+    /** Pi SDK `SettingsManager` 明确只读全局 `settings.json` 的键（项目层覆盖会被 SDK 忽略）。 */
+    private fun isGlobalOnlyKey(key: String): Boolean = key in GLOBAL_ONLY_KEYS
+
     // Delegated to `:rpc`'s SettingsDocument, which is unit-tested on a bare JDK.
     // Keeping one implementation matters: a second copy of merge/lookup/set here
     // would be free to drift, and drift in this code corrupts user config.
@@ -318,6 +330,19 @@ class PiSettingsFileStore(
 
     companion object {
         private const val APP_KEY_PREFIX = "app."
+
+        /**
+         * Pi SDK 1.5.2 只读全局层的键（对照 `core/settings-manager.js`）：
+         * `cacheWarming`（扣费）、`httpProxy`、`defaultProjectTrust`、`deviceId`、`enableAnalytics`、`trackingId`。
+         */
+        private val GLOBAL_ONLY_KEYS = setOf(
+            "cacheWarming",
+            "httpProxy",
+            "defaultProjectTrust",
+            "deviceId",
+            "enableAnalytics",
+            "trackingId",
+        )
 
         /** Unique temp-name suffix within this process; see [writeDocument]. */
         private val TEMP_SEQUENCE = AtomicLong()

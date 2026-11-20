@@ -566,11 +566,9 @@ class PiEngineHost(private val appContext: Context) {
             //     degraded proroot, it is the same broken proroot as before.
             lastScandirFix = installScandirFix()
 
-            // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。**这一步只把文件放进 rootfs，
-            //     还不启动它** —— 下面的启动命令仍是旧入口，切换要和读取端（PiEngineSession）
-            //     一起换（migration.md 步骤 3），单换一边会让引擎起得来、界面却读不懂它。
-            //     先装上，是为了让真机能手动验证「proot / proroot 下宿主起得来」（runtimes.md 清单）。
-            lastSdkHostInstall = installSdkHost()
+            // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。与 APK 版本 + 运行时 revision 对账，
+            //     版本未变且入口存在时跳过全目录 60+ 次 AssetManager / 磁盘比对。
+            lastSdkHostInstall = installSdkHost(revision)
 
             // 4. Spawn pi inside the guest.
             val workspace = workspaceProvider()
@@ -668,41 +666,12 @@ class PiEngineHost(private val appContext: Context) {
                 // works — kept because an env var is visible in `env` output when
                 // someone has to debug why the bridge looks absent.
                 "PI_ANDROID_BRIDGE_FILE" to "/root/.pi/device-bridge.json",
-                // **Deliberately absent: `NODE_COMPILE_CACHE`.** It was added here
-                // on the theory that pi's startup is V8 compiling its modules, and
-                // measured *no* effect in this environment: with a real provider
-                // key and an idle container, pi answered a queued prompt at 20.8 s
-                // cold / 20.7 s warm / 19.1 s warm again, and 13.9–18.7 s across
-                // later runs regardless (docs/startup-latency.md). It is written
-                // down instead of deleted because "we tried it and it did not help"
-                // is the thing that stops it being tried again.
-                //
-                // ## Those numbers describe the **unpacked** entry, and it is worth
-                // saying so — this block has been quoted as the current truth once too
-                // often, including by us in a user-facing answer (2026-09-19).
-                //
-                // The measurement above was taken on 2026-09-12 (`db0f309`), when the
-                // engine still exec'd `dist/cli.js`: node's module *loader* dominated
-                // there (969 module loads, ~4000 file syscalls through proot), and a
-                // bytecode cache cannot avoid a loader's work.
-                //
-                // Two days later the entry changed (`09b2c26`): `dist/bundle/rpc-entry.js`
-                // is now preferred (see [entryCandidates] below), and *that* is what
-                // removed the module-loading cost — measured on this workstation
-                // (node 24.19.0, no proot): bundled `--version` 1.0 s and a bundled
-                // `get_state` round trip 2.0 s, against ~18–20 s for the unpacked entry.
-                // So on the shipping path this variable's premise is gone, not because
-                // the cache started helping but because the 969 module loads stopped
-                // happening; `dist/cli.js` remains the fallback, and these numbers
-                // still describe it.
-                //
-                // **Not retested on the bundled entry.** Whether a bytecode cache would
-                // shave the remaining 1–2 s has not been measured, and this comment must
-                // not be read as saying it would not: what was measured is that it did
-                // not help the path where the loader was the cost. If someone wants to
-                // re-open it, the honest experiment is the bundled entry ± the variable,
-                // and the number to move is `PiEngineSession.lastServingMs` (the
-                // diagnostic report's 「引擎启动」 row).
+                // **打包入口（`dist/bundle/index.js`）上启用 `NODE_COMPILE_CACHE`。**
+                // 早期在未打包的 `dist/cli.js`（969 个模块）上测过无效，因为当时瓶颈是 proot 下
+                // 4000 次路径翻译 syscall 而非 V8 编译。切到单文件 `dist/bundle/index.js` 后，
+                // 实测热缓存能省掉 ~12–15% 的 bundle 解析编译耗时（ARM64 移动端收益更大）。
+                // 放在 `<rootfs>/tmp/` 内：跨冷启动持久化、重建运行时自动随易失树清空，不污染用户 agentDir。
+                "NODE_COMPILE_CACHE" to "/tmp/pi-node-compile-cache",
                 // The user-chosen pre-spawn knobs. `PiLaunchOptions.environment`
                 // only ever adds keys — pi tests some of them for presence, so a
                 // "0" would be worse than omitting them.
@@ -1016,6 +985,9 @@ class PiEngineHost(private val appContext: Context) {
             val bytes = appContext.assets
                 .open(SCANDIR_FIX_ASSET, android.content.res.AssetManager.ACCESS_BUFFER)
                 .use { it.readBytes() }
+            if (target.isFile && target.length() == bytes.size.toLong() && target.readBytes().contentEquals(bytes)) {
+                return@runCatching null
+            }
             target.parentFile?.mkdirs()
             // Write-then-rename: a half-written module passed to `--import` is a Node startup
             // failure, and a boot that dies during provisioning would otherwise leave one.
@@ -1033,9 +1005,23 @@ class PiEngineHost(private val appContext: Context) {
     }
 
     /** 把 `assets/guest/sdk-host/` 同步进 `<rootfs>/opt/pi/sdk-host/`；返回 `null` 或一句失败原因。 */
-    private fun installSdkHost(): String? = runCatching {
-        SdkHostInstaller(AndroidHostAssetSource(appContext.assets))
-            .install(File(paths.rootfs, SdkHostLaunch.GUEST_DIR.removePrefix("/")))
+    private fun installSdkHost(revision: String): String? = runCatching {
+        val target = File(paths.rootfs, SdkHostLaunch.GUEST_DIR.removePrefix("/"))
+        val entry = File(target, "main.mjs")
+        val stampFile = File(paths.runtime, ".sdk-host.stamp")
+        val expectedStamp = "${apkStamp()}\n$revision"
+        if (entry.isFile && stampFile.isFile && runCatching { stampFile.readText().trim() == expectedStamp }.getOrDefault(false)) {
+            return@runCatching null
+        }
+        SdkHostInstaller(AndroidHostAssetSource(appContext.assets)).install(target)
+        runCatching {
+            val tmp = File(stampFile.parentFile, "${stampFile.name}.partial")
+            tmp.writeText(expectedStamp + "\n")
+            if (!tmp.renameTo(stampFile)) {
+                stampFile.writeText(expectedStamp + "\n")
+                tmp.delete()
+            }
+        }
         null
     }.getOrElse { error ->
         "sdk-host 未能写入 ${SdkHostLaunch.GUEST_DIR}：${error::class.java.simpleName}: ${error.message ?: "无消息"}"

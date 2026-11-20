@@ -335,9 +335,8 @@ object PiSettingsCatalog {
             section = "缓存",
             defaultValue = str("idle"),
             // 0.86.0 新键，1.5.2 官方默认改为 `idle`（`SETTINGS_DEFAULTS.cacheWarming = "idle"`）。
-            // pi 的取值器是活的（把 `() => settingsManager.getCacheWarmingMode()` 交给 CacheWarmer），
-            // 外部改 settings.json 靠宿主 `settings.reload` / `cache.setMode` 同步。
-            effective = EffectiveKind.Reload,
+            // 通过宿主 `cache.setMode` / `settings.reload` 实时调谐当前会话的 `CacheWarmer`，修改即时生效。
+            effective = EffectiveKind.Immediate,
             options = listOf(
                 PiOption("off", "关闭"),
                 PiOption("streaming", "仅流式中"),
@@ -1437,7 +1436,7 @@ object PiSettingsCatalog {
             group = G_SECURITY,
             section = "信任与隐私",
             defaultValue = str("ask"),
-            effective = EffectiveKind.RestartEngine,
+            effective = EffectiveKind.NewSession,
             options = trustOptions,
         ),
 

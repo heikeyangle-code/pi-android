@@ -154,6 +154,17 @@ fun main() {
             global.readJsonOrNull()?.get("theme")?.toString() == "\"dark\"",
             "global: ${global.readTextOrEmpty()}",
         )
+
+        // Pi SDK global-only keys (`cacheWarming`, `httpProxy`, `defaultProjectTrust`) never read/write project scope.
+        project.writeText("""{"cacheWarming":"off","httpProxy":"http://project.invalid:8080"}""")
+        store.invalidate()
+        store.write("cacheWarming", JsonPrimitive("idle"))
+        check(
+            "global-only key writes to global document even when present in project",
+            global.readJsonOrNull()?.get("cacheWarming")?.toString() == "\"idle\"" &&
+                (store.read("cacheWarming") as? JsonPrimitive)?.content == "idle",
+            "global: ${global.readTextOrEmpty()} project: ${project.readTextOrEmpty()}",
+        )
     }
 
     // ------------------------------------------------------------------ §B1 app-local keys

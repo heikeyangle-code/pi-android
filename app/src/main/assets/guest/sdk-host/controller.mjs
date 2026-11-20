@@ -74,36 +74,116 @@ export class Controller {
     this.lastOpenArgs = null;
     this.footerData = null;
     this.httpDispatcherMod = null;
+    this.httpSettingsPromise = null;
+    this.httpSettingsApplied = false;
+    this.keybindingsPromise = null;
+    this.footerDataPromise = null;
+    this.ui.setLazyLoaders?.({
+      ensureKeybindings: () => this.ensureKeybindings(),
+      ensureFooterData: () => this.ensureFooterData(),
+    });
+  }
+
+  /** 延迟加载官方 KeybindingsManager：仅在扩展打开 custom TUI / editor 时加载，避免启动阻塞 ~1.3s（proot 下 5-15s）。 */
+  ensureKeybindings() {
+    if (this.keybindingsPromise) return this.keybindingsPromise;
+    if (!this.cfg.piDir) return Promise.resolve(null);
+    this.keybindingsPromise = (async () => {
+      try {
+        const { pathToFileURL } = await import("node:url");
+        const kbMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "keybindings.js")).href);
+        if (kbMod?.KeybindingsManager?.create) {
+          const kb = kbMod.KeybindingsManager.create(this.cfg.agentDir);
+          this.ui.setKeybindings(kb);
+          try {
+            const tuiMod = await import("@earendil-works/pi-tui");
+            tuiMod.setKeybindings?.(kb);
+          } catch {
+            // 打包入口下如果外部包名不可解析，局部 keybindings 实例仍完整工作。
+          }
+          return kb;
+        }
+      } catch (error) {
+        this.hub.emit("host.log", { level: "warn", message: `keybindings init failed: ${error?.message ?? error}` });
+      }
+      return null;
+    })();
+    return this.keybindingsPromise;
+  }
+
+  /** 延迟加载官方 FooterDataProvider：仅在扩展注册自定义 footer 时加载并挂 git 监听。 */
+  ensureFooterData() {
+    if (this.footerData) return Promise.resolve(this.footerData);
+    if (this.footerDataPromise) return this.footerDataPromise;
+    if (!this.cfg.piDir) return Promise.resolve(null);
+    this.footerDataPromise = (async () => {
+      try {
+        const { pathToFileURL } = await import("node:url");
+        const fdpMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "footer-data-provider.js")).href);
+        if (fdpMod?.FooterDataProvider) {
+          this.footerData = new fdpMod.FooterDataProvider(this.cwd);
+          this.ui.setFooterData(this.footerData);
+          this.syncFooterProviders();
+          return this.footerData;
+        }
+      } catch (error) {
+        this.hub.emit("host.log", { level: "warn", message: `footer-data-provider init failed: ${error?.message ?? error}` });
+      }
+      return null;
+    })();
+    return this.footerDataPromise;
+  }
+
+  /** 同步先写入代理环境变量（零额外 import），供任何同步读取 env 的逻辑即时可见。 */
+  #applyProxyEnvFromSettings(sm) {
+    if (!sm) return "";
+    const globalSettings = sm.getGlobalSettings?.() ?? {};
+    const proxy = typeof globalSettings.httpProxy === "string" ? globalSettings.httpProxy.trim() : "";
+    if (proxy) {
+      process.env.HTTP_PROXY = proxy;
+      process.env.HTTPS_PROXY = proxy;
+    } else if (this.appliedHttpProxy) {
+      delete process.env.HTTP_PROXY;
+      delete process.env.HTTPS_PROXY;
+    }
+    this.appliedHttpProxy = proxy || null;
+    return proxy;
+  }
+
+  /** 确保官方 http-dispatcher 已配置：启动时后台异步执行，首次发起网络请求前等待它落地。 */
+  ensureHttpSettings() {
+    if (this.httpSettingsApplied) return Promise.resolve();
+    if (!this.httpSettingsPromise) {
+      this.httpSettingsPromise = this.applyHttpSettings();
+    }
+    return this.httpSettingsPromise;
   }
 
   /** 应用全局设置里的 httpProxy 与 httpIdleTimeoutMs（对照 Pi `main.ts` 调用官方 `http-dispatcher.js`）。 */
   async applyHttpSettings() {
-    if (!this.cfg.piDir) return;
+    if (!this.cfg.piDir) {
+      this.httpSettingsApplied = true;
+      return;
+    }
     try {
+      const sm = this.runtime?.services?.settingsManager
+        ?? (this.sdk ? this.sdk.SettingsManager.create(this.cwd, this.cfg.agentDir, { projectTrusted: false }) : null);
+      if (!sm) return;
+      const proxy = this.#applyProxyEnvFromSettings(sm);
       if (!this.httpDispatcherMod) {
         const { pathToFileURL } = await import("node:url");
         this.httpDispatcherMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "http-dispatcher.js")).href);
       }
-      const sm = this.runtime?.services?.settingsManager
-        ?? (this.sdk ? this.sdk.SettingsManager.create(this.cwd, this.cfg.agentDir, { projectTrusted: false }) : null);
-      if (!sm) return;
-      const globalSettings = sm.getGlobalSettings?.() ?? {};
-      const proxy = typeof globalSettings.httpProxy === "string" ? globalSettings.httpProxy.trim() : "";
       if (proxy) {
-        process.env.HTTP_PROXY = proxy;
-        process.env.HTTPS_PROXY = proxy;
         this.httpDispatcherMod.applyHttpProxySettings?.(proxy);
-      } else if (this.appliedHttpProxy) {
-        delete process.env.HTTP_PROXY;
-        delete process.env.HTTPS_PROXY;
       }
-      this.appliedHttpProxy = proxy || null;
       const idle = sm.getHttpIdleTimeoutMs?.();
       if (idle !== undefined) {
         this.httpDispatcherMod.configureHttpDispatcher?.(idle);
       } else {
         this.httpDispatcherMod.configureHttpDispatcher?.(this.httpDispatcherMod.DEFAULT_HTTP_IDLE_TIMEOUT_MS);
       }
+      this.httpSettingsApplied = true;
     } catch (error) {
       this.hub.emit("host.log", { level: "warn", message: `http-dispatcher setup failed: ${error?.message ?? error}` });
     }
@@ -150,36 +230,6 @@ export class Controller {
     this.sessionDir = sessionDir;
 
     this.bus = sdk.createEventBus();
-    await this.applyHttpSettings();
-    // 接入官方 KeybindingsManager 与 FooterDataProvider（与 Pi TUI 一致），替换空桩。
-    if (this.cfg.piDir) {
-      const { pathToFileURL } = await import("node:url");
-      try {
-        const kbMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "keybindings.js")).href);
-        if (kbMod?.KeybindingsManager?.create) {
-          const kb = kbMod.KeybindingsManager.create(agentDir);
-          this.ui.setKeybindings(kb);
-          // 同步注册到 pi-tui 全局单例，确保扩展用官方 SelectList/SettingsList/Editor 时也能匹配键位。
-          try {
-            const tuiMod = await import("@earendil-works/pi-tui");
-            tuiMod.setKeybindings?.(kb);
-          } catch {
-            // 打包入口下如果外部包名不可解析，局部 keybindings 实例仍完整工作。
-          }
-        }
-      } catch (error) {
-        this.hub.emit("host.log", { level: "warn", message: `keybindings init failed: ${error?.message ?? error}` });
-      }
-      try {
-        const fdpMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "footer-data-provider.js")).href);
-        if (fdpMod?.FooterDataProvider) {
-          this.footerData = new fdpMod.FooterDataProvider(cwd);
-          this.ui.setFooterData(this.footerData);
-        }
-      } catch (error) {
-        this.hub.emit("host.log", { level: "warn", message: `footer-data-provider init failed: ${error?.message ?? error}` });
-      }
-    }
     const modelRuntime = await sdk.ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
@@ -197,6 +247,7 @@ export class Controller {
     const factory = async ({ cwd: targetCwd, sessionManager, sessionStartEvent }) => {
       const trusted = this.#projectTrusted(targetCwd);
       const settingsManager = sdk.SettingsManager.create(targetCwd, agentDir, { projectTrusted: trusted.value });
+      this.#applyProxyEnvFromSettings(settingsManager);
       const services = await sdk.createAgentSessionServices({
         cwd: targetCwd,
         agentDir,
@@ -405,8 +456,13 @@ export class Controller {
           this.extensionsBound = true;
           hub.emit("ext.bound", { ok: true, first: wasFirst });
           this.pushState("extensions");
+          // 扩展绑定完成后在后台配置官方 http-dispatcher（undici），不占用 open/bind 关键路径。
+          setImmediate(() => void this.ensureHttpSettings());
         })
-        .catch((error) => hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) }));
+        .catch((error) => {
+          hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) });
+          setImmediate(() => void this.ensureHttpSettings());
+        });
     });
   }
 

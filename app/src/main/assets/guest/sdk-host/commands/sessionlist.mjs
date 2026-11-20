@@ -8,42 +8,203 @@
  *   session-selector.js         `buildSessionTree` / `flattenSessionTree`：threaded 排序下按
  *                               `parentSessionPath` 成树、按子树最近活动降序；行带 depth / isLast / ancestorContinues
  *   session-selector-search.js  `filterAndSortSessions`：搜索语法（`re:` 正则、`"短语"`、模糊）、named 过滤、
- *                               recent / relevance 排序 —— **直接 import 官方文件**，不重写
+ *                               recent / relevance 排序 —— **直接 import 官方文件**（仅在有查询词时延迟加载，
+ *                               避免无搜索时把未打包的 `@earendil-works/pi-tui` 整棵模块树拖进冷启动）
  *   interactive-mode.js         `showSessionSelector`：current = `SessionManager.list(cwd, dir)`，
  *                               all = `listAll(dir)`（自定义会话目录时）
  *
- * `buildSessionTree` / `flattenSessionTree` 在官方文件里没有导出（模块私有），所以按源码移植到这里，
- * 并由 `tools/sdk-host/test.mjs` 用**官方 `SessionSelectorComponent` 真渲染出的行序与前缀**逐行比对
- * （「会话列表对照官方组件」一节）；SDK 升级让规则变了，那一节先红。
+ * 性能设计（保持 100% 官方语义）：
+ *  1. 延迟加载 `session-selector-search.js`：无查询词时完全不 import `@earendil-works/pi-tui`；
+ *  2. 路径规范化缓存：每次渲染把 `realpathSync` 记忆化，消除 O(N²) proot syscall；
+ *  3. 持久化增量元数据索引（`<agentDir>/.session-list-index.json`）：按 `(size, mtimeMs)` 复用
+ *     未改动文件的 SDK 解析结果，仅对变更的少数文件增量解析；全文搜索时自动通过官方
+ *     `SessionManager.list`/`listAll` 回填完整 `allMessagesText`。
  *
  * 命令：
  *   session.list         {scope, sortMode, nameFilter, query, refresh, groupByCwd}  → {scope, rows, total, loading:false}
- *                        `groupByCwd`（App 呈现，非 pi 概念）：threaded 视图下每个工作目录各自成树
- *                        没有缓存或 `refresh:true` 时读磁盘，读的过程中发 `sessions.progress` 事件（带部分行）；
- *                        否则只用缓存重算视图（切排序 / 过滤 / 搜索即时）。
  *   session.list.cancel  中止在途的加载（对应 `cancelLoads`）
- *
- * 状态：缓存与在途加载挂在 controller 上，按会话目录 + cwd 区分，`session.open` 换了目录就作废。
  */
 
+import { createReadStream, existsSync } from "node:fs";
+import { readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { ERR, HostError, bad, bool, optStr } from "../protocol.mjs";
 
 const SORT_MODES = new Set(["threaded", "recent", "relevance"]);
 const NAME_FILTERS = new Set(["all", "named"]);
 const SCOPES = new Set(["current", "all"]);
+const INDEX_VERSION = 1;
+const MAX_INCREMENTAL_DIRTY = 16;
+const STAT_CONCURRENCY = 32;
 
-let officialCache = null;
-/** 官方的搜索 / 路径工具：按文件 URL 加载（它们不在包的公开导出里；catalog.mjs 加载 slash-commands 同理）。 */
-async function official(controller) {
-  if (officialCache) return officialCache;
+const hasSessionNameLocal = (session) => Boolean(session.name?.trim());
+
+let pathsCache = null;
+let searchCache = null;
+
+/** 官方路径工具（不依赖 `@earendil-works/pi-tui`，体积小）。 */
+async function officialPaths(controller) {
+  if (pathsCache) return pathsCache;
+  const base = join(controller.cfg.piDir, "dist");
+  const paths = await import(pathToFileURL(join(base, "utils", "paths.js")).href);
+  pathsCache = { hasSessionName: hasSessionNameLocal, ...paths };
+  return pathsCache;
+}
+
+/** 官方搜索实现（依赖 `@earendil-works/pi-tui`）：仅在真正有搜索词时延迟加载。 */
+async function officialSearch(controller) {
+  if (searchCache) return searchCache;
   const base = join(controller.cfg.piDir, "dist");
   const search = await import(pathToFileURL(join(base, "modes", "interactive", "components", "session-selector-search.js")).href);
-  const paths = await import(pathToFileURL(join(base, "utils", "paths.js")).href);
-  officialCache = { filterAndSortSessions: search.filterAndSortSessions, hasSessionName: search.hasSessionName, parseSearchQuery: search.parseSearchQuery, ...paths };
-  return officialCache;
+  searchCache = {
+    filterAndSortSessions: search.filterAndSortSessions,
+    hasSessionName: search.hasSessionName,
+    parseSearchQuery: search.parseSearchQuery,
+  };
+  return searchCache;
+}
+
+async function mapWithConcurrency(items, limit, fn, signal) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      signal?.throwIfAborted();
+      const idx = next++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
+}
+
+function extractTextContent(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block && block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join(" ");
+}
+
+function getMessageActivityTime(entry) {
+  const message = entry?.message;
+  if (!message || typeof message.role !== "string" || !("content" in message)) return undefined;
+  if (message.role !== "user" && message.role !== "assistant") return undefined;
+  if (typeof message.timestamp === "number") return message.timestamp;
+  const t = new Date(entry.timestamp).getTime();
+  return Number.isNaN(t) ? undefined : t;
+}
+
+/**
+ * 单文件流式解析，字段与边界条件严格对齐 SDK `dist/core/session-manager.js#buildSessionInfo`。
+ * 仅用于持久化索引命中绝大多数文件时增量更新少量变更文件；大批量仍走官方 `SessionManager.list`/`listAll`。
+ */
+async function parseSessionMetaFile(filePath, fileStats, signal) {
+  try {
+    const stats = fileStats ?? (await stat(filePath));
+    let header = null;
+    let messageCount = 0;
+    let firstMessage = "";
+    let name;
+    let lastActivityTime;
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf8", signal }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let entry;
+      try {
+        entry = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (!entry || typeof entry !== "object") continue;
+      if (!header) {
+        if (entry.type !== "session") return null;
+        header = entry;
+        continue;
+      }
+      if (entry.type === "session_info") {
+        name = typeof entry.name === "string" ? entry.name.trim() || undefined : undefined;
+      }
+      if (entry.type !== "message") continue;
+      messageCount++;
+      const activityTime = getMessageActivityTime(entry);
+      if (typeof activityTime === "number") {
+        lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+      }
+      const message = entry.message;
+      if (!message || typeof message.role !== "string" || !("content" in message)) continue;
+      if (message.role !== "user" && message.role !== "assistant") continue;
+      if (!firstMessage && message.role === "user") {
+        const textContent = extractTextContent(message);
+        if (textContent) firstMessage = textContent;
+      }
+    }
+    if (!header) return null;
+    const cwd = typeof header.cwd === "string" ? header.cwd : "";
+    const parentSessionPath = header.parentSession;
+    const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
+    const modified =
+      typeof lastActivityTime === "number" && lastActivityTime > 0
+        ? new Date(lastActivityTime)
+        : !Number.isNaN(headerTime)
+          ? new Date(headerTime)
+          : stats.mtime;
+    return {
+      path: filePath,
+      id: header.id,
+      cwd,
+      name,
+      parentSessionPath,
+      created: new Date(header.timestamp),
+      modified,
+      messageCount,
+      firstMessage: firstMessage || "(no messages)",
+      // 显式保留 undefined：需要全文搜索时据其判断是否回源官方 `SessionManager.list`/`listAll`。
+      allMessagesText: undefined,
+    };
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
+function serializeIndexEntry(session, st) {
+  return {
+    size: st.size,
+    mtimeMs: st.mtimeMs,
+    id: session.id,
+    cwd: session.cwd,
+    name: session.name ?? null,
+    parentSessionPath: session.parentSessionPath ?? null,
+    created: session.created instanceof Date ? session.created.toISOString() : String(session.created),
+    modified: session.modified instanceof Date ? session.modified.toISOString() : String(session.modified),
+    messageCount: session.messageCount,
+    firstMessage: session.firstMessage,
+  };
+}
+
+function hydrateIndexEntry(filePath, raw) {
+  return {
+    path: filePath,
+    id: raw.id,
+    cwd: typeof raw.cwd === "string" ? raw.cwd : "",
+    name: raw.name ?? undefined,
+    parentSessionPath: raw.parentSessionPath ?? undefined,
+    created: new Date(raw.created),
+    modified: new Date(raw.modified),
+    messageCount: Number(raw.messageCount) || 0,
+    firstMessage: typeof raw.firstMessage === "string" ? raw.firstMessage : "(no messages)",
+    allMessagesText: undefined,
+  };
 }
 
 /** `session-selector.js` 的 `buildSessionTree`：按 parentSessionPath 成树，子树按最近活动降序。 */
@@ -102,14 +263,29 @@ export function flattenSessionTree(roots) {
   return result;
 }
 
+/** 创建带记忆化的路径比较键函数，避免渲染 N 条会话时重复调用 realpathSync（proot 下每条 syscall 很贵）。 */
+function makePathKeyMemo(o, backingCache) {
+  const cache = backingCache ?? new Map();
+  return (p) => {
+    let k = cache.get(p);
+    if (k === undefined) {
+      k = o.getPathComparisonKey(o.canonicalizePath(p));
+      cache.set(p, k);
+    }
+    return k;
+  };
+}
+
 /**
  * `SessionList.filterSessions`：threaded 且无查询 → 树；其余 → `filterAndSortSessions` 的平铺。
  * name 过滤先于一切（官方先 `hasSessionName` 过滤，再把 "all" 传给 filterAndSortSessions）。
  */
-export function viewOf(o, sessions, { sortMode, nameFilter, query, groupByCwd = false }) {
-  const nameFiltered = nameFilter === "all" ? sessions : sessions.filter((s) => o.hasSessionName(s));
-  if (sortMode === "threaded" && !query.trim()) {
-    const key = (p) => o.getPathComparisonKey(o.canonicalizePath(p));
+export function viewOf(o, sessions, { sortMode, nameFilter, query, groupByCwd = false }, pathKeyMemo) {
+  const hasName = o.hasSessionName ?? hasSessionNameLocal;
+  const nameFiltered = nameFilter === "all" ? sessions : sessions.filter((s) => hasName(s));
+  const trimmedQuery = query.trim();
+  if (sortMode === "threaded" && !trimmedQuery) {
+    const key = pathKeyMemo ?? makePathKeyMemo(o);
     if (!groupByCwd) return flattenSessionTree(buildSessionTree(nameFiltered, key));
     // App 层的呈现（不是 pi 的概念）：手机上「全部」范围按工作目录分组展示，每组各自成树 ——
     // 父会话在别的目录时，子会话在本组里就是根（跨组的连线没法画）。组内规则仍是官方的 build/flatten。
@@ -121,19 +297,24 @@ export function viewOf(o, sessions, { sortMode, nameFilter, query, groupByCwd = 
     }
     return [...groups.values()].flatMap((g) => flattenSessionTree(buildSessionTree(g, key)));
   }
+  if (!trimmedQuery) {
+    // 无搜索词时 recent / relevance 都不改变顺序（对照 session-selector-search.js:189 `if (!trimmed) return nameFiltered`），
+    // 无需加载 `@earendil-works/pi-tui`。
+    return nameFiltered.map((session) => ({ session, depth: 0, isLast: true, ancestorContinues: [] }));
+  }
   return o.filterAndSortSessions(nameFiltered, query, sortMode, "all").map((session) => ({ session, depth: 0, isLast: true, ancestorContinues: [] }));
 }
 
 /** 列表行上线：去掉整段对话文本；多带「~ 缩写」后的 cwd / path（官方 `shortenHomePath`，家目录取宿主进程的）。 */
-function rowOf(o, node, currentKey) {
+function rowOf(o, node, currentKey, pathKey, home) {
   const s = node.session;
-  const key = o.getPathComparisonKey(o.canonicalizePath(s.path));
+  const key = pathKey(s.path);
   return {
     path: s.path,
     id: s.id,
     cwd: s.cwd,
-    cwdShort: s.cwd ? o.shortenHomePath(s.cwd, homedir()) : "",
-    pathShort: o.shortenHomePath(s.path, homedir()),
+    cwdShort: s.cwd ? o.shortenHomePath(s.cwd, home) : "",
+    pathShort: o.shortenHomePath(s.path, home),
     name: s.name ?? null,
     created: s.created.toISOString(),
     modified: s.modified.toISOString(),
@@ -153,7 +334,7 @@ function queryError(o, query) {
 }
 
 export function register(reg, { controller }) {
-  /** @type {{key:string, current?:any[], all?:any[], load?:{scope:string, abort:AbortController, superseded:boolean, promise:Promise<any[]>}}} */
+  /** @type {{key:string, current?:any[], all?:any[], allHasText?:boolean, currentHasText?:boolean, load?:{scope:string, fullText:boolean, abort:AbortController, superseded:boolean, promise:Promise<any[]>}}} */
   const state = { key: "" };
   controller.sessionListState = state;
 
@@ -162,6 +343,7 @@ export function register(reg, { controller }) {
     return controller.sdk;
   };
   const dirOf = () => controller.sessionDir ?? controller.cfg.sessionDir;
+  const indexFileOf = () => (controller.cfg.agentDir ? join(controller.cfg.agentDir, ".session-list-index.json") : null);
   /** 缓存的有效范围：会话目录 + cwd（cwd 变了「当前文件夹」就是另一批）。 */
   const keyOf = () => `${dirOf()}\n${controller.cwd}`;
   const syncKey = () => {
@@ -171,6 +353,8 @@ export function register(reg, { controller }) {
       state.key = k;
       state.current = undefined;
       state.all = undefined;
+      state.currentHasText = false;
+      state.allHasText = false;
       state.load = undefined;
     }
   };
@@ -189,16 +373,133 @@ export function register(reg, { controller }) {
     abortLoad();
     state.current = undefined;
     state.all = undefined;
+    state.currentHasText = false;
+    state.allHasText = false;
   };
 
-  const loader = (scope, onProgress, signal) => {
+  let diskIndexMem = null;
+  async function readDiskIndex(dir) {
+    const file = indexFileOf();
+    if (!file) return null;
+    const piVersion = controller.sdk?.VERSION ?? "";
+    if (diskIndexMem && diskIndexMem.dir === dir && diskIndexMem.piVersion === piVersion) {
+      return diskIndexMem.entries;
+    }
+    try {
+      const raw = JSON.parse(await readFile(file, "utf8"));
+      if (raw?.v === INDEX_VERSION && raw.dir === dir && raw.piVersion === piVersion && raw.entries && typeof raw.entries === "object") {
+        diskIndexMem = { dir, piVersion, entries: raw.entries };
+        return raw.entries;
+      }
+    } catch {
+      // 索引不存在或损坏：静默回落全量扫描。
+    }
+    return null;
+  }
+
+  async function writeDiskIndex(dir, entries) {
+    const file = indexFileOf();
+    if (!file) return;
+    const piVersion = controller.sdk?.VERSION ?? "";
+    diskIndexMem = { dir, piVersion, entries };
+    try {
+      const tmp = `${file}.tmp`;
+      await writeFile(tmp, JSON.stringify({ v: INDEX_VERSION, dir, piVersion, entries }), "utf8");
+      await rename(tmp, file);
+    } catch {
+      // 写索引失败不影响列表正确性。
+    }
+  }
+
+  /**
+   * 尝试走增量索引快速加载平铺会话目录（仅当不需要全文搜索 `allMessagesText` 时）：
+   *  - 0 文件变更 → 直接返回缓存元数据（~5 ms，0 次 JSONL 读取）；
+   *  - 1..16 文件变更 → 仅流式解析变更文件，其余复用索引；
+   *  - 无索引或 >16 文件变更 → 返回 null，回落官方 `SessionManager.list`/`listAll` 并在完成后保存索引。
+   */
+  async function tryIncrementalLoad(scope, dir, o, signal) {
+    if (!dir || !existsSync(dir)) return null;
+    const existing = await readDiskIndex(dir);
+    if (!existing) return null;
+    const dirEntries = await readdir(dir);
+    const jsonlNames = dirEntries.filter((f) => f.endsWith(".jsonl"));
+    const statList = await mapWithConcurrency(
+      jsonlNames,
+      STAT_CONCURRENCY,
+      async (name) => {
+        const path = join(dir, name);
+        try {
+          return { name, path, stats: await stat(path) };
+        } catch {
+          return null;
+        }
+      },
+      signal,
+    );
+    const files = statList.filter(Boolean);
+    const hits = [];
+    const dirty = [];
+    const nextEntries = {};
+    for (const f of files) {
+      const prev = existing[f.name];
+      if (prev && prev.size === f.stats.size && prev.mtimeMs === f.stats.mtimeMs) {
+        hits.push(hydrateIndexEntry(f.path, prev));
+        nextEntries[f.name] = prev;
+      } else {
+        dirty.push(f);
+      }
+    }
+    if (dirty.length > MAX_INCREMENTAL_DIRTY) return null;
+    if (dirty.length > 0) {
+      const parsed = await mapWithConcurrency(
+        dirty,
+        10,
+        async (f) => ({ f, info: await parseSessionMetaFile(f.path, f.stats, signal) }),
+        signal,
+      );
+      for (const { f, info } of parsed) {
+        if (info) {
+          hits.push(info);
+          nextEntries[f.name] = serializeIndexEntry(info, f.stats);
+        }
+      }
+    }
+    if (dirty.length > 0 || Object.keys(existing).length !== Object.keys(nextEntries).length) {
+      void writeDiskIndex(dir, nextEntries);
+    }
+    hits.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+    if (scope === "current") {
+      const resolvedCwd = o.resolvePath(controller.cwd);
+      return hits.filter((s) => s.cwd && o.pathsEqual(o.resolvePath(s.cwd), resolvedCwd));
+    }
+    return hits;
+  }
+
+  /** 官方全量加载完成后把目录元数据刷入持久化索引（异步，不阻塞应答）。 */
+  async function saveIndexFromSessions(dir, sessions) {
+    if (!dir || !sessions) return;
+    try {
+      const nextEntries = {};
+      await mapWithConcurrency(sessions, STAT_CONCURRENCY, async (s) => {
+        if (!s?.path) return;
+        try {
+          const st = await stat(s.path);
+          nextEntries[basename(s.path)] = serializeIndexEntry(s, st);
+        } catch {
+          // ignore disappeared file
+        }
+      });
+      await writeDiskIndex(dir, nextEntries);
+    } catch {
+      // ignore
+    }
+  }
+
+  const officialLoader = (scope, onProgress, signal) => {
     const s = sdk();
-    return scope === "current" ? s.SessionManager.list(controller.cwd, dirOf(), onProgress, signal) : s.SessionManager.listAll(dirOf(), onProgress, signal);
-  };
-
-  const currentKeyOf = (o) => {
-    const f = controller.session?.sessionManager?.getSessionFile?.();
-    return f ? o.getPathComparisonKey(o.canonicalizePath(f)) : undefined;
+    return scope === "current"
+      ? s.SessionManager.list(controller.cwd, dirOf(), onProgress, signal)
+      : s.SessionManager.listAll(dirOf(), onProgress, signal);
   };
 
   reg.add("session.list.cancel", () => {
@@ -211,18 +512,36 @@ export function register(reg, { controller }) {
    * 开一次读盘。读的过程中发 `sessions.progress`；读完才写缓存（被换掉的加载不写）。
    * 加载是**共享**的：同一时刻只有一个，视图请求（没有缓存时）直接等它，不再各自重起一遍整盘读取。
    */
-  const startLoad = (scope, render) => {
+  const startLoad = (scope, fullText, o, render) => {
     abortLoad();
     const ctl = new AbortController();
-    const mine = { scope, abort: ctl, superseded: false, promise: undefined };
+    const mine = { scope, fullText, abort: ctl, superseded: false, promise: undefined };
     const onProgress = (loaded, total, partial) => {
       if (state.load !== mine) return;
       controller.hub.emit("sessions.progress", { scope, loaded, total, rows: partial ? render(partial) : undefined });
     };
     mine.promise = (async () => {
-      const sessions = await loader(scope, onProgress, ctl.signal);
+      const dir = dirOf();
+      let sessions = null;
+      let hasText = false;
+      if (!fullText && dir) {
+        try {
+          sessions = await tryIncrementalLoad(scope, dir, o, ctl.signal);
+        } catch (err) {
+          if (ctl.signal.aborted) throw err;
+          sessions = null;
+        }
+      }
+      if (!sessions) {
+        sessions = await officialLoader(scope, onProgress, ctl.signal);
+        hasText = true;
+        if (scope === "all" && dir && state.load === mine) {
+          void saveIndexFromSessions(dir, sessions);
+        }
+      }
       if (state.load !== mine) throw new HostError(ERR.BUSY, "加载已被新的请求取代");
       state[scope] = sessions;
+      state[`${scope}HasText`] = hasText;
       state.load = undefined;
       return sessions;
     })();
@@ -239,21 +558,30 @@ export function register(reg, { controller }) {
     if (!SCOPES.has(scope)) throw bad(`scope 只能是 current / all：${scope}`);
     if (!SORT_MODES.has(sortMode)) throw bad(`sortMode 只能是 threaded / recent / relevance：${sortMode}`);
     if (!NAME_FILTERS.has(nameFilter)) throw bad(`nameFilter 只能是 all / named：${nameFilter}`);
-    const o = await official(controller);
+    const needsSearch = query.trim().length > 0;
+    const pathsMod = await officialPaths(controller);
+    const o = needsSearch ? { ...pathsMod, ...(await officialSearch(controller)) } : pathsMod;
     syncKey();
     const view = { sortMode, nameFilter, query, groupByCwd: bool(args, "groupByCwd", false) };
-    const render = (sessions) => viewOf(o, sessions, view).map((n) => rowOf(o, n, currentKeyOf(o)));
-    const answer = (sessions) => ({ scope, rows: render(sessions), total: sessions.length, queryError: queryError(o, query) });
+    const pathKeyCache = new Map();
+    const pathKey = makePathKeyMemo(o, pathKeyCache);
+    const home = homedir();
+    const render = (sessions) => {
+      const curFile = controller.session?.sessionManager?.getSessionFile?.();
+      const currentKey = curFile ? pathKey(curFile) : undefined;
+      return viewOf(o, sessions, view, pathKey).map((n) => rowOf(o, n, currentKey, pathKey, home));
+    };
+    const answer = (sessions) => ({ scope, rows: render(sessions), total: sessions.length, queryError: needsSearch ? queryError(o, query) : null });
     const refresh = bool(args, "refresh", false);
+    const hasCachedText = Boolean(state[`${scope}HasText`]);
 
-    // 有缓存且不要求重读：立刻答。**重读期间也一样** —— 重读不清缓存，读完才换，
-    // 所以后台刷新时切排序 / 搜索仍是毫秒级（旧缓存只会落后于磁盘，不会让界面空着）。
-    if (!refresh && state[scope]) return answer(state[scope]);
+    // 有缓存且不要求重读（若本次要全文搜索，还要求缓存已含全文）：立刻答。
+    if (!refresh && state[scope] && (!needsSearch || hasCachedText)) return answer(state[scope]);
 
     for (;;) {
-      let load = state.load?.scope === scope ? state.load : undefined;
-      // 要求重读：磁盘可能在在途那次开始之后又变了，所以重起一次（正确性优先于省这一遍）。
-      if (refresh || !load) load = startLoad(scope, render);
+      let load = state.load?.scope === scope && (!needsSearch || state.load.fullText) ? state.load : undefined;
+      // 要求重读或需要全文搜索而当前无全文加载：重起一次。
+      if (refresh || !load) load = startLoad(scope, needsSearch, o, render);
       try {
         return answer(await load.promise);
       } catch (e) {

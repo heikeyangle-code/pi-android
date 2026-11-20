@@ -89,6 +89,7 @@ export function register(reg, { controller, hub }) {
   });
 
   reg.add("auth.login", async (args, call) => {
+    await controller.ensureHttpSettings?.();
     const rt = controller.requireSession().modelRuntime;
     const providerId = str(args, "providerId");
     const type = optStr(args, "type") ?? "oauth";

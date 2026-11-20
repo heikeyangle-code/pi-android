@@ -619,11 +619,7 @@ fun PiSettingsStack(
                         highlightKey = null
                     }
                 },
-                onOpenDeviceCapabilities = { deviceCapabilities = true },
-                onOpenLicenses = { licenses = true },
-                onOpenTerminal = onOpenTerminal,
                 onOpenModels = openModelFlow,
-                onOpenDiagnostics = { diagnostics = true },
                 onOpenOther = { other = true },
                 onOpenMcp = { mcp = true },
             )

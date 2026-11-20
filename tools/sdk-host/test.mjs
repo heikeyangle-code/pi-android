@@ -891,6 +891,33 @@ try {
     // settings.setHttpProxy / setHttpIdleTimeoutMs 经官方 http-dispatcher 生效（不抛错）
     const pxy = await h.call("settings.set", { method: "setHttpIdleTimeoutMs", params: [45000] });
     expect("settings.set(setHttpIdleTimeoutMs) 调用官方 http-dispatcher 生效", pxy.ok && pxy.data.effective.httpIdleTimeoutMs === 45000, JSON.stringify(pxy.error ?? pxy.data?.effective?.httpIdleTimeoutMs));
+
+    // 会话列表持久化增量索引：首次扫描落盘 .session-list-index.json，增改删增量更新，全文搜索透明回源官方扫描
+    const idxFile = join(h.agentDir, ".session-list-index.json");
+    const idxSessionsDir = join(h.agentDir, "sessions");
+    mkdirSync(idxSessionsDir, { recursive: true });
+    const idxFixture = join(idxSessionsDir, "2026-11-20T09-00-00-000Z_idx-probe.jsonl");
+    const tsIdx = "2026-11-20T09:00:00.000Z";
+    writeFileSync(
+      idxFixture,
+      [
+        JSON.stringify({ type: "session", version: 3, id: "idx-probe", timestamp: tsIdx, cwd: h.cwd }),
+        JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: tsIdx, message: { role: "user", content: [{ type: "text", text: "ORCHID-unique-token" }], timestamp: 1700000001000 } }),
+        JSON.stringify({ type: "message", id: "m2", parentId: "m1", timestamp: tsIdx, message: { role: "assistant", content: [{ type: "text", text: "ok" }], timestamp: 1700000002000 } }),
+      ].join("\n") + "\n",
+    );
+    const list1 = await h.call("session.list", { scope: "all", refresh: true });
+    await new Promise((r) => setTimeout(r, 80)); // 等待异步写索引落盘
+    expect("session.list 落盘持久化增量索引 .session-list-index.json", list1.ok && existsSync(idxFile));
+    // 改名触发单文件增量解析
+    await h.call("session.rename", { path: idxFixture, name: "增量索引改名" });
+    const list2 = await h.call("session.list", { scope: "all", refresh: true });
+    const rowIdx = list2.data?.rows?.find((r) => r.id === "idx-probe");
+    expect("增量索引刷新命中改名后的新标题", list2.ok && rowIdx?.name === "增量索引改名", JSON.stringify(rowIdx));
+    // 全文搜索在索引态下自动回源官方 SessionManager.listAll 并命中正文
+    const searchIdx = await h.call("session.list", { scope: "all", sortMode: "relevance", query: "ORCHID-unique-token" });
+    expect("增量索引态下全文搜索透明回源官方扫描并命中", searchIdx.ok && searchIdx.data?.rows?.some((r) => r.id === "idx-probe"), JSON.stringify(searchIdx.data?.rows));
+    await h.call("session.delete", { path: idxFixture });
   }
 
   // ---- 8. 退出 ----------------------------------------------------------

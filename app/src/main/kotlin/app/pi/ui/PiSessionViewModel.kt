@@ -740,6 +740,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val loadTotal: Int = 0,
         /** [rows] 是上次存下来的（宿主还没读完），读完会换掉。 */
         val fromCache: Boolean = false,
+        /** 无缓存首次扫描时正在流式接收 `sessions.progress` 部分行（1 → 10 → 20 …）。 */
+        val streamingPartial: Boolean = false,
         val failed: Boolean = false,
         val queryError: String? = null,
     )
@@ -891,6 +893,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         total = page.total,
                         loading = false,
                         fromCache = false,
+                        streamingPartial = false,
                         failed = false,
                         queryError = page.queryError,
                     )
@@ -899,7 +902,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onFailure = {
                     // **保留手上那份列表**：读失败不该把已经显示出来的行也拿走。
-                    _sessionList.value = _sessionList.value.copy(loading = false, failed = true)
+                    _sessionList.value = _sessionList.value.copy(loading = false, streamingPartial = false, failed = true)
                 },
             )
         }
@@ -909,12 +912,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun onSessionLoadProgress(p: app.pi.session.SessionLoadProgress) {
         val cur = _sessionList.value
         if (!cur.loading || p.scope != cur.query.scope) return
+        // 已有上次缓存的完整列表时，绝不用 loaded=1 的部分结果把整页替换成 1 条，
+        // 保持缓存完整可见直到扫描结束再无声替换；无缓存首次扫描时则持续接收每一批进度行（1→10→20…）。
+        val adoptPartial = p.rows != null && (cur.rows.isEmpty() || cur.streamingPartial)
         _sessionList.value = cur.copy(
             loaded = p.loaded,
             loadTotal = p.total,
-            // 部分结果只在还没有「新鲜」行可看时采用（有缓存行时它会让列表在读的过程中跳）。
-            rows = if (p.rows != null && (cur.rows.isEmpty() || cur.fromCache)) p.rows else cur.rows,
-            fromCache = if (p.rows != null && (cur.rows.isEmpty() || cur.fromCache)) false else cur.fromCache,
+            rows = if (adoptPartial) p.rows!! else cur.rows,
+            fromCache = if (adoptPartial) false else cur.fromCache,
+            streamingPartial = if (adoptPartial) true else cur.streamingPartial,
         )
     }
 
@@ -2432,15 +2438,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // 事件可能在界面订阅之前就发过了：引擎就绪后主动问一次信任状态。
+        // 会话列表不在这里与 replayHistory / bindExtensions 抢单线程 Node；见下方 attach 就绪流在
+        // replayHistory 之后再触发后台预热（若用户已提前点开会话列表页，ensureSessionList 会立即启动）。
         viewModelScope.launch {
             engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
-            if (session === engine) refreshTrustPrompt()
-        }
-        // 引擎一就绪就在后台读一遍会话列表（上次的列表已经先画在 [primeSessionList] 里）：
-        // 读完之后每次打开列表屏都是秒开，变更由 [watchSessionListChanges] 补。
-        viewModelScope.launch {
-            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
-            if (session === engine) refreshSessions()
+            if (session === engine) {
+                refreshTrustPrompt()
+                if (_overlay.value?.slot == OverlaySlot.SessionList) refreshSessions()
+            }
         }
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
@@ -2779,6 +2784,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // while the app was closed is discovered here as well.
             refreshPrefs()
             refreshTheme()
+            // 主对话就绪后再后台预热会话列表（上次缓存已在 primeSessionList 画好，宿主端增量索引毫秒级返回）。
+            if (session === engine && !sessionListLoadedOnce && !_sessionList.value.loading) {
+                refreshSessions()
+            }
             // **没有"接回"这一步了。** 会话由 argv 钉住（[launchOptions] 的
             // `continueSessionId` / `continueMostRecent`）：进程内重启带 `--session-id` 起来，
             // 冷启动带 `-c`（受 `app.sessions.resumeLast` 管辖）。所以这里既不需要事后

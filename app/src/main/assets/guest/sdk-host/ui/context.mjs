@@ -68,6 +68,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
 
   let activeKeybindings = createFallbackKeybindings();
   let activeFooterData = null;
+  let lazyLoaders = {};
 
   // 代理到当前生效的真实 `KeybindingsManager`，确保扩展在 `open` 期间拿到的引用也会自动升级。
   const keybindings = {
@@ -195,7 +196,13 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
       }
     },
     setFooter(factory) {
-      mountChrome("footer", factory && ((tui) => factory(tui, theme, footerData)));
+      if (!factory) {
+        mountChrome("footer", null);
+        return;
+      }
+      Promise.resolve(activeFooterData ? null : lazyLoaders.ensureFooterData?.())
+        .then(() => mountChrome("footer", (tui) => factory(tui, theme, footerData)))
+        .catch((error) => hub.emit("host.log", { level: "error", message: `footer: ${error?.message ?? error}` }));
     },
     setHeader(factory) {
       mountChrome("header", factory && ((tui) => factory(tui, theme)));
@@ -216,20 +223,22 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
             : typeof options?.blocked?.message === "string" && options.blocked.message
               ? options.blocked.message
               : null;
-        surfaces
-          .mount({
-            mode: "custom",
-            overlay: Boolean(options?.overlay),
-            overlayOptions: options?.overlayOptions ?? null,
-            blocked,
-            onHandle: options?.onHandle,
-            // 被外部关掉（用户点了 ✕ / 会话被替换）：以 undefined 结束，扩展的 await 不能悬着。
-            onClose: () => finish(undefined),
-            build: (tui, surface) => {
-              surfaceRef = surface;
-              return factory(tui, theme, keybindings, finish);
-            },
-          })
+        Promise.resolve(lazyLoaders.ensureKeybindings?.())
+          .then(() =>
+            surfaces.mount({
+              mode: "custom",
+              overlay: Boolean(options?.overlay),
+              overlayOptions: options?.overlayOptions ?? null,
+              blocked,
+              onHandle: options?.onHandle,
+              // 被外部关掉（用户点了 ✕ / 会话被替换）：以 undefined 结束，扩展的 await 不能悬着。
+              onClose: () => finish(undefined),
+              build: (tui, surface) => {
+                surfaceRef = surface;
+                return factory(tui, theme, keybindings, finish);
+              },
+            }),
+          )
           .then((surface) => {
             surfaceRef = surface;
             if (done) surfaces.close(surface.id);
@@ -240,6 +249,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     getEditorComponent: () => state.customEditorFactory,
     setEditorComponent(factory) {
       state.customEditorFactory = typeof factory === "function" ? factory : undefined;
+      if (state.customEditorFactory) void lazyLoaders.ensureKeybindings?.();
       // 终端编辑器组件无法直接替换原生手机输入框；通知 App 展示状态说明。
       hub.emit("ui.chrome", { slot: "editor", attached: Boolean(factory), supported: false });
     },
@@ -328,6 +338,9 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     keybindings,
     dispatchTerminalInput,
     queryAutocomplete,
+    setLazyLoaders(loaders) {
+      lazyLoaders = loaders ?? {};
+    },
     setKeybindings(kb) {
       if (kb && typeof kb.matches === "function") activeKeybindings = kb;
     },

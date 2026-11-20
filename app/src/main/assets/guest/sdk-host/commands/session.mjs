@@ -48,18 +48,22 @@ export function register(reg, { controller }) {
     const message = str(args, "message");
     const reply = call.defer();
     let preflighted = false;
-    s.prompt(message, {
-      images: args.images,
-      streamingBehavior: args.streamingBehavior,
-      source: "interactive",
-      preflightResult: (disposition) => {
-        preflighted = true;
-        reply.ok(withState(controller, { disposition }));
-      },
-    }).catch((error) => {
-      if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
-      else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });
-    });
+    Promise.resolve(controller.ensureHttpSettings?.())
+      .then(() =>
+        s.prompt(message, {
+          images: args.images,
+          streamingBehavior: args.streamingBehavior,
+          source: "interactive",
+          preflightResult: (disposition) => {
+            preflighted = true;
+            reply.ok(withState(controller, { disposition }));
+          },
+        }),
+      )
+      .catch((error) => {
+        if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
+        else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });
+      });
     return DEFERRED;
   });
   reg.add("session.steer", async (args) =>
@@ -84,18 +88,22 @@ export function register(reg, { controller }) {
     if (behavior !== "steer" && behavior !== "followUp") throw bad("behavior 必须是 steer 或 followUp");
     const reply = call.defer();
     let preflighted = false;
-    s.prompt(message, {
-      images: args.images,
-      streamingBehavior: behavior,
-      source: "interactive",
-      preflightResult: (disposition) => {
-        preflighted = true;
-        reply.ok(withState(controller, { disposition }));
-      },
-    }).catch((error) => {
-      if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
-      else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });
-    });
+    Promise.resolve(controller.ensureHttpSettings?.())
+      .then(() =>
+        s.prompt(message, {
+          images: args.images,
+          streamingBehavior: behavior,
+          source: "interactive",
+          preflightResult: (disposition) => {
+            preflighted = true;
+            reply.ok(withState(controller, { disposition }));
+          },
+        }),
+      )
+      .catch((error) => {
+        if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
+        else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });
+      });
     return DEFERRED;
   });
   reg.add("chat.stop", async (args) => {
