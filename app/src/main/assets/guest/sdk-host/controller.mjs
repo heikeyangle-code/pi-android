@@ -417,6 +417,9 @@ export class Controller {
     this.footerData?.setCwd?.(this.cwd);
     this.syncFooterProviders();
     hub.bumpEpoch();
+    // 官方 `resetExtensionUI`：会话被替换时，扩展挂的状态 / 小组件 / 自定义编辑器 / 工作提示 / 思考标签全部收回。
+    // 宿主这边的 reset() 只清了自己的表，App 那份投影得到通知才会清（否则 /new、切会话后上一个会话的提示会一直挂着）。
+    hub.emit("ui.reset", {});
     hub.emit("session.bound", { sessionId: session.sessionId, sessionFile: session.sessionFile ?? null, first: this.firstBind });
 
     this.unsubscribe = session.subscribe((event) => {

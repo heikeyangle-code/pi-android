@@ -112,6 +112,7 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | `ui.notify` | `{message,tone}` | tone: info/warning/error |
 | `ui.status` | `{key,text\|null}` | |
 | `ui.title` · `ui.editorText` · `ui.paste` | | |
+| `ui.reset` | | 会话被替换（`#bind`）：App 清空扩展 UI 投影（对应官方 `resetExtensionUI`，工具展开除外） |
 | `ui.working` · `ui.workingVisible` · `ui.workingIndicator` · `ui.thinkingLabel` · `ui.toolsExpanded` | | 工作中提示相关 |
 | `ui.widget` | `{key,lines\|null,surfaceId\|null,placement}` | 字符串行 / 清除（`lines:null,surfaceId:null`）/ 组件（`surfaceId`） |
 | `ui.chrome` | `{slot: footer\|header\|editor, attached, supported, surfaceId?}` | |

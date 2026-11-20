@@ -93,6 +93,7 @@ class ExtUiReducer {
         val d = data as? JsonObject ?: return null
         val before = state
         when (name) {
+            "ui.reset" -> reset()
             "ui.status" -> status(d)
             "ui.widget" -> widget(d)
             "ui.chrome" -> chrome(d)
@@ -114,6 +115,18 @@ class ExtUiReducer {
             else -> return null
         }
         return state.takeIf { it != before }
+    }
+
+    /**
+     * 官方 `interactive-mode.js` 的 `resetExtensionUI`（会话被替换时）：状态、小组件、header/footer、自定义编辑器、
+     * 工作消息 / 可见性 / 指示器、思考标签、自动补全提供者全部回到默认；**工具展开**不在其中，保留。
+     */
+    private fun reset() {
+        frames.clear()
+        widgetSurface.clear()
+        widgetPlacement.clear()
+        slotSurface.clear()
+        state = ExtUiState(toolsExpanded = state.toolsExpanded)
     }
 
     private fun status(d: JsonObject) {

@@ -282,6 +282,16 @@ private fun widgets() {
     check("输入框接管只做标记", r.state.editorTakeover, true)
     ev("ui.chrome", """{"slot":"editor","attached":false,"supported":false}""")
     check("输入框接管撤销", r.state.editorTakeover, false)
+    // 官方 resetExtensionUI：会话被替换后，状态 / 输入框接管 / 工作提示 / 思考标签清空；工具展开保留
+    ev("ui.chrome", """{"slot":"editor","attached":true,"supported":false}""")
+    ev("ui.status", """{"key":"zz","text":"keep?"}""")
+    ev("ui.working", """{"message":"sniffs around"}""")
+    ev("ui.thinkingLabel", """{"label":"hm"}""")
+    ev("ui.toolsExpanded", """{"expanded":true}""")
+    ev("ui.reset", "{}")
+    check("会话替换：输入框接管 / 状态 / 工作提示 / 思考标签清空",
+        listOf(r.state.editorTakeover, r.state.statuses.isEmpty(), r.state.working.message, r.state.thinkingLabel), listOf(false, true, null, null))
+    check("会话替换：工具展开保留（官方 resetExtensionUI 不动它）", r.state.toolsExpanded, true)
 
     // custom 表面：支持叠栈 + OverlayHandle.setHidden
     ev("ui.surface", """{"surfaceId":"c1","key":"c1","mode":"custom","rev":1,"lines":["menu"],"overlay":true,"interactive":true}""")
