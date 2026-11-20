@@ -1684,8 +1684,14 @@ internal fun ChatBody(
             // 以下都是 pi 的内建命令在手机上的做法：打开对应的界面，或直接执行。每一项都和
             // 「⋯」菜单 / 顶栏里的同名入口走同一个函数，不另起一套。
             ChatAction.OpenSettings -> {
-                command?.let { CLIENT_BUILTINS[it.name]?.note }?.let { session.notifyUser(it) }
-                onOpenSettings()
+                when (command?.name) {
+                    "login", "logout", "scoped-models" -> session.requestNav(NavRequest.SettingsFocus("hub:models"))
+                    "trust" -> session.requestNav(NavRequest.SettingsFocus("defaultProjectTrust"))
+                    else -> {
+                        command?.let { CLIENT_BUILTINS[it.name]?.note }?.let { session.notifyUser(it) }
+                        onOpenSettings()
+                    }
+                }
             }
             // `/model <引用>`：精确匹配直接切，否则开选择器并预填（interactive-mode.js handleModelCommand）。
             ChatAction.PickModel -> if (args.isNotBlank()) {

@@ -151,8 +151,8 @@ fun ModelsScreen(
                             }
                             TagRow(capabilityTags(current) + listOfNotNull(priceLabel(current.inputCost, current.outputCost)?.let { "$it /M" }))
                         } else {
-                            Text("还没有选择模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
-                            Text("先在下方连接一个供应商，再选一个模型。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text("尚未选择模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                            Text("先在下方「订阅账号登录」或「API 供应商」完成连接，再选择模型即可开始对话。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
                         }
                         if (d.thinkingLevels.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -179,7 +179,15 @@ fun ModelsScreen(
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            PrimaryAction(if (current == null) "选择模型" else "更换模型", enabled = d.models.isNotEmpty(), onClick = { picker = true })
+                            PrimaryAction(
+                                text = when {
+                                    d.models.isEmpty() -> "先连接供应商"
+                                    current == null -> "选择模型（${d.models.size} 可用）"
+                                    else -> "更换模型（${d.models.size} 可用）"
+                                },
+                                enabled = d.models.isNotEmpty(),
+                                onClick = { picker = true },
+                            )
                         }
                     }
                 }

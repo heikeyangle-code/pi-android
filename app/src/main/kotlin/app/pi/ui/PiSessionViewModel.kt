@@ -812,7 +812,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         var added = false
         if (st.meta.messageCount >= 2 && rows.none { it.isCurrent }) {
             val now = System.currentTimeMillis()
-            val first = st.transcript.firstNotNullOfOrNull { (it as? TranscriptItem.UserMessage)?.text }.orEmpty()
+            val first = st.transcript.firstNotNullOfOrNull { (it as? UserMessage)?.text }.orEmpty()
             val cwd = guestWorkspace()
             rows = listOf(
                 SessionSummary(
@@ -2380,7 +2380,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             engine.hostEvents.collect { ev ->
                 if (ev.name == "ui.cancel") {
                     // 宿主收回一个挂起对话框（超时 / AbortSignal / 会话替换）：立刻移出队列，避免死弹窗滞留屏幕。
-                    val cancelId = (ev.data["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val cancelId = (ev.data?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content
                     if (cancelId != null && dialogs.remove(cancelId) != null) {
                         publishDialogs()
                     }
@@ -4998,8 +4998,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * event rather than written optimistically here — a level the model cannot
      * use would otherwise be displayed as if it had taken effect.
      */
-    fun setThinkingLevel(level: String) {
-        call("切换思考等级") { it.setThinkingLevel(level) }
+    fun setThinkingLevel(level: String, persist: Boolean = false) {
+        call("切换思考等级") { api ->
+            api.setThinkingLevel(level, persist)
+            _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevel = level))
+            refreshState()
+        }
     }
 
     /** `cycle_thinking_level`. `null` is pi's documented answer. */
@@ -5065,14 +5069,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** `set_model`. pi answers with the model it actually switched to. */
-    fun setModel(model: PiResponses.ModelInfo) {
+    fun setModel(model: PiResponses.ModelInfo, persist: Boolean = false) {
         val provider = model.provider
         if (provider.isNullOrBlank()) {
             fail("该模型没有 provider，pi 无法按 provider/id 定位它")
             return
         }
         call("切换模型") { api ->
-            val applied = api.setModel(provider, model.id)
+            val applied = api.setModel(provider, model.id, persist = persist)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
             // Thinking levels are a property of the model, and pi applies a
             // per-model default on a model switch

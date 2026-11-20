@@ -12,14 +12,9 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.pi.ui.PiTopBar
-import androidx.compose.foundation.layout.padding
 
 /**
- * 设置首页的「其他」：不属于 pi 的设置键、也不属于日常操作的几扇门。
- *
- * 用户裁定：首页只保留「模型与供应商」「分组」「其他」三张卡，其他里的东西点进来再看。
- * 这一屏的行形状与分组页一致（`PiSettingsEntryRow`：标题 + 一行说明 + chevron），
- * **全部不带前置图标** —— 首页此前一半有图标一半没有，正是用户报的那处不一致。
+ * 设置首页的「其他」：系统工具、设备权限、安全与法律声明，统一收进一张分组卡片中展示。
  */
 @Composable
 internal fun OtherSettingsScreen(
@@ -34,34 +29,32 @@ internal fun OtherSettingsScreen(
         PiTopBar(title = "其他", onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(
+                top = PiSettingsMetrics.groupGap,
+                bottom = contentPadding.calculateBottomPadding(),
+            ),
         ) {
             val rows = buildList {
                 if (onOpenTerminal != null) add(
-                    Triple(Icons.Filled.Terminal, "终端", { onOpenTerminal() }),
+                    OtherEntry(Icons.Filled.Terminal, "终端", "打开内置全屏终端环境", onOpenTerminal),
                 )
                 if (onOpenDeviceCapabilities != null) add(
-                    Triple(Icons.Filled.PhoneAndroid, "设备能力", { onOpenDeviceCapabilities() }),
+                    OtherEntry(Icons.Filled.PhoneAndroid, "设备能力", "管理通知、无障碍、文件与系统桥接授权", onOpenDeviceCapabilities),
                 )
-                add(Triple(Icons.Filled.Lock, "安全与隐私", onOpenSecurity))
+                add(OtherEntry(Icons.Filled.Lock, "安全与隐私", "项目默认信任策略与安装遥测", onOpenSecurity))
                 if (onOpenLicenses != null) add(
-                    Triple(Icons.Filled.Info, "开源许可", { onOpenLicenses() }),
+                    OtherEntry(Icons.Filled.Info, "开源许可", "查看第三方依赖与开源协议声明", onOpenLicenses),
                 )
             }
-            rows.forEachIndexed { index, (icon, title, action) ->
-                item(key = title) {
-                    PiSettingsCard(
-                        modifier = if (index == 0) {
-                            Modifier.padding(top = PiSettingsMetrics.groupGap)
-                        } else {
-                            Modifier
-                        },
-                    ) {
+            item(key = "other-card") {
+                PiSettingsCard {
+                    rows.forEachIndexed { index, entry ->
+                        if (index > 0) PiSettingsHairline()
                         PiSettingsEntryRow(
-                            title = title,
-                            supporting = null,
-                            onClick = action,
-                            leadingIcon = icon,
+                            title = entry.title,
+                            supporting = entry.supporting,
+                            onClick = entry.action,
+                            leadingIcon = entry.icon,
                         )
                     }
                 }
@@ -69,3 +62,10 @@ internal fun OtherSettingsScreen(
         }
     }
 }
+
+private class OtherEntry(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val title: String,
+    val supporting: String,
+    val action: () -> Unit,
+)

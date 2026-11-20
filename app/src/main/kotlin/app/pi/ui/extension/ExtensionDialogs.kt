@@ -41,6 +41,7 @@ import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
+import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.theme.PiSpacing
@@ -130,6 +131,13 @@ private fun ExtensionDialogShell(
         return
     }
 
+    // 多行编辑器在 330dp 居中小弹窗里叠加软键盘极难编辑：改用全宽底部面板承载，
+    // 保留完整协议（回包 id / value / cancelled / timeout 倒计时完全不变）。
+    if (dialog.method == ExtensionDialogMethod.Editor) {
+        EditorSheetBody(dialog, draft, { draft = it }, backlog, onAnswer)
+        return
+    }
+
     // 外壳与设置页的对话框是**同一个构件**（`ui/components/PiDialog.kt`）：最大宽
     // 330、圆角 14、`surf-high` 底、1px `borderMuted`、`padding:18px 16px 12px`、
     // scrim `rgba(0,0,0,.32)`。两边原先各画一套，底色一个 `surf-low` 一个
@@ -206,6 +214,12 @@ private fun SelectSheetBody(
     backlog: Int,
     onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
+    var query by remember(dialog.id) { mutableStateOf("") }
+    val needle = query.trim().lowercase()
+    val filtered = remember(dialog.options, needle) {
+        if (needle.isEmpty()) dialog.options
+        else dialog.options.filter { chromeText(it).lowercase().contains(needle) }
+    }
     PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
         Column(
             Modifier
@@ -215,6 +229,17 @@ private fun SelectSheetBody(
         ) {
             DialogHeading(dialog)
             DialogMessage(dialog.message)
+            if (dialog.options.size >= 8) {
+                Spacer(Modifier.height(DialogControlGap))
+                PiEditorField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "筛选选项（共 ${dialog.options.size} 项）",
+                    height = PiSettingsMetrics.searchFieldHeight,
+                )
+            }
+            Spacer(Modifier.height(DialogControlGap))
             val palette = PiTheme.palette
             val shape = RoundedCornerShape(DialogListRadius)
             Box(
@@ -224,11 +249,80 @@ private fun SelectSheetBody(
                     .clip(shape)
                     .border(PiSpacing.hairline, palette.borderMuted, shape),
             ) {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    SelectOptionRows(dialog, onAnswer)
+                if (filtered.isEmpty()) {
+                    Text(
+                        "没有匹配「$query」的选项。",
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                        modifier = Modifier.padding(PiSpacing.cardPadding),
+                    )
+                } else {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        SelectOptionRows(dialog.id, filtered, onAnswer)
+                    }
                 }
             }
             DialogActions(dialog, dialog.prefill.orEmpty(), onAnswer)
+            DialogFooter(dialog, backlog)
+        }
+    }
+}
+
+/** 宽屏多行编辑面板：相比 330dp 小对话框，在手机竖屏叠加软键盘时有充足的横向与纵向编辑空间。 */
+@Composable
+private fun EditorSheetBody(
+    dialog: ExtensionDialog,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    backlog: Int,
+    onAnswer: (String, ExtensionAnswer) -> Unit,
+) {
+    val lines = remember(draft) { if (draft.isEmpty()) 0 else draft.count { it == '\n' } + 1 }
+    PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+                .padding(top = PiSettingsMetrics.sheetHeadTop),
+        ) {
+            DialogHeading(dialog)
+            DialogMessage(dialog.message)
+            Spacer(Modifier.height(DialogControlGap))
+            ExtField(
+                value = draft,
+                onValueChange = onDraftChange,
+                placeholder = dialog.placeholder ?: "编辑内容",
+                singleLine = false,
+                height = null,
+                paddingHorizontal = 12.dp,
+                paddingVertical = 10.dp,
+                onSubmit = {},
+                minLinesOverride = 6,
+                maxLinesOverride = 14,
+            )
+            Spacer(Modifier.height(PiSpacing.small))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "$lines 行 · ${draft.length} 字",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.dim,
+                )
+                if (draft.isNotEmpty()) {
+                    Text(
+                        "清空",
+                        modifier = Modifier
+                            .clickable(role = Role.Button) { onDraftChange("") }
+                            .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.muted,
+                    )
+                }
+            }
+            DialogActions(dialog, draft, onAnswer)
             DialogFooter(dialog, backlog)
         }
     }
@@ -239,8 +333,15 @@ private fun SelectSheetBody(
 private fun SelectOptionRows(
     dialog: ExtensionDialog,
     onAnswer: (String, ExtensionAnswer) -> Unit,
+) = SelectOptionRows(dialog.id, dialog.options, onAnswer)
+
+@Composable
+private fun SelectOptionRows(
+    dialogId: String,
+    options: List<String>,
+    onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
-    dialog.options.forEachIndexed { index, option ->
+    options.forEachIndexed { index, option ->
         if (index > 0) {
             Box(
                 Modifier
@@ -257,7 +358,7 @@ private fun SelectOptionRows(
                     // plain: `buildAnswer` strips escapes from a select answer, so a colour
                     // the extension wrapped its own option in cannot come back as the
                     // user's choice.
-                    onAnswer(dialog.id, ExtensionAnswer.Value(option))
+                    onAnswer(dialogId, ExtensionAnswer.Value(option))
                 }
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -273,6 +374,7 @@ private fun SelectOptionRows(
                 defaultColor = PiTheme.palette.text,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
+                richStyle = true,
             )
         }
     }
@@ -372,6 +474,7 @@ private fun DialogHeading(dialog: ExtensionDialog) {
             defaultColor = palette.text,
             style = PiTheme.text.mono,
             modifier = Modifier.weight(1f),
+            richStyle = true,
         )
     }
     if (dialog.timed) CountdownRow(dialog)
@@ -425,6 +528,7 @@ private fun DialogMessage(message: String?) {
         spans = chromeSpans(message),
         defaultColor = PiTheme.palette.text,
         style = MaterialTheme.typography.bodyMedium,
+        richStyle = true,
     )
 }
 
@@ -541,6 +645,8 @@ private fun ExtField(
     paddingHorizontal: Dp,
     paddingVertical: Dp,
     onSubmit: () -> Unit,
+    minLinesOverride: Int = EditorMinLines,
+    maxLinesOverride: Int = EditorMaxLines,
 ) {
     val palette = PiTheme.palette
     val interaction = remember { MutableInteractionSource() }
@@ -571,8 +677,8 @@ private fun ExtField(
             textStyle = (if (singleLine) MaterialTheme.typography.bodyMedium else PiTheme.text.mono)
                 .copy(color = palette.text),
             singleLine = singleLine,
-            minLines = if (singleLine) 1 else EditorMinLines,
-            maxLines = if (singleLine) 1 else EditorMaxLines,
+            minLines = if (singleLine) 1 else minLinesOverride,
+            maxLines = if (singleLine) 1 else maxLinesOverride,
             cursorBrush = SolidColor(palette.accent),
             interactionSource = interaction,
             keyboardOptions = KeyboardOptions(

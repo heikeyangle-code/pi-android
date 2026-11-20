@@ -39,18 +39,19 @@ internal fun ChatSheetHost(
             models = state.models,
             current = state.meta.model,
             busy = state.busy != null,
-            onPick = { model ->
-                session.setModel(model)
+            onPick = { model, persist ->
+                session.setModel(model, persist = persist)
                 onSheet(null)
             },
             onRefresh = { session.refreshModels() },
+            onManageProviders = { session.requestNav(NavRequest.SettingsFocus("hub:models")) },
             onDismiss = { onSheet(null) },
         )
 
         ChatSheet.Thinking -> ThinkingPickerSheet(
             levels = state.meta.thinkingLevels,
             current = state.meta.thinkingLevel,
-            onPick = { session.setThinkingLevel(it) },
+            onPick = { level, persist -> session.setThinkingLevel(level, persist = persist) },
             onDismiss = { onSheet(null) },
         )
 

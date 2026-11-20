@@ -28,6 +28,7 @@ import app.pi.ui.chat.SlashPalette
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.extension.ExtensionStatusStrip
 import app.pi.ui.extension.ExtensionWidgetStack
+import app.pi.ui.extension.ExtensionWorkingStrip
 import app.pi.ui.extension.PLACEMENT_BELOW
 import app.pi.ui.theme.PiSpacing
 import kotlinx.coroutines.Dispatchers
@@ -118,6 +119,8 @@ internal fun ChatDockCards(
             onDismiss = { session.dismissExport() },
         )
     }
+
+    ExtensionWorkingStrip(working = state.ext.working, streaming = state.streaming)
 
     ExtensionStatusStrip(statuses = state.ext.statuses, editorTakeover = state.ext.editorTakeover)
 

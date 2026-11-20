@@ -61,5 +61,5 @@ fun main() {
         println("\n$failures check(s) failed")
         kotlin.system.exitProcess(1)
     }
-    println("\nall checks passed")
+    println("harness: OK (slash-palette)")
 }

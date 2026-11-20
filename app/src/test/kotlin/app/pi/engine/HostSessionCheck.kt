@@ -132,7 +132,7 @@ private fun run(node: String, hostMain: File, piDir: File, tmp: File) = runBlock
     // —— 会话库：宿主机路径 ↔ guest 路径；这里 guest 与宿主机是同一棵目录，所以换算是恒等的，
     //    但越界拒绝、改名、删除、搜索都是真的在跑宿主命令。
     val agentDir = tmp.resolve("a/agent")
-    val lib = SessionLibrary(agentDir, agentDir.path) { session.commands }
+    val lib = SessionLibrary(agentDir, agentDir.path, cacheFile = null) { session.commands }
     val sdir = agentDir.resolve("sessions").also { it.mkdirs() }
     val fx = sdir.resolve("2026-01-01T00-00-00-000Z_lib-1.jsonl")
     fx.writeText(

@@ -403,6 +403,8 @@ fun PiSettingsStack(
             // 项目页的「扩展与资源」入口：不是某一条设置，是枢纽页本身；`:project` 直接落在项目层。
             resourcesProject = key.endsWith(":project")
             resources = true
+        } else if (key == "hub:models") {
+            modelFlow = true
         } else if (setting != null && setting.group == G_MODELS_SCREEN) {
             modelFlow = true
         } else if (setting != null) {

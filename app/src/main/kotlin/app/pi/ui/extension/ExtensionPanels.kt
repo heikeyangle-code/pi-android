@@ -16,11 +16,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import app.pi.host.ExtWorking
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
@@ -98,6 +102,61 @@ fun ExtensionWidgetStack(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 扩展工作指示器（`ctx.ui.setWorkingMessage` / `ctx.ui.setWorkingIndicator`）：
+ * 流式运行时按扩展声明的 `frames` 与 `intervalMs` 轮播指示帧，并呈现带 ANSI 样式的工作提示文案；
+ * 空闲、不可见或扩展未设置时完全不占位。
+ */
+@Composable
+fun ExtensionWorkingStrip(
+    working: ExtWorking,
+    streaming: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!streaming || !working.visible) return
+    val frames = working.frames?.filter { it.isNotEmpty() }.orEmpty()
+    val message = working.message?.takeIf { it.isNotBlank() }
+    if (frames.isEmpty() && message == null) return
+
+    var frameIndex by remember(frames, working.intervalMs) { mutableIntStateOf(0) }
+    LaunchedEffect(frames, working.intervalMs) {
+        if (frames.size <= 1) return@LaunchedEffect
+        val stepMs = (working.intervalMs ?: 120).coerceIn(50, 2000).toLong()
+        while (true) {
+            delay(stepMs)
+            frameIndex = (frameIndex + 1) % frames.size
+        }
+    }
+
+    val glyph = if (frames.isNotEmpty()) frames[frameIndex % frames.size] else "◌"
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = PiSpacing.tiny),
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ExtensionSpans(
+            spans = remember(glyph) { chromeSpans(glyph) },
+            defaultColor = PiTheme.palette.accent,
+            style = PiTheme.text.monoSmall,
+            maxLines = 1,
+            richStyle = true,
+        )
+        if (message != null) {
+            ExtensionSpans(
+                spans = remember(message) { chromeSpans(message) },
+                defaultColor = PiTheme.palette.muted,
+                style = PiTheme.text.meta,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                richStyle = true,
+            )
         }
     }
 }

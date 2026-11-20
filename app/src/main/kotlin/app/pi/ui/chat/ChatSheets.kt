@@ -82,18 +82,15 @@ fun ModelPickerSheet(
     models: List<PiResponses.ModelInfo>,
     current: PiResponses.ModelInfo?,
     busy: Boolean,
-    onPick: (PiResponses.ModelInfo) -> Unit,
+    onPick: (PiResponses.ModelInfo, persist: Boolean) -> Unit,
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
     initialFilter: String = "",
+    onManageProviders: (() -> Unit)? = null,
 ) {
     var filter by remember { mutableStateOf(initialFilter) }
+    var persistAsDefault by remember { mutableStateOf(false) }
     val query = filter.trim().lowercase()
-    // Remembered on the two inputs it reads: `list()` can be hundreds of entries (a
-    // provider like OpenRouter publishes its whole catalogue), and the filter lowercases
-    // three fields per model, so recomputing it per composition made every keystroke
-    // allocate a few hundred strings for an answer that only changes when the query or
-    // the list does.
     val shown = remember(query, models) {
         if (query.isEmpty()) {
             models
@@ -107,14 +104,44 @@ fun ModelPickerSheet(
     }
     PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("选择模型", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "选择模型",
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Surface(
+                    onClick = { persistAsDefault = !persistAsDefault },
+                    shape = PiShapes.badge,
+                    color = if (persistAsDefault) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                ) {
+                    Text(
+                        if (persistAsDefault) "✓ 同时设为默认" else "仅本次会话",
+                        modifier = Modifier.padding(horizontal = PiSpacing.inline, vertical = PiSpacing.tiny),
+                        style = PiTheme.text.meta,
+                        color = if (persistAsDefault) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
             Spacer(Modifier.height(PiSpacing.unit))
             OutlinedTextField(
                 value = filter,
                 onValueChange = { filter = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("按 provider / 模型名筛选") },
+                placeholder = { Text("按供应商 / 模型名筛选") },
                 shape = PiShapes.input,
             )
             Spacer(Modifier.height(PiSpacing.unit))
@@ -122,35 +149,28 @@ fun ModelPickerSheet(
                 Text(
                     if (busy) {
                         "正在读取模型列表…"
+                    } else if (query.isNotEmpty()) {
+                        "没有匹配「$filter」的可用模型。"
                     } else {
-                        // The list is pi's availability snapshot and nothing else, so "just
-                        // configured a provider and it is not here" has exactly one cause:
-                        // the running engine has not re-read `models.json`/`auth.json`.
-                        // Saying that here is the difference between a dead end and one
-                        // tap, because this sheet is where the user notices.
-                        "没有可用模型。刚配置好的厂商要重启引擎后才会出现在这里；" +
-                            "已经保存的模型可以在 设置 → 模型 里看到它们的状态。"
+                        "还没有可用模型。先登录订阅账号或配置 API Key，连接后会立刻生效，无需重启引擎。"
                     },
                     style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(PiSpacing.unit))
-                TextButton(onClick = onRefresh) { Text("重新读取") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onManageProviders != null) {
+                        TextButton(onClick = {
+                            onDismiss()
+                            onManageProviders()
+                        }) { Text("连接供应商与订阅…") }
+                    }
+                    TextButton(onClick = onRefresh) { Text("刷新列表") }
+                }
             } else {
-                // Lazy, so only the rows on screen are composed: the list can be a
-                // provider's whole catalogue (hundreds of entries), and a plain `Column`
-                // built every one of them when the sheet opened. `heightIn(max = …)` is
-                // what bounds the viewport — the same shape the `/` palette already uses
-                // (`SlashPalette.kt`), where a `LazyColumn` under a max-height constraint
-                // still wraps its content, so three models do not leave a 420 dp empty
-                // sheet. No `key`: these rows never reorder and a duplicate `id` across
-                // two providers would collide a key and crash the list.
                 LazyColumn(
                     Modifier.fillMaxWidth().heightIn(max = 420.dp),
                 ) {
-                    // 厂商不止一个时按厂商分段（段内与段间都保持 pi 的原顺序：厂商按第一次出现的
-                    // 先后，所以选中模型不会让列表跳）。一个厂商一个小标题，几百个模型不再是一整面
-                    // 一模一样的行。只有一个厂商时不画标题，与以前完全相同。
                     val groups = shown.groupBy { it.provider.orEmpty() }
                     groups.forEach { (provider, inGroup) ->
                         if (groups.size > 1) {
@@ -167,20 +187,30 @@ fun ModelPickerSheet(
                             ModelRow(
                                 model = model,
                                 selected = model.id == current?.id && model.provider == current.provider,
-                                onClick = { onPick(model) },
+                                onClick = { onPick(model, persistAsDefault) },
                             )
                         }
                     }
                 }
             }
             Spacer(Modifier.height(PiSpacing.unit))
-            // One line under the list, for the case the empty state cannot cover: the
-            // list is not empty, but the model the user just imported is not in it.
-            Text(
-                "这个列表来自运行中的引擎。导入过的模型在 设置 → 模型 里能看到它们的状态。",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (persistAsDefault) "选择后会同时保存为默认模型" else "仅切换当前会话；可点右上角改为默认",
+                    modifier = Modifier.weight(1f),
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (onManageProviders != null && shown.isNotEmpty()) {
+                    TextButton(onClick = {
+                        onDismiss()
+                        onManageProviders()
+                    }) { Text("管理供应商") }
+                }
+            }
             Spacer(Modifier.height(PiSpacing.unit))
         }
     }
@@ -191,14 +221,20 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(PiShapes.card)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+            )
             .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
+            .padding(horizontal = PiSpacing.small, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     model.name,
+                    modifier = Modifier.weight(1f, fill = false),
                     style = PiType.rowTitle,
                     color = if (selected) {
                         MaterialTheme.colorScheme.primary
@@ -255,12 +291,43 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
 fun ThinkingPickerSheet(
     levels: List<String>,
     current: String,
-    onPick: (String) -> Unit,
+    onPick: (String, persist: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var persistAsDefault by remember { mutableStateOf(false) }
     PiSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("思考等级", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "思考等级",
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Surface(
+                    onClick = { persistAsDefault = !persistAsDefault },
+                    shape = PiShapes.badge,
+                    color = if (persistAsDefault) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                ) {
+                    Text(
+                        if (persistAsDefault) "✓ 同时设为默认" else "仅本次会话",
+                        modifier = Modifier.padding(horizontal = PiSpacing.inline, vertical = PiSpacing.tiny),
+                        style = PiTheme.text.meta,
+                        color = if (persistAsDefault) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 "可选等级由当前模型决定。",
@@ -281,11 +348,16 @@ fun ThinkingPickerSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(PiShapes.card)
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                            )
                             .clickable {
-                                onPick(level)
+                                onPick(level, persistAsDefault)
                                 onDismiss()
                             }
-                            .padding(vertical = 12.dp),
+                            .padding(horizontal = PiSpacing.small, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Surface(

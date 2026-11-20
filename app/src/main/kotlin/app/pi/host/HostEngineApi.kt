@@ -133,7 +133,12 @@ class HostEngineApi(private val commands: HostCommands) {
         return required("cycle_model", PiResponses.cycleModel(result))
     }
 
-    suspend fun setThinkingLevel(level: String) { write("thinking.set", obj { put("level", JsonPrimitive(level)) }) }
+    suspend fun setThinkingLevel(level: String, persist: Boolean = false) {
+        write("thinking.set", obj {
+            put("level", JsonPrimitive(level))
+            if (persist) put("persist", JsonPrimitive(true))
+        })
+    }
 
     suspend fun cycleThinkingLevel(): PiResponses.CycleThinkingResult? {
         val level = write("thinking.cycle").data["level"]

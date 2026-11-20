@@ -52,10 +52,9 @@ fun SettingsHome(
     val q = query.trim()
     val hits = remember(q) {
         if (q.isEmpty()) emptyList() else PiSettingsCatalog.settings.filter {
-            it.group != "security" && (
-                it.title.contains(q, ignoreCase = true) || it.description.contains(q, ignoreCase = true) ||
-                    it.key.contains(q, ignoreCase = true)
-                )
+            it.title.contains(q, ignoreCase = true) ||
+                it.description.contains(q, ignoreCase = true) ||
+                it.key.contains(q, ignoreCase = true)
         }.take(40)
     }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {

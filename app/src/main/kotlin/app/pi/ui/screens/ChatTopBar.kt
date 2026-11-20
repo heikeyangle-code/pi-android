@@ -147,19 +147,8 @@ internal fun ChatTopBar(
                     contentDescription = "工作区",
                     icon = Icons.Filled.FolderOpen,
                 )
-                // There is **no reload icon** any more. pi's `/reload` has no RPC
-                // channel at all — it rebinds pi's runtime *inside* pi
-                // (`agent-session.ts` `reload()`) and `rpc-types.ts` carries no
-                // `reload` command — so this button could only ever answer with
-                // 「只在 pi 原版 TUI 里有」, promising a reload it cannot perform.
-                // 设置 → 运行时与诊断 的「重启引擎」 is a different action (it
-                // restarts the process, which re-reads the settings pi caches at
-                // startup) and is **not** a replacement for this button, so
-                // nothing was moved there to take its place.
-                // The two ⋮s of this screen — here and the composer's — draw the
-                // same v2 container (`PiMenu`), not Material's menu: M3's shadow,
-                // its 4 dp corner and its `primary` ripple are all three things
-                // `04 §2.3` and v2 refuse. See `PiMenu`'s KDoc.
+                // 顶栏右侧保留高频入口；「重新加载扩展与资源」（SDK `session.reload`）收在 ⋮ 菜单中。
+                // ⋮ 菜单统一使用 `PiMenu` 外壳，保持与输入框菜单一致。
                 Box {
                     ChatTopBarAction(
                         onClick = { overflow = true },
