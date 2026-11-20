@@ -482,26 +482,33 @@ internal fun ExtensionChromeBanner(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .then(if (expanded) Modifier.heightIn(max = EXPANDED_MAX_HEIGHT).verticalScroll(rememberScrollState()) else Modifier),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(modifier = if (expanded && wide) Modifier.horizontalScroll(rememberScrollState()) else Modifier) {
-                shown.forEach { line -> PanelLine(line, wrap = expanded && !isPreformatted(line)) }
-            }
-            if (canExpand) {
-                Row(
-                    modifier = Modifier.padding(top = 3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (expanded) Modifier.heightIn(max = EXPANDED_MAX_HEIGHT).verticalScroll(rememberScrollState()) else Modifier),
+            ) {
+                Column(modifier = if (expanded && wide) Modifier.horizontalScroll(rememberScrollState()) else Modifier) {
+                    shown.forEach { line -> PanelLine(line, wrap = expanded && !isPreformatted(line)) }
                 }
             }
-        }
-        if (onInteract != null) {
-            InteractPill(onClick = onInteract)
+            if (canExpand || onInteract != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (canExpand) {
+                        ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
+                    }
+                    if (onInteract != null) {
+                        InteractPill(onClick = onInteract)
+                    }
+                }
+            }
         }
     }
 }
@@ -532,13 +539,14 @@ internal fun ExtensionPanelCard(
                     else -> Modifier
                 },
             ),
-        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.45f),
+        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.28f) else null,
         padding = BlockCardRowPadding,
         shape = RoundedCornerShape(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (caption != null || canExpand || onInteract != null) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
                 ) {

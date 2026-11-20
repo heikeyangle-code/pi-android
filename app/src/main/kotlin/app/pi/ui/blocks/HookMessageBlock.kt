@@ -1,9 +1,8 @@
 package app.pi.ui.blocks
 
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -48,7 +47,7 @@ fun HookMessageBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.customMessageBg,
-            borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            borderColor = null,
         ) {
             // F28: the card's content is the target (pi's rule — see
             // `ToggleContent`); `enabled` keeps a short message from toggling into
@@ -58,13 +57,17 @@ fun HookMessageBlock(
                 onToggle = { expanded = !expanded },
                 enabled = collapsible,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CardChip(
-                        text = item.customType.ifEmpty { "extension" },
-                        color = palette.customMessageLabel,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Spacer(Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        CardChip(
+                            text = item.customType.ifEmpty { "extension" },
+                            color = palette.customMessageLabel,
+                        )
+                    }
                     if (collapsible) ExpandLabel(expanded)
                 }
                 if (renderedLines != null) {

@@ -210,7 +210,7 @@ fun ToolCallBlock(
                     BlockCard(
                         color = palette.cardBg,
                         modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-                        borderColor = palette.borderMuted.copy(alpha = 0.35f),
+                        borderColor = null,
                         padding = ToolCardRowPadding,
                         shape = TOOL_CARD_SHAPE,
                     ) {

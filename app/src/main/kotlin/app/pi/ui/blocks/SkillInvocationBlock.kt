@@ -60,14 +60,17 @@ fun SkillInvocationBlock(
             // `#ede7f6` vs `#ffffff` (`interactive/theme/dark.json:20,88`,
             // `light.json:19,87`).
             color = palette.customMessageBg,
-            borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            borderColor = null,
         ) {
             // F28: pi's only toggle is the content region (see `ToggleContent`);
             // the header row is not a separate hit target.
             ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(PiSpacing.inline),
+                ) {
                     CardChip(text = "技能", color = palette.customMessageLabel)
-                    Spacer(Modifier.width(PiSpacing.inline))
                     Text(
                         text = "/skill:" + item.skillName.ifEmpty { "未知技能" },
                         modifier = Modifier.weight(1f),

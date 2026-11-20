@@ -120,54 +120,71 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = PiSpacing.inline),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
-            val invocation = command.invocation
-            val slash = invocation.startsWith("/")
-            Text(
-                text = buildAnnotatedString {
-                    if (slash) {
-                        withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))) { append("/") }
-                    }
-                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                        append(if (slash) invocation.drop(1) else invocation)
-                    }
-                },
-                style = PiTheme.text.mono,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f, fill = false),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            command.argumentHint?.let { hint ->
+        // 单 weight 左侧组合 + 右端来源胶囊：彻底消除旧版双 weight(1f) 导致的命令名被硬砍半宽、
+        // 参数提示与命令基线错位、长参数把来源标签挤歪的问题。
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val invocation = command.invocation
+                val slash = invocation.startsWith("/")
                 Text(
-                    hint,
-                    modifier = Modifier
-                        .clip(PiShapes.badge)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                        .padding(horizontal = PiSpacing.gutter, vertical = PiSpacing.hairline),
-                    style = PiTheme.text.monoSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = buildAnnotatedString {
+                        if (slash) {
+                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f))) { append("/") }
+                        }
+                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                            append(if (slash) invocation.drop(1) else invocation)
+                        }
+                    },
+                    style = PiTheme.text.mono,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                command.argumentHint?.let { hint ->
+                    Text(
+                        text = hint,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clip(PiShapes.badge)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = PiTheme.text.monoSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-            Spacer(Modifier.weight(1f))
             command.sourceTag?.let { tag ->
                 Text(
-                    sourceTagLabelOf(tag),
+                    text = sourceTagLabelOf(tag),
+                    modifier = Modifier
+                        .clip(PiShapes.badge)
+                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.tertiary,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false,
                 )
             }
         }
         val subtitle = command.description.orEmpty()
         if (subtitle.isNotEmpty()) {
             Text(
-                subtitle,
-                style = PiTheme.text.prose,
+                text = subtitle,
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,

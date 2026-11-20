@@ -78,15 +78,14 @@ fun CompactionBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.customMessageBg,
-            // The same 35 % `customMessageLabel` frame the three sibling cards carry
-            // (`ui/blocks/BranchSummaryBlock.kt`, `SkillInvocationBlock.kt`, `HookMessageBlock.kt`).
-            // pi's own box declares no border (`super(1, 1, …)` sets a background only), so this
-            // is the family's convention in this app — applied for the same reason the other
-            // three have it, so the four cards are one component.
-            borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            borderColor = null,
             modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(PiSpacing.inline),
+            ) {
                 // 失败用错误色、中止用警告色：状态一眼看出，不必读字。
                 CardChip(
                     text = label,

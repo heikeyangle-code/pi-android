@@ -358,7 +358,7 @@ internal fun ToolHeader(
     }
     val chevronAngle = animateFloatAsState(if (expanded) 90f else 0f, tween(160), label = "tool-chevron")
 
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
                 .size(18.dp)
@@ -637,7 +637,9 @@ internal fun ToolCard(
             // LazyColumn 内不挂 animateContentSize：运行中流式输出与收起锚点（anchor.onCollapse）
             // 都不再被 160ms 高度动画拉扯，展开/收起大工具输出零掉帧、零回跳。
             modifier = Modifier.toggleContent(expanded, onToggle),
-            borderColor = stateAccent.copy(alpha = if (state == ToolState.Running) 0.36f else 0.22f),
+            // 已结束的工具卡去掉彩色描边，纯靠语义色底 + 左侧状态圆点自然分层（干净克制、对齐官方 Pi）；
+            // 仅在运行中保留一层极轻细边突出活跃态，结束后自动消隐。
+            borderColor = if (state == ToolState.Running) stateAccent.copy(alpha = 0.28f) else null,
             padding = ToolCardRowPadding,
             shape = TOOL_CARD_SHAPE,
             content = content,

@@ -129,11 +129,14 @@ fun DiffBlock(
                 BlockCard(
                     color = palette.toolPendingBg,
                     modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-                    borderColor = palette.borderMuted.copy(alpha = 0.45f),
+                    borderColor = null,
                     padding = ToolCardRowPadding,
                     shape = TOOL_CARD_SHAPE,
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
                             text = item.toolName.ifEmpty { "diff" },
                             style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),

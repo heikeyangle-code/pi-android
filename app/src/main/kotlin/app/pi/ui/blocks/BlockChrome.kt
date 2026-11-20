@@ -403,18 +403,18 @@ internal fun ExpandLabel(
     color: Color? = null,
 ) {
     val tint = color ?: PiTheme.palette.muted
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         Text(
             text = if (expanded) collapseText else expandText,
             style = MaterialTheme.typography.labelMedium,
             color = tint,
+            maxLines = 1,
+            softWrap = false,
         )
-        Spacer(Modifier.width(PiSpacing.tiny))
-        // v2 draws every `展开 / 收起` chevron the same way round: **down while
-        // expanded, right while collapsed** (`direction-b-v2.html:911`, the `ThinkRow`;
-        // the same pair in this half's `ToolBlockChrome.kt` header and `DiffBlock.kt`
-        // header). This used to be up-when-expanded / down-when-collapsed, i.e. the
-        // collapsed state showed a downward chevron that pointed at nothing.
         Icon(
             imageVector = if (expanded) {
                 Icons.Filled.KeyboardArrowDown
@@ -422,11 +422,6 @@ internal fun ExpandLabel(
                 Icons.Filled.KeyboardArrowRight
             },
             contentDescription = null,
-            // 13, not 14: v2 sizes *this* chevron — the one on the `展开 / 收起` label — at
-            // `s={13}` on the thinking row (`direction-b-v2.html:911`) and on the custom card's
-            // head (`:951`). The 14 dp in `06 §2` is the **tool card's** title-row chevron, which
-            // is a separate inline `Icon` (`ToolBlockChrome.kt`'s `ToolHeader`, `DiffBlock.kt`'s
-            // header) and does not go through this composable.
             modifier = Modifier.size(EXPAND_CHEVRON_SIZE),
             tint = tint,
         )

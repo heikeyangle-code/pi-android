@@ -127,7 +127,6 @@ fun UserMessageBlock(
             // `borderRadius:12`.
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 5.dp, bottomStart = 18.dp),
             color = palette.userMessageBg,
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.22f)),
         ) {
             Column(
                 // The board's `padding:12`, both axes.

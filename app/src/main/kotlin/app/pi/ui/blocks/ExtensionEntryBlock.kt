@@ -35,7 +35,7 @@ fun ExtensionEntryBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.cardBg,
-            borderColor = palette.borderMuted.copy(alpha = 0.35f),
+            borderColor = null,
         ) {
             ToggleContent(
                 expanded = expanded,
