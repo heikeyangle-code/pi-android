@@ -696,6 +696,7 @@ async function withFeedback(
 interface ScreenParams {
 	action?: string;
 	filter?: string;
+	diff?: boolean;
 	maxNodes?: number;
 	index?: number;
 	x?: number;
@@ -738,10 +739,15 @@ function normalizedKey(key: string): string {
 }
 
 async function screenLook(p: ScreenParams): Promise<ToolOutcome> {
-	const data = await bridgePost<DumpData>("/app/ui/dump", { filter: p.filter, maxNodes: p.maxNodes });
+	const data = await bridgePost<DumpData>("/app/ui/dump", {
+		filter: p.filter,
+		maxNodes: p.maxNodes,
+		diff: p.diff === true,
+	});
+	const diffTag = data.diff ? ` · diff(+${data.added ?? 0}/~${data.changed ?? 0}/-${data.removed ?? 0})` : "";
 	const header =
 		`[look] ${data.packageName} · ${data.screen.width}×${data.screen.height} · ` +
-		`控件 ${data.nodeCount}/${data.totalNodeCount}${data.truncated ? "（已按上限截断）" : ""}`;
+		`控件 ${data.nodeCount}/${data.totalNodeCount}${diffTag}${data.truncated ? "（已按上限截断）" : ""}`;
 	const body = data.text.length > 0 ? data.text : "（没有可读控件：界面可能是空白，或无障碍服务被限制）";
 	return textResult(`${header}\n\n${truncateForModel(body, "屏幕控件树")}`, {
 		packageName: data.packageName,
@@ -1603,6 +1609,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			action: ScreenAction,
 			steps: Type.Optional(Type.Array(StepSpec, { description: "batch <=8 steps" })),
 			filter: Type.Optional(Type.String({ description: "look: filter text" })),
+			diff: Type.Optional(Type.Boolean({ description: "look: diff only" })),
 			maxNodes: Type.Optional(Type.Number({ description: "look: node cap" })),
 			index: Type.Optional(Type.Number({ description: "node index" })),
 			x: Type.Optional(Type.Number({ description: "x px" })),

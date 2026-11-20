@@ -84,6 +84,7 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateChip
 import app.pi.ui.theme.StateTone
+import app.pi.ui.theme.contrastOn
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -578,37 +579,36 @@ private fun ViewerTopBar(
                     maxLines = 1,
                 )
 
-                editing -> Box(
-                    // 点击区拉到整条顶栏高（48）× 至少 56 宽；字本身不变大。
-                    Modifier
-                        .height(PiSpacing.topBarHeight)
-                        .widthIn(min = 56.dp)
-                        .clickable(enabled = dirty, onClick = onSave),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "保存",
-                        style = PiTheme.text.prose.copy(
-                            fontWeight = if (dirty) FontWeight.SemiBold else FontWeight.Normal,
-                        ),
-                        color = if (dirty) PiTheme.palette.accent else PiTheme.palette.muted,
-                        maxLines = 1,
-                    )
+                editing -> {
+                    val palette = PiTheme.palette
+                    Surface(
+                        onClick = onSave,
+                        enabled = dirty,
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (dirty) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Text(
+                            "保存",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (dirty) palette.contrastOn(palette.accent) else palette.muted,
+                            maxLines = 1,
+                        )
+                    }
                 }
 
                 else -> {
                     if (canEdit) {
-                        Box(
-                            Modifier
-                                .height(PiSpacing.topBarHeight)
-                                .widthIn(min = 56.dp)
-                                .clickable(onClick = onEdit),
-                            contentAlignment = Alignment.Center,
+                        Surface(
+                            onClick = onEdit,
+                            shape = RoundedCornerShape(999.dp),
+                            color = PiTheme.palette.accent.copy(alpha = 0.14f),
                         ) {
                             Text(
                                 "编辑",
-                                style = PiTheme.text.prose,
-                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                color = PiTheme.palette.accent,
                                 maxLines = 1,
                             )
                         }

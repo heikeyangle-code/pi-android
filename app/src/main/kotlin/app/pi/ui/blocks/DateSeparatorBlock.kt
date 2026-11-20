@@ -1,23 +1,24 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.DateSeparator
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
-/**
- * `date-separator` (docs/pi-android-ui-spec.md §7.4): a centred hairline with the
- * day label. The reducer inserts one whenever the stream crosses a day boundary,
- * so timestamps do not have to repeat on every block.
- */
+/** 日期分隔条：柔和细线夹着一枚微描边居中日期胶囊。 */
 @Composable
 fun DateSeparatorBlock(
     item: DateSeparator,
@@ -27,30 +28,31 @@ fun DateSeparatorBlock(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            // F11 (`docs/rendering-review.md`): the page margin is the
-            // `LazyColumn`'s `contentPadding`, not the block's; this row used to
-            // add another `horizontal = PiSpacing.pageHorizontal` on top of it, which is
-            // what left this kind at 32 dp while every `BlockColumn` block moved
-            // to 16 dp. Vertical rhythm stays here: this block is outside the
-            // list's block spacing by design.
-            .padding(vertical = PiSpacing.unit / 2),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HorizontalDivider(
             modifier = Modifier.weight(1f),
-            thickness = PiSpacing.hairline,
-            color = palette.borderMuted.copy(alpha = 0.5f),
+            thickness = 0.5.dp,
+            color = palette.borderMuted.copy(alpha = 0.45f),
         )
-        Text(
-            text = item.label.ifEmpty { formatClock(item.ts) },
-            modifier = Modifier.padding(horizontal = PiSpacing.inner),
-            style = PiTheme.text.meta,
-            color = palette.metaOnCanvas,
-        )
+        Surface(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            shape = RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.55f)),
+        ) {
+            Text(
+                text = item.label.ifEmpty { formatClock(item.ts) },
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = palette.metaOnCanvas,
+            )
+        }
         HorizontalDivider(
             modifier = Modifier.weight(1f),
-            thickness = PiSpacing.hairline,
-            color = palette.borderMuted.copy(alpha = 0.5f),
+            thickness = 0.5.dp,
+            color = palette.borderMuted.copy(alpha = 0.45f),
         )
     }
 }

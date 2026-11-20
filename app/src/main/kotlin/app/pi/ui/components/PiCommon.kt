@@ -375,12 +375,12 @@ data class PiMenuItem(
 /** Where a [PiMenu] opens relative to its anchor. */
 enum class PiMenuPlacement { Above, Below }
 
-/** v2's menu container: 240 wide, radius 10, 4 dp of vertical padding, 40 dp rows. */
-private val PI_MENU_WIDTH = 240.dp
-private val PI_MENU_RADIUS = 10.dp
-private val PI_MENU_VERTICAL_PADDING = 4.dp
-private val PI_MENU_ROW_HEIGHT = 40.dp
-private val PI_MENU_ROW_PADDING = 12.dp
+/** 现代菜单容器：圆角 14，清晰留白。 */
+private val PI_MENU_WIDTH = 244.dp
+private val PI_MENU_RADIUS = 14.dp
+private val PI_MENU_VERTICAL_PADDING = 6.dp
+private val PI_MENU_ROW_HEIGHT = 42.dp
+private val PI_MENU_ROW_PADDING = 14.dp
 private val PI_MENU_SYMBOL_WIDTH = 24.dp
 private val PI_MENU_SYMBOL_GAP = 10.dp
 private val PI_MENU_DIVIDER_HEIGHT = 1.dp
@@ -528,6 +528,7 @@ fun PiEmptyState(
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,
 ) {
+    val palette = PiTheme.palette
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -535,19 +536,21 @@ fun PiEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        // A **bare** glyph, 30 dp and `muted`, exactly as the board draws it:
-        // `EmptyState` (`direction-b-v2.html:821-823`) puts the screen's own icon in a
-        // plain `inline-flex` coloured `--muted`. The app used to wrap it in a 68 dp
-        // `surfaceContainerHigh` disc, which no v2 empty state has — see phone21/22 (the
-        // session list's two) and phone28 (the tree's), all three a bare glyph over the
-        // title.
-        Icon(
-            icon,
-            contentDescription = null,
-            modifier = Modifier.size(EMPTY_STATE_ICON),
-            tint = PiTheme.palette.muted,
-        )
-        Spacer(Modifier.height(EMPTY_STATE_TITLE_GAP))
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(palette.accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(28.dp),
+                tint = palette.accent,
+            )
+        }
+        Spacer(Modifier.height(14.dp))
         Text(
             title,
             style = MaterialTheme.typography.titleMedium,
@@ -560,7 +563,7 @@ fun PiEmptyState(
             modifier = Modifier.fillMaxWidth(),
             style = MaterialTheme.typography.bodyMedium.copy(lineHeight = EMPTY_STATE_BODY_LEADING),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Start,
+            textAlign = TextAlign.Center,
         )
         if (action != null) {
             Spacer(Modifier.height(PiSpacing.unit))

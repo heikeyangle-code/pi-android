@@ -1,5 +1,7 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -58,16 +60,8 @@ fun SkillInvocationBlock(
             // `#ede7f6` vs `#ffffff` (`interactive/theme/dark.json:20,88`,
             // `light.json:19,87`).
             color = palette.customMessageBg,
-            // pi draws this box with **no frame at all** — `super(1, 1, …)` at
-            // `skill-invocation-message.ts:17` sets a background, not a border — so
-            // the card border is this app's own addition, the same kind of "已定妥协"
-            // the other block cards carry. The token is `customMessageLabel` at 35 %
-            // because that is what the two blocks built on the same `customMessageBg`
-            // surface use (`ui/blocks/HookMessageBlock.kt:41`,
-            // `ui/blocks/BranchSummaryBlock.kt:44`); this card used `borderMuted`
-            // before, which left three sibling blocks with three different frames for
-            // no reason. A consistency choice inside this app, not a pi value.
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            modifier = Modifier.animateContentSize(animationSpec = tween(180)),
         ) {
             // F28: pi's only toggle is the content region (see `ToggleContent`);
             // the header row is not a separate hit target.

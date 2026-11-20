@@ -1,6 +1,7 @@
 package app.pi.ui.terminal
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -23,8 +24,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.connectbot.terminal.VTermKey
@@ -205,14 +210,14 @@ fun TerminalKeyBar(
         modifier
             .fillMaxWidth()
             .background(palette.background.copy(alpha = 0.96f))
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         rows.forEachIndexed { index, row ->
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 row.forEach { key ->
                     KeyChip(
@@ -252,20 +257,26 @@ private fun KeyChip(
     onKey: (TerminalBarKey) -> Unit,
 ) {
     var popupOpen by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(9.dp)
 
     Box {
         Box(
             Modifier
-                .size(width = 40.dp, height = 34.dp)
-                .background(
-                    if (armed) palette.chipArmed else palette.chip,
-                    RoundedCornerShape(6.dp),
+                .size(width = 44.dp, height = 36.dp)
+                .clip(shape)
+                .background(if (armed) palette.chipArmed else palette.chip, shape)
+                .border(
+                    width = if (armed) 1.dp else 0.5.dp,
+                    color = palette.foreground.copy(alpha = if (armed) 0.45f else 0.14f),
+                    shape = shape,
                 )
-                // A plain tap sends the key; a long press opens Termux's popup,
-                // which is how one chip carries two characters.
                 .pointerInput(key, onKey) {
                     detectTapGestures(
-                        onTap = { onKey(key) },
+                        onTap = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onKey(key)
+                        },
                         onLongPress = { if (key.popup != null) popupOpen = true },
                     )
                 },
@@ -275,6 +286,7 @@ private fun KeyChip(
                 text = key.label,
                 color = palette.foreground,
                 fontFamily = FontFamily.Monospace,
+                fontWeight = if (armed) FontWeight.Bold else FontWeight.Medium,
                 fontSize = 12.sp,
             )
         }
@@ -294,24 +306,32 @@ private fun KeyChip(
     }
 }
 
-/** A labelled action that is not a terminal key (currently only `PASTE`). */
+/** A labelled action that is not a terminal key (currently only `PASTE` / `重开`). */
 @Composable
 private fun ActionChip(
     label: String,
     palette: TerminalPalette,
     onClick: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(9.dp)
     Box(
         Modifier
-            .size(width = 62.dp, height = 34.dp)
-            .background(palette.chip, RoundedCornerShape(6.dp))
-            .clickable(interactionSource = null, indication = null, onClick = onClick),
+            .size(width = 64.dp, height = 36.dp)
+            .clip(shape)
+            .background(palette.chip, shape)
+            .border(0.5.dp, palette.foreground.copy(alpha = 0.16f), shape)
+            .clickable(interactionSource = null, indication = null) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             color = palette.foreground,
             fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
             fontSize = 11.sp,
         )
     }

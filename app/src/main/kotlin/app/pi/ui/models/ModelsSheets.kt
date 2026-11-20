@@ -69,7 +69,7 @@ internal fun ModelPickerSheet(
     PiSheet(onDismiss = onDismiss, fullHeight = true) {
         Text(
             "选择模型",
-            style = PiTheme.text.prose,
+            style = app.pi.ui.components.PiType.title,
             color = PiTheme.palette.text,
             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
         )
@@ -137,18 +137,32 @@ internal fun UseBar(
     onUse: (UseScope) -> Unit,
     onCancel: () -> Unit,
 ) {
-    Column(
-        Modifier
+    Surface(
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 8.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, PiTheme.palette.accent.copy(alpha = 0.35f)),
     ) {
-        Text(title, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1)
-        error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            PrimaryAction(UseScope.Session.label, enabled = !working, onClick = { onUse(UseScope.Session) })
-            PiSettingsChip(text = UseScope.Default.label, enabled = !working, onClick = { onUse(UseScope.Default) })
-            PiSettingsChip(text = "取消", onClick = onCancel)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                title,
+                style = PiTheme.text.prose.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                color = PiTheme.palette.text,
+                maxLines = 1,
+            )
+            error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                PrimaryAction(UseScope.Session.label, enabled = !working, onClick = { onUse(UseScope.Session) })
+                PiSettingsChip(text = UseScope.Default.label, enabled = !working, onClick = { onUse(UseScope.Default) })
+                PiSettingsChip(text = "取消", onClick = onCancel)
+            }
         }
     }
 }

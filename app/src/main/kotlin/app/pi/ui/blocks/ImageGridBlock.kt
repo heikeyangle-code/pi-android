@@ -2,6 +2,7 @@ package app.pi.ui.blocks
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -334,18 +335,22 @@ private fun ImageCell(
                     }
                 }
                 if (overflow > 0) {
-                    Text(
-                        text = "+$overflow",
-                        // The overflow count is a reading, and it is machine language: v2 draws it
-                        // `mono t14` (`direction-b-v2.html:855`). It used to take M3's
-                        // `titleMedium` — 17 sp of the *UI* face, i.e. the largest step on the
-                        // screen for a "+1", two families and four sizes away from the board.
-                        // The board's step is stated inline because `PiTextStyles.mono` is the
-                        // app's 13 sp machine body and this card's tile label is the one place
-                        // v2 draws the count at 14.
-                        style = PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                        color = palette.text,
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.54f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "+$overflow",
+                            style = PiTheme.text.mono.copy(
+                                fontSize = 18.sp,
+                                lineHeight = 22.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            ),
+                            color = androidx.compose.ui.graphics.Color(0xFFF7F8FA),
+                        )
+                    }
                 }
             }
         }

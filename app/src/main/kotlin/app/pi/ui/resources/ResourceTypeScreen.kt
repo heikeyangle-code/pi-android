@@ -1,15 +1,19 @@
 package app.pi.ui.resources
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,7 +24,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.pi.packages.PiLoadedResources
 import app.pi.packages.PiResourceCatalog
 import app.pi.packages.PiResourceCatalog.Layer
@@ -200,16 +207,28 @@ private fun ResourceRowView(
     onOpen: () -> Unit,
     onToggle: () -> Unit,
 ) {
+    val palette = PiTheme.palette
+    val dotColor = when {
+        !row.effective -> palette.dim.copy(alpha = 0.45f)
+        row.info.loaded -> palette.success
+        else -> palette.warning
+    }
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = ModelsCardPadding, vertical = PiSpacing.inline),
+        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = ModelsCardPadding, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline + PiSpacing.small),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(dotColor),
+        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny)) {
             Text(
                 row.item.name,
-                style = PiTheme.text.prose,
-                color = if (row.effective) PiTheme.palette.text else PiTheme.palette.muted,
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                color = if (row.effective) palette.text else palette.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

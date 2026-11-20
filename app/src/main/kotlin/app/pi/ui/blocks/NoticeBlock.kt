@@ -1,52 +1,35 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import app.pi.rpc.Notice
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiSpacing
 
-/**
- * Single-line status rows (auto-retry, extension failures) and the fallback for
- * an item kind this build does not know. Not one of pi's 14 content blocks —
- * these are App chrome, so they stay deliberately quiet.
- *
- * The prefix is the row's **symbol channel**, and it carries the tone like every
- * other state in the app: `·` for an ordinary note, `!` for a warning, `✗` for an
- * error (`05 §3.3`; the same three glyphs `06 §4` gives the Snackbar, which is the
- * same shape on a different surface). The words are the notice's own text and the
- * colour is the third channel (`muted` / `warning` / `error`), so a greyscale
- * screenshot still separates the three. The clock stays in the metadata colour
- * rather than the tone: it is a reading, not a state.
- *
- * ## What this block deliberately no longer draws
- *
- * Until 2026-09-24 a `custom` entry (an extension's `ctx.ui.appendEntry(customType,
- * data)`) also produced a key/value table under the line. That rendering was the
- * App's own invention and the user removed it — the payloads (the web-search
- * extension's fetch cache, for one) read as noise under every tool card. The whole
- * row is gone now: `Transcript`'s `custom` arm answers `TranscriptChange.None`, and
- * this block draws one line again, which is all it ever owed. The single-line
- * `Notice` itself stays: auto-retry and extension failures still use it.
- */
+/** 单行状态提示（自动重试、扩展提示、系统告警）：轻量微色带胶囊。 */
 @Composable
 fun NoticeBlock(
     item: Notice,
     modifier: Modifier = Modifier,
-    /** `app.appearance.showTimestamps`: off hides the trailing clock, and off is the default. */
     showTimestamps: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    // pi's own informational status line is `dim`, and only its warning branch leaves that
-    // token: `const color = status.type === "warning" ? "warning" : "dim";`
-    // (`modes/interactive/interactive-mode.js:2866-2867`, `showManagedToolStatus`). The three
-    // tones were `muted` / `warning` / `error`; `dim` is the one pi states for the Info case,
-    // and the palette keeps the two tokens distinct for a hand-written theme.
     val color = when (item.tone) {
         Notice.Tone.Info -> palette.dim
         Notice.Tone.Warning -> palette.warning
@@ -57,30 +40,60 @@ fun NoticeBlock(
         Notice.Tone.Warning -> "!"
         Notice.Tone.Error -> "✗"
     }
+    val bg = when (item.tone) {
+        Notice.Tone.Info -> Color.Transparent
+        Notice.Tone.Warning -> palette.warning.copy(alpha = 0.08f)
+        Notice.Tone.Error -> palette.error.copy(alpha = 0.09f)
+    }
+    val border = when (item.tone) {
+        Notice.Tone.Info -> null
+        Notice.Tone.Warning -> BorderStroke(0.5.dp, palette.warning.copy(alpha = 0.28f))
+        Notice.Tone.Error -> BorderStroke(0.5.dp, palette.error.copy(alpha = 0.32f))
+    }
+
     BlockColumn(modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = glyph,
-                style = PiTheme.text.mono,
-                color = color,
-            )
-            Spacer(Modifier.width(PiSpacing.inline))
-            Text(
-                text = item.text.ifEmpty { "（无内容）" },
-                modifier = Modifier.weight(1f),
-                style = PiTheme.text.meta,
-                color = color,
-            )
-            Spacer(Modifier.width(PiSpacing.inline))
-            if (showTimestamps) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            color = bg,
+            border = border,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = if (item.tone == Notice.Tone.Info) 2.dp else 10.dp,
+                        vertical = if (item.tone == Notice.Tone.Info) 2.dp else 7.dp,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(color.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = glyph,
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                        color = color,
+                    )
+                }
                 Text(
-                    text = formatClock(item.ts),
-                    // 时钟是机器读数，按规则 #7 用等宽 —— 与用户气泡右下角那一次
-                    //（`UserMessageBlock` 的 `monoSmall`）同一个字面。此前这里是 `meta`
-                    //（系统字），于是**同一份 `formatClock` 输出在两个位置是两种字体**。
-                    style = PiTheme.text.monoSmall,
-                    color = palette.metaOnCanvas,
+                    text = item.text.ifEmpty { "（无内容）" },
+                    modifier = Modifier.weight(1f),
+                    style = PiTheme.text.meta,
+                    color = color,
                 )
+                if (showTimestamps) {
+                    Text(
+                        text = formatClock(item.ts),
+                        style = PiTheme.text.monoSmall,
+                        color = palette.metaOnCanvas,
+                    )
+                }
             }
         }
     }

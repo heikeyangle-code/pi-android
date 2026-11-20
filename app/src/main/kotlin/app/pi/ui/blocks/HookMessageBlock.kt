@@ -1,5 +1,7 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,6 +49,7 @@ fun HookMessageBlock(
         BlockCard(
             color = palette.customMessageBg,
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            modifier = Modifier.animateContentSize(animationSpec = tween(180)),
         ) {
             // F28: the card's content is the target (pi's rule — see
             // `ToggleContent`); `enabled` keeps a short message from toggling into

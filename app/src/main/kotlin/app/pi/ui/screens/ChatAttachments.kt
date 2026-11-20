@@ -315,7 +315,7 @@ internal sealed interface WorkspaceCopy {
  * staged photo is up to pi's 2000 px ceiling and this paints a 48 dp square. The note
  * inside has the arithmetic and the shared decode gate.
  */
-private val ATTACHMENT_THUMB_SIZE = 48.dp
+private val ATTACHMENT_THUMB_SIZE = 56.dp
 
 
 @Composable
@@ -324,53 +324,62 @@ internal fun AttachmentThumb(
     index: Int,
     onRemove: () -> Unit,
 ) {
-    // The decode is bounded by the box it is drawn in, the same way the transcript's
-    // cells bound theirs (`decodePiImage`'s `targetWidth`/`targetHeight`). Without it the
-    // default is "the natural size": a staged photo is up to pi's 2000 px ceiling, i.e.
-    // ~16 MB of ARGB per attachment held to paint a 48 dp square, and a message may carry
-    // seven of them. `decodePiImage` keeps the result within 2× of this box on each axis,
-    // so the thumbnail is still sampled above its drawn size at any density.
     val thumbPx = with(LocalDensity.current) { ATTACHMENT_THUMB_SIZE.roundToPx() }
     val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, image.base64, thumbPx) {
         value = withContext(Dispatchers.IO) {
-            // The same gate the transcript's decodes go through
-            // (`MAX_CONCURRENT_IMAGE_DECODES`): staging five photos must not start five
-            // simultaneous full-res codec runs on the frame's behalf.
             piImageDecodeGate.withPermit {
-                // …and the same process-wide bitmap cache the transcript's cells use
-                // (`PiImageCache`, keyed by payload + box), so re-staging the same picture — or
-                // leaving the composer and coming back — reuses the decode instead of running
-                // the codec again. The permit is held for the lookup too; a hit is a reference
-                // compare or one `memcmp` over the payload and costs no codec work, and the
-                // 32 MiB bound (payloads charged) lives in that object.
                 PiImageCache.readThrough(image.base64, thumbPx, thumbPx) {
                     decodePiImage(image.base64, thumbPx, thumbPx)
                 }
             }
         }
     }
-    Surface(
+    val palette = PiTheme.palette
+    Box(
         modifier = Modifier
-            .padding(end = 6.dp)
-            .size(ATTACHMENT_THUMB_SIZE)
-            .clickable(onClickLabel = "移除第 ${index + 1} 张图片", onClick = onRemove),
-        shape = PiShapes.cardInner,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            .padding(end = 8.dp, top = 4.dp)
+            .size(ATTACHMENT_THUMB_SIZE + 6.dp),
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            val decoded = bitmap
-            if (decoded != null) {
-                Image(
-                    bitmap = decoded.asImageBitmap(),
-                    contentDescription = "待发送的第 ${index + 1} 张图片，点击移除",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .size(ATTACHMENT_THUMB_SIZE)
+                .clickable(onClickLabel = "移除第 ${index + 1} 张图片", onClick = onRemove),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                val decoded = bitmap
+                if (decoded != null) {
+                    Image(
+                        bitmap = decoded.asImageBitmap(),
+                        contentDescription = "待发送的第 ${index + 1} 张图片，点击移除",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        image.mimeType.substringAfter('/').ifEmpty { "图片" },
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Surface(
+            onClick = onRemove,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(20.dp),
+            shape = androidx.compose.foundation.shape.CircleShape,
+            color = palette.error,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
                 Text(
-                    image.mimeType.substringAfter('/').ifEmpty { "图片" },
+                    text = "×",
                     style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onError,
                 )
             }
         }

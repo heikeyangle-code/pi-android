@@ -154,7 +154,7 @@ internal fun PiTreeToolbar(
     ) {
         Row(
             modifier = Modifier
-                .background(palette.mdCodeBlockBorder.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                .background(palette.mdCodeBlockBorder.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
                 .padding(2.dp),
         ) {
             PiTreeModeLabel(

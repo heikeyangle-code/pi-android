@@ -476,6 +476,53 @@ fun DeviceCapabilityScreen(
                     }
                 }
             }
+
+            // 6. 权限与零上下文指引卡（可折叠）
+            item(key = "guide") {
+                var guideOpen by remember { mutableStateOf(false) }
+                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                    DeviceSectionLabel("权限与架构说明")
+                    PiSettingsCard {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { guideOpen = !guideOpen }
+                                .padding(
+                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    "免 ADB 授权流程与 0 Token 机制",
+                                    style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    if (guideOpen) "收起" else "展开",
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                    color = palette.accent,
+                                )
+                            }
+                            if (guideOpen) {
+                                Text(
+                                    "• 屏幕自动化：仅需开启系统无障碍服务，无需电脑或 ADB。\n" +
+                                        "• 系统与文件：通过 Android SAF 授权指定目录读写，无需 ADB。\n" +
+                                        "• 设备 Shell：默认以沙箱身份运行；安装 Shizuku 并通过本机无线调试激活后，即可免电脑提权至 ADB 级（uid=2000）。\n" +
+                                        "• 零上下文占用：每轮对话前实时同步此处开关，全部关闭后自动摘除全部设备工具与提示词，严格 0 Token 占用，无需重启引擎。",
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

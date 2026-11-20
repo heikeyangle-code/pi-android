@@ -1,14 +1,21 @@
 package app.pi.ui.resources
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,7 +27,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.pi.host.ExtensionsAccess
 import app.pi.host.HostException
 import app.pi.host.HostExtensions
@@ -244,8 +254,34 @@ internal fun PackagesScreen(
                 val view = if (info != null) sourceView(p.source, info.kind, info.name, info.version, info.pinned) else sourceView(p.source, "unknown", null, null, false)
                 val update = updates?.firstOrNull { it.source == p.source && it.scope == p.scope }
                 ModelsCard {
-                    Column(Modifier.fillMaxWidth().padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                        Text(p.source, style = PiTheme.text.mono, color = PiTheme.palette.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.fillMaxWidth().padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(PiTheme.palette.accent.copy(alpha = 0.13f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Inventory2,
+                                    contentDescription = null,
+                                    tint = PiTheme.palette.accent,
+                                    modifier = Modifier.size(17.dp),
+                                )
+                            }
+                            Text(
+                                p.source,
+                                style = PiTheme.text.mono.copy(fontWeight = FontWeight.Medium),
+                                color = PiTheme.palette.text,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                         TagRow(packageTags(p.scope, p.filtered, p.installedPath != null, view) + listOfNotNull(if (update != null) "有更新" else null))
                         p.installedPath?.let { Text(shortPath(it), style = PiTheme.text.monoSmall, color = PiTheme.palette.dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         view.warning?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }

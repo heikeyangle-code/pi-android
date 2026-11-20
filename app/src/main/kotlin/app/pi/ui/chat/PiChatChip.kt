@@ -33,42 +33,15 @@ import app.pi.ui.theme.PiTheme
 // drift apart the way they had (26 vs 24 high, 999 vs 6 radius, 9 vs 7 padding, each
 // file spelling its own).
 
-/** `06 §2` 的 chip 高. */
-private val CHAT_CHIP_HEIGHT = 26.dp
-
-/** `06 §2` 的 chip 横向内边距. */
-private val CHAT_CHIP_PADDING = 9.dp
-
-/** The glyph-to-label gap inside a chip (`06 §2` 的 `padding:0 9px` 之外唯一的间距). */
+private val CHAT_CHIP_HEIGHT = 28.dp
+private val CHAT_CHIP_PADDING = 10.dp
 private val CHAT_CHIP_GLYPH_GAP = 5.dp
 
-// ------------------------------------------------------- the key row's own geometry
-//
-// v2 draws the composer's key chips as **keys**, not pills: `height:24;min-width:24;
-// padding:0 7px;border-radius:6;background:surf-highest` (`direction-b-v2.html:1430-1431`,
-// cited in `KeyChip`'s KDoc in `screens/ChatScreen.kt`). `compact = true` keeps that
-// shape; see [ChatChip]'s KDoc for why it is the one deviation from the table above.
-
-/** `direction-b-v2.html:1430` 的 `height:24`. */
-private val KEY_CHIP_HEIGHT = 24.dp
-
-/** `direction-b-v2.html:1430` 的 `border-radius:6`. */
-private val KEY_CHIP_RADIUS = 6.dp
-
-/** `direction-b-v2.html:1430` 的 `padding:0 7px`. */
-private val KEY_CHIP_PADDING = 7.dp
-
-/** The icon-to-label gap of a key chip (`Spacer(Modifier.width(4.dp))` before this batch). */
+private val KEY_CHIP_HEIGHT = 26.dp
+private val KEY_CHIP_RADIUS = 8.dp
+private val KEY_CHIP_PADDING = 8.dp
 private val KEY_CHIP_ICON_GAP = 4.dp
-
-/** A labelled key chip's icon: 14 dp, so the chip's text and icon share a baseline rhythm. */
 private val KEY_CHIP_ICON_SIZE = 14.dp
-
-/**
- * An **icon-only** key chip's icon: 16 dp, not 14. With the same 7 dp of horizontal padding
- * it makes the chip exactly 30 dp wide — the designer's number (16 + 7 + 7), and the weight
- * that matches the send disc opposite it in the row.
- */
 private val KEY_CHIP_ICON_ONLY_SIZE = 16.dp
 
 /**

@@ -1,8 +1,10 @@
 package app.pi.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -13,26 +15,36 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.FileCopy
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +53,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -50,32 +65,24 @@ import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.TokenUsage
 import app.pi.ui.PiSessionViewModel
-import app.pi.ui.components.PiType
-import app.pi.ui.extension.ExtensionSpans
-import app.pi.ui.extension.chromeSpans
 import app.pi.ui.components.PiContextRing
-import app.pi.ui.components.PiSectionHeader
-import app.pi.ui.components.piFormatTokens
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.components.PiDialogBody
+import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiSwitchRow
-import app.pi.ui.components.PiValueRow
+import app.pi.ui.components.PiType
 import app.pi.ui.components.contextProgressColor
+import app.pi.ui.components.piFormatTokens
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
-import java.util.Locale
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
+import java.util.Locale
 
-/**
- * The model picker.
- *
- * The list is exactly `get_available_models` — pi's own availability snapshot
- * (`rpc-mode.ts:490-493` → `modelRuntime.getAvailableSnapshot()`), which is also
- * what makes extension-registered providers reachable
- * (`model-runtime.ts:766-771`; audit §1.1 `registerProvider`). Nothing is
- * filtered or re-ordered here, and the current model is marked rather than moved
- * to the top, so the order is pi's and the list does not jump when the selection
- * changes.
- */
+/** 模型选择器：带搜索胶囊、默认开关胶囊、供应商分组计数、能力/价格标签卡。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelPickerSheet(
@@ -88,6 +95,7 @@ fun ModelPickerSheet(
     initialFilter: String = "",
     onManageProviders: (() -> Unit)? = null,
 ) {
+    val palette = PiTheme.palette
     var filter by remember { mutableStateOf(initialFilter) }
     var persistAsDefault by remember { mutableStateOf(false) }
     val query = filter.trim().lowercase()
@@ -103,10 +111,16 @@ fun ModelPickerSheet(
         }
     }
     PiSheet(onDismiss = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     "选择模型",
@@ -114,76 +128,148 @@ fun ModelPickerSheet(
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                Surface(
-                    onClick = { persistAsDefault = !persistAsDefault },
-                    shape = PiShapes.badge,
-                    color = if (persistAsDefault) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                ) {
-                    Text(
-                        if (persistAsDefault) "✓ 同时设为默认" else "仅本次会话",
-                        modifier = Modifier.padding(horizontal = PiSpacing.inline, vertical = PiSpacing.tiny),
-                        style = PiTheme.text.meta,
-                        color = if (persistAsDefault) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                PersistTogglePill(
+                    persistAsDefault = persistAsDefault,
+                    onToggle = { persistAsDefault = !persistAsDefault },
+                )
+            }
+
+            // 现代圆角搜索框（替换 M3 OutlinedTextField）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .border(
+                        width = 1.dp,
+                        color = if (filter.isNotEmpty()) palette.borderAccent.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
+                        shape = RoundedCornerShape(12.dp),
                     )
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = if (filter.isNotEmpty()) palette.accent else palette.muted,
+                    modifier = Modifier.size(18.dp),
+                )
+                BasicTextField(
+                    value = filter,
+                    onValueChange = { filter = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(palette.accent),
+                    decorationBox = { inner ->
+                        Box {
+                            if (filter.isEmpty()) {
+                                Text(
+                                    "按供应商或模型名筛选…",
+                                    style = PiTheme.text.prose,
+                                    color = palette.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            inner()
+                        }
+                    },
+                )
+                if (filter.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .clickable { filter = "" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "清空",
+                            tint = palette.muted,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
-            OutlinedTextField(
-                value = filter,
-                onValueChange = { filter = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("按供应商 / 模型名筛选") },
-                shape = PiShapes.input,
-            )
-            Spacer(Modifier.height(PiSpacing.unit))
+
             if (shown.isEmpty()) {
-                Text(
-                    if (busy) {
-                        "正在读取模型列表…"
-                    } else if (query.isNotEmpty()) {
-                        "没有匹配「$filter」的可用模型。"
-                    } else {
-                        "还没有可用模型。先登录订阅账号或配置 API Key，连接后会立刻生效，无需重启引擎。"
-                    },
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(PiSpacing.unit))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (onManageProviders != null) {
-                        TextButton(onClick = {
-                            onDismiss()
-                            onManageProviders()
-                        }) { Text("连接供应商与订阅…") }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            if (busy) {
+                                "正在读取模型列表…"
+                            } else if (query.isNotEmpty()) {
+                                "没有匹配「$filter」的可用模型。"
+                            } else {
+                                "还没有可用模型。先登录订阅账号或配置 API Key，连接后立即生效，无需重启引擎。"
+                            },
+                            style = PiTheme.text.prose,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (onManageProviders != null) {
+                                SheetActionPill(
+                                    text = "连接供应商与订阅",
+                                    primary = true,
+                                    onClick = {
+                                        onDismiss()
+                                        onManageProviders()
+                                    },
+                                )
+                            }
+                            SheetActionPill(text = "刷新列表", primary = false, onClick = onRefresh)
+                        }
                     }
-                    TextButton(onClick = onRefresh) { Text("刷新列表") }
                 }
             } else {
                 LazyColumn(
-                    Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     val groups = shown.groupBy { it.provider.orEmpty() }
                     groups.forEach { (provider, inGroup) ->
                         if (groups.size > 1) {
-                            item {
-                                Text(
-                                    "${provider.ifEmpty { "其他" }} · ${inGroup.size}",
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-                                )
+                            item(key = "hdr:$provider") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp, bottom = 2.dp, start = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        provider.ifEmpty { "其他" },
+                                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                        color = palette.muted,
+                                    )
+                                    Text(
+                                        "${inGroup.size}",
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.dim,
+                                    )
+                                }
                             }
                         }
-                        items(inGroup) { model ->
+                        items(inGroup, key = { "${it.provider}/${it.id}" }) { model ->
                             ModelRow(
                                 model = model,
                                 selected = model.id == current?.id && model.provider == current.provider,
@@ -193,99 +279,116 @@ fun ModelPickerSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    if (persistAsDefault) "选择后会同时保存为默认模型" else "仅切换当前会话；可点右上角改为默认",
+                    if (persistAsDefault) "选中后同步设为新会话默认模型" else "仅切换当前会话；可点右上角设为默认",
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = palette.muted,
                 )
                 if (onManageProviders != null && shown.isNotEmpty()) {
-                    TextButton(onClick = {
-                        onDismiss()
-                        onManageProviders()
-                    }) { Text("管理供应商") }
+                    SheetActionPill(
+                        text = "管理供应商",
+                        primary = false,
+                        onClick = {
+                            onDismiss()
+                            onManageProviders()
+                        },
+                    )
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
         }
     }
 }
 
 @Composable
 private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(PiShapes.card)
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.small, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val palette = PiTheme.palette
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(13.dp),
+        color = if (selected) palette.accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = if (selected) palette.accent.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        model.name,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (selected) {
+                        MiniBadge(text = "当前", tone = palette.accent)
+                    }
+                }
                 Text(
-                    model.name,
-                    modifier = Modifier.weight(1f, fill = false),
-                    style = PiType.rowTitle,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
+                    buildString {
+                        model.provider?.let { append(it).append("/") }
+                        append(model.id)
                     },
+                    style = PiTheme.text.monoSmall,
+                    color = palette.dim,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (selected) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "当前",
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    model.contextWindow?.let { MiniBadge(text = formatTokens(it), tone = palette.muted) }
+                    if (model.reasoning) MiniBadge(text = "推理", tone = palette.accent)
+                    if (model.acceptsImages) MiniBadge(text = "视觉", tone = palette.success)
+                    model.inputCost?.let { cost ->
+                        val price = "$${trimCost(cost)}" + (model.outputCost?.let { "/$${trimCost(it)}" } ?: "")
+                        MiniBadge(text = "$price/M", tone = palette.muted)
+                    }
                 }
             }
-            Text(
-                buildString {
-                    model.provider?.let { append(it).append("/") }
-                    append(model.id)
-                    model.contextWindow?.let { append(" · ").append(formatTokens(it)).append(" 上下文") }
-                    if (model.reasoning) append(" · 思考")
-                    if (model.acceptsImages) append(" · 图片")
-                },
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            model.inputCost?.let { cost ->
-                Text(
-                    "$${trimCost(cost)} / M 输入" + (model.outputCost?.let { " · $${trimCost(it)} / M 输出" } ?: ""),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = palette.contrastOn(palette.accent),
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * The thinking-level picker.
- *
- * The set comes from `get_available_thinking_levels`, which pi derives from the
- * selected model (`agent-session.ts` `getAvailableThinkingLevels`), and the
- * labels are pi's own level names — a level this build does not know is shown as
- * pi's raw string rather than mapped onto a familiar one, because pi adds levels
- * in minor versions and renaming one would misreport what the user selected.
- */
+/** 思考等级选择器：按当前模型真实支持的档位渲染彩色触感卡片。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThinkingPickerSheet(
@@ -294,124 +397,125 @@ fun ThinkingPickerSheet(
     onPick: (String, persist: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     var persistAsDefault by remember { mutableStateOf(false) }
     PiSheet(onDismiss = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "思考等级",
-                    modifier = Modifier.weight(1f),
-                    style = PiType.title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Surface(
-                    onClick = { persistAsDefault = !persistAsDefault },
-                    shape = PiShapes.badge,
-                    color = if (persistAsDefault) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                ) {
+                Column(Modifier.weight(1f)) {
+                    Text("思考深度", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        if (persistAsDefault) "✓ 同时设为默认" else "仅本次会话",
-                        modifier = Modifier.padding(horizontal = PiSpacing.inline, vertical = PiSpacing.tiny),
+                        "可选档位由当前模型决定",
                         style = PiTheme.text.meta,
-                        color = if (persistAsDefault) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        color = palette.muted,
                     )
                 }
+                PersistTogglePill(
+                    persistAsDefault = persistAsDefault,
+                    onToggle = { persistAsDefault = !persistAsDefault },
+                )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "可选等级由当前模型决定。",
-                style = PiTheme.text.prose,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(PiSpacing.unit))
-            Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
                 if (levels.isEmpty()) {
                     Text(
-                        "当前模型不支持思考等级。",
+                        "当前模型不支持切换思考等级。",
                         style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 levels.forEach { level ->
                     val selected = level == current
-                    val levelColor = PiTheme.palette.thinking(level)
+                    val levelColor = palette.thinking(level)
                     val desc = when (level.lowercase()) {
-                        "off" -> "关闭推理，直接最快回复"
+                        "off" -> "关闭推理，最快响应"
                         "minimal" -> "极简思考，超低延迟"
                         "low" -> "轻量推理，适合简单任务"
                         "medium" -> "均衡思考，日常编码推荐"
                         "high" -> "深度推理，适合复杂架构与排错"
                         "xhigh" -> "超深推理，攻克高难度问题"
-                        "max" -> "最大思考预算，深度分析"
+                        "max" -> "最大思考预算，全面深度分析"
                         else -> null
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(PiShapes.card)
-                            .background(
-                                if (selected) levelColor.copy(alpha = 0.14f)
-                                else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
-                            )
-                            .clickable {
-                                onPick(level, persistAsDefault)
-                                onDismiss()
-                            }
-                            .padding(horizontal = 10.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Surface(
+                        onClick = {
+                            onPick(level, persistAsDefault)
+                            onDismiss()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(13.dp),
+                        color = if (selected) levelColor.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(
+                            width = if (selected) 1.5.dp else 1.dp,
+                            color = if (selected) levelColor else MaterialTheme.colorScheme.outlineVariant,
+                        ),
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .height(10.dp)
-                                .width(10.dp)
-                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(levelColor),
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                thinkingLabelOf(level),
-                                style = PiType.rowTitle,
-                                color = if (selected) levelColor else MaterialTheme.colorScheme.onSurface,
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(levelColor),
                             )
-                            if (desc != null) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    desc,
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    thinkingLabelOf(level),
+                                    style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                                    color = if (selected) levelColor else MaterialTheme.colorScheme.onSurface,
                                 )
+                                if (desc != null) {
+                                    Text(
+                                        desc,
+                                        style = PiTheme.text.meta,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
-                        }
-                        if (selected) {
-                            Text(
-                                "✓ 当前",
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                                color = levelColor,
-                            )
+                            if (selected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clip(CircleShape)
+                                        .background(levelColor),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = palette.contrastOn(levelColor),
+                                        modifier = Modifier.size(13.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(6.dp))
         }
     }
 }
 
-/**
- * The session tools sheet: the switches and one-shot actions that pi's RPC
- * surface exposes but that have no home in the transcript.
- */
+/** 会话控制中心：现代队列切换卡、自动化开关卡 + 2 列快捷操作网格。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionToolsSheet(
@@ -431,135 +535,151 @@ fun SessionToolsSheet(
     onCopyLast: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     PiSheet(onDismiss = onDismiss) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 580.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = PiSpacing.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "会话与队列",
-                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
+                "会话控制中心",
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
 
-            PiSectionHeader("队列模式")
-            // 引导 / 后续 are the composer's two delivery chips' words, used here for
-            // the same two modes: one name per concept, or the sheet reads as if it
-            // were describing something else. They are also the words the settings
-            // page already uses for the two keys (`引导模式` = `steeringMode`,
-            // `后续模式` = `followUpMode`, `PiSettingsRegistry`), so the whole app says
-            // one thing per mode.
-            //
-            // The English names in the parentheses are pi's own **user-visible**
-            // spelling, not a key name: the pending-message lines pi prints above its
-            // editor are `Steering: <text>` / `Follow-up: <text>`
-            // (`modes/interactive/interactive-mode.js:3881`, `:3885`), and the editor
-            // hint calls `alt+enter` "queue follow-up" (`:745`). Not `follow_up` (the
-            // RPC command) and not `followUpMode` (the settings key).
-            //
-            // Both supporting lines say *when*, because that is the whole difference
-            // between the two modes. 引导's first version said 「本回合进行中插入」
-            // ("inserted during this turn"), which is weaker than pi's own definition:
-            // a steering message is delivered after the turn's tool calls finish and
-            // before the next model call (`packages/agent/src/agent-loop.js:111`), not
-            // anywhere inside the turn. 后续's 「整个回合结束后才投递」 is already pi's
-            // `_queueFollowUp` rule (`core/agent-session.js:1781`, drained only once the
-            // agent would otherwise stop, `agent-loop.js:192-198`) and stays as it was.
-            QueueModeRow(
-                title = "引导消息（Steering）",
-                supporting = "本回合的工具调用跑完后、下一次回答前投递",
-                current = state.meta.steeringMode,
-                onPick = onSteeringMode,
-            )
-            QueueModeRow(
-                title = "后续消息（Follow-up）",
-                supporting = "整个回合结束后才投递",
-                current = state.meta.followUpMode,
-                onPick = onFollowUpMode,
-            )
+            // 1. 队列投递策略卡
+            SheetCardSection(title = "消息队列策略") {
+                QueueModeRow(
+                    title = "引导消息（Steering）",
+                    supporting = "本回合工具跑完后、下次回答前插队投递",
+                    current = state.meta.steeringMode,
+                    tone = palette.warning,
+                    onPick = onSteeringMode,
+                )
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                QueueModeRow(
+                    title = "后续消息（Follow-up）",
+                    supporting = "整轮回复结束后顺序投递",
+                    current = state.meta.followUpMode,
+                    tone = palette.accent,
+                    onPick = onFollowUpMode,
+                )
+            }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            PiSectionHeader("上下文与重试")
-            PiSwitchRow(
-                title = "自动压缩",
-                supporting = "接近上下文上限时自动摘要",
-                checked = state.meta.autoCompaction,
-                onCheckedChange = onAutoCompaction,
-            )
-            PiSwitchRow(
-                title = "自动重试",
-                supporting = "可重试的模型错误按退避自动重试",
-                checked = state.meta.autoRetry,
-                onCheckedChange = onAutoRetry,
-            )
-            PiValueRow(
-                title = "取消重试",
-                supporting = "结束正在等待的退避延迟",
-                value = "立即",
-                onClick = onAbortRetry,
-            )
-            PiValueRow(
-                title = "压缩上下文",
-                supporting = "先中止当前回合，再生成一次摘要",
-                value = "执行",
-                onClick = onCompact,
-            )
+            // 2. 自动压缩与重试卡
+            SheetCardSection(title = "上下文与容错") {
+                PiSwitchRow(
+                    title = "自动压缩上下文",
+                    supporting = "接近窗口上限时自动生成摘要",
+                    checked = state.meta.autoCompaction,
+                    onCheckedChange = onAutoCompaction,
+                )
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                PiSwitchRow(
+                    title = "自动退避重试",
+                    supporting = "遇到限流或网络抖动时自动重试",
+                    checked = state.meta.autoRetry,
+                    onCheckedChange = onAutoRetry,
+                )
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SheetActionPill(
+                        text = "立即压缩上下文",
+                        primary = true,
+                        onClick = onCompact,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SheetActionPill(
+                        text = "取消等待重试",
+                        primary = false,
+                        onClick = onAbortRetry,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            PiSectionHeader("会话")
-            PiValueRow(
-                // Not 「与统计」 any more: the sheet behind this row is metadata
-                // (name / id / file / message and tool counts); the figures moved to
-                // 上下文与用量, which the composer's ring opens.
-                title = "会话信息",
-                supporting = "会话名、会话 ID、文件、消息与工具计数",
-                value = "查看",
-                onClick = onStats,
-            )
-            PiValueRow(
-                title = "会话树",
-                supporting = "分支结构与扩展写入的条目",
-                value = "打开",
-                onClick = onTree,
-            )
-            PiValueRow(
-                // 「分叉」，不是「分支」：pi 的 `/fork` 写的是一个**新会话文件**
-                // （`docs/sessions.md:26-31` 的三行表：`/tree` 在同一个文件里移动、`/fork`
-                // 与 `/clone` 各建一个新会话），而「分支」在本应用里指的是树上的结构
-                // （会话树的那个页签、分支摘要）。两个词各有各的所指，混用是用户说的
-                // 「分叉分支搞不清」。
-                title = "从历史消息分叉",
-                supporting = null,
-                value = "选择",
-                onClick = onFork,
-            )
-            PiValueRow(
-                title = "复制当前会话",
-                supporting = "复制出一个新的会话",
-                value = "执行",
-                onClick = onClone,
-            )
-            PiValueRow(
-                title = "重命名",
-                supporting = null,
-                value = state.meta.sessionName ?: "未命名",
-                onClick = onRename,
-            )
-            PiValueRow(
-                title = "导出会话（按扩展名）",
-                supporting = "导出到工作区，包含扩展生成的渲染结果",
-                value = "导出",
-                onClick = onExport,
-            )
-            PiValueRow(
-                title = "复制最后一条回复",
-                supporting = null,
-                value = "复制",
-                onClick = onCopyLast,
-            )
+            // 3. 会话快捷操作 2 列网格
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "会话操作",
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.muted,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SessionGridTile(
+                        icon = Icons.Filled.AccountTree,
+                        tint = palette.accent,
+                        title = "会话树",
+                        subtitle = "查看分支结构",
+                        onClick = onTree,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SessionGridTile(
+                        icon = Icons.Filled.CallSplit,
+                        tint = palette.warning,
+                        title = "历史分叉",
+                        subtitle = "从指定消息分支",
+                        onClick = onFork,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SessionGridTile(
+                        icon = Icons.Filled.FileCopy,
+                        tint = palette.success,
+                        title = "复制会话",
+                        subtitle = "克隆独立副本",
+                        onClick = onClone,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SessionGridTile(
+                        icon = Icons.Filled.DriveFileRenameOutline,
+                        tint = palette.borderAccent,
+                        title = "重命名",
+                        subtitle = state.meta.sessionName ?: "未命名",
+                        onClick = onRename,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SessionGridTile(
+                        icon = Icons.Filled.IosShare,
+                        tint = palette.accent,
+                        title = "导出会话",
+                        subtitle = "生成完整 HTML",
+                        onClick = onExport,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SessionGridTile(
+                        icon = Icons.Filled.ContentCopy,
+                        tint = palette.muted,
+                        title = "复制末条回复",
+                        subtitle = "直接进剪贴板",
+                        onClick = onCopyLast,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                SessionGridTile(
+                    icon = Icons.Filled.Info,
+                    tint = palette.muted,
+                    title = "会话元数据信息",
+                    subtitle = "ID、文件路径、消息与工具计数",
+                    onClick = onStats,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(10.dp))
         }
     }
 }
@@ -569,53 +689,109 @@ private fun QueueModeRow(
     title: String,
     supporting: String,
     current: QueueMode,
+    tone: Color,
     onPick: (QueueMode) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp)) {
-        Text(title, style = PiType.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            title,
+            style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
         Text(
             supporting,
-            style = PiTheme.text.prose,
+            style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(6.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            val options = listOf(
-                // pi's wire values, verbatim (`settings-manager.ts:758-774`).
-                QueueMode.OneAtATime to "逐条",
-                QueueMode.All to "全部",
-            )
-            options.forEachIndexed { index, (mode, label) ->
-                SegmentedButton(
-                    selected = current == mode,
-                    onClick = { onPick(mode) },
-                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                ) { Text(label) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            val options = listOf(QueueMode.OneAtATime to "逐条投递", QueueMode.All to "合并全部")
+            options.forEach { (mode, label) ->
+                val active = current == mode
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (active) tone.copy(alpha = 0.18f) else Color.Transparent)
+                        .clickable { onPick(mode) }
+                        .padding(vertical = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label,
+                        style = PiTheme.text.meta.copy(
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        ),
+                        color = if (active) tone else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * **上下文与用量** — the sheet the composer's context ring opens.
- *
- * A sheet of its own rather than the top of 会话信息, by the user's ruling
- * (「不要复用会话信息那个，直接重绘一个」): the metadata sheet identifies a session and
- * this one measures it. Keeping them apart is also what makes each figure appear
- * exactly once in the app, which is how the two sheets stopped being able to
- * disagree.
- *
- * Two blocks and nothing else:
- *
- *  - [ContextBlock] — the ring, pi's own percentage, the window, and the two facts
- *    pi does not report (the percentage is an estimate; there is no breakdown);
- *  - [UsageBlock] — **本轮** and **本会话累计** side by side, five rows each, with the
- *    two hit rates under them and labels long enough to tell apart.
- *
- * The states where a figure is missing belong to the blocks: no percentage yet is
- * [ContextBlock]'s empty ring with a `?`, and no usage at all is [UsageBlock]'s `—`.
- * Neither ever becomes a row of zeros.
- */
+@Composable
+private fun SessionGridTile(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(tint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(
+                    title,
+                    style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** 上下文与用量仪表盘：环形占比主卡 + 本轮/累计双卡对比 + 缓存命中率 + 一键压缩。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContextSheet(
@@ -627,16 +803,16 @@ fun ContextSheet(
     val palette = PiTheme.palette
     PiSheet(onDismiss = onDismiss) {
         Column(
-            Modifier
+            modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = PiSpacing.pageHorizontal)
-                .widthIn(max = 430.dp),
+                .widthIn(max = 460.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     "上下文与用量",
@@ -645,35 +821,45 @@ fun ContextSheet(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (onCompact != null) {
-                    Text(
-                        text = "压缩上下文",
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(palette.accent.copy(alpha = 0.14f))
-                            .clickable {
-                                onDismiss()
-                                onCompact()
-                            }
-                            .padding(horizontal = 11.dp, vertical = 5.dp),
-                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    Surface(
+                        onClick = {
+                            onDismiss()
+                            onCompact()
+                        },
+                        shape = RoundedCornerShape(999.dp),
                         color = palette.accent,
-                    )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Compress,
+                                contentDescription = null,
+                                tint = palette.contrastOn(palette.accent),
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = "压缩上下文",
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                color = palette.contrastOn(palette.accent),
+                            )
+                        }
+                    }
                 }
             }
-            HorizontalDivider(
-                thickness = PiSpacing.hairlineThin,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
+
             Column(
-                Modifier
+                modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 560.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = PiSpacing.pageHorizontal, vertical = 12.dp),
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (stats == null) {
                     Text(
-                        "正在读取…",
+                        "正在读取会话统计…",
                         style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -698,19 +884,13 @@ fun ContextSheet(
                         lastMessage = state.lastUsage,
                     )
                 }
+                Spacer(Modifier.height(6.dp))
             }
         }
     }
 }
 
-/**
- * Session metadata, straight out of `get_session_stats` and `get_state`.
- *
- * `get_state` already gives the session file, so it is shown here too — it is the one
- * fact that lets a user find the JSONL by hand. Field set follows `SessionStats` in
- * `agent-session.ts`, minus everything that measures the session: the counts, the
- * token totals, the context percentage and the cost are in [ContextSheet].
- */
+/** 会话元数据卡：清晰展示名称、ID、文件路径、消息与工具调用计数。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionStatsSheet(
@@ -720,16 +900,18 @@ fun SessionStatsSheet(
     val stats = state.stats
     PiSheet(onDismiss = onDismiss) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(
-                horizontal = PiSpacing.pageHorizontal,
-            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = PiSpacing.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                "会话信息",
+                "会话元数据",
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
             if (stats == null) {
                 Text(
                     "正在读取…",
@@ -737,255 +919,221 @@ fun SessionStatsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                // **Metadata only.** This sheet used to be the app's number dump —
-                // token totals, the context percentage and the session cost — and the
-                // user's ruling was blunt: 「把会话信息里那些上下文的那些信息删干净，
-                // 那个地方太丑了」. Every figure now lives in exactly one place, the
-                // 上下文与用量 sheet the composer's ring opens ([ContextSheet]); what
-                // is left here identifies the session rather than measuring it.
-                StatLine("会话名称", state.meta.sessionName ?: "未命名")
-                StatLine("会话 ID", stats.sessionId ?: state.meta.sessionId ?: "—")
-                StatLine("会话文件", stats.sessionFile ?: state.meta.sessionFile ?: "（尚未落盘）")
-                StatLine("消息", "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计")
-                StatLine("工具调用", "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果")
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                        StatLine("会话名称", state.meta.sessionName ?: "未命名")
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        StatLine("会话 ID", stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        StatLine("会话文件", stats.sessionFile ?: state.meta.sessionFile ?: "（尚未落盘）", mono = true)
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        StatLine("消息统计", "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计")
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        StatLine("工具调用", "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果")
+                    }
+                }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-/**
- * The sheet's 上下文 block: ring, percentage, used / window, and the auto-compaction state.
- *
- * 数字全部是 pi 自己的：`percent` 与 `tokens` 来自 `getContextUsage()`
- * (`core/agent-session.ts:4297`)，`contextWindow` 是模型自己的窗口；下面的用量对比列
- * 来自 `get_session_stats()`。按用户要求，解释这些数怎么估的说明文字已删掉，只留读数。
- *
- * `percent == null` 是 pi 自己的窗口（压缩后到下一次回复前，
- * `agent-session.ts:4311-4335` 返回 `{tokens:null, contextWindow, percent:null}`）：
- * 环里是 `?`，已用是 `—`，窗口照旧。
- *
- * 窗口行用 pi 自己的 k/M 缩写（[piFormatTokens]，`footer.ts:24-30`），与底栏、环同口径。
- */
 @Composable
 private fun ContextBlock(
     stats: PiResponses.SessionStats,
     autoCompaction: Boolean,
-    /** 当前模型自己的窗口；pi 没给 `contextUsage.contextWindow` 时用它兜底。 */
     modelContextWindow: Long?,
 ) {
     val palette = PiTheme.palette
     val usage = stats.contextUsage
     val percent = usage?.percent
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        PiContextRing(
-            percent = percent,
-            diameter = SHEET_RING_DIAMETER,
-            stroke = SHEET_RING_STROKE,
-            placeholderStyle = PiTheme.text.monoSmall,
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
-                style = PiTheme.text.mono.copy(fontSize = 17.sp),
-                color = percent?.let { contextProgressColor(it, palette) }
-                    ?: MaterialTheme.colorScheme.onSurfaceVariant,
+    val ringColor = percent?.let { contextProgressColor(it, palette) } ?: palette.muted
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, ringColor.copy(alpha = 0.30f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PiContextRing(
+                percent = percent,
+                diameter = SHEET_RING_DIAMETER,
+                stroke = SHEET_RING_STROKE,
+                placeholderStyle = PiTheme.text.monoSmall,
             )
-            Text(
-                text = contextWindowLine(usage, autoCompaction, modelContextWindow),
-                modifier = Modifier.padding(top = 2.dp),
-                style = PiTheme.text.mono,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
+                        style = PiTheme.text.mono.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                        color = ringColor,
+                    )
+                    MiniBadge(
+                        text = if (autoCompaction) "自动压缩开" else "自动压缩关",
+                        tone = if (autoCompaction) palette.success else palette.muted,
+                    )
+                }
+                Text(
+                    text = contextWindowLine(usage, modelContextWindow),
+                    style = PiTheme.text.monoSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
 
-/**
- * The window line: `641k / 1.0M · 自动压缩开`.
- *
- * 窗口优先 `usage.contextWindow`，否则当前模型的 `contextWindow` —— pi 的 footer 也是
- * `contextUsage?.contextWindow ?? state.model?.contextWindow`（`footer.ts:160`）。
- * 两个都没有才写 `—`；已用只在 pi 报了 tokens 时出现。
- */
 private fun contextWindowLine(
     usage: PiResponses.ContextUsage?,
-    autoCompaction: Boolean,
     modelContextWindow: Long?,
 ): String {
     val used = usage?.tokens?.let { piFormatTokens(it) } ?: "—"
     val window = usage?.contextWindow?.takeIf { it > 0L }
         ?: modelContextWindow?.takeIf { it > 0L }
-    val auto = if (autoCompaction) "自动压缩开" else "自动压缩关"
-    return "$used / ${window?.let { piFormatTokens(it) } ?: "—"} · $auto"
+    return "已用 $used / 窗口 ${window?.let { piFormatTokens(it) } ?: "—"}"
 }
 
-/**
- * The sheet's 用量 block: **two columns, side by side** — 本轮 and 本会话累计.
- *
- * The two are separate columns on purpose, and the parent's ruling is why: the user
- * once read a session total as the turn's, and a single column with two values would
- * reproduce exactly that misreading. Five rows in both, in pi's own field order
- * (`components/footer.ts:106-146`).
- *
- * **Counts are exact integers with thousands separators** — `96,400`, never `96k`.
- * The transcript's compact forms (`96k`) belong to a one-line reading; a detail sheet
- * exists to be quoted, and `96k` cannot say whether it was 96,400 or 96,900.
- *
- * **Both hit rates, one row each, outside both columns.** pi defines the first on a single
- * message — `cacheRead ÷ (input + cacheRead + cacheWrite)` (`footer.ts:95-98`) — and there is
- * no turn-level equivalent: applying the same formula to a sum would produce a *third*
- * percentage that looks like the others and means something else, which is precisely the
- * confusion this sheet was reported for. So each row says which number it is about.
- *
- * **Neither row may disappear.** They used to `return` when the ratio was null, so a reader
- * saw one, then the other, then neither and reported it as 「感觉只有一个总的」. "This
- * reading has no figure" and "this reading does not exist" are different statements
- * ([HitRate]): the row stays, the value is `—`, and the reason is that branch's own sentence.
- */
 @Composable
 private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: TokenUsage?) {
-    // 稿子的 `.cmp`：两列并排，中间一条 1px `borderMuted` 竖分隔线，两侧各 12dp。
-    // `IntrinsicSize.Min` 是那条竖线能 `fillMaxHeight` 的前提（画到较高那一列的下沿）。
-    SectionTitle("用量对比")
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        UsageColumn("本轮", turn, Modifier.weight(1f), cumulative = false)
-        Spacer(Modifier.width(12.dp))
-        Box(
-            Modifier
-                .width(PiSpacing.hairline)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.outline),
+    val palette = PiTheme.palette
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "Token 与费用对比",
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = palette.muted,
+            modifier = Modifier.padding(start = 4.dp),
         )
-        Spacer(Modifier.width(12.dp))
-        UsageColumn("本会话累计", session, Modifier.weight(1f), cumulative = true)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+                    .padding(12.dp),
+            ) {
+                UsageColumn("本轮", turn, Modifier.weight(1f), cumulative = false)
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    Modifier
+                        .width(0.5.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                Spacer(Modifier.width(10.dp))
+                UsageColumn("本会话累计", session, Modifier.weight(1f), cumulative = true)
+            }
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                HitRateRow("缓存命中率（最后一条回复）", lastMessageHitRate(lastMessage))
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HitRateRow("缓存命中率（本会话累计）", cumulativeHitRate(session))
+            }
+        }
     }
-    // Two hit rates, and the labels are long on purpose: the user has already read
-    // one of these as the other. They are different kinds of number —
-    //
-    //   命中率（最后一条回复）  is **pi's own field** for one message
-    //                            (`components/footer.ts:95-98`), and it is what pi's
-    //                            footer prints;
-    //   命中率（本会话累计）    is **derived here** from the four cumulative counters
-    //                            `get_session_stats` reports — the same counters pi
-    //                            sums itself, so the arithmetic is pi's, but the ratio
-    //                            is this app's and pi has no field for it.
-    //
-    // There is deliberately **no 本轮 hit rate**: a third percentage of the same shape
-    // would put three near-synonyms on one screen, which the designer ruled out (and a
-    // ratio of sums is not the sum of ratios in any case).
-    //
-    // **Both rows are always drawn.** They used to `return` when the ratio was null, so
-    // a reader saw one row, then the other, then neither — and reported it as 「感觉只有
-    // 一个总的」. This project's rule is that "this reading has no figure" and "this
-    // reading does not exist" may not look the same: the row stays, the value is `—`, and
-    // the reason is the branch's own sentence ([HitRate.none]).
-    HitRateRow("命中率（最后一条回复）", lastMessageHitRate(lastMessage))
-    HitRateRow("命中率（本会话累计）", cumulativeHitRate(session))
 }
 
-/**
- * One hit-rate reading: a figure, or **why there is none**.
- *
- * The two are separate cases on purpose. A single nullable `String?` is what made the
- * row disappear, and a row that disappears cannot say which of the four causes it was
- * (no usage reported yet / a message whose three counters are all zero / the cumulative
- * counters not read yet / a session with no counters at all).
- */
 private sealed interface HitRate {
     data class Value(val percent: String) : HitRate
     data class None(val reason: String) : HitRate
 }
 
-/**
- * pi's cache-hit rate for **one message**, or the reason it has none.
- *
- * `cacheRead ÷ (input + cacheRead + cacheWrite)` (`components/footer.ts:95-98`), one
- * decimal — pi's own `toFixed(1)`, and pi's own definition of the number: it is a
- * per-message field, not a session one.
- */
 private fun lastMessageHitRate(usage: TokenUsage?): HitRate {
     if (usage == null) return HitRate.None("本条还没有服务商回报的用量")
     val read = usage.cacheRead ?: 0L
     val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
-    if (denominator <= 0L) return HitRate.None("本条的三项计数都是 0，算不出比例")
+    if (denominator <= 0L) return HitRate.None("本条三项计数都是 0")
     return HitRate.Value(String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%")
 }
 
-/**
- * The same ratio over the **whole session**: `ΣcacheRead ÷ (Σinput + ΣcacheRead +
- * ΣcacheWrite)`.
- *
- * A **derived** figure (D30): its inputs are `get_session_stats`' own cumulative
- * counters, so the arithmetic is four operations on pi's truth, but the ratio itself is
- * this app's and pi has no field for it. The reason it has no figure says which of the
- * two it is — the counters have not been read, or the session has none.
- */
 private fun cumulativeHitRate(usage: TokenUsage?): HitRate {
     if (usage == null) return HitRate.None("累计计数还没读到")
     val read = usage.cacheRead ?: 0L
     val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
-    if (denominator <= 0L) return HitRate.None("本会话还没有服务商的累计计数")
+    if (denominator <= 0L) return HitRate.None("本会话还没有累计计数")
     return HitRate.Value(String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%")
 }
 
-/**
- * One hit-rate line in the sheet's `kv` shape, and it is **always drawn**.
- *
- * The value is the figure or `—`; the note beside it is the branch's own reason when
- * there is no figure, so the two are never the same blank and never the same sentence.
- */
 @Composable
 private fun HitRateRow(label: String, rate: HitRate) {
-    KvRow(
-        key = label,
-        value = when (rate) {
-            is HitRate.Value -> rate.percent
-            is HitRate.None -> "—"
-        },
-        note = (rate as? HitRate.None)?.reason,
-        // 稿子这一行是 `.kv.auto`：标签是中文长句，固定 72dp 装不下，所以键宽自动。
-        keyWidth = null,
-    )
+    val palette = PiTheme.palette
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = label,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (rate) {
+                is HitRate.Value -> MiniBadge(text = rate.percent, tone = palette.success)
+                is HitRate.None -> Text("—", style = PiTheme.text.mono, color = palette.dim)
+            }
+        }
+        if (rate is HitRate.None) {
+            Text(
+                text = rate.reason,
+                style = PiTheme.text.meta,
+                color = palette.dim,
+            )
+        }
+    }
 }
 
-/**
- * One usage column: its title, then the five readings in pi's own field order
- * (`components/footer.ts:106-146`).
- *
- * The titles are deliberately different sizes and colours (稿子 §5：左「本轮」13/600 正文色、
- * 右「本会话累计」12/500 muted) — that structural difference is what keeps the two
- * columns from being read as one, which is the misreading D30 exists for.
- */
 @Composable
 private fun UsageColumn(title: String, usage: TokenUsage?, modifier: Modifier = Modifier, cumulative: Boolean) {
-    Column(modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(
             text = title,
-            // 稿子的 `.cmp .ch` **没有** font-family 覆盖 ⇒ 它是无衬线（13/600 正文色；
-            // 右列 `.ch.dim` 是 12/500 muted）。等宽只给数字，中文标题不走机器面。
-            style = if (cumulative) {
-                PiTheme.text.meta.copy(fontWeight = FontWeight.Medium)
-            } else {
-                PiTheme.text.meta.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            },
-            color = if (cumulative) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+            style = PiTheme.text.meta.copy(
+                fontSize = if (cumulative) 12.sp else 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            ),
+            color = if (cumulative) MaterialTheme.colorScheme.onSurfaceVariant else PiTheme.palette.accent,
             maxLines = 1,
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
         if (usage == null) {
-            // "No figures", not "zero": a turn in which pi reported no usage has no
-            // row of zeros to show (`TranscriptReducer.turnUsage`).
-            KvRow(key = "", value = "—", note = null, keyWidth = null)
+            Text("—", style = PiTheme.text.mono, color = PiTheme.palette.dim)
             return@Column
         }
-        // A field pi did not report stays `—`, never `0`: "no figure" and "zero" are
-        // different readings and this sheet may not turn one into the other.
         KvRow("输入", usage.input?.let { exactCount(it) } ?: "—")
         KvRow("输出", usage.output?.let { exactCount(it) } ?: "—")
         KvRow("缓存读", usage.cacheRead?.let { exactCount(it) } ?: "—")
@@ -994,114 +1142,52 @@ private fun UsageColumn(title: String, usage: TokenUsage?, modifier: Modifier = 
     }
 }
 
-/**
- * One `kv` line, the sheet's only row shape: `align-items: baseline`、间距 8、上下内边距 3；
- * 键 12sp muted（[keyWidth] 给固定宽时就是稿子的 72dp）、值等宽 13sp 正文色、tabular。
- *
- * @param keyWidth null means "as wide as the label needs" — the design's `.kv.auto`, used
- *   by the two hit-rate rows whose labels are sentences.
- * @param note an optional muted sentence after the value (a hit-rate row's reason).
- */
 @Composable
-private fun KvRow(key: String, value: String, note: String? = null, keyWidth: Dp? = 72.dp) {
+private fun KvRow(key: String, value: String, keyWidth: Dp = 52.dp) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp),
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = key,
-            modifier = if (keyWidth != null) Modifier.width(keyWidth) else Modifier,
+            modifier = Modifier.width(keyWidth),
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
         )
-        Spacer(Modifier.width(8.dp))
         Text(
             text = value,
-            modifier = Modifier.alignByBaseline(),
-            style = PiTheme.text.mono,
+            style = PiTheme.text.monoSmall,
             color = MaterialTheme.colorScheme.onSurface,
-        )
-        if (note != null) {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = note,
-                modifier = Modifier.alignByBaseline().weight(1f),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/**
- * A section title inside the sheet: 12sp/500 in the body colour, 上距 12 下距 6.
- *
- * 原来还有一个可选的 muted 括号注（「（服务商回报的真值…）」），按用户「说明文字都删掉」
- * 的要求去掉了；标题只留名字。
- */
-@Composable
-private fun SectionTitle(text: String) {
-    Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp)) {
-        Text(
-            text = text,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
         )
     }
 }
 
-/** `96,400` — an exact count, for a sheet someone quotes. */
 private fun exactCount(value: Long): String = String.format(Locale.US, "%,d", value)
 
-/**
- * The sheet's ring: 稿子形态 1 的 56dp / 描边 4（半径 26，与 `.sheet .ringbtn` 的 svg 同值）。
- * 「板子没给测量」那条理由在 D27 之后不再成立 —— 现在给了，就是稿子这一处。
- */
-private val SHEET_RING_DIAMETER = 56.dp
-private val SHEET_RING_STROKE = 4.dp
+private val SHEET_RING_DIAMETER = 58.dp
+private val SHEET_RING_STROKE = 4.5.dp
 
 @Composable
-private fun StatLine(label: String, value: String) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+private fun StatLine(label: String, value: String, mono: Boolean = false) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             label,
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.primary,
+            color = PiTheme.palette.muted,
         )
         Text(
             value,
-            style = PiTheme.text.meta,
+            style = if (mono) PiTheme.text.monoSmall else PiTheme.text.prose,
             color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
 
-/**
- * The fork picker: pi's `/fork` selector.
- *
- * `get_fork_messages` returns exactly the user messages pi considers forkable
- * (`session.getUserMessagesForForking()`, `rpc-mode.ts:633-636`), so no filtering
- * happens here — pi decides what a valid fork point is, and `fork(entryId)`
- * re-validates it on the other side.
- *
- * **The order is pi's and the ordinal is shown.** Several prompts look alike in a
- * three-line preview, so the user's request was 「后面写个 123 也行」: each row now
- * carries its 1-based position in a monospaced gutter. The number is the row's
- * index in the list pi sent — `messages` is rendered with `forEachIndexed` and
- * never re-sorted, filtered or deduplicated here, because the whole value of the
- * number is that "第 3 条" in this sheet and the third entry of
- * `getUserMessagesForForking()` are the same message. Re-ordering would silently
- * break exactly the promise the number makes.
- *
- * The blurb states pi's real semantics, which the previous copy got wrong:
- * `fork` defaults to `position: "before"` (`agent-session-runtime.ts:262-287`), so
- * the new session ends *before* the chosen message — that message is not carried
- * over; its text is handed back instead and the block menu's 编辑并从此分叉 puts it
- * in the composer (`interactive-mode.ts:5450-5457`), which is what the picker
- * opened from the ⋮ menu will do too once the fork lands.
- */
+/** 分叉选择器：编号卡片列表，严格保留 pi 可分叉消息顺序。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForkPickerSheet(
@@ -1109,149 +1195,259 @@ fun ForkPickerSheet(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     PiSheet(onDismiss = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("从哪条消息分叉", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "会在「这条消息之前」分出新的会话（这条消息本身不会带过去），" +
-                    "并把它放回输入框，可以改完再发。编号就是 pi 给的可分叉消息顺序。" +
-                    "原会话文件保持原样，在会话列表里还找得到它。",
-                style = PiTheme.text.prose,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(PiSpacing.unit))
-            if (messages.isEmpty()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("从历史消息分叉", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                 Text(
-                    // pi's own wording for this state is `No messages to fork from`
-                    // (`interactive-mode.ts:5437-5440`); saying what to do about it is
-                    // the app's addition, because a sheet that says only "没有" reads
-                    // as a broken feature rather than as an empty session.
-                    "pi 说这个会话还没有可分叉的用户消息（No messages to fork from）。" +
-                        "先发一条消息，等 pi 把它写进会话文件后再回来。",
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "将在所选消息之前分出新会话，并把该消息放回输入框便于修改重发，原会话保持不变。",
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
                 )
+            }
+            if (messages.isEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Text(
+                        "当前会话还没有可分叉的用户消息。先发送一条消息落盘后再试。",
+                        modifier = Modifier.padding(14.dp),
+                        style = PiTheme.text.prose,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
-                // Lazy for the same reason as the model list above: a long session's fork
-                // points are hundreds of rows, and this sheet is opened on a tap.
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    itemsIndexed(messages) { index, message ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onPick(message.entryId)
-                                    onDismiss()
-                                }
-                                .padding(vertical = 10.dp),
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    itemsIndexed(messages, key = { _, m -> m.entryId }) { index, message ->
+                        Surface(
+                            onClick = {
+                                onPick(message.entryId)
+                                onDismiss()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(13.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         ) {
-                            // The gutter: a monospaced ordinal, wide enough for three
-                            // digits so the text column cannot shift between rows.
-                            Text(
-                                text = "${index + 1}",
-                                modifier = Modifier.width(28.dp),
-                                style = PiTheme.text.mono,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    message.text.ifBlank { "（空消息）" },
-                                    style = PiTheme.text.prose,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    message.entryId,
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(palette.accent.copy(alpha = 0.14f)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "${index + 1}",
+                                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = palette.accent,
+                                    )
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        message.text.ifBlank { "（空消息）" },
+                                        style = PiTheme.text.prose,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        message.entryId,
+                                        style = PiTheme.text.monoSmall,
+                                        color = palette.dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(6.dp))
         }
     }
 }
 
-/**
- * Session rename.
- *
- * pi trims and rejects an empty name (`rpc-mode.ts:661-665`), so the field is
- * validated the same way here to save a round trip — the error path still exists
- * for anything else pi refuses.
- */
+/** 会话重命名弹窗：统一至 PiDialog 家族。 */
 @Composable
 fun RenameSessionDialog(
     initial: String?,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     var name by remember { mutableStateOf(initial.orEmpty()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("会话名称") },
-        text = {
-            Column {
-                Text(
-                    "会话列表里显示的名称。",
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(PiSpacing.unit))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("名称") },
-                    shape = PiShapes.input,
+    PiDialog(onDismissRequest = onDismiss) {
+        PiDialogTitle("重命名会话")
+        PiDialogBody("修改后将立即同步到会话列表。")
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .border(1.dp, palette.borderAccent.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = name,
+                onValueChange = { name = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(palette.accent),
+                decorationBox = { inner ->
+                    Box {
+                        if (name.isEmpty()) {
+                            Text("输入新名称…", style = PiTheme.text.prose, color = palette.muted)
+                        }
+                        inner()
+                    }
+                },
+            )
+            if (name.isNotEmpty()) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "清空",
+                    tint = palette.muted,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clickable { name = "" },
                 )
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(name) },
+        }
+        PiDialogActions {
+            PiDialogAction(label = "取消", primary = false, onClick = onDismiss)
+            PiDialogAction(
+                label = "保存",
+                primary = true,
                 enabled = name.isNotBlank(),
-            ) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+                onClick = { onConfirm(name) },
+            )
+        }
+    }
+}
+
+// ------------------------------------------------------------------- shared pieces
+
+@Composable
+private fun PersistTogglePill(persistAsDefault: Boolean, onToggle: () -> Unit) {
+    val palette = PiTheme.palette
+    Surface(
+        onClick = onToggle,
+        shape = RoundedCornerShape(999.dp),
+        color = if (persistAsDefault) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (persistAsDefault) palette.accent.copy(alpha = 0.55f) else Color.Transparent,
+        ),
+    ) {
+        Text(
+            if (persistAsDefault) "✓ 设为默认" else "仅本次会话",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = if (persistAsDefault) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SheetCardSection(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            title,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = PiTheme.palette.muted,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(Modifier.fillMaxWidth()) { content() }
+        }
+    }
+}
+
+@Composable
+private fun SheetActionPill(
+    text: String,
+    primary: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(999.dp),
+        color = if (primary) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                color = if (primary) palette.contrastOn(palette.accent) else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MiniBadge(text: String, tone: Color) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(tone.copy(alpha = 0.13f))
+            .padding(horizontal = 6.dp, vertical = 1.5.dp),
+        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+        color = tone,
+        maxLines = 1,
     )
 }
 
-// ------------------------------------------------------------------- helpers
-
-/**
- * pi's own thinking-level identifier — **not** a translation of it.
- *
- * The engine and the TUI spell these exactly as pi's identifier does: the TUI's
- * footer concatenates the raw level (`modes/interactive/footer.ts:185-187`) and its
- * selector builds each option's label from the identifier itself
- * (`thinking-selector.ts:64-66`); `cli/args.ts:60` validates the same seven words.
- * A translated label would be a name the engine never uses, on the one surface
- * whose whole point is to report what the engine is set to — translation belongs
- * somewhere else, and this is not that place.
- *
- * Which of the seven a model can actually be set to is pi's own
- * `getSupportedThinkingLevels(model)`, so on a phone the list is often only three
- * or four of them; the fallback keeps a newer pi's level readable rather than blank.
- */
 fun thinkingLabelOf(level: String): String = when (level.lowercase()) {
     "off", "minimal", "low", "medium", "high", "xhigh", "max" -> level.lowercase()
     else -> level
 }
 
-/** 200000 → `200k`, 1000000 → `1M`. pi shows raw numbers; this is a phone label. */
 private fun formatTokens(tokens: Long): String = when {
     tokens >= 1_000_000 -> "${tokens / 1_000_000}M"
     tokens >= 1_000 -> "${tokens / 1_000}k"
     else -> tokens.toString()
 }
 
-/** Two decimals, no trailing zeros: cost strings are read, not computed on. */
 private fun trimCost(value: Double): String {
     val rounded = kotlin.math.round(value * 100) / 100
     return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString() else rounded.toString()

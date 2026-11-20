@@ -18,13 +18,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -192,47 +197,51 @@ internal fun SearchBar(
     onNext: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Column(
-        Modifier
+    val palette = PiTheme.palette
+    val countLabel = if (matchCount == 0) {
+        if (query.isBlank()) "" else "0 / 0"
+    } else {
+        "${cursor.coerceIn(0, matchCount - 1) + 1} / $matchCount"
+    }
+    Surface(
+        modifier = Modifier
             .fillMaxWidth()
-            // `surf-dim` is the chrome tone the AppBar uses; the strip is chrome,
-            // not content.
-            .background(MaterialTheme.colorScheme.surfaceDim)
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = if (query.isNotEmpty()) palette.borderAccent.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(SEARCH_BAR_HEIGHT)
-                .clip(RoundedCornerShape(9.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .border(1.dp, PiTheme.palette.borderAccent, RoundedCornerShape(9.dp))
+                .height(44.dp)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(
                 imageVector = Icons.Filled.Search,
                 contentDescription = null,
-                modifier = Modifier.size(15.dp),
-                tint = PiTheme.palette.muted,
+                modifier = Modifier.size(18.dp),
+                tint = if (query.isNotEmpty()) palette.accent else palette.muted,
             )
             BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                // `06 §2` 机器语言层: a search query over machine output is typed in the
-                // machine face, and v2 sets it `mono t13`.
-                textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
-                cursorBrush = SolidColor(PiTheme.palette.accent),
+                textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(palette.accent),
                 decorationBox = { inner ->
                     Box {
                         if (query.isEmpty()) {
                             Text(
-                                text = "在对话里查找",
-                                style = PiTheme.text.mono,
-                                color = PiTheme.palette.muted,
+                                text = "搜索对话内容…",
+                                style = PiTheme.text.prose,
+                                color = palette.muted,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -241,82 +250,78 @@ internal fun SearchBar(
                     }
                 },
             )
-            Text(
-                text = if (matchCount == 0) {
-                    "0 / 0"
-                } else {
-                    "${cursor.coerceIn(0, matchCount - 1) + 1} / $matchCount"
-                },
-                style = PiTheme.text.monoSmall,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
+            if (countLabel.isNotEmpty()) {
+                Text(
+                    text = countLabel,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(
+                            if (matchCount > 0) palette.accent.copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        )
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                    color = if (matchCount > 0) palette.accent else palette.muted,
+                    maxLines = 1,
+                )
+            }
+            SearchNavButton(
+                icon = Icons.Filled.KeyboardArrowUp,
+                label = "上一个匹配",
+                enabled = matchCount > 0,
+                onClick = onPrevious,
             )
-            Text(
-                text = "关闭查找",
+            SearchNavButton(
+                icon = Icons.Filled.KeyboardArrowDown,
+                label = "下一个匹配",
+                enabled = matchCount > 0,
+                onClick = onNext,
+            )
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClickLabel = "关闭查找", onClick = onClose)
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // A disabled end of the transcript is drawn muted rather than removed: the
-            // pair is a reading of "there is nothing further this way", and a missing
-            // chip would move the other one.
-            SearchChip("↑", "上一个匹配", enabled = matchCount > 0, onClick = onPrevious)
-            SearchChip("↓", "下一个匹配", enabled = matchCount > 0, onClick = onNext)
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "当前命中给底 + 亮，其余命中只给底",
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable(onClickLabel = "关闭查找", onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "关闭查找",
+                    tint = palette.muted,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
         }
     }
 }
 
-
-
-/**
- * The search input row's height: **40**, which is the number `06 §2` gives the search
- * field (`PiSettingsMetrics.searchFieldHeight` / 「搜索框 40 高」) and therefore the
- * height the settings page's own search field draws.
- *
- * v2's in-transcript strip was `height:36` (`direction-b-v2.html:2756`). The board's
- * prototype is the only place that 36 appears; every other search field in this app is
- * 40, so the strip takes 40 and the two searches now type into the same-size target.
- */
-private val SEARCH_BAR_HEIGHT = 40.dp
-
-
-/**
- * One search action chip — v2's `Chip` (`direction-b-v2.html:605-617`) as the two
- * match arrows use it (`:2763-2764`): `height:26`, `border-radius:999`, a
- * `1px borderMuted` ring on a transparent ground, a glyph in the muted tone and the
- * label in the text colour.
- *
- * Geometry, ring, label role and the glyph tone are [ChatChip]'s now; this wrapper only
- * keeps the arrows' own semantics — a search with no match is a **disabled** chip, so it
- * draws muted and takes no tap (`muted` plus a null `onClick`).
- */
 @Composable
-private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: () -> Unit) {
-    ChatChip(
-        text = label,
-        glyph = glyph,
-        muted = !enabled,
-        onClick = if (enabled) onClick else null,
-        onClickLabel = label,
-    )
+private fun SearchNavButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(
+                if (enabled) palette.accent.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+            )
+            .then(if (enabled) Modifier.clickable(onClickLabel = label, onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (enabled) palette.accent else palette.dim.copy(alpha = 0.5f),
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 

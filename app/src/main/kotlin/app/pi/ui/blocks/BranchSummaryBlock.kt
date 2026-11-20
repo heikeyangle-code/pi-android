@@ -1,5 +1,7 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,6 +57,7 @@ fun BranchSummaryBlock(
         BlockCard(
             color = palette.customMessageBg,
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            modifier = Modifier.animateContentSize(animationSpec = tween(180)),
         ) {
             Row(
                 modifier = Modifier

@@ -84,7 +84,7 @@ fun PiLinkCardView(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(14.dp)
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {

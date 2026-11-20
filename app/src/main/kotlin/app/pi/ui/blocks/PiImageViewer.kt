@@ -9,6 +9,7 @@ import android.util.Base64
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,11 +23,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -650,33 +655,47 @@ internal fun PiImageViewerSurface(
             }
         }
 
-        // ③ 右上角两颗按钮。最后一个子节点 = 最上面，所以它们自己的点按不会被背景层截走。
-        //    保存键与 ✕ 同一种形状（`IconButton` + 同一枚 `tint`），不引入新的按钮样式或颜色。
+        // ③ 右上角两颗毛玻璃悬浮圆钮（避让状态栏，亮/暗图上均清晰可见）。
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
+                .statusBarsPadding()
                 .padding(PiSpacing.pageHorizontal),
-            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(
+            Surface(
                 onClick = { saveToDownloads() },
                 enabled = !saving,
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Download,
-                    contentDescription = "保存到下载目录",
-                    tint = palette.text,
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Download,
+                        contentDescription = "保存到下载目录",
+                        tint = palette.text,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
-            IconButton(onClick = onDismiss) {
-                // v2's icon language: the same `Close` glyph the session tree's top
-                // bar uses, in the palette's own `text` token.
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "关闭",
-                    tint = palette.text,
-                )
+            Surface(
+                onClick = onDismiss,
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = palette.text,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
     }

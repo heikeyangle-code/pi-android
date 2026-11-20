@@ -1,10 +1,10 @@
 package app.pi.ui.screens
 
-import app.pi.engine.PiEngineSession
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,118 +13,84 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.ExportedSession
-import app.pi.ui.chat.ChatChip
-import app.pi.ui.chat.SessionExportDelivery
-import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 
-/** 输入框上方的状态行：压缩中止、队列、导出交付。从 ChatScreen.kt 拆出。 */
+/** 输入框上方的状态行：压缩中止、队列排队卡、导出交付卡。 */
 
+private const val PENDING_MESSAGE_LINES = 3
 
-/**
- * How many queued-message lines [QueueRow] draws before it stops.
- *
- * pi prints every queued message (`updatePendingMessagesDisplay`,
- * `interactive-mode.js:3873-3889`); the cap is this screen's, and it is what keeps a
- * long queue from walking the composer up the screen. Nothing is hidden by it: the
- * two count chips above the lines are the complete reading.
- */
-private const val PENDING_MESSAGE_LINES = 2
-
-
-/**
- * What is waiting behind the running turn, plus the one action pi offers on it.
- *
- * pi draws the same thing above its editor (`updatePendingMessagesDisplay`,
- * `interactive-mode.js:3873-3889`): one `dim` line per queued message —
- * `Steering: ${message}` (`:3879`) and `Follow-up: ${message}` (`:3883`) — plus one
- * hint, `↳ <key> to edit all queued messages` (`:3887`), because
- * `app.message.dequeue` restores **all** of them (`restoreQueuedMessagesToEditor`,
- * `:3891-3910`) and `clear_queue` has no per-message form
- * (`rpc-types.d.ts:34-36`). This row keeps the app's existing count chips and adds
- * that one action; it deliberately does not pretend each message can be taken back
- * alone, because nothing on the wire can do that.
- *
- * ## The message lines
- *
- * The text is pi's own. `queue_update` carries `{steering: string[],
- * followUp: string[]}` (`core/agent-session.js:655`; emitted on a steer enqueue at
- * `:1767`, on a follow-up at `:1783`, and by `clearQueue` at `:1920`) and RPC
- * forwards the whole event verbatim (`modes/rpc/rpc-mode.js:265-270`). The app used
- * to keep only `.size`, which left the queue the one state whose *content* the user
- * could not read — and since a queued message is deliberately not drawn in the
- * transcript until pi delivers it (`PiEngineSession.prompt`), the count was all
- * there was. The reading of each line is pi's too: steering first and then
- * follow-ups (the two loops at `interactive-mode.js:3878-3885`), each truncated to a
- * single visual line (`TruncatedText(text, 1, 0)` at `:3880`/`:3884`).
- *
- * `PiTheme.palette.dim` is the same token pi paints these lines with —
- * `theme.fg("dim", …)` at `:3879`/`:3883`/`:3887` — and it is resolved from the
- * user's own theme file (`PiThemeFiles.kt:1020`, the `dim` key), so a theme switch
- * moves both together. pi draws these lines on its canvas; this app now floats them on a
- * `surfaceContainerLow` card at the same 12 dp edge as the composer, because the composer
- * itself floats — bare lines over the transcript would read as debris rather than as a
- * queue waiting above the input box. At most [PENDING_MESSAGE_LINES] are drawn, unlike
- * pi's uncapped list.
- *
- * v2's `QueueRow` (`direction-b-v2.html:1381-1390`, phone11/phone12) is the shape of
- * the count row: a `⇢` chip for the steering count and a `⇣` chip for the follow-up
- * count — the symbol is the queue's own third channel, coloured by meaning (`⇢`
- * warning, `⇣` muted) while the words and the number stay in the normal text colour
- * — and 「收回并编辑」 in the accent at the far right. The app used to print the two
- * counts as bare words in surface-coloured pills, which left the queue the only state
- * on the screen without a symbol. The v2 board also draws a per-message card carrying
- * its own 「编辑」 (`direction-b-v2.html:2702-2718`); that half is **not** built,
- * because a per-message dequeue does not exist on the wire. The ruling is
- * `design/ui-refactor/14-illustration-and-queue-diff.md:230` option (a), and the
- * message text itself was adjudicated in row 6 of that table (`:181`).
- */
-/** 输入框上方的一行状态卡：一句话 + 一个文字动作。队列行、压缩中止共用同一套外观。 */
+/** 输入框上方的一行状态卡：状态点 + 文案 + 胶囊动作按钮。 */
 @Composable
 internal fun StatusActionRow(text: String, actionLabel: String, onAction: () -> Unit) {
+    val palette = PiTheme.palette
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = PiSpacing.composerPageMargin)
-            .padding(bottom = PiSpacing.small),
-        shape = PiShapes.card,
+            .padding(bottom = 6.dp),
+        shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.25f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(PiSpacing.inline),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(palette.accent),
+            )
             Text(
                 text = text,
                 modifier = Modifier.weight(1f),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.dim,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = actionLabel,
-                modifier = Modifier
-                    .clickable(onClickLabel = actionLabel, onClick = onAction)
-                    .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Surface(
+                onClick = onAction,
+                shape = RoundedCornerShape(999.dp),
+                color = palette.accent.copy(alpha = 0.14f),
+            ) {
+                Text(
+                    text = actionLabel,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.accent,
+                )
+            }
         }
     }
 }
 
-
+/** 排队中的引导 / 后续消息悬浮卡：清晰区分引导（黄）与后续（蓝），一键全部收回编辑。 */
 @Composable
 internal fun QueueRow(
     steering: Int,
@@ -133,115 +99,142 @@ internal fun QueueRow(
     followUpTexts: List<String>,
     onRestore: () -> Unit,
 ) {
-    // pi's order, capped by [PENDING_MESSAGE_LINES]. Built here rather than in the
-    // caller so the two lists cannot be paired with the wrong counts.
-    //
-    // A blank text is skipped rather than drawn as an empty line. An attachment-only
-    // mid-turn message queues with an empty string — `_queueSteer` pushes the *text*
-    // (`core/agent-session.js:1765-1766`) and this app offers 引导 for an attachment
-    // with no caption (the composer's `canSteer`), a state official pi cannot reach
-    // at all because its submit rejects empty text
-    // (`interactive-mode.js:2542-2544`). Skipping keeps such a queue showing exactly
-    // what it showed before these lines existed: the count chip. The gap behind it —
-    // a queued attachment cannot be taken back, because `clear_queue` returns
-    // `string[]` only (`rpc-types.d.ts:194-199`) — is already recorded and needs a
-    // product ruling: `design/ui-refactor/14-illustration-and-queue-diff.md:187` row 12.
-    val pendingLines = buildList {
-        steeringTexts.filter { it.isNotBlank() }.forEach { add("引导：$it") }
-        followUpTexts.filter { it.isNotBlank() }.forEach { add("后续：$it") }
-    }.take(PENDING_MESSAGE_LINES)
-    // 悬浮输入框的邻居：同一条 12 dp 边、同一族的圆角卡片，叠在输入框上方。
-    // 输入框浮起来之后，再把这几行裸文字直接画在聊天流上会像悬空的碎片 —— 给它一张
-    // 和输入框同色的底，队列才读成"在输入框上面等着"，而不是"聊天流里的几行字"。
+    val palette = PiTheme.palette
+    val pendingItems = buildList {
+        steeringTexts.filter { it.isNotBlank() }.forEach { add(Triple("引导", palette.warning, it)) }
+        followUpTexts.filter { it.isNotBlank() }.forEach { add(Triple("后续", palette.accent, it)) }
+    }
+    val visibleItems = pendingItems.take(PENDING_MESSAGE_LINES)
+    val overflow = (pendingItems.size - visibleItems.size).coerceAtLeast(0)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = PiSpacing.composerPageMargin)
             .padding(bottom = 6.dp),
-        shape = PiShapes.card,
-        // 比输入框（surfaceContainerLow）高一级：两张卡叠在一起时，队列是**浮在**
-        // 输入框上面的那一张，不该和它融成一块。
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (steering > 0) palette.warning.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            // The two words are pi's two waiting modes and are **not** synonyms:
-            // 引导 is `steeringMode`/steer (this turn is steered by the message: pi
-            // delivers it after the turn's tool calls finish and before the next model
-            // call, `core/agent-session.js:1741-1742`), 后续 is `followUpMode`/followUp
-            // (processed once the agent would otherwise stop, `:1753-1754`). The glyphs
-            // and tones are the queue's own third channel (`06 §4`: `⇢` warning,
-            // `⇣` muted). The words are the same two the composer chips and the settings
-            // page use, and the same two pi prints above its editor
-            // (`interactive-mode.js:3881`/`:3885`).
-            if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "引导 $steering")
-            if (steering > 0 && followUp > 0) Spacer(Modifier.width(PiSpacing.inline))
-            if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "后续 $followUp")
-            Spacer(Modifier.weight(1f))
-            // The consequence, not the mechanism: the text goes back into the input box
-            // and the turn that is running is not touched.
-            Text(
-                "收回并编辑",
-                modifier = Modifier
-                    .clickable(onClickLabel = "收回并编辑", onClick = onRestore)
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        // One read-only line per queued message, in pi's `dim` and on the canvas —
-        // the same shape as official, and the only place the user can read what is
-        // actually waiting (`PiThemeFiles.kt:1020` resolves `dim` from their theme).
-        pendingLines.forEach { line ->
-            Text(
-                text = line,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.dim,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (steering > 0) {
+                    QueueCountPill(glyph = "⇢", label = "引导 $steering", tone = palette.warning)
+                }
+                if (followUp > 0) {
+                    QueueCountPill(glyph = "⇣", label = "后续 $followUp", tone = palette.accent)
+                }
+                Spacer(Modifier.weight(1f))
+                Surface(
+                    onClick = onRestore,
+                    shape = RoundedCornerShape(999.dp),
+                    color = palette.accent.copy(alpha = 0.14f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = null,
+                            tint = palette.accent,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Text(
+                            text = "收回并编辑",
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                            color = palette.accent,
+                        )
+                    }
+                }
+            }
+            if (visibleItems.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    visibleItems.forEach { (tag, tone, body) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(2.5.dp)
+                                    .height(14.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(tone),
+                            )
+                            Text(
+                                text = tag,
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                color = tone,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = body,
+                                modifier = Modifier.weight(1f),
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    if (overflow > 0) {
+                        Text(
+                            text = "还有 $overflow 条排队中…",
+                            style = PiTheme.text.meta,
+                            color = palette.dim,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun QueueCountPill(glyph: String, label: String, tone: Color) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(tone.copy(alpha = 0.14f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = glyph,
+            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+            color = tone,
+        )
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = tone,
+            maxLines = 1,
+        )
     }
 }
 
-
-/**
- * One count chip: `06 §2` 的 chip（高 26 圆角 999），加上队列自己的符号。
- *
- * Both halves are monospace — a queue count is a machine reading, and the symbol
- * belongs to the machine face in v2 too (`<Chip glyph="⇢" … mono>`). The two counts
- * are the family's one pair with a **per-glyph tone** (`⇢` warning, `⇣` muted), which
- * is what [ChatChip]'s `glyphTone` carries; the words and the number stay in the text
- * colour. Its `surfaceContainerHigh` fill is gone: the chip is the same `1px
- * borderMuted` ring on the page ground as the model and search chips, which is what
- * `06 §2` draws and what made this one's fill read as a nested card.
- */
-@Composable
-private fun QueueChip(glyph: String, tone: Color, text: String) {
-    ChatChip(
-        text = text,
-        glyph = glyph,
-        glyphTone = tone,
-    )
-}
-
-
-/**
- * The delivery row for a finished `/export`.
- *
- * pi's export lands in the user's own cwd (`core/export-html/index.ts:274-281`), so
- * on a desktop the file is simply there. This app's export lands in its private
- * workspace, where no file manager can reach it — so "where is it and how do I get
- * it out" is the only question the row has to answer. It shows the file name (what
- * the user will look for) and the two sinks the app already owns for its own
- * diagnostic report ([SessionExportDelivery]). No location is shown, because the
- * only location the app could print is one the user cannot open.
- */
+/** `/export` 导出交付卡：一键存至 Download、分享或关闭。 */
 @Composable
 internal fun ExportDeliveryRow(
     exported: ExportedSession,
@@ -249,52 +242,98 @@ internal fun ExportDeliveryRow(
     onShare: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
-        shape = PiShapes.card,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, palette.success.copy(alpha = 0.32f)),
     ) {
-        Column(Modifier.padding(horizontal = PiSpacing.cardPadding, vertical = 8.dp)) {
-            Text(
-                "会话已导出",
-                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                exported.name,
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DeliveryAction("保存到 Download", onSave)
-                Spacer(Modifier.width(14.dp))
-                DeliveryAction("分享", onShare)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "关闭",
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
                     modifier = Modifier
-                        .clickable(onClick = onDismiss)
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(palette.success.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = palette.success,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(
+                        "会话已导出",
+                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        exported.name,
+                        style = PiTheme.text.monoSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable(onClickLabel = "关闭", onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = palette.muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Surface(
+                    onClick = onSave,
+                    shape = RoundedCornerShape(999.dp),
+                    color = palette.accent,
+                ) {
+                    Text(
+                        "保存到 Download",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                        color = palette.contrastOn(palette.accent),
+                    )
+                }
+                Surface(
+                    onClick = onShare,
+                    shape = RoundedCornerShape(999.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ) {
+                    Text(
+                        "分享文件",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }
-}
-
-
-@Composable
-private fun DeliveryAction(label: String, onClick: () -> Unit) {
-    Text(
-        label,
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(vertical = 3.dp),
-        style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-        color = MaterialTheme.colorScheme.primary,
-    )
 }
