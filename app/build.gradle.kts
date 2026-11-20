@@ -41,8 +41,8 @@ android {
         applicationId = "app.pi"
         minSdk = 26
         targetSdk = piTargetSdk
-        versionCode = 8
-        versionName = "0.1.8"
+        versionCode = 9
+        versionName = "0.1.9"
 
         // The bundled runtime is aarch64-only: proot loader, glibc rootfs, Node.
         // One ABI, no `splits`: the APK carries hundreds of prebuilt binaries and

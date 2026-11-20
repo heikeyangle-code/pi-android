@@ -7,14 +7,15 @@
 <h1 align="center">Pi for Android</h1>
 
 <p align="center">
-  <b>Your coding agent. Now on Android.</b><br />
-  Native Android · Three runtimes · Local development environment
+  <b>A real Linux coding agent in your pocket.</b><br />
+  Native Jetpack Compose · Official Pi 1.6.0 SDK · Three Switchable Runtimes · Zero Root, Zero Termux
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+" />
-  <img src="https://img.shields.io/badge/ARM64-arm64--v8-555" alt="ARM64" />
-  <img src="https://img.shields.io/badge/pi-1.5.0-7C5CFF" alt="pi 1.5.0" />
+  <img src="https://img.shields.io/badge/ABI-arm64--v8a-555" alt="ARM64" />
+  <img src="https://img.shields.io/badge/pi-1.6.0-7C5CFF" alt="pi 1.6.0" />
+  <img src="https://img.shields.io/badge/Node.js-24.22.1-339933?logo=node.js&logoColor=white" alt="Node.js 24.22.1" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
 </p>
 
@@ -24,127 +25,73 @@
   <a href="https://github.com/heikeyangle-code/pi-android/issues">Issues</a>
 </p>
 
-### Bring Pi to your phone.
+---
 
-A native Android experience for the Pi Coding Agent, built for developers who want to work with their agent directly on a mobile device — a real Linux userspace, the official Pi SDK, and three switchable runtimes.
+### Turn your Android phone into a local coding workstation.
 
-No root. No Termux. No remote machine. Your phone becomes the workspace.
+Most mobile AI apps are just thin chat boxes over an API. **Pi for Android** ships the real **[Pi Coding Agent](https://github.com/earendil-works/pi)** inside a bundled **Ubuntu 24.04 ARM64** userspace with **Node.js 24**, **Git**, **ripgrep**, and **fd** — driven by a native Android Jetpack Compose interface.
+
+No root. No Termux setup. No SSH or cloud sandbox. Open any folder on your phone and let your agent read, search, edit, run commands, manage Git, use MCP servers, and even invoke interactive TUI extensions right on device.
 
 <table align="center">
   <tr>
     <td align="center" width="50%">
       <img src="docs/screenshots/chat-tools.jpg" width="280" alt="Tool cards and an inline diff in a conversation" /><br />
-      <sub><b>Tool cards &amp; inline diffs</b> — every call is a row; the edit shows the changed lines.</sub>
+      <sub><b>Structured tool cards &amp; inline diffs</b> — every shell command, file read, and code edit stays readable at a glance.</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/workspace.jpg" width="280" alt="Workspace file list with this session's changes" /><br />
-      <sub><b>Workspace</b> — a real folder on the phone; this session's edits are collected at the top.</sub>
+      <sub><b>Real local workspace</b> — browse directories on your phone with session edits surfaced right at the top.</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
       <img src="docs/screenshots/chat-markdown.jpg" width="280" alt="Markdown and LaTeX rendering in the transcript" /><br />
-      <sub><b>Markdown &amp; math</b> — headings, code blocks and LaTeX render in place.</sub>
+      <sub><b>Rich native rendering</b> — syntax-highlighted code, LaTeX math, Mermaid diagrams, and full-screen image viewer.</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/models-providers.jpg" width="280" alt="Model providers screen" /><br />
-      <sub><b>Model providers</b> — 7 subscription logins plus 34 more, or any OpenAI-compatible endpoint.</sub>
+      <sub><b>Full Pi provider ecosystem</b> — 7 OAuth subscription logins, 35+ API providers, or any OpenAI-compatible endpoint.</sub>
     </td>
   </tr>
 </table>
 
 ---
 
-## Why Pi for Android?
+## Highlights
 
-Pi for Android is not just another AI chat interface. It is a mobile environment for working with an actual coding agent.
+### 1. Real Local Linux & Three Switchable Runtimes
+No Termux, no manual bootstrap scripts, no root required. First launch unpacks a deterministic, per-payload versioned Linux runtime (**Ubuntu 24.04 ARM64 · Node.js 24.22.1 · Git · ripgrep · fd · Pi 1.6.0**) — and future upgrades only refresh changed payloads without wiping packages you installed inside the guest.
 
-The agent can explore projects, read and edit files, execute shell commands, use extensions, and continue development directly on your Android device.
+Pick the execution backend that works best on your device:
 
-- **Native Android experience** — a purpose-built interface for agent-driven development.
-- **Local execution** — the agent and its tools run on your device.
-- **Three switchable runtimes** — choose between PRoot, Proroot, and TAWCROOT.
-- **Real project access** — work with directories and files available on your phone.
-- **Upstream Pi engine** — built around the Pi Coding Agent ecosystem rather than an independently reinvented agent engine.
-
-## Features
-
-### Three runtime backends. One coding environment.
-
-Different Android runtime approaches have different trade-offs in execution speed, compatibility, and stability.
-
-Pi for Android supports three runtime choices:
-
-| Runtime | Role |
+| Runtime | Characteristics |
 | :--- | :--- |
-| **PRoot** | Traditional user-space Linux execution, serving as the compatibility-oriented baseline. |
-| **Proroot** | An alternative runtime designed to reduce the overhead associated with traditional PRoot execution. |
-| **TAWCROOT** | A third runtime option offering another execution path. Its stability is still being improved. |
+| **PRoot** | Proven user-space syscall translation (Termux build). The compatibility baseline. |
+| **Proroot** | Alternative LD_PRELOAD/linker runtime designed to slash PRoot's syscall overhead. |
+| **TAWCROOT** | Single-process `seccomp` runtime built from pinned upstream source (experimental, actively hardened). |
 
-The two alternative runtimes can offer better performance than traditional PRoot in supported workloads.
+### 2. Built Directly on the Official Pi 1.6.0 SDK — Not a Fork
+Instead of scraping CLI stdout or reinventing an agent loop, Pi for Android runs a dedicated **Node.js SDK Host** over a typed, backpressured JSONL protocol:
 
-Runtime performance depends on the device, workload, and compatibility requirements. No single backend is guaranteed to be the fastest or most suitable in every situation.
+- **Fast cold start**: loads Pi's bundled SDK (`dist/bundle/index.js`) with lazy module loading and incremental session indexing.
+- **Full upstream capabilities**: `gpt-6.2-sol` / `gpt-6.2-astra`, Claude, Gemini, Qwen Token Plan, per-model thinking levels, live context & cost telemetry, Code Mode, Tool Search, and MCP servers.
+- **100% Official Pi Theme compatibility**: reads official Pi theme JSONs (including `okhsl()` / `oklch()` color spaces) with automatic contrast calculation across light and dark modes.
+- **Native mobile TUI surfaces**: extensions that spawn custom interactive panels, overlays, widgets, status bars, autocompletes, or audio bells work directly on touchscreens with responsive width-fitting, touch/mouse dispatch, and soft/hardware keyboard support.
 
-Choose the runtime that works best for your device and workload.
+### 3. Designed for Mobile Flow & Speed
+- **Calm, borderless reading stream**: quiet single-line thinking indicator, clean tonal tool cards, syntax highlighting powered by Pi's own guest highlighter, LaTeX math, Mermaid diagrams, and expandable diffs.
+- **Multi-source attachments**: attach multiple photos or files, paste images directly from the clipboard, or `@`-mention files from your workspace — with OOM-safe downsampling aligned with Pi's exact image budget and per-model image limits.
+- **Official `/tree` & `/resume` parity**: navigate branching session trees with Pi's 5 filter modes, fork from any message, and full-text search across workspaces with instant cached listings.
+- **Smart memory management**: compact SHA-256 image cache keys and lifecycle-aware memory trimming keep long, media-heavy sessions smooth on mobile RAM.
 
-### A coding agent, not just a chatbot
+### 4. Opt-in Android Device Capabilities (Strict Zero-Token When Off)
+When you explicitly enable them in **设置 → 设备能力**, your agent can bridge into Android itself — screen automation (Accessibility), notifications, clipboard, location/camera, and Shizuku / device shell — guarded by:
+- **0-token overhead when disabled**: tools are only registered in the model's active tool list when turned on.
+- **Per-rule confirmation gate**: irreversible actions (`pm uninstall`, `pm clear`, `dd`, stopping apps, etc.) always prompt you before running.
 
-Work with an agent that can:
-
-- Inspect project files.
-- Search through source code.
-- Execute shell commands.
-- Create and edit files.
-- Use tools and extensions.
-- Explain and report its changes.
-
-Tool activity and results are presented as structured conversation elements, making it easier to understand what the agent is doing.
-
-### A Linux environment on your phone
-
-No root access or separate Termux installation is required.
-
-The app provisions a local Linux userspace and Node.js environment. The pinned runtime artifacts include:
-
-- Ubuntu 24.04 ARM64 userspace.
-- Node.js 24.22.1.
-- Git.
-- ripgrep.
-- fd.
-- Runtime-specific components for the supported execution backends.
-
-### Work with real projects
-
-Choose a directory on your device and use it as a project workspace.
-
-Browse files, inspect changes, edit code, and let the agent work with the same local project.
-
-### Understand every change
-
-Tool calls and their outputs are presented in dedicated UI components.
-
-- Inspect tool execution results.
-- Review code changes through diff-oriented views.
-- Follow the agent's progress in the conversation.
-- Expand or collapse detailed reasoning and tool output where supported.
-
-### Sessions that preserve context
-
-Continue previous work, navigate conversation history, and use branching workflows supported by the Pi engine.
-
-### Extend the agent
-
-Bring the Pi ecosystem into a mobile environment.
-
-The project supports Pi-oriented customization through extensions, skills, prompts, and themes, with the goal of preserving compatibility with the upstream agent architecture.
-
-All of it has one entry point in the app (设置 → 扩展与资源): extensions, skills, prompts, themes, context files, packages, MCP servers and project trust. Each entry names the real path it came from and whether it is project-level or global — there is no private store, because what you install is a file in the workspace or in pi's agent directory.
-
-### Configure your own models
-
-Use supported provider presets or configure a custom OpenAI-compatible endpoint.
-
-The application follows the upstream Pi configuration model rather than maintaining an unrelated model backend.
+### 5. Unified Extension & Resource Hub
+Everything Pi loads lives in one transparent hub (**设置 → 扩展与资源**): extensions, skills, prompt templates, themes, context files, npm/git packages, MCP servers, and project trust. Every entry shows its exact path and scope (project vs. global) — no private store, 100% compatible with desktop Pi configs.
 
 ---
 
@@ -155,49 +102,37 @@ The application follows the upstream Pi configuration model rather than maintain
 | Requirement | Support |
 | :--- | :--- |
 | Android | 8.0 (API 26) or later |
-| CPU architecture | ARM64 / arm64-v8a |
-| Root access | Not required |
-| Termux | Not required |
-| Internet | Required for model-provider requests |
+| CPU architecture | ARM64 (`arm64-v8a`) |
+| Root / Termux | **Not required** |
+| Internet | Required for model API requests & package installs |
 
-### Download
+### Quick Start
 
-1. Open the [Releases](https://github.com/heikeyangle-code/pi-android/releases) page.
-2. Download the APK.
-3. Install it on your Android device.
-4. Launch the app and allow the runtime to initialize.
-5. Select a runtime and configure your model provider.
-6. Open a project and start a session.
-
-The first launch may take longer while runtime components are provisioned.
-
-> **Note:** The bundled runtime currently targets ARM64 Android devices. Other CPU architectures are not supported.
+1. Download the latest APK from [GitHub Releases](https://github.com/heikeyangle-code/pi-android/releases).
+2. Install it on your Android device (signed with a consistent sideload key so future versions upgrade in place).
+3. Launch the app and wait for the bundled Linux + Pi runtime to provision on first boot.
+4. Connect a provider in **设置 → 模型与供应商** (OAuth subscription login, API key, or custom OpenAI-compatible endpoint).
+5. Open any local folder as your workspace and start coding.
 
 ---
 
 ## Architecture
 
-Pi for Android combines a native Android application with a local Node.js agent host and switchable runtime backends.
-
-The Android application provides the user interface, workspace access, runtime management, and lifecycle integration.
-
-The Node.js host runs the Pi agent integration and communicates with the Android application through a structured protocol.
-
 ```mermaid
 flowchart TB
-    A["Android Application"]
-    B["Native UI · Workspace · Sessions"]
-    C["Kotlin Host Client"]
-    D["JSONL Host Protocol"]
-    E["Node.js SDK Host"]
-    F["Pi Coding Agent SDK"]
-    G["Agent Tools · Extensions · Models"]
+    A["Android App (Kotlin · Jetpack Compose)"]
+    B["Chat Stream · Workspace · Session Tree · Extension Surfaces"]
+    C["Kotlin Host Client & State Store"]
+    D["Typed JSONL Protocol (seq · epoch · backpressure)"]
+    E["Node.js SDK Host (app/src/main/assets/guest/sdk-host)"]
+    F["@earendil-works/pi-coding-agent 1.6.0 SDK"]
+    G["Built-in Tools · Extensions · MCP · Code Mode · Models"]
 
-    H["Runtime Manager"]
+    H["Runtime Selection"]
     I["PRoot"]
     J["Proroot"]
     K["TAWCROOT"]
-    L["Linux Userspace · Node.js · Tools"]
+    L["Bundled Ubuntu 24.04 ARM64 · Node 24.22.1 · Git · rg · fd"]
 
     A --> B
     B --> C
@@ -214,151 +149,55 @@ flowchart TB
     K --> L
 ```
 
-### Why the SDK Host?
-
-The SDK Host provides a dedicated Node.js process that owns the agent integration and exposes a structured interface to the Android application.
-
-This separates the Android presentation layer from the agent's internal implementation and provides a cleaner foundation for future capabilities.
-
-The host protocol uses JSON Lines, with typed commands, events, state updates, and UI interaction requests.
-
-The SDK Host integration has been merged into the main branch. The broader migration and integration work continues to evolve; not every remaining service should be assumed to have completed the transition.
-
-See [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md) and [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md) for host architecture and wire protocol details.
-
----
-
-## Technology Stack
+### Stack at a Glance
 
 | Layer | Technology |
 | :--- | :--- |
-| Application | Native Android |
-| UI | Kotlin · Jetpack Compose |
-| Agent engine | [Pi Coding Agent](https://github.com/earendil-works/pi) |
-| Agent integration | Pi SDK · Node.js Host |
-| Runtime backends | PRoot · Proroot · TAWCROOT |
-| Linux userspace | Ubuntu 24.04 ARM64 |
-| JavaScript runtime | Node.js 24.22.1 |
-| Host protocol | JSONL |
-| Build system | Gradle · Android Gradle Plugin |
+| App & UI | Native Android · Kotlin · Jetpack Compose · Material 3 |
+| Agent Engine | [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi) **`1.6.0`** (deterministic lockfile) |
+| Host Bridge | Node.js SDK Host · Typed JSONL (`seq`, `epoch`, backpressure) |
+| Runtimes | PRoot (Termux) · Proroot · TAWCROOT |
+| Bundled Userspace | Ubuntu 24.04 ARM64 · Node.js 24.22.1 · Git 2.43 · ripgrep 15.2 · fd 10.2 |
+| Build & CI | Gradle · AGP · 6 automated GitHub Actions jobs |
 
-### Upstream engine
-
-The project pins:
-
-- `@earendil-works/pi-coding-agent`: **1.5.2**
-
-The engine version is managed through the repository's dependency and runtime tooling.
-
-The goal is to keep the upstream Pi agent engine intact and build the Android experience around its public capabilities.
+Docs:
+- [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md) — SDK Host architecture & lifecycle
+- [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md) — Wire protocol v1 specification
+- [`docs/sdk-host/upgrading.md`](docs/sdk-host/upgrading.md) — 6-gate upstream Pi upgrade SOP (`tools/pi-upgrade-audit.mjs`)
+- [`docs/runtime-engines.md`](docs/runtime-engines.md) — PRoot / Proroot / TAWCROOT comparison
 
 ---
 
-## Development
-
-### Clone the repository
+## Development & Verification
 
 ```bash
 git clone https://github.com/heikeyangle-code/pi-android.git
 cd pi-android
-```
 
-### Build the APK
+# Check for upstream Pi updates & audit all 9 integration seams
+node tools/pi-upgrade-audit.mjs --check-only
 
-```bash
+# Run real Pi SDK contract & 299 host integration checks
+node tools/sdk-host/contract.mjs
+node tools/sdk-host/test.mjs
+
+# Run protocol JVM tests & build release APK
+./gradlew :rpc:test
+node tools/fetch-runtime.mjs
 ./gradlew :app:assembleRelease
 ```
 
-### Run checks
+### What CI Proves (and Doesn't)
+Every push runs 6 GitHub Actions checks: `:rpc` JVM unit tests, real Pi SDK contract & 3× SDK Host suites (`bundle`, `--no-bundle`, `--scandir-fix`), Kotlin/Android API static guards, TAWCROOT NDK build, and dual signed APKs (`sideload28` + `modern36`). Green CI proves compilation, real SDK contract parity, and clean signed APK packaging; device-level runtime switching and hardware permissions are verified on real Android phones.
 
-```bash
-./gradlew :rpc:test
-
-node tools/sdk-host/contract.mjs
-node tools/sdk-host/test.mjs
-```
-
-### What a green build does and does not prove
-
-Every push runs the `:rpc` JVM unit tests, SDK Host real-engine tests, static safety guards, TAWCROOT native build, and APK (`targetSdk` 28 and 36) release builds. Green means: it compiles, the host contract and behaviour against the pinned Pi SDK pass, and both signed APKs assemble cleanly.
-
-It does not mean every screen has been exercised on a phone. Runtime switching, the three backends, extension UI and other device-level behaviour are verified by hand on real hardware.
-
-For SDK Host implementation details, see:
-
-- [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md)
-- [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md)
-- [`docs/runtime-engines.md`](docs/runtime-engines.md)
+### Interface Language & Contributing
+The app UI is currently **Chinese only** (copy lives directly in Compose code rather than `strings.xml`). Extracting strings for localization, improving runtime stability across more Android devices, and refining docs are all welcome contributions — open an [Issue](https://github.com/heikeyangle-code/pi-android/issues) or submit a PR!
 
 ---
 
-## Project Status
+## Acknowledgements & License
 
-Pi for Android is actively developed.
+Pi for Android stands on the shoulders of:
+[Pi Coding Agent](https://github.com/earendil-works/pi) · [Node.js](https://nodejs.org/) · [Ubuntu](https://ubuntu.com/) · [PRoot (Termux)](https://github.com/termux/proot) · [Proroot](https://github.com/coderredlab/proroot) · [TAWCROOT](https://github.com/wmww/tawc) (MIT, © Sophie Winter) · [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd) · [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) · [Source Han Serif CN](https://github.com/adobe-fonts/source-han-serif)
 
-The project includes a native Android application, local agent execution, three runtime options, project-oriented workflows, and SDK Host integration.
-
-Current development priorities include:
-
-- Improving runtime compatibility and stability.
-- Refining runtime selection and switching workflows.
-- Improving TAWCROOT stability.
-- Continuing SDK Host integration.
-- Improving extension UI support.
-- Strengthening session and workspace workflows.
-- Expanding device-level testing across supported Android versions and runtime backends.
-- Extracting UI copy for localisation — the interface is **Chinese only** today.
-
-### Interface language
-
-The app interface is currently **Chinese only**. The copy lives in the Compose code instead of in `strings.xml`, so an English interface is a refactor rather than a translation pass: it is planned, not shipped.
-
-Pull requests are very welcome — for that work, for translations once the strings are extracted, for the documentation, or for the English wording in this README. See [Contributing](#contributing).
-
-For current work and known issues, visit [GitHub Issues](https://github.com/heikeyangle-code/pi-android/issues).
-
----
-
-## Contributing
-
-Contributions, bug reports, ideas, and technical discussions are welcome.
-
-- Found a bug? [Open an issue](https://github.com/heikeyangle-code/pi-android/issues).
-- Want to contribute code? Fork the repository and submit a pull request.
-- Want to help with the interface language or the docs? Those are the two least flashy and most useful contributions right now.
-
-Please include relevant tests when modifying runtime, protocol, or agent integration code.
-
----
-
-## Support the Project
-
-If you find Pi for Android useful, consider giving the project a Star.
-
-Stars help other developers discover the project and encourage continued development.
-
-**A real coding agent. Three runtime choices. Your Android device.**
-
----
-
-## Acknowledgements
-
-Pi for Android builds on the work of several upstream projects:
-
-- [Pi Coding Agent](https://github.com/earendil-works/pi) — the agent engine.
-- [Node.js](https://nodejs.org/) — the JavaScript runtime.
-- [Ubuntu](https://ubuntu.com/) — the Linux userspace.
-- [PRoot](https://github.com/termux/proot) (Termux build) — user-space syscall translation; the default backend.
-- [Proroot](https://github.com/coderredlab/proroot) — the alternative runtime, shipped as a proprietary binary.
-- [TAWCROOT](https://github.com/wmww/tawc) (MIT, © Sophie Winter) — the single-process `seccomp` backend, built from a pinned upstream tag.
-- [ripgrep](https://github.com/BurntSushi/ripgrep) — fast code search.
-- [fd](https://github.com/sharkdp/fd) — convenient file discovery.
-- [Android](https://developer.android.com/) — the native application platform.
-
-Each runtime keeps its own upstream licence: PRoot is bundled from the Termux build, Proroot is a proprietary binary, TAWCROOT is MIT. Every third-party component retains its own licence and copyright; see [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/) for the bundled texts.
-
-## License
-
-The application source code is distributed under the MIT License.
-
-Third-party components bundled with the application retain their respective licenses. See [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/) for license texts and component notices.
+Application source code is licensed under **MIT**. Bundled third-party components retain their respective licenses (PRoot from Termux, Proroot proprietary unmodified binaries, TAWCROOT MIT, etc.); full license texts and notices are shipped in [`app/src/main/assets/licenses/`](app/src/main/assets/licenses/).
