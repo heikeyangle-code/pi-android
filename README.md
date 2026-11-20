@@ -90,8 +90,22 @@ When you explicitly enable them in **设置 → 设备能力**, your agent can b
 - **0-token overhead when disabled**: tools are only registered in the model's active tool list when turned on.
 - **Per-rule confirmation gate**: irreversible actions (`pm uninstall`, `pm clear`, `dd`, stopping apps, etc.) always prompt you before running.
 
-### 5. Unified Extension & Resource Hub
-Everything Pi loads lives in one transparent hub (**设置 → 扩展与资源**): extensions, skills, prompt templates, themes, context files, npm/git packages, MCP servers, and project trust. Every entry shows its exact path and scope (project vs. global) — no private store, 100% compatible with desktop Pi configs.
+### 5. Full Pi Extension & Mobile TUI Compatibility Engine (The Hard Part, Solved)
+Running desktop terminal extensions on a touchscreen phone is usually where mobile clients give up and say "CLI only". **Pi for Android** implements a complete, real-SDK compatibility engine so upstream extensions, custom renderers, and even interactive terminal UIs work natively on Android:
+
+- **Virtual TUI Surface Projection (`ui/surfaces.mjs` → Jetpack Compose)**:
+  - Extensions calling `ctx.ui.custom()`, `setWidget()`, `setHeader()`, `setFooter()`, or `tui.showOverlay()` mount real Pi TUI components into an in-host virtual terminal surface.
+  - Full `OverlayHandle` (`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`) and `OverlayOptions` (`visible(w, h)`, `nonCapturing`, anchors) lifecycle parity.
+  - **Responsive mobile width-fitting**: automatically scales 80-column desktop TUI layouts to fit your phone viewport and reports real columns back via `ui.resize`, with full `handleInput` (soft + hardware keyboard via official `KeybindingsManager`) and `handleMouse` (touch-to-mouse coordinate mapping).
+  - **Terminal control sequence bridge**: strips zero-width `CURSOR_MARKER`, converts `FAKE_CURSOR` to inverse SGR, and intercepts `BEL` (`\x07`) + `OSC 777 / 99 / 9` + `OSC 0/2` + `OSC 9;4` — turning terminal notifications, window titles, progress bars, and even TUI game sound bells into native Android feedback.
+- **1:1 Official Extension Renderers & Pipelines (`commands/catalog.mjs`)**:
+  - Custom tool cards run through Pi's real `ToolExecutionComponent` (`resolveToolRenderers`), sharing per-call renderer state, `details`, `renderShell: "self"`, and debounced `requestRender` invalidation.
+  - Full support for `registerMessageRenderer` (`CustomMessageComponent`), `registerEntryRenderer` (`CustomEntryComponent`), `registerMarkdownTransformer`, `addAutocompleteProvider`, `onTerminalInput`, `registerFlag`, and `FooterDataProvider` (live git branch & provider count).
+- **Zero-Compromise Bundled Extensions (`app/src/main/assets/pi-extensions/`)**:
+  - **`pi-highlight`**: exposes Pi's own guest `highlight.js` + `lovely-mermaid` layout engine over an authenticated local loopback service so syntax highlighting and Mermaid rendering stay 100% faithful to Pi without shipping a second JS engine on Android.
+  - **`pi-android-bridge` & `pi-android-permission-gate`**: bridges opt-in Android device capabilities into Pi's tool system with strict **0-token overhead when disabled** and per-rule user confirmation dialogs for irreversible actions.
+- **Unified Transparent Resource Hub (**设置 → 扩展与资源**)**:
+  - Manage extensions, skills, prompt templates, themes, context files, npm/git packages, MCP servers, and project trust in one place — every item shows its real file path and scope (project vs. global), with zero private store lock-in.
 
 ---
 

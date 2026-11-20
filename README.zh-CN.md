@@ -90,8 +90,22 @@
 - **关闭即零消耗**：未启用的能力不会注册进模型工具集，严格 **0 Token** 占用。
 - **高危操作逐规则确认**：`pm uninstall`、`pm clear`、`dd`、停止应用等不可逆调用强制弹出原生确认框，绝不静默执行。
 
-### 5. 透明统一的扩展与资源中心
-**设置 → 扩展与资源** 一站管理全部 Pi 资源：扩展、技能（Skills）、提示模板、主题、上下文文件、npm/git 包、MCP 服务器与项目信任。每一条都标明真实文件路径与作用域（项目级 / 全局级），没有封闭商店，与桌面端 Pi 配置 100% 互通。
+### 5. 硬核级 Pi 扩展与移动端 TUI 兼容引擎（把桌面终端生态搬上触屏）
+大多数移动端 Agent 客户端一遇到「终端扩展、自定义 TUI 界面、扩展渲染器」就会直接摆烂。**Pi for Android** 在宿主层与原生 UI 之间完整重建了一套贴合官方 SDK 的扩展与 TUI 兼容引擎，让社区的 Pi 扩展在手机上几乎开箱即用：
+
+- **虚拟 TUI 表面实时投影（`ui/surfaces.mjs` → 原生 Compose 交互面板）**：
+  - 扩展调用 `ctx.ui.custom()`、`setWidget()`、`setHeader()`、`setFooter()`、`tui.showOverlay()` 时，宿主实时挂载真实 TUI 组件并按帧去重推送给原生 UI，完整支持最小化、收起与重开。
+  - 完整实现 `OverlayHandle`（`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`）、`Focusable.focused` 焦点流转与 `OverlayOptions`（`visible(w, h)`、`nonCapturing` 等）。
+  - **小屏自适应 + 触控键鼠双支持**：默认「适配宽度」将 80 列桌面 TUI 优雅缩进手机视口并按实际列数回传 `ui.resize`；接入官方 `KeybindingsManager` 匹配快捷键，同时把触屏点击实时映射为 `TuiMouseEvent` 交给 `handleMouse()`。
+  - **终端控制序列桥接**：自动剥离 `CURSOR_MARKER`、将 `FAKE_CURSOR` 转为反显 SGR，并拦截 `tui.terminal.write()` 发出的 `BEL`（`\x07`）、`OSC 777 / 99 / 9` 通知、`OSC 0/2` 标题与 `OSC 9;4` 进度条 —— 连终端游戏里的响铃提示音都能在手机上响起来。
+- **1:1 复刻官方扩展渲染链路（`commands/catalog.mjs`）**：
+  - 扩展/MCP 工具直接交由官方 `ToolExecutionComponent`（经 `resolveToolRenderers`）渲染，完整保留 `details`、跨帧渲染状态、`renderShell: "self"` 自绘框架与防抖异步重绘（`render.invalidate`）。
+  - 全面接通 `registerMessageRenderer`（`CustomMessageComponent`）、`registerEntryRenderer`（`CustomEntryComponent`）、`registerMarkdownTransformer`、`addAutocompleteProvider`（输入框扩展补全）、`onTerminalInput`、`registerFlag` 与真实 `FooterDataProvider`（Git 分支与供应商计数）。
+- **随包内置的自研原生增强扩展（`app/src/main/assets/pi-extensions/`）**：
+  - **`pi-highlight`**：通过本地认证回环服务直接复用 guest 里 Pi 自带的 `highlight.js` 与 `lovely-mermaid`，零额外 JS 引擎开销实现毫秒级代码高亮与 Mermaid 渲染，且 100% 跟随官方主题色盘。
+  - **`pi-android-bridge` + `pi-android-permission-gate`**：将手机设备能力以原生 Pi 扩展形态接入，关闭时严格 0 Token 占用，高危操作按规则弹出原生三选一确认框。
+- **透明统一的扩展与资源中心（设置 → 扩展与资源）**：
+  - 扩展、技能（Skills）、提示模板、主题、上下文文件、npm/git 包、MCP 服务器与项目信任一站管理；每一项都展示真实路径与项目/全局作用域，**一键重载即刻刷新命令与工具**，与桌面端 Pi 配置 100% 互通。
 
 ---
 
