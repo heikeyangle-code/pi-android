@@ -427,6 +427,19 @@ run_harness session-import \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
+# app.pi.ui.chat：命令面板的纯逻辑（内建行映射 / 官方分组顺序 / 过滤与排序 / 不可做命令只在敲全名时出现）。
+run_harness slash-palette \
+  app.pi.ui.chat.SlashPaletteCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/SlashPaletteCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Events.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntrySummary.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
 # app.pi.session: **引擎（重新）启动时靠什么认回这一段对话** —— 会话 `id`，还是那个文件本身
 # （`SessionResume.kt`）。它存在的理由是一条真机制：pi 的 `--session-id` 走
 # `SessionManager.findById`，判据是「id ∧ header 的 cwd 等于引擎 cwd ∧ 文件在 `--session-dir`

@@ -1667,7 +1667,12 @@ internal fun ChatBody(
                 command?.let { CLIENT_BUILTINS[it.name]?.note }?.let { session.notifyUser(it) }
                 onOpenSettings()
             }
-            ChatAction.PickModel -> {
+            // `/model <引用>`：精确匹配直接切，否则开选择器并预填（interactive-mode.js handleModelCommand）。
+            ChatAction.PickModel -> if (args.isNotBlank()) {
+                session.refreshModels()
+                session.runModelCommand(args.trim()) { sheet = ChatSheet.Model }
+            } else {
+                session.seedModelPicker("")
                 session.refreshModels()
                 sheet = ChatSheet.Model
             }

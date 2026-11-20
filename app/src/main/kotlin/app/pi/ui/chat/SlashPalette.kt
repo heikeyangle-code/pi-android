@@ -1,15 +1,15 @@
 package app.pi.ui.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -17,8 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.Box
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -30,24 +29,20 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * The `/` palette: every command the user can invoke, filtered by what they have
- * typed after the slash.
+ * 输入框里敲 `/` 时弹出的命令面板：pi 终端自动补全弹窗（`CombinedAutocompleteProvider` over
+ * `[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList]`，
+ * `interactive-mode.js` `setupAutocompleteProvider`）在触屏上的样子。顺序和分组就是官方的：
+ * 内置 → 模板 → 扩展 → 技能；每组一个小标题，行里不再重复写「来源」，只有带来源标签
+ * （用户 / 项目 / npm / git，官方 `getAutocompleteSourceTag`）的行才多一枚标签。
  *
- * It replaces pi's autocomplete popup (`CombinedAutocompleteProvider` over
- * `[...slashCommands, ...templateCommands, ...extensionCommands,
- * ...skillCommandList]`, `interactive-mode.ts:728`) on a touch screen. Two
- * behaviours are taken from that provider rather than invented:
+ * 过滤：命令名前缀优先，其次名字包含，最后说明里出现 —— 官方只按名字过滤，手机上输入慢，
+ * 多一层说明匹配能少敲几个字（排在名字命中之后，不改变官方的优先次序）。
  *
- *  - **filtering is on the invocation name**, case-insensitively, prefix first —
- *    the same thing typing in pi's editor does.
+ * 这里的行都能执行。pi 有、手机做不了的内建命令（`UNSUPPORTED_BUILTIN_REASONS`）不占列表行，
+ * 敲全名时才出现并说明原因；pi 新增而我们还没映射的命令照常列出（点一下说明「还没有对应做法」），
+ * 不会悄悄缺一个。
  *
- * Every row here is runnable: the built-ins whose only outcome was a notice
- * ("no entry in this app" or "go to Settings") were **deleted**, not listed, so
- * there is no longer a state to explain. `PiSlashCommands.CLIENT_BUILTINS`
- * records the seventeen built-ins that are not here and why.
- *
- * The list is capped in height so it never covers the transcript: on a phone the
- * composer must stay reachable while the palette is open.
+ * 高度封顶：命令面板打开时输入框必须还够得着。
  */
 @Composable
 fun SlashPalette(
@@ -56,163 +51,132 @@ fun SlashPalette(
     onPick: (PiSlashCommand) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Remembered on the two inputs the ranking reads. The filter lowercases every
-    // command's name twice (once per pass) and allocates two lists per call, and this
-    // composable is on screen exactly while the user types a `/` name — which is also
-    // when the chat screen below it recomposes once per streamed token. Same answer,
-    // computed when the query or the command list moves rather than on every frame.
+    // 随查询词 / 命令表变化才重算：流式输出时对话页每个 token 重组一次，面板开着的那几秒不该每帧过滤。
     val matches = remember(commands, query) { filterPalette(commands, query) }
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
         shape = PiShapes.card,
-            ) {
+    ) {
         if (matches.isEmpty()) {
             Text(
                 text = if (query.isBlank()) "没有可用命令" else "没有匹配「$query」的命令",
-                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 12.dp),
+                modifier = Modifier.padding(PiSpacing.pageHorizontal),
                 style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Surface
         }
         LazyColumn(
-            modifier = Modifier.heightIn(max = 260.dp).padding(vertical = 4.dp),
+            modifier = Modifier.heightIn(max = SLASH_PALETTE_MAX_HEIGHT).padding(vertical = PiSpacing.tiny),
         ) {
-            itemsIndexed(matches, key = { _, it -> it.source.name + ":" + it.name }) { index, command ->
-                // 行与行之间一条两头留白的发丝线：几十条命令挤在一起时，靠它分出「一条」。
-                if (index > 0) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
-                        thickness = PiSpacing.hairlineThin,
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                    )
+            var previous: PiCommandSource? = null
+            matches.forEach { command ->
+                if (command.source != previous) {
+                    val group = command.source
+                    val count = matches.count { it.source == group }
+                    item(key = "group:" + group.name) { SlashPaletteGroupHeader(group, count) }
+                    previous = group
                 }
-                SlashPaletteRow(command, onClick = { onPick(command) })
+                item(key = command.source.name + ":" + command.name) {
+                    SlashPaletteRow(command, onClick = { onPick(command) })
+                }
             }
         }
     }
 }
 
+/** 分组小标题：「内置 · 18」。 */
 @Composable
-private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
+private fun SlashPaletteGroupHeader(source: PiCommandSource, count: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.pageHorizontal, vertical = PiSpacing.inline),
-        // 来源徽标对齐第一行（命令名那一行），描述折成两行时它不再漂在中间。
-        verticalAlignment = Alignment.Top,
+            .padding(start = PiSpacing.pageHorizontal, end = PiSpacing.pageHorizontal, top = PiSpacing.blockGap, bottom = PiSpacing.tiny),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
     ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // 斜杠退一档（强调色、淡），名字用正文色加粗：一眼先读到「是哪条命令」，
-                // 而不是先读到一排整齐的 `/`。
-                val invocation = command.invocation
-                val slash = invocation.startsWith("/")
-                Text(
-                    text = buildAnnotatedString {
-                        if (slash) {
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))) { append("/") }
-                        }
-                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                            append(if (slash) invocation.drop(1) else invocation)
-                        }
-                    },
-                    style = PiTheme.text.mono,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                command.argumentHint?.let { hint ->
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        hint,
-                        style = PiTheme.text.monoSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            // Just the description. A row used to append a provenance note for
-            // built-ins the app could not run (「仅终端」, then 「本应用：<设置路径>」);
-            // every one of those rows was deleted instead, so there is nothing left
-            // to annotate. Re-adding a note here means re-adding a row that cannot
-            // be run — see `PiSlashCommands.CLIENT_BUILTINS`.
-            val subtitle = command.description.orEmpty()
-            if (subtitle.isNotEmpty()) {
-                Text(
-                    subtitle,
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Box(Modifier.padding(top = PiSpacing.tiny)) { SourceBadge(command) }
-    }
-}
-
-/**
- * The provenance chip: the source word (内置/扩展/模板/技能), then the scope, then
- * the package origin when there is one.
- *
- * pi prefixes the same information to the description as a bracketed tag
- * (`interactive-mode.ts` `prefixAutocompleteDescription`, `:612-617`:
- * `[u:npm:…] <description>`). The relationship between the two halves is what
- * matters and is unchanged: the **source word** says what kind of thing the
- * command is, the **scope** says whose it is (a `项目` command comes from the
- * project being worked on, which is a different trust question from `用户`), and
- * the trailing `npm:`/`git:` part says which package it arrived in.
- *
- * Only the presentation of the scope differs from pi: pi writes the single
- * letters `u`/`p`/`t`, and this badge writes 用户/项目/临时 — see
- * [sourceTagLabelOf], which is where that ruling and its reason live.
- */
-@Composable
-private fun SourceBadge(command: PiSlashCommand) {
-    val color = when (command.source) {
-        PiCommandSource.Builtin -> MaterialTheme.colorScheme.primary
-        PiCommandSource.Extension -> MaterialTheme.colorScheme.tertiary
-        PiCommandSource.Prompt -> MaterialTheme.colorScheme.secondary
-        PiCommandSource.Skill -> MaterialTheme.colorScheme.secondary
-    }
-    val label = command.sourceTag
-        ?.let { "${command.source.label}·${sourceTagLabelOf(it)}" }
-        ?: command.source.label
-    Surface(shape = PiShapes.badge, color = color.copy(alpha = 0.16f)) {
         Text(
-            label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = PiTheme.text.meta,
-            color = color,
-            maxLines = 1,
+            source.label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            "$count",
+            style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
 /**
- * Rank palette rows against what was typed after the `/`.
- *
- * Prefix matches come first, then substring matches, then everything (so an
- * empty query shows the full list). Ordering inside a group is the input order,
- * and the input order is pi's TUI autocomplete sequence — built-ins, templates,
- * extensions, skills (`interactive-mode.ts:727`:
- * `[...slashCommands, ...templateCommands, ...extensionCommands,
- * ...skillCommandList]`). This function does not sort by group; it relies on
- * `piCommandPalette` having already put the list in that order, because
- * `get_commands` itself sends extension → template → skill
- * (`rpc-mode.ts:684-708`) and copying the wire order would put extensions ahead
- * of templates where the TUI shows the opposite.
+ * 一条命令：第一行 `/名字`（斜杠退一档用强调色，名字用正文色加粗：先读到「是哪条命令」）+ 参数提示
+ * （等宽、胶囊底），右端是来源标签（仅用户 / 项目 / npm / git 这类有出处的行）；第二行是说明，两行封顶。
  */
-fun filterPalette(commands: List<PiSlashCommand>, query: String): List<PiSlashCommand> {
-    val needle = query.trim().removePrefix("/").lowercase()
-    if (needle.isEmpty()) return commands
-    val prefix = commands.filter { it.name.lowercase().startsWith(needle) }
-    val contains = commands.filter {
-        !it.name.lowercase().startsWith(needle) && it.name.lowercase().contains(needle)
+@Composable
+private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = PiSpacing.inline),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
+            val invocation = command.invocation
+            val slash = invocation.startsWith("/")
+            Text(
+                text = buildAnnotatedString {
+                    if (slash) {
+                        withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))) { append("/") }
+                    }
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                        append(if (slash) invocation.drop(1) else invocation)
+                    }
+                },
+                style = PiTheme.text.mono,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f, fill = false),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            command.argumentHint?.let { hint ->
+                Text(
+                    hint,
+                    modifier = Modifier
+                        .clip(PiShapes.badge)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        .padding(horizontal = PiSpacing.gutter, vertical = PiSpacing.hairline),
+                    style = PiTheme.text.monoSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            command.sourceTag?.let { tag ->
+                Text(
+                    sourceTagLabelOf(tag),
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        val subtitle = command.description.orEmpty()
+        if (subtitle.isNotEmpty()) {
+            Text(
+                subtitle,
+                style = PiTheme.text.prose,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
-    return prefix + contains
 }
+
+/** 面板最高占多少：给输入框和最近的对话留出位置。 */
+private val SLASH_PALETTE_MAX_HEIGHT = 320.dp
 
 /**
  * What the composer should do with the text the user submitted.

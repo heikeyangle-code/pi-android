@@ -113,6 +113,18 @@ class HostEngineApi(private val commands: HostCommands) {
         return required("set_model", PiResponses.setModel(r.data["model"]))
     }
 
+    /**
+     * `/model <引用>`：官方 `findExactModelReferenceMatch`（宿主 `model.resolve`）。精确命中返回
+     * (provider, id)，没有精确匹配返回 null —— 调用方据此开选择器并预填搜索词。
+     */
+    suspend fun resolveModel(query: String): Pair<String, String>? {
+        val r = write("model.resolve", obj { put("query", JsonPrimitive(query)) })
+        val model = r.data["model"] as? JsonObject ?: return null
+        val provider = (model["provider"] as? JsonPrimitive)?.content ?: return null
+        val id = (model["id"] as? JsonPrimitive)?.content ?: return null
+        return provider to id
+    }
+
     /** 只有一个可选模型时为 null。 */
     suspend fun cycleModel(): PiResponses.CycleModelResult? {
         val r = write("model.cycle")

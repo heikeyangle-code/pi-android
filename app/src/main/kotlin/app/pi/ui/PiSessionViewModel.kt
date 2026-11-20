@@ -4929,6 +4929,33 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 模型选择器打开时预填的搜索词（`/model <词>` 没有精确匹配时）。 */
+    private val _modelPickerSeed = MutableStateFlow("")
+    val modelPickerSeed: StateFlow<String> = _modelPickerSeed.asStateFlow()
+
+    fun seedModelPicker(text: String) {
+        _modelPickerSeed.value = text
+    }
+
+    /**
+     * `/model <引用>`（官方 `handleModelCommand`）：精确匹配就直接切（只改本会话，`persist:false`），
+     * 否则打开选择器并预填 [term]。[openPicker] 在没有精确匹配时回到界面去开弹层。
+     */
+    fun runModelCommand(term: String, openPicker: () -> Unit) {
+        call("切换模型") { api ->
+            val ref = api.resolveModel(term)
+            if (ref == null) {
+                _modelPickerSeed.value = term
+                openPicker()
+                return@call
+            }
+            val applied = api.setModel(ref.first, ref.second)
+            _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
+            refreshState()
+            refreshStats()
+        }
+    }
+
     /** `set_model`. pi answers with the model it actually switched to. */
     fun setModel(model: PiResponses.ModelInfo) {
         val provider = model.provider

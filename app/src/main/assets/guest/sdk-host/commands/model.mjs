@@ -2,6 +2,8 @@
 
 import { ERR, HostError, bad, bool, optStr, str } from "../protocol.mjs";
 import { withState } from "../state.mjs";
+import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 
 export function register(reg, { controller }) {
   /**
@@ -18,6 +20,22 @@ export function register(reg, { controller }) {
     return {
       models: rt.getModels(provider).map((m) => ({ ...m, available: rt.hasConfiguredAuth(m.provider) })),
     };
+  });
+
+  /**
+   * `/model <引用>` 的第一步（interactive-mode.js `handleModelCommand` / `findExactModelMatch`）：
+   * 在「作用域模型（有就只看它们）或可用模型」里按**精确引用**找（`provider/id` 或唯一的 id），找到由 App
+   * 接着 `model.set`，找不到才打开选择器并预填搜索词。`findExactModelReferenceMatch` 不在包的公开出口里，
+   * 按文件路径读（同 catalog.mjs 读 slash-commands）。终端版在「没有作用域模型且缓存里没有」时还会先联网
+   * 刷新一次目录（15 秒超时）；这里不做，没命中就进选择器，那里有刷新按钮。
+   */
+  reg.add("model.resolve", async (args) => {
+    const s = controller.requireSession();
+    const query = str(args, "query");
+    const mod = await import(pathToFileURL(join(controller.cfg.piDir, "dist", "core", "model-resolver.js")).href);
+    const pool = s.scopedModels.length > 0 ? s.scopedModels.map((x) => x.model) : [...s.modelRuntime.getAvailableSnapshot()];
+    const m = mod.findExactModelReferenceMatch(query, pool);
+    return { model: m ? { provider: m.provider, id: m.id, name: m.name } : null };
   });
 
   // `persist` 是 SDK 的 ModelMutationOptions：**默认只改本会话**，true 才写进全局默认

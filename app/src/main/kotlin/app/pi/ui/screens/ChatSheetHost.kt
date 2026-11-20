@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalContext
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
@@ -34,6 +35,7 @@ internal fun ChatSheetHost(
     val context = LocalContext.current
     when (sheet) {
         ChatSheet.Model -> ModelPickerSheet(
+            initialFilter = session.modelPickerSeed.collectAsState().value,
             models = state.models,
             current = state.meta.model,
             busy = state.busy != null,

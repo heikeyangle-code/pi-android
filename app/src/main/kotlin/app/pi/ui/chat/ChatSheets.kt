@@ -85,8 +85,9 @@ fun ModelPickerSheet(
     onPick: (PiResponses.ModelInfo) -> Unit,
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
+    initialFilter: String = "",
 ) {
-    var filter by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(initialFilter) }
     val query = filter.trim().lowercase()
     // Remembered on the two inputs it reads: `list()` can be hundreds of entries (a
     // provider like OpenRouter publishes its whole catalogue), and the filter lowercases

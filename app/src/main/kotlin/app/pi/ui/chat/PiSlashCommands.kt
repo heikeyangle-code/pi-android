@@ -105,6 +105,11 @@ data class PiSlashCommand(
     val argumentHint: String? = null,
     /** 该命令（扩展命令的 `getArgumentCompletions`）能按已输入的前缀给参数候选。 */
     val completes: Boolean = false,
+    /**
+     * 是否在面板列表里占一行。pi 有、手机做不了的内建命令（[UNSUPPORTED_BUILTIN_REASONS]）是 false：
+     * 一行只会说「不行」的命令放在列表里是噪音，敲全名时才出现并说明原因（`filterPalette`）。
+     */
+    val listed: Boolean = true,
 ) {
     /** What the user types to invoke it. */
     val invocation: String get() = "/$name"
@@ -213,6 +218,8 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
                 source = PiCommandSource.Builtin,
                 sourceTag = null,
                 action = ChatAction.Unsupported,
+                // 已知做不了的不占列表行；pi 新增而我们还没映射的照常列出（不悄悄缺一个）。
+                listed = builtin.name !in UNSUPPORTED_BUILTIN_REASONS,
             )
         }
     }
@@ -223,7 +230,7 @@ fun unsupportedReason(name: String): String =
     UNSUPPORTED_BUILTIN_REASONS[name.trim().removePrefix("/").lowercase()] ?: GENERIC_UNSUPPORTED
 
 /**
- * Build the palette: pi's `get_commands` result plus pi's built-ins.
+ * 面板的数据：宿主 `catalog.commands`（扩展 / 模板 / 技能，`commands/catalog.mjs`）加 pi 自己的内建表（`catalog.builtins`）。
  *
  * Deduplication follows pi's own rule rather than a guess. When an extension
  * registers a command whose name is a built-in, pi keeps the **built-in** in
@@ -239,12 +246,11 @@ fun unsupportedReason(name: String): String =
  *
  * ## Group order
  *
- * The three `get_commands` groups arrive on the wire in one order and are
- * displayed in another, because those are two genuinely different orders in pi:
+ * The three groups arrive from the host in one order and are displayed in another,
+ *  because pi itself has two different orders:
  *
- *  - the wire pushes **extension → template → skill** (`rpc-mode.ts:684-708`: the
- *    `for` loops run over `getRegisteredCommands()`, then `promptTemplates`, then
- *    `getSkills().skills`);
+ *  - `catalog.commands` pushes **extension → template → skill** (it mirrors the old RPC
+ *    `get_commands`: `getRegisteredCommands()`, then `promptTemplates`, then skills);
  *  - the TUI builds its own autocomplete list as
  *    `[...slashCommands, ...templateCommands, ...extensionCommands,
  *    ...skillCommandList]` (`interactive-mode.ts:727`) — i.e. built-ins,
@@ -252,7 +258,7 @@ fun unsupportedReason(name: String): String =
  *
  * This palette reproduces the **TUI** order, because it is the surface a pi user
  * sees while typing `/` and the panel exists to be that surface on a phone;
- * `get_commands` is only the transport. [sortedBy] is stable, so rows inside one
+ * the host's list is only the transport. [sortedBy] is stable, so rows inside one
  * group keep the order the wire sent them in.
  *
  * @param skillCommandsEnabled pi's `enableSkillCommands` (default true). This is
@@ -265,6 +271,30 @@ fun unsupportedReason(name: String): String =
  *        owns. The skills stay readable by the model either way — the setting is
  *        about the command panel, not about access.
  */
+/**
+ * 过滤并排序：名字前缀 → 名字包含 → 说明包含（组内保持原顺序，即官方的 内置→模板→扩展→技能）。
+ * `listed = false` 的行（已知做不了的内建命令）只在敲全名时出现。
+ */
+fun filterPalette(commands: List<PiSlashCommand>, query: String): List<PiSlashCommand> {
+    val needle = query.trim().removePrefix("/").lowercase()
+    if (needle.isEmpty()) return commands.filter { it.listed }
+    val visible = commands.filter { it.listed || it.name.lowercase() == needle }
+    val byName = visible.filter { it.name.lowercase().startsWith(needle) }
+    val byContains = visible.filter { !it.name.lowercase().startsWith(needle) && it.name.lowercase().contains(needle) }
+    val byDescription = visible.filter {
+        !it.name.lowercase().contains(needle) && it.description.orEmpty().lowercase().contains(needle)
+    }
+    // 分组头要求同一来源的行相邻：排序之后按官方组序稳定归并。
+    return (byName + byContains + byDescription).sortedBy { groupRank(it.source) }
+}
+
+private fun groupRank(source: PiCommandSource): Int = when (source) {
+    PiCommandSource.Builtin -> 0
+    PiCommandSource.Prompt -> 1
+    PiCommandSource.Extension -> 2
+    PiCommandSource.Skill -> 3
+}
+
 /** 输入框里「命令名已写完、正在写参数」的状态：哪条命令、参数写到哪了。 */
 data class ArgumentContext(val command: PiSlashCommand, val prefix: String)
 

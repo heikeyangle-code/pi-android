@@ -323,6 +323,15 @@ try {
     const clr = await h.call("models.setScoped", { models: [] });
     expect("models.setScoped 空数组 = 取消作用域", clr.ok && clr.data.state.scopedModelCount === 0);
   }
+  // ---- /model <引用>：精确匹配（官方 findExactModelReferenceMatch），没有就 null ----
+  if (mods.length >= 1) {
+    const m0 = mods[0];
+    const exact = await h.call("model.resolve", { query: `${m0.provider}/${m0.id}` });
+    expect("model.resolve provider/id 精确命中", exact.ok && exact.data.model?.id === m0.id && exact.data.model?.provider === m0.provider, JSON.stringify(exact.error ?? exact.data));
+    const none = await h.call("model.resolve", { query: "no-such-model-xyz" });
+    expect("model.resolve 没有精确匹配 → model:null（App 据此开选择器）", none.ok && none.data.model === null, JSON.stringify(none.error ?? none.data));
+    expect("model.resolve 缺 query → bad_args", (await h.call("model.resolve", {})).error?.code === "bad_args");
+  }
   // ---- 模型目录与 persist（SDK ModelMutationOptions：默认只改本会话）----
   const allList = await h.call("model.list", { all: true });
   const allModels = allList.data?.models ?? [];
