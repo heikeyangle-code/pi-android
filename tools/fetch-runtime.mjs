@@ -603,8 +603,32 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *  5. 其余：默认模型（OpenAI/Copilot/NVIDIA/Xiaomi）换了、模型目录升到 models.dev v2（非 chat 条目
  *     100 → 120）、`grep` 工具加 `--no-config`、缩放图片先试更小的编码、会话写盘失败时回滚内存条目、
  *     路径比较在 Windows 上不分大小写（Linux guest 无影响）。读取器都不用动。
+ *
+ * ## pi 1.5.2 → 1.6.0（2026-11-20；升级评审由 `tools/pi-upgrade-audit.mjs` + 逐包 diff 复核）
+ *
+ *  1. **契约与静态面零破坏**：`settings-manager.{d.ts,js}`、`core/slash-commands.js`、
+ *     `theme/{dark,light}.json`、`utils/image-resize-core.js`、`core/project-trust.js`、
+ *     `core/session-manager.d.ts`、`modes/rpc/rpc-types.d.ts` 全部逐字节相同；
+ *     `tools/sdk-host/contract.mjs` 全项 PASS。`engines.node` 仍 `>=22.19.0`。
+ *  2. **SDK 宿主三处升级适配**：
+ *     - `AgentSessionRuntime.takeUnreportedDiagnostics()`（1.6.0 新增）：`controller.mjs` 在启动与每次
+ *       会话替换（`new`/`switch`/`fork`/`clone`）后取未上报诊断（含模型回退提示、项目扩展报错、
+ *       `enabledModels` 未命中等），发 `runtime.diagnostics` + `ui.notify`，每条只报一次不重复；
+ *     - `DefaultResourceLoader` / `DefaultPackageManager` 新增 `commandOutput: "capture"`（#11264）：
+ *       `controller.mjs` 与 `commands/services.mjs` 全部开启，防止 `git`/`npm` 子进程污染协议 stdout
+ *       或卡死在交互式密码提示；
+ *     - OpenAI / Anthropic 推理被丢弃提示（`openai_input_transformations` / `anthropic_input_transformations`）：
+ *       `controller.mjs` 按官方 `showCacheMissNotices` 开关与增量去重逻辑实时推送 `ui.notify`。
+ *  3. **App 层一处必改**：`read` 工具在非视觉模型读图时（#12131）不再把警告拼进文本正文，改为写入
+ *     `details.imageUnsupportedByModel` 并在折叠态也展示警告；`ToolOutputParse.kt` 与 `ReadBlock.kt`
+ *     已跟进展示该警告条。GPT-6.2 Astra / Sol 禁用 `thinkingLevel: off`，App 的思考深度选择器直接读
+ *     `getAvailableThinkingLevels()`，天然兼容。
+ *  4. **扩展与渲染器核查**：1.6.0 将组件 `render()` 返回值改为缓存的 `readonly string[]`（#9549）；
+ *     已核查 `ui/surfaces.mjs`、`commands/catalog.mjs` 与 `app/src/main/assets/pi-extensions/` 均无原地修改。
+ *  5. **依赖与安全修复**：`undici` 8.12.3 → 8.12.4（6 个 GHSA 安全修复），`standardwebhooks` 1.1.1 → 1.3.0；
+ *     v1.6.0 根 `LICENSE` 与之前各版本逐字节相同（sha256 `0457f5bc…`），许可证资产同步刷新。
  */
-const PI_VERSION = "1.5.2";
+const PI_VERSION = "1.6.0";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

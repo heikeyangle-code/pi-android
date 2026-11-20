@@ -1,6 +1,6 @@
 /**
  * 会话命令：对话控制、会话树、会话替换、维护操作。
- * 语义逐条对照 pi 的 `modes/rpc/rpc-mode.js`（1.5.0），差异处有注释。
+ * 语义逐条对照 pi 的 `modes/rpc/rpc-mode.js`（1.6.0），差异处有注释。
  */
 
 import { existsSync, statSync, unlinkSync } from "node:fs";

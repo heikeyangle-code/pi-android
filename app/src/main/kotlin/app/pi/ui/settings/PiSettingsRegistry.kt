@@ -355,7 +355,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "showCacheMissNotices",
             title = "缓存未命中提示",
-            description = "提示严重的缓存未命中等诊断。",
+            description = "提示缓存未命中、压缩计费及思考/推理块被丢弃等诊断。",
             kind = PiRowKind.Switch,
             group = G_MODELS_SCREEN,
             section = "缓存",

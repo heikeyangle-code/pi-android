@@ -33,6 +33,53 @@ export function toJsonEvent(event) {
 }
 
 /**
+ * 对照 Pi 1.6.0 `interactive-mode.js` `REASONING_DROP_DIAGNOSTICS` / `getDroppedReasoning`：
+ * 当 Anthropic 或 OpenAI 丢弃请求中的思考/推理块时，解析新增丢弃计数与原因。
+ */
+const REASONING_DROP_DIAGNOSTICS = new Map([
+  ["anthropic_input_transformations", { provider: "Anthropic", droppedType: "thinking_dropped", noun: "个思考块" }],
+  ["openai_input_transformations", { provider: "OpenAI", droppedType: "reasoning", noun: "条推理记录" }],
+]);
+
+export function getDroppedReasoning(message) {
+  for (const diagnostic of message?.diagnostics ?? []) {
+    const kind = REASONING_DROP_DIAGNOSTICS.get(diagnostic?.type);
+    if (!kind) continue;
+    const transformations = diagnostic?.details?.transformations;
+    if (!Array.isArray(transformations)) continue;
+    const dropped = transformations.filter(
+      (t) => typeof t === "object" && t !== null && t.type === kind.droppedType,
+    );
+    if (dropped.length === 0) continue;
+    const reasons = new Set();
+    for (const t of dropped) {
+      if (typeof t.reason === "string" && t.reason.trim()) reasons.add(t.reason.trim());
+    }
+    return { diagnostic: kind, count: dropped.length, reasons: [...reasons] };
+  }
+  return null;
+}
+
+export function formatDroppedReasoningNotice(session, message) {
+  if (!session?.settingsManager?.getShowCacheMissNotices?.()) return null;
+  const dropped = getDroppedReasoning(message);
+  if (!dropped) return null;
+  // 与官方一致：供应商在后续回放请求里会重复报告旧丢弃，仅当数量超过上一条助手消息时提示。
+  const branch = session.sessionManager?.getBranch?.() ?? [];
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const entry = branch[i];
+    if (entry?.type === "message" && entry.message?.role === "assistant" && entry.message !== message) {
+      const prev = getDroppedReasoning(entry.message);
+      if (prev?.diagnostic === dropped.diagnostic && dropped.count <= prev.count) return null;
+      break;
+    }
+  }
+  const { provider, noun } = dropped.diagnostic;
+  const reasonText = dropped.reasons.length > 0 ? `：${dropped.reasons.join(", ")}` : "";
+  return `${provider} 丢弃了 ${dropped.count} ${noun}${reasonText}`;
+}
+
+/**
  * 与 CLI 一致的内置扩展：Code Mode、Tool Search、MCP。
  * 缺口：CLI 还有 `llama.cpp` 内置扩展，SDK 没有导出它的工厂（只能 import dist/extensions/index.js，
  * 那是未打包的模块图，会拖慢启动），先不接，见 docs/sdk-host/capabilities.md。
@@ -266,6 +313,14 @@ export class Controller {
           noPromptTemplates: resources.noPromptTemplates,
           noThemes: resources.noThemes,
           noContextFiles: resources.noContextFiles,
+          // Pi 1.6.0 (#11264)：捕获资源加载器自动安装 npm/git 包时的子进程输出并禁用交互提示，
+          // 防止 git/npm 写坏协议 stdout 或在无终端环境下挂死。
+          packageCommandOutput: "capture",
+          onPackageProgress: (event) => {
+            if (event?.message) {
+              this.hub.emit("host.log", { level: event.type === "error" ? "warn" : "info", message: String(event.message) });
+            }
+          },
         },
       });
       const created = await sdk.createAgentSessionFromServices({
@@ -284,7 +339,13 @@ export class Controller {
         // 项目里有需要信任才加载的资源，而用户还没表态：先按「不信任」起，让 App 去问。
         this.hub.emit("project.trust.required", { cwd: targetCwd });
       }
-      return { ...created, services, diagnostics: services.diagnostics };
+      // 对照 Pi 1.6.0 `main.js:762`：当恢复会话因旧模型不可用而回退到其它模型时，
+      // 把回退提示并入 diagnostics，这样 `takeUnreportedDiagnostics()` 在启动与每次 /resume /fork 后都能统一上报一次。
+      const diagnostics = [...(services.diagnostics ?? [])];
+      if (created.modelFallbackMessage && created.session?.model) {
+        diagnostics.push({ type: "warning", message: created.modelFallbackMessage });
+      }
+      return { ...created, services, diagnostics };
     };
 
     const sessionManager = this.#pickSessionManager(sdk, cwd, sessionDir, args.session ?? {});
@@ -294,7 +355,11 @@ export class Controller {
     });
 
     this.#bind({ background: true }); // 同步段：订阅 + epoch；扩展绑定在后台
-    setImmediate(() => this.pushState("open")); // 应答先出去，状态紧随其后
+    const startupDiagnostics = this.#takeUnreportedDiagnostics();
+    setImmediate(() => {
+      this.pushState("open"); // 应答先出去，状态紧随其后
+      this.#emitDiagnostics(startupDiagnostics);
+    });
 
     const session = this.session;
     return {
@@ -308,8 +373,27 @@ export class Controller {
       sessionId: session.sessionId,
       sessionFile: session.sessionFile ?? null,
       modelFallbackMessage: this.runtime.modelFallbackMessage ?? null,
-      diagnostics: this.runtime.diagnostics ?? [],
+      diagnostics: startupDiagnostics,
     };
+  }
+
+  #takeUnreportedDiagnostics() {
+    if (!this.runtime) return [];
+    if (typeof this.runtime.takeUnreportedDiagnostics === "function") {
+      return this.runtime.takeUnreportedDiagnostics();
+    }
+    return [...(this.runtime.diagnostics ?? [])];
+  }
+
+  #emitDiagnostics(diagnostics) {
+    if (!Array.isArray(diagnostics) || diagnostics.length === 0) return;
+    this.hub.emit("runtime.diagnostics", { diagnostics });
+    for (const d of diagnostics) {
+      const msg = typeof d?.message === "string" ? d.message.trim() : "";
+      if (!msg) continue;
+      const tone = d.type === "error" ? "error" : d.type === "warning" ? "warning" : "info";
+      this.hub.emit("ui.notify", { message: msg, tone });
+    }
   }
 
   /**
@@ -425,6 +509,10 @@ export class Controller {
     this.unsubscribe = session.subscribe((event) => {
       hub.emit("agent", toJsonEvent(event));
       if (STATE_EVENTS.has(event.type)) this.pushState(event.type);
+      if (event.type === "message_end" && event.message?.role === "assistant") {
+        const dropNotice = formatDroppedReasoningNotice(session, event.message);
+        if (dropNotice) hub.emit("ui.notify", { message: dropNotice, tone: "warning" });
+      }
       if (event.type === "agent_end" || event.type === "agent_settled") {
         // 新会话在首条助手回复后落盘，老会话也会增长消息数/修改时间；使列表缓存失效，确保立刻可见。
         this.invalidateSessionList?.();
@@ -456,6 +544,8 @@ export class Controller {
       await this.bindPromise;
       this.extensionsBound = true;
       this.pushState("rebind");
+      // Pi 1.6.0：每次会话替换（/new /resume /fork /clone）后上报本轮新增诊断（每条仅报一次）。
+      this.#emitDiagnostics(this.#takeUnreportedDiagnostics());
       return;
     }
     // `setImmediate`：`bindExtensions` 的同步段会加载扩展并跑 `session_start`，实测能把

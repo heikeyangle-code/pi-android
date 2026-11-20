@@ -961,7 +961,56 @@ try {
     let osc9Progress = null;
     inspectTerminalOutput("\x1b]9;4;1;50\x07", { onProgress: (v) => { osc9Progress = v; } });
     expect("OSC 9;4 进度序列解析为 workingVisible", osc9Progress === true, String(osc9Progress));
+    // Pi 1.6.0 (#9549)：Component.render() 返回缓存的 readonly string[]，Surfaces 不得原地修改。
+    const frozenLines = Object.freeze(["Line A", "Line B"]);
+    const frozenMounted = await surf.mount({
+      mode: "widget",
+      key: "frozen-test",
+      build: () => ({ render: () => frozenLines }),
+    });
+    expect("Surfaces 兼容冻结的 readonly string[] render() 输出", frozenMounted && frozenLines[0] === "Line A");
     surf.closeAll();
+
+    // Pi 1.6.0：OpenAI / Anthropic 推理块被丢弃诊断解析（仅在 showCacheMissNotices 开启且丢弃数增长时提示）。
+    const { formatDroppedReasoningNotice } = await import(
+      pathToFileURL(join(here, "../../app/src/main/assets/guest/sdk-host/controller.mjs")).href
+    );
+    const makeDropMsg = (type, itemType, count, reason) => ({
+      role: "assistant",
+      diagnostics: [{
+        type,
+        details: {
+          transformations: Array.from({ length: count }, () => ({ type: itemType, reason })),
+        },
+      }],
+    });
+    const fakeSession = (enabled, prevMsg = null) => ({
+      settingsManager: { getShowCacheMissNotices: () => enabled },
+      sessionManager: { getBranch: () => (prevMsg ? [{ type: "message", message: prevMsg }] : []) },
+    });
+    const oai2 = makeDropMsg("openai_input_transformations", "reasoning", 2, "prefix_mismatch");
+    const ant1 = makeDropMsg("anthropic_input_transformations", "thinking_dropped", 1, "signature_mismatch");
+    expect(
+      "showCacheMissNotices 关闭时不提示 OpenAI 推理丢弃",
+      formatDroppedReasoningNotice(fakeSession(false), oai2) === null,
+    );
+    const oaiNotice = formatDroppedReasoningNotice(fakeSession(true), oai2);
+    expect(
+      "showCacheMissNotices 开启时格式化 OpenAI 推理丢弃原因",
+      oaiNotice?.includes("OpenAI") && oaiNotice.includes("2") && oaiNotice.includes("prefix_mismatch"),
+      String(oaiNotice),
+    );
+    const oai2Next = makeDropMsg("openai_input_transformations", "reasoning", 2, "prefix_mismatch");
+    expect(
+      "OpenAI 丢弃数未超过上一条助手消息时不重复提示",
+      formatDroppedReasoningNotice(fakeSession(true, oai2), oai2Next) === null,
+    );
+    const antNotice = formatDroppedReasoningNotice(fakeSession(true), ant1);
+    expect(
+      "Anthropic 思考块丢弃诊断带原因文本",
+      antNotice?.includes("Anthropic") && antNotice.includes("signature_mismatch"),
+      String(antNotice),
+    );
   }
 
   // ---- 8. 退出 ----------------------------------------------------------

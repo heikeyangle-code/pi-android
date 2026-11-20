@@ -349,7 +349,7 @@ PI_ENGINE_NO_LICENCE_TEXT = [
       )),
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
-    ("standardwebhooks", "1.1.1", "MIT"),
+    ("standardwebhooks", "1.3.0", "MIT"),
     ("@aws-sdk/credential-provider-http", "3.972.86", "Apache-2.0"),
     ("@aws-sdk/credential-provider-login", "3.972.92", "Apache-2.0"),
     ("@aws-sdk/nested-clients", "3.998.3", "Apache-2.0"),
@@ -383,7 +383,7 @@ PI_ENGINE_NOTICES = [
     ),
     (
         "standardwebhooks",
-        "1.1.1",
+        "1.3.0",
         "MIT",
         "版权声明取不到：包内 package.json 声明的是 MIT（npm 元数据同此），而它**不带**任何许可文件；"
         "上游仓库根部的 LICENSE 是 Apache-2.0 模板（c71d239d…，与本仓库 `licenses/apache-2.0.txt` 同源），"

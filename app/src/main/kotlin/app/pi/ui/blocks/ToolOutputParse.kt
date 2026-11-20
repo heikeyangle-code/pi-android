@@ -570,6 +570,21 @@ internal fun truncationOf(details: JsonElement?): ToolTruncation? {
 }
 
 /**
+ * Pi 1.6.0 (#12131): when `read` loads an image while the active model does not accept image
+ * input, pi no longer bakes the warning into the text content (so switching to a vision model
+ * later doesn't replay stale text); instead it sets `details.imageUnsupportedByModel = model.id`
+ * and its TUI renderer shows the warning even while collapsed.
+ */
+internal fun readImageUnsupportedByModel(details: JsonElement?): String? =
+    (details as? JsonObject)
+        ?.get("imageUnsupportedByModel")
+        ?.let { it as? JsonPrimitive }
+        ?.takeIf { it.isString }
+        ?.content
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+/**
  * The path pi recorded for this call's complete output, or null when it recorded none.
  *
  * Two sources, in the order that prefers structure over text: the `details.fullOutputPath`

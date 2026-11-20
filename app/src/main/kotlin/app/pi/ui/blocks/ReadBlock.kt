@@ -55,6 +55,8 @@ internal fun ReadBlock(
     val notice = remember(item.details, fullOutputPath) {
         truncationNotice(fullOutputPath, truncationOf(item.details))
     }
+    // Pi 1.6.0 (#12131)：非视觉模型读取图片时，警告写在 `details.imageUnsupportedByModel`，折叠态也展示。
+    val imageUnsupportedBy = remember(item.details) { readImageUnsupportedByModel(item.details) }
     val pending = state == ToolState.Running
     val shown = if (fullOutput) body.lines else body.lines.take(READ_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
@@ -136,6 +138,13 @@ internal fun ReadBlock(
                         Text(text = TOOL_SCAN_CAPPED_HINT, style = PiTheme.text.meta, color = palette.muted)
                     }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
+                }
+                if (imageUnsupportedBy != null) {
+                    ToolNotice(
+                        text = "$imageUnsupportedBy 不支持图片输入，模型看到的是占位说明",
+                        copyOnTap = null,
+                        modifier = Modifier.padding(top = PiSpacing.tiny),
+                    )
                 }
                 ToolImages(item.images, onImageClick)
 

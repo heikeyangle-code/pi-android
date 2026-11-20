@@ -46,7 +46,7 @@ for (const m of [
 ]) check(`AgentSession.${m}`, has(proto, m));
 
 const rt = sdk.AgentSessionRuntime?.prototype ?? {};
-for (const m of ["newSession", "switchSession", "fork", "setRebindSession", "dispose"]) check(`AgentSessionRuntime.${m}`, has(rt, m));
+for (const m of ["newSession", "switchSession", "fork", "setRebindSession", "takeUnreportedDiagnostics", "dispose"]) check(`AgentSessionRuntime.${m}`, has(rt, m));
 for (const m of ["session", "services", "diagnostics"]) check(`AgentSessionRuntime.${m}`, has(rt, m));
 
 const sm = sdk.SessionManager;
@@ -68,12 +68,17 @@ const mr = sdk.ModelRuntime?.prototype ?? {};
 for (const m of ["getProviders", "getProvider", "login", "logout", "listCredentials", "hasConfiguredAuth", "isUsingOAuth", "getProviderAuthStatus", "refresh"]) check(`ModelRuntime.${m}`, has(mr, m));
 check("SettingsManager.getOrCreateDeviceId（OAuth 登录要设备 ID）", has(sdk.SettingsManager?.prototype ?? {}, "getOrCreateDeviceId"));
 
-// 宿主伸进 pi **非公开路径**的全部地方（resources.mjs / mcp.mjs / catalog.mjs）。这里红了 = pi 升级挪了位置：
-// 先修宿主，别在 App 里绕。每一项都写明谁在用。
+// 宿主伸进 pi **非公开路径**的全部地方（controller.mjs / resources.mjs / mcp.mjs / catalog.mjs / model.mjs / sessionlist.mjs）。
+// 这里红了 = pi 升级挪了位置：先修宿主，别在 App 里绕。每一项都写明谁在用。
 const internals = [
   ["core/keybindings.js", ["KeybindingsManager"], "controller.mjs"],
   ["core/footer-data-provider.js", ["FooterDataProvider"], "controller.mjs"],
   ["core/http-dispatcher.js", ["applyHttpProxySettings", "configureHttpDispatcher"], "controller.mjs"],
+  ["core/slash-commands.js", ["BUILTIN_SLASH_COMMANDS"], "catalog.mjs"],
+  ["modes/interactive/components/custom-entry.js", ["CustomEntryComponent"], "catalog.mjs"],
+  ["core/model-resolver.js", ["findExactModelReferenceMatch"], "model.mjs"],
+  ["utils/paths.js", ["shortenHomePath", "pathsEqual", "resolvePath"], "sessionlist.mjs"],
+  ["modes/interactive/components/session-selector-search.js", ["filterAndSortSessions", "hasSessionName", "parseSearchQuery"], "sessionlist.mjs"],
   ["modes/interactive/components/config-selector.js", ["ConfigSelectorComponent"], "resources.mjs"],
   ["extensions/index.js", ["builtInExtensions"], "resources.mjs（可选，取不到有后备名单）"],
   ["extensions/mcp/cli.js", ["runMcpCommand"], "mcp.mjs"],
@@ -85,6 +90,17 @@ for (const [rel, names, who] of internals) {
   const mod = await import(pathToFileURL(join(pi, "dist", rel)).href).catch((e) => ({ __error: String(e?.message ?? e) }));
   for (const name of names) check(`内部路径 dist/${rel} 导出 ${name}（${who}）`, name in mod, mod.__error);
 }
+
+// 兄弟包 @earendil-works/pi-ai 非公开路径（model.mjs 读取每模型真实支持的思考档位）。
+const piAiCandidates = [
+  join(pi, "..", "pi-ai", "dist", "models.js"),
+  join(pi, "node_modules", "@earendil-works", "pi-ai", "dist", "models.js"),
+];
+const piAiModelsPath = piAiCandidates.find((p) => existsSync(p));
+const piAiMod = piAiModelsPath
+  ? await import(pathToFileURL(piAiModelsPath).href).catch((e) => ({ __error: String(e?.message ?? e) }))
+  : { __error: "missing pi-ai/dist/models.js" };
+check("兄弟包 @earendil-works/pi-ai dist/models.js 导出 getSupportedThinkingLevels（model.mjs）", typeof piAiMod.getSupportedThinkingLevels === "function");
 
 console.log(`pi ${sdk.VERSION}`);
 if (failures.length) {

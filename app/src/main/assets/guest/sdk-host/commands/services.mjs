@@ -16,6 +16,8 @@ function packageManager(controller) {
     cwd: s.sessionManager.getCwd(),
     agentDir: controller.cfg.agentDir,
     settingsManager: services.settingsManager,
+    // Pi 1.6.0 (#11264)：捕获 git/npm 输出并禁用交互式凭据提示，避免污染协议 stdout 或挂死在密码输入。
+    commandOutput: "capture",
   });
 }
 
