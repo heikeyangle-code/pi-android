@@ -48,13 +48,13 @@ enum class SessionScope(val wire: String) { Current("current"), All("all") }
 enum class SessionSort(val wire: String) { Threaded("threaded"), Recent("recent"), Relevance("relevance") }
 
 data class SessionListQuery(
-    val scope: SessionScope = SessionScope.Current,
+    val scope: SessionScope = SessionScope.All,
     val sort: SessionSort = SessionSort.Threaded,
     val namedOnly: Boolean = false,
     val query: String = "",
 ) {
     /** 磁盘缓存只存「无查询」的视图（有查询的结果取决于输入，没有缓存价值）。 */
-    val cacheKey: String get() = "${scope.wire}|${sort.wire}|${if (namedOnly) "named" else "all"}"
+    val cacheKey: String get() = "${scope.wire}|${sort.wire}|${if (namedOnly) "named" else "all"}|g"
 }
 
 class SessionListPage(val rows: List<SessionSummary>, val total: Int, val queryError: String?, val raw: JsonArray? = null)
@@ -98,6 +98,8 @@ class SessionLibrary(
                 "nameFilter" to JsonPrimitive(if (q.namedOnly) "named" else "all"),
                 "query" to JsonPrimitive(q.query),
                 "refresh" to JsonPrimitive(refresh),
+                // 手机上按工作目录分组展示（App 呈现，非 pi 概念）：threaded 视图每个目录各自成树。
+                "groupByCwd" to JsonPrimitive(true),
             ),
         ).data
         return SessionListPage(

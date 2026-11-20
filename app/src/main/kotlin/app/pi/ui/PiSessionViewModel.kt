@@ -48,7 +48,6 @@ import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.SessionLibrary
 import app.pi.session.SessionListQuery
-import app.pi.session.SessionScope
 import app.pi.session.SessionSort
 import app.pi.session.SessionSummary
 import app.pi.session.ResumeTarget
@@ -119,7 +118,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -742,6 +743,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var sessionListJob: kotlinx.coroutines.Job? = null
     private var sessionListPrimed = false
 
+    /** 成功读完过一次：之后打开列表屏直接用手上的行（秒开），变更靠 [watchSessionListChanges] 在后台补。 */
+    private var sessionListLoadedOnce = false
+
+    /** 没读过才读：列表屏挂载、引擎就绪都走这里。官方 `/resume` 每次打开都重读，手机上改成「读一次，变了才补」。 */
+    fun ensureSessionList() {
+        if (!sessionListLoadedOnce && !_sessionList.value.loading) loadSessionList(refresh = false)
+    }
+
+    /**
+     * 「现在在哪个会话 / 工作区」变了（新会话落盘、切了工作区）→ 后台静默重读，
+     * 不依赖列表屏开着。`messageCount` 只取到 2：每条消息都重读整个目录太贵，
+     * 而「文件出现」只发生在最开头那一两条。
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun watchSessionListChanges() {
+        viewModelScope.launch {
+            _state
+                .map { Triple(it.meta.sessionFile, it.workspace.revision, it.meta.messageCount.coerceAtMost(2)) }
+                .distinctUntilChanged()
+                .drop(1)
+                .debounce(500)
+                .collect { if (sessionListLoadedOnce) refreshSessions() }
+        }
+    }
+
     /**
      * 冷启动：宿主要几秒才起得来、SDK 还要逐个解析会话文件，这段时间先画**上次的列表**
      * （`SessionLibrary.writeCache`）。只在手上还没有行时用；宿主读完会换成新的。
@@ -757,11 +783,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 重读磁盘（进入这一屏、变更之后、手动刷新）。 */
+    /** 重读磁盘（引擎就绪、会话 / 工作区变了、手动刷新）；手上有行时静默，读完无声替换。 */
     fun refreshSessions() = loadSessionList(refresh = true)
 
-    /** 切范围 / 排序 / 命名过滤：宿主有缓存就只重算视图，没有（第一次进这个范围）才读磁盘。 */
-    fun setSessionScope(scope: SessionScope) = changeSessionQuery(_sessionList.value.query.copy(scope = scope))
+    /** 切排序 / 命名过滤：宿主有缓存就只重算视图，没有才读磁盘。范围固定为全部，列表按工作区分组（见 SessionsScreen）。 */
     fun setSessionSort(sort: SessionSort) = changeSessionQuery(_sessionList.value.query.copy(sort = sort))
     fun setSessionNamedOnly(named: Boolean) = changeSessionQuery(_sessionList.value.query.copy(namedOnly = named))
     fun toggleSessionPath() {
@@ -782,25 +807,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun changeSessionQuery(next: SessionListQuery) {
-        val prev = _sessionList.value.query
-        if (next == prev) return
-        // 范围变了：手上的行属于另一个范围，先清空（官方切范围时 `setSessions(别的范围的行)`），
-        // 缓存里有同一视图就先画缓存。
-        val scopeChanged = next.scope != prev.scope
-        _sessionList.value = _sessionList.value.copy(
-            query = next,
-            rows = if (scopeChanged) emptyList() else _sessionList.value.rows,
-            total = if (scopeChanged) 0 else _sessionList.value.total,
-            fromCache = false,
-        )
-        if (scopeChanged) {
-            viewModelScope.launch {
-                val cached = withContext(Dispatchers.IO) { sessionLibrary.readCache(next) }
-                if (cached != null && _sessionList.value.query == next && _sessionList.value.rows.isEmpty()) {
-                    _sessionList.value = _sessionList.value.copy(rows = cached.rows, total = cached.total, fromCache = true)
-                }
-            }
-        }
+        if (next == _sessionList.value.query) return
+        // 不清行、不转圈：宿主有缓存，换排序 / 过滤只是重算视图，行读完无声替换。
+        _sessionList.value = _sessionList.value.copy(query = next)
         loadSessionList(refresh = false)
     }
 
@@ -808,6 +817,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val generation = ++sessionListGeneration
         val requested = _sessionList.value.query
         sessionListJob?.cancel()
+        // 手上有行时是后台刷新 / 换视图：不盖转圈、不清行，读完无声替换。
         _sessionList.value = _sessionList.value.copy(loading = true, loaded = 0, loadTotal = 0)
         sessionListJob = viewModelScope.launch {
             val read = runCatching { sessionLibrary.list(requested, refresh) }
@@ -816,6 +826,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             if (generation != sessionListGeneration) return@launch
             read.fold(
                 onSuccess = { page ->
+                    sessionListLoadedOnce = true
                     _sessionList.value = _sessionList.value.copy(
                         rows = page.rows,
                         total = page.total,
@@ -2351,8 +2362,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
             if (session === engine) refreshTrustPrompt()
         }
-        // 不在引擎就绪时预读会话列表：官方 `/resume` 每次打开都重读，列表屏挂载时自己读
-        // （`SessionsScreen` 的 `LaunchedEffect`）；这里预读的结果没有读者，还要在启动那几秒和引擎抢 CPU。
+        // 引擎一就绪就在后台读一遍会话列表（上次的列表已经先画在 [primeSessionList] 里）：
+        // 读完之后每次打开列表屏都是秒开，变更由 [watchSessionListChanges] 补。
+        viewModelScope.launch {
+            engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
+            if (session === engine) refreshSessions()
+        }
         // A fresh engine is exactly the moment the settings documents may have
         // changed on disk, so the cache is dropped here rather than left showing
         // pre-write values. See [invalidateSettingsCache].
@@ -6192,14 +6207,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         replayHistory(engine, brandNew)
         refreshStats()
         refreshCommands()
-        // **这里**不再**调 `refreshSessions()`。** 会话列表在这一屏之外只有一个读者（会话覆盖层），
-        // 而那个屏幕**每次挂载都会自己重读**（`SessionsScreen` 的 `LaunchedEffect(Unit)`）——
-        // 那也是它唯一能重新变可见的方式：本条函数每一个用户可达的调用点都以
-        // `requestNav(NavRequest.Chat)` 收尾，而 `PiRoot` 对它的处理就是 `closeOverlay()`
-        // （`PiRoot.kt:605-608`，覆盖层本来就关着）。
-        // 所以这里那次扫描的产物是「没人在看的一份列表」，而覆盖层每次挂载还要再扫一遍。
-        // 删它的理由是**那次扫描的结果到不了任何屏幕**，不是「列表可以旧着」：如果将来出现一条路
-        // 在覆盖层开着的时候换会话，这一行就是要加回来的那一行。
+        // 会话换了之后的列表更新不在这里调：`watchSessionListChanges` 盯着「当前会话文件 / 工作区 /
+        // 消息数（到 2 为止）」，变了就在后台静默重读，不论列表屏开没开。
         //
         // One-shot: a hint is only valid for the command that set it. Left behind, it
         // would let a later attach replay the file of a session pi is no longer on.
@@ -6383,6 +6392,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val resolved = WorkspaceStore.reconcile(getApplication())
         publishWorkspaceState(resolved.name, resolved.note, bumped = resolved.note != null)
         primeSessionList()
+        watchSessionListChanges()
     }
 
     /**

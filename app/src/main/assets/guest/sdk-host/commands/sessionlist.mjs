@@ -17,7 +17,8 @@
  * （「会话列表对照官方组件」一节）；SDK 升级让规则变了，那一节先红。
  *
  * 命令：
- *   session.list         {scope, sortMode, nameFilter, query, refresh}  → {scope, rows, total, loading:false}
+ *   session.list         {scope, sortMode, nameFilter, query, refresh, groupByCwd}  → {scope, rows, total, loading:false}
+ *                        `groupByCwd`（App 呈现，非 pi 概念）：threaded 视图下每个工作目录各自成树
  *                        没有缓存或 `refresh:true` 时读磁盘，读的过程中发 `sessions.progress` 事件（带部分行）；
  *                        否则只用缓存重算视图（切排序 / 过滤 / 搜索即时）。
  *   session.list.cancel  中止在途的加载（对应 `cancelLoads`）
@@ -105,11 +106,20 @@ export function flattenSessionTree(roots) {
  * `SessionList.filterSessions`：threaded 且无查询 → 树；其余 → `filterAndSortSessions` 的平铺。
  * name 过滤先于一切（官方先 `hasSessionName` 过滤，再把 "all" 传给 filterAndSortSessions）。
  */
-export function viewOf(o, sessions, { sortMode, nameFilter, query }) {
+export function viewOf(o, sessions, { sortMode, nameFilter, query, groupByCwd = false }) {
   const nameFiltered = nameFilter === "all" ? sessions : sessions.filter((s) => o.hasSessionName(s));
   if (sortMode === "threaded" && !query.trim()) {
     const key = (p) => o.getPathComparisonKey(o.canonicalizePath(p));
-    return flattenSessionTree(buildSessionTree(nameFiltered, key));
+    if (!groupByCwd) return flattenSessionTree(buildSessionTree(nameFiltered, key));
+    // App 层的呈现（不是 pi 的概念）：手机上「全部」范围按工作目录分组展示，每组各自成树 ——
+    // 父会话在别的目录时，子会话在本组里就是根（跨组的连线没法画）。组内规则仍是官方的 build/flatten。
+    const groups = new Map();
+    for (const s of nameFiltered) {
+      const g = groups.get(s.cwd ?? "");
+      if (g) g.push(s);
+      else groups.set(s.cwd ?? "", [s]);
+    }
+    return [...groups.values()].flatMap((g) => flattenSessionTree(buildSessionTree(g, key)));
   }
   return o.filterAndSortSessions(nameFiltered, query, sortMode, "all").map((session) => ({ session, depth: 0, isLast: true, ancestorContinues: [] }));
 }
@@ -200,7 +210,7 @@ export function register(reg, { controller }) {
     if (!NAME_FILTERS.has(nameFilter)) throw bad(`nameFilter 只能是 all / named：${nameFilter}`);
     const o = await official(controller);
     syncKey();
-    const view = { sortMode, nameFilter, query };
+    const view = { sortMode, nameFilter, query, groupByCwd: bool(args, "groupByCwd", false) };
     const render = (sessions) => viewOf(o, sessions, view).map((n) => rowOf(o, n, currentKeyOf(o)));
 
     if (bool(args, "refresh", false)) {

@@ -762,6 +762,14 @@ try {
         && JSON.stringify(got.map((n) => ({ depth: n.depth, isLast: n.isLast, ancestorContinues: n.ancestorContinues }))) === JSON.stringify(c.nodes);
       expect(`会话列表对照官方组件：${c.name}`, same, JSON.stringify(got.map((n) => n.session.id)));
     }
+    // groupByCwd（App 呈现，非 pi 概念）：每个工作目录各自成树；父会话在别的目录时，子会话在本组里是根。
+    const mk = (id, cwd, parent, t) => ({ path: `/tmp/g/${id}.jsonl`, id, cwd, name: undefined, firstMessage: id, messageCount: 1, parentSessionPath: parent, created: new Date(t), modified: new Date(t), allMessagesText: id });
+    const pool = [mk("a1", "/w/a", undefined, 1000), mk("b1", "/w/b", undefined, 2000), mk("a2", "/w/a", "/tmp/g/a1.jsonl", 3000), mk("b2", "/w/b", "/tmp/g/a1.jsonl", 4000)];
+    const grouped = viewOf(o, pool, { sortMode: "threaded", nameFilter: "all", query: "", groupByCwd: true });
+    const summary = grouped.map((n) => `${n.session.cwd}:${n.session.id}:${n.depth}`);
+    expect("groupByCwd：同目录连续、跨目录的父不连线（b2 在 b 组里是根）", JSON.stringify(summary) === JSON.stringify(["/w/a:a1:0", "/w/a:a2:1", "/w/b:b2:0", "/w/b:b1:0"]), JSON.stringify(summary));
+    const flat = viewOf(o, pool, { sortMode: "threaded", nameFilter: "all", query: "" });
+    expect("不带 groupByCwd 时与官方行为一致（跨目录成树）", flat.some((n) => n.session.id === "b2" && n.depth === 1), JSON.stringify(flat.map((n) => `${n.session.id}:${n.depth}`)));
   }
 
   // ---- 8. 退出 ----------------------------------------------------------
