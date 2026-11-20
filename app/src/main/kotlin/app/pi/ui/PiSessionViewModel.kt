@@ -2380,7 +2380,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             engine.hostEvents.collect { ev ->
                 if (ev.name == "ui.cancel") {
                     // 宿主收回一个挂起对话框（超时 / AbortSignal / 会话替换）：立刻移出队列，避免死弹窗滞留屏幕。
-                    val cancelId = (ev.data?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val cancelId = ((ev.data as? JsonObject)?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content
                     if (cancelId != null && dialogs.remove(cancelId) != null) {
                         publishDialogs()
                     }
