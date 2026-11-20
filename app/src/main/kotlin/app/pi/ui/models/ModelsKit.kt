@@ -2,6 +2,7 @@ package app.pi.ui.models
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -82,7 +86,12 @@ internal fun ModelsSectionLabel(text: String, modifier: Modifier = Modifier, tra
             .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, style = PiTheme.text.meta, color = PiTheme.palette.muted, modifier = Modifier.weight(1f))
+        Text(
+            text,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = PiTheme.palette.muted,
+            modifier = Modifier.weight(1f),
+        )
         trailing?.invoke()
     }
 }
@@ -106,11 +115,13 @@ private fun toneColor(seed: Int): Color {
 @Composable
 internal fun ProviderAvatar(id: String, name: String, size: Dp = 40.dp, modifier: Modifier = Modifier) {
     val tone = toneColor(avatarSeed(id))
+    val shape = RoundedCornerShape(size * 0.3f)
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(size * 0.3f))
-            .background(tone.copy(alpha = 0.16f)),
+            .clip(shape)
+            .background(tone.copy(alpha = 0.14f))
+            .border(1.dp, tone.copy(alpha = 0.25f), shape),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -141,16 +152,21 @@ internal fun ConnectionPill(c: Connection, modifier: Modifier = Modifier) {
     }
 }
 
-/** 模型的能力 / 价格小标签：一圈细线，字号同 meta。 */
+/** 模型的能力 / 价格小标签：柔和色块胶囊，字号同 meta。 */
 @Composable
 internal fun TagPill(text: String, modifier: Modifier = Modifier, tone: Color = PiTheme.palette.muted) {
+    val bg = if (tone == PiTheme.palette.muted) {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    } else {
+        tone.copy(alpha = 0.14f)
+    }
     Text(
         text,
         modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(horizontal = 7.dp, vertical = 1.dp),
-        style = PiTheme.text.meta,
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
         color = tone,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -161,7 +177,7 @@ internal fun TagPill(text: String, modifier: Modifier = Modifier, tone: Color = 
 @Composable
 internal fun TagRow(tags: List<String>, modifier: Modifier = Modifier) {
     if (tags.isEmpty()) return
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         tags.forEach { TagPill(it) }
     }
 }
@@ -180,13 +196,19 @@ internal fun ProviderRow(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = ModelsCardPadding, vertical = 10.dp),
+            .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         ProviderAvatar(facts.id, facts.title)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(facts.title, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                facts.title,
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                color = PiTheme.palette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 ConnectionPill(c)
                 val extra = listOfNotNull(
@@ -198,7 +220,12 @@ internal fun ProviderRow(
                 }
             }
         }
-        Text("›", style = PiTheme.text.prose, color = PiTheme.palette.dim)
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = PiTheme.palette.dim,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

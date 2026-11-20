@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,15 +20,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -312,6 +321,7 @@ internal fun McpServersScreen(
                 )
             }
             item {
+                val palette = PiTheme.palette
                 val enabledCount = definitions.count { it.enabled }
                 val connectedSummary = status?.let { report ->
                     val enabled = report.servers.filter { it.enabled }
@@ -327,27 +337,50 @@ internal fun McpServersScreen(
                                 horizontal = PiSettingsMetrics.rowPaddingHorizontal,
                                 vertical = PiSettingsMetrics.rowPaddingVertical,
                             ),
-                        verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Column(Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(palette.accent.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Hub,
+                                    contentDescription = null,
+                                    tint = palette.accent,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     if (project) "本项目 · .pi/mcp.json" else "全局 · mcp.json",
-                                    style = PiType.rowTitle,
+                                    style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
                                     color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    connectedSummary ?: "已启用 $enabledCount / ${definitions.size} 个服务器",
+                                    connectedSummary ?: "已启用 $enabledCount / ${definitions.size} 个 MCP 服务",
                                     style = PiTheme.text.meta,
-                                    color = PiTheme.palette.muted,
+                                    color = if (status != null) palette.success else palette.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             if (project && cfgNow != null && !cfgNow.projectTrusted) {
-                                McpBadgePill(text = "未信任", tint = PiTheme.palette.warning)
+                                McpBadgePill(text = "未信任", tint = palette.warning)
+                            } else if (definitions.isNotEmpty()) {
+                                McpBadgePill(
+                                    text = "$enabledCount/${definitions.size}",
+                                    tint = if (enabledCount > 0) palette.accent else palette.muted,
+                                )
                             }
                         }
                         Row(
@@ -361,7 +394,7 @@ internal fun McpServersScreen(
                                 onClick = { runCheck() },
                             )
                             PiSettingsChip(
-                                text = "＋ 添加",
+                                text = "＋ 添加服务",
                                 active = true,
                                 onClick = { picking = true },
                             )
@@ -874,6 +907,7 @@ private fun McpServerRow(
         else -> palette.error
     }
     val isHttp = server.config.containsKey("url")
+    val protoTint = if (isHttp) palette.accent else palette.success
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -883,35 +917,56 @@ private fun McpServerRow(
                 vertical = PiSettingsMetrics.rowPaddingVertical,
             ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(PiSpacing.inline)
-                .clip(CircleShape)
-                .background(dotColor),
-        )
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PiSpacing.tiny)) {
+        Box(modifier = Modifier.size(40.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(protoTint.copy(alpha = if (server.enabled) 0.14f else 0.06f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (isHttp) Icons.Filled.Language else Icons.Filled.Terminal,
+                    contentDescription = null,
+                    tint = if (server.enabled) protoTint else palette.muted,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(11.dp)
+                    .align(Alignment.BottomEnd)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .padding(1.5.dp)
+                    .clip(CircleShape)
+                    .background(dotColor),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     server.name,
-                    style = PiType.rowTitle,
+                    style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
                     color = if (server.enabled) MaterialTheme.colorScheme.onSurface else palette.muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 McpBadgePill(
-                    text = if (isHttp) "HTTP" else "命令",
-                    tint = palette.muted,
+                    text = if (isHttp) "HTTP" else "STDIO",
+                    tint = protoTint,
                 )
                 if (server.exposure != "codemode") {
                     McpBadgePill(
                         text = exposureLabel(server.exposure).substringBefore('（'),
-                        tint = palette.accent,
+                        tint = palette.warning,
                     )
                 }
                 if (state?.connected == true && state.tools.isNotEmpty()) {
@@ -1021,6 +1076,7 @@ private fun McpTemplateSheet(
                     PiSettingsEntryRow(
                         title = template.title,
                         supporting = template.note,
+                        leadingIcon = if (template.draft.http) Icons.Filled.Language else Icons.Filled.Terminal,
                         onClick = { onPick(template.draft) },
                     )
                 }
@@ -1028,12 +1084,14 @@ private fun McpTemplateSheet(
                 PiSettingsEntryRow(
                     title = "从别处导入（粘贴 JSON）",
                     supporting = "Claude Desktop / Claude Code / Cursor / VS Code / OpenCode 的配置直接贴进来",
+                    leadingIcon = Icons.Filled.Code,
                     onClick = onImport,
                 )
                 PiSettingsHairline()
                 PiSettingsEntryRow(
                     title = "命令式（自己填）",
                     supporting = "本地启动一个进程，例如 npx / uvx 包",
+                    leadingIcon = Icons.Filled.Terminal,
                     onClick = { onPick(PiMcpConfig.Draft(command = "npx", args = "-y\n")) },
                 )
             }
@@ -1150,21 +1208,68 @@ private fun McpEditSheet(
                     contentPadding = PiFieldPaddingBlock,
                 )
             }
-            Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
-                Text("暴露方式", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                    PiMcpConfig.EXPOSURES.forEach { option ->
-                        PiSettingsChip(
-                            text = exposureLabel(option).substringBefore('（'),
-                            active = draft.exposure == option,
-                            onClick = { draft = draft.copy(exposure = option) },
-                        )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "工具暴露方式",
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val palette = PiTheme.palette
+                val rows = PiMcpConfig.EXPOSURES.chunked(2)
+                rows.forEach { pair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        pair.forEach { option ->
+                            val selected = draft.exposure == option
+                            val subtitle = when (option) {
+                                "codemode" -> "0 提示词 · 推荐"
+                                "deferred" -> "按需检索加载"
+                                "direct" -> "全量直接暴露"
+                                "hidden" -> "连接但不暴露"
+                                else -> ""
+                            }
+                            Surface(
+                                onClick = { draft = draft.copy(exposure = option) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (selected) {
+                                    palette.accent.copy(alpha = 0.14f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerLow
+                                },
+                                border = BorderStroke(
+                                    width = if (selected) 1.5.dp else 1.dp,
+                                    color = if (selected) palette.accent else MaterialTheme.colorScheme.outlineVariant,
+                                ),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(
+                                        exposureLabel(option).substringBefore('（'),
+                                        style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                                        color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        subtitle,
+                                        style = PiTheme.text.meta,
+                                        color = if (selected) palette.accent.copy(alpha = 0.85f) else palette.muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
                 Text(
                     exposureHelp(draft.exposure),
                     style = PiTheme.text.meta,
-                    color = PiTheme.palette.muted,
+                    color = palette.muted,
                 )
             }
             // —— 这个服务器现在怎么样：只有「检测连接」跑过才有。

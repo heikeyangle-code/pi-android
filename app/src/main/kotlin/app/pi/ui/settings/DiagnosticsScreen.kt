@@ -16,7 +16,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,8 +24,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import app.pi.runtime.PiPaths
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
@@ -104,22 +106,25 @@ fun DiagnosticsScreen(
                 .padding(bottom = contentPadding.calculateBottomPadding())
                 .verticalScroll(rememberScrollState()),
         ) {
+            val clipboard = LocalClipboardManager.current
             Text(
-                "报告不会进入对话上下文；敏感值已做脱敏。",
-                style = PiTheme.text.prose,
+                "报告不会进入对话上下文；敏感值已自动脱敏。",
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(10.dp))
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.unit),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 val text = report
-                TextButton(
-                    enabled = text != null && !working,
+                PiSettingsChip(
+                    text = "保存到 Download",
+                    active = text != null && !working,
                     onClick = {
-                        val current = report ?: return@TextButton
+                        val current = report ?: return@PiSettingsChip
+                        if (working) return@PiSettingsChip
                         val name = DiagnosticsExport.fileName()
                         scope.launch {
                             status = withContext(Dispatchers.IO) {
@@ -127,11 +132,12 @@ fun DiagnosticsScreen(
                             }
                         }
                     },
-                ) { Text("保存到 Download") }
-                TextButton(
-                    enabled = text != null && !working,
+                )
+                PiSettingsChip(
+                    text = "分享",
                     onClick = {
-                        val current = report ?: return@TextButton
+                        val current = report ?: return@PiSettingsChip
+                        if (working) return@PiSettingsChip
                         val name = DiagnosticsExport.fileName()
                         scope.launch {
                             status = withContext(Dispatchers.IO) {
@@ -139,17 +145,34 @@ fun DiagnosticsScreen(
                             }
                         }
                     },
-                ) { Text("分享") }
+                )
+                PiSettingsChip(
+                    text = "复制全文",
+                    onClick = {
+                        val current = report ?: return@PiSettingsChip
+                        if (working) return@PiSettingsChip
+                        clipboard.setText(AnnotatedString(current))
+                        status = "已复制诊断报告到剪贴板"
+                    },
+                )
             }
 
             val note = status
             if (note != null) {
-                Spacer(Modifier.height(PiSpacing.unit))
-                Text(
-                    note,
-                    style = PiTheme.text.prose,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = PiSettingsCardShape,
+                    color = PiTheme.palette.accent.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, PiTheme.palette.accent.copy(alpha = 0.25f)),
+                ) {
+                    Text(
+                        note,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                        color = PiTheme.palette.accent,
+                    )
+                }
             }
 
             Spacer(Modifier.height(PiSpacing.unit))

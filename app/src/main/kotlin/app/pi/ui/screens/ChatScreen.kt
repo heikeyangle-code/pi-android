@@ -2563,17 +2563,18 @@ private fun ScrollArrowButton(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        val fg = if (hasUnread) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
         Icon(
             imageVector = icon,
             contentDescription = label,
             modifier = Modifier.size(18.dp),
-            tint = if (hasUnread) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onSurface,
+            tint = fg,
         )
         if (hasUnread) {
             Text(
                 text = if (unreadCount > 99) "99+" else "$unreadCount",
                 style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                color = androidx.compose.ui.graphics.Color.White,
+                color = fg,
                 maxLines = 1,
             )
         }

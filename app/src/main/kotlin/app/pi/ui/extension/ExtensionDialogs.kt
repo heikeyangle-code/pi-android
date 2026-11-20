@@ -14,12 +14,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +41,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -316,20 +324,24 @@ private fun EditorSheetBody(
                     Text(
                         "粘贴",
                         modifier = Modifier
+                            .clip(CircleShape)
+                            .background(PiTheme.palette.accent.copy(alpha = 0.12f))
                             .clickable(role = Role.Button) {
                                 val clip = clipboard.getText()?.text
                                 if (!clip.isNullOrEmpty()) onDraftChange(if (draft.isEmpty()) clip else draft + clip)
                             }
-                            .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
-                        style = PiTheme.text.meta,
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                         color = PiTheme.palette.accent,
                     )
                     if (draft.isNotEmpty()) {
                         Text(
                             "清空",
                             modifier = Modifier
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                 .clickable(role = Role.Button) { onDraftChange("") }
-                                .padding(horizontal = PiSpacing.small, vertical = PiSpacing.tiny),
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.muted,
                         )
@@ -374,14 +386,14 @@ private fun SelectOptionRows(
                     // user's choice.
                     onAnswer(dialogId, ExtensionAnswer.Value(option))
                 }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "○",
-                style = PiTheme.text.monoSmall,
-                color = PiTheme.palette.muted,
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .border(1.5.dp, PiTheme.palette.accent.copy(alpha = 0.55f), CircleShape),
             )
             ExtensionSpans(
                 spans = remember(option) { chromeSpans(option) },
@@ -389,6 +401,12 @@ private fun SelectOptionRows(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
                 richStyle = true,
+            )
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = PiTheme.palette.dim,
+                modifier = Modifier.size(16.dp),
             )
         }
     }
@@ -460,74 +478,75 @@ private fun EditorBody(
 @Composable
 private fun DialogHeading(dialog: ExtensionDialog) {
     val palette = PiTheme.palette
+    val (glyph, badgeTint) = when (dialog.method) {
+        ExtensionDialogMethod.Confirm -> "!" to palette.warning
+        ExtensionDialogMethod.Select -> "☰" to palette.accent
+        ExtensionDialogMethod.Input -> "✎" to palette.accent
+        ExtensionDialogMethod.Editor -> "✎" to palette.accent
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "!",
-            style = PiTheme.text.mono,
-            color = palette.warning,
-        )
-        // The heading is chrome, so it keeps whatever colour the extension gave
-        // the title. The countdown suffix is appended *after* the title text, and
-        // pi's `theme.fg` closes every coloured run with `\x1b[39m`
-        // (`theme.ts:326`), so the suffix parses as its own uncoloured span and
-        // takes `palette.text` rather than borrowing the title's colour.
-        val label = buildString {
-            append(dialog.title.ifBlank { dialog.method.fallbackTitle })
-            // `<title> (5s)` —— pi 自己的写法（`docs/extensions.md` §"Timed
-            // Dialogs with Countdown"、`02-real-content.md:572`），v2 的
-            // `phone13` / `phone57` 也照抄。原先这里写的是「（5 秒）」，与稿子和
-            // pi 的原文都不一致。
-            dialog.remainingSeconds()?.let { append(" (").append(it).append("s)") }
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(badgeTint.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = glyph,
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                color = badgeTint,
+            )
         }
+        val titleText = dialog.title.ifBlank { dialog.method.fallbackTitle }
         ExtensionSpans(
-            spans = remember(label) { chromeSpans(label) },
+            spans = remember(titleText) { chromeSpans(titleText) },
             defaultColor = palette.text,
-            style = PiTheme.text.mono,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
             modifier = Modifier.weight(1f),
             richStyle = true,
         )
+        dialog.remainingSeconds()?.let { secs ->
+            Text(
+                text = "${secs}s",
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(palette.warning.copy(alpha = 0.16f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = palette.warning,
+                maxLines = 1,
+            )
+        }
     }
     if (dialog.timed) CountdownRow(dialog)
 }
 
-/**
- * The live countdown: ten `3`-high segments, `1` apart, rounded 1.
- *
- * Derived from `remainingMs` on every published tick rather than animated, so it is
- * truthful: when pi's own timer fires first the dialog still disappears at the
- * moment the ViewModel answers. Every filled segment is `warning` — the same tone
- * as the `!` beside the title — rather than an accent bar that turns yellow near
- * the deadline: the readable thing is *how much is left*, and one colour reads as
- * one scale (`06 §2` 审批卡 gives the same 10×3 countdown one colour).
- */
 @Composable
 private fun CountdownRow(dialog: ExtensionDialog) {
     val palette = PiTheme.palette
     val total = (dialog.timeoutMs ?: 1L).coerceAtLeast(1L)
     val remaining = (dialog.remainingMs ?: total).coerceIn(0L, total)
-    val filled = ((remaining.toFloat() / total.toFloat()) * CountdownSegments)
-        .roundToInt()
-        .coerceIn(0, CountdownSegments)
+    val fraction = (remaining.toFloat() / total.toFloat()).coerceIn(0f, 1f)
     Spacer(Modifier.height(DialogControlGap))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(1.dp),
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .clip(CircleShape)
+            .background(palette.borderMuted.copy(alpha = 0.45f)),
     ) {
-        repeat(CountdownSegments) { index ->
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(CountdownSegmentHeight)
-                    .background(
-                        color = if (index < filled) palette.warning else palette.borderMuted,
-                        shape = RoundedCornerShape(CountdownSegmentRadius),
-                    ),
-            )
-        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(palette.warning),
+        )
     }
 }
 
@@ -668,25 +687,25 @@ private fun ExtField(
     val focusRequester = remember { FocusRequester() }
     PiAutoFocus(focusRequester)
     val shape = RoundedCornerShape(FieldRadius)
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (height != null) Modifier.height(height) else Modifier)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .border(
-                width = PiSpacing.hairline,
-                color = if (focused) palette.borderAccent else palette.borderMuted,
+                width = 1.dp,
+                color = if (focused) palette.borderAccent else palette.borderMuted.copy(alpha = 0.7f),
                 shape = shape,
             )
             .padding(horizontal = paddingHorizontal, vertical = paddingVertical),
-        contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart,
+        verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
     ) {
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier
-                .fillMaxWidth()
+                .weight(1f)
                 .focusRequester(focusRequester),
             textStyle = (if (singleLine) MaterialTheme.typography.bodyMedium else PiTheme.text.mono)
                 .copy(color = palette.text),
@@ -701,8 +720,6 @@ private fun ExtField(
             keyboardActions = KeyboardActions(onDone = { onSubmit() }),
             decorationBox = { inner ->
                 if (value.isEmpty()) {
-                    // A placeholder is chrome, so it keeps the extension's colour;
-                    // `value` itself does not, and cannot — see this function's KDoc.
                     ExtensionSpans(
                         spans = remember(placeholder) { chromeSpans(placeholder) },
                         defaultColor = palette.muted,
@@ -713,39 +730,30 @@ private fun ExtField(
                 inner()
             },
         )
+        if (singleLine && value.isNotEmpty()) {
+            Spacer(Modifier.width(4.dp))
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .clickable(role = Role.Button, onClickLabel = "清空") { onValueChange("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "清空",
+                    tint = palette.dim,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
     }
 }
 
-// -------------------------------------------------------------- the board's numbers
-
-/**
- * `06 §2` 的对话框外壳在 `ui/components/PiDialog.kt`（330 / 圆角 14 / `padding:18px
- * 16px 12px` / surf-high / 1px borderMuted）；这里只剩扩展对话框自己的构件：动作行
- * 上方 14 的空隙、`select` 的容器、两种输入框的形状。
- *
- * Literals in this file rather than members of a theme object because `ui/theme/`
- * belongs to another batch in this same round; they are the board's own numbers,
- * each cited below.
- */
-
-/** The gap every control and the footer keep from the line above them. */
 private val DialogControlGap = 10.dp
-
-/** `.b-dlg` actions row 的 `gap:6` 与 `margin-top:14` 由 `PiDialogActions` 画。 */
-
-/** `select`'s container: `border-radius:10`, rows `padding:10px 12px`. */
-private val DialogListRadius = 10.dp
+private val DialogListRadius = 12.dp
 private val DialogListMaxHeight = 360.dp
-
-/** `input`'s row `height:38`; both fields' `border-radius:9`. */
-private val FieldHeight = 38.dp
-private val FieldRadius = 9.dp
-
-/** `editor`'s `minLines 4 / maxLines 10` (the file's pre-existing behaviour). */
+private val FieldHeight = 44.dp
+private val FieldRadius = 12.dp
 private const val EditorMinLines = 4
 private const val EditorMaxLines = 10
-
-/** `06 §2` 审批卡倒计时: `10 段（3px 高、段间 1px）`, rounded 1. */
-private const val CountdownSegments = 10
-private val CountdownSegmentHeight = 3.dp
-private val CountdownSegmentRadius = 1.dp

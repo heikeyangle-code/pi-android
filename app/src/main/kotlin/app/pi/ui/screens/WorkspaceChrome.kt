@@ -208,16 +208,18 @@ internal fun WsBadge(
     val color = stateToneColor(tone, palette)
     Row(
         modifier = modifier
-            .border(PiSettingsMetrics.hairline, palette.borderMuted, CircleShape)
-            .padding(start = 6.dp, end = 7.dp, top = 1.dp, bottom = 1.dp),
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.13f))
+            .padding(start = 7.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
     ) {
         if (dot) {
             Box(
                 Modifier
-                    .size(PiSettingsMetrics.badgeDot)
-                    .background(color, RoundedCornerShape(PiSettingsMetrics.badgeDotRadius)),
+                    .size(5.dp)
+                    .clip(CircleShape)
+                    .background(color),
             )
         }
         if (glyph != null) {
@@ -226,13 +228,13 @@ internal fun WsBadge(
         if (text.isNotEmpty()) {
             Text(
                 text,
-                style = PiTheme.text.meta,
-                color = palette.text,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = color,
                 maxLines = 1,
             )
         }
         if (mono != null) {
-            Text(mono, style = PiTheme.text.monoSmall, color = palette.text, maxLines = 1)
+            Text(mono, style = PiTheme.text.monoSmall, color = color, maxLines = 1)
         }
     }
 }
@@ -543,8 +545,8 @@ internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit
  * 菜单、提示条、点击区）、胶囊（芯片与主按钮）。新写的东西从这里取，不再各写各的数字。
  */
 internal object WsShape {
-    val small = 8.dp
-    val medium = 12.dp
+    val small = 9.dp
+    val medium = 14.dp
 }
 
 // ------------------------------------------------------------------ 行 ----

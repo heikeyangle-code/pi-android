@@ -1,17 +1,34 @@
 package app.pi.ui.resources
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,7 +41,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.pi.host.ExtensionsAccess
 import app.pi.host.HostAdvanced
 import app.pi.packages.PiProjectTrust
@@ -194,6 +216,7 @@ private fun Hub(
         item { TrustCard(model, onOpenTrustPolicy) }
 
         item {
+            val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                 ModelsSectionLabel(if (model.hasLoaded) "pi 已加载" else "读取中…")
                 ModelsCard {
@@ -205,7 +228,15 @@ private fun Hub(
                             Triple("主题", "themes", Type.Themes),
                         ).forEachIndexed { i, (label, page, type) ->
                             if (i > 0) ModelsDivider()
+                            val (icon, tint) = when (type) {
+                                Type.Extensions -> Icons.Filled.Extension to palette.accent
+                                Type.Skills -> Icons.Filled.AutoAwesome to palette.success
+                                Type.Prompts -> Icons.Filled.Description to palette.warning
+                                Type.Themes -> Icons.Filled.Palette to palette.borderAccent
+                            }
                             HubRow(
+                                icon = icon,
+                                iconTint = tint,
                                 title = label,
                                 summary = if (model.hasLoaded) typeSummary(type, ov) else "",
                                 badge = if (model.hasLoaded) {
@@ -218,6 +249,8 @@ private fun Hub(
                         }
                         ModelsDivider()
                         HubRow(
+                            icon = Icons.Filled.Article,
+                            iconTint = palette.muted,
                             title = "上下文与系统提示",
                             summary = if (model.hasLoaded) contextSummary(model) else "",
                             badge = null,
@@ -229,31 +262,56 @@ private fun Hub(
         }
 
         item {
+            val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                 ModelsSectionLabel("来源与连接")
                 ModelsCard {
                     Column {
                         HubRow(
+                            icon = Icons.Filled.Inventory2,
+                            iconTint = palette.accent,
                             title = "扩展包",
                             summary = packagesSummary(model),
                             badge = ov.installFailures.takeIf { it > 0 }?.let { "$it 个没装上" },
                             onClick = { onOpen("packages") },
                         )
                         ModelsDivider()
-                        HubRow(title = "MCP 服务器", summary = "给 pi 接外部工具", badge = null, onClick = onOpenMcp)
+                        HubRow(
+                            icon = Icons.Filled.Hub,
+                            iconTint = palette.success,
+                            title = "MCP 服务器",
+                            summary = "给 pi 接外部工具",
+                            badge = null,
+                            onClick = onOpenMcp,
+                        )
                     }
                 }
             }
         }
 
         item {
+            val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                 ModelsSectionLabel("相关")
                 ModelsCard {
                     Column {
-                        HubRow(title = "技能命令与扩展启动参数", summary = "/skill:name 开关、--flag 传参", badge = null, onClick = onOpenCommandSettings)
+                        HubRow(
+                            icon = Icons.Filled.Tune,
+                            iconTint = palette.warning,
+                            title = "技能命令与扩展启动参数",
+                            summary = "/skill:name 开关、--flag 传参",
+                            badge = null,
+                            onClick = onOpenCommandSettings,
+                        )
                         ModelsDivider()
-                        HubRow(title = "扩展运行时参数（flag）", summary = "查看扩展注册的 --flag 并即时修改当前值", badge = null, onClick = onOpenFlags)
+                        HubRow(
+                            icon = Icons.Filled.Flag,
+                            iconTint = palette.borderAccent,
+                            title = "扩展运行时参数（flag）",
+                            summary = "查看扩展注册的 --flag 并即时修改当前值",
+                            badge = null,
+                            onClick = onOpenFlags,
+                        )
                     }
                 }
             }
@@ -300,18 +358,61 @@ private fun packagesSummary(model: ResourcesModel): String {
 }
 
 @Composable
-private fun HubRow(title: String, summary: String, badge: String?, onClick: () -> Unit) {
+private fun HubRow(
+    icon: ImageVector,
+    iconTint: Color,
+    title: String,
+    summary: String,
+    badge: String?,
+    onClick: () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = ModelsCardPadding, vertical = PiSpacing.inline + PiSpacing.small),
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = ModelsCardPadding, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (summary.isNotEmpty()) Text(summary, style = PiTheme.text.meta, color = PiTheme.palette.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(iconTint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                color = PiTheme.palette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (summary.isNotEmpty()) {
+                Text(
+                    summary,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         badge?.let { TagPill(it, tone = PiTheme.palette.warning) }
-        Text("›", style = PiTheme.text.prose, color = PiTheme.palette.dim)
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = PiTheme.palette.dim,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -335,14 +436,32 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
                     Text("读取中…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
                     return@Column
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                val tone = if (st.trusted) PiTheme.palette.success else PiTheme.palette.warning
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(tone.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (st.trusted) Icons.Filled.VerifiedUser else Icons.Filled.GppMaybe,
+                            contentDescription = null,
+                            tint = tone,
+                            modifier = Modifier.size(19.dp),
+                        )
+                    }
                     Text(
                         PiProjectTrust.headline(st),
-                        style = PiTheme.text.prose,
-                        color = if (st.trusted) PiTheme.palette.success else PiTheme.palette.warning,
+                        style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                        color = tone,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (st.needsTrust) TagPill("项目有 .pi 资源")
+                    if (st.needsTrust) TagPill("含 .pi 资源", tone = PiTheme.palette.accent)
                 }
                 Text(PiProjectTrust.explanation(st), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                 PiProjectTrust.recordNote(st)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim) }

@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 import kotlinx.coroutines.delay
 
 /** 音视频链接：按扩展名认（去掉 query / fragment），只认 http(s)。 */
@@ -101,7 +102,7 @@ private fun PlayButton(playing: Boolean, size: Int = 40, onClick: () -> Unit) {
         Modifier.size(size.dp).clip(CircleShape).background(palette.accent).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(if (playing) "❚❚" else "▶", color = Color.White, style = PiTheme.text.monoSmall)
+        Text(if (playing) "❚❚" else "▶", color = palette.contrastOn(palette.accent), style = PiTheme.text.monoSmall)
     }
 }
 

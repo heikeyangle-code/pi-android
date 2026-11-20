@@ -77,6 +77,7 @@ import app.pi.ui.components.contextProgressColor
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 import java.util.Locale
 
 private const val COMPOSER_BORDER_MS = 160
@@ -388,17 +389,18 @@ internal fun Composer(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
+                    val stopFg = palette.contrastOn(palette.error)
                     Icon(
                         imageVector = Icons.Filled.Stop,
                         contentDescription = "停止",
                         modifier = Modifier.size(16.dp),
-                        tint = Color.White,
+                        tint = stopFg,
                     )
                     if (showStopLabel) {
                         Text(
                             text = "停止",
                             style = PiType.chipLabel.copy(fontWeight = FontWeight.SemiBold),
-                            color = Color.White,
+                            color = stopFg,
                             maxLines = 1,
                         )
                     }
@@ -414,7 +416,7 @@ internal fun Composer(
                     animationSpec = tween(150),
                     label = "sendBtnBg",
                 )
-                val sendFg = if (hasPayload) Color.White else palette.muted
+                val sendFg = if (hasPayload) palette.contrastOn(sendBg) else palette.muted
                 Box(
                     modifier = Modifier
                         .size(36.dp)

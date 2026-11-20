@@ -1197,6 +1197,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 preset = typography,
                 lineHeight = string("app.appearance.lineHeight", "normal"),
                 fontSize = fontSize,
+                proseFont = string("app.appearance.proseFont", PiTypographyProfile.FONT_SANS),
             ),
             showTimestamps = bool("app.appearance.showTimestamps", false),
             thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),

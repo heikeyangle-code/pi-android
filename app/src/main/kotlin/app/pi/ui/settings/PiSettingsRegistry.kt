@@ -1021,6 +1021,20 @@ object PiSettingsCatalog {
         // 删行不等于删能力：旧的 ±2sp 偏移在新行里是四个具名档（小/标准/大/更大），
         // 旧的块间距三档在预设的 `blockSpacing` 里（紧凑 4 / 舒适 8 / 宽松 12）。
         PiSetting(
+            key = "app.appearance.proseFont",
+            title = "阅读字体",
+            description = "AI 回复正文的字族：现代无衬线清爽利落，思源宋体适合长文阅读，JetBrains Mono 适合纯代码风。",
+            kind = PiRowKind.Value,
+            group = G_APPEARANCE,
+            section = "外观",
+            defaultValue = str("sans"),
+            options = choices(
+                "sans" to "现代无衬线（默认）",
+                "serif" to "思源宋体（阅读衬线）",
+                "mono" to "JetBrains Mono（等宽）",
+            ),
+        ),
+        PiSetting(
             key = "app.appearance.typography",
             title = "排版",
             description = "正文、行高、段距与各种字号一起换档；底色不跟。",

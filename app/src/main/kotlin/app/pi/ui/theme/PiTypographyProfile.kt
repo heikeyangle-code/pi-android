@@ -316,6 +316,8 @@ data class PiTypographyProfile(
     val blockSpacing: Dp,
     /** The `sp` this profile's [fontSize] adds to every text role, headings included. */
     val fontSizeOffsetSp: Int,
+    /** Markdown reading font family: `sans` (modern UI sans), `serif` (bundled Source Han Serif), or `mono` (JetBrains Mono). */
+    val proseFont: String = FONT_SANS,
 ) {
     /**
      * True for 经典. The preset that keeps the pre-feature scale (and the only one
@@ -324,11 +326,27 @@ data class PiTypographyProfile(
      */
     val isClassic: Boolean get() = preset == CLASSIC
 
+    fun proseFontFamily(): FontFamily = when (proseFont) {
+        FONT_SERIF -> PiProseFamily
+        FONT_MONO -> PiMonoFamily
+        else -> FontFamily.Default
+    }
+
     companion object {
         const val CLASSIC = "classic"
         const val COMPACT = "compact"
         const val COMFORTABLE = "comfortable"
         const val LOOSE = "loose"
+
+        const val FONT_SANS = "sans"
+        const val FONT_SERIF = "serif"
+        const val FONT_MONO = "mono"
+
+        fun proseFontOf(raw: String?): String = when (raw) {
+            FONT_SERIF -> FONT_SERIF
+            FONT_MONO -> FONT_MONO
+            else -> FONT_SANS
+        }
 
         /** Unknown or absent → the default preset, never a crash over a text file. */
         fun presetOf(raw: String?): String = when (raw) {
@@ -497,8 +515,13 @@ data class PiTypographyProfile(
             }
         }
 
-        /** The whole profile from the three stored strings. */
-        fun forPreset(preset: String, lineHeight: String, fontSize: String): PiTypographyProfile {
+        /** The whole profile from the stored strings. */
+        fun forPreset(
+            preset: String,
+            lineHeight: String,
+            fontSize: String,
+            proseFont: String = FONT_SANS,
+        ): PiTypographyProfile {
             val resolved = presetOf(preset)
             val numbers = PRESETS.getValue(resolved)
             val leading = if (resolved == CLASSIC) {
@@ -591,6 +614,7 @@ data class PiTypographyProfile(
                 messageSpacing = numbers.messageGap.dp,
                 blockSpacing = numbers.blockSpacing.dp,
                 fontSizeOffsetSp = offset,
+                proseFont = proseFontOf(proseFont),
             )
         }
 

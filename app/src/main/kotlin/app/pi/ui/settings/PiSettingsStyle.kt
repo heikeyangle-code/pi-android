@@ -486,7 +486,7 @@ internal fun PiSettingsSwitch(
                 .size(PiSettingsMetrics.switchKnob)
                 .clip(CircleShape)
                 .background(
-                    if (checked) Color.White else PiTheme.palette.muted,
+                    if (checked) MaterialTheme.colorScheme.onPrimary else PiTheme.palette.muted,
                 ),
         )
     }

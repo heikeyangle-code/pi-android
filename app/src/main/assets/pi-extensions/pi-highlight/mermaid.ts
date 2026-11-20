@@ -50,7 +50,7 @@ export interface MermaidArt {
 
 /** The slice of `grok-mermaid` this service uses. Structural, so nothing is imported eagerly. */
 interface MermaidModule {
-	render(src: string): { styled: Array<Array<{ text: string; cls: string }>>; width: number; warnings: string[] } | null;
+	render(src: string): { styled: Array<Array<{ text: string; cls?: string; role?: string }>>; width: number; warnings?: string[] } | null;
 }
 
 let loaded: MermaidModule | null = null;
@@ -87,18 +87,26 @@ export async function locateMermaid(): Promise<MermaidModule> {
 	if (!pending) {
 		pending = (async () => {
 			const tried: string[] = [];
+			// Pi 1.5.2 renamed `grok-mermaid` to `lovely-mermaid`; probe both so every pi build works.
+			const packages = ["lovely-mermaid", "grok-mermaid"];
 			for (const anchor of anchors()) {
 				tried.push(anchor);
-				let entry: string;
-				try {
-					entry = createRequire(anchor).resolve("grok-mermaid");
-				} catch {
+				let entry: string | null = null;
+				for (const pkg of packages) {
+					try {
+						entry = createRequire(anchor).resolve(pkg);
+						break;
+					} catch {
+						// try next package name
+					}
+				}
+				if (!entry) {
 					continue;
 				}
 				try {
 					const module = (await import(pathToFileURL(entry).href)) as { render?: unknown };
 					if (typeof module.render !== "function") {
-						loadError = `grok-mermaid 没有导出 render()：${entry}`;
+						loadError = `mermaid 模块没有导出 render()：${entry}`;
 						continue;
 					}
 					loaded = module as unknown as MermaidModule;
@@ -108,27 +116,18 @@ export async function locateMermaid(): Promise<MermaidModule> {
 					loadError = error instanceof Error ? error.message : String(error);
 				}
 			}
-			loadError = `找不到 grok-mermaid（它应当是 pi 自己的依赖）。已尝试：${tried.join("、")}`;
+			loadError = `找不到 lovely-mermaid / grok-mermaid（它应当是 pi 自己的依赖）。已尝试：${tried.join("、")}`;
 			return null;
 		})();
 	}
 	const located = await pending;
 	if (!located) {
 		pending = undefined;
-		throw new Error(loadError ?? "找不到 grok-mermaid。");
+		throw new Error(loadError ?? "找不到 lovely-mermaid / grok-mermaid。");
 	}
 	return located;
 }
 
-/**
- * Render one mermaid source block, or `null` when there is no art to show.
- *
- * `null` is `grok-mermaid`'s own answer for blank input, a syntax error, a diagram
- * type it does not draw, or one so large that laying it out was refused — and pi's
- * response to all of those is to keep the original fence
- * (`components/mermaid.ts:75-76`), which is exactly what the app does with `null`.
- * Only a module that cannot be found throws.
- */
 export async function renderArt(source: string): Promise<MermaidArt | null> {
 	const active = await locateMermaid();
 	const art = active.render(source);
@@ -136,8 +135,10 @@ export async function renderArt(source: string): Promise<MermaidArt | null> {
 		return null;
 	}
 	return {
-		rows: art.styled.map((row) => row.map((span) => ({ text: span.text, cls: span.cls }))),
+		rows: art.styled.map((row) =>
+			row.map((span) => ({ text: span.text, cls: span.cls ?? span.role ?? "text" })),
+		),
 		width: art.width,
-		warnings: art.warnings,
+		warnings: art.warnings ?? [],
 	};
 }

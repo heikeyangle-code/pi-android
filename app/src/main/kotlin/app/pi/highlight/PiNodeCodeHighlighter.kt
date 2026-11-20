@@ -50,26 +50,12 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
      * server at exactly the moment the engine is starting. First-come,
      * first-served is right here because the visible blocks are composed first.
      */
-    private const val MAX_IN_FLIGHT = 2
-    private const val QUEUE_LIMIT = 64
+    private const val MAX_IN_FLIGHT = 4
+    private const val QUEUE_LIMIT = 96
 
-    /**
-     * How long a caller may wait for its turn *plus* the request. The request
-     * itself is capped at 100 ms connect + 150 ms read ([PiHighlightClient]); the
-     * extra room is only for waiting behind the queue, on a `Dispatchers.Default`
-     * thread, never on the frame thread. A cold engine (highlight.js is loaded on
-     * its first request) is the slow case this covers.
-     */
     private const val CALLER_WAIT_MS = 750L
 
-    /**
-     * The cache bound. Keyed by a hash of `(language, code)`, so entries never pin
-     * a fence's text; 128 entries is several screens of transcript plus the
-     * re-compositions of the same block, which is the whole point of the cache.
-     * Span lists are small (a 40-line block is ~100 spans) and anything
-     * pathological is not cached at all — see [MAX_CACHED_SPANS].
-     */
-    private const val CACHE_ENTRIES = 128
+    private const val CACHE_ENTRIES = 256
     private const val MAX_CACHED_SPANS = 2048
 
     /**

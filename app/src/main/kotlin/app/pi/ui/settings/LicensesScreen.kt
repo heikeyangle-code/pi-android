@@ -10,14 +10,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -84,7 +80,6 @@ fun PiLicensesEntryRow(
  * The notices themselves: a grouped list of every bundled licence, and the full
  * text of whichever one the user opened.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LicensesScreen(
     contentPadding: PaddingValues,
@@ -110,15 +105,8 @@ fun LicensesScreen(
         return
     }
 
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("开源许可") },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-        )
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
+        PiTopBar(title = "开源许可", onBack = onBack)
         if (notices.isEmpty()) {
             Text(
                 "正在读取…",
@@ -133,18 +121,13 @@ fun LicensesScreen(
         }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSettingsMetrics.groupGap),
         ) {
             // Grouping is by the manifest's own section field, in the order the
             // sections first appear, so the statement, the component list, the
             // licence texts and the per-package copyright files stay in the
             // sequence the manifest author put them in.
             notices.groupBy { it.section }.forEach { (section, entries) ->
-                // 每组一张圆角 10 的卡，卡里行间 1px inset hairline；一个分组是一个
-                // LazyColumn item，所以卡片与它的行不会被懒加载拆开。
-                //
-                // **没有分区头、没有「N 项」**：统一后的设置面只有一张接一张的卡，
-                // 卡与卡之间留 `groupGap`（与「设备能力」页同一套）。
                 item(key = "section-$section") {
                     PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
                         entries.forEachIndexed { index, notice ->
@@ -164,7 +147,6 @@ fun LicensesScreen(
 }
 
 /** The full text of one notice, read on demand. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LicenceTextScreen(
     notice: LicenceNotice,
@@ -175,15 +157,8 @@ private fun LicenceTextScreen(
     val body by produceState<String?>(null, notice.file) {
         value = withContext(Dispatchers.IO) { readAsset(context, notice.file) }
     }
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text(notice.title, maxLines = 1) },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-        )
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
+        PiTopBar(title = notice.title, onBack = onBack)
         val text = body
         if (text == null) {
             Text(
@@ -202,19 +177,18 @@ private fun LicenceTextScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.notePaddingVertical,
                     bottom = contentPadding.calculateBottomPadding() + PiSettingsMetrics.groupGap,
                 ),
         ) {
-            // Monospace, because these are licence and copyright files: the line
-            // breaks, the indented warranty clauses and the ASCII rules in the
-            // GPL texts are part of how they read.
-            Text(
-                text,
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            PiSettingsCard {
+                Text(
+                    text,
+                    modifier = Modifier.padding(PiSettingsMetrics.cardPadding),
+                    style = PiTheme.text.monoSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
     }
 }

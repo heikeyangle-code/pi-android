@@ -301,7 +301,7 @@ internal fun piMarkdownTypography(
     // `prose` 本身仍是系统 Sans —— 设置页/Boot/文件页/诊断页共用它，只有 Markdown
     // 正文换成宋体。`mono`/`code` 只留给机器输出（代码、命令行、路径）。
     val base = profile.styles.prose.copy(
-        fontFamily = PiProseFamily,
+        fontFamily = profile.proseFontFamily(),
         fontWeight = FontWeight.Normal,
     )
     val mono = profile.styles.mono

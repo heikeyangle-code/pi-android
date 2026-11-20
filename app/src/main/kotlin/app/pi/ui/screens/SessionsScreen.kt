@@ -35,6 +35,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.MoreVert
@@ -42,6 +45,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.draw.shadow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -434,6 +438,12 @@ fun SessionsScreen(
                                     onToggle = {
                                         collapsedGroups = if (group.cwd in collapsedGroups) collapsedGroups - group.cwd else collapsedGroups + group.cwd
                                     },
+                                    onNewSession = if (group.current) {
+                                        {
+                                            session.newSession()
+                                            onOpenChat()
+                                        }
+                                    } else null,
                                 )
                             }
                             if (collapsed) {
@@ -551,21 +561,31 @@ fun SessionsScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            SessionActionRow(label = "重命名", tone = MaterialTheme.colorScheme.onSurface) {
+            SessionActionRow(
+                icon = Icons.Filled.Edit,
+                label = "重命名",
+                tone = MaterialTheme.colorScheme.onSurface,
+                iconTint = PiTheme.palette.accent,
+            ) {
                 actions = null
                 renaming = acting
             }
-            // 官方：当前会话不能删（直接报「Cannot delete the currently active session」）。
-            // 手机上把原因写在行里，而不是点了才被拒。
             SessionActionRow(
-                label = if (actingIsCurrent) "删除（当前会话不能删，先切换到别的会话）" else "删除",
+                icon = Icons.Filled.Delete,
+                label = if (actingIsCurrent) "删除（当前会话不能删，先切换到别的会话）" else "删除会话",
                 tone = if (actingIsCurrent) PiTheme.palette.muted else PiTheme.palette.error,
+                iconTint = if (actingIsCurrent) PiTheme.palette.muted else PiTheme.palette.error,
                 enabled = !actingIsCurrent,
             ) {
                 actions = null
                 confirming = acting
             }
-            SessionActionRow(label = "取消", tone = MaterialTheme.colorScheme.onSurface) { actions = null }
+            SessionActionRow(
+                icon = Icons.Filled.Close,
+                label = "取消",
+                tone = PiTheme.palette.muted,
+                iconTint = PiTheme.palette.muted,
+            ) { actions = null }
         }
     }
 
@@ -830,48 +850,81 @@ private fun SessionListRow(
                 .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
                 .padding(
                     start = PiSettingsMetrics.rowPaddingHorizontal + SESSIONS_TREE_UNIT * levels,
-                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = 6.dp,
                     top = PiSettingsMetrics.rowPaddingVertical,
                     bottom = PiSettingsMetrics.rowPaddingVertical,
                 ),
         ) {
-            Text(
-                summary.displayName,
-                style = if (active) PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold) else PiType.rowTitle,
-                color = when {
-                    active -> MaterialTheme.colorScheme.primary
-                    named -> PiTheme.palette.warning
-                    else -> MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
             Row(
-                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(SESSIONS_ROW_PROP_GAP),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    sessionAgeLabel(System.currentTimeMillis() - summary.lastActivityAt) + " · " + summary.messageCount + " 条",
-                    style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
-                    color = PiTheme.palette.muted,
-                    maxLines = 1,
-                )
-                Box(Modifier.weight(1f))
-                if (named) SessionTag("已命名")
-                if (forkedFrom != null) {
-                    SessionTag(if (forkedFrom.length > SESSIONS_TAG_NAME_MAX) "分支" else "来自 $forkedFrom")
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        summary.displayName,
+                        style = if (active) PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold) else PiType.rowTitle,
+                        color = when {
+                            active -> MaterialTheme.colorScheme.primary
+                            named -> PiTheme.palette.warning
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(
+                        modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(SESSIONS_ROW_PROP_GAP),
+                    ) {
+                        Text(
+                            sessionAgeLabel(System.currentTimeMillis() - summary.lastActivityAt) + " · " + summary.messageCount + " 条",
+                            style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
+                            color = PiTheme.palette.muted,
+                            maxLines = 1,
+                        )
+                        if (active) {
+                            Text(
+                                text = "当前",
+                                modifier = Modifier
+                                    .clip(PiShapes.tag)
+                                    .background(accent.copy(alpha = 0.16f))
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                color = accent,
+                                maxLines = 1,
+                            )
+                        }
+                        if (named) SessionTag("已命名")
+                        if (forkedFrom != null) {
+                            SessionTag(if (forkedFrom.length > SESSIONS_TAG_NAME_MAX) "分支" else "来自 $forkedFrom")
+                        }
+                    }
+                    if (showPath) {
+                        Text(
+                            summary.pathShort,
+                            modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                            style = PiTheme.text.monoSmall,
+                            color = PiTheme.palette.dim,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-            }
-            if (showPath) {
-                Text(
-                    summary.pathShort,
-                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                    style = PiTheme.text.monoSmall,
-                    color = PiTheme.palette.dim,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable(onClickLabel = "会话操作", onClick = onLongPress),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = PiTheme.palette.dim,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
             }
         }
         if (!tree && !last) {
@@ -949,6 +1002,7 @@ private fun WorkspaceGroupHeader(
     collapsed: Boolean,
     alone: Boolean,
     onToggle: () -> Unit,
+    onNewSession: (() -> Unit)? = null,
 ) {
     val angle by androidx.compose.animation.core.animateFloatAsState(if (collapsed) 0f else 90f, label = "group-chevron")
     val accent = MaterialTheme.colorScheme.primary
@@ -990,6 +1044,30 @@ private fun WorkspaceGroupHeader(
             )
             if (current) {
                 Text("当前工作区", style = PiTheme.text.meta, color = accent, maxLines = 1)
+            }
+        }
+        if (onNewSession != null) {
+            Row(
+                modifier = Modifier
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(accent.copy(alpha = 0.14f))
+                    .clickable(onClick = onNewSession)
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = "在当前工作区新建会话",
+                    tint = accent,
+                    modifier = Modifier.size(13.dp),
+                )
+                Text(
+                    text = "新建",
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    color = accent,
+                    maxLines = 1,
+                )
             }
         }
         Text(
@@ -1070,9 +1148,15 @@ private fun SessionTag(text: String) {
  * 行标题 `PiType.rowTitle`（t15/500）、色由调用方按语义给 —— 删除是 error）。
  */
 @Composable
-private fun SessionActionRow(label: String, tone: Color, enabled: Boolean = true, onClick: () -> Unit) {
-    Text(
-        text = label,
+private fun SessionActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tone: Color,
+    iconTint: Color,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
@@ -1080,29 +1164,40 @@ private fun SessionActionRow(label: String, tone: Color, enabled: Boolean = true
                 horizontal = PiSettingsMetrics.pageHorizontal,
                 vertical = SESSIONS_ACTION_ROW_PADDING,
             ),
-        style = PiType.rowTitle,
-        color = tone,
-    )
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+                .background(iconTint.copy(alpha = if (enabled) 0.14f else 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Text(
+            text = label,
+            style = PiType.rowTitle,
+            color = tone,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
-/**
- * 「+ 新建会话」：胶囊（`height:42; padding:0 16px; border-radius:999; gap:7`，
- * 图标 16 + 14/600 文字）。
- *
- * 底色是**主题容器色** `primaryContainer`（= pi 的 `selectedBg`，用户裁决）：原来的
- * 实心 accent 比主题色更深更重，压过了列表；容器色仍然是这一屏最显眼的一件动作，
- * 但安静一档。文字与图标用它的 `on*` 对色。仍然**没有阴影**（`06 §5`）。
- */
 @Composable
 private fun NewSessionButton(onClick: () -> Unit) {
     Row(
         modifier = Modifier
+            .shadow(elevation = 6.dp, shape = PiShapes.badge, clip = false)
             .height(SESSIONS_NEW_SESSION_HEIGHT)
             .clip(PiShapes.badge)
-            // **主题容器色**（用户裁决）：`primaryContainer` = pi 的 `selectedBg`，
-            // 也就是 accent 的低饱和底，比原来的实心 accent 安静一档，而仍然读成
-            // 「这一屏最显眼的那一件动作」。文字与图标用它的 `on*` 对色。
-            .background(MaterialTheme.colorScheme.primaryContainer)
+            .background(PiTheme.palette.accent)
             .clickable(onClick = onClick)
             .padding(horizontal = SESSIONS_NEW_SESSION_PADDING),
         verticalAlignment = Alignment.CenterVertically,
@@ -1112,12 +1207,12 @@ private fun NewSessionButton(onClick: () -> Unit) {
             Icons.Filled.Add,
             contentDescription = null,
             modifier = Modifier.size(SESSIONS_NEW_SESSION_ICON),
-            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            tint = MaterialTheme.colorScheme.onPrimary,
         )
         Text(
             "新建会话",
             style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            color = MaterialTheme.colorScheme.onPrimary,
         )
     }
 }

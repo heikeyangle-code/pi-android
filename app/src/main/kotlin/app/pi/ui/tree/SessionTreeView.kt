@@ -18,9 +18,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,10 +42,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -311,13 +320,21 @@ private fun TreeRowView(row: TreeRow, showStamps: Boolean, onClick: () -> Unit, 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (item.isLeaf) p.selectedBg else MaterialTheme.colorScheme.background)
+            .background(if (item.isLeaf) p.selectedBg.copy(alpha = 0.55f) else MaterialTheme.colorScheme.background)
             .clickable(onClick = onClick)
             .drawBehind {
                 val stroke = 1.dp.toPx()
                 val unit = LEVEL.toPx()
                 val pageStart = PiSpacing.pageHorizontal.toPx()
                 val mid = size.height / 2f
+                if (item.isLeaf) {
+                    val barW = 3.dp.toPx()
+                    drawRect(
+                        color = p.accent,
+                        topLeft = Offset(0f, 4.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(barW, (size.height - 8.dp.toPx()).coerceAtLeast(0f)),
+                    )
+                }
                 for (g in row.gutters) {
                     if (!g.show) continue
                     val x = pageStart + (g.position + 0.5f) * unit
@@ -384,59 +401,161 @@ private fun EntrySheet(
     val p = PiTheme.palette
 
     PiSheet(onDismiss = onDismiss) {
-        Column(Modifier.padding(horizontal = PiSpacing.pageHorizontal).padding(bottom = PiSpacing.unit)) {
-            Text(item.typeTitle + if (item.isLeaf) " · 当前位置" else "", style = PiTheme.text.meta, color = p.muted)
-            Spacer(Modifier.height(ROW_GAP))
-            Text(fullText, maxLines = 6, overflow = TextOverflow.Ellipsis, style = PiTheme.text.prose, color = p.text)
-            Spacer(Modifier.height(PiSpacing.unit))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = PiSpacing.unit),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    item.typeTitle,
+                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
+                    color = p.text,
+                )
+                if (item.isLeaf) {
+                    Text(
+                        "当前位置",
+                        modifier = Modifier
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(p.accent.copy(alpha = 0.16f))
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                        color = p.accent,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    fullText,
+                    maxLines = 5,
+                    overflow = TextOverflow.Ellipsis,
+                    style = PiTheme.text.prose,
+                    color = p.text,
+                )
+            }
             when (step) {
                 Step.Actions -> {
-                    if (item.isLeaf) {
-                        Text("已在这个位置", style = PiTheme.text.meta, color = p.muted)
-                    } else {
-                        val hint = buildString {
-                            append(
-                                if (item.rewinds) "回到这条之前，这条的文字放回输入框（输入框为空时）让你改写后重发"
-                                else "把当前位置移到这里，在这里继续",
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                    ) {
+                        if (!item.isLeaf) {
+                            val hint = buildString {
+                                append(
+                                    if (item.rewinds) "回到此消息之前并放回输入框改写重发"
+                                    else "切换当前会话分支位置到这里继续对话",
+                                )
+                                if (streaming) append("（将先停止本轮）")
+                            }
+                            ActionRow(
+                                title = "跳转到这里",
+                                hint = hint,
+                                icon = Icons.Filled.PlayArrow,
+                                tint = p.accent,
+                            ) {
+                                if (skipSummaryPrompt()) onNavigate(BranchSummaryChoice.NoSummary, null) else step = Step.SummaryChoice
+                            }
+                        }
+                        if (item.forkable) {
+                            ActionRow(
+                                title = "从这里分叉",
+                                hint = "新建独立会话文件，原会话不变",
+                                icon = Icons.Filled.AccountTree,
+                                tint = p.success,
+                                onClick = onFork,
                             )
-                            if (streaming) append("。正在输出：会先停止本轮")
                         }
-                        ActionRow("跳转到这里", hint) {
-                            if (skipSummaryPrompt()) onNavigate(BranchSummaryChoice.NoSummary, null) else step = Step.SummaryChoice
+                        ActionRow(
+                            title = if (item.label == null) "加标签（书签）" else "改标签",
+                            hint = item.label?.let { "当前：「$it」" } ?: "方便在「书签」里一键定位",
+                            icon = Icons.Filled.BookmarkBorder,
+                            tint = p.warning,
+                        ) { step = Step.Label }
+                        if (item.contextEditable && !item.hiddenFromContext) {
+                            ActionRow(
+                                title = "不再发给模型",
+                                hint = "对话记录保留，后续上下文不再携带",
+                                icon = Icons.Filled.VisibilityOff,
+                                tint = p.muted,
+                                onClick = onHide,
+                            )
+                            ActionRow(
+                                title = "改写模型看到的内容",
+                                hint = "仅改上下文版本，原文不变",
+                                icon = Icons.Filled.Edit,
+                                tint = p.mdLink,
+                            ) { step = Step.Replace }
+                        }
+                        if (item.copyText != null) {
+                            ActionRow(
+                                title = "复制文本",
+                                hint = null,
+                                icon = Icons.Filled.ContentCopy,
+                                tint = p.muted,
+                            ) { clipboard.setText(AnnotatedString(fullText)); onDismiss() }
                         }
                     }
-                    if (item.forkable) ActionRow("从这里分叉", "新建一个会话文件，原会话保持不变", onFork)
-                    ActionRow(if (item.label == null) "加标签（书签）" else "改标签", item.label?.let { "现在是「$it」" } ?: "之后在「书签」里一键回来") { step = Step.Label }
-                    if (item.contextEditable && !item.hiddenFromContext) {
-                        ActionRow("不再发给模型", "对话里仍看得见，记录一个字不少；只是之后的上下文里没有它", onHide)
-                        ActionRow("改写模型看到的内容", "只改发给模型的版本，原文保留") { step = Step.Replace }
-                    }
-                    if (item.copyText != null) ActionRow("复制", null) { clipboard.setText(AnnotatedString(fullText)); onDismiss() }
                 }
                 Step.SummaryChoice -> {
-                    Text("要摘要被放弃的那一段吗？", style = PiTheme.text.prose, color = p.text)
-                    Text("摘要是一次模型调用，可能等一会儿；之后可以随时点「停止摘要」。关掉这个面板回到树。", style = PiTheme.text.meta, color = p.muted)
-                    Spacer(Modifier.height(ROW_GAP))
-                    ActionRow("不摘要", null) { onNavigate(BranchSummaryChoice.NoSummary, null) }
-                    ActionRow("摘要", "用默认的摘要提示词") { onNavigate(BranchSummaryChoice.Summarize, null) }
-                    ActionRow("用自定义指令摘要…", "告诉它这次要留住什么") { step = Step.SummaryInstructions }
+                    Text("要摘要被放弃的那一段吗？", style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold), color = p.text)
+                    Text("摘要会调用一次模型，可随时中止；关闭面板回到树。", style = PiTheme.text.meta, color = p.muted)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                    ) {
+                        ActionRow("不摘要", "直接切换，不消耗 token") { onNavigate(BranchSummaryChoice.NoSummary, null) }
+                        ActionRow("自动摘要", "使用默认摘要提示词") { onNavigate(BranchSummaryChoice.Summarize, null) }
+                        ActionRow("用自定义指令摘要…", "指定需要保留的关键信息") { step = Step.SummaryInstructions }
+                    }
                 }
                 Step.SummaryInstructions -> {
                     TextBox(instructions, { instructions = it }, "摘要指令：要留住什么")
-                    ActionRow("开始摘要", null) { onNavigate(BranchSummaryChoice.SummarizeWithPrompt, instructions.trim().ifEmpty { null }) }
-                    // TUI：自定义指令编辑器里取消 → 回到摘要选择。
-                    ActionRow("返回", null) { step = Step.SummaryChoice }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    ) {
+                        TreePillButton("返回", primary = false) { step = Step.SummaryChoice }
+                        TreePillButton("开始摘要", primary = true) { onNavigate(BranchSummaryChoice.SummarizeWithPrompt, instructions.trim().ifEmpty { null }) }
+                    }
                 }
                 Step.Label -> {
                     TextBox(labelText, { labelText = it }, "标签，例如「方案 A 之前」", singleLine = true)
-                    ActionRow("保存", null) { onLabel(labelText.trim().ifEmpty { null }) }
-                    if (item.label != null) ActionRow("清除标签", null) { onLabel(null) }
-                    ActionRow("返回", null) { step = Step.Actions }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    ) {
+                        if (item.label != null) {
+                            TreePillButton("清除标签", primary = false) { onLabel(null) }
+                        }
+                        TreePillButton("返回", primary = false) { step = Step.Actions }
+                        TreePillButton("保存", primary = true) { onLabel(labelText.trim().ifEmpty { null }) }
+                    }
                 }
                 Step.Replace -> {
                     TextBox(replacement, { replacement = it }, "模型将看到的内容")
-                    ActionRow("保存改写", "只影响之后发给模型的上下文") { onReplace(replacement) }
-                    ActionRow("返回", null) { step = Step.Actions }
+                    Text("只影响之后发给模型的上下文，不改原始记录。", style = PiTheme.text.meta, color = p.muted)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    ) {
+                        TreePillButton("返回", primary = false) { step = Step.Actions }
+                        TreePillButton("保存改写", primary = true) { onReplace(replacement) }
+                    }
                 }
             }
         }
@@ -444,12 +563,61 @@ private fun EntrySheet(
 }
 
 @Composable
-private fun ActionRow(title: String, hint: String?, onClick: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = ROW_PAD),
+private fun TreePillButton(label: String, primary: Boolean, onClick: () -> Unit) {
+    val p = PiTheme.palette
+    Box(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (primary) p.accent else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(title, style = PiTheme.text.prose, color = PiTheme.palette.text)
-        if (hint != null) Text(hint, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = if (primary) MaterialTheme.colorScheme.onPrimary else p.text,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ActionRow(
+    title: String,
+    hint: String?,
+    icon: ImageVector? = null,
+    tint: Color = PiTheme.palette.accent,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (icon != null) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(tint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium), color = PiTheme.palette.text)
+            if (hint != null) Text(hint, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+        }
     }
 }
 

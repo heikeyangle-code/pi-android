@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Image
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -334,19 +336,20 @@ fun ProjectScreen(
     // 资源（扩展 / 技能 / 提示 / 主题 / 包 / 项目信任）统一在「设置 → 扩展与资源」，这里只放入口，不再复制一份。
     // 入口行的副标题读宿主的项目信任结论（`project.trustState`，SDK 的信任库说了算）；读不到就退回静态文案。
     var trustMeta by remember { mutableStateOf<String?>(null) }
+    var trustTrusted by remember { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(refreshTick, state.workspace.revision) {
         val r = session.extensionsAccess()?.resources?.trustState()
-        trustMeta = (r as? app.pi.packages.PiResourceCatalog.Parsed.Ok)?.value?.let { t ->
+        val parsed = (r as? app.pi.packages.PiResourceCatalog.Parsed.Ok)?.value
+        trustTrusted = parsed?.let { if (it.trusted) true else if (it.undecided) null else false }
+        trustMeta = parsed?.let { t ->
             when {
-                t.trusted -> "本项目已信任：.pi 下的扩展、技能、提示会被加载"
-                t.undecided -> "本项目还没表态：.pi 下的资源暂不加载，点进去处理"
-                else -> "本项目不被信任：只加载全局资源"
+                t.trusted -> "已信任"
+                t.undecided -> "待表态"
+                else -> "未信任"
             }
         }
     }
-    // 顶栏「⋯」与「关于工作区」。原来那两段说明文案常驻屏顶，占掉一整块却没有人读。
     var overflow by remember { mutableStateOf(false) }
-    var aboutOpen by remember { mutableStateOf(false) }
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
     // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
@@ -657,12 +660,6 @@ fun ProjectScreen(
                             placement = PiMenuPlacement.Below,
                             items = buildList {
                                 add(
-                                    PiMenuItem("切换 / 新建项目") {
-                                        overflow = false
-                                        rootSheet = true
-                                    },
-                                )
-                                add(
                                     PiMenuItem("从设备目录打开项目") {
                                         overflow = false
                                         externalPicker = true
@@ -682,12 +679,6 @@ fun ProjectScreen(
                                         session.requestNav(NavRequest.SettingsFocus("hub:resources:project"))
                                     },
                                 )
-                                add(
-                                    PiMenuItem("关于工作区") {
-                                        overflow = false
-                                        aboutOpen = true
-                                    },
-                                )
                             },
                         )
                     }
@@ -698,7 +689,35 @@ fun ProjectScreen(
                 contentPadding = PaddingValues(bottom = PiSpacing.scrollBottom),
             ) {
                 run {
-                    // 工作区路径条置顶：进工作区第一眼就看清当前项目与路径层级，一键切换/新建项目。
+                    // 项目 Hero 卡：当前项目、位置/信任/改动状态、以及一键切换项目 / 新建项目 / 选设备目录。
+                    item(key = "project-hero") {
+                        val currentEntry = remember(workspaceEntries, state.workspace.name) {
+                            workspaceEntries.firstOrNull { it.name == state.workspace.name }
+                        }
+                        WorkspaceHeroCard(
+                            workspaceName = workspaceName,
+                            relativePath = currentEntry?.relative ?: state.workspace.relative,
+                            isExternal = currentEntry?.external == true,
+                            trustLabel = trustMeta,
+                            trustTrusted = trustTrusted,
+                            changedCount = if (engineDown) 0 else changed.size,
+                            runningCount = if (engineDown) 0 else runs.size,
+                            onSwitchProject = { rootSheet = true },
+                            onNewProject = {
+                                inputDialog = WorkspaceInputDialog(
+                                    kind = WorkspaceInputKind.NewWorkspace,
+                                    title = "新建项目",
+                                    where = "项目目录名（留空自动编号）",
+                                    relativeParent = null,
+                                    absoluteParent = null,
+                                    initial = "",
+                                )
+                            },
+                            onOpenExternal = { externalPicker = true },
+                            onOpenTrust = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
+                        )
+                    }
+                    // 路径面包屑条：文件树导航始终触手可及。
                     item(key = "path-bar") {
                         WorkspacePathBar(
                             workspaceName = workspaceName,
@@ -1086,27 +1105,6 @@ fun ProjectScreen(
                             )
                         }
                     }
-                }
-            }
-        }
-
-        // 「关于工作区」：原来常驻屏顶的两段说明文案（项目现场 + 私有目录）挪到这里。
-        if (aboutOpen) {
-            PiDialog(onDismissRequest = { aboutOpen = false }) {
-                PiDialogTitle(title = "关于工作区")
-                PiDialogBody(
-                    "这个会话的项目现场。文件走宿主 File I/O，引擎没起来也能打开 · 编辑 · 删除。",
-                )
-                PiDialogBody(
-                    "工作区在 App 私有目录里，路径由 App 固定；文件读写走宿主 File I/O，" +
-                        "不需要额外授权。往上还可以浏览 rootfs 的其他目录。",
-                )
-                PiDialogActions {
-                    PiDialogAction(
-                        label = "知道了",
-                        primary = true,
-                        onClick = { aboutOpen = false },
-                    )
                 }
             }
         }
@@ -2205,6 +2203,172 @@ private const val RECENT_ROW_MS = 10 * 60 * 1000L
  * 路径条：工作区药丸 + 工作区内的子路径，横向可滚，进到深处时自动滚到当前层。
  * 工作区之外（根目录下别处）则是药丸 + 「根 / a / b」整条路径，点药丸回工作区。
  */
+@Composable
+private fun WorkspaceHeroCard(
+    workspaceName: String,
+    relativePath: String,
+    isExternal: Boolean,
+    trustLabel: String?,
+    trustTrusted: Boolean?,
+    changedCount: Int,
+    runningCount: Int,
+    onSwitchProject: () -> Unit,
+    onNewProject: () -> Unit,
+    onOpenExternal: () -> Unit,
+    onOpenTrust: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val cardShape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 6.dp)
+            .clip(cardShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(1.dp, palette.borderMuted.copy(alpha = 0.55f), cardShape)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(palette.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.FolderOpen,
+                    contentDescription = null,
+                    tint = palette.accent,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = workspaceName,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = palette.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    WsBadge(
+                        text = if (isExternal) "设备目录" else "应用私有",
+                        tone = StateTone.Muted,
+                        dot = false,
+                    )
+                }
+                Text(
+                    text = relativePath,
+                    style = PiTheme.text.monoSmall,
+                    color = palette.dim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (trustLabel != null) {
+                val trustTone = when (trustTrusted) {
+                    true -> StateTone.Success
+                    false -> StateTone.Error
+                    null -> StateTone.Warning
+                }
+                Box(modifier = Modifier.clickable(onClick = onOpenTrust)) {
+                    WsBadge(text = trustLabel, tone = trustTone)
+                }
+            }
+        }
+        if (changedCount > 0 || runningCount > 0) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (runningCount > 0) {
+                    WsBadge(text = "$runningCount 条命令运行中", tone = StateTone.Warning)
+                }
+                if (changedCount > 0) {
+                    WsBadge(text = "本次改动 $changedCount 项", tone = StateTone.Accent)
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            HeroActionPill(
+                icon = Icons.Filled.SwapHoriz,
+                label = "切换项目",
+                primary = true,
+                modifier = Modifier.weight(1f),
+                onClick = onSwitchProject,
+            )
+            HeroActionPill(
+                icon = Icons.Filled.Add,
+                label = "新建项目",
+                primary = false,
+                modifier = Modifier.weight(1f),
+                onClick = onNewProject,
+            )
+            HeroActionPill(
+                icon = Icons.Filled.Folder,
+                label = "设备目录",
+                primary = false,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenExternal,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeroActionPill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    primary: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = modifier
+            .height(36.dp)
+            .clip(shape)
+            .background(if (primary) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                width = 1.dp,
+                color = if (primary) palette.accent.copy(alpha = 0.35f) else palette.borderMuted.copy(alpha = 0.45f),
+                shape = shape,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (primary) palette.accent else palette.text,
+            modifier = Modifier.size(15.dp),
+        )
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = if (primary) palette.accent else palette.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @Composable
 private fun WorkspacePathBar(
     workspaceName: String,

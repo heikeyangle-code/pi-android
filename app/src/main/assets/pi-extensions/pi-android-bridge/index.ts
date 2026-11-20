@@ -372,7 +372,7 @@ function shellFailureStatus(data: ShellData): string | null {
  * `/app/ui/diff`，把「界面到底变没变」写进同一份结果（同文件 §3）。
  */
 
-const SCREEN_ACTIONS = ["look", "tap", "type", "swipe", "key", "wait", "shot", "steps"] as const;
+const SCREEN_ACTIONS = ["look", "tap", "type", "swipe", "key", "wait", "idle", "shot", "steps"] as const;
 const APP_ACTIONS = ["list", "launch", "stop"] as const;
 const FILE_ACTIONS = ["dirs", "list", "read", "write", "export", "import", "download"] as const;
 const COMM_ACTIONS = [
@@ -414,10 +414,11 @@ const ScreenAction = Type.Union(
 		Type.Literal("swipe"),
 		Type.Literal("key"),
 		Type.Literal("wait"),
+		Type.Literal("idle"),
 		Type.Literal("shot"),
 		Type.Literal("steps"),
 	],
-	{ description: "look · tap · type · swipe · key · wait · shot · steps" },
+	{ description: "look|tap|type|swipe|key|wait|idle|shot|steps" },
 );
 
 const AppAction = Type.Union([Type.Literal("list"), Type.Literal("launch"), Type.Literal("stop")], {
@@ -475,19 +476,22 @@ const StepSpec = Type.Object({
 			Type.Literal("swipe"),
 			Type.Literal("key"),
 			Type.Literal("wait"),
+			Type.Literal("idle"),
 		],
 		{ description: "step action" },
 	),
-	text: Type.Optional(Type.String({ description: "tap/swipe: match text; type: text to write" })),
+	text: Type.Optional(Type.String({ description: "match or input text" })),
 	index: Type.Optional(Type.Number({ description: "node index" })),
-	resourceId: Type.Optional(Type.String({ description: "resource id part" })),
+	resourceId: Type.Optional(Type.String({ description: "view id part" })),
+	anchor: Type.Optional(Type.String({ description: "nearby anchor text" })),
+	occurrence: Type.Optional(Type.Number({ description: "1-based match index" })),
 	x: Type.Optional(Type.Number({ description: "x px" })),
 	y: Type.Optional(Type.Number({ description: "y px" })),
 	key: Type.Optional(Type.String({ description: "key name" })),
-	direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "scroll direction" })),
-	submit: Type.Optional(Type.Boolean({ description: "type: press enter" })),
-	waitMs: Type.Optional(Type.Number({ description: "wait timeout ms" })),
-	gone: Type.Optional(Type.Boolean({ description: "wait for it to go" })),
+	direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "scroll dir" })),
+	submit: Type.Optional(Type.Boolean({ description: "submit after type" })),
+	waitMs: Type.Optional(Type.Number({ description: "timeout ms" })),
+	gone: Type.Optional(Type.Boolean({ description: "wait gone" })),
 });
 
 const DEVICE_NAMESPACE: ToolNamespace = {
@@ -699,6 +703,8 @@ interface ScreenParams {
 	text?: string;
 	desc?: string;
 	resourceId?: string;
+	anchor?: string;
+	occurrence?: number;
 	longPress?: boolean;
 	direction?: string;
 	x1?: number;
@@ -714,6 +720,7 @@ interface ScreenParams {
 	format?: "jpeg" | "png";
 	maxDimension?: number;
 	region?: number[];
+	marks?: boolean;
 	steps?: Record<string, unknown>[];
 }
 
@@ -746,25 +753,54 @@ async function screenLook(p: ScreenParams): Promise<ToolOutcome> {
 async function screenTap(p: ScreenParams): Promise<ToolOutcome> {
 	const byIndex = typeof p.index === "number";
 	const byPoint = typeof p.x === "number" && typeof p.y === "number";
-	if (!byIndex && !byPoint && !hasSelector(p)) {
+	const useSmartSelect = (typeof p.anchor === "string" && p.anchor.length > 0) || typeof p.occurrence === "number";
+	if (!byIndex && !byPoint && !hasSelector(p) && !useSmartSelect) {
 		throw new Error(
-			'[BAD_PARAM] android_screen 的 action="tap" 需要 index、x+y 或 text/desc/resourceId 之一。' +
+			'[BAD_PARAM] android_screen 的 action="tap" 需要 index、x+y 或 text/desc/resourceId/anchor 之一。' +
 				"\n提示：先 action=look 拿控件编号，编号比坐标稳。",
 		);
 	}
 	await ensureDiffBaseline();
-	const data = await bridgePost<ActionData>("/app/ui/tap", {
-		index: p.index,
-		x: p.x,
-		y: p.y,
-		longPress: p.longPress === true,
-		...selectorBody({ text: p.text, desc: p.desc, resourceId: p.resourceId }),
-	});
+	let tapBody: Record<string, unknown>;
+	if (useSmartSelect && !byIndex && !byPoint) {
+		const resolved = await bridgePost<{
+			found?: boolean;
+			strategy?: string;
+			element?: { bounds?: { left: number; top: number; right: number; bottom: number }; text?: string };
+		}>("/app/ui/select", {
+			text: p.text,
+			desc: p.desc,
+			resourceId: p.resourceId,
+			anchorText: p.anchor,
+			occurrence: p.occurrence,
+			timeoutMs: p.waitMs ?? 1500,
+		});
+		const b = resolved.element?.bounds;
+		if (!resolved.found || !b) {
+			throw new Error(
+				`[NOT_FOUND] 智能选择器未找到目标（text=${p.text ?? ""}, anchor=${p.anchor ?? ""}, occurrence=${p.occurrence ?? ""}）。\n提示：先 action=look 确认当前屏幕内容。`,
+			);
+		}
+		tapBody = {
+			x: Math.round((b.left + b.right) / 2),
+			y: Math.round((b.top + b.bottom) / 2),
+			longPress: p.longPress === true,
+		};
+	} else {
+		tapBody = {
+			index: p.index,
+			x: p.x,
+			y: p.y,
+			longPress: p.longPress === true,
+			...selectorBody({ text: p.text, desc: p.desc, resourceId: p.resourceId }),
+		};
+	}
+	const data = await bridgePost<ActionData>("/app/ui/tap", tapBody);
 	const where = data.x !== undefined
 		? `(${data.x}, ${data.y})`
 		: byIndex
 			? `#${p.index}`
-			: (p.text ?? p.resourceId ?? p.desc ?? "目标");
+			: (p.text ?? p.resourceId ?? p.desc ?? p.anchor ?? "目标");
 	return withFeedback(
 		`[tap] 已${p.longPress === true ? "长按" : "点按"} ${where}（${data.mode ?? "?"}）`,
 		{ mode: data.mode, index: p.index },
@@ -884,27 +920,41 @@ async function screenWait(p: ScreenParams, params: Record<string, unknown>): Pro
 	);
 }
 
+async function screenIdle(p: ScreenParams): Promise<ToolOutcome> {
+	const data = await bridgePost<{ idle?: boolean; elapsedMs?: number; polls?: number }>(
+		"/app/ui/idle",
+		{ timeoutMs: p.waitMs ?? 3000 },
+	);
+	return textResult(
+		`[idle] ${data.idle === true ? "界面已稳定" : "等待超时"}（${data.elapsedMs ?? 0}ms）`,
+		{ idle: data.idle, elapsedMs: data.elapsedMs },
+	);
+}
+
 async function screenShot(p: ScreenParams): Promise<ToolOutcome> {
 	const data = await bridgePost<ScreenshotData>(
 		"/app/screenshot",
-		{ format: p.format, maxDimension: p.maxDimension, region: p.region },
+		{ format: p.format, maxDimension: p.maxDimension, region: p.region, marks: p.marks === true },
 		60_000,
 	);
 	const scale =
 		data.scale !== undefined && data.scale !== 1
-			? `，已缩放 ×${data.scale.toFixed(3)}（原图 ${data.sourceWidth}×${data.sourceHeight}）`
+			? `，缩放 ×${data.scale.toFixed(3)}（原图 ${data.sourceWidth}×${data.sourceHeight}）`
 			: "";
 	const notes = [
 		`[shot] ${data.width}×${data.height}（${data.mimeType}，${formatSize(data.bytes)}）${scale}`,
 	];
-	if (data.region) notes.push(`裁剪区域（display 像素）：[${data.region.join(", ")}]`);
-	notes.push("文字看不清时：调大 maxDimension、改用 png，或用 region 只截那一块。");
+	if (data.marks) {
+		notes.push(`已叠加 Set-of-Marks 编号框（${data.markedIndices ?? 0} 个可交互目标，可直接用 index 点击）。`);
+	}
+	if (data.region) notes.push(`裁剪：[${data.region.join(", ")}]`);
 	return imageResult(data.base64, data.mimeType, notes.join("\n"), {
 		width: data.width,
 		height: data.height,
 		bytes: data.bytes,
 		scale: data.scale,
 		region: data.region,
+		marks: data.marks,
 	});
 }
 
@@ -931,15 +981,13 @@ async function screenSteps(p: ScreenParams, params: Record<string, unknown>): Pr
 	}
 	// 先把每一步的 action 校验完再动手：打错一个字就「跑了前三步然后停」是最难查的
 	// 失败方式 —— 屏幕已经被动过，模型却不知道从哪一步开始重来。
-	const allowed = ["look", "tap", "type", "swipe", "key", "wait"];
+	const allowed = ["look", "tap", "type", "swipe", "key", "wait", "idle"];
 	for (const [index, raw] of steps.entries()) {
 		const step = (raw ?? {}) as Record<string, unknown>;
 		const name = typeof step.action === "string" ? step.action : "";
 		if (!allowed.includes(name)) {
 			throw new Error(
-				`[BAD_PARAM] android_screen 的 steps[${index}].action 只能是 "look" / "tap" / "type" / ` +
-					`"swipe" / "key" / "wait"，收到 ${JSON.stringify(step.action)}。` +
-					"\n提示：一步都没执行（先校验再动手），改对再来。",
+				`[BAD_PARAM] android_screen 的 steps[${index}].action 只能是 ${allowed.join("/")}，收到 ${JSON.stringify(step.action)}。`,
 			);
 		}
 	}
@@ -984,6 +1032,8 @@ async function screenAction(params: Record<string, unknown>): Promise<ToolOutcom
 				return screenKey(p, params);
 			case "wait":
 				return screenWait(p, params);
+			case "idle":
+				return screenIdle(p);
 			case "shot":
 				return screenShot(p);
 			case "steps":
@@ -1547,37 +1597,37 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_screen",
 		capability: "accessibility",
 		label: "屏幕",
-		description: "Screen: look, tap, type, swipe, key, wait, shot, steps.",
-		promptSnippet: "Screen read + act",
-		promptGuidelines: [
-			"Destructive actions ask first; if declined, stop and say so — never work around it.",
-		],
+		description: "Phone UI: look, tap, type, swipe, key, wait, idle, shot(marks), steps.",
+		promptSnippet: "Phone screen UI automation",
 		parameters: Type.Object({
 			action: ScreenAction,
-			steps: Type.Optional(Type.Array(StepSpec, { description: "up to 8 steps, stops at the first error" })),
-			filter: Type.Optional(Type.String({ description: "look: keep nodes containing this" })),
-			maxNodes: Type.Optional(Type.Number({ description: "look: node cap, default 400" })),
-			index: Type.Optional(Type.Number({ description: "node index from look" })),
-			x: Type.Optional(Type.Number({ description: "x in display px" })),
-			y: Type.Optional(Type.Number({ description: "y in display px" })),
-			text: Type.Optional(Type.String({ description: "tap/swipe: text to match; type: text to write" })),
-			desc: Type.Optional(Type.String({ description: "contentDescription part" })),
-			resourceId: Type.Optional(Type.String({ description: "resource id part, e.g. btn_send" })),
+			steps: Type.Optional(Type.Array(StepSpec, { description: "batch <=8 steps" })),
+			filter: Type.Optional(Type.String({ description: "look: filter text" })),
+			maxNodes: Type.Optional(Type.Number({ description: "look: node cap" })),
+			index: Type.Optional(Type.Number({ description: "node index" })),
+			x: Type.Optional(Type.Number({ description: "x px" })),
+			y: Type.Optional(Type.Number({ description: "y px" })),
+			text: Type.Optional(Type.String({ description: "match or type text" })),
+			desc: Type.Optional(Type.String({ description: "contentDesc part" })),
+			resourceId: Type.Optional(Type.String({ description: "view id part" })),
+			anchor: Type.Optional(Type.String({ description: "tap: nearby anchor text" })),
+			occurrence: Type.Optional(Type.Number({ description: "tap: 1-based match #" })),
 			longPress: Type.Optional(Type.Boolean({ description: "tap: long press" })),
-			direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "swipe: scroll direction" })),
-			x1: Type.Optional(Type.Number({ description: "swipe: start x" })),
-			y1: Type.Optional(Type.Number({ description: "swipe: start y" })),
-			x2: Type.Optional(Type.Number({ description: "swipe: end x" })),
-			y2: Type.Optional(Type.Number({ description: "swipe: end y" })),
-			durationMs: Type.Optional(Type.Number({ description: "swipe: ms, default 300" })),
-			submit: Type.Optional(Type.Boolean({ description: "type: press enter after" })),
-			key: Type.Optional(Type.String({ description: "back/home/recents/lock… or ENTER, KEYCODE_*" })),
-			repeat: Type.Optional(Type.Number({ description: "key: repeat 1-20" })),
-			waitMs: Type.Optional(Type.Number({ description: "wait: timeout ms, default 5000" })),
-			gone: Type.Optional(Type.Boolean({ description: "wait: until it disappears" })),
-			format: Type.Optional(StringEnum(["jpeg", "png"] as const, { description: "shot: png is lossless" })),
-			maxDimension: Type.Optional(Type.Number({ description: "shot: long side cap, default 1280" })),
-			region: Type.Optional(Type.Array(Type.Number(), { description: "shot: crop [left,top,right,bottom]" })),
+			direction: Type.Optional(StringEnum(["forward", "backward"] as const, { description: "scroll dir" })),
+			x1: Type.Optional(Type.Number()),
+			y1: Type.Optional(Type.Number()),
+			x2: Type.Optional(Type.Number()),
+			y2: Type.Optional(Type.Number()),
+			durationMs: Type.Optional(Type.Number()),
+			submit: Type.Optional(Type.Boolean({ description: "type: submit" })),
+			key: Type.Optional(Type.String({ description: "back/home/recents/lock or KEYCODE_*" })),
+			repeat: Type.Optional(Type.Number()),
+			waitMs: Type.Optional(Type.Number()),
+			gone: Type.Optional(Type.Boolean()),
+			format: Type.Optional(StringEnum(["jpeg", "png"] as const)),
+			maxDimension: Type.Optional(Type.Number()),
+			region: Type.Optional(Type.Array(Type.Number(), { description: "crop [l,t,r,b]" })),
+			marks: Type.Optional(Type.Boolean({ description: "shot: overlay numbered tap boxes" })),
 		}),
 		run: (params) => screenAction(params),
 	},
@@ -1841,31 +1891,13 @@ async function skillDirectory(): Promise<string> {
 function environmentGuidance(): string {
 	return [
 		"",
-		"## Android device environment (pi-android)",
-		"",
-		"pi runs in proot Ubuntu; the `android_*` tools drive this phone, and `android_screen` reports the diff of its own action. Read the pi-android-device skill before acting on it.",
+		"## Phone bridge (pi-android)",
+		"Active `android_*` tools control this phone. Screen loop: `look` → act (result carries UI diff); use `shot(marks=true)` when the tree is sparse. Read skill `pi-android-device` if needed.",
 	].join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// 注册哪些工具
-// ---------------------------------------------------------------------------
+const ALL_DEVICE_TOOL_NAMES = new Set(DEVICE_TOOLS.map((tool) => tool.name));
 
-/**
- * 读一次 `/app/health`，得出“此刻哪些能力分组可用”，给注册循环做过滤。
- *
- * 判据是 `capabilities[].usable`，**不**再叠一次 `enabled`：App 侧的
- * `DeviceCapabilityStore.state()` 已经把三件事合进 `usable`
- * （`DeviceCapabilityStore.kt:151`：`usable = persisted && !sessionOff && denial == null`），
- * 所以 `usable` 严格强于“开关开着”。再与一次 `enabled` 只会是同一件事的第二份真相，
- * 而且会把“开关开着但系统侧还没就绪”的那一组（例如无障碍已启用但服务还没连上）当成可用 ——
- * 那正是这次要消灭的“注册了却调不动”。
- *
- * 读不到（桥没起来、token 文件读不到、超时）就返回 `null`，调用方按「一组都不注册、
- * 只留常驻的 `android_status`」处理。桥不在时我们并不知道任何一组开着没有；这时注册全部
- * 工具等于把「注册了但调用失败」重新变成默认，而这次改动的全部意义就是不让不可用的东西进请求。
- * 对用户也不是死路：`android_status` 会说出「未连接」和下一步。
- */
 async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 	try {
 		const health = await bridgeHealth();
@@ -1876,78 +1908,58 @@ async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
 }
 
 /**
- * 这个工具此刻该不该注册。
- *
- * `capability === null` 的是 `android_status`：**常驻**（用户拍板的例外）。它是
- * `health.capabilities[].reason` 的唯一读者 —— 「某一组开着却不可用」是模型自己查不清的
- * 那条事实，而它只有一句中文 + 一个英文 snippet，常驻的成本比「模型不知道为什么调不动」
- * 便宜得多。
- *
- * 其余工具只在它那一组 `usable` 时注册 —— 关掉的能力，它的 `description`、
- * `promptSnippet`、`promptGuidelines` 和整份参数 schema 一个字都不进请求。
+ * 零上下文占用硬约束：
+ * - 当没有任何设备能力可用（全关或桥未连接）时，**包括 `android_status` 在内所有工具全部停用**，
+ *   不注入任何系统提示词、并清理磁盘技能目录 → 上下文占用严格为 0 token；
+ * - 只要至少开启 1 组可用能力，才激活对应能力组的工具与 `android_status`，并在每轮 `before_agent_start`
+ *   通过 `pi.setActiveTools()` 实时热同步，无需重启引擎或新开会话。
  */
-function shouldRegister(spec: DeviceToolSpec, usable: ReadonlySet<string> | null): boolean {
+function shouldActivate(spec: DeviceToolSpec, usable: ReadonlySet<string> | null): boolean {
+	if (usable === null || usable.size === 0) return false;
 	if (spec.capability === null) return true;
-	return usable !== null && usable.has(spec.capability);
+	return usable.has(spec.capability);
 }
 
-// ---------------------------------------------------------------------------
-// extension entry point
-// ---------------------------------------------------------------------------
+async function removeSkillDirSafe(): Promise<void> {
+	try {
+		const { rm } = await import("node:fs/promises");
+		await rm(await skillDirectory(), { recursive: true, force: true });
+	} catch {
+		// best effort
+	}
+}
 
-/**
- * 工厂是 `async` 的，这是 pi 支持的形状：`ExtensionFactory = (pi) => void | Promise<void>`
- * （pi 1.1.0 `core/extensions/types.d.ts:1494`），加载器 `await factory(load.api)` 之后才
- * `commit()`（`core/extensions/loader.js:514`），所以这里 `await` 出来的能力状态在
- * 任何工具被调用之前就已经定下。
- */
-export default async function (pi: ExtensionAPI) {
-	// 只注册“当前可用”的能力对应的工具。
-	//
-	// ## 为什么不热生效（以及这句事实写在哪两处）
-	//
-	// `pi.registerTool` 只在扩展工厂跑的时候登记一次，pi 没有“每次请求重算工具表”的钩子。
-	// 这个工厂不是在进程启动时跑一次就完了：pi 每次 `createRuntime()` 都会重新加载扩展 ——
-	// 引擎启动、新会话、fork / switch_session / resume、`ctx.reload()`（`/device-reload`）
-	// 都走这条路（pi 1.1.0：`core/agent-session-runtime.js` 的 `newSession()` → `createRuntime()`
-	// → `core/agent-session-services.js:69` 的 `resourceLoader.reload()` →
-	// `core/resource-loader.js:355` 的 `clearExtensionCache()`）。
-	//
-	// 所以：能力开关的改动在**下一个新会话 / 重载扩展 / 引擎重启**之后生效，而不是当场生效。
-	// App 侧 `ui/device/DeviceCapabilityScreen.kt` 在「能力授权」标题下写了同一句话，
-	// 用户和模型看到的是同一个口径。
-	const usable = await usableCapabilities();
+function syncActiveDeviceTools(pi: ExtensionAPI, usable: ReadonlySet<string> | null): boolean {
 	usableGroups = usable ?? new Set<string>();
-
-	// 能力全关（或桥根本没起来）时，把上一轮写出去的技能目录清掉 —— **必须在这里删**。
-	//
-	// 时机是全部理由：扩展工厂跑在 `ResourceLoader.reload()` 的 `loadFinalExtensionSet()`
-	// 里（`core/resource-loader.js:410`），而磁盘上的技能是紧接着在 `updateSkillsFromPaths()`
-	// （`:424`）被扫进列表的。**工厂在前，扫盘在后** —— 所以在这里删，这一次启动就干净了。
-	//
-	// 曾经把这段放在 `resources_discover` 里，那是错的：那个钩子在扫盘**之后**才跑
-	// （`core/agent-session.js:2628`），删掉的目录已经被扫进技能列表，而且因为返回的
-	// `skillPaths` 为空，`extendResources()` 不会重扫（`core/resource-loader.js:333`）——
-	// 结果是「关了还要再启动一次才不显示」。实测发现（用户问「不开开关不显示吗？现在也显示啊」）。
-	//
-	// pi 只认磁盘：技能是靠扫目录发现的，不是靠钩子返回什么。所以「不显示」只能靠删。
-	// 删的是本扩展自己那一个目录（`<agentDir>/skills/pi-android-device`），别的技能不碰。
-	if (usable === null || usable.size === 0) {
-		try {
-			const { rm } = await import("node:fs/promises");
-			await rm(await skillDirectory(), { recursive: true, force: true });
-		} catch {
-			// 尽力而为：清不掉只是技能多显示一会儿，不该让扩展加载不了。
+	const desired = new Set<string>();
+	for (const tool of DEVICE_TOOLS) {
+		if (shouldActivate(tool, usable)) desired.add(tool.name);
+	}
+	try {
+		const current = pi.getActiveTools();
+		const currentDevice = current.filter((name) => ALL_DEVICE_TOOL_NAMES.has(name));
+		const same =
+			currentDevice.length === desired.size &&
+			currentDevice.every((name) => desired.has(name));
+		if (!same) {
+			const nonDevice = current.filter((name) => !ALL_DEVICE_TOOL_NAMES.has(name));
+			pi.setActiveTools([...nonDevice, ...desired]);
 		}
+	} catch {
+		// older/mocked host without setActiveTools: defaultActive already took effect at load time
+	}
+	return desired.size > 0;
+}
+
+export default async function (pi: ExtensionAPI) {
+	const initialUsable = await usableCapabilities();
+	usableGroups = initialUsable ?? new Set<string>();
+
+	if (initialUsable === null || initialUsable.size === 0) {
+		await removeSkillDirSafe();
 	}
 
-	// 这一轮有没有**能力组**真的可用。`android_status` 的能力是 `null`（它常驻，用来解释
-	// 「为什么不能用」），不能拿它当证据 —— 否则全关时也会以为有工具可用，那段环境说明
-	// 就白进每一轮请求了。
-	let anyDeviceToolRegistered = false;
 	for (const tool of DEVICE_TOOLS) {
-		if (!shouldRegister(tool, usable)) continue;
-		if (tool.capability !== null) anyDeviceToolRegistered = true;
 		pi.registerTool({
 			name: tool.name,
 			label: tool.label,
@@ -1956,6 +1968,7 @@ export default async function (pi: ExtensionAPI) {
 			promptGuidelines: tool.promptGuidelines,
 			parameters: tool.parameters,
 			namespace: DEVICE_NAMESPACE,
+			defaultActive: shouldActivate(tool, initialUsable),
 			async execute(
 				_toolCallId: string,
 				params: Static<TSchema>,
@@ -2124,17 +2137,17 @@ export default async function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Tell the agent what environment it woke up in — **but only while it can act on it**.
-	//
-	// 这里曾经无条件追加：全关时那段文字照样每轮进请求，告诉模型一套它根本调不到的工具。
-	// 现在的条件是「这一轮至少注册了一个能力组的工具」（就是上面那个
-	// anyDeviceToolRegistered）。全关 = 只剩常驻的 android_status（它只解释「为什么不能
-	// 用」）—— 那种情况下不说环境：模型真的做不了任何设备操作，这段说明只会每轮白占位置。
-	//
-	// Sentinel 防的是「扩展被加载两次」时的重复追加，不能替代上面那个条件。
+	// 每轮发送前实时探测 `/app/health` 并热同步活跃设备工具：
+	// 关闭全部设备能力时，所有 `android_*` 工具（含 `android_status`）立刻移出活跃工具表，
+	// 不注入任何系统提示词并清理技能目录 —— 严格 0 Token 上下文占用，且无需重启引擎。
 	pi.on("before_agent_start", async (event) => {
-		if (!anyDeviceToolRegistered) return undefined;
-		if (event.systemPrompt.includes("## Android device environment (pi-android)")) return undefined;
+		const liveUsable = await usableCapabilities();
+		const hasActive = syncActiveDeviceTools(pi, liveUsable);
+		if (!hasActive) {
+			void removeSkillDirSafe();
+			return undefined;
+		}
+		if (event.systemPrompt.includes("## Phone bridge (pi-android)")) return undefined;
 		return { systemPrompt: event.systemPrompt + environmentGuidance() };
 	});
 

@@ -1761,24 +1761,29 @@ internal data class PiHighlightedCode(val text: AnnotatedString, val languageKno
 internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighlightedCode {
     val palette = PiTheme.palette
     val highlighter = LocalPiCodeHighlighter.current
-    // A one-element array rather than state on purpose: this is a marker for the
-    // producer, not something the UI reads, so it must not participate in
-    // snapshot invalidation. Not keyed on `code` either — it exists to tell "this
-    // block changed (streaming)" apart from "this block just appeared (final)".
+    // 0ms 即时原生快扫层：流式输出、冷启动、离线查看历史会话时立刻着官方 syntax* 主题色，彻底告别黑白闪屏；
+    // 随后后台请求 Pi 自带的 191 语言 highlight.js 精确补全并平滑替换。
+    val fastFallback = remember(code, language) {
+        if (PiCodeLanguage.isUnspecified(language)) PiCodeHighlight()
+        else PiFastCodeHighlighter.highlight(code, language)
+    }
     val hasStreamed = remember { booleanArrayOf(false) }
     val answer = produceState(
-        initialValue = PiCodeHighlight(),
+        initialValue = fastFallback,
         code,
         language,
         highlighter,
     ) {
-        value = if (PiCodeLanguage.isUnspecified(language)) {
-            PiCodeHighlight()
+        if (PiCodeLanguage.isUnspecified(language)) {
+            value = PiCodeHighlight()
         } else {
             val isUpdate = hasStreamed[0]
             hasStreamed[0] = true
             if (isUpdate) delay(STREAM_SETTLE_MS)
-            withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
+            val nodeResult = withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
+            if (nodeResult.languageKnown) {
+                value = nodeResult
+            }
         }
     }
     return remember(code, answer.value, palette) {

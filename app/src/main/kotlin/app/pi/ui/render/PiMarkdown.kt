@@ -316,7 +316,7 @@ internal fun PiMarkdownText(
     // long block recomposes this function per token; without these `remember`s
     // every token rebuilt all five objects and the component set.
     val palette = PiTheme.palette
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = app.pi.ui.theme.PiContrast.luminance(palette.pageBg) < 0.5
     // 排版预设（`app.appearance.typography` / `.lineHeight` / `.fontSize`）解析后的那一个值：
     // 正文/次要角色的字号与字重、标题字号、markdown 段间距与列表缩进都在里面。
     // 库的 typography 与 padding 由它派生，所以两个 `remember` 都键在它上面 —— 一次组合只算

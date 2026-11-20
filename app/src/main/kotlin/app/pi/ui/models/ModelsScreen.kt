@@ -1,16 +1,25 @@
 package app.pi.ui.models
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +30,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.HostAdvanced
@@ -141,22 +152,61 @@ fun ModelsScreen(
 
             // ---- 当前模型与即时思考等级 ----
             item(key = "current") {
+                val palette = PiTheme.palette
                 ModelsCard(accent = current != null) {
-                    Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("当前模型", style = PiTheme.text.meta, color = PiTheme.palette.muted)
-                        if (current != null) {
-                            Text(current.title, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(names[current.provider]?.ifBlank { null } ?: current.provider, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                    Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(13.dp))
+                                    .background(palette.accent.copy(alpha = if (current != null) 0.16f else 0.08f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = if (current != null) palette.accent else palette.muted,
+                                    modifier = Modifier.size(22.dp),
+                                )
                             }
-                            TagRow(capabilityTags(current) + listOfNotNull(priceLabel(current.inputCost, current.outputCost)?.let { "$it /M" }))
-                        } else {
-                            Text("尚未选择模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
-                            Text("先在下方「订阅账号登录」或「API 供应商」完成连接，再选择模型即可开始对话。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    if (current != null) "当前会话模型" else "尚未选择模型",
+                                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                    color = if (current != null) palette.accent else palette.muted,
+                                )
+                                if (current != null) {
+                                    Text(
+                                        current.title,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = palette.text,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                } else {
+                                    Text(
+                                        "连接供应商后即可选择模型开始对话",
+                                        style = PiTheme.text.meta,
+                                        color = palette.dim,
+                                    )
+                                }
+                            }
+                        }
+                        if (current != null) {
+                            val providerDisplay = names[current.provider]?.ifBlank { null } ?: current.provider
+                            TagRow(
+                                listOf(providerDisplay) +
+                                    capabilityTags(current) +
+                                    listOfNotNull(priceLabel(current.inputCost, current.outputCost)?.let { "$it /M" }),
+                            )
                         }
                         if (d.thinkingLevels.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("当前会话思考等级", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                                Text("思考深度", style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.muted)
                                 Row(
                                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
@@ -669,7 +719,12 @@ private fun CustomRow(id: String, name: String?, detail: String?, overrides: Boo
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text("›", style = PiTheme.text.prose, color = PiTheme.palette.dim)
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = PiTheme.palette.dim,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

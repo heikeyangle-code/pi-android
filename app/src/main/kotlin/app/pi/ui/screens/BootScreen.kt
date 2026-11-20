@@ -47,6 +47,7 @@ import app.pi.runtime.RuntimeProvisioner
 import app.pi.ui.Boot
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.contrastOn
 
 /**
  * 首次安装初始化与引擎恢复页：
@@ -304,7 +305,7 @@ private fun BootButton(
     val palette = PiTheme.palette
     val shape = RoundedCornerShape(12.dp)
     val bg = if (destructive) palette.error.copy(alpha = 0.16f) else palette.accent
-    val fg = if (destructive) palette.error else Color.White
+    val fg = if (destructive) palette.error else palette.contrastOn(palette.accent)
     val border = if (destructive) BorderStroke(1.dp, palette.error.copy(alpha = 0.42f)) else null
     Surface(
         modifier = modifier
