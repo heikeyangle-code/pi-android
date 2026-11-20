@@ -1,5 +1,7 @@
 package app.pi.ui.models
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,8 +9,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,8 +33,12 @@ import app.pi.ui.components.PiSheet
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
@@ -146,12 +155,14 @@ internal fun UseBar(
 
 // ------------------------------------------------------------------ 供应商面板 + 登录
 
-private class Login(
+private data class LoginState(
     val loginId: String,
     val lines: List<String> = emptyList(),
     val url: String? = null,
     val code: String? = null,
+    val links: List<HostAuth.InfoLink> = emptyList(),
     val prompt: HostAuth.AuthPrompt? = null,
+    val browserWarning: String? = null,
     val error: String? = null,
 )
 
@@ -159,6 +170,13 @@ private class Login(
  * 一个供应商：头像与状态、连接方式（订阅 / 网页登录 / API Key）、它的全部模型。
  *
  * 「已连接」只读 [provider]（宿主每次改动后由页面重新读取并传回），不在这里留一份会过期的副本。
+ *
+ * ## 为什么登录事件订阅必须用 `CoroutineStart.UNDISPATCHED`
+ * `h.events` 和 `h.requests` 都是 replay=0 的 `SharedFlow`。此前代码靠 `LaunchedEffect(active)`
+ * 在下一帧才开始 collect，导致像 Anthropic / OpenAI Codex / GitHub Copilot 这样立刻发 `select`
+ * 或 `auth_url` 的供应商在订阅建立前就把消息发丢，界面永远卡在「正在登录…」。
+ * 现在在调用 `h.auth.login()` 之前就以 `CoroutineStart.UNDISPATCHED` 立即挂好订阅，彻底消除竞态；
+ * 同时监听 `ui.cancel` 自动收起已被本地回调胜出作废的 `manual_code` 输入框，关闭面板时自动取消登录并释放回调端口。
  */
 @Composable
 internal fun ProviderSheet(
@@ -177,51 +195,127 @@ internal fun ProviderSheet(
     val clipboard = LocalClipboardManager.current
     val uri = LocalUriHandler.current
     var key by remember { mutableStateOf("") }
-    var login by remember { mutableStateOf<Login?>(null) }
+    var login by remember { mutableStateOf<LoginState?>(null) }
+    var loginJob by remember { mutableStateOf<Job?>(null) }
     var promptText by remember { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
     var modelQuery by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<ModelFacts?>(null) }
     var pickError by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
-    // 目录里这家的全部模型：还没连接也看得到它有什么（`model.list {all, provider}`）。读不到就退回
-    // 页面给的「可用模型」，不留空白。
+
+    // 目录里这家的全部模型：还没连接也看得到它有什么（`model.list {all, provider}`）。
     var catalog by remember { mutableStateOf<List<app.pi.rpc.PiResponses.ModelInfo>?>(null) }
     LaunchedEffect(provider.id, provider.configured) {
         catalog = host()?.let { h -> runCatching { h.catalog(provider.id) }.getOrNull() }
     }
+
+    // 面板被滑走/关闭时，如果登录仍在进行，立刻向宿主发 auth.cancel 释放本地回调端口（避免重试报 BUSY）。
+    DisposableEffect(provider.id) {
+        onDispose {
+            val activeId = login?.takeIf { it.error == null }?.loginId
+            loginJob?.cancel()
+            if (activeId != null) {
+                host()?.let { h -> scope.launch { runCatching { h.auth.cancel(activeId) } } }
+            }
+        }
+    }
+
+    fun openExternalUrl(url: String) {
+        val opened = runCatching { uri.openUri(url) }
+        if (opened.isFailure) {
+            login = login?.copy(browserWarning = "未能自动打开浏览器，请点击「复制链接」后手动粘贴到浏览器中打开。")
+        } else {
+            login = login?.copy(browserWarning = null)
+        }
+    }
+
+    fun startOAuthLogin() {
+        val h = host() ?: run { note = "引擎没在运行，无法登录。"; return }
+        // 若已有残留登录任务先清掉。
+        loginJob?.cancel()
+        val id = "l" + System.nanoTime().toString(36)
+        login = LoginState(loginId = id)
+        promptText = ""
+        note = null
+
+        loginJob = scope.launch {
+            var lastAutoOpenedUrl: String? = null
+            val eventWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                h.events.collect { e ->
+                    // 回调服务器胜出或登录结束：宿主发 ui.cancel，立刻收起过期的 prompt。
+                    val cancelledReqId = HostAuth.cancelId(e)
+                    if (cancelledReqId != null && login?.prompt?.requestId == cancelledReqId) {
+                        login = login?.copy(prompt = null)
+                        return@collect
+                    }
+                    val ev = HostAuth.authEvent(e)?.takeIf { it.loginId == id } ?: return@collect
+                    val cur = login ?: return@collect
+                    val nextUrl = ev.url ?: cur.url
+                    val nextLines = if (!ev.message.isNullOrBlank()) {
+                        (cur.lines + ev.message).distinct().takeLast(6)
+                    } else {
+                        cur.lines
+                    }
+                    val nextLinks = if (ev.links.isNotEmpty()) ev.links else cur.links
+                    login = cur.copy(
+                        lines = nextLines,
+                        url = nextUrl,
+                        code = ev.code ?: cur.code,
+                        links = nextLinks,
+                    )
+                    // 对齐官方 LoginDialogComponent：收到 auth_url 时主动拉起系统浏览器一次（device_code 等用户先看清码或一键复制打开）。
+                    if (ev.kind == "auth_url" && !ev.url.isNullOrBlank() && ev.url != lastAutoOpenedUrl) {
+                        lastAutoOpenedUrl = ev.url
+                        openExternalUrl(ev.url)
+                    }
+                }
+            }
+            val requestWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                h.requests.collect { r ->
+                    val pr = HostAuth.authPrompt(r)?.takeIf { it.loginId == id } ?: return@collect
+                    val cur = login ?: return@collect
+                    promptText = ""
+                    login = cur.copy(prompt = pr)
+                }
+            }
+            try {
+                h.auth.login(provider.id, "oauth", id)
+                login = null
+                note = "登录成功。"
+                onChanged()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                login = (login ?: LoginState(id)).copy(prompt = null, error = e.message ?: "登录失败")
+            } finally {
+                eventWatcher.cancel()
+                requestWatcher.cancel()
+            }
+        }
+    }
+
+    fun cancelActiveLogin() {
+        val active = login
+        loginJob?.cancel()
+        loginJob = null
+        if (active != null && active.error == null) {
+            host()?.let { h -> scope.launch { runCatching { h.auth.cancel(active.loginId) } } }
+        }
+        login = null
+    }
+
     val allModels = (catalog ?: available).map { it.facts() }
     val connection = connectionOf(facts)
     val configured = provider.configured
 
-    // 登录期间的事件与提问：只收属于这次 loginId 的。
-    val active = login?.loginId
-    LaunchedEffect(active) {
-        val h = host() ?: return@LaunchedEffect
-        if (active == null) return@LaunchedEffect
-        launch {
-            h.events.collect { e ->
-                val ev = HostAuth.authEvent(e)?.takeIf { it.loginId == active } ?: return@collect
-                val cur = login ?: return@collect
-                login = Login(
-                    loginId = cur.loginId,
-                    lines = (cur.lines + listOfNotNull(ev.message)).takeLast(6),
-                    url = ev.url ?: cur.url,
-                    code = ev.code ?: cur.code,
-                    prompt = cur.prompt,
-                    error = cur.error,
-                )
-            }
-        }
-        h.requests.collect { r ->
-            val pr = HostAuth.authPrompt(r)?.takeIf { it.loginId == active } ?: return@collect
-            val cur = login ?: return@collect
-            promptText = ""
-            login = Login(cur.loginId, cur.lines, cur.url, cur.code, pr, cur.error)
-        }
-    }
-
-    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+    PiSheet(
+        onDismiss = {
+            cancelActiveLogin()
+            onDismiss()
+        },
+        fullHeight = true,
+    ) {
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             // ---- 头部 ----
             item(key = "head") {
@@ -240,7 +334,16 @@ internal fun ProviderSheet(
                     }
                 }
             }
-            note?.let { n -> item(key = "note") { Text(n, style = PiTheme.text.meta, color = PiTheme.palette.warning, modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small)) } }
+            note?.let { n ->
+                item(key = "note") {
+                    Text(
+                        n,
+                        style = PiTheme.text.meta,
+                        color = if (n.contains("失败") || n.contains("未")) PiTheme.palette.warning else PiTheme.palette.success,
+                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
+                    )
+                }
+            }
 
             // ---- 连接 ----
             item(key = "connect") {
@@ -253,17 +356,7 @@ internal fun ProviderSheet(
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     PrimaryAction(
                                         oauth.loginLabel ?: (if (oauth.isSubscription) "用订阅账号登录" else "网页登录"),
-                                        onClick = {
-                                            val h = host() ?: run { note = "引擎没在运行。"; return@PrimaryAction }
-                                            val id = "l" + System.currentTimeMillis().toString(36)
-                                            login = Login(id)
-                                            note = null
-                                            scope.launch {
-                                                runCatching { h.auth.login(provider.id, "oauth", id) }
-                                                    .onSuccess { login = null; note = "登录成功。"; onChanged() }
-                                                    .onFailure { login = Login(id, error = it.message ?: "登录失败") }
-                                            }
-                                        },
+                                        onClick = { startOAuthLogin() },
                                     )
                                     Text(oauth.name, style = PiTheme.text.meta, color = PiTheme.palette.dim)
                                 }
@@ -272,24 +365,28 @@ internal fun ProviderSheet(
                                     l = l,
                                     promptText = promptText,
                                     onPromptText = { promptText = it },
-                                    onOpenUrl = { runCatching { uri.openUri(it) } },
-                                    onCopy = { clipboard.setText(AnnotatedString(it)) },
-                                    onSubmit = { pr ->
+                                    onOpenUrl = { openExternalUrl(it) },
+                                    onCopy = { value ->
+                                        clipboard.setText(AnnotatedString(value))
+                                        note = "已复制到剪贴板。"
+                                    },
+                                    onCopyAndOpen = { code, url ->
+                                        clipboard.setText(AnnotatedString(code))
+                                        note = "验证码已复制，正在打开验证页面…"
+                                        openExternalUrl(url)
+                                    },
+                                    onAnswer = { pr, value ->
                                         val h = host() ?: return@LoginProgress
                                         scope.launch {
-                                            runCatching { h.answer(pr.requestId, promptText, false) }
-                                            login = Login(l.loginId, l.lines, l.url, l.code, null, l.error)
+                                            runCatching { h.answer(pr.requestId, value, false) }
+                                            login = login?.copy(prompt = null)
                                         }
                                     },
-                                    onCancel = {
-                                        val h = host()
-                                        if (l.error == null && h != null) scope.launch { runCatching { h.auth.cancel(l.loginId) } }
-                                        login = null
-                                    },
+                                    onCancel = { cancelActiveLogin() },
                                 )
                             }
                         }
-                        if (provider.supportsApiKey) {
+                        if (provider.supportsApiKeyInput) {
                             LabeledField(
                                 label = "API Key",
                                 value = key,
@@ -307,6 +404,12 @@ internal fun ProviderSheet(
                                     }
                                 })
                             }
+                        } else if (provider.hasAmbientApiKey && provider.oauth == null) {
+                            Text(
+                                "这个供应商通过环境变量或本机云凭证工作，不支持直接填写 API Key。",
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.dim,
+                            )
                         }
                         if (provider.oauth == null && !provider.supportsApiKey) {
                             Text("这个供应商没有登录方式；用自定义设置给它写好地址与密钥。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
@@ -412,39 +515,116 @@ internal fun ProviderSheet(
 
 @Composable
 private fun LoginProgress(
-    l: Login,
+    l: LoginState,
     promptText: String,
     onPromptText: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     onCopy: (String) -> Unit,
-    onSubmit: (HostAuth.AuthPrompt) -> Unit,
+    onCopyAndOpen: (code: String, url: String) -> Unit,
+    onAnswer: (HostAuth.AuthPrompt, String) -> Unit,
     onCancel: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (l.error == null && l.lines.isEmpty() && l.url == null && l.prompt == null) {
-            Text("正在登录…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (l.error == null && l.lines.isEmpty() && l.url == null && l.code == null && l.prompt == null) {
+            Text("正在准备登录…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
         }
         l.lines.forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.text) }
-        l.url?.let { url ->
+        if (l.links.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PiSettingsChip(text = "打开浏览器", onClick = { onOpenUrl(url) })
+                l.links.forEach { link ->
+                    PiSettingsChip(text = link.label?.takeIf { it.isNotBlank() } ?: "打开说明", onClick = { onOpenUrl(link.url) })
+                }
+            }
+        }
+        // 设备码流程（GitHub Copilot / Kimi / Meta 等）：高亮展示验证码，并提供「复制验证码并打开浏览器」一键操作。
+        l.code?.let { code ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = PiShapes.card,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, PiTheme.palette.borderAccent.copy(alpha = 0.5f)),
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("设备验证码", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                    Text(code, style = PiTheme.text.mono, color = PiTheme.palette.accent)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val url = l.url
+                        if (url != null) {
+                            PrimaryAction("复制验证码并打开浏览器", onClick = { onCopyAndOpen(code, url) })
+                        }
+                        PiSettingsChip(text = "复制验证码", onClick = { onCopy(code) })
+                    }
+                }
+            }
+        }
+        // 授权链接（auth_url 或 device_code 附带 url）。
+        l.url?.let { url ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (l.code == null) {
+                    PrimaryAction("打开浏览器授权", onClick = { onOpenUrl(url) })
+                } else {
+                    PiSettingsChip(text = "打开验证页", onClick = { onOpenUrl(url) })
+                }
                 PiSettingsChip(text = "复制链接", onClick = { onCopy(url) })
             }
         }
-        l.code?.let { code ->
-            Text(code, style = PiTheme.text.mono, color = PiTheme.palette.accent)
-            PiSettingsChip(text = "复制验证码", onClick = { onCopy(code) })
+        l.browserWarning?.let { warn ->
+            Text(warn, style = PiTheme.text.meta, color = PiTheme.palette.warning)
         }
+        // 交互式提问：区分 select / manual_code / secret / text 四种 SDK 协议形态。
         l.prompt?.let { pr ->
-            Text(pr.message, style = PiTheme.text.prose, color = PiTheme.palette.text)
-            PiEditorField(
-                value = promptText,
-                onValueChange = onPromptText,
-                placeholder = pr.placeholder,
-                // SDK 的提问带 secret 就别把输入摆在屏幕上。
-                visualTransformation = if (pr.secret) PasswordVisualTransformation() else VisualTransformation.None,
-            )
-            PiSettingsChip(text = "提交", onClick = { onSubmit(pr) })
+            if (pr.isSelect) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (pr.message.isNotBlank()) {
+                        Text(pr.message, style = PiTheme.text.prose, color = PiTheme.palette.text)
+                    }
+                    pr.options.forEach { opt ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAnswer(pr, opt.id) },
+                            shape = PiShapes.card,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(opt.label, style = PiTheme.text.prose, color = PiTheme.palette.text)
+                                opt.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                                    Text(desc, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val label = if (pr.isManualCode) {
+                        pr.message.ifBlank { "如果浏览器未自动跳转回来，请粘贴完整回调链接或授权码：" }
+                    } else {
+                        pr.message
+                    }
+                    if (label.isNotBlank()) {
+                        Text(label, style = PiTheme.text.prose, color = PiTheme.palette.text)
+                    }
+                    if (pr.isManualCode) {
+                        Text("浏览器自动回跳成功后会自动继续，无需手动粘贴。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                    }
+                    PiEditorField(
+                        value = promptText,
+                        onValueChange = onPromptText,
+                        placeholder = pr.placeholder ?: if (pr.isManualCode) "粘贴回调 URL 或授权码" else null,
+                        visualTransformation = if (pr.secret) PasswordVisualTransformation() else VisualTransformation.None,
+                    )
+                    val canSubmit = pr.allowEmpty || promptText.isNotBlank() || (!pr.isManualCode && !pr.secret)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PrimaryAction(
+                            if (promptText.isBlank() && pr.allowEmpty) "使用默认继续" else "提交",
+                            enabled = canSubmit,
+                            onClick = { onAnswer(pr, promptText) },
+                        )
+                    }
+                }
+            }
         }
         l.error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
         PiSettingsChip(text = if (l.error == null) "取消登录" else "关闭", onClick = onCancel)

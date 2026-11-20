@@ -40,6 +40,7 @@ export function register(reg, { controller, hub }) {
     await sm.flush();
     const errors = sm.drainErrors();
     if (errors.length) throw new HostError(ERR.REJECTED, errors.map((e) => String(e?.error?.message ?? e?.message ?? e)).join("; "));
+    if (method === "setHttpProxy" || method === "setHttpIdleTimeoutMs") await controller.applyHttpSettings?.();
     hub.emit("settings.changed", { method });
     return view(sm);
   });
@@ -48,6 +49,7 @@ export function register(reg, { controller, hub }) {
   reg.add("settings.reload", async () => {
     const sm = manager();
     await sm.reload();
+    await controller.applyHttpSettings?.();
     hub.emit("settings.changed", { method: "reload" });
     return view(sm);
   });

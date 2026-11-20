@@ -16,7 +16,14 @@ import { ERR, HostError, bad, str, optStr } from "../protocol.mjs";
 /** 供应商的认证方式清单：App 的登录页据此画「填 Key」/「网页登录」。 */
 function describeProvider(runtime, provider) {
   const methods = [];
-  if (provider.auth?.apiKey) methods.push({ type: "api_key", name: provider.auth.apiKey.name });
+  if (provider.auth?.apiKey) {
+    methods.push({
+      type: "api_key",
+      name: provider.auth.apiKey.name,
+      // 某些供应商只有环境变量/隐式认证（无 apiKey.login），App 不应显示保存后报错的假输入框。
+      interactive: typeof provider.auth.apiKey.login === "function",
+    });
+  }
   if (provider.auth?.oauth) {
     methods.push({
       type: "oauth",
@@ -66,6 +73,7 @@ export function register(reg, { controller, hub }) {
       notify: () => {},
     };
     await rt.login(providerId, "api_key", interaction);
+    controller.syncFooterProviders?.();
     hub.emit("auth.changed", { providerId, action: "setApiKey" });
     return { provider: describeProvider(rt, provider) };
   });
@@ -74,6 +82,7 @@ export function register(reg, { controller, hub }) {
     const rt = controller.requireSession().modelRuntime;
     const providerId = str(args, "providerId");
     await rt.logout(providerId); // 删凭据库里的条目（持久化）
+    controller.syncFooterProviders?.();
     hub.emit("auth.changed", { providerId, action: "removeApiKey" });
     const p = rt.getProvider(providerId);
     return p ? { provider: describeProvider(rt, p) } : {};
@@ -95,16 +104,24 @@ export function register(reg, { controller, hub }) {
     }
 
     const abort = new AbortController();
+    const promptCleanup = new AbortController();
     logins.set(loginId, { providerId, abort });
     const done = call.defer();
 
     const interaction = {
       signal: abort.signal,
-      prompt: (prompt) =>
-        hub.ask("auth.prompt", { loginId, providerId, prompt: stripSignal(prompt) }, undefined, { signal: abort.signal }).then((value) => {
-          if (value === undefined) throw new Error("已取消");
+      prompt: (prompt) => {
+        // 合并用户取消（abort）、登录结束收尾（promptCleanup）和 prompt 自身的 signal
+        // （如 OAuth callback server 赢下竞态时 abort manual_code）：任一触发都会让 hub.ask
+        // 向 App 发送 `ui.cancel { id }` 收起输入提示，避免泄漏挂起请求。
+        const signals = [abort.signal, promptCleanup.signal];
+        if (prompt?.signal) signals.push(prompt.signal);
+        const promptSignal = AbortSignal.any(signals);
+        return hub.ask("auth.prompt", { loginId, providerId, prompt: stripSignal(prompt) }, undefined, { signal: promptSignal }).then((value) => {
+          if (value === undefined) throw new Error(promptSignal.aborted ? "Login cancelled" : "已取消");
           return String(value);
-        }),
+        });
+      },
       notify: (event) => hub.emit("auth.event", { loginId, providerId, event }),
     };
 
@@ -115,12 +132,16 @@ export function register(reg, { controller, hub }) {
         // （ChatGPT 订阅登录没有它直接报错），由 SettingsManager 生成并持久化。
         const settings = controller.runtime.services.settingsManager;
         const credential = await rt.login(providerId, type, interaction, { getDeviceId: () => settings.getOrCreateDeviceId() });
+        promptCleanup.abort();
+        controller.syncFooterProviders?.();
         hub.emit("auth.changed", { providerId, action: "login" });
         done.ok({ loginId, providerId, credentialType: credential?.type ?? type, provider: describeProvider(rt, provider) });
       } catch (error) {
+        promptCleanup.abort();
         const cancelled = abort.signal.aborted;
         done.fail(new HostError(cancelled ? ERR.REJECTED : ERR.INTERNAL, cancelled ? "登录已取消" : String(error?.message ?? error)));
       } finally {
+        promptCleanup.abort();
         logins.delete(loginId);
       }
     })();
@@ -137,6 +158,7 @@ export function register(reg, { controller, hub }) {
     const rt = controller.requireSession().modelRuntime;
     const providerId = str(args, "providerId");
     await rt.logout(providerId);
+    controller.syncFooterProviders?.();
     hub.emit("auth.changed", { providerId, action: "logout" });
     const p = rt.getProvider(providerId);
     return p ? { provider: describeProvider(rt, p) } : {};
@@ -150,6 +172,7 @@ export function register(reg, { controller, hub }) {
   reg.add("auth.refreshModels", async () => {
     const rt = controller.requireSession().modelRuntime;
     const result = await rt.refresh();
+    controller.syncFooterProviders?.();
     hub.emit("auth.changed", { action: "refresh" });
     return { result: wireRefresh(result) };
   });

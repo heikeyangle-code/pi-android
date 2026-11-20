@@ -73,9 +73,13 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 |---|---|---|
 | `ui.respond` | `id`, `value?` / `cancelled?` | 回答宿主的 `req`。迟到的回答返回 `{matched:false}`，不是错误 |
 | `ui.input` | `surfaceId`, `data` | 把按键/文本喂给组件的 `handleInput`，随后宿主重绘 |
-| `ui.resize` | `width`, `height?` | 字符列数。全部表面按新宽度重绘 |
+| `ui.mouse` | `surfaceId`, `x`, `y`, `type?`, `button?`, `width?`, `height?` | 把触屏点击转为 `TuiMouseEvent` 交给组件的 `handleMouse`，随后重绘 |
+| `ui.resize` | `width`, `height?` | 字符列数/行数。全部表面按新尺寸重绘 |
 | `ui.close` | `surfaceId` | 用户关掉了弹层 |
 | `ui.editorState` | `text` | App 输入框内容同步给宿主（`getEditorText()` 读它） |
+| `ui.autocomplete` | `lines[]`, `cursorLine`, `cursorCol`, `force?` | 执行扩展通过 `addAutocompleteProvider` 注册的补全链，返回 `{prefix, items[]}` |
+| `ui.terminalInput` | `data` | 经过扩展 `onTerminalInput` 监听器链，返回 `{consumed, data}` |
+| `ui.setToolsExpanded` | `expanded` | 同步工具展开态（与 `ctx.ui.setToolsExpanded` 双向一致） |
 | `ui.palette` | `palette:{语义色:"#rrggbb"}` | App 主题变了，换色板 |
 
 ### 通用口与总线（「随引擎升级」的杠杆）

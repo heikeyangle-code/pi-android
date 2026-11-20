@@ -34,20 +34,36 @@ fun main() {
     check("connected 只有「未连接」为假", Connection.entries.all { it.connected == (it != Connection.None) })
     check("每个状态有不重复的标签", Connection.entries.map { it.label }.toSet().size == Connection.entries.size)
 
-    // ---- 分区 ----
+    // ---- 分区：支持订阅的供应商统一置顶（已连接在前、未连接在后），绝不跨段跳动或重复 ----
     val all = listOf(
-        p("zai", "Z.ai"), p("anthropic", "Anthropic", offersSub = true), p("openai", "OpenAI", configured = true, source = "stored"),
-        p("github-copilot", "GitHub Copilot", offersSub = true), p("groq", "Groq"), p("mine", "", configured = true, custom = true),
+        p("zai", "Z.ai"),
+        p("anthropic", "Anthropic", offersSub = true),
+        p("openai", "OpenAI", configured = true, oauth = true, sub = true, offersSub = true),
+        p("github-copilot", "GitHub Copilot", offersSub = true),
+        p("deepseek", "DeepSeek", configured = true, source = "stored"),
+        p("groq", "Groq"),
+        p("mine", "", configured = true, custom = true),
     )
     val s = sectionProviders(all, "")
-    check("已连接按名字排（空名字用 id）", s.connected.map { it.id } == listOf("mine", "openai"), s.connected.map { it.id }.toString())
-    check("订阅入口单独成段、按名字排", s.subscriptionOffers.map { it.id } == listOf("anthropic", "github-copilot"))
-    check("其余未连接折在最后", s.others.map { it.id } == listOf("groq", "zai"))
-    check("三段不重不漏", (s.connected + s.subscriptionOffers + s.others).map { it.id }.toSet() == all.map { it.id }.toSet() &&
-        s.connected.size + s.subscriptionOffers.size + s.others.size == all.size)
+    check(
+        "订阅供应商统一在顶部：已连接排在未连接前，各自按名字排",
+        s.subscriptionProviders.map { it.id } == listOf("openai", "anthropic", "github-copilot"),
+        s.subscriptionProviders.map { it.id }.toString(),
+    )
+    check(
+        "已连接非订阅供应商按名字排（空名字用 id），不含订阅供应商",
+        s.connectedApi.map { it.id } == listOf("deepseek", "mine"),
+        s.connectedApi.map { it.id }.toString(),
+    )
+    check("其余未连接折在最后", s.otherApi.map { it.id } == listOf("groq", "zai"))
+    check(
+        "三段互斥不重不漏",
+        (s.subscriptionProviders + s.connectedApi + s.otherApi).map { it.id }.toSet() == all.map { it.id }.toSet() &&
+            s.subscriptionProviders.size + s.connectedApi.size + s.otherApi.size == all.size,
+    )
     val q = sectionProviders(all, "git")
-    check("搜索命中名字或 id，三段同时过滤", q.subscriptionOffers.map { it.id } == listOf("github-copilot") && q.connected.isEmpty() && q.others.isEmpty())
-    check("搜索不分大小写", sectionProviders(all, "OPENAI").connected.map { it.id } == listOf("openai"))
+    check("搜索命中名字或 id，三段同时过滤", q.subscriptionProviders.map { it.id } == listOf("github-copilot") && q.connectedApi.isEmpty() && q.otherApi.isEmpty())
+    check("搜索不分大小写", sectionProviders(all, "OPENAI").subscriptionProviders.map { it.id } == listOf("openai"))
 
     // ---- 搜索词 ----
     check("多个词全部命中才算，顺序不限", matches("sonnet 4", "claude-sonnet-4-5") && matches("4 sonnet", "claude-sonnet-4-5") && !matches("sonnet 9", "claude-sonnet-4-5"))

@@ -696,7 +696,7 @@ fun PiRoot() {
                     // somewhere else" is not a setting, and the OAuth one is now a real
                     // feature (「订阅账号」 card, `ui/settings/SubscriptionLogin.kt`).
                     // The registry rows those signposts answered for were deleted with
-                    // them — G_MODEL has no group page, so nothing rendered them.
+                    // them — model & reasoning settings now live inside ModelsScreen.
                     onRunAction = { setting ->
                         when (setting.key) {
                             // pi's `/compact` — the RPC command is `compact`

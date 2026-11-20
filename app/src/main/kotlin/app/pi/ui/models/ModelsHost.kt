@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.SharedFlow
 class ModelsHost(
     val auth: HostAuth,
     val advanced: HostAdvanced,
-    /** 宿主的事件（要 `auth.event`）。 */
+    /** 宿主的事件（要 `auth.event` / `ui.cancel`）。 */
     val events: Flow<HostSignal.Event>,
     /** 宿主的提问（要 `auth.prompt`）。 */
     val requests: SharedFlow<HostRequest>,
@@ -32,4 +32,10 @@ class ModelsHost(
     val selectModel: suspend (provider: String, modelId: String, persist: Boolean) -> Unit,
     /** 当前模型 `provider/id`，没有则 null。 */
     val currentModel: () -> Pair<String, String>?,
+    /** 当前会话思考等级（SDK `session.thinkingLevel`）。 */
+    val currentThinking: () -> String = { "medium" },
+    /** 当前模型支持的思考等级列表（`thinking.levels`）。 */
+    val thinkingLevels: suspend () -> List<String> = { emptyList() },
+    /** 立即设置当前会话的思考等级（`thinking.set`）。 */
+    val setThinking: suspend (level: String) -> Unit = {},
 )

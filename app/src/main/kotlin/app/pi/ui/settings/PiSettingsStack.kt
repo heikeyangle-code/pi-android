@@ -1,9 +1,18 @@
 package app.pi.ui.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -13,8 +22,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.DeviceCapabilityStore
+import app.pi.host.HostAdvanced
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
@@ -23,7 +35,10 @@ import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
 import app.pi.ui.PromptFileFacts
+import app.pi.ui.components.PiSheet
 import app.pi.ui.device.DeviceCapabilityScreen
+import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -174,24 +189,21 @@ fun PiSettingsStack(
     // 它跳去 MCP、Pi 文件、引擎、设置组时自己保持 true，所以那些页返回就回到枢纽，不用另记来路。
     var resources by rememberSaveable { mutableStateOf(false) }
     var resourcesProject by rememberSaveable { mutableStateOf(false) }
-    // 「模型与供应商」（`ui/models/ModelsScreen`）：一个层级，数据全在宿主（auth.* / models.config.*）。
+    // 「模型与供应商」（`ui/models/ModelsScreen`）：统一承载模型选择、订阅/API Key 登录、自定义供应商、推理与缓存设置。
     var modelFlow by rememberSaveable { mutableStateOf(false) }
-    // 从「模型与供应商」点进「默认模型与推理」（那一组行的页）时置位：从那一页退出要回到模型页，
-    // 而不是掉回设置首页。组页本身没有别的入口（首页过滤了它），所以这是它唯一的来路。
-    var defaultsFromModels by rememberSaveable { mutableStateOf(false) }
     // The open-source licence notices. Not a pi screen either — see §L: publishing
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
     var licenses by rememberSaveable { mutableStateOf(false) }
-    // 设置 → 运行时与诊断 → 导出诊断报告（`app.runtime.diagnostics`）。报告的正文是
-    // 被交付的那件东西，所以它先被看到、再被送出：一页屏幕而不是一次静默的保存 ——
-    // 用户能亲眼看到退出码是空的、stderr 是空的、哪个载荷读不出来，再决定发不发。
-    // 它不碰引擎，因此引擎已经退出时同样可用（这正是它存在的场景）。
+    // 设置 → 运行时与诊断 → 导出诊断报告（`app.runtime.diagnostics`）。
     var diagnostics by rememberSaveable { mutableStateOf(false) }
-    // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器，与「模型与供应商」
-    // 同类，是这个栈里的一个层级，返回语义与状态恢复和别的层级一致。
+    // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器。
     var mcp by rememberSaveable { mutableStateOf(false) }
-    var engineOpen by rememberSaveable { mutableStateOf(false) }
+    // 归位自原 EngineScreen 的轻量动作浮层：查看生效系统提示词 / 问题报告 / 实时工具启停。
+    var textSheet by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var liveToolsOpen by remember { mutableStateOf(false) }
+    var actionNote by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val clipboard = LocalClipboardManager.current
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -391,6 +403,8 @@ fun PiSettingsStack(
             // 项目页的「扩展与资源」入口：不是某一条设置，是枢纽页本身；`:project` 直接落在项目层。
             resourcesProject = key.endsWith(":project")
             resources = true
+        } else if (setting != null && setting.group == G_MODELS_SCREEN) {
+            modelFlow = true
         } else if (setting != null) {
             groupId = setting.group
             highlightKey = key
@@ -413,31 +427,55 @@ fun PiSettingsStack(
     // that would have to pretend every key is handled.
     val openModelFlow: () -> Unit = { modelFlow = true }
     val hostActions: Map<String, () -> Unit> = mapOf(
-        // The 进程 section's three switches are pi's process configuration, so
-        // they can only take effect in a new `pi --mode rpc` process. This row is
-        // the next step the rows above point at.
         "app.runtime.restartEngine" to { restartPrompt = true },
-        // 线上事故的入口：界面只显示 "rpc: engine exited with code 1"，而用户没有 ADB、
-        // 看不到 logcat。这一行把 App 此刻还能读到的一切汇总成一份纯文本交给用户，报告
-        // 的抓取发生在引擎退出的一瞬间（`engineDiagnostics`），所以引擎死了也能导。
         "app.runtime.diagnostics" to { diagnostics = true },
+        "app.prompts.viewEffective" to {
+            val api = advanced()
+            if (api == null) {
+                actionNote = "查看系统提示词" to "引擎未运行，启动后再来读取当前生效的完整系统提示词。"
+            } else {
+                scope.launch {
+                    runCatching { api.systemPrompt() }
+                        .onSuccess { textSheet = "当前生效系统提示词" to it.ifBlank { "（空）" } }
+                        .onFailure { actionNote = "查看系统提示词" to "读取失败：${it.message}" }
+                }
+            }
+        },
+        "app.tools.manageLive" to { liveToolsOpen = true },
+        "app.runtime.exportJsonl" to {
+            val api = advanced()
+            if (api == null) {
+                actionNote = "导出 JSONL" to "引擎未运行，启动后再导出当前会话。"
+            } else {
+                scope.launch {
+                    runCatching { api.exportJsonl() }
+                        .onSuccess { path -> actionNote = "导出 JSONL" to "已导出到：$path" }
+                        .onFailure { actionNote = "导出 JSONL" to "导出失败：${it.message}" }
+                }
+            }
+        },
+        "app.runtime.bugReport" to {
+            val api = advanced()
+            if (api == null) {
+                actionNote = "生成本地问题报告" to "引擎未运行，启动后再生成。"
+            } else {
+                scope.launch {
+                    runCatching { api.bugReport() }
+                        .onSuccess { report -> textSheet = "本地问题报告" to report.ifBlank { "（空）" } }
+                        .onFailure { actionNote = "生成本地问题报告" to "生成失败：${it.message}" }
+                }
+            }
+        },
     )
 
-    // **一直启用**：底栏没了以后，设置首页的返回键必须回到对话，否则按一下直接退出
-    // 应用。内部层级仍然先退（同一段 `if` 链，从深到浅），首页落在最后一个 `else`。
-    // 与覆盖层那条的关系：它们在 `PiRoot` 里，覆盖层 handler 组合顺序在后 ⇒ LIFO 先
-    // 接到按键，所以覆盖层开着时按返回关的是覆盖层，不是这一屏。
     BackHandler(enabled = true) {
-        if (engineOpen) {
-            engineOpen = false
-        } else if (mcp) {
+        if (mcp) {
             mcp = false
         } else if (licenses) {
             licenses = false
         } else if (diagnostics) {
             diagnostics = false
         } else if (modelFlow) {
-            // 与屏自己的 onBack 同一套复位（四个状态一起清），两条退出路径不留半开状态。
             modelFlow = false
         } else if (deviceCapabilities) {
             deviceCapabilities = false
@@ -446,14 +484,9 @@ fun PiSettingsStack(
         } else if (groupId != null || highlightKey != null) {
             groupId = null
             highlightKey = null
-            if (defaultsFromModels) {
-                defaultsFromModels = false
-                modelFlow = true
-            }
         } else if (resources) {
             resources = false
         } else {
-            // 首页：底栏没了，这一下退到对话。
             onBack()
         }
     }
@@ -461,14 +494,6 @@ fun PiSettingsStack(
     val currentGroup = groupId
     Box(Modifier.fillMaxSize()) {
         when {
-            engineOpen -> EngineScreen(
-                contentPadding = contentPadding,
-                onBack = { engineOpen = false },
-                advanced = advanced,
-                availableModels = availableModels,
-                onLoadAvailableModels = onLoadAvailableModels,
-            )
-
             mcp -> McpServersScreen(
                 contentPadding = contentPadding,
                 onBack = { mcp = false },
@@ -483,10 +508,6 @@ fun PiSettingsStack(
                 onBack = { licenses = false },
             )
 
-            // The engine's last exit, the runtime tree, the APK's payloads and the
-            // failures the app recorded — assembled into one text file the user can
-            // send. Both lambdas read the **newest** capture every time the screen
-            // rebuilds, because the engine can die while this screen is open.
             diagnostics -> DiagnosticsScreen(
                 contentPadding = contentPadding,
                 onBack = { diagnostics = false },
@@ -497,15 +518,13 @@ fun PiSettingsStack(
 
             modelFlow -> app.pi.ui.models.ModelsScreen(
                 contentPadding = contentPadding,
-                onBack = {
-                    modelFlow = false
-                },
+                onBack = { modelFlow = false },
                 host = modelsHost,
-                onOpenDefaults = {
-                    defaultsFromModels = true
-                    modelFlow = false
-                    groupId = G_MODEL
-                },
+                store = effectiveStore,
+                freshness = rowsEpoch,
+                onSettingWritten = handleSettingWritten,
+                availableModels = availableModels,
+                onLoadAvailableModels = onLoadAvailableModels,
             )
 
             deviceCapabilities -> DeviceCapabilityScreen(
@@ -541,19 +560,11 @@ fun PiSettingsStack(
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
                 store = effectiveStore,
-                // 外部改了 settings.json、或者 App 自己写了一个设置之后，值必须在界面上变。
-                // store 的缓存由 `onExternalSettingsWrite` 丢掉，而这个 epoch 才是让行重新读
-                // 它的东西（行是在 composition 里读 store 的，缓存失效本身不会触发重组）。
-                // `rowsEpoch` = 外部改动 + 本进程写入，见它在 `writeEpoch` 旁边的定义。
                 freshness = rowsEpoch,
                 contentPadding = contentPadding,
                 onBack = {
                     groupId = null
                     highlightKey = null
-                    if (defaultsFromModels) {
-                        defaultsFromModels = false
-                        modelFlow = true
-                    }
                 },
                 highlightKey = highlightKey,
                 knownThemes = knownThemes,
@@ -563,14 +574,6 @@ fun PiSettingsStack(
                 onRunAction = onRunAction,
                 hostActions = hostActions,
                 valueOverrides = runtimeOverrides(facts) + promptOverrides,
-                // The raw per-phase evidence under 运行时（实际生效）: read once with the
-                // sentence above, rendered as a bounded string. See the state's comment.
-                //
-                // Suppressed while the switch's own flow is running: the reading in hand was
-                // taken before the probe started, so it says 「探针尚未运行」 under a value that
-                // says 「正在测 proroot 探针」. Two sentences contradicting each other is worse
-                // than the block arriving one step later — it does, at `Idle`, with the verdict
-                // the probe just recorded.
                 detailOverrides = (if (runtimeSwitch.inFlight) {
                     emptyMap()
                 } else {
@@ -581,8 +584,6 @@ fun PiSettingsStack(
                     } else {
                         mapOf(AppOnlySettingsStore.KEY_MATRIX to engineMatrix.second)
                     }),
-                // The same restart the 进程 section's action row asks for, offered
-                // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
             )
 
@@ -591,8 +592,8 @@ fun PiSettingsStack(
                 startOnProject = resourcesProject,
                 onBack = { resources = false },
                 access = extensionsAccess,
+                advanced = advanced,
                 onOpenMcp = { mcp = true },
-                onOpenEngine = { engineOpen = true },
                 onOpenCommandSettings = {
                     groupId = "resources"
                     highlightKey = null
@@ -607,9 +608,6 @@ fun PiSettingsStack(
                 store = effectiveStore,
                 contentPadding = contentPadding,
                 onBack = onBack,
-                // 首页的每条分组摘要也是从 store 读出来的（`GroupEntry` 的 `group.summary`），
-                // 所以同一个 epoch 必须传下来：没有它，首页会被 strong skipping 跳过，
-                // 「外观 → 主题 dark」那类摘要会停在旧值上。
                 freshness = rowsEpoch,
                 onOpenGroup = { id ->
                     if (id == "resources") {
@@ -622,15 +620,40 @@ fun PiSettingsStack(
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
                 onOpenLicenses = { licenses = true },
                 onOpenTerminal = onOpenTerminal,
-                // 首页顶栏的「模型与供应商」与分组页里那两条 Action 行是同一个目的地
-                // （`openModelFlow`），所以这里只是把已有的状态开关接上去，不多开任何一页。
                 onOpenModels = openModelFlow,
                 onOpenDiagnostics = { diagnostics = true },
                 onOpenOther = { other = true },
                 onOpenMcp = { mcp = true },
-                onOpenEngine = { engineOpen = true },
             )
         }
+    }
+
+    textSheet?.let { (title, body) ->
+        PiSheet(onDismiss = { textSheet = null }, fullHeight = true) {
+            Column(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(title, style = PiTheme.text.prose, color = PiTheme.palette.text)
+                    PiSettingsChip(text = "复制", onClick = { clipboard.setText(AnnotatedString(body)) })
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = PiSpacing.small)) {
+                    Text(body, style = PiTheme.text.monoSmall, color = PiTheme.palette.text)
+                }
+            }
+        }
+    }
+
+    if (liveToolsOpen) {
+        LiveToolsSheet(advanced = advanced, onDismiss = { liveToolsOpen = false })
+    }
+
+    actionNote?.let { (title, body) ->
+        PiSettingsDialog(
+            onDismissRequest = { actionNote = null },
+            title = title,
+            body = body,
+            confirmationLabel = "知道了",
+            onConfirm = { actionNote = null },
+        )
     }
 
     // The 进程 section's "restart so these take effect" step. Two dialogs, not
@@ -716,3 +739,71 @@ private val SETTINGS_WATCHED = listOf(
  * 而不是注册表里，是因为它是**宿主**这一侧的键：注册表只声明行。
  */
 private const val PROMPT_SOURCE_KEY = "app.prompts.effectiveSource"
+
+/** 当前会话实时工具启停面板（原 `EngineScreen` 的工具段，现归位到「工具」分组）。 */
+@Composable
+private fun LiveToolsSheet(
+    advanced: () -> HostAdvanced?,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var reload by remember { mutableStateOf(0) }
+    var tools by remember { mutableStateOf<List<HostAdvanced.ToolDetail>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(reload) {
+        val api = advanced()
+        if (api == null) {
+            tools = emptyList()
+            error = "引擎未运行，启动后可查看和即时切换当前会话的工具。"
+        } else {
+            runCatching { api.tools() }
+                .onSuccess { tools = it; error = null }
+                .onFailure { error = it.message ?: "读取工具失败" }
+        }
+    }
+
+    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+        Column(
+            modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
+        ) {
+            val list = tools
+            Text(
+                if (list == null) "当前会话工具" else "当前会话工具（${list.count { it.active }} / ${list.size} 启用）",
+                style = PiTheme.text.prose,
+                color = PiTheme.palette.text,
+            )
+            error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
+            if (list == null) {
+                Text("读取中…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+            } else {
+                LazyColumn(Modifier.weight(1f)) {
+                    items(list.size) { i ->
+                        val t = list[i]
+                        if (i > 0) PiSettingsHairline()
+                        PiSettingsToggleRow(
+                            title = t.name,
+                            supporting = listOfNotNull(
+                                t.description.lineSequence().firstOrNull()?.take(100),
+                                t.source?.let { "来自 $it" },
+                                if (t.active && !t.callable) "已启用但当前不可调用" else null,
+                            ).joinToString(" · ").ifEmpty { null },
+                            checked = t.active,
+                            onCheckedChange = { on ->
+                                val api = advanced() ?: return@PiSettingsToggleRow
+                                val names = list.filter { it.active && it.name != t.name }.map { it.name } +
+                                    if (on) listOf(t.name) else emptyList()
+                                scope.launch {
+                                    runCatching { api.setActiveTools(names) }
+                                        .onSuccess { reload++ }
+                                        .onFailure { error = it.message ?: "更新工具失败" }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

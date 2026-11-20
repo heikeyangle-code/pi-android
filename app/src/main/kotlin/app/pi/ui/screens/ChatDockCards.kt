@@ -19,6 +19,7 @@ import app.pi.ui.PiSessionViewModel
 import app.pi.ui.chat.ArgumentContext
 import app.pi.ui.chat.ArgumentPalette
 import app.pi.ui.chat.BashPanel
+import app.pi.ui.chat.ExtensionAutocompletePalette
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiSlashCommand
@@ -52,6 +53,7 @@ internal fun ChatDockCards(
     mentionPrefix: String?,
     onPickCommand: (PiSlashCommand, String) -> Unit,
     argContext: ArgumentContext?,
+    onInteractWidget: (app.pi.host.ExtPanel) -> Unit,
     onAboveHeight: (Int) -> Unit,
 ) {
     val context = LocalContext.current
@@ -129,6 +131,7 @@ internal fun ChatDockCards(
             state.ext.widgets.filter { it.placement != PLACEMENT_BELOW }
         },
         onColumns = session::setPanelColumns,
+        onInteract = onInteractWidget,
     )
 
     state.bash?.let { bashRun ->
@@ -225,6 +228,30 @@ internal fun ChatDockCards(
             candidates = mentions.items,
             onPick = { item -> onDraft(PiFileMentions.apply(draft, prefix, item)) },
             modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+        )
+    }
+
+    val extComp = state.extCompletions
+    if (
+        paletteQuery == null &&
+        argContext == null &&
+        mentionPrefix == null &&
+        extComp != null &&
+        extComp.draft == draft &&
+        extComp.items.isNotEmpty()
+    ) {
+        ExtensionAutocompletePalette(
+            items = extComp.items,
+            onPick = { item ->
+                val replaced = if (extComp.prefix.isNotEmpty() && draft.endsWith(extComp.prefix)) {
+                    draft.removeSuffix(extComp.prefix) + item.value
+                } else {
+                    draft + item.value
+                }
+                onDraft(replaced)
+                session.dismissExtensionAutocomplete()
+            },
+            modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = PiSpacing.small),
         )
     }
 

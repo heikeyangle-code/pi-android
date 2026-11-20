@@ -14,15 +14,23 @@ import kotlinx.serialization.json.JsonPrimitive
 data class ExtStatus(val key: String, val text: String)
 
 /** 一块常驻面板：一组带 ANSI 的行。[placement] 是 `aboveEditor` / `belowEditor`（header/footer 不用）。 */
-data class ExtPanel(val key: String, val lines: List<String>, val placement: String? = null)
+data class ExtPanel(
+    val key: String,
+    val lines: List<String>,
+    val placement: String? = null,
+    val surfaceId: String? = null,
+    val interactive: Boolean = false,
+)
 
-/** `ctx.ui.custom()` 弹出的组件：浮层（[overlay]）或整页；[interactive] 时 App 要给按键条。 */
+/** `ctx.ui.custom()` 弹出的组件：浮层（[overlay]）或整页；[interactive] 时 App 要给按键条与触控点击。 */
 data class ExtCustom(
     val surfaceId: String,
     val overlay: Boolean,
     val interactive: Boolean,
     val lines: List<String>,
     val blocked: String? = null,
+    val hidden: Boolean = false,
+    val focused: Boolean = true,
 )
 
 data class ExtWorking(
@@ -37,12 +45,20 @@ data class ExtUiState(
     val widgets: List<ExtPanel> = emptyList(),
     val header: ExtPanel? = null,
     val footer: ExtPanel? = null,
-    /** 有扩展想接管输入框（终端编辑器组件），手机上做不到：只让界面知道。 */
+    /** 有扩展想接管输入框（终端编辑器组件），手机上保留原生输入体验并显示提示。 */
     val editorTakeover: Boolean = false,
-    val custom: ExtCustom? = null,
+    /** 支持叠加浮层（`tui.showOverlay` / 嵌套 `ctx.ui.custom`），按打开顺序入栈。 */
+    val customStack: List<ExtCustom> = emptyList(),
     val working: ExtWorking = ExtWorking(),
     val thinkingLabel: String? = null,
-)
+    /** 扩展通过 `ctx.ui.setToolsExpanded` 设置的工具展开态；null 表示未由扩展驱动。 */
+    val toolsExpanded: Boolean? = null,
+    /** 扩展通过 `ctx.ui.addAutocompleteProvider` 注册的补全提供者数量。 */
+    val autocompleteCount: Int = 0,
+) {
+    /** 当前最顶层且未被 `OverlayHandle.setHidden(true)` 隐藏的 custom 表面。 */
+    val custom: ExtCustom? get() = customStack.lastOrNull { !it.hidden }
+}
 
 /**
  * 事件 → [ExtUiState]。
@@ -63,6 +79,8 @@ class ExtUiReducer {
         val overlay: Boolean,
         val interactive: Boolean,
         val blocked: String? = null,
+        val hidden: Boolean = false,
+        val focused: Boolean = true,
     )
 
     private val frames = HashMap<String, Frame>()
@@ -89,6 +107,10 @@ class ExtUiReducer {
                 ),
             )
             "ui.thinkingLabel" -> state = state.copy(thinkingLabel = str(d["label"]))
+            "ui.toolsExpanded" -> state = state.copy(toolsExpanded = bool(d["expanded"], false))
+            "ui.autocomplete" -> state = state.copy(
+                autocompleteCount = (d["registered"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+            )
             else -> return null
         }
         return state.takeIf { it != before }
@@ -114,21 +136,28 @@ class ExtUiReducer {
         if (sid != null) {
             widgetSurface[key] = sid
             widgetPlacement[key] = placement
-            frames[sid]?.let { setWidget(key, it.lines, placement) }
+            frames[sid]?.let { setWidget(key, it.lines, placement, surfaceId = sid, interactive = it.interactive) }
             return
         }
         widgetSurface.remove(key)?.let { frames.remove(it) }
         widgetPlacement.remove(key)
-        setWidget(key, linesOf(d["lines"]), placement)
+        setWidget(key, linesOf(d["lines"]), placement, surfaceId = null, interactive = false)
     }
 
-    private fun setWidget(key: String, lines: List<String>, placement: String?) {
+    private fun setWidget(
+        key: String,
+        lines: List<String>,
+        placement: String?,
+        surfaceId: String?,
+        interactive: Boolean,
+    ) {
         val current = state.widgets
+        val next = ExtPanel(key, lines, placement, surfaceId = surfaceId, interactive = interactive)
         state = state.copy(
             widgets = when {
                 lines.isEmpty() -> current.filterNot { it.key == key }
-                current.any { it.key == key } -> current.map { if (it.key == key) ExtPanel(key, lines, placement) else it }
-                else -> current + ExtPanel(key, lines, placement)
+                current.any { it.key == key } -> current.map { if (it.key == key) next else it }
+                else -> current + next
             },
         )
     }
@@ -145,7 +174,7 @@ class ExtUiReducer {
                     setSlot(slot, null)
                 } else {
                     slotSurface[slot] = sid
-                    frames[sid]?.let { setSlot(slot, ExtPanel(slot, it.lines)) }
+                    frames[sid]?.let { setSlot(slot, ExtPanel(slot, it.lines, surfaceId = sid, interactive = it.interactive)) }
                 }
             }
         }
@@ -161,15 +190,44 @@ class ExtUiReducer {
         val mode = str(d["mode"]) ?: return
         val rev = (d["rev"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
         if ((frames[id]?.rev ?: -1L) >= rev) return
-        val frame = Frame(rev, linesOf(d["lines"]), bool(d["overlay"], false), bool(d["interactive"], false), str(d["blocked"]))
+        val frame = Frame(
+            rev = rev,
+            lines = linesOf(d["lines"]),
+            overlay = bool(d["overlay"], false),
+            interactive = bool(d["interactive"], false),
+            blocked = str(d["blocked"]),
+            hidden = bool(d["hidden"], false),
+            focused = bool(d["focused"], true),
+        )
         frames[id] = frame
         when (mode) {
             "widget" -> {
                 val key = (str(d["key"]) ?: return).removePrefix("widget:")
-                if (widgetSurface[key] == id) setWidget(key, frame.lines, widgetPlacement[key])
+                if (widgetSurface[key] == id) {
+                    setWidget(key, frame.lines, widgetPlacement[key], surfaceId = id, interactive = frame.interactive)
+                }
             }
-            "header", "footer" -> if (slotSurface[mode] == id) setSlot(mode, ExtPanel(mode, frame.lines))
-            "custom" -> state = state.copy(custom = ExtCustom(id, frame.overlay, frame.interactive, frame.lines, frame.blocked))
+            "header", "footer" -> if (slotSurface[mode] == id) {
+                setSlot(mode, ExtPanel(mode, frame.lines, surfaceId = id, interactive = frame.interactive))
+            }
+            "custom" -> {
+                val item = ExtCustom(
+                    surfaceId = id,
+                    overlay = frame.overlay,
+                    interactive = frame.interactive,
+                    lines = frame.lines,
+                    blocked = frame.blocked,
+                    hidden = frame.hidden,
+                    focused = frame.focused,
+                )
+                val stack = state.customStack
+                val updated = if (stack.any { it.surfaceId == id }) {
+                    stack.map { if (it.surfaceId == id) item else it }
+                } else {
+                    stack + item
+                }
+                state = state.copy(customStack = updated)
+            }
         }
     }
 
@@ -182,7 +240,7 @@ class ExtUiReducer {
                 if (widgetSurface[key] == id) {
                     widgetSurface.remove(key)
                     widgetPlacement.remove(key)
-                    setWidget(key, emptyList(), null)
+                    setWidget(key, emptyList(), null, surfaceId = null, interactive = false)
                 }
             }
             "header", "footer" -> {
@@ -192,7 +250,11 @@ class ExtUiReducer {
                     setSlot(slot, null)
                 }
             }
-            "custom" -> if (state.custom?.surfaceId == id) state = state.copy(custom = null)
+            "custom" -> {
+                if (state.customStack.any { it.surfaceId == id }) {
+                    state = state.copy(customStack = state.customStack.filterNot { it.surfaceId == id })
+                }
+            }
         }
     }
 

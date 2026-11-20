@@ -538,13 +538,28 @@ fun main() {
 
     // Rule 11: groups and rows agree. A declared group with no rows renders as an empty
     // screen, and a row pointing at an undeclared group disappears from 全部设置 entirely.
+    // The one dedicated-screen group (`G_MODELS_SCREEN`) is embedded directly inside
+    // `ModelsScreen` instead of a legacy standalone 「模型与推理」 group page.
     val groups = declaredGroups(registry)
     check("the group list was found", groups.isNotEmpty())
+    check(
+        "legacy standalone G_MODEL group is removed",
+        "G_MODEL" !in groups && "模型与推理" !in groups.values,
+        groups.toString(),
+    )
+    val embeddedGroups = setOf("G_MODELS_SCREEN")
+    val modelsScreen = File(root, "app/src/main/kotlin/app/pi/ui/models/ModelsScreen.kt")
+        .takeIf { it.isFile }?.readText().orEmpty()
+    check(
+        "G_MODELS_SCREEN rows are rendered inside ModelsScreen",
+        modelsScreen.contains("G_MODELS_SCREEN"),
+        "ModelsScreen.kt must render PiSettingsCatalog.settingsIn(G_MODELS_SCREEN)",
+    )
     val usedGroups = shapes.map { it.group }.toSet()
     val emptyGroups = groups.keys - usedGroups
-    val undeclaredGroups = usedGroups - groups.keys
+    val undeclaredGroups = usedGroups - groups.keys - embeddedGroups
     check("no declared group is empty", emptyGroups.isEmpty(), emptyGroups.joinToString())
-    check("every row's group is declared", undeclaredGroups.isEmpty(), undeclaredGroups.joinToString())
+    check("every row's group is declared (or G_MODELS_SCREEN)", undeclaredGroups.isEmpty(), undeclaredGroups.joinToString())
     check(
         "no two groups share a title",
         groups.values.toSet().size == groups.size,

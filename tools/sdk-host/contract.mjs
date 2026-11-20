@@ -71,6 +71,9 @@ check("SettingsManager.getOrCreateDeviceId（OAuth 登录要设备 ID）", has(s
 // 宿主伸进 pi **非公开路径**的全部地方（resources.mjs / mcp.mjs / catalog.mjs）。这里红了 = pi 升级挪了位置：
 // 先修宿主，别在 App 里绕。每一项都写明谁在用。
 const internals = [
+  ["core/keybindings.js", ["KeybindingsManager"], "controller.mjs"],
+  ["core/footer-data-provider.js", ["FooterDataProvider"], "controller.mjs"],
+  ["core/http-dispatcher.js", ["applyHttpProxySettings", "configureHttpDispatcher"], "controller.mjs"],
   ["modes/interactive/components/config-selector.js", ["ConfigSelectorComponent"], "resources.mjs"],
   ["extensions/index.js", ["builtInExtensions"], "resources.mjs（可选，取不到有后备名单）"],
   ["extensions/mcp/cli.js", ["runMcpCommand"], "mcp.mjs"],

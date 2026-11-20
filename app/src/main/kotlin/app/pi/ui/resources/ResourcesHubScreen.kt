@@ -26,22 +26,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.host.ExtensionsAccess
+import app.pi.host.HostAdvanced
 import app.pi.packages.PiProjectTrust
 import app.pi.packages.PiResourceCatalog.Type
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiSheet
 import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
 import app.pi.ui.models.ModelsDivider
 import app.pi.ui.models.ModelsSectionLabel
 import app.pi.ui.models.PrimaryAction
 import app.pi.ui.models.TagPill
+import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsToggleRow
 import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * 「扩展与资源」——资源管理的**唯一**入口。
@@ -61,8 +67,8 @@ internal fun ResourcesHubScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     access: () -> ExtensionsAccess?,
+    advanced: () -> HostAdvanced?,
     onOpenMcp: () -> Unit,
-    onOpenEngine: () -> Unit,
     onOpenCommandSettings: () -> Unit,
     onOpenTrustPolicy: () -> Unit,
     startOnProject: Boolean = false,
@@ -72,6 +78,7 @@ internal fun ResourcesHubScreen(
     // 编辑页：从哪一页进来的、编辑哪个文件。关掉回到来处。
     var editPath by rememberSaveable { mutableStateOf("") }
     var editReturn by rememberSaveable { mutableStateOf("hub") }
+    var showFlagsSheet by remember { mutableStateOf(false) }
     val edit: (String) -> Unit = { path -> editReturn = page; editPath = path; page = "edit" }
     BackHandler(enabled = page != "hub" && page != "edit") { page = "hub" }
 
@@ -120,11 +127,18 @@ internal fun ResourcesHubScreen(
                 onBack = onBack,
                 onOpen = { page = it },
                 onOpenMcp = onOpenMcp,
-                onOpenEngine = onOpenEngine,
+                onOpenFlags = { showFlagsSheet = true },
                 onOpenCommandSettings = onOpenCommandSettings,
                 onOpenTrustPolicy = onOpenTrustPolicy,
             )
         }
+    }
+
+    if (showFlagsSheet) {
+        ExtensionFlagsSheet(
+            advanced = advanced,
+            onDismiss = { showFlagsSheet = false },
+        )
     }
 }
 
@@ -142,7 +156,7 @@ private fun Hub(
     onBack: () -> Unit,
     onOpen: (String) -> Unit,
     onOpenMcp: () -> Unit,
-    onOpenEngine: () -> Unit,
+    onOpenFlags: () -> Unit,
     onOpenCommandSettings: () -> Unit,
     onOpenTrustPolicy: () -> Unit,
 ) {
@@ -239,7 +253,7 @@ private fun Hub(
                     Column {
                         HubRow(title = "技能命令与扩展启动参数", summary = "/skill:name 开关、--flag 传参", badge = null, onClick = onOpenCommandSettings)
                         ModelsDivider()
-                        HubRow(title = "引擎：工具与扩展 flag", summary = "已注册的工具、运行时改 flag", badge = null, onClick = onOpenEngine)
+                        HubRow(title = "扩展运行时参数（flag）", summary = "查看扩展注册的 --flag 并即时修改当前值", badge = null, onClick = onOpenFlags)
                     }
                 }
             }
@@ -362,4 +376,82 @@ private fun policyLabel(raw: String): String = when (raw) {
     "always" -> "总是信任"
     "never" -> "从不信任"
     else -> "每次询问"
+}
+
+/** 扩展注册的运行时 `--flag` 编辑器（原 `EngineScreen` 的 flag 段，现归位到「扩展与资源」）。 */
+@Composable
+private fun ExtensionFlagsSheet(
+    advanced: () -> HostAdvanced?,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var reload by remember { mutableStateOf(0) }
+    var flags by remember { mutableStateOf<List<HostAdvanced.ExtensionFlag>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(reload) {
+        val api = advanced()
+        if (api == null) {
+            flags = emptyList()
+            error = "引擎未运行，读不到扩展 flag。"
+        } else {
+            runCatching { api.flags() }
+                .onSuccess { flags = it; error = null }
+                .onFailure { error = it.message ?: "读取失败" }
+        }
+    }
+
+    PiSheet(onDismiss = onDismiss, fullHeight = false) {
+        Column(
+            modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
+        ) {
+            Text("扩展运行时参数（flag）", style = PiTheme.text.prose, color = PiTheme.palette.text)
+            error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
+            val list = flags
+            if (list == null) {
+                Text("读取中…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+            } else if (list.isEmpty()) {
+                Text("当前已加载的扩展没有声明任何 --flag 参数。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                    items(list.size) { i ->
+                        val f = list[i]
+                        if (f.isBoolean) {
+                            PiSettingsToggleRow(
+                                title = "--${f.name}",
+                                supporting = f.description,
+                                checked = (f.value as? JsonPrimitive)?.content == "true",
+                                onCheckedChange = { on ->
+                                    val api = advanced() ?: return@PiSettingsToggleRow
+                                    scope.launch {
+                                        runCatching { api.setFlag(f.name, on) }
+                                            .onSuccess { reload++ }
+                                            .onFailure { error = it.message ?: "修改失败" }
+                                    }
+                                },
+                            )
+                        } else {
+                            var text by remember(f.name, f.value) { mutableStateOf((f.value as? JsonPrimitive)?.content.orEmpty()) }
+                            Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                                Text("--${f.name}", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                                f.description?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.muted) }
+                                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+                                    PiEditorField(value = text, onValueChange = { text = it }, modifier = Modifier.weight(1f), placeholder = "值")
+                                    PiSettingsChip(text = "保存", onClick = {
+                                        val api = advanced() ?: return@PiSettingsChip
+                                        scope.launch {
+                                            runCatching { api.setFlag(f.name, text) }
+                                                .onSuccess { reload++ }
+                                                .onFailure { error = it.message ?: "保存失败" }
+                                        }
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -56,6 +56,26 @@ export default function probe(pi) {
     },
   });
 
+  // 第二个假 OAuth 供应商：测 prompt.signal（回调赢下竞态时自动 abort manual_code，宿主应发 ui.cancel）。
+  pi.registerProvider?.("probe-sso-race", {
+    name: "Probe SSO Race",
+    baseUrl: "https://probe-race.invalid",
+    api: "openai-completions",
+    models: [{ id: "probe-race-model", name: "Probe Race", input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, reasoning: false, contextWindow: 8000, maxTokens: 1000 }],
+    oauth: {
+      name: "Probe SSO Race",
+      async login(cb) {
+        cb.onAuth({ url: "https://probe-race.invalid/authorize" });
+        // 发起不回答的手动码输入，随后模拟本地回调 80ms 后胜出，SDK 应触发 prompt.signal abort。
+        cb.onManualCodeInput?.().catch(() => {});
+        await new Promise((r) => setTimeout(r, 80));
+        return { refresh: "r-cb", access: "a-cb", expires: Date.now() + 3600_000 };
+      },
+      async refreshToken(c) { return c; },
+      getApiKey: (c) => c.access,
+    },
+  });
+
   pi.registerFlag?.("probe-mode", { description: "probe flag", type: "string", default: "fast" });
   pi.registerFlag?.("probe-loud", { type: "boolean", default: false });
 
@@ -66,6 +86,76 @@ export default function probe(pi) {
     handler: async (_args, ctx) => ctx.ui.notify("pong"),
   });
 
+  // 测试 Phase 1 补齐的完整 TUI / ExtensionUIContext 能力：
+  // KeybindingsManager、OverlayHandle、Focusable、FAKE_CURSOR/CURSOR_MARKER、handleMouse、FooterDataProvider。
+  pi.registerCommand?.("probe-tui", {
+    description: "test full TUI overlay/keybindings/mouse/cursor/focus",
+    handler: async (_args, ctx) => {
+      let handleRef = null;
+      const result = await ctx.ui.custom(
+        (_tui, _theme, kb, done) => {
+          let cursor = 0;
+          let clicked = "";
+          const comp = {
+            focused: false,
+            render: (w) => [
+              `focused=${comp.focused} cursor=${cursor} clicked=${clicked} w=${w}`,
+              `edit: ab\x1b_pi:c\x07\x1b_pi:fc\x07c`,
+            ],
+            handleInput: (data) => {
+              if (kb.matches(data, "tui.select.down")) {
+                cursor += 1;
+                return;
+              }
+              if (data === "H" && handleRef) {
+                handleRef.setHidden(true);
+                ctx.ui.notify(`hidden=${handleRef.isHidden()}`);
+                handleRef.setHidden(false);
+                ctx.ui.notify(`hidden=${handleRef.isHidden()}`);
+                return;
+              }
+              if (data === "U" && handleRef) {
+                handleRef.unfocus();
+                ctx.ui.notify(`focus=${handleRef.isFocused()}`);
+                handleRef.focus();
+                ctx.ui.notify(`focus=${handleRef.isFocused()}`);
+                return;
+              }
+              if (kb.matches(data, "tui.select.confirm")) {
+                done(`ok:c=${cursor}:m=${clicked}`);
+              }
+            },
+            handleMouse: (ev) => {
+              clicked = `${ev.type}@${ev.x},${ev.y}`;
+            },
+            dispose: () => {},
+          };
+          return comp;
+        },
+        {
+          overlay: true,
+          overlayOptions: { width: "80%", anchor: "center" },
+          onHandle: (h) => { handleRef = h; },
+        },
+      );
+      ctx.ui.notify(`probe-tui=${result}`);
+    },
+  });
+
+  pi.registerCommand?.("probe-footer", {
+    description: "test real FooterDataProvider",
+    handler: async (_args, ctx) => {
+      ctx.ui.setFooter((_tui, _theme, footerData) => ({
+        render: () => {
+          const statuses = [...footerData.getExtensionStatuses().entries()].map(([k, v]) => `${k}=${v}`).join(",");
+          return [`providers=${footerData.getAvailableProviderCount()} statuses=${statuses}`];
+        },
+        invalidate: () => {},
+        dispose: () => {},
+      }));
+    },
+  });
+
   pi.on("session_start", async (event, ctx) => {
     // 噪声：扩展里随手一行 console.log，不应该污染协议流。
     console.log("NOISE-from-extension {not json");
@@ -74,6 +164,24 @@ export default function probe(pi) {
     ctx.ui.setStatus("probe", `ready:${event.reason ?? "start"}`);
     ctx.ui.setTitle("probe session");
     ctx.ui.setWidget("probe-lines", ["alpha", "beta"]);
+    ctx.ui.addAutocompleteProvider?.((base) => ({
+      getSuggestions: async (lines, cursorLine, cursorCol) => {
+        const line = lines[cursorLine] ?? "";
+        const head = line.slice(0, cursorCol);
+        if (head.endsWith("#pr")) {
+          return {
+            prefix: "#pr",
+            items: [{ value: "#probe-item", label: "probe-item", description: "from extension" }],
+          };
+        }
+        return base?.getSuggestions?.(lines, cursorLine, cursorCol) ?? null;
+      },
+    }));
+    ctx.ui.onTerminalInput?.((data) => {
+      if (data === "DROP") return { consume: true };
+      if (data === "REWRITE") return { data: "REWRITTEN" };
+      return undefined;
+    });
 
     // 会自己动的组件：靠 tui.requestRender() 触发重绘。
     ctx.ui.setWidget("probe-factory", (tui, theme) => {

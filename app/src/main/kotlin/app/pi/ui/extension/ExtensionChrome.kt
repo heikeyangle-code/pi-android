@@ -9,6 +9,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import app.pi.rpc.Ansi
@@ -50,18 +53,48 @@ fun ExtensionSpans(
     modifier: Modifier = Modifier,
     maxLines: Int = Int.MAX_VALUE,
     overflow: TextOverflow = TextOverflow.Clip,
+    /** 为 TUI 表面 / 面板启用完整 SGR 样式（背景高亮、反显光标、粗体、斜体、下划线、删除线、dim）。 */
+    richStyle: Boolean = false,
 ) {
     val palette = PiTheme.palette
     // One candidate array per palette, not one per span: `toArgb()` is not free
     // and a widget can carry dozens of spans.
     val tokens = remember(palette) { palette.themeTokenArgb() }
+    val surfaceBg = palette.cardBg
     // Keyed on the spans themselves: `Ansi.Span` is a data class, so an unchanged
     // string re-renders nothing when the caller recomposes.
-    val text: AnnotatedString = remember(spans, tokens, defaultColor) {
+    val text: AnnotatedString = remember(spans, tokens, defaultColor, surfaceBg, richStyle) {
         buildAnnotatedString {
             spans.forEach { span ->
-                withStyle(SpanStyle(color = tokenColorFor(span, tokens) ?: defaultColor)) {
-                    append(span.text)
+                val resolvedFg = tokenColorFor(span, tokens) ?: defaultColor
+                if (!richStyle) {
+                    withStyle(SpanStyle(color = resolvedFg)) {
+                        append(span.text)
+                    }
+                } else {
+                    val resolvedBg = backgroundColorFor(span, tokens)
+                    val fg = if (span.inverse) (resolvedBg ?: surfaceBg) else resolvedFg
+                    val bg = if (span.inverse) resolvedFg else (resolvedBg ?: Color.Unspecified)
+                    val finalFg = if (span.dim) fg.copy(alpha = 0.65f) else fg
+                    val decoration = when {
+                        span.underline && span.strikethrough -> TextDecoration.combine(
+                            listOf(TextDecoration.Underline, TextDecoration.LineThrough),
+                        )
+                        span.underline -> TextDecoration.Underline
+                        span.strikethrough -> TextDecoration.LineThrough
+                        else -> null
+                    }
+                    withStyle(
+                        SpanStyle(
+                            color = finalFg,
+                            background = bg,
+                            fontWeight = if (span.bold) FontWeight.SemiBold else null,
+                            fontStyle = if (span.italic) FontStyle.Italic else null,
+                            textDecoration = decoration,
+                        ),
+                    ) {
+                        append(span.text)
+                    }
                 }
             }
         }

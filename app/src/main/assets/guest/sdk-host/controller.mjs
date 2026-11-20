@@ -72,6 +72,47 @@ export class Controller {
     /** 表态只对表态时的项目有效；会话换到别的 cwd 后，那个项目走自己的信任库记录。 */
     this.trustOverrideCwd = undefined;
     this.lastOpenArgs = null;
+    this.footerData = null;
+    this.httpDispatcherMod = null;
+  }
+
+  /** 应用全局设置里的 httpProxy 与 httpIdleTimeoutMs（对照 Pi `main.ts` 调用官方 `http-dispatcher.js`）。 */
+  async applyHttpSettings() {
+    if (!this.cfg.piDir) return;
+    try {
+      if (!this.httpDispatcherMod) {
+        const { pathToFileURL } = await import("node:url");
+        this.httpDispatcherMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "http-dispatcher.js")).href);
+      }
+      const sm = this.runtime?.services?.settingsManager
+        ?? (this.sdk ? this.sdk.SettingsManager.create(this.cwd, this.cfg.agentDir, { projectTrusted: false }) : null);
+      if (!sm) return;
+      const globalSettings = sm.getGlobalSettings?.() ?? {};
+      if (typeof globalSettings.httpProxy === "string" && globalSettings.httpProxy.trim()) {
+        this.httpDispatcherMod.applyHttpProxySettings?.(globalSettings.httpProxy);
+      }
+      const idle = sm.getHttpIdleTimeoutMs?.();
+      if (idle !== undefined) {
+        this.httpDispatcherMod.configureHttpDispatcher?.(idle);
+      } else {
+        this.httpDispatcherMod.configureHttpDispatcher?.(this.httpDispatcherMod.DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+      }
+    } catch (error) {
+      this.hub.emit("host.log", { level: "warn", message: `http-dispatcher setup failed: ${error?.message ?? error}` });
+    }
+  }
+
+  /** 刷新 FooterDataProvider 的可用供应商计数（登录/退出/刷新目录后调用）。 */
+  syncFooterProviders() {
+    const rt = this.session?.modelRuntime;
+    if (!this.footerData || !rt) return;
+    try {
+      const uniqueProviders = new Set(rt.getAvailableSnapshot().map((m) => m.provider));
+      this.footerData.setAvailableProviderCount(uniqueProviders.size);
+      this.surfaces.repaintKey("footer");
+    } catch {
+      // ignore
+    }
   }
 
   get session() {
@@ -102,6 +143,36 @@ export class Controller {
     this.sessionDir = sessionDir;
 
     this.bus = sdk.createEventBus();
+    await this.applyHttpSettings();
+    // 接入官方 KeybindingsManager 与 FooterDataProvider（与 Pi TUI 一致），替换空桩。
+    if (this.cfg.piDir) {
+      const { pathToFileURL } = await import("node:url");
+      try {
+        const kbMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "keybindings.js")).href);
+        if (kbMod?.KeybindingsManager?.create) {
+          const kb = kbMod.KeybindingsManager.create(agentDir);
+          this.ui.setKeybindings(kb);
+          // 同步注册到 pi-tui 全局单例，确保扩展用官方 SelectList/SettingsList/Editor 时也能匹配键位。
+          try {
+            const tuiMod = await import("@earendil-works/pi-tui");
+            tuiMod.setKeybindings?.(kb);
+          } catch {
+            // 打包入口下如果外部包名不可解析，局部 keybindings 实例仍完整工作。
+          }
+        }
+      } catch (error) {
+        this.hub.emit("host.log", { level: "warn", message: `keybindings init failed: ${error?.message ?? error}` });
+      }
+      try {
+        const fdpMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "footer-data-provider.js")).href);
+        if (fdpMod?.FooterDataProvider) {
+          this.footerData = new fdpMod.FooterDataProvider(cwd);
+          this.ui.setFooterData(this.footerData);
+        }
+      } catch (error) {
+        this.hub.emit("host.log", { level: "warn", message: `footer-data-provider init failed: ${error?.message ?? error}` });
+      }
+    }
     const modelRuntime = await sdk.ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
@@ -285,6 +356,8 @@ export class Controller {
     this.unsubscribeBackpressure?.();
     this.extensionsBound = false;
     this.ui.reset();
+    this.footerData?.setCwd?.(this.cwd);
+    this.syncFooterProviders();
     hub.bumpEpoch();
     hub.emit("session.bound", { sessionId: session.sessionId, sessionFile: session.sessionFile ?? null, first: this.firstBind });
 
@@ -446,6 +519,7 @@ export class Controller {
     try {
       this.unsubscribe?.();
       this.unsubscribeBackpressure?.();
+      this.footerData?.dispose?.();
       this.hub.cancelAllAsks();
       await Promise.race([this.runtime?.dispose(), new Promise((resolve) => setTimeout(resolve, 3000))]);
       await Promise.race([this.transport.flush(), new Promise((resolve) => setTimeout(resolve, 1000))]);

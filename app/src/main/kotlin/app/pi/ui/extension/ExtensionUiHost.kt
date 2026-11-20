@@ -129,7 +129,10 @@ fun ExtensionUiHost(
 
         ExtensionSurfaceHost(
             custom = state.ext.custom,
+            stackCount = state.ext.customStack.count { !it.hidden },
             onInput = session::sendSurfaceInput,
+            onMouse = session::sendSurfaceMouse,
+            onResize = session::resizeSurface,
             onClose = session::closeSurface,
         )
     }

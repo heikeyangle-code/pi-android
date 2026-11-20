@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -224,15 +225,20 @@ internal fun McpServersScreen(
         loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, null, "")
         loginJob = scope.launch {
             val watchers = listOf(
-                launch {
+                launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                     host.events.collect { event ->
+                        val cancelledId = app.pi.host.HostAuth.cancelId(event)
+                        if (cancelledId != null && loginUi?.redirectRequestId == cancelledId) {
+                            loginUi = loginUi?.copy(redirectRequestId = null)
+                            return@collect
+                        }
                         app.pi.host.HostExtensions.authUrl(event)?.takeIf { it.loginId == id }?.let { auth ->
                             loginUi = LoginUi(LoginUi.Kind.Login, name, LoginUi.Phase.Waiting, auth.url, "")
                             runCatching { uriHandler.openUri(auth.url) }
                         }
                     }
                 },
-                launch {
+                launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                     host.requests.collect { request ->
                         app.pi.host.HostExtensions.redirectRequest(request)?.takeIf { it.first == id }?.let {
                             loginUi = loginUi?.copy(redirectRequestId = request.id)
@@ -301,7 +307,7 @@ internal fun McpServersScreen(
                     if (project) {
                         "写入本项目的 .pi/mcp.json，只有项目被信任时 pi 才会读它；同名条目会整条替换全局的。"
                     } else {
-                        "写入全局的 mcp.json，所有项目共用。服务器在会话开始时连接，改完要新会话或重启引擎才生效。"
+                        "写入全局的 mcp.json，所有项目共用。改完可点上方「让改动生效」热重载，或在新会话自动生效。"
                     },
                 )
             }

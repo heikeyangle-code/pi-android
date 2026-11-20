@@ -108,11 +108,22 @@ private fun PiPalette.tokenArgb(): IntArray = intArrayOf(
 fun PiPalette.themeTokenArgb(): IntArray = tokenArgb()
 
 /** The theme token that painted [span], or null to keep the caller's own colour. */
-fun tokenColorFor(span: Ansi.Span, tokens: IntArray): Color? {
-    val foreground = span.foreground ?: return null
-    val r = (foreground shr 16) and 0xFF
-    val g = (foreground shr 8) and 0xFF
-    val b = foreground and 0xFF
+fun tokenColorFor(span: Ansi.Span, tokens: IntArray): Color? =
+    span.foreground?.let { nearestTokenColor(it, tokens) }
+
+/**
+ * Resolve [Ansi.Span.background] for TUI surfaces (`selectedBg`、反显高亮、搜索命中等)。
+ * 优先匹配主题令牌（保证跟用户主题一致）；若扩展自己选了特定背景色，则保留原 24-bit 色彩。
+ */
+fun backgroundColorFor(span: Ansi.Span, tokens: IntArray): Color? {
+    val bg = span.background ?: return null
+    return nearestTokenColor(bg, tokens) ?: Color(0xFF000000.toInt() or bg)
+}
+
+private fun nearestTokenColor(rgb: Int, tokens: IntArray): Color? {
+    val r = (rgb shr 16) and 0xFF
+    val g = (rgb shr 8) and 0xFF
+    val b = rgb and 0xFF
 
     var best = 0
     var bestDistance = Double.MAX_VALUE

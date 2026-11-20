@@ -14,13 +14,21 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * 登录是长事务：`auth.login` 在用户去浏览器授权期间一直不应答，所以 [login] 的超时很长，
  * 中途的两类消息走宿主的事件/提问流（`PiEngineSession.hostEvents` / `hostRequests`）：
- *  - 事件 `auth.event {loginId, providerId, event}`：要打开的链接、设备码、进度、提示；
- *  - 提问 `auth.prompt {loginId, providerId, prompt}`：要用户输入的东西，答复用 `PiHostClient.respond`。
- * [AuthEvent] / [AuthPrompt] 把这两类消息解成类型。
+ *  - 事件 `auth.event {loginId, providerId, event}`：要打开的链接、设备码、进度、提示（含 links）；
+ *  - 提问 `auth.prompt {loginId, providerId, prompt}`：text / secret / select / manual_code，答复用 `PiHostClient.respond`；
+ *  - 事件 `ui.cancel {id}`：OAuth 本地回调赢下竞态或登录结束时，宿主收回挂起的提问。
+ * [AuthEvent] / [AuthPrompt] 把这些消息解成强类型。
  */
 class HostAuth(private val commands: HostCommands) {
 
-    data class Method(val type: String, val name: String, val isSubscription: Boolean, val loginLabel: String?) {
+    data class Method(
+        val type: String,
+        val name: String,
+        val isSubscription: Boolean,
+        val loginLabel: String?,
+        /** `api_key` 方式是否真的支持交互式保存 Key（某些供应商仅支持环境变量/隐式凭据）。 */
+        val interactive: Boolean = true,
+    ) {
         val isOauth get() = type == "oauth"
         val isApiKey get() = type == "api_key"
     }
@@ -43,8 +51,14 @@ class HostAuth(private val commands: HostCommands) {
         val statusSource: String? get() = ((status as? JsonObject)?.get("source") as? JsonPrimitive)?.takeIf { it.isString }?.content
 
         val supportsApiKey get() = methods.any { it.isApiKey }
+        /** 真正支持在界面输入并保存 API Key 的供应商。 */
+        val supportsApiKeyInput get() = methods.any { it.isApiKey && it.interactive }
+        /** 仅通过环境变量/隐式凭据工作的供应商（无 apiKey.login）。 */
+        val hasAmbientApiKey get() = methods.any { it.isApiKey && !it.interactive }
         val oauth: Method? get() = methods.firstOrNull { it.isOauth }
         val isSubscription get() = oauth?.isSubscription == true
+        /** 非订阅型的 OAuth 网页登录（如 OpenRouter / Radius）。 */
+        val isWebLogin get() = oauth != null && !isSubscription
     }
 
     data class Credential(val providerId: String, val type: String)
@@ -82,11 +96,40 @@ class HostAuth(private val commands: HostCommands) {
 
     // ---- 登录中的消息 ----
 
-    /** `auth.event` 的内容。[kind] 是 SDK 事件的类型名，[raw] 留全，界面按需取字段。 */
-    data class AuthEvent(val loginId: String, val providerId: String, val kind: String, val url: String?, val code: String?, val message: String?, val raw: JsonObject)
+    data class InfoLink(val url: String, val label: String?)
 
-    /** `auth.prompt` 的内容：要用户输入什么。[requestId] 是应答时要用的提问 id。 */
-    data class AuthPrompt(val requestId: String, val loginId: String, val providerId: String, val message: String, val placeholder: String?, val secret: Boolean, val raw: JsonObject)
+    /** `auth.event` 的内容。[kind] 是 SDK 事件的类型名（`auth_url` / `device_code` / `info` / `progress`）。 */
+    data class AuthEvent(
+        val loginId: String,
+        val providerId: String,
+        val kind: String,
+        val url: String?,
+        val code: String?,
+        val message: String?,
+        val links: List<InfoLink> = emptyList(),
+        val openBrowserOnConfirm: Boolean = false,
+        val copyCodeOnConfirm: Boolean = false,
+        val raw: JsonObject = JsonObject(emptyMap()),
+    )
+
+    data class PromptOption(val id: String, val label: String, val description: String?)
+
+    /** `auth.prompt` 的内容（`text` / `secret` / `select` / `manual_code`）。[requestId] 是应答时要用的提问 id。 */
+    data class AuthPrompt(
+        val requestId: String,
+        val loginId: String,
+        val providerId: String,
+        val type: String,
+        val message: String,
+        val placeholder: String?,
+        val secret: Boolean,
+        val allowEmpty: Boolean,
+        val options: List<PromptOption>,
+        val raw: JsonObject,
+    ) {
+        val isSelect get() = type == "select" && options.isNotEmpty()
+        val isManualCode get() = type == "manual_code"
+    }
 
     companion object {
         const val LOGIN_TIMEOUT_MS = 15 * 60_000L
@@ -96,6 +139,11 @@ class HostAuth(private val commands: HostCommands) {
             if (event.name != "auth.event") return null
             val d = event.data as? JsonObject ?: return null
             val e = d["event"] as? JsonObject ?: return null
+            val links = (e["links"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val u = str(o["url"])?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                InfoLink(url = u, label = str(o["label"]))
+            }.orEmpty()
             return AuthEvent(
                 loginId = str(d["loginId"]).orEmpty(),
                 providerId = str(d["providerId"]).orEmpty(),
@@ -103,6 +151,9 @@ class HostAuth(private val commands: HostCommands) {
                 url = str(e["url"]) ?: str(e["verificationUri"]) ?: str(e["verificationUrl"]),
                 code = str(e["userCode"]) ?: str(e["code"]),
                 message = str(e["message"]) ?: str(e["instructions"]) ?: str(e["text"]),
+                links = links,
+                openBrowserOnConfirm = bool(e["openBrowserOnConfirm"], false),
+                copyCodeOnConfirm = bool(e["copyCodeOnConfirm"], false),
                 raw = e,
             )
         }
@@ -110,18 +161,39 @@ class HostAuth(private val commands: HostCommands) {
         fun authPrompt(request: HostRequest): AuthPrompt? {
             if (request.method != "auth.prompt") return null
             val p = request.params["prompt"] as? JsonObject ?: JsonObject(emptyMap())
+            val type = str(p["type"]) ?: "text"
+            val options = (p["options"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val id = str(o["id"]) ?: return@mapNotNull null
+                PromptOption(
+                    id = id,
+                    label = str(o["label"]) ?: id,
+                    description = str(o["description"]),
+                )
+            }.orEmpty()
             return AuthPrompt(
                 requestId = request.id,
                 loginId = str(request.params["loginId"]).orEmpty(),
                 providerId = str(request.params["providerId"]).orEmpty(),
+                type = type,
                 message = str(p["message"]) ?: str(p["title"]) ?: str(p["label"]) ?: "",
                 placeholder = str(p["placeholder"]),
-                secret = (p["secret"] as? JsonPrimitive)?.content == "true" || (p["password"] as? JsonPrimitive)?.content == "true",
+                secret = type == "secret" || bool(p["secret"], false) || bool(p["password"], false),
+                allowEmpty = bool(p["allowEmpty"], false),
+                options = options,
                 raw = p,
             )
         }
 
+        /** `ui.cancel { id }`：宿主收回了一个挂起的提问（例如回调服务器胜出后收回 manual_code）。 */
+        fun cancelId(event: HostSignal.Event): String? {
+            if (event.name != "ui.cancel") return null
+            val d = event.data as? JsonObject ?: return null
+            return str(d["id"])
+        }
+
         private fun str(e: JsonElement?): String? = (e as? JsonPrimitive)?.takeIf { it.isString }?.content
+        private fun bool(e: JsonElement?, default: Boolean): Boolean = (e as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: default
     }
 
     // ---- 内部 ----
@@ -131,7 +203,13 @@ class HostAuth(private val commands: HostCommands) {
         id = str(o["id"]).orEmpty(),
         name = str(o["name"]) ?: str(o["id"]).orEmpty(),
         methods = rows(o["methods"]).map {
-            Method(str(it["type"]).orEmpty(), str(it["name"]).orEmpty(), (it["isSubscription"] as? JsonPrimitive)?.content == "true", str(it["loginLabel"]))
+            Method(
+                type = str(it["type"]).orEmpty(),
+                name = str(it["name"]).orEmpty(),
+                isSubscription = (it["isSubscription"] as? JsonPrimitive)?.content == "true",
+                loginLabel = str(it["loginLabel"]),
+                interactive = (it["interactive"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true,
+            )
         },
         configured = (o["configured"] as? JsonPrimitive)?.content == "true",
         usingOAuth = (o["usingOAuth"] as? JsonPrimitive)?.content == "true",

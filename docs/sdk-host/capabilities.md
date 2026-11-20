@@ -41,7 +41,7 @@
 | 调用 `/skill:name`、模板、扩展命令 | 已接 | 走 `session.prompt`（pi 会分派），**不会**产生用户气泡 —— 与旧 App 的 `runPromptCommand` 行为一致 |
 | 重载（`/reload`） | 已接 | `session.reload`，**不再需要重启进程**（旧 `PiEngineHost.restart` 的那段理由消失） |
 | 扩展 CLI 标志（`--flag`） | 已接 | `session.open.flags`；查扩展声明了哪些：`sdk.call extensionRunner getFlags` |
-| 扩展的完整 UI（对话框、widget 行/组件、footer、header、`custom()`、通知、状态、标题、编辑器文本） | 已接 | `ui.*`；组件以「表面」呈现（ANSI 行），见 ui-design.md |
+| 扩展的完整 UI（对话框、widget 行/组件、footer/真实 FooterDataProvider、header、`custom()`+`OverlayHandle`+`KeybindingsManager`+`handleMouse`、补全链、通知、状态、标题、编辑器文本） | 已接 | `ui.*`（含 `ui.mouse`/`ui.autocomplete`/`ui.terminalInput`/`ui.setToolsExpanded`）；组件以「表面」呈现（ANSI 行），见 ui-design.md |
 | 扩展事件总线 | 已接 | `bus.*` |
 | 扩展注册的消息渲染器 | 已接 | `render.message`（官方 `CustomMessageComponent`） |
 | 扩展工具渲染（含 `registerToolRenderer` 接管内置工具） | 已接 | `render.tool`（官方 `ToolExecutionComponent` + `resolveToolRenderers`） |
@@ -101,9 +101,9 @@
 
 | 缺口 | 影响 | 处理 |
 |---|---|---|
-| **HTTP 代理 / 空闲超时**：pi 的 `main()` 调 `configureHttpDispatcher()`，SDK 不导出 | 设置里的 `httpProxy`、`httpIdleTimeout` 在宿主里不生效 | 先向上游提需求导出；临时方案：宿主内用 pi 依赖里的 `undici` 自己配 `setGlobalDispatcher`（要先确认 undici 在引擎包里可解析） |
+| **HTTP 代理 / 空闲超时** | 已通过内部 `dist/core/http-dispatcher.js` 接入（contract 测试把守） | 会话打开与 `settings.set(setHttpProxy / setHttpIdleTimeoutMs)` / `settings.reload` 时即时刷新 |
 | **启动迁移**：`runMigrations()` 不导出 | 用户把 agentDir 从很老的 pi 版本带过来时，旧格式不被迁移 | App 的 agentDir 由 App 管，影响面小；升级 pi 的大版本时在 upgrading.md 里手动核一遍迁移说明 |
 | **`llama.cpp` 内置扩展**：CLI 内置，SDK 不导出工厂 | `/llama` 命令不可用 | 需要时 `import(dist/extensions/index.js)`（未打包模块图，慢）取 `builtInExtensions`，仅在用户启用本地模型时懒加载 |
 | 关机时跟踪的 detached 子进程清理（`killTrackedDetachedChildren` 不导出） | 退出时正在跑的 bash 子进程可能残留 | Kotlin 侧已有 `GuestTreeReaper` 收尾；保持它 |
-| `onTerminalInput` 原始按键、`setEditorComponent` | 扩展里依赖它们的功能不可用 | 前者降级为「输入框文本变化回调」，后者只通知 App；见 ui-design.md |
+| `setEditorComponent` 自定义终端编辑器 | 手机输入法与终端逐键编辑器模型不同 | 宿主保留工厂记录（`getEditorComponent()` 可读）并通知 App `editorTakeover`，继续使用原生输入框 |
 | 子代理一等公民 UI | 未做 | migration.md 步骤 6 |

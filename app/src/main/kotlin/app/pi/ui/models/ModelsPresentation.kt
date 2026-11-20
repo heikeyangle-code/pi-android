@@ -43,11 +43,13 @@ data class ProviderFacts(
     val usingOAuth: Boolean,
     val usingSubscription: Boolean,
     val source: String?,
-    /** 这家有没有「订阅账号」型的 OAuth 登录方式可选（还没登录时用它决定是不是排进「用订阅登录」）。 */
+    /** 这家有没有「订阅账号」型的 OAuth 登录方式可选（统一排在顶部「订阅登录」段，登录前后不跳段、不重复）。 */
     val offersSubscription: Boolean,
     val modelCount: Int,
     /** 来自 `models.json`（用户自己加的，或覆盖了内置供应商）。 */
     val custom: Boolean,
+    /** 是否支持非订阅型 OAuth 网页登录（如 OpenRouter / Radius）。 */
+    val offersWebLogin: Boolean = false,
 ) {
     val title: String get() = name.ifBlank { id }
 }
@@ -64,14 +66,16 @@ fun connectionOf(f: ProviderFacts): Connection = when {
     }
 }
 
-/** 供应商列表的三段。 */
+/**
+ * 供应商列表的三段，按使用优先级自上而下排列，且互斥不重复：
+ *  1. [subscriptionProviders]：全部支持订阅登录的供应商（已连接的排前面，未连接的排后面，各自按名字排）；
+ *  2. [connectedApi]：已连接的非订阅供应商（API Key / 网页登录 / 环境变量 / 自定义）；
+ *  3. [otherApi]：其余未连接的 API 供应商（默认折叠，搜索时展开）。
+ */
 data class ProviderSections(
-    /** 已连接，按名字排。 */
-    val connected: List<ProviderFacts>,
-    /** 还没连接、但可以用订阅账号登录：最常被想要的入口，单独摆在前面。 */
-    val subscriptionOffers: List<ProviderFacts>,
-    /** 其余未连接的（折叠起来，搜索时展开）。 */
-    val others: List<ProviderFacts>,
+    val subscriptionProviders: List<ProviderFacts>,
+    val connectedApi: List<ProviderFacts>,
+    val otherApi: List<ProviderFacts>,
 )
 
 private val NAME_ORDER = Comparator<ProviderFacts> { a, b ->
@@ -79,12 +83,14 @@ private val NAME_ORDER = Comparator<ProviderFacts> { a, b ->
     if (byName != 0) byName else a.id.compareTo(b.id)
 }
 
+private val SUBSCRIPTION_ORDER = compareByDescending<ProviderFacts> { it.configured }.then(NAME_ORDER)
+
 fun sectionProviders(all: List<ProviderFacts>, query: String): ProviderSections {
     val hit = all.filter { matches(query, it.title, it.id) }
     return ProviderSections(
-        connected = hit.filter { it.configured }.sortedWith(NAME_ORDER),
-        subscriptionOffers = hit.filter { !it.configured && it.offersSubscription }.sortedWith(NAME_ORDER),
-        others = hit.filter { !it.configured && !it.offersSubscription }.sortedWith(NAME_ORDER),
+        subscriptionProviders = hit.filter { it.offersSubscription }.sortedWith(SUBSCRIPTION_ORDER),
+        connectedApi = hit.filter { !it.offersSubscription && it.configured }.sortedWith(NAME_ORDER),
+        otherApi = hit.filter { !it.offersSubscription && !it.configured }.sortedWith(NAME_ORDER),
     )
 }
 

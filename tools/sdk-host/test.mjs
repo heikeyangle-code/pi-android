@@ -45,7 +45,10 @@ const h = startHost({
 
 // App 的最小行为：select 自动回第一个，其余对话框不回答。
 h.onRequest((req) => {
-  if (req.method === "auth.prompt") h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: globalThis.__authAnswer ?? "CODE1" } });
+  if (req.method === "auth.prompt") {
+    if (req.params?.providerId === "probe-sso-race") return; // 故意不答，等 prompt.signal abort 触发 ui.cancel
+    h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: globalThis.__authAnswer ?? "CODE1" } });
+  }
   if (req.method === "ui.select") h.send({ id: `r-${req.id}`, cmd: "ui.respond", args: { id: req.id, value: req.params.options[0] } });
 });
 
@@ -789,6 +792,94 @@ try {
     expect("groupByCwd：同目录连续、跨目录的父不连线（b2 在 b 组里是根）", JSON.stringify(summary) === JSON.stringify(["/w/a:a1:0", "/w/a:a2:1", "/w/b:b2:0", "/w/b:b1:0"]), JSON.stringify(summary));
     const flat = viewOf(o, pool, { sortMode: "threaded", nameFilter: "all", query: "" });
     expect("不带 groupByCwd 时与官方行为一致（跨目录成树）", flat.some((n) => n.session.id === "b2" && n.depth === 1), JSON.stringify(flat.map((n) => `${n.session.id}:${n.depth}`)));
+  }
+
+  // ---- 7y. Phase 1 深度对齐：Keybindings / OverlayHandle / Focus / Cursor / Mouse / FooterData / Autocomplete / TerminalInput / prompt.signal ----
+  {
+    const helloNow = await h.call("host.hello");
+    expect(
+      "host.hello 宣告新能力（ui.keybindings / ui.overlayHandle / ui.autocomplete / ui.mouse / http.dispatcher）",
+      ["ui.keybindings", "ui.overlayHandle", "ui.autocomplete", "ui.mouse", "http.dispatcher"].every((c) => helloNow.data.capabilities.includes(c)),
+      JSON.stringify(helloNow.data.capabilities),
+    );
+
+    // 扩展补全链 + ui.autocomplete
+    const acHit = await h.call("ui.autocomplete", { lines: ["hello #pr"], cursorLine: 0, cursorCol: 9 });
+    expect("ui.autocomplete 执行扩展 addAutocompleteProvider 链", acHit.ok && acHit.data.prefix === "#pr" && acHit.data.items?.[0]?.value === "#probe-item", JSON.stringify(acHit));
+    const acMiss = await h.call("ui.autocomplete", { lines: ["hello world"], cursorLine: 0, cursorCol: 11 });
+    expect("ui.autocomplete 无匹配时返回空 items", acMiss.ok && Array.isArray(acMiss.data.items) && acMiss.data.items.length === 0, JSON.stringify(acMiss));
+
+    // onTerminalInput + ui.terminalInput
+    const tiDrop = await h.call("ui.terminalInput", { data: "DROP" });
+    expect("ui.terminalInput 尊重 { consume: true }", tiDrop.ok && tiDrop.data.consumed === true, JSON.stringify(tiDrop));
+    const tiRewrite = await h.call("ui.terminalInput", { data: "REWRITE" });
+    expect("ui.terminalInput 尊重 { data } 改写", tiRewrite.ok && tiRewrite.data.consumed === false && tiRewrite.data.data === "REWRITTEN", JSON.stringify(tiRewrite));
+    const tiPass = await h.call("ui.terminalInput", { data: "plain" });
+    expect("ui.terminalInput 透传未拦截输入", tiPass.ok && tiPass.data.consumed === false && tiPass.data.data === "plain", JSON.stringify(tiPass));
+
+    // ui.setToolsExpanded 同步 + 事件
+    const teEv = h.waitFor(h.evt("ui.toolsExpanded", (d) => d.expanded === true), 5000);
+    const teRes = await h.call("ui.setToolsExpanded", { expanded: true });
+    expect("ui.setToolsExpanded 同步工具展开状态并广播事件", teRes.ok && teRes.data.expanded === true && !!(await teEv.catch(() => null)));
+
+    // 真实 FooterDataProvider（含可用供应商数与扩展状态）
+    await h.call("auth.setApiKey", { providerId: "openai", apiKey: "sk-footer-probe" });
+    const mFooter = h.frames.length;
+    await h.call("session.prompt", { message: "/probe-footer" });
+    const footerSurf = await h.waitFor((f) => h.frames.indexOf(f) >= mFooter && h.evt("ui.surface", (d) => d.mode === "footer")(f), 5000);
+    expect(
+      "setFooter 拿到真实 FooterDataProvider（含 availableProviderCount 与 extensionStatuses）",
+      footerSurf.data.lines[0].includes("providers=") && !footerSurf.data.lines[0].includes("providers=0 ") && footerSurf.data.lines[0].includes("probe=ready:"),
+      JSON.stringify(footerSurf.data.lines),
+    );
+    await h.call("auth.removeApiKey", { providerId: "openai" });
+
+    // 完整 TUI custom overlay：KeybindingsManager / OverlayHandle / Focusable / CURSOR_MARKER & FAKE_CURSOR / handleMouse
+    // 注意：扩展命令 handler 里 await ctx.ui.custom()，因此不能先 await session.prompt，需并发驱动表面交互。
+    const mTui = h.frames.length;
+    const tuiCmdP = h.call("session.prompt", { message: "/probe-tui" }, 15000);
+    const tuiSurf = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.surface", (d) => d.mode === "custom" && d.overlay === true)(f), 5000);
+    const sid = tuiSurf.data.surfaceId;
+    expect("custom overlay 自动赋予 Focusable.focused=true 且带 overlayOptions", tuiSurf.data.focused === true && tuiSurf.data.lines[0].includes("focused=true") && tuiSurf.data.overlayOptions?.anchor === "center", JSON.stringify(tuiSurf.data));
+    expect("CURSOR_MARKER 已剥离，FAKE_CURSOR 转为反显 SGR（无泄露 APC 控制符）", !tuiSurf.data.lines[1].includes("\x1b_pi:") && tuiSurf.data.lines[1].includes("\x1b[7mc\x1b[27m"), JSON.stringify(tuiSurf.data.lines[1]));
+
+    // 方向键走真实 KeybindingsManager（kb.matches(data, "tui.select.down")）
+    await h.call("ui.input", { surfaceId: sid, data: "\x1b[B" });
+    const afterDown = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.surface", (d) => d.surfaceId === sid && d.lines[0].includes("cursor=1"))(f), 5000);
+    expect("kb.matches(data, 'tui.select.down') 在 custom() 中生效", !!afterDown);
+
+    // ui.mouse 点击命中 handleMouse
+    const mouseRes = await h.call("ui.mouse", { surfaceId: sid, x: 3, y: 1, type: "press", button: 0 });
+    const afterMouse = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.surface", (d) => d.surfaceId === sid && d.lines[0].includes("clicked=press@3,1"))(f), 5000);
+    expect("ui.mouse 派发给组件 handleMouse 并重绘", mouseRes.ok && mouseRes.data.handled === true && !!afterMouse, JSON.stringify(mouseRes));
+
+    // OverlayHandle: setHidden / isHidden & unfocus / focus / isFocused
+    await h.call("ui.input", { surfaceId: sid, data: "H" });
+    const hiddenTrue = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.notify", (d) => d.message === "hidden=true")(f), 5000).catch(() => null);
+    const hiddenFalse = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.notify", (d) => d.message === "hidden=false")(f), 5000).catch(() => null);
+    expect("OverlayHandle.setHidden / isHidden 生效", !!hiddenTrue && !!hiddenFalse);
+
+    await h.call("ui.input", { surfaceId: sid, data: "U" });
+    const focusFalse = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.notify", (d) => d.message === "focus=false")(f), 5000).catch(() => null);
+    const focusTrue = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.notify", (d) => d.message === "focus=true")(f), 5000).catch(() => null);
+    expect("OverlayHandle.unfocus / focus / isFocused 生效", !!focusFalse && !!focusTrue);
+
+    // 回车走真实 KeybindingsManager（kb.matches(data, "tui.select.confirm")）结束 custom()
+    await h.call("ui.input", { surfaceId: sid, data: "\r" });
+    const tuiDone = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.notify", (d) => d.message === "probe-tui=ok:c=1:m=press@3,1")(f), 5000).catch(() => null);
+    await tuiCmdP;
+    expect("kb.matches(data, 'tui.select.confirm') 正常结束 custom()", !!tuiDone);
+
+    // auth.prompt 的 prompt.signal 被 SDK abort 时，宿主发送 ui.cancel 收回挂起提问
+    const mRace = h.frames.length;
+    const raceLogin = await h.call("auth.login", { providerId: "probe-sso-race", loginId: "L-RACE" }, 15000);
+    const raceCancel = h.frames.slice(mRace).find(h.evt("ui.cancel"));
+    expect("OAuth 回调胜出 abort prompt.signal 时，宿主发 ui.cancel 收回 manual_code", raceLogin.ok && !!raceCancel, JSON.stringify({ ok: raceLogin.ok, error: raceLogin.error, cancel: raceCancel }));
+    await h.call("auth.logout", { providerId: "probe-sso-race" });
+
+    // settings.setHttpProxy / setHttpIdleTimeoutMs 经官方 http-dispatcher 生效（不抛错）
+    const pxy = await h.call("settings.set", { method: "setHttpIdleTimeoutMs", params: [45000] });
+    expect("settings.set(setHttpIdleTimeoutMs) 调用官方 http-dispatcher 生效", pxy.ok && pxy.data.effective.httpIdleTimeoutMs === 45000, JSON.stringify(pxy.error ?? pxy.data?.effective?.httpIdleTimeoutMs));
   }
 
   // ---- 8. 退出 ----------------------------------------------------------

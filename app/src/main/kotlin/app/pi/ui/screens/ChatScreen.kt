@@ -128,6 +128,7 @@ import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.render.transcriptGap
 import app.pi.ui.extension.ExtensionWidgetStack
+import app.pi.ui.extension.ExtensionWidgetSurfaceSheet
 import app.pi.ui.extension.toExtensionPalette
 import app.pi.ui.extension.ExtensionPanelCard
 import app.pi.ui.extension.ExtensionStatusStrip
@@ -436,14 +437,19 @@ internal fun ChatBody(
     // 悬浮输入框上方的渐隐要用的底色。在组合里读一次，交给 `drawBehind` 用 ——
     // `drawBehind` 的 lambda 不是 composable，不能在那里读 `MaterialTheme`。
     val pageBackground = MaterialTheme.colorScheme.background
-    // pi's `app.tools.expand` (Ctrl+O): one switch that expands or collapses every
-    // expandable row. Extensions cannot drive it over RPC — `setToolsExpanded` is
-    // a documented no-op there (`rpc-mode.ts:303-310`) and this app does not
-    // pretend otherwise — so the preference belongs to the user, not to a wire
-    // message, and `app.tools.expandByDefault` is where it starts.
+    // 工具展开态：以 `app.tools.expandByDefault` 起步，同时与扩展 `ctx.ui.setToolsExpanded` 双向同步。
     var toolsExpanded by rememberSaveable(prefs.expandToolsByDefault) {
         mutableStateOf(prefs.expandToolsByDefault)
     }
+    LaunchedEffect(state.ext.toolsExpanded) {
+        state.ext.toolsExpanded?.let { toolsExpanded = it }
+    }
+    // 把输入框内容同步给宿主，确保扩展调用 `ctx.ui.getEditorText()` 读到真实文本。
+    LaunchedEffect(draft) {
+        session.syncEditorState(draft)
+    }
+    // 可交互工厂 widget（带 handleInput / handleMouse）点「交互」打开的底部表面。
+    var interactingWidgetKey by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     // 顶栏的 0.5dp 发丝线只在**手指滚动/惯性滑动期间**出现；一停就收回，
     // 不是“离开顶部就永久留在那里”。顶栏本身是页面底色，没有常驻灰线。
@@ -1595,6 +1601,20 @@ internal fun ChatBody(
             session.requestMentions(mentionPrefix)
         }
     }
+    // 扩展通过 `ctx.ui.addAutocompleteProvider` 注册的自动补全：在 `/` 命令、`@` 提及未占屏时自动防抖查询。
+    val extAutocompleteEligible = state.ext.autocompleteCount > 0 &&
+        draft.isNotEmpty() &&
+        paletteQueryOf(draft) == null &&
+        argContext == null &&
+        mentionPrefix == null
+    LaunchedEffect(draft, extAutocompleteEligible) {
+        if (!extAutocompleteEligible) {
+            session.dismissExtensionAutocomplete()
+        } else {
+            delay(ARG_COMPLETION_DEBOUNCE_MS)
+            session.requestExtensionAutocomplete(draft)
+        }
+    }
 
     // The follow itself is the single `LaunchedEffect(listState)` above; nothing
     // below this line decides anything about it, except the two jumps and the FAB
@@ -1741,7 +1761,11 @@ internal fun ChatBody(
                     reveal(row)
                 }
             },
-            onToggleTools = { toolsExpanded = !toolsExpanded },
+            onToggleTools = {
+                val next = !toolsExpanded
+                toolsExpanded = next
+                session.setToolsExpandedRemote(next)
+            },
             onAction = { perform(it) },
         )
 
@@ -2262,6 +2286,7 @@ internal fun ChatBody(
             mentionPrefix = mentionPrefix,
             onPickCommand = { command, args -> pick(command, args) },
             argContext = argContext,
+            onInteractWidget = { panel -> interactingWidgetKey = panel.key },
             onAboveHeight = { aboveComposerHeightPx = it },
         )
 
@@ -2429,6 +2454,7 @@ internal fun ChatBody(
             widgets = remember(state.ext.widgets) {
                 state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
             },
+            onInteract = { panel -> interactingWidgetKey = panel.key },
         )
         // 扩展的 footer（`ctx.ui.setFooter`）：宿主把组件渲染成行，这里是一条细栏，点开看全部。
         state.ext.footer?.let { footer ->
@@ -2444,6 +2470,21 @@ internal fun ChatBody(
     }
 
     ChatSheetHost(sheet = sheet, onSheet = { sheet = it }, state = state, session = session)
+
+    interactingWidgetKey?.let { activeKey ->
+        val activeWidget = state.ext.widgets.firstOrNull { it.key == activeKey && it.surfaceId != null }
+        if (activeWidget == null) {
+            interactingWidgetKey = null
+        } else {
+            ExtensionWidgetSurfaceSheet(
+                panel = activeWidget,
+                onInput = session::sendSurfaceInput,
+                onMouse = session::sendSurfaceMouse,
+                onResize = session::resizeSurface,
+                onDismiss = { interactingWidgetKey = null },
+            )
+        }
+    }
 
     // Hosted here, at the top of the screen's own tree, for the same reason the
     // sheets are: the tap can come from any block, and the surface that opens must

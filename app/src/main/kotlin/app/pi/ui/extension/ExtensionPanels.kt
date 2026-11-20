@@ -59,6 +59,7 @@ fun ExtensionWidgetStack(
     widgets: List<ExtPanel>,
     modifier: Modifier = Modifier,
     onColumns: ((Int) -> Unit)? = null,
+    onInteract: ((ExtPanel) -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -84,7 +85,19 @@ fun ExtensionWidgetStack(
                 .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            widgets.forEach { widget -> key(widget.key) { ExtensionPanelCard(caption = widgetCaption(widget.key), lines = widget.lines) } }
+            widgets.forEach { widget ->
+                key(widget.key) {
+                    ExtensionPanelCard(
+                        caption = widgetCaption(widget.key),
+                        lines = widget.lines,
+                        onInteract = if (widget.interactive && widget.surfaceId != null && onInteract != null) {
+                            { onInteract(widget) }
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -158,6 +171,7 @@ internal fun ExtensionPanelCard(
     lines: List<String>,
     modifier: Modifier = Modifier,
     collapsedRows: Int = COLLAPSED_ROWS,
+    onInteract: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     var expanded by remember { mutableStateOf(false) }
@@ -177,8 +191,11 @@ internal fun ExtensionPanelCard(
         shape = PiShapes.card,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (caption != null || canExpand) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            if (caption != null || canExpand || onInteract != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+                ) {
                     Text(
                         text = caption.orEmpty(),
                         modifier = Modifier.weight(1f),
@@ -187,6 +204,9 @@ internal fun ExtensionPanelCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (onInteract != null) {
+                        app.pi.ui.settings.PiSettingsChip(text = "交互", onClick = onInteract)
+                    }
                     if (canExpand) ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
                 }
             }
@@ -211,6 +231,7 @@ internal fun PanelLine(raw: String, wrap: Boolean) {
         style = PiTheme.text.monoSmall,
         maxLines = if (wrap) Int.MAX_VALUE else 1,
         overflow = TextOverflow.Ellipsis,
+        richStyle = true,
     )
 }
 

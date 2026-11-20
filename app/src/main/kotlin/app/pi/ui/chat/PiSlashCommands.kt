@@ -144,7 +144,7 @@ val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
     "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级"),
     "scoped-models" to ClientBuiltin(
         ChatAction.OpenSettings, "选择参与循环切换的模型",
-        note = "「循环模型」在 设置 → 模型与供应商 → 默认模型与推理。",
+        note = "「循环模型」在 设置 → 模型与供应商 → 推理、作用域与缓存。",
     ),
     "export" to ClientBuiltin(
         ChatAction.ExportSession,

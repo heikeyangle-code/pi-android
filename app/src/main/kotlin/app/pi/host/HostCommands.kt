@@ -340,11 +340,68 @@ class HostCommands(
         client.call("ui.input", obj { put("surfaceId", JsonPrimitive(surfaceId)); put("data", JsonPrimitive(data)) })
     }
 
+    suspend fun uiMouse(
+        surfaceId: String,
+        x: Int,
+        y: Int,
+        type: String = "click",
+        width: Int? = null,
+        height: Int? = null,
+    ): Boolean {
+        val res = client.callObject("ui.mouse", obj {
+            put("surfaceId", JsonPrimitive(surfaceId))
+            put("x", JsonPrimitive(x))
+            put("y", JsonPrimitive(y))
+            put("type", JsonPrimitive(type))
+            width?.let { put("width", JsonPrimitive(it)) }
+            height?.let { put("height", JsonPrimitive(it)) }
+        })
+        return (res["handled"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+    }
+
     suspend fun uiResize(width: Int, height: Int? = null) {
         client.call("ui.resize", obj { put("width", JsonPrimitive(width)); height?.let { put("height", JsonPrimitive(it)) } })
     }
 
     suspend fun uiClose(surfaceId: String) { client.call("ui.close", obj { put("surfaceId", JsonPrimitive(surfaceId)) }) }
+
+    suspend fun uiEditorState(text: String) {
+        client.call("ui.editorState", obj { put("text", JsonPrimitive(text)) })
+    }
+
+    suspend fun uiSetToolsExpanded(expanded: Boolean) {
+        client.call("ui.setToolsExpanded", obj { put("expanded", JsonPrimitive(expanded)) })
+    }
+
+    /** 扩展补全链（`ctx.ui.addAutocompleteProvider`）的一次查询结果。 */
+    data class ExtensionCompletion(val value: String, val label: String, val description: String?)
+    data class AutocompleteReply(val prefix: String, val items: List<ExtensionCompletion>)
+
+    suspend fun uiAutocomplete(
+        lines: List<String>,
+        cursorLine: Int,
+        cursorCol: Int,
+        force: Boolean = false,
+    ): AutocompleteReply {
+        val res = client.callObject("ui.autocomplete", obj {
+            put("lines", JsonArray(lines.map(::JsonPrimitive)))
+            put("cursorLine", JsonPrimitive(cursorLine))
+            put("cursorCol", JsonPrimitive(cursorCol))
+            if (force) put("force", JsonPrimitive(true))
+        })
+        val prefix = res.str("prefix").orEmpty()
+        val items = (res["items"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val value = o.str("value") ?: return@mapNotNull null
+            ExtensionCompletion(
+                value = value,
+                label = o.str("label") ?: value,
+                description = o.str("description"),
+            )
+        }.orEmpty()
+        return AutocompleteReply(prefix = prefix, items = items)
+    }
+
     suspend fun uiPalette(palette: Map<String, String>) {
         client.call("ui.palette", obj { put("palette", JsonObject(palette.mapValues { JsonPrimitive(it.value) })) })
     }

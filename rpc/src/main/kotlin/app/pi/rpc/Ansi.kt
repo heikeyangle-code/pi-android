@@ -32,6 +32,8 @@ object Ansi {
         val dim: Boolean = false,
         val italic: Boolean = false,
         val underline: Boolean = false,
+        val inverse: Boolean = false,
+        val strikethrough: Boolean = false,
     )
 
     /** True when the text contains anything this parser would act on. */
@@ -90,6 +92,8 @@ object Ansi {
         var dim = false
         var italic = false
         var underline = false
+        var inverse = false
+        var strikethrough = false
 
 
         fun flush() {
@@ -102,6 +106,8 @@ object Ansi {
                 dim = dim,
                 italic = italic,
                 underline = underline,
+                inverse = inverse,
+                strikethrough = strikethrough,
             )
             buffer.setLength(0)
         }
@@ -142,6 +148,8 @@ object Ansi {
                     setDim = { dim = it },
                     setItalic = { italic = it },
                     setUnderline = { underline = it },
+                    setInverse = { inverse = it },
+                    setStrikethrough = { strikethrough = it },
                 )
                 fg = nfg
                 bg = nbg
@@ -170,6 +178,8 @@ object Ansi {
         setDim: (Boolean) -> Unit,
         setItalic: (Boolean) -> Unit,
         setUnderline: (Boolean) -> Unit,
+        setInverse: (Boolean) -> Unit,
+        setStrikethrough: (Boolean) -> Unit,
     ): Pair<Int?, Int?> {
         var outFg = fg
         var outBg = bg
@@ -179,14 +189,19 @@ object Ansi {
                 0 -> {
                     outFg = null; outBg = null
                     setBold(false); setDim(false); setItalic(false); setUnderline(false)
+                    setInverse(false); setStrikethrough(false)
                 }
                 1 -> setBold(true)
                 2 -> setDim(true)
                 3 -> setItalic(true)
                 4 -> setUnderline(true)
+                7 -> setInverse(true)
+                9 -> setStrikethrough(true)
                 22 -> { setBold(false); setDim(false) }
                 23 -> setItalic(false)
                 24 -> setUnderline(false)
+                27 -> setInverse(false)
+                29 -> setStrikethrough(false)
                 39 -> outFg = null
                 49 -> outBg = null
                 in 30..37 -> outFg = BASIC_16[code - 30]

@@ -83,3 +83,49 @@ fun ArgumentPalette(
         }
     }
 }
+
+/**
+ * 扩展通过 `ctx.ui.addAutocompleteProvider` 提供的自动补全候选面板。
+ * 点击一项时将当前草稿尾部的 [prefix] 替换为 `item.value`（与 Pi 编辑器 Tab 接受补全语义一致）。
+ */
+@Composable
+fun ExtensionAutocompletePalette(
+    items: List<app.pi.host.HostCommands.ExtensionCompletion>,
+    onPick: (app.pi.host.HostCommands.ExtensionCompletion) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (items.isEmpty()) return
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = PiShapes.card,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        LazyColumn(Modifier.heightIn(max = PiSpacing.paletteMaxHeight)) {
+            items(items, key = { it.value }) { item ->
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(item) }
+                        .padding(horizontal = PiSpacing.pageHorizontal, vertical = PiSpacing.inline),
+                ) {
+                    Text(
+                        text = item.label.ifBlank { item.value },
+                        style = PiTheme.text.prose,
+                        color = PiTheme.palette.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    item.description?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = it,
+                            style = PiTheme.text.meta,
+                            color = PiTheme.palette.dim,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

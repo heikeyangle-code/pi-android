@@ -9,7 +9,6 @@ import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import app.pi.ui.components.EffectiveKind
@@ -170,11 +169,10 @@ class PiSettingsGroup(
 )
 
 /**
- * pi 的「模型与推理」分组。**首页不再列它**（用户裁定：删掉那个分组入口）——组里的行
- * 全部搬进了「模型与供应商」一屏；`SettingsHome` 用它把入口过滤掉，行本身留着给搜索、
- * `groupTitle` 与就地编辑器用。
+ * 「模型与供应商」页内嵌的推理与缓存设置键（不作为独立的「模型与推理」设置分组页存在）。
+ * 由 `ModelsScreen` 直接渲染编辑；设置搜索与 `/scoped-models` 等深链命中该组键时直接打开 `ModelsScreen`。
  */
-internal const val G_MODEL = "model"
+internal const val G_MODELS_SCREEN = "models"
 /**
  * 本应用自己的分组（spec §6.4 的 12 组里没有它）。pi 的 settings 里没有系统提示词那两行：
  * pi 只把这两个值做成**文件**（`<agentDir>/SYSTEM.md`、`<agentDir>/APPEND_SYSTEM.md`），
@@ -215,57 +213,6 @@ private val thinkingLevelOptions: List<PiOption> =
     PiThinkingLevel.entries
         .filter { it != PiThinkingLevel.Off }
         .map { PiOption(it.wire, it.label) }
-
-/**
- * pi's 40 built-in providers (docs/pi-android-app-design.md §10.2), with the
- * ones that are directly reachable from the mainland listed first.
- */
-private val providerOptions: List<PiOption> = choices(
-    "deepseek" to "DeepSeek",
-    "minimax" to "MiniMax",
-    "minimax-cn" to "MiniMax（国内）",
-    "moonshotai" to "Moonshot AI",
-    "moonshotai-cn" to "Moonshot AI（国内）",
-    "zai" to "Z.ai",
-    "zai-coding-cn" to "Z.ai Coding（国内）",
-    "kimi-coding" to "Kimi Coding",
-    "qwen-token-plan" to "Qwen Token Plan",
-    "qwen-token-plan-cn" to "Qwen Token Plan（国内）",
-    "qwen-token-plan-individual" to "Qwen Token Plan（个人）",
-    "xiaomi" to "Xiaomi",
-    "xiaomi-token-plan-cn" to "Xiaomi Token Plan（国内）",
-    "xiaomi-token-plan-ams" to "Xiaomi Token Plan（AMS）",
-    "xiaomi-token-plan-sgp" to "Xiaomi Token Plan（SGP）",
-    "opencode" to "OpenCode",
-    "opencode-go" to "OpenCode Go",
-    "anthropic" to "Anthropic",
-    "openai" to "OpenAI",
-    "google" to "Google",
-    "google-vertex" to "Google Vertex",
-    "amazon-bedrock" to "Amazon Bedrock",
-    // 根因：pi 1.0.3 把 Azure 的 provider id 从 `azure-openai-responses` 改名成 `azure`
-    //（上游 breaking change）。这里选中的值会进 `settings.json` 的 `defaultProvider`，
-    // 旧 id 在新引擎里不再被认，会静默回退到别的 provider —— 所以必须跟着改名。
-    "azure" to "Azure OpenAI",
-    "openai-codex" to "OpenAI Codex",
-    "github-copilot" to "GitHub Copilot",
-    "xai" to "xAI",
-    "groq" to "Groq",
-    "cerebras" to "Cerebras",
-    "mistral" to "Mistral",
-    "openrouter" to "OpenRouter",
-    "vercel-ai-gateway" to "Vercel AI Gateway",
-    "together" to "Together",
-    "fireworks" to "Fireworks",
-    "baseten" to "Baseten",
-    "nvidia" to "NVIDIA NIM",
-    "huggingface" to "Hugging Face",
-    "cloudflare-workers-ai" to "Cloudflare Workers AI",
-    "cloudflare-ai-gateway" to "Cloudflare AI Gateway",
-    "ant-ling" to "Ant Ling",
-    "radius" to "Radius",
-    "llama.cpp" to "本地 llama.cpp",
-)
 
 private val transportOptions = choices(
     "auto" to "自动",
@@ -325,39 +272,17 @@ object PiSettingsCatalog {
     /** Every registered key, in spec §6.4 order. */
     val settings: List<PiSetting> = listOf(
 
-        // 「模型与供应商」是 App 侧的一页（`ui/models/ModelsScreen`，数据来自宿主的 auth.* / models.config.*），
-        // 不是 pi 的设置键；本分组只放 settings.json 里的模型相关键，由通用行编辑器渲染。
         // ------------------------------------------------------------------
-        // 1 模型与推理
+        // 模型推理与缓存（内嵌在「模型与供应商」页 `ModelsScreen`，已删除独立「模型与推理」旧页；
+        // `defaultProvider` / `defaultModel` 改由 `ModelsScreen` 经 SDK `model.set { persist: true }` 读写）
         // ------------------------------------------------------------------
-        PiSetting(
-            key = "defaultProvider",
-            title = "默认厂商",
-            description = "启动时使用的厂商，例如 anthropic。",
-            kind = PiRowKind.Value,
-            group = G_MODEL,
-            section = "默认模型",
-            effective = EffectiveKind.NewSession,
-            options = providerOptions,
-            allowCustom = true,
-        ),
-        PiSetting(
-            key = "defaultModel",
-            title = "默认模型",
-            description = "启动时使用的模型 ID；也可以直接填自定义模型。",
-            kind = PiRowKind.Value,
-            group = G_MODEL,
-            section = "默认模型",
-            effective = EffectiveKind.NewSession,
-            allowCustom = true,
-        ),
         PiSetting(
             key = "defaultThinkingLevel",
             title = "默认思考等级",
-            description = "启动时使用的思考等级。",
+            description = "新建会话时默认使用的思考等级。",
             kind = PiRowKind.Value,
-            group = G_MODEL,
-            section = "默认模型",
+            group = G_MODELS_SCREEN,
+            section = "默认与循环",
             effective = EffectiveKind.NewSession,
             // pi 没有这个键时用的就是 "medium"（`core/defaults.ts:3`）：不写默认值，
             // 行上会显示成空，看起来像「没设过 = 没有等级」。
@@ -370,12 +295,11 @@ object PiSettingsCatalog {
             // 「新会话生效」，不是「重启引擎」：pi 的 `resolveModelScope` 在 `createRuntime` 闭包里
             // 跑（`main.ts:788`，调用它的 `main.ts:797` 也在同一个闭包内），而那个闭包**每个新
             // 会话都会重新执行一次**（`agent-session-runtime.ts:226-252` 重建 runtime），所以新
-            // 会话就会重新解析这份作用域，不必换进程。（原先这里标 `RestartEngine`，理由只看了
-            // "一个进程里调用点只有一处"，漏了闭包本身每会话重跑。）
+            // 会话就会重新解析这份作用域，不必换进程。
             description = "循环切换的模型，支持通配符；清空 = 全部模型。",
             kind = PiRowKind.List,
-            group = G_MODEL,
-            section = "默认模型",
+            group = G_MODELS_SCREEN,
+            section = "默认与循环",
             effective = EffectiveKind.NewSession,
             presets = listOf("claude-*", "gpt-*", "gemini-*", "deepseek-*", "qwen-*"),
             emptyListLabel = "全部模型",
@@ -383,15 +307,9 @@ object PiSettingsCatalog {
         PiSetting(
             key = "modelThinkingLevels",
             title = "逐模型思考等级",
-            // 合法等级与 `defaultThinkingLevel` 的选项同一份（`PiThinkingLevel`）：写错一个
-            // 拼错的等级，pi 不报错，只是这一个模型继续用默认等级（`core/sdk.ts:218` 读的是
-            // `Record<"provider/modelId", ThinkingLevel>`，值不在枚举里就落回默认）。
-            //
-            // 这一行现在由专用编辑器打开（模型点选 + 等级点选，没有文本输入），所以描述里
-            // 不再教 `名字 = 值` 的写法，只留"选谁、有哪些等级"。
             description = "按模型覆盖启动思考等级。清空并保存 = 回到默认。",
             kind = PiRowKind.List,
-            group = G_MODEL,
+            group = G_MODELS_SCREEN,
             section = "逐模型与预算",
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
@@ -400,37 +318,25 @@ object PiSettingsCatalog {
         PiSetting(
             key = "thinkingBudgets",
             title = "思考预算",
-            // 合法键只有这四个（`packages/ai/src/types.ts:100-105` 的 `ThinkingBudgets`）；
-            // 多写的键 pi 原样透传给厂商，厂商不认识就只是白写一行。值是 token 数，pi 不给
-            // 默认值（消费侧 `?? 厂商默认`），所以专用编辑器里"留空 = 用厂商默认"才是正确用法。
             description = "逐档思考预算，留空 = 厂商默认。",
             kind = PiRowKind.List,
-            group = G_MODEL,
+            group = G_MODELS_SCREEN,
             section = "逐模型与预算",
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
             emptyListLabel = "未设置",
         ),
         PiSetting(
-            key = "hideThinkingBlock",
-            title = "隐藏思考块",
-            description = "隐藏对话流里的思考块；思考照常进行，只是不显示。",
-            kind = PiRowKind.Switch,
-            group = G_MODEL,
-            section = "行为",
-            defaultValue = bool(false),
-        ),
-        PiSetting(
             key = "cacheWarming",
             title = "缓存预热",
             description = "空闲时续住提示缓存（花钱）。",
             kind = PiRowKind.Value,
-            group = G_MODEL,
-            section = "行为",
+            group = G_MODELS_SCREEN,
+            section = "缓存",
             defaultValue = str("idle"),
             // 0.86.0 新键，1.5.2 官方默认改为 `idle`（`SETTINGS_DEFAULTS.cacheWarming = "idle"`）。
-            // pi 的取值器是活的（把 `() => settingsManager.getCacheWarmingMode()` 交给 CacheWarmer，
-            // 每次决策读一次），外部改 settings.json 靠宿主 `settings.reload` / `ctx.reload()` 同步。
+            // pi 的取值器是活的（把 `() => settingsManager.getCacheWarmingMode()` 交给 CacheWarmer），
+            // 外部改 settings.json 靠宿主 `settings.reload` / `cache.setMode` 同步。
             effective = EffectiveKind.Reload,
             options = listOf(
                 PiOption("off", "关闭"),
@@ -443,8 +349,8 @@ object PiSettingsCatalog {
             title = "缓存未命中提示",
             description = "提示严重的缓存未命中等诊断。",
             kind = PiRowKind.Switch,
-            group = G_MODEL,
-            section = "行为",
+            group = G_MODELS_SCREEN,
+            section = "缓存",
             defaultValue = bool(false),
         ),
         // ------------------------------------------------------------------
@@ -542,6 +448,14 @@ object PiSettingsCatalog {
             defaultValue = str("未读取"),
             readOnly = true,
         ),
+        PiSetting(
+            key = "app.prompts.viewEffective",
+            title = "查看当前生效系统提示词",
+            description = "读取此刻发给模型的完整系统提示（含工具与规则）。",
+            kind = PiRowKind.Action,
+            group = G_PROMPTS,
+            section = "当前生效",
+        ),
         // ------------------------------------------------------------------
         // 3 消息与网络
         // ------------------------------------------------------------------
@@ -595,7 +509,7 @@ object PiSettingsCatalog {
             group = G_RETRY,
             section = "连接",
             defaultValue = num(300000),
-            effective = EffectiveKind.RestartEngine,
+            effective = EffectiveKind.Immediate,
             min = 0,
             max = 3600000,
             step = 1000,
@@ -618,12 +532,12 @@ object PiSettingsCatalog {
         PiSetting(
             key = "httpProxy",
             title = "HTTP 代理",
-            description = "代理地址，对 pi 自己发起的请求生效。",
+            description = "代理地址，对 pi 自己发起的请求即时生效。",
             kind = PiRowKind.Text,
             group = G_RETRY,
             section = "连接",
             defaultValue = str(""),
-            effective = EffectiveKind.RestartEngine,
+            effective = EffectiveKind.Immediate,
         ),
         PiSetting(
             key = "images.autoResize",
@@ -908,6 +822,14 @@ object PiSettingsCatalog {
             section = "工具",
             defaultValue = bool(false),
         ),
+        PiSetting(
+            key = "app.tools.manageLive",
+            title = "当前会话启用的工具",
+            description = "查看所有已注册工具（含内置与扩展/MCP）并即时启停。",
+            kind = PiRowKind.Action,
+            group = G_TOOLS,
+            section = "当前会话",
+        ),
         // ------------------------------------------------------------------
         // 7 会话
         // ------------------------------------------------------------------
@@ -1144,6 +1066,15 @@ object PiSettingsCatalog {
             group = G_APPEARANCE,
             section = "外观",
             defaultValue = bool(true),
+        ),
+        PiSetting(
+            key = "hideThinkingBlock",
+            title = "隐藏思考块",
+            description = "隐藏对话流里的思考块；思考照常进行，只是不显示。",
+            kind = PiRowKind.Switch,
+            group = G_APPEARANCE,
+            section = "外观",
+            defaultValue = bool(false),
         ),
         // ------------------------------------------------------------------
         // 10 运行时与诊断
@@ -1440,6 +1371,22 @@ object PiSettingsCatalog {
             group = G_RUNTIME,
             section = "动作",
         ),
+        PiSetting(
+            key = "app.runtime.exportJsonl",
+            title = "导出当前会话 JSONL",
+            description = "把当前会话分支原样导出到工作区目录。",
+            kind = PiRowKind.Action,
+            group = G_RUNTIME,
+            section = "动作",
+        ),
+        PiSetting(
+            key = "app.runtime.bugReport",
+            title = "生成本地问题报告",
+            description = "仅在本地生成文本供复制，不会自动上传（会调用一次模型）。",
+            kind = PiRowKind.Action,
+            group = G_RUNTIME,
+            section = "动作",
+        ),
         // Implemented, and each clause of the description is one RPC command:
         // "中止当前轮次" + "清空队列" are `clear_queue` and `abort`
         // (`rpc-mode.ts:428`, `:433`, reached through
@@ -1542,14 +1489,8 @@ object PiSettingsCatalog {
         "retry.provider.timeoutMs" to "pi 读：settings-manager.ts:949 → core/sdk.ts:315（厂商请求超时）",
         "retry.provider.maxRetries" to "pi 读：settings-manager.ts:949 → core/sdk.ts:315（厂商层重试次数）",
         "retry.provider.maxRetryDelayMs" to "pi 读：settings-manager.ts:949 → core/sdk.ts:371（厂商要求的长等待上限）",
-        // 模型四键：pi 自己读（`getDefaultProvider`/`getDefaultModel`/`getDefaultThinkingLevel`/
-        // `getEnabledModels`，core/settings-manager.js:538 起），App 侧不再有读取方 ——
-        // 模型与供应商页走宿主的 `models.config.*` / `auth.*`（SDK 的 ModelRuntime），
-        // 本页只保留为 settings.json 的通用行编辑器。
-        "defaultProvider" to "pi 读：settings-manager.js:538 getDefaultProvider → 建会话时选厂商；App 的模型页经宿主 models.config.* 写，不读这一行的值",
-        "defaultModel" to "pi 读：settings-manager.js 的 getDefaultModel → 建会话时选模型；App 的模型页经宿主 models.config.* 写",
-        "defaultThinkingLevel" to "pi 读：settings-manager.js 的 getDefaultThinkingLevel → 建会话时的思考等级；App 不再读",
-        "enabledModels" to "pi 读：agent-session.js:2050 getEnabledModels（模式匹配已启用模型）；App 不再读",
+        "defaultThinkingLevel" to "pi 读：settings-manager.js 的 getDefaultThinkingLevel → 建会话时的思考等级；内嵌在 ModelsScreen 编辑",
+        "enabledModels" to "pi 读：agent-session.js:2050 getEnabledModels（模式匹配已启用模型）；内嵌在 ModelsScreen 编辑",
         "defaultTools" to "pi 读：settings-manager.ts:1319 → core/sdk.ts:257（建会话时的内建工具选择）",
         "images.autoResize" to "pi 读：settings-manager.ts:1289 → core/agent-session.ts:522 / :2792（附件与 read 的图片缩放）",
         "images.blockImages" to "pi 读：settings-manager.ts:1302 → core/sdk.ts:271（建会话时是否允许图片进入模型）",
@@ -1572,13 +1513,6 @@ object PiSettingsCatalog {
      * a user looks for "what the model is told".
      */
     val groups: List<PiSettingsGroup> = listOf(
-        PiSettingsGroup(G_MODEL, "模型与推理", Icons.Filled.Psychology) { store ->
-            val model = PiSettingsCatalog.summaryText(store, "defaultModel")
-            val row = byKey["defaultModel"]
-            val configured = row != null && row.isExplicit(store)
-            val level = PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
-            if (configured) "默认 $model · ◐ $level" else "未配置模型，启动时再选"
-        },
         PiSettingsGroup(G_PROMPTS, "系统提示词", Icons.Filled.Edit) { store ->
             // 摘要只报**长度**，不报开头：这两项的值是几千字的提示词，截出开头几十
             // 个字既要多一行省略号，又正是用户报的那个 bug 的表象（「只进去几十
@@ -1658,7 +1592,10 @@ object PiSettingsCatalog {
 
     fun group(id: String): PiSettingsGroup? = groups.firstOrNull { it.id == id }
 
-    fun groupTitle(id: String): String = group(id)?.title ?: id
+    fun groupTitle(id: String): String = when (id) {
+        G_MODELS_SCREEN -> "模型与供应商"
+        else -> group(id)?.title ?: id
+    }
 
     /** Rows of one group, in registry order. */
     fun settingsIn(groupId: String): List<PiSetting> = settings.filter { it.group == groupId }

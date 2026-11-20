@@ -14,8 +14,10 @@ export function register(reg, { controller, hub, reg: registry }) {
     // 能力表：App 据此决定哪些入口亮起，而不是硬编码「有没有」。
     capabilities: [
       "ui.dialogs", "ui.widgetFactory", "ui.footer", "ui.header", "ui.custom",
+      "ui.keybindings", "ui.overlayHandle", "ui.autocomplete", "ui.mouse",
       "ui.palette", "ui.cancelNotice", "renderers", "services.packages",
-      "session.replace", "project.trust", "builtin.mcp", "builtin.codemode", "builtin.toolSearch",
+      "session.replace", "project.trust", "http.dispatcher",
+      "builtin.mcp", "builtin.codemode", "builtin.toolSearch",
     ],
   }));
   reg.add("host.ping", () => ({ now: Date.now(), epoch: hub.epoch, seq: hub.seq }));

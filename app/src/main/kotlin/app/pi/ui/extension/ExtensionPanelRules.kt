@@ -49,5 +49,8 @@ internal object SurfaceKeys {
     const val SPACE = " "
     const val PAGE_UP = "\u001b[5~"
     const val PAGE_DOWN = "\u001b[6~"
+    const val HOME = "\u001b[H"
+    const val END = "\u001b[F"
     const val CTRL_C = "\u0003"
+    const val CTRL_D = "\u0004"
 }

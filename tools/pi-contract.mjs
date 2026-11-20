@@ -1719,6 +1719,9 @@ function checkAppTables(piDir) {
 	// gone stale (pi removed the key, or the app started exposing it) fails too, so the
 	// list cannot rot into a description of a state that cannot happen.
 	const UNEXPOSED_SETTINGS_DECISIONS = {
+		// Superseded by dedicated SDK-backed surfaces:
+		defaultProvider: "由「模型与供应商」页经 SDK model.set(persist: true) 读写；旧版「模型与推理」独立设置页已删除",
+		defaultModel: "由「模型与供应商」页经 SDK model.set(persist: true) 读写；旧版「模型与推理」独立设置页已删除",
 		// Superseded by a dedicated surface: the 「扩展与资源 → 扩展包」page installs / updates /
 		// removes through the SDK's DefaultPackageManager (host `packages.*`), which is what
 		// writes this array. A row that edits the array by hand would skip the download step.

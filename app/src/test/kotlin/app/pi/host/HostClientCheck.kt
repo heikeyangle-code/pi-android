@@ -247,11 +247,11 @@ private fun widgets() {
     ev("ui.widget", """{"key":"w","lines":null,"surfaceId":null,"placement":null}""")
     check("清除", r.state.widgets, emptyList<ExtPanel>())
 
-    // 宿主先 paint 再宣布：帧先到，缓存；宣布时补出
-    check("帧先于宣布：没有可见变化", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":1,"lines":["a","b"]}"""), null)
+    // 宿主先 paint 再宣布：帧先到，缓存；宣布时补出（含 surfaceId / interactive）
+    check("帧先于宣布：没有可见变化", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":1,"lines":["a","b"],"interactive":true}"""), null)
     ev("ui.widget", """{"key":"t","lines":null,"surfaceId":"s1","placement":"aboveEditor"}""")
-    check("宣布时补出缓存的帧", r.state.widgets, listOf(ExtPanel("t", listOf("a", "b"), "aboveEditor")))
-    ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["c"]}""")
+    check("宣布时补出缓存的帧", r.state.widgets, listOf(ExtPanel("t", listOf("a", "b"), "aboveEditor", surfaceId = "s1", interactive = true)))
+    ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["c"],"interactive":true}""")
     check("新帧更新", lines("t"), listOf("c"))
     check("旧帧（rev 不增）被忽略", ev("ui.surface", """{"surfaceId":"s1","key":"widget:t","mode":"widget","rev":2,"lines":["old"]}"""), null)
     ev("ui.close", """{"surfaceId":"s1","key":"widget:t","mode":"widget"}""")
@@ -275,7 +275,7 @@ private fun widgets() {
     ev("ui.surface", """{"surfaceId":"h1","key":"header","mode":"header","rev":1,"lines":["H"]}""")
     check("槽：帧先到不显示", r.state.header, null)
     ev("ui.chrome", """{"slot":"header","attached":true,"supported":true,"surfaceId":"h1"}""")
-    check("槽：宣布后显示", r.state.header, ExtPanel("header", listOf("H")))
+    check("槽：宣布后显示", r.state.header, ExtPanel("header", listOf("H"), surfaceId = "h1", interactive = false))
     ev("ui.chrome", """{"slot":"header","attached":false,"supported":true}""")
     check("槽：卸下", r.state.header, null)
     ev("ui.chrome", """{"slot":"editor","attached":true,"supported":false}""")
@@ -283,15 +283,26 @@ private fun widgets() {
     ev("ui.chrome", """{"slot":"editor","attached":false,"supported":false}""")
     check("输入框接管撤销", r.state.editorTakeover, false)
 
-    // custom 表面
+    // custom 表面：支持叠栈 + OverlayHandle.setHidden
     ev("ui.surface", """{"surfaceId":"c1","key":"c1","mode":"custom","rev":1,"lines":["menu"],"overlay":true,"interactive":true}""")
     check("custom 出现", r.state.custom, ExtCustom("c1", true, true, listOf("menu")))
+    ev("ui.surface", """{"surfaceId":"c2","key":"c2","mode":"custom","rev":1,"lines":["sub"],"overlay":true,"interactive":true}""")
+    check("叠加第二个 custom 时顶层为 c2", r.state.custom?.surfaceId to r.state.customStack.size, "c2" to 2)
+    ev("ui.surface", """{"surfaceId":"c2","key":"c2","mode":"custom","rev":2,"lines":["sub"],"overlay":true,"interactive":true,"hidden":true}""")
+    check("顶层 c2 隐藏时自动露出下层 c1", r.state.custom?.surfaceId, "c1")
+    ev("ui.close", """{"surfaceId":"c2","key":"c2","mode":"custom"}""")
     ev("ui.surface", """{"surfaceId":"c1","key":"c1","mode":"custom","rev":2,"lines":["menu2"],"overlay":true,"interactive":true}""")
     check("custom 重绘", r.state.custom?.lines, listOf("menu2"))
     ev("ui.close", """{"surfaceId":"other","key":"x","mode":"custom"}""")
     check("关别的表面不影响当前 custom", r.state.custom?.surfaceId, "c1")
     ev("ui.close", """{"surfaceId":"c1","key":"c1","mode":"custom"}""")
     check("custom 关闭", r.state.custom, null)
+
+    // 工具展开态 & 补全注册数
+    ev("ui.toolsExpanded", """{"expanded":true}""")
+    check("ui.toolsExpanded 更新状态", r.state.toolsExpanded, true)
+    ev("ui.autocomplete", """{"registered":2}""")
+    check("ui.autocomplete 更新数量", r.state.autocompleteCount, 2)
 
     // 状态
     ev("ui.status", """{"key":"b","text":"two"}""")

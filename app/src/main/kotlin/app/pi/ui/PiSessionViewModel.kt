@@ -168,6 +168,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val items: List<PiResponses.CommandCompletion>,
     )
 
+    /** 扩展 `addAutocompleteProvider` 补全链的一次应答。 */
+    data class ExtensionCompletions(
+        val draft: String,
+        val prefix: String,
+        val items: List<app.pi.host.HostCommands.ExtensionCompletion>,
+    )
+
     data class MentionList(
         val query: String,
         val items: List<PiFileMentions.Item>,
@@ -318,6 +325,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         /** The `@` mention list for the token in the composer, if one is open. */
         val mentions: MentionList? = null,
         val argCompletions: ArgCompletions? = null,
+        /** 扩展通过 `ctx.ui.addAutocompleteProvider` 返回的补全候选。 */
+        val extCompletions: ExtensionCompletions? = null,
         /** Label of the long RPC call in flight, for a progress line. */
         val busy: String? = null,
         /**
@@ -2369,6 +2378,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         renderInvalidateJob?.cancel()
         renderInvalidateJob = viewModelScope.launch {
             engine.hostEvents.collect { ev ->
+                if (ev.name == "ui.cancel") {
+                    // 宿主收回一个挂起对话框（超时 / AbortSignal / 会话替换）：立刻移出队列，避免死弹窗滞留屏幕。
+                    val cancelId = (ev.data["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    if (cancelId != null && dialogs.remove(cancelId) != null) {
+                        publishDialogs()
+                    }
+                }
                 if (ev.name == "project.trust.required") {
                     // 官方弹窗：项目里有要信任才加载的东西、又没人表态。事件只发一次，
                     // 错过（界面还没挂上）就再也问不到，所以状态存在这里，由 [ProjectTrustHost] 显示。
@@ -4497,10 +4513,48 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
 
-    /** 键盘 / 文本 → 一个交互式表面（`ctx.ui.custom()` 的组件）。宿主喂给组件的 `handleInput` 后重绘。 */
+    /** 键盘 / 文本 → 一个交互式表面（`ctx.ui.custom()` / 工厂 widget）。宿主喂给组件的 `handleInput` 后重绘。 */
     fun sendSurfaceInput(surfaceId: String, data: String) {
         val commands = session?.commands ?: return
         viewModelScope.launch { runCatching { commands.uiInput(surfaceId, data) } }
+    }
+
+    /** 触控点击 → 组件 `handleMouse`（`ui.mouse`）。 */
+    fun sendSurfaceMouse(surfaceId: String, x: Int, y: Int, width: Int, height: Int) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch { runCatching { commands.uiMouse(surfaceId, x, y, width = width, height = height) } }
+    }
+
+    /** 表面面板尺寸变化 → 同步列数与行数到宿主（`ui.resize`）。 */
+    fun resizeSurface(columns: Int, rows: Int) {
+        if (columns == panelColumns && rows <= 0) return
+        panelColumns = columns
+        panelResizeJob?.cancel()
+        panelResizeJob = viewModelScope.launch {
+            delay(PANEL_RESIZE_DEBOUNCE_MS)
+            runCatching { session?.commands?.uiResize(columns, rows.takeIf { it > 0 }) }
+        }
+    }
+
+    private var editorSyncJob: Job? = null
+    private var lastSyncedEditorText: String? = null
+
+    /** 把聊天输入框内容同步到宿主，让扩展调用 `ctx.ui.getEditorText()` 能拿到真实草稿。 */
+    fun syncEditorState(text: String) {
+        if (text == lastSyncedEditorText) return
+        editorSyncJob?.cancel()
+        editorSyncJob = viewModelScope.launch {
+            delay(150)
+            val commands = session?.commands ?: return@launch
+            lastSyncedEditorText = text
+            runCatching { commands.uiEditorState(text) }
+        }
+    }
+
+    /** 将用户在 App 中切换的工具展开态同步回宿主（`ctx.ui.getToolsExpanded()` 一致）。 */
+    fun setToolsExpandedRemote(expanded: Boolean) {
+        val commands = session?.commands ?: return
+        viewModelScope.launch { runCatching { commands.uiSetToolsExpanded(expanded) } }
     }
 
     /** 用户点 ✕：先 Esc（组件自己收尾、自己 `done()`），它不理就强关；强关会让扩展的 await 以 undefined 返回。 */
@@ -4509,7 +4563,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { commands.uiInput(surfaceId, "\u001b") }
             delay(SURFACE_ESC_GRACE_MS)
-            if (_state.value.ext.custom?.surfaceId == surfaceId) runCatching { commands.uiClose(surfaceId) }
+            if (_state.value.ext.customStack.any { it.surfaceId == surfaceId }) {
+                runCatching { commands.uiClose(surfaceId) }
+            }
         }
     }
 
@@ -4532,6 +4588,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
             },
             currentModel = { _state.value.meta.model?.let { m -> m.provider?.let { it to m.id } } },
+            currentThinking = { _state.value.meta.thinkingLevel },
+            thinkingLevels = {
+                api.getAvailableThinkingLevels().also { lv ->
+                    _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevels = lv))
+                }
+            },
+            setThinking = { level ->
+                api.setThinkingLevel(level)
+                _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevel = level))
+            },
         )
     }
 
@@ -5156,6 +5222,35 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         argCompletionId++
         if (_state.value.argCompletions != null) {
             _state.value = _state.value.copy(argCompletions = null)
+        }
+    }
+
+    private var extCompletionId = 0
+
+    /** 查询扩展通过 `ctx.ui.addAutocompleteProvider` 注册的补全候选（`ui.autocomplete`）。 */
+    fun requestExtensionAutocomplete(draft: String) {
+        val id = ++extCompletionId
+        val commands = session?.commands ?: return
+        viewModelScope.launch {
+            val lines = draft.split('\n')
+            val cursorLine = (lines.size - 1).coerceAtLeast(0)
+            val cursorCol = lines.lastOrNull()?.length ?: 0
+            val reply = runCatching { commands.uiAutocomplete(lines, cursorLine, cursorCol) }.getOrNull() ?: return@launch
+            if (id != extCompletionId) return@launch
+            _state.value = _state.value.copy(
+                extCompletions = if (reply.items.isNotEmpty()) {
+                    ExtensionCompletions(draft = draft, prefix = reply.prefix, items = reply.items)
+                } else {
+                    null
+                },
+            )
+        }
+    }
+
+    fun dismissExtensionAutocomplete() {
+        extCompletionId++
+        if (_state.value.extCompletions != null) {
+            _state.value = _state.value.copy(extCompletions = null)
         }
     }
 
