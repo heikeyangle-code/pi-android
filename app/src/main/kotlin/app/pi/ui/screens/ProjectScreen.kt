@@ -489,12 +489,24 @@ fun ProjectScreen(
 
     // ------------------------------------------------------ 工作区级操作（非文件）
 
+    /** 真的切过去（详见原 KDoc：在 `session.viewModelScope` 上执行，避免离开页面取消重启）。 */
+    fun switchWorkspaceTo(entry: WorkspaceStore.Entry) {
+        session.viewModelScope.launch {
+            when (val result = session.switchWorkspace(entry.name, allowInterrupt = true)) {
+                is WorkspaceSwitch.Ok -> {
+                    crumbs = homeCrumbs
+                    localEdits = emptySet()
+                    refreshTick++
+                }
+                is WorkspaceSwitch.AlreadyCurrent -> say("已经在这个工作区里。")
+                is WorkspaceSwitch.Refused -> Unit
+                is WorkspaceSwitch.Failed -> Unit
+            }
+        }
+    }
+
     /**
-     * 新建工作区。
-     *
-     * 名字是用户起的**目录名**（`WorkspaceChoice.nameProblem` 裁决；留空 = 下一个空闲的
-     * `workspace-N`）；显示名（label）仍是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
-     * 搬进它是两个决定，`WorkspaceStore.create` 的 KDoc 把这条写死了。
+     * 新建工作区并直接切入（若当前回合正跑着则先弹出统一的打断确认，避免建完还要再点一次切换）。
      */
     fun createNewWorkspace(dirName: String = "") {
         scope.launch {
@@ -504,7 +516,6 @@ fun ProjectScreen(
                     val entry = result.entry
                     say("已新建项目 · ${entry.displayName}")
                     refreshTick++
-                    // 建完项目直接切入（若当前回合正跑着则走统一的打断确认，避免建完还要再点一次切换）。
                     when (
                         WorkspaceChoice.decidePick(
                             isCurrent = entry.isCurrent,
@@ -572,45 +583,6 @@ fun ProjectScreen(
                 // `Refused` / `Failed` 的 message 都是给人看的一句话，照原话说。
                 is WorkspaceStore.Delete.Refused -> say(result.message, StateTone.Error)
                 is WorkspaceStore.Delete.Failed -> say(result.message, StateTone.Error)
-            }
-        }
-    }
-
-    /**
-     * 真的切过去。
-     *
-     * 调用点（[WorkspaceRootSheet] 的 `onPick`）**在调它之前就把面板关了**，这不是随手
-     * 关窗：`switchWorkspace` 的四种返回里，`Refused` / `Failed` 的那句话是 VM 推进
-     * `state.notices` 的，而通知是全应用那一条 M3 snackbar（`ExtensionUiHost`），画在
-     * **主窗口**里 —— 面板是一层 `Dialog` 窗口，盖在它上面，面板开着的时候那条通知会
-     * 被盖住、然后在 4 秒后照常被消费掉，用户什么都看不到。先关面板，四种返回才都看得见。
-     * `Failed` 与 `Refused` 因而在这里无事可做：VM 已经把话说完了，屏幕不再拼一句。
-     *
-     * 协程跑在**引擎那个 scope**（`session.viewModelScope`）上，不是这一屏的
-     * `rememberCoroutineScope()`：切换会把旧引擎停掉、再在新目录里起一个，中间有几秒的
-     * 窗口期，而这一屏在用户点「对话」tab 时会被 `PiRoot` 整个卸掉。挂在屏上的 scope 会在
-     * 那一刻把 `host.restart` 从中间取消 —— 旧引擎已经停了、新引擎没起来、`Failed` 那条
-     * 回滚代码也不会执行。VM 自己的 KDoc 要的也正是「从 `viewModelScope` 里调」
-     * （`switchWorkspace` 的 `Call from a main-dispatcher coroutine`），这是同一件事的
-     * 屏幕侧写法。下面那几个非 suspend 的工作区增删改留在本屏 scope 上：它们是一次
-     * `java.io.File` 操作，没有可被取消的中间态。
-     */
-    fun switchWorkspaceTo(entry: WorkspaceStore.Entry) {
-        session.viewModelScope.launch {
-            when (val result = session.switchWorkspace(entry.name, allowInterrupt = true)) {
-                is WorkspaceSwitch.Ok -> {
-                    // 新工作区是一个新的现场：文件浏览回到根目录，这一屏记的「我手工保存过
-                    // 哪些文件」也作废（那些是旧工作区里的路径）。草稿那一半由
-                    // `state.workspace.revision` 在 `ChatScreen` 里清（引擎已经把 revision
-                    // 加一了）。
-                    // 回到**当前工作区**那一层：根现在是 guest 的 `/`，`emptyList()` 会落到根上。
-                    crumbs = homeCrumbs
-                    localEdits = emptySet()
-                    refreshTick++
-                }
-                is WorkspaceSwitch.AlreadyCurrent -> say("已经在这个工作区里。")
-                is WorkspaceSwitch.Refused -> Unit
-                is WorkspaceSwitch.Failed -> Unit
             }
         }
     }
