@@ -505,6 +505,9 @@ export class Controller {
     // `AgentSession.reload()` 自己没有这道闸，重建 runner 会撞上正在跑的一轮，所以所有入口共用这里的判断。
     if (session.isStreaming) return { reloaded: false, reason: "Wait for the current response to finish before reloading." };
     if (session.isCompacting) return { reloaded: false, reason: "Wait for compaction to finish before reloading." };
+    // 官方 `handleReloadCommand` 在 reload 之前先 `resetExtensionUI()`：reload 会换掉所有扩展，旧扩展挂的东西要先收。
+    this.ui.reset();
+    this.hub.emit("ui.reset", {});
     try {
       await session.reload();
       return { reloaded: true };

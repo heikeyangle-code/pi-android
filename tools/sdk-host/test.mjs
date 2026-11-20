@@ -452,9 +452,11 @@ try {
   writeFileSync(join(h.agentDir, "prompts", "user-prompt.md"), "---\ndescription: 用户级提示\nargument-hint: <x>\n---\n你好 $1\n");
   // 重载一完成就发 `catalog.changed`，并且 `catalog.commands` 立刻读到刚加的技能：
   // App 的命令面板靠这条事件刷新（此前四个重载入口各自忘了刷新，面板一直显示旧命令）。
+  const resetEvt = h.waitFor(h.evt("ui.reset", () => true), 60000);
   const changed = h.waitFor(h.evt("catalog.changed", (d) => d.reason === "reload"), 60000);
   await h.call("session.reload", {}, 60000);
   expect("session.reload 之后发出 catalog.changed", !!(await changed.catch(() => null)));
+  expect("session.reload 先发 ui.reset（官方 handleReloadCommand 先 resetExtensionUI）", !!(await resetEvt.catch(() => null)));
   const cat = await h.call("catalog.commands");
   expect("重载后命令表里立刻有新技能", cat.ok && cat.data.commands.some((c) => c.name === "skill:user-skill"), JSON.stringify(cat.error ?? cat.data?.commands?.map((c) => c.name)));
   const ld = await h.call("resources.loaded");

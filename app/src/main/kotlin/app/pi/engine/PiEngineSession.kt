@@ -1500,6 +1500,8 @@ class PiEngineSession(
                     d["message"]?.let { put("message", it) }
                     d["tone"]?.let { put("notifyType", it) }
                 }
+                // 官方 resetExtensionUI 末尾的 updateTerminalTitle()：标题回到默认（空标题 = 回到屏幕自己的名字）。
+                "ui.reset" -> legacyObj { put("method", JsonPrimitive("setTitle")) }
                 "ui.title" -> legacyObj {
                     put("method", JsonPrimitive("setTitle"))
                     d["title"]?.let { put("title", it) }
