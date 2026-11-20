@@ -53,7 +53,6 @@ fun ErrorBlock(
             color = palette.toolErrorBg,
             borderColor = palette.error.copy(alpha = 0.34f),
             padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            modifier = Modifier.animateContentSize(animationSpec = tween(160)),
         ) {
             ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }, enabled = expandable) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

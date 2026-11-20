@@ -84,9 +84,7 @@ fun CompactionBlock(
             // is the family's convention in this app — applied for the same reason the other
             // three have it, so the four cards are one component.
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
-            modifier = Modifier
-                .animateContentSize(animationSpec = tween(180))
-                .toggleContent(expanded, { expanded = !expanded }),
+            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // 失败用错误色、中止用警告色：状态一眼看出，不必读字。

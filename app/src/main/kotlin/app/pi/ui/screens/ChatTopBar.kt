@@ -97,15 +97,17 @@ internal fun ChatTopBar(
     val tone = engineStateTone(engineLabel)
     val engineDotColor = stateToneColor(tone, palette)
     val isActiveWork = tone == StateTone.Warning
-    val dotAlpha = if (isActiveWork) {
+    // State 本身往下传，只在 graphicsLayer 里读：以前在组合里读 `.value`，引擎工作期间整条顶栏
+    // 每帧重组一次（60 次/秒），现在只重绘那一个点。
+    val dotAlpha: androidx.compose.runtime.State<Float>? = if (isActiveWork) {
         rememberInfiniteTransition(label = "engine-dot").animateFloat(
             initialValue = 0.35f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
             label = "engine-dot-alpha",
-        ).value
+        )
     } else {
-        1f
+        null
     }
     val widePhone = LocalConfiguration.current.screenWidthDp >= 360
 
@@ -135,7 +137,7 @@ internal fun ChatTopBar(
                 Box(
                     modifier = Modifier
                         .size(8.dp)
-                        .graphicsLayer { alpha = dotAlpha }
+                        .graphicsLayer { alpha = dotAlpha?.value ?: 1f }
                         .clip(CircleShape)
                         .background(engineDotColor)
                         .semantics { contentDescription = "引擎：$engineLabel" },

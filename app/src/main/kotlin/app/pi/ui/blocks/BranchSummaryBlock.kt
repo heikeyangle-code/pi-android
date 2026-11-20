@@ -57,7 +57,6 @@ fun BranchSummaryBlock(
         BlockCard(
             color = palette.customMessageBg,
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
-            modifier = Modifier.animateContentSize(animationSpec = tween(180)),
         ) {
             Row(
                 modifier = Modifier

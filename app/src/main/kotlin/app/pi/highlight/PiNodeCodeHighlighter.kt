@@ -155,6 +155,11 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
     /** Diagnostics for the settings/diagnostics surface; never used on a hot path. */
     fun lastFailure(): String? = client?.lastFailure
 
+    /** 清空高亮结果缓存（会话切换或内存紧张时调用）。 */
+    fun clear() {
+        synchronized(cacheLock) { cache.clear() }
+    }
+
     /**
      * The attached client, or `null` before [attach].
      *

@@ -308,7 +308,12 @@ internal class PiGuestImageTransformer(
         )
     }.getOrNull()
 
-    private companion object {
+    companion object {
+
+        /** 清空解码位图缓存（保留比例记忆，系统内存紧张时由 `PiMemoryTrimmer` 调用）。 */
+        internal fun clearBitmapCache() {
+            synchronized(cache) { cache.clear() }
+        }
 
         /**
          * 按可用宽度铺开。`ImageData.modifier` 是数据类的一个字段，所以要的是一个常量，

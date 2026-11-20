@@ -165,8 +165,12 @@ fun SessionsScreen(
     var renaming by remember { mutableStateOf<SessionSummary?>(null) }
     var viewIndex by rememberSaveable { mutableIntStateOf(initialView.ordinal) }
     var menuOpen by remember { mutableStateOf(false) }
-    // 搜索框默认收起；收起时清掉查询 —— 否则列表会被一个看不见的过滤条件筛着。
-    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    // 搜索框默认收起，但如果 ViewModel 里还保留着上一次的搜索词（例如从会话回到列表），
+    // 自动展开搜索栏，避免出现「搜索框是关的、列表却被隐藏过滤词筛空」的幽灵过滤 bug。
+    var searchOpen by rememberSaveable { mutableStateOf(list.query.query.isNotEmpty()) }
+    LaunchedEffect(list.query.query) {
+        if (list.query.query.isNotEmpty() && !searchOpen) searchOpen = true
+    }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
     LaunchedEffect(initialView) { viewIndex = initialView.ordinal }
 
@@ -377,6 +381,7 @@ fun SessionsScreen(
             ) {
                 SessionSearchField(
                     query = list.query.query,
+                    loading = list.loading && list.query.query.isNotBlank(),
                     onChange = session::setSessionQuery,
                     error = list.queryError,
                 )
@@ -424,60 +429,24 @@ fun SessionsScreen(
                             bottom = SESSIONS_LIST_BOTTOM_RESERVE,
                         ),
                     ) {
-                        groups.forEach { group ->
-                            // 搜索时不折叠：命中的行不能被藏起来。
-                            val collapsed = group.cwd in collapsedGroups && !searching
-                            item(key = "hdr:${group.cwd}") {
-                                WorkspaceGroupHeader(
-                                    label = group.label,
-                                    count = group.rows.size,
-                                    current = group.current,
-                                    collapsed = collapsed,
-                                    // 卡里没有行（空的当前工作区 / 折叠）时头自己就是整张卡。
-                                    alone = collapsed || group.rows.isEmpty(),
-                                    onToggle = {
-                                        collapsedGroups = if (group.cwd in collapsedGroups) collapsedGroups - group.cwd else collapsedGroups + group.cwd
-                                    },
-                                    onNewSession = if (group.current) {
-                                        {
-                                            session.newSession()
-                                            onOpenChat()
-                                        }
-                                    } else null,
+                        if (searching) {
+                            // 对照官方 SDK `session-selector.js:306`：搜索态平铺展示，严格保留官方相关度/时间排序，
+                            // 不按工作区重新打散分组，并在每行显示所属工作区标签。
+                            itemsIndexed(rows, key = { _, r -> r.file.absolutePath }) { index, summary ->
+                                val wsLabel = WorkspaceChoice.sessionGroupLabel(
+                                    summary.cwd.trimEnd('/'),
+                                    workspacesRoot,
+                                    workspaceLabels,
                                 )
-                            }
-                            if (collapsed) {
-                                item(key = "gap:${group.cwd}") { Spacer(Modifier.height(PiSettingsMetrics.rowGap)) }
-                                return@forEach
-                            }
-                            if (group.rows.isEmpty()) {
-                                item(key = "empty:${group.cwd}") {
-                                    Text(
-                                        "这个工作区还没有会话",
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = PiSettingsMetrics.pageHorizontal)
-                                            .clip(sessionCardShape(first = false, last = true))
-                                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                            .padding(
-                                                start = PiSettingsMetrics.rowPaddingHorizontal,
-                                                end = PiSettingsMetrics.rowPaddingHorizontal,
-                                                bottom = PiSettingsMetrics.rowPaddingVertical,
-                                            ),
-                                        style = PiTheme.text.meta,
-                                        color = PiTheme.palette.muted,
-                                    )
-                                }
-                            }
-                            itemsIndexed(group.rows, key = { _, r -> r.file.absolutePath }) { index, summary ->
                                 SessionListRow(
                                     summary = summary,
                                     active = summary.isCurrent || (activeFile != null && summary.file.name == activeFile),
-                                    tree = tree,
-                                    last = index == group.rows.lastIndex,
+                                    tree = false,
+                                    first = index == 0,
+                                    last = index == rows.lastIndex,
                                     showPath = list.showPath,
-                                    // 树里父子关系已经由缩进说了，不再重复写「来自」。
-                                    forkedFrom = if (tree) null else forkParentNames[summary.file.absolutePath],
+                                    forkedFrom = forkParentNames[summary.file.absolutePath],
+                                    workspaceTag = wsLabel,
                                     onOpen = {
                                         session.switchSession(summary)
                                         onOpenChat()
@@ -485,7 +454,70 @@ fun SessionsScreen(
                                     onLongPress = { actions = summary },
                                 )
                             }
-                            item(key = "gap:${group.cwd}") { Spacer(Modifier.height(PiSettingsMetrics.rowGap)) }
+                        } else {
+                            groups.forEach { group ->
+                                val collapsed = group.cwd in collapsedGroups
+                                item(key = "hdr:${group.cwd}") {
+                                    WorkspaceGroupHeader(
+                                        label = group.label,
+                                        count = group.rows.size,
+                                        current = group.current,
+                                        collapsed = collapsed,
+                                        // 卡里没有行（空的当前工作区 / 折叠）时头自己就是整张卡。
+                                        alone = collapsed || group.rows.isEmpty(),
+                                        onToggle = {
+                                            collapsedGroups = if (group.cwd in collapsedGroups) collapsedGroups - group.cwd else collapsedGroups + group.cwd
+                                        },
+                                        onNewSession = if (group.current) {
+                                            {
+                                                session.newSession()
+                                                onOpenChat()
+                                            }
+                                        } else null,
+                                    )
+                                }
+                                if (collapsed) {
+                                    item(key = "gap:${group.cwd}") { Spacer(Modifier.height(PiSettingsMetrics.rowGap)) }
+                                    return@forEach
+                                }
+                                if (group.rows.isEmpty()) {
+                                    item(key = "empty:${group.cwd}") {
+                                        Text(
+                                            "这个工作区还没有会话",
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+                                                .clip(sessionCardShape(first = false, last = true))
+                                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                                .padding(
+                                                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                                                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                                                    bottom = PiSettingsMetrics.rowPaddingVertical,
+                                                ),
+                                            style = PiTheme.text.meta,
+                                            color = PiTheme.palette.muted,
+                                        )
+                                    }
+                                }
+                                itemsIndexed(group.rows, key = { _, r -> r.file.absolutePath }) { index, summary ->
+                                    SessionListRow(
+                                        summary = summary,
+                                        active = summary.isCurrent || (activeFile != null && summary.file.name == activeFile),
+                                        tree = tree,
+                                        first = false,
+                                        last = index == group.rows.lastIndex,
+                                        showPath = list.showPath,
+                                        // 树里父子关系已经由缩进说了，不再重复写「来自」。
+                                        forkedFrom = if (tree) null else forkParentNames[summary.file.absolutePath],
+                                        onOpen = {
+                                            session.switchSession(summary)
+                                            onOpenChat()
+                                        },
+                                        onLongPress = { actions = summary },
+                                    )
+                                }
+                                item(key = "gap:${group.cwd}") { Spacer(Modifier.height(PiSettingsMetrics.rowGap)) }
+                            }
                         }
                         item(key = "hint") {
                             Text(
@@ -662,8 +694,10 @@ fun SessionsScreen(
     }
 }
 
-/** 顶栏右侧的文字：只有「手上没有行、正在读」才说进度；有行时后台刷新不出声。 */
+/** 顶栏右侧的文字：搜索加载中给出明确提示，首次读取展示进度，平时展示匹配数/总数。 */
 private fun sessionCountText(list: app.pi.ui.PiSessionViewModel.SessionListState): String = when {
+    list.loading && list.query.query.isNotBlank() && list.loadTotal > 0 -> "搜索 ${list.loaded}/${list.loadTotal}"
+    list.loading && list.query.query.isNotBlank() -> "搜索中…"
     list.rows.isEmpty() && list.loading && list.loadTotal > 0 -> "读取 ${list.loaded}/${list.loadTotal}"
     list.rows.isEmpty() && list.loading -> "读取中…"
     list.total > list.rows.size -> "${list.rows.size}/${list.total} 条"
@@ -716,8 +750,13 @@ private fun SessionsEmpty(
  * 语法有误时（坏正则）把原因写在同一位置，官方此时列表为空，这里多说一句为什么。
  */
 @Composable
-private fun SessionSearchField(query: String, onChange: (String) -> Unit, error: String?) {
+private fun SessionSearchField(query: String, loading: Boolean, onChange: (String) -> Unit, error: String?) {
     val focus = remember { FocusRequester() }
+    // 本地持有输入文本，只在外部清空时同步：避免后台全文搜索结果回流触发重组时打断中文拼音 IME 组合态。
+    var localInput by remember { mutableStateOf(query) }
+    LaunchedEffect(query) {
+        if (query.isEmpty() && localInput.isNotEmpty()) localInput = ""
+    }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Column(
         modifier = Modifier
@@ -746,22 +785,35 @@ private fun SessionSearchField(query: String, onChange: (String) -> Unit, error:
                     tint = PiTheme.palette.muted,
                 )
                 Box(Modifier.weight(1f)) {
-                    if (query.isEmpty()) {
+                    if (localInput.isEmpty()) {
                         Text("搜索名字、内容、目录", style = PiTheme.text.monoSmall, color = PiTheme.palette.muted)
                     }
                     BasicTextField(
-                        value = query,
-                        onValueChange = onChange,
+                        value = localInput,
+                        onValueChange = { next ->
+                            localInput = next
+                            onChange(next)
+                        },
                         modifier = Modifier.fillMaxWidth().focusRequester(focus),
                         singleLine = true,
                         textStyle = PiTheme.text.monoSmall.copy(color = MaterialTheme.colorScheme.onSurface),
                         cursorBrush = SolidColor(PiTheme.palette.accent),
                     )
                 }
-                if (query.isNotEmpty()) {
+                if (loading) {
+                    Text(
+                        "索引中…",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.accent,
+                    )
+                }
+                if (localInput.isNotEmpty()) {
                     Text(
                         "清除",
-                        modifier = Modifier.clickable { onChange("") },
+                        modifier = Modifier.clickable {
+                            localInput = ""
+                            onChange("")
+                        },
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.muted,
                     )
@@ -798,9 +850,11 @@ private fun SessionListRow(
     summary: SessionSummary,
     active: Boolean,
     tree: Boolean,
+    first: Boolean = false,
     last: Boolean,
     showPath: Boolean,
     forkedFrom: String?,
+    workspaceTag: String? = null,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -812,7 +866,7 @@ private fun SessionListRow(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = PiSettingsMetrics.pageHorizontal)
-            .clip(sessionCardShape(first = false, last = last))
+            .clip(sessionCardShape(first = first, last = last))
             .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(
@@ -896,6 +950,7 @@ private fun SessionListRow(
                             )
                         }
                         if (named) SessionTag("已命名")
+                        if (!workspaceTag.isNullOrBlank()) SessionTag(workspaceTag)
                         if (forkedFrom != null) {
                             SessionTag(if (forkedFrom.length > SESSIONS_TAG_NAME_MAX) "分支" else "来自 $forkedFrom")
                         }

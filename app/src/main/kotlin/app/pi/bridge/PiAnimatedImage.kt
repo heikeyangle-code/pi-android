@@ -49,6 +49,8 @@ internal object PiAnimatedImages {
 
     fun get(link: String): ByteArray? = synchronized(map) { map[link] }
 
+    fun clear() = synchronized(map) { map.clear() }
+
     /** GIF（含多帧）/ 带 ANIM 块的 WebP / 带 acTL 块的 PNG。单帧 GIF 也走动图路径，无害。 */
     fun isAnimated(b: ByteArray): Boolean {
         if (b.size < 16) return false

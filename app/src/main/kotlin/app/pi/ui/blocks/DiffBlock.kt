@@ -128,9 +128,7 @@ fun DiffBlock(
             ToolRailFrame {
                 BlockCard(
                     color = palette.toolPendingBg,
-                    modifier = Modifier
-                        .animateContentSize(animationSpec = tween(160))
-                        .toggleContent(expanded, { expanded = !expanded }),
+                    modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                     borderColor = palette.borderMuted.copy(alpha = 0.45f),
                     padding = ToolCardRowPadding,
                     shape = TOOL_CARD_SHAPE,

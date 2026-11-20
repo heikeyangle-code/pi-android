@@ -1122,199 +1122,81 @@ object PiSettingsCatalog {
             ),
         ),
         // ------------------------------------------------------------------
-        // 10 运行时与诊断
+        // 10 运行时与诊断（精简版：只保留有实际价值的状态、引擎选择、官方启动开关与维护动作）
         // ------------------------------------------------------------------
-
-        // The seven `app.device.*` rows lived here and were the *only* occurrence
-        // of those keys: the enforcement and the real switches both read
-        // `DeviceCapabilityStore`'s SharedPreferences
-        // (`DeviceCapabilityStore.kt:61-96`, reached from the 设备能力 entry row on
-        // SettingsHome), so editing a row here wrote a JSON value no code
-        // consulted — two screens for one grant, only one connected. The real
-        // screen is the single authority now.
 
         PiSetting(
             key = "app.runtime.piVersion",
             title = "pi 版本",
-            description = "当前内置的 pi 版本；读不到时会写明原因。",
+            description = "内置 pi SDK 版本。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时状态",
+            section = "状态",
             defaultValue = str("未读取"),
             readOnly = true,
         ),
-        // `app.runtime.checkUpdate` and `app.runtime.rollback` used to sit here and
-        // were removed on purpose. pi's own check is a network call the app turns
-        // off deliberately (`PiEngineHost.kt:305-306` sets `PI_SKIP_VERSION_CHECK`,
-        // because a phone app should not make it behind the user's back), and its
-        // replacement, `pi update --self`, is an npm self-update
-        // (`package-manager-cli.ts:1033-1068`) that this app's engine cannot use:
-        // the engine is an APK payload that `RuntimeProvisioner` extracts over the tree
-        // (`extractEngine`) whenever the packaged engine's own digest changes, so an
-        // in-guest update is overwritten the next time that payload moves. pi has no
-        // rollback at all (no such subcommand in `cli.ts` /
-        // `package-manager-cli.ts`). The read-only 「pi 版本」 row above is what
-        // tells the user which version they are on.
         PiSetting(
             key = "app.runtime.nodeVersion",
             title = "Node 版本",
-            description = "内置运行时里的 Node 版本；读不到时会写明原因。",
+            description = "内置 Node 运行时版本。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时状态",
+            section = "状态",
             defaultValue = str("未读取"),
             readOnly = true,
         ),
         PiSetting(
             key = "app.runtime.rootfsUsage",
             title = "运行时占用",
-            // 口径必须与实现一致（`RuntimeFacts.runtimeUsage`）：它量的是 <files>/pi/runtime
-            // **整棵目录** —— 解包出来的 Linux 系统树（里面包含 agent 目录：npm 包、会话文件）、
-            // proot 的临时目录、载荷记账文件；不跟随符号链接，按已分配块数计（不是表观大小）。
-            // 原来的文案写「与包缓存的磁盘占用」，既没说清是整棵树，也没说会话也在里面。
-            description = "运行时目录实际占用（含系统树与临时目录）。",
+            description = "运行时目录实际磁盘占用。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时状态",
+            section = "状态",
             defaultValue = str("未读取"),
             readOnly = true,
         ),
-        PiSetting(
-            key = "app.runtime.engineStartup",
-            title = "引擎启动耗时",
-            description = "上一次引擎从启动到能响应命令的用时。",
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = "运行时状态",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
-        PiSetting(
-            key = "app.runtime.wakeLock",
-            title = "唤醒锁状态",
-            // The policy changed with this row's wording: the lock is held while the
-            // engine starts or a turn runs, and released when idle (`PiEngineLifecyclePolicy`),
-            // so "未持有" while the app sits idle is normal — the old text ("最长 6
-            // 小时") described the old always-held lock and would now read as a fault.
-            description = "引擎忙时保持唤醒，空闲自动释放。",
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = "运行时状态",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
-
-        // ------------------------------------------------------------------
-        // 运行时选择（proroot）—— 开关与它的派生读数**同属一节、上下紧挨**：它们是
-        // 同一个功能的两半（控件在上、结果紧贴在下）。拆到两节里曾让用户以为下面那行
-        // 在说另一件事（「关掉 Pro Root 为什么要写着未开启」）——那一行的值现在也永远
-        // 先写「实际在跑的那个运行时」，原因跟在括号里。
-        //
-        // 这两行是本应用自己的状态，**不写进 pi 的 settings.json**：它决定用哪个二进制
-        // 启动 guest，在 pi 存在之前就要定下来，pi 那边没有读者。值由
-        // `AppOnlySettingsStore` 拦下，落在 `RuntimePreferences`（SharedPreferences，
-        // 与 `DeviceCapabilityStore` 同一种存法）。行仍然放在注册表里，因为
-        // 「运行时与诊断」正是用户找它的地方。
-        //
-        // 文案必须诚实，四件事缺一不可：实验性 / 默认关 / 不可用时自动回退 proot /
-        // 装机与维护始终 proot；再加两条已知取舍：闭源不可审计、提速幅度未量化
-        // （`docs/proroot-research.md` §2.3 只有 DSHA 自己的一组数字，机型还不同）。
-        //
-        // `effective = AutoRestartEngine`：这个开关**自己**会重启引擎来换运行时
-        // （`AppOnlySettingsStore.write` 清结论 → `PiSessionViewModel.onSettingWritten`
-        // → `RuntimeSwitchAction` 的判定），所以徽标是「自动重启引擎」——「需重启引擎」
-        // 会让用户以为还要自己动手，而那正是他要修掉的东西（「为什么还要退出软件重进呢」）。
-        // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.engine",
-            title = "运行时",
-            // 三选一，随时自由切换，选完当场探针并重启引擎。每个选项各自的状态写在下面
-            // 「各运行时状态」那一行里（选之前就能看到：可用 / 缺组件 / 探针没过 / 失败 N 次）。
-            // 装机、更新、维护永远用 proot，选的运行时不可用时也自动回退 proot。
-            description = "proot 最稳；proroot 闭源；tawcroot 开源。",
+            title = "运行时引擎",
+            description = "proot 最稳；proroot / tawcroot 为实验性加速。",
             kind = PiRowKind.Value,
             group = G_RUNTIME,
-            section = "运行时选择",
+            section = "引擎",
             defaultValue = str("proot"),
             options = choices(
-                "proot" to "proot（默认，最兼容）",
-                "proroot" to "proroot（闭源，实验性）",
-                "tawcroot" to "tawcroot（开源，实验性）",
+                "proot" to "proot（默认）",
+                "proroot" to "proroot（实验）",
+                "tawcroot" to "tawcroot（实验）",
             ),
             effective = EffectiveKind.AutoRestartEngine,
         ),
         PiSetting(
             key = "app.runtime.prorootStatus",
-            title = "运行时（实际生效）",
-            // 值先说「在跑哪个运行时」，原因跟在括号里——这一行答的是「在跑哪个」，不是
-            // 「开关在哪一档」；`RuntimeChoice.describe` 的那组句子因此全部改成了这个形状。
-            // 值下面还会列出探针逐阶段的原始判读：说明文字必须指向那两块内容，否则用户仍然
-            // 不知道「探针未通过」到底卡在哪一步（缺陷原形：开关开着，行上只有半句话，
-            // 唯一能看到证据的地方是导出的报告）。
-            description = "这次用的运行时；没用上时括号里写原因。",
+            title = "当前生效",
+            description = "实际运行中的引擎及回退原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时选择",
+            section = "引擎",
             defaultValue = str("未读取"),
             readOnly = true,
         ),
-        PiSetting(
-            key = "app.runtime.engineMatrix",
-            title = "各运行时状态",
-            // 一行摘要，逐个运行时的明细（可用 / 缺组件 / 探针 / 失败次数）在行下面。
-            description = "三个运行时现在各自能不能用。",
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = "运行时选择",
-            defaultValue = str("未读取"),
-            readOnly = true,
-        ),
-
-        // ------------------------------------------------------------------
-        // 进程开关（pi 的启动参数 / 环境变量）
-        //
-        // 这里的每一行都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
-        // （`core/settings-manager.ts:110-163` 的 `Settings` 里没有 offline /
-        // cacheRetention / noContextFiles / noExtensions / noSkills /
-        // noPromptTemplates / noThemes），
-        // 所以键是我们自己的（`app.` 前缀），值由 App 组进 `PiLaunchOptions`
-        // （`rpc/PiLaunchOptions.kt`）在启动 `pi --mode rpc` 时传下去 —— 这与 pi
-        // 的 CLI 参数一一对应，表的权威副本是 `rpc/PiPreSpawnConfig.kt`：
-        //   `--offline`（`cli/args.ts:223`，等价 `PI_OFFLINE=1`，`:433`）
-        //   `PI_CACHE_RETENTION=long`（`packages/ai/src/api/anthropic-messages.ts:64`）
-        //   `--no-context-files`（`:194`）
-        //   `--no-extensions` / `--no-skills` / `--no-prompt-templates` / `--no-themes`
-        //   （`:169` / `:188` / `:190` / `:192`）
-        // 四个 `--no-*` 与 pi **1:1**：pi 只停「发现」，显式 `-e` / `--skill` /
-        // `--prompt-template` / `--theme` 仍然生效（`core/resource-loader.ts:452` /
-        // `:468` / `:483` / `:502`；帮助文本 `:303`）。**本应用一个显式路径都不传**，
-        // 所以打开「停用扩展发现」时随包扩展也一起停。要「只关别人的、留下自带的」
-        // 是另一个 app 侧功能，不靠 `-e` 绕过这个旗标。
-        // 因为进程启动后这些值不再变（值是 App 读 settings 后写进 argv/env 的，
-        // 新会话不会重读 argv），`effective` 必须是 `RestartEngine`（界面标签
-        // 「需重启引擎」），每一行的说明里写明需要重启引擎。
-        //
-        // 系统提示词那两行**不在这里**（它们在 2 提示词组）：它们既不是 pi 的 settings
-        // 键，也不再是启动参数 —— 它们是 pi 自己的两个文件，改完新会话就生效
-        // （`ui/PromptFileSettingsStore.kt`）。本节仍然是「引擎怎么跑」。
-        // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.offline",
             title = "离线模式",
-            description = "关闭启动时的联网检查、包更新与遥测；模型照常联网。",
+            description = "关闭启动联网检查与更新；模型正常联网。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
         ),
         PiSetting(
             key = "app.runtime.cacheRetention",
             title = "缓存保留策略",
-            description = "向厂商申请更长提示缓存。",
+            description = "向模型服务商申请更长的提示缓存。",
             kind = PiRowKind.Value,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
             defaultValue = str("short"),
             effective = EffectiveKind.RestartEngine,
             options = choices(
@@ -1323,128 +1205,89 @@ object PiSettingsCatalog {
             ),
         ),
         PiSetting(
-            key = "app.runtime.noContextFiles",
-            title = "不加载上下文文件",
-            description = "不读工作区的上下文文件。",
+            key = "app.runtime.keepAlive",
+            title = "后台保活",
+            description = "空闲时维持前台服务，防止系统回收引擎。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
+            defaultValue = bool(true),
+            effective = EffectiveKind.RestartApp,
+        ),
+        PiSetting(
+            key = "app.runtime.noContextFiles",
+            title = "不加载上下文文件",
+            description = "跳过工作区 AGENTS.md / CLAUDE.md。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "启动选项",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
         ),
-        // The four discovery suppressions. They are here (rather than beside the
-        // 扩展与资源 rows they affect) because what they change is *how the engine is
-        // launched*, not what a resource list contains — and because the next tap after
-        // them is 「重启引擎」, which is the only way they take effect.
         PiSetting(
             key = "app.runtime.noExtensions",
             title = "停用扩展发现",
-            description = "连 pi 自带扩展一起停。",
+            description = "启动时不自动加载任何扩展。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
         ),
         PiSetting(
             key = "app.runtime.noSkills",
             title = "停用技能发现",
-            description = "不发现、不加载技能。",
+            description = "启动时不自动加载技能。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
         ),
         PiSetting(
             key = "app.runtime.noPromptTemplates",
             title = "停用提示模板发现",
-            description = "不发现、不加载提示模板。",
+            description = "启动时不自动加载提示模板。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
         ),
         PiSetting(
             key = "app.runtime.noThemes",
             title = "停用主题发现",
-            description = "不发现、不加载主题。",
+            description = "启动时不自动加载外部主题。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "启动选项",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
-        ),
-        // `app.runtime.cleanNpmCache` was removed rather than wired: pi has no
-        // cache-clearing command (nothing in `cli.ts` or `package-manager-cli.ts`
-        // touches an npm store), and the app has no console that could call
-        // `npm cache clean` in the guest — the only surfaces that run guest
-        // commands are the engine's argv (`PiEngineHost`) and the PTY terminal.
-        // A row whose button cleans nothing is exactly the defect §I2 records.
-        // The 「rootfs 占用」 row above still reports how much space is in use.
-        PiSetting(
-            key = "app.runtime.keepAlive",
-            title = "后台保活",
-            description = "空闲时也让引擎活着（前台服务保活）。回合进行中始终保活，关掉它不会让长构建被系统回收。",
-            kind = PiRowKind.Switch,
-            group = G_RUNTIME,
-            section = "进程",
-            defaultValue = bool(true),
-            effective = EffectiveKind.RestartApp,
         ),
         PiSetting(
             key = "app.runtime.restartEngine",
             title = "重启引擎",
-            description = "重启让上面的开关生效；会终止进行中的回合。",
+            description = "使启动选项生效（会终止当前回合）。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
-            section = "动作",
+            section = "维护与诊断",
             dangerous = true,
         ),
-        // 为线上事故加的入口：界面只显示 "rpc: engine exited with code 1"，而用户没有
-        // ADB、看不到 logcat，`PiEngineSession` 捕获的 stderr 又只留在已经死掉的对象里。
-        // 这一行把「App 此刻还能读到的一切」汇总成一份纯文本，交给 Download 或系统分享，
-        // 而不是塞进对话上下文（`DiagnosticsReport` 的 KDoc 写了为什么）。它是 Action 行
-        // 而不是开关：没有值可写，也没有 pi 侧的对应键。引擎已经退出时同样可用 —— 报告里
-        // 的引擎部分来自退出瞬间的抓取，不依赖引擎活着。
         PiSetting(
             key = "app.runtime.diagnostics",
             title = "导出诊断报告",
-            description = "导出引擎失败、运行时与设备信息；引擎退出后也能用。",
+            description = "汇总引擎日志与设备环境，引擎退出后仍可用。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
-            section = "动作",
+            section = "维护与诊断",
         ),
-        PiSetting(
-            key = "app.runtime.exportJsonl",
-            title = "导出当前会话 JSONL",
-            description = "把当前会话分支原样导出到工作区目录。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "动作",
-        ),
-        PiSetting(
-            key = "app.runtime.bugReport",
-            title = "生成本地问题报告",
-            description = "仅在本地生成文本供复制，不会自动上传（会调用一次模型）。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "动作",
-        ),
-        // Implemented, and each clause of the description is one RPC command:
-        // "中止当前轮次" + "清空队列" are `clear_queue` and `abort`
-        // (`rpc-mode.ts:428`, `:433`, reached through
-        // `PiEngineSession.stopAndDrainQueue` `:480-486`), and "杀掉全部后台 bash
-        // 作业" is `abort_bash` (`rpc-mode.ts:586`), which aborts every running
-        // bash command rather than one (`agent-session.ts:3073-3077`).
         PiSetting(
             key = "app.security.emergencyStop",
             title = "紧急停止",
-            description = "中止本轮、停命令、清空队列。",
+            description = "中止当前回合、停止后台命令并清空队列。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
-            section = "动作",
+            section = "维护与诊断",
             dangerous = true,
         ),
         // ------------------------------------------------------------------

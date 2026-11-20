@@ -444,30 +444,6 @@ fun PiSettingsStack(
             }
         },
         "app.tools.manageLive" to { liveToolsOpen = true },
-        "app.runtime.exportJsonl" to {
-            val api = advanced()
-            if (api == null) {
-                actionNote = "导出 JSONL" to "引擎未运行，启动后再导出当前会话。"
-            } else {
-                scope.launch {
-                    runCatching { api.exportJsonl() }
-                        .onSuccess { path -> actionNote = "导出 JSONL" to "已导出到：$path" }
-                        .onFailure { actionNote = "导出 JSONL" to "导出失败：${it.message}" }
-                }
-            }
-        },
-        "app.runtime.bugReport" to {
-            val api = advanced()
-            if (api == null) {
-                actionNote = "生成本地问题报告" to "引擎未运行，启动后再生成。"
-            } else {
-                scope.launch {
-                    runCatching { api.bugReport() }
-                        .onSuccess { report -> textSheet = "本地问题报告" to report.ifBlank { "（空）" } }
-                        .onFailure { actionNote = "生成本地问题报告" to "生成失败：${it.message}" }
-                }
-            }
-        },
     )
 
     BackHandler(enabled = true) {

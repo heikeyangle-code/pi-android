@@ -474,7 +474,6 @@ internal fun ExtensionChromeBanner(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .animateContentSize()
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), shape)
@@ -526,7 +525,6 @@ internal fun ExtensionPanelCard(
     BlockCard(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier
-            .animateContentSize()
             .then(
                 when {
                     canExpand -> Modifier.toggleContent(expanded, { expanded = !expanded })

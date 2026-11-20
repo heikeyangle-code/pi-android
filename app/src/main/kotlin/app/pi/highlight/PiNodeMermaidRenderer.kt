@@ -112,6 +112,11 @@ internal object PiNodeMermaidRenderer {
         memo.put(source, mode, answer)
         return answer
     }
+
+    /** 清空 Mermaid 渲染缓存（内存紧张时调用）。 */
+    fun clear() {
+        memo.clear()
+    }
 }
 
 /**

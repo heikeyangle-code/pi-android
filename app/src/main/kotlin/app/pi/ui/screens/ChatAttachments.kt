@@ -16,13 +16,20 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.util.Base64
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -31,11 +38,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiImage
 import app.pi.ui.chat.PiFileMentions
+import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.sync.withPermit
 
@@ -525,12 +539,22 @@ internal fun compressAttachment(
         return PiImage(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)
     }
 
-    val source = BitmapFactory.decodeByteArray(
-        bytes,
-        0,
-        bytes.size,
-        BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
-    ) ?: return null
+    // 50MP/108MP 手机相机原图若不设 inSampleSize 直接全分辨率解成 ARGB_8888，单张就需要
+    // 200~400 MB 堆内存，中端机直接 OOM。这里按 2 的幂次安全预采样：只要解出来的像素仍
+    // 至少保留目标尺寸的 2 倍（例如目标 2000px → 至少保留 4000px），既为双线性缩小保留充足
+    // 超采样细节，又能把 50MP~200MP 照片的峰值内存压低 4~16 倍。
+    val sampleSize = computeSafeSampleSize(storedWidth, storedHeight, limits)
+    val source = runCatching {
+        BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+                inSampleSize = sampleSize
+            },
+        )
+    }.getOrNull() ?: return null
     // 摆正发生在**进入 3/4 + 质量阶梯循环之前**，与 pi 同序（`:74-76` 在 `:126-154` 之前）。
     val oriented = applyOrientation(source, transform)
     if (oriented == null) {
@@ -538,15 +562,15 @@ internal fun compressAttachment(
         return null
     }
     try {
-        // 候选顺序不看源：pi 对每一个进循环的源都先推 PNG，装不下再走 JPEG 阶梯
-        // （`AttachmentBudget.encodings`，两笔价钱写在那里的类 KDoc 里）。所以这里不再传 MIME，
-        // 也不再问 `source.hasAlpha()` —— 解码配置仍是 ARGB_8888，那是 PNG 编码要保留 alpha。
-        // pi 1.5.0（`image-resize-core.ts:137-141`）：同一尺寸下 PNG 和第一档 JPEG **都编码出来**，
-        // 谁小先试谁（JPEG 严格更小才排前面），两个都装不下才往下走更低的 JPEG 质量。所以 PNG 那一次
-        // 编码不能直接返回，要等第一档 JPEG 出来再裁决 —— 每个尺寸的第一档 JPEG 就是裁决点。
+        // 对不透明相机 JPEG 跳过无意义的全尺寸无损 PNG 编码：相机照片编成 2000px PNG 耗时
+        // 高达数百毫秒且体积几乎必然远大于 JPEG80；对 PNG / WebP / 截图 / 带透明通道图片
+        // 完整保留 pi 1.5.2 的 PNG vs 首档 JPEG 裁决，确保截图文字清晰无损。
+        val skipLosslessPng = mime.substringBefore(';').trim().equals("image/jpeg", ignoreCase = true) &&
+            !oriented.hasAlpha()
         var pngAtSize: PiImage? = null
         var verdictPending = false
         for (attempt in AttachmentBudget.attemptPlan(width, height, limits)) {
+            if (skipLosslessPng && attempt.encoding is AttachmentBudget.Encoding.Png) continue
             val scaled = scaleForAttachment(oriented, attempt.width, attempt.height) ?: continue
             try {
                 val encoded = encodeForAttachment(scaled, attempt.encoding)
@@ -583,6 +607,23 @@ internal fun compressAttachment(
         if (oriented !== source) oriented.recycle()
         source.recycle()
     }
+}
+
+/**
+ * 计算安全的 2 次幂 `inSampleSize`：保证解码后两轴都不低于目标最大边的 2 倍（超采样余量），
+ * 仅在超高像素原图（如 50MP/108MP/200MP 相机照片）时启用降采样防止 `OutOfMemoryError`。
+ */
+private fun computeSafeSampleSize(
+    storedWidth: Int,
+    storedHeight: Int,
+    limits: AttachmentBudget.Limits,
+): Int {
+    val ceiling = maxOf(limits.maxWidth, limits.maxHeight).coerceAtLeast(1) * 2
+    var sample = 1
+    while (storedWidth / (sample * 2) >= ceiling && storedHeight / (sample * 2) >= ceiling) {
+        sample *= 2
+    }
+    return sample
 }
 
 
@@ -753,3 +794,160 @@ internal fun mibLabel(count: Int): String =
 
 internal fun mibLabel(count: Long): String =
     String.format(java.util.Locale.US, "%.1f", count / 1024.0 / 1024.0)
+
+/**
+ * 现代多源附件选择面板：相册图片（多选）、任意文件（多选）、粘贴剪贴板图片、快速 `@` 引用工作区文件。
+ */
+@Composable
+internal fun AttachmentPickerSheet(
+    hasClipboardImage: Boolean,
+    stagedCount: Int,
+    maxPerMessage: Int?,
+    onPickPhotos: () -> Unit,
+    onPickFiles: () -> Unit,
+    onPasteClipboardImage: () -> Unit,
+    onInsertMention: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    PiSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "添加附件",
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                val limitNote = buildString {
+                    if (stagedCount > 0) append("已暂存 $stagedCount 张")
+                    if (maxPerMessage != null) {
+                        if (isNotEmpty()) append(" · ")
+                        append("单条上限 $maxPerMessage 张")
+                    }
+                }
+                if (limitNote.isNotEmpty()) {
+                    Text(
+                        text = limitNote,
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                AttachmentSourceTile(
+                    title = "相册图片",
+                    subtitle = "支持多选与智能压缩",
+                    glyph = "图",
+                    tint = palette.accent,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onDismiss()
+                        onPickPhotos()
+                    },
+                )
+                AttachmentSourceTile(
+                    title = "本地文件",
+                    subtitle = "多选并拷入工作区",
+                    glyph = "文",
+                    tint = palette.success,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onDismiss()
+                        onPickFiles()
+                    },
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                AttachmentSourceTile(
+                    title = "工作区文件",
+                    subtitle = "输入 @ 模糊引用",
+                    glyph = "@",
+                    tint = palette.mdLink,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onDismiss()
+                        onInsertMention()
+                    },
+                )
+                AttachmentSourceTile(
+                    title = "剪贴板图片",
+                    subtitle = if (hasClipboardImage) "检测到剪贴板图片" else "读取剪贴板中的图片",
+                    glyph = "贴",
+                    tint = if (hasClipboardImage) palette.warning else palette.muted,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onDismiss()
+                        onPasteClipboardImage()
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentSourceTile(
+    title: String,
+    subtitle: String,
+    glyph: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.45f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(tint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = glyph,
+                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                    color = tint,
+                )
+            }
+            Text(
+                text = title,
+                style = PiType.rowTitle,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+            Text(
+                text = subtitle,
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}

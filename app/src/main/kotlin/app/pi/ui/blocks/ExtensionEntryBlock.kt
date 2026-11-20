@@ -36,7 +36,6 @@ fun ExtensionEntryBlock(
         BlockCard(
             color = palette.cardBg,
             borderColor = palette.borderMuted.copy(alpha = 0.35f),
-            modifier = Modifier.animateContentSize(animationSpec = tween(180)),
         ) {
             ToggleContent(
                 expanded = expanded,

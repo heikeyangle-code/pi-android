@@ -1,5 +1,6 @@
 package app.pi.host
 
+import app.pi.rpc.PiResponses
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -8,6 +9,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 
 /**
@@ -48,6 +50,44 @@ class HostState(val raw: JsonObject) {
     val cost: JsonElement? get() = raw["cost"]
     val messageCounts: JsonObject? get() = raw["messageCounts"] as? JsonObject
 
+    /**
+     * 把宿主主动推来的状态快照直接投影成 [PiResponses.SessionStats]：
+     * 上下文用量、累计 token、费用、消息数都已随每次 debounced `state` 事件推送，
+     * 不再需要 UI 自己 `delay(700)` 或反复发 `session.stats` 重扫整份会话。
+     */
+    fun toSessionStats(previousToolResults: Int = 0): PiResponses.SessionStats {
+        val tok = tokens?.let {
+            PiResponses.TokenTotals(
+                input = it.long("input") ?: 0L,
+                output = it.long("output") ?: 0L,
+                cacheRead = it.long("cacheRead") ?: 0L,
+                cacheWrite = it.long("cacheWrite") ?: 0L,
+                total = it.long("total") ?: 0L,
+            )
+        }
+        val usage = contextUsage?.let {
+            PiResponses.ContextUsage(
+                tokens = it.long("tokens"),
+                contextWindow = it.long("contextWindow"),
+                percent = it.dbl("percent"),
+            )
+        }
+        val counts = messageCounts
+        val costNum = (cost as? JsonPrimitive)?.doubleOrNull
+        return PiResponses.SessionStats(
+            sessionFile = sessionFile,
+            sessionId = sessionId,
+            userMessages = counts?.long("user")?.toInt() ?: 0,
+            assistantMessages = counts?.long("assistant")?.toInt() ?: 0,
+            toolCalls = counts?.long("tools")?.toInt() ?: 0,
+            toolResults = counts?.long("toolResults")?.toInt() ?: previousToolResults,
+            totalMessages = counts?.long("total")?.toInt() ?: 0,
+            tokens = tok,
+            cost = costNum,
+            contextUsage = usage,
+        )
+    }
+
     /** (epoch, seq) 的先后；用来在多个来源（事件 / 应答 / 对账）里取最新。 */
     internal fun isNewerOrEqual(other: HostState): Boolean =
         epoch > other.epoch || (epoch == other.epoch && seq >= other.seq)
@@ -55,6 +95,7 @@ class HostState(val raw: JsonObject) {
     private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
     private fun JsonObject.bool(k: String): Boolean? = (this[k] as? JsonPrimitive)?.booleanOrNull
     private fun JsonObject.long(k: String): Long? = (this[k] as? JsonPrimitive)?.longOrNull
+    private fun JsonObject.dbl(k: String): Double? = (this[k] as? JsonPrimitive)?.doubleOrNull
 }
 
 /**

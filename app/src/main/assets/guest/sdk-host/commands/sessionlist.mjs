@@ -511,14 +511,15 @@ export function register(reg, { controller }) {
   /**
    * 开一次读盘。读的过程中发 `sessions.progress`；读完才写缓存（被换掉的加载不写）。
    * 加载是**共享**的：同一时刻只有一个，视图请求（没有缓存时）直接等它，不再各自重起一遍整盘读取。
+   * `mine.render` 保持最新：新查询复用在途全量扫描时更新 `mine.render`，避免进度事件把旧搜索词的结果覆写回 UI。
    */
   const startLoad = (scope, fullText, o, render) => {
     abortLoad();
     const ctl = new AbortController();
-    const mine = { scope, fullText, abort: ctl, superseded: false, promise: undefined };
+    const mine = { scope, fullText, abort: ctl, superseded: false, render, promise: undefined };
     const onProgress = (loaded, total, partial) => {
       if (state.load !== mine) return;
-      controller.hub.emit("sessions.progress", { scope, loaded, total, rows: partial ? render(partial) : undefined });
+      controller.hub.emit("sessions.progress", { scope, loaded, total, rows: partial ? mine.render(partial) : undefined });
     };
     mine.promise = (async () => {
       const dir = dirOf();
@@ -580,8 +581,12 @@ export function register(reg, { controller }) {
 
     for (;;) {
       let load = state.load?.scope === scope && (!needsSearch || state.load.fullText) ? state.load : undefined;
-      // 要求重读或需要全文搜索而当前无全文加载：重起一次。
-      if (refresh || !load) load = startLoad(scope, needsSearch, o, render);
+      // 要求重读或需要全文搜索而当前无全文加载：重起一次；复用在途加载时把进度渲染更新为当前最新查询。
+      if (refresh || !load) {
+        load = startLoad(scope, needsSearch, o, render);
+      } else {
+        load.render = render;
+      }
       try {
         return answer(await load.promise);
       } catch (e) {

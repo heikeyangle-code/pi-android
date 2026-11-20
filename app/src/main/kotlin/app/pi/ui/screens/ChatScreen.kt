@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -522,221 +523,153 @@ internal fun ChatBody(
     // off it.
     val pickerScope = rememberCoroutineScope()
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-    val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        // A null uri is the user backing out of the picker, not a failure.
-        if (uri != null) {
+    var attachmentSheetOpen by remember { mutableStateOf(false) }
+
+    // 统一处理单选/多选/剪贴板粘贴来的 URI：逐个在 IO 线程流式拷贝或按模型档位压缩，
+    // 顺序累计本条消息的 base64 预算并遵守模型发布的 `inputLimits.images.maxPerMessage`。
+    fun handlePickedUris(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        pickerScope.launch {
             val resolver = context.contentResolver
-            val mime = resolver.getType(uri).orEmpty()
-            when {
-                // Anything that is not an image has no byte channel, so the bytes are
-                // copied into the workspace and the agent is handed the **path** — see
-                // [copyIntoWorkspace] for why a copy and never a guessed device path.
-                // The work is streamed and bounded on `Dispatchers.IO`; the callback
-                // resumed the Activity, so this is the frame thread.
-                !mime.startsWith("image/") -> pickerScope.launch {
-                    val result = withContext(Dispatchers.IO) { copyIntoWorkspace(context, uri) }
-                    when (result) {
-                        // The path goes into the composer as **text**: pi's agent
-                        // resolves it the same way it resolves one the user typed, and
-                        // the app does not get to write the prompt.
-                        is WorkspaceCopy.Copied -> {
-                            draft = if (draft.isBlank()) {
-                                result.relativePath
-                            } else {
-                                draft + " " + result.relativePath
-                            }
-                            // **No notice here on purpose.** There used to be one
-                            // (「已放入工作区：<path>」) so that a new file in 工作区 was not
-                            // unexplained; the path that has just landed in the composer says
-                            // the same thing, and it says it without covering the composer for
-                            // four seconds with a snackbar that has no dismiss action (the
-                            // app-wide `ExtensionUiHost` host, `Info` tone →
-                            // `SnackbarDuration.Short`, `actionLabel = null`). The user asked
-                            // for it to go: 「发送完为什么有个提示呢？占住我的输入框了好几秒，
-                            // 去不掉，把这个提示删掉。」 The **failure** arms below stay — those
-                            // explain why nothing was copied, and there is no path in the
-                            // composer to say it for them.
-                        }
-                        // Each failure names its own cause and inserts nothing: a
-                        // `content://` string or a guessed path would be answered by pi
-                        // with an error about a file the user never named.
-                        WorkspaceCopy.Unreadable -> session.notifyUser(
-                            "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。" +
-                                "请重新选择，或先把文件存到手机上再选。",
-                            warning = true,
-                        )
+            val limits = AttachmentBudget.limitsFor(state.meta.model?.inputLimits)
+            val maxPerMessage = state.meta.model?.inputLimits?.images?.maxPerMessage
+            val autoResize = session.settingsStore.readBoolean("images.autoResize") ?: true
+            var workingAttachments = attachments
 
-                        // 空间不够是**磁盘**说出来的事，不是「文件太大」：这条路上限只有可用空间
-                        // （见 `AttachmentBudget.workspaceSpace`），所以这句话里的两个数字都来自
-                        // 当时的测量，而 `neededBytes` 是下界，所以说「至少」。
-                        is WorkspaceCopy.OutOfSpace -> session.notifyUser(
-                            "磁盘空间不足：这个文件至少需要 " +
-                                "${mibLabel(result.neededBytes)} MB，工作区所在磁盘可用 " +
-                                "${mibLabel(result.availableBytes)} MB" +
-                                "（要留 ${mibLabel(result.marginBytes)} MB 余量）。" +
-                                "它没有被复制进工作区，也没有加进这条消息；" +
-                                "腾出空间后可以再选一次。",
-                            warning = true,
-                        )
+            suspend fun appendPath(relativePath: String) {
+                draft = if (draft.isBlank()) relativePath else "$draft $relativePath"
+            }
 
-                        WorkspaceCopy.WriteFailed -> session.notifyUser(
-                            "写不进工作区（目录不可写，或写入过程中空间用尽）。" +
-                                "这个文件没有被复制，也没有加进这条消息。",
-                            warning = true,
-                        )
+            suspend fun reportCopyFailure(failure: WorkspaceCopy) {
+                when (failure) {
+                    WorkspaceCopy.Unreadable -> session.notifyUser(
+                        "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。请重新选择，或先把文件存到手机上再选。",
+                        warning = true,
+                    )
+                    is WorkspaceCopy.OutOfSpace -> session.notifyUser(workspaceOutOfSpaceText(failure), warning = true)
+                    WorkspaceCopy.WriteFailed -> session.notifyUser(
+                        "写不进工作区（目录不可写，或写入过程中空间用尽）。这个文件没有被复制，也没有加进这条消息。",
+                        warning = true,
+                    )
+                    is WorkspaceCopy.Copied -> Unit
+                }
+            }
+
+            suspend fun fallbackInline(uri: android.net.Uri, sourceUri: android.net.Uri?, bytes: ByteArray?, why: String) {
+                val fallback = withContext(Dispatchers.IO) {
+                    when {
+                        sourceUri != null -> copyIntoWorkspace(context, sourceUri)
+                        bytes != null -> copyBytesIntoWorkspace(context, bytes, displayNameOf(context, uri))
+                        else -> WorkspaceCopy.WriteFailed
                     }
                 }
+                when (fallback) {
+                    is WorkspaceCopy.Copied -> {
+                        appendPath(fallback.relativePath)
+                        session.notifyUser(inlineDowngradeText(fallback.relativePath, why))
+                    }
+                    else -> reportCopyFailure(fallback)
+                }
+            }
 
-                else -> {
-                    // Off the frame thread, and bounded while reading. This callback
-                    // runs on the main thread (`rememberLauncherForActivityResult`
-                    // resumes the Activity), and the previous shape read *everything*
-                    // the provider would give it — `readBytes()` on the whole
-                    // `InputStream` — and only then compared the length with the cap.
-                    // A cloud/gallery provider happily hands out tens of megabytes, so
-                    // "the image is too large" was decided after allocating it, twice
-                    // (the byte array, then the base64 string), on the thread that
-                    // draws: on a phone with ~1 GB free that is an OutOfMemoryError for
-                    // the app, not a warning. `readBounded` stops at the guard and
-                    // reports it without ever holding more than the guard, the decode and
-                    // the encode happen on IO, and the **acceptance test is the whole
-                    // message's budget**, not this image's size — see [AttachmentBudget].
-                    pickerScope.launch {
-                        // 内联不成时的**一处**收尾：把这份文件放进工作区、把相对路径插进 composer、
-                        // 说清为什么它没有随消息内联。三个原因（原图超过读取上限、按 pi 的上限压不出
-                        // 足够小的版本、本条消息的内联额度不够）走的是同一段代码，所以三处的行为
-                        // 不可能漂移；`bytes` 与 `uri` 二选一由调用方给（见下）。
-                        suspend fun fallbackInline(sourceUri: android.net.Uri?, bytes: ByteArray?, why: String) {
-                            val fallback = withContext(Dispatchers.IO) {
-                                when {
-                                    // **从 URI 流式复制。** 原图超过读取上限那一支只持有
-                                    // `MAX_PICKED_IMAGE_BYTES + 1` 个字节 —— 那是文件的**一段前缀**，
-                                    // 写进工作区会留下一个被截断的文件。流式复制没有这个问题。
-                                    sourceUri != null -> copyIntoWorkspace(context, sourceUri)
-                                    // 名字仍取自用户选的那份文档（外层的 `uri`，这里已知非 null）：
-                                    // `bytes` 那一支手上没有 URI，名字只能从这里来。
-                                    bytes != null -> copyBytesIntoWorkspace(context, bytes, displayNameOf(context, uri))
-                                    else -> WorkspaceCopy.WriteFailed
-                                }
-                            }
-                            when (fallback) {
-                                is WorkspaceCopy.Copied -> {
-                                    draft = if (draft.isBlank()) {
-                                        fallback.relativePath
-                                    } else {
-                                        draft + " " + fallback.relativePath
-                                    }
-                                    // 这一句**不能**省，与纯文件那条路（D47）不同：那次是「用户要的就是
-                                    // 一个路径」，这次是「本来要内联、改成了给路径」——消息的形状与用户预期
-                                    // 不一样，而 composer 里多出来的那个路径自己不解释这件事。
-                                    session.notifyUser(inlineDowngradeText(fallback.relativePath, why))
-                                }
-                                // 降级本身也可能失败；三种原因各自的可读句子。
-                                WorkspaceCopy.Unreadable -> session.notifyUser(
-                                    "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。" +
-                                        "请重新选择，或先把文件存到手机上再选。",
-                                    warning = true,
-                                )
+            for (uri in uris) {
+                val mime = resolver.getType(uri).orEmpty()
+                if (!mime.startsWith("image/")) {
+                    val result = withContext(Dispatchers.IO) { copyIntoWorkspace(context, uri) }
+                    when (result) {
+                        is WorkspaceCopy.Copied -> appendPath(result.relativePath)
+                        else -> reportCopyFailure(result)
+                    }
+                    continue
+                }
 
-                                is WorkspaceCopy.OutOfSpace -> session.notifyUser(
-                                    workspaceOutOfSpaceText(fallback),
-                                    warning = true,
-                                )
+                // 遵守模型声明的单条消息图片上限（`inputLimits.images.maxPerMessage`）：超额不丢弃，自动降级为工作区路径。
+                if (maxPerMessage != null && workingAttachments.size >= maxPerMessage) {
+                    fallbackInline(
+                        uri = uri,
+                        sourceUri = uri,
+                        bytes = null,
+                        why = "当前模型单条消息最多内联 $maxPerMessage 张图片",
+                    )
+                    continue
+                }
 
-                                WorkspaceCopy.WriteFailed -> session.notifyUser(
-                                    "写不进工作区（目录不可写，或写入过程中空间用尽）。" +
-                                        "这个文件没有被复制，也没有加进这条消息。",
-                                    warning = true,
-                                )
-                            }
+                val bytes = withContext(Dispatchers.IO) {
+                    runCatching {
+                        resolver.openInputStream(uri)
+                            ?.use { readBounded(it, AttachmentBudget.MAX_PICKED_IMAGE_BYTES) }
+                    }.getOrNull()
+                }
+                when {
+                    bytes == null || bytes.isEmpty() -> session.notifyUser(
+                        "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
+                        warning = true,
+                    )
+                    bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> fallbackInline(
+                        uri = uri,
+                        sourceUri = uri,
+                        bytes = null,
+                        why = "原图超过 ${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB，没有整张读进内存来压缩",
+                    )
+                    else -> {
+                        val image = withContext(Dispatchers.IO) {
+                            compressAttachment(bytes, mime, limits, autoResize)
                         }
-                        val staged = attachments.map { it.base64.length }
-                        val bytes = withContext(Dispatchers.IO) {
-                            runCatching {
-                                resolver.openInputStream(uri)
-                                    ?.use { readBounded(it, AttachmentBudget.MAX_PICKED_IMAGE_BYTES) }
-                            }.getOrNull()
-                        }
-                        when {
-                            bytes == null || bytes.isEmpty() -> session.notifyUser(
-                                "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
-                                warning = true,
-                            )
-
-                            // 读取上限（一条记录的大小，64 MiB；App 自己的内存门槛），不是消息的额度，也不是「太大」。
-                            // 这一支以前是**拒绝**；现在原图照样进工作区、agent 照样能读它 —— 而且
-                            // 走的是流式复制，所以「不把几十兆读进内存」这条理由一分没丢。
-                            bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> fallbackInline(
-                                sourceUri = uri,
-                                bytes = null,
-                                why = "原图超过 ${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB，" +
-                                    "没有整张读进内存来压缩",
-                            )
-
-                            else -> {
-                                // The profile this pass works against: the **current model's**
-                                // own `inputLimits.images.resize` where pi published one, pi's
-                                // defaults otherwise, and the record's budget as a ceiling
-                                // (`AttachmentBudget.limitsFor`). Reading it here is what makes a
-                                // user's per-model profile in `models.json` actually apply —
-                                // before this, the App pre-resized to pi's default 2000/4.5 MB
-                                // and pi then resized again to whatever the model really allows.
-                                val limits = AttachmentBudget.limitsFor(state.meta.model?.inputLimits)
-                                // pi 的 `images.autoResize`（`settings-manager.ts:68` 定义、
-                                // `:1404` 的 `getImageAutoResize()`，默认 `true`；pi 在归一化
-                                // 每一轮 prompt 图片时读它，`agent-session.ts:1899`）。
-                                // 关掉 = 不做 App 侧预压缩；语义与**没有**跟着关掉的那条消息预算
-                                // 都写在 `compressAttachment` 的 KDoc 里。
-                                // 这次读是内存命中（缓存文档按 1/4 秒节流 stat），与设置界面的
-                                // 每一行同一条读法。
-                                val autoResize = session.settingsStore.readBoolean("images.autoResize") ?: true
-                                val image = withContext(Dispatchers.IO) {
-                                    compressAttachment(bytes, mime, limits, autoResize)
-                                }
-                                if (image == null) {
-                                    // 压不出来（自动缩放开着）：读不出像素，或者所有候选都超
-                                    // **这个模型的** 上限。数字来自同一份 limits，所以句子与判定
-                                    // 不可能对不上。
-                                    // 自动缩放关着时不成的是**转换**（不是「压不小」）：那句
-                                    // 不能借用这里的数字，否则句子里会出现一个没有参与判定的上限。
-                                    fallbackInline(
-                                        sourceUri = null,
-                                        bytes = bytes,
-                                        why = if (autoResize) {
-                                            "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
-                                                "base64 ${mibLabel(limits.maxBase64Chars)} MB）" +
-                                                "压不出足够小的版本"
-                                        } else {
-                                            "自动缩放关着（images.autoResize: false），" +
-                                                "这张图也不是 pi 能直接内联的格式，转换不出来"
-                                        },
-                                    )
+                        if (image == null) {
+                            fallbackInline(
+                                uri = uri,
+                                sourceUri = null,
+                                bytes = bytes,
+                                why = if (autoResize) {
+                                    "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
+                                        "base64 ${mibLabel(limits.maxBase64Chars)} MB）压不出足够小的版本"
                                 } else {
-                                    when (val verdict = AttachmentBudget.decide(staged, image.base64.length)) {
-                                        // `image` is non-null here: the verdict is only
-                                        // asked for once there is something to add.
-                                        AttachmentBudget.Verdict.Fits -> attachments = attachments + image
-
-                                        // 本条消息的内联额度不够：不拒绝，改成「只给路径」。原图进工作区
-                                        // （不是那份压缩结果 —— agent 读到的是用户选的那份文件），两个数
-                                        // 据仍然来自 verdict 本身，所以句子与判定不可能对不上。
-                                        is AttachmentBudget.Verdict.MessageFull -> fallbackInline(
-                                            sourceUri = null,
-                                            bytes = bytes,
-                                            why = "本条消息的内联额度不够" +
-                                                "（上限 ${mibLabel(verdict.limitBytes)} MB，" +
-                                                "已用 ${mibLabel(verdict.usedBytes)} MB，" +
-                                                "这张" + (if (autoResize) "压缩后 " else "原图 ") +
-                                                "${mibLabel(verdict.candidateBytes)} MB）",
-                                        )
-                                    }
+                                    "自动缩放关着（images.autoResize: false），这张图也不是 pi 能直接内联的格式，转换不出来"
+                                },
+                            )
+                        } else {
+                            val staged = workingAttachments.map { it.base64.length }
+                            when (val verdict = AttachmentBudget.decide(staged, image.base64.length)) {
+                                AttachmentBudget.Verdict.Fits -> {
+                                    workingAttachments = workingAttachments + image
+                                    attachments = workingAttachments
                                 }
+                                is AttachmentBudget.Verdict.MessageFull -> fallbackInline(
+                                    uri = uri,
+                                    sourceUri = null,
+                                    bytes = bytes,
+                                    why = "本条消息的内联额度不够（上限 ${mibLabel(verdict.limitBytes)} MB，" +
+                                        "已用 ${mibLabel(verdict.usedBytes)} MB，这张" +
+                                        (if (autoResize) "压缩后 " else "原图 ") +
+                                        "${mibLabel(verdict.candidateBytes)} MB）",
+                                )
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(AttachmentBudget.MAX_PI_SIZED_IMAGES.coerceAtLeast(2)),
+    ) { uris ->
+        handlePickedUris(uris)
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        handlePickedUris(uris)
+    }
+
+    fun clipboardImageUri(): android.net.Uri? {
+        val sysClipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            ?: return null
+        val clip = sysClipboard.primaryClip ?: return null
+        for (i in 0 until clip.itemCount) {
+            val u = clip.getItemAt(i)?.uri ?: continue
+            val type = context.contentResolver.getType(u).orEmpty()
+            if (type.startsWith("image/")) return u
+        }
+        return null
     }
 
 
@@ -1494,26 +1427,8 @@ internal fun ChatBody(
         }
     }
 
-    // **`get_session_stats` 不能等用户点环才读。**
-    //
-    // 环与「已用 / 总量」的唯一数据源是 `get_session_stats().contextUsage`
-    // （pi `core/agent-session.ts:4297` 的 `getContextUsage()`；`get_state` 里没有这个
-    // 字段）。引擎进入 Ready 时 ViewModel 已经会读一次，但新会话/模型刚绑定的那一瞬它
-    // 可能还回答不了（`getContextUsage()` 在 `_limitsModel()` 为空或 `contextWindow <= 0`
-    // 时返回 undefined），于是环一直 `?`，直到用户点一次环触发第二次读。
-    //
-    // 这里按「Ready 且还没有 contextUsage」补一次，键是**模型 id**：模型一到位就重读，
-    // 读到之后键不再变，不会变成轮询；已有 stats 的普通会话不会多读。
-    //
-    // 先等 700 ms 再判断：正常的启动路径上 ViewModel 在进入 Ready 时已经读了一次，
-    // 不等它落地就补读会变成每次启动两次 `get_session_stats`（那个调用要遍历整份会话）。
-    // 700 ms 之后还没有 contextUsage，才说明那一次读在了模型绑定之前（或者根本没跑）。
-    val modelId = state.meta.model?.id
-    LaunchedEffect(state.engine, modelId) {
-        if (state.engine != PiEngineSession.EngineState.Ready) return@LaunchedEffect
-        delay(700)
-        if (state.stats?.contextUsage == null) session.refreshStats()
-    }
+    // 上下文用量现已直接由 SDK Host 的 `state` 快照流实时推给 `PiSessionViewModel`（`stateStore`），
+    // 不再需要旧 RPC 时代的 `delay(700)` 延迟补读 `get_session_stats`。
 
     // The `@` mention list. pi looks its candidates up on every keystroke of the
     // token, debounced by 20 ms (`packages/tui/src/components/editor.ts:251`); here
@@ -2177,7 +2092,7 @@ internal fun ChatBody(
             ) {
                 Composer(
                     draft = draft,
-                    onPickAttachment = { attachmentPicker.launch("*/*") },
+                    onPickAttachment = { attachmentSheetOpen = true },
                     contextUsage = state.stats?.contextUsage,
                     onOpenContext = { perform(ChatAction.ContextUsage) },
                     modelLabel = modelLabel,
@@ -2272,6 +2187,33 @@ internal fun ChatBody(
     }
 
     ChatSheetHost(sheet = sheet, onSheet = { sheet = it }, state = state, session = session)
+
+    if (attachmentSheetOpen) {
+        val clipImg = clipboardImageUri()
+        AttachmentPickerSheet(
+            hasClipboardImage = clipImg != null,
+            stagedCount = attachments.size,
+            maxPerMessage = state.meta.model?.inputLimits?.images?.maxPerMessage,
+            onPickPhotos = {
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onPickFiles = {
+                filePicker.launch(arrayOf("*/*"))
+            },
+            onPasteClipboardImage = {
+                val uri = clipboardImageUri()
+                if (uri != null) {
+                    handlePickedUris(listOf(uri))
+                } else {
+                    session.notifyUser("剪贴板里当前没有可读取的图片。", warning = true)
+                }
+            },
+            onInsertMention = {
+                if (PiFileMentions.prefixOf(draft) == null) draft += "@"
+            },
+            onDismiss = { attachmentSheetOpen = false },
+        )
+    }
 
     if (widgetsInspectorOpen) {
         ExtensionWidgetsSheet(

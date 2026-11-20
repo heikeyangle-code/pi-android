@@ -14,11 +14,24 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.ui.PiMemoryTrimmer
 import app.pi.ui.PiRoot
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.theme.PiTheme
 
 class MainActivity : ComponentActivity() {
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        PiMemoryTrimmer.onTrimMemory(level)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onLowMemory() {
+        @Suppress("DEPRECATION")
+        super.onLowMemory()
+        PiMemoryTrimmer.onLowMemory()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()

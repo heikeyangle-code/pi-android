@@ -2473,6 +2473,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         extUiJob = viewModelScope.launch {
             engine.extUi.collect { ext -> _state.value = _state.value.copy(ext = ext) }
         }
+        // 宿主状态快照（debounced `state` 事件 + 所有变更命令的 `withState` 应答）直接同步上下文用量、
+        // 累计 token、费用与消息数，不再等用户点开详情页或靠 `delay(700)` 补读 `session.stats`。
+        hostStateJob?.cancel()
+        hostStateJob = viewModelScope.launch {
+            engine.commands.stateStore.state.collect { hostState ->
+                if (session !== engine || hostState == null) return@collect
+                val prev = _state.value.stats
+                val next = hostState.toSessionStats(previousToolResults = prev?.toolResults ?: 0)
+                if (next != prev) {
+                    _state.value = _state.value.copy(stats = next)
+                }
+            }
+        }
         // 官方渲染组件自己要求重绘（`ui.requestRender()`：动画、定时刷新）→ 清缓存、换一版，卡片重取。
         entryProbeJob?.cancel()
         entryProbeJob = viewModelScope.launch {
@@ -4502,6 +4515,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
 
     private var extUiJob: Job? = null
+    private var hostStateJob: Job? = null
     private var panelColumns = 0
     private var panelResizeJob: Job? = null
 
@@ -6534,6 +6548,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun afterSessionReplaced(brandNew: Boolean = false) {
         val engine = session ?: return
+        PiMemoryTrimmer.onSessionReplaced()
         // `refreshState` **before** the replay, not after: on the file-backed paths
         // (`switch_session` / import) the only trustworthy name for that file is the one
         // `get_state` just reported. Reading it first would use the meta of the session the

@@ -190,8 +190,6 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
             "app.runtime.piVersion",
             "app.runtime.nodeVersion",
             "app.runtime.rootfsUsage",
-            "app.runtime.engineStartup",
-            "app.runtime.wakeLock",
         ).associateWith { "未读取" }
     }
     val unreadable = if (snapshot.runtimeUnpacked) {
@@ -203,28 +201,6 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
         "app.runtime.piVersion" to (snapshot.piVersion ?: unreadable),
         "app.runtime.nodeVersion" to (snapshot.nodeVersion ?: unreadable),
         "app.runtime.rootfsUsage" to (snapshot.runtimeUsage ?: unreadable),
-        // Measured, not estimated: `PiEngineSession.probeServing` times the span
-        // between starting pi and pi's first answer. Rounded to whole seconds
-        // because that is the resolution the wait is felt at, and because a
-        // milliseconds figure would imply a precision this deliberately variable
-        // measurement does not have.
-        "app.runtime.engineStartup" to (
-            snapshot.engineStartupMs?.let { ms ->
-                if (ms < 1000) "$ms 毫秒" else "${(ms + 500) / 1000} 秒"
-            } ?: "尚未启动过引擎"
-            ),
-        // The lock's own state, read through `PiEngineService.isWakeLockHeld()` — the
-        // lock's `isHeld`, not an inference from the service being alive. Since the
-        // lock is taken per busy period (`PiEngineLifecyclePolicy.shouldHoldWakeLock`,
-        // applied by `PiEngineService.reportWork`), "service up, lock released" is the
-        // **normal idle state**. The old wording here ("锁已达 6 小时上限") was an
-        // inference that the policy change made wrong: it told the user their
-        // protection had just expired while the app was simply doing nothing.
-        "app.runtime.wakeLock" to when {
-            snapshot.wakeLockHeld -> "持有中"
-            snapshot.serviceRunning -> "未持有（当前空闲）"
-            else -> "未持有"
-        },
     )
 }
 

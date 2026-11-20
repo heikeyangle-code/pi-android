@@ -3,7 +3,11 @@ package app.pi.ui.screens
 import android.animation.ValueAnimator
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -157,30 +161,44 @@ internal fun Composer(
     )
 
     val animationsEnabled = ValueAnimator.areAnimatorsEnabled()
-    val pulse by rememberInfiniteTransition(label = "composerPulse").animateFloat(
-        initialValue = 1f,
-        targetValue = COMPOSER_PULSE_MIN,
-        animationSpec = infiniteRepeatable(
-            animation = tween(COMPOSER_PULSE_MS, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "composerPulseAlpha",
-    )
-    val factor by animateFloatAsState(
-        targetValue = if (streaming && !focused && animationsEnabled) pulse else 1f,
-        animationSpec = tween(COMPOSER_FADE_MS),
-        label = "composerPulseFactor",
-    )
+    // 仅在流式输出且未聚焦时启动呼吸动画，且只传 State 到绘制阶段读取：
+    // 以前无条件运行 rememberInfiniteTransition 并用 `by` 在组合期读取，导致空闲时
+    // 整个输入框也 60~120fps 空转重组！现在空闲零开销、流式零重组。
+    val pulseState: androidx.compose.runtime.State<Float>? = if (streaming && !focused && animationsEnabled) {
+        rememberInfiniteTransition(label = "composerPulse").animateFloat(
+            initialValue = 1f,
+            targetValue = COMPOSER_PULSE_MIN,
+            animationSpec = infiniteRepeatable(
+                animation = tween(COMPOSER_PULSE_MS, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "composerPulseAlpha",
+        )
+    } else {
+        null
+    }
     val idleAlpha = if (focused || isBash || streaming) 0.92f else 0.55f
-    val shownBorder = borderColor.copy(alpha = (borderColor.alpha * idleAlpha * factor).coerceIn(0.15f, 1f))
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(inputShape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
-            .border(borderWidth, shownBorder, inputShape)
-            .animateContentSize(animationSpec = tween(160)),
+            .drawWithContent {
+                drawContent()
+                val factor = pulseState?.value ?: 1f
+                val strokePx = borderWidth.toPx()
+                val half = strokePx / 2f
+                val radiusPx = PiSpacing.composerRadius.toPx()
+                val alpha = (borderColor.alpha * idleAlpha * factor).coerceIn(0.15f, 1f)
+                drawRoundRect(
+                    color = borderColor.copy(alpha = alpha),
+                    topLeft = Offset(half, half),
+                    size = Size(size.width - strokePx, size.height - strokePx),
+                    cornerRadius = CornerRadius(radiusPx, radiusPx),
+                    style = Stroke(width = strokePx),
+                )
+            },
     ) {
         // 1) Bash 模式横幅（仅在 `!` / `!!` 开头时平滑滑出）
         AnimatedVisibility(

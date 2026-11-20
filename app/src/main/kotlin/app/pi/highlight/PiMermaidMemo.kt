@@ -99,4 +99,10 @@ internal class PiMermaidMemo<M : Any, V : Any>(
 
     /** 当前计费字节数，永不超过 [maxBytes]；诊断与纯检查用。 */
     fun byteCount(): Int = synchronized(lock) { bytes }
+
+    /** 清空缓存（内存紧张时调用）。 */
+    fun clear() = synchronized(lock) {
+        entries.clear()
+        bytes = 0
+    }
 }

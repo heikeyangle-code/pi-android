@@ -345,23 +345,24 @@ internal fun ToolHeader(
     val subjectText = remember(subject, palette) { subject.toAnnotatedString(palette) }
     val word = toolStateWord(state)
     val accent = toolAccentColor(state, palette)
-    val runningPulse = if (state == ToolState.Running) {
+    // State 留到 graphicsLayer 里读，避免运行中每帧重组整条工具卡标题。
+    val runningPulse: androidx.compose.runtime.State<Float>? = if (state == ToolState.Running) {
         rememberInfiniteTransition(label = "tool-run").animateFloat(
             initialValue = 0.35f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
             label = "tool-run-alpha",
-        ).value
+        )
     } else {
-        1f
+        null
     }
-    val chevronAngle by animateFloatAsState(if (expanded) 90f else 0f, label = "tool-chevron")
+    val chevronAngle = animateFloatAsState(if (expanded) 90f else 0f, tween(160), label = "tool-chevron")
 
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
                 .size(18.dp)
-                .graphicsLayer { alpha = runningPulse }
+                .graphicsLayer { alpha = runningPulse?.value ?: 1f }
                 .clip(CircleShape)
                 .background(accent.copy(alpha = 0.16f))
                 .clearAndSetSemantics { contentDescription = toolStateLabel(state) },
@@ -415,7 +416,7 @@ internal fun ToolHeader(
                 contentDescription = null,
                 modifier = Modifier
                     .size(15.dp)
-                    .rotate(chevronAngle),
+                    .graphicsLayer { rotationZ = chevronAngle.value },
                 tint = palette.bodyOnTool,
             )
         }
@@ -633,9 +634,9 @@ internal fun ToolCard(
     ToolRailFrame(modifier = modifier) {
         BlockCard(
             color = toolContainerColor(state, palette),
-            modifier = Modifier
-                .animateContentSize(animationSpec = tween(160))
-                .toggleContent(expanded, onToggle),
+            // LazyColumn 内不挂 animateContentSize：运行中流式输出与收起锚点（anchor.onCollapse）
+            // 都不再被 160ms 高度动画拉扯，展开/收起大工具输出零掉帧、零回跳。
+            modifier = Modifier.toggleContent(expanded, onToggle),
             borderColor = stateAccent.copy(alpha = if (state == ToolState.Running) 0.36f else 0.22f),
             padding = ToolCardRowPadding,
             shape = TOOL_CARD_SHAPE,
