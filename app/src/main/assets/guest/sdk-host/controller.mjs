@@ -88,9 +88,16 @@ export class Controller {
         ?? (this.sdk ? this.sdk.SettingsManager.create(this.cwd, this.cfg.agentDir, { projectTrusted: false }) : null);
       if (!sm) return;
       const globalSettings = sm.getGlobalSettings?.() ?? {};
-      if (typeof globalSettings.httpProxy === "string" && globalSettings.httpProxy.trim()) {
-        this.httpDispatcherMod.applyHttpProxySettings?.(globalSettings.httpProxy);
+      const proxy = typeof globalSettings.httpProxy === "string" ? globalSettings.httpProxy.trim() : "";
+      if (proxy) {
+        process.env.HTTP_PROXY = proxy;
+        process.env.HTTPS_PROXY = proxy;
+        this.httpDispatcherMod.applyHttpProxySettings?.(proxy);
+      } else if (this.appliedHttpProxy) {
+        delete process.env.HTTP_PROXY;
+        delete process.env.HTTPS_PROXY;
       }
+      this.appliedHttpProxy = proxy || null;
       const idle = sm.getHttpIdleTimeoutMs?.();
       if (idle !== undefined) {
         this.httpDispatcherMod.configureHttpDispatcher?.(idle);

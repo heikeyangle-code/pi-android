@@ -34,6 +34,8 @@ object Ansi {
         val underline: Boolean = false,
         val inverse: Boolean = false,
         val strikethrough: Boolean = false,
+        /** OSC 8 hyperlink URL, or null when not inside a link. */
+        val link: String? = null,
     )
 
     /** True when the text contains anything this parser would act on. */
@@ -94,7 +96,7 @@ object Ansi {
         var underline = false
         var inverse = false
         var strikethrough = false
-
+        var link: String? = null
 
         fun flush() {
             if (buffer.isEmpty()) return
@@ -108,55 +110,93 @@ object Ansi {
                 underline = underline,
                 inverse = inverse,
                 strikethrough = strikethrough,
+                link = link,
             )
             buffer.setLength(0)
         }
 
         var i = 0
-        while (i < text.length) {
-            val c = text[i]
-            if (c != ESC) {
-                buffer.append(c)
-                i++
-                continue
-            }
-            val next = if (i + 1 < text.length) text[i + 1] else '\u0000'
-            if (next != '[') {
-                // Not a control sequence we understand; drop the ESC, keep going.
-                i++
-                continue
-            }
-            // CSI: parameters, then a final byte in 0x40..0x7E.
-            var j = i + 2
-            while (j < text.length && text[j] !in '@'..'~') j++
-            if (j >= text.length) {
-                // Unterminated sequence: a truncated stream. Drop the rest rather
-                // than print half an escape.
-                break
-            }
-            val finalByte = text[j]
-            val params = text.substring(i + 2, j)
-            if (finalByte == 'm') {
-                flush()
-
-                val codes = params.split(';').mapNotNull { it.toIntOrNull() }
-                val (nfg, nbg) = applySgr(
-                    codes = if (params.isEmpty()) listOf(0) else codes,
-                    fg = fg,
-                    bg = bg,
-                    setBold = { bold = it },
-                    setDim = { dim = it },
-                    setItalic = { italic = it },
-                    setUnderline = { underline = it },
-                    setInverse = { inverse = it },
-                    setStrikethrough = { strikethrough = it },
-                )
-                fg = nfg
-                bg = nbg
-            }
-            // Every other final byte is a control we intentionally ignore.
-            i = j + 1
+        var runStart = 0
+        fun flushPlain(endExclusive: Int) {
+            if (endExclusive > runStart) buffer.append(text, runStart, endExclusive)
         }
+        while (i < text.length) {
+            if (text[i] != ESC) {
+                i++
+                continue
+            }
+            flushPlain(i)
+            val next = if (i + 1 < text.length) text[i + 1] else '\u0000'
+            when (next) {
+                '[' -> {
+                    // CSI: parameters, then a final byte in 0x40..0x7E.
+                    var j = i + 2
+                    while (j < text.length && text[j] !in '@'..'~') j++
+                    if (j >= text.length) {
+                        runStart = text.length
+                        break
+                    }
+                    val finalByte = text[j]
+                    if (finalByte == 'm') {
+                        flush()
+                        val params = text.substring(i + 2, j)
+                        val codes = if (params.isEmpty()) listOf(0) else params.split(';').mapNotNull { it.toIntOrNull() }
+                        val (nfg, nbg) = applySgr(
+                            codes = codes,
+                            fg = fg,
+                            bg = bg,
+                            setBold = { bold = it },
+                            setDim = { dim = it },
+                            setItalic = { italic = it },
+                            setUnderline = { underline = it },
+                            setInverse = { inverse = it },
+                            setStrikethrough = { strikethrough = it },
+                        )
+                        fg = nfg
+                        bg = nbg
+                    }
+                    i = j + 1
+                    runStart = i
+                }
+                ']' -> {
+                    // OSC: `ESC ] payload (BEL | ESC \)`. Parse OSC 8 hyperlinks; drop all others cleanly.
+                    val end = findStringTerminator(text, i + 2)
+                    if (end < 0) {
+                        runStart = text.length
+                        break
+                    }
+                    val payload = text.substring(i + 2, end)
+                    if (payload.startsWith("8;")) {
+                        val secondSemi = payload.indexOf(';', 2)
+                        if (secondSemi >= 0) {
+                            val url = payload.substring(secondSemi + 1).trim().takeIf { it.isNotEmpty() }
+                            if (url != link) {
+                                flush()
+                                link = url
+                            }
+                        }
+                    }
+                    i = advancePastTerminator(text, end)
+                    runStart = i
+                }
+                '_', 'P', '^', 'X' -> {
+                    // APC / DCS / PM / SOS (e.g. Pi cursor marker `\x1b_pi:c\x07`): skip whole payload.
+                    val end = findStringTerminator(text, i + 2)
+                    if (end < 0) {
+                        runStart = text.length
+                        break
+                    }
+                    i = advancePastTerminator(text, end)
+                    runStart = i
+                }
+                else -> {
+                    // Single/2-byte ESC sequence we do not interpret.
+                    i = if (i + 1 < text.length) i + 2 else i + 1
+                    runStart = i
+                }
+            }
+        }
+        flushPlain(text.length)
         flush()
 
         // Input with escapes but no visible text (e.g. a bare clear-screen) must
@@ -257,15 +297,43 @@ object Ansi {
         return pack(level, level, level)
     }
 
+    /** Index of BEL (`\u0007`) or ST (`ESC \`) starting from [from], or -1 if unterminated. */
+    private fun findStringTerminator(text: String, from: Int): Int {
+        var j = from
+        while (j < text.length) {
+            val c = text[j]
+            if (c == BEL) return j
+            if (c == ESC && j + 1 < text.length && text[j + 1] == '\\') return j
+            j++
+        }
+        return -1
+    }
+
+    private fun advancePastTerminator(text: String, termIndex: Int): Int = when {
+        termIndex >= text.length -> text.length
+        text[termIndex] == BEL -> termIndex + 1
+        text[termIndex] == ESC && termIndex + 1 < text.length && text[termIndex + 1] == '\\' -> termIndex + 2
+        else -> termIndex + 1
+    }
+
     private fun skipEscape(text: String, start: Int): Int {
         val next = if (start + 1 < text.length) text[start + 1] else return start + 1
-        if (next != '[') return start + 1
-        var j = start + 2
-        while (j < text.length && text[j] !in '@'..'~') j++
-        return if (j < text.length) j + 1 else text.length
+        return when (next) {
+            '[' -> {
+                var j = start + 2
+                while (j < text.length && text[j] !in '@'..'~') j++
+                if (j < text.length) j + 1 else text.length
+            }
+            ']', '_', 'P', '^', 'X' -> {
+                val end = findStringTerminator(text, start + 2)
+                if (end < 0) text.length else advancePastTerminator(text, end)
+            }
+            else -> if (start + 2 <= text.length) start + 2 else text.length
+        }
     }
 
     private const val ESC = '\u001b'
+    private const val BEL = '\u0007'
 
     /** Standard ANSI palette (0–15), matching `ansi-to-html.ts`. */
     private val BASIC_16 = intArrayOf(

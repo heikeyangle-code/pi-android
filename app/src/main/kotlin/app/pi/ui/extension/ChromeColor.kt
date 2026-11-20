@@ -100,12 +100,15 @@ private fun PiPalette.tokenArgb(): IntArray = intArrayOf(
     pageBg.toArgb(), cardBg.toArgb(), infoBg.toArgb(),
 )
 
+private val paletteTokenCache = java.util.WeakHashMap<PiPalette, IntArray>()
+
 /**
- * The match candidates for [this], to be built **once per palette** and passed to
- * [tokenColorFor] for every span — `toArgb()` is not free and a widget can carry
- * dozens of spans.
+ * The match candidates for [this], cached per [PiPalette] instance so rendering dozens of
+ * surface/tool/widget lines never recomputes 59 `Color.toArgb()` conversions per line.
  */
-fun PiPalette.themeTokenArgb(): IntArray = tokenArgb()
+fun PiPalette.themeTokenArgb(): IntArray = synchronized(paletteTokenCache) {
+    paletteTokenCache.getOrPut(this) { tokenArgb() }
+}
 
 /** The theme token that painted [span], or null to keep the caller's own colour. */
 fun tokenColorFor(span: Ansi.Span, tokens: IntArray): Color? =

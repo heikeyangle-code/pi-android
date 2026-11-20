@@ -370,7 +370,7 @@ private fun SelectOptionRows(
                 color = PiTheme.palette.muted,
             )
             ExtensionSpans(
-                spans = chromeSpans(option),
+                spans = remember(option) { chromeSpans(option) },
                 defaultColor = PiTheme.palette.text,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
@@ -470,7 +470,7 @@ private fun DialogHeading(dialog: ExtensionDialog) {
             dialog.remainingSeconds()?.let { append(" (").append(it).append("s)") }
         }
         ExtensionSpans(
-            spans = chromeSpans(label),
+            spans = remember(label) { chromeSpans(label) },
             defaultColor = palette.text,
             style = PiTheme.text.mono,
             modifier = Modifier.weight(1f),
@@ -525,7 +525,7 @@ private fun DialogMessage(message: String?) {
     // tests the *raw* string, so a message that is only colour escapes is not
     // blank here and reserves its gap — which is what pi draws for it too.
     ExtensionSpans(
-        spans = chromeSpans(message),
+        spans = remember(message) { chromeSpans(message) },
         defaultColor = PiTheme.palette.text,
         style = MaterialTheme.typography.bodyMedium,
         richStyle = true,
@@ -690,7 +690,7 @@ private fun ExtField(
                     // A placeholder is chrome, so it keeps the extension's colour;
                     // `value` itself does not, and cannot — see this function's KDoc.
                     ExtensionSpans(
-                        spans = chromeSpans(placeholder),
+                        spans = remember(placeholder) { chromeSpans(placeholder) },
                         defaultColor = palette.muted,
                         style = if (singleLine) MaterialTheme.typography.bodyMedium else PiTheme.text.mono,
                         maxLines = 1,

@@ -48,8 +48,17 @@ export function register(reg, { controller, hub }) {
   // 外部改了 settings.json（App 的旧路径 / 用户手改）之后让会话重读。
   reg.add("settings.reload", async () => {
     const sm = manager();
+    const prevWarming = sm.getCacheWarmingMode?.();
     await sm.reload();
     await controller.applyHttpSettings?.();
+    const nextWarming = sm.getCacheWarmingMode?.();
+    if (nextWarming && nextWarming !== prevWarming) {
+      try {
+        controller.session?.setCacheWarmingMode?.(nextWarming);
+      } catch {
+        // ignore if session not ready
+      }
+    }
     hub.emit("settings.changed", { method: "reload" });
     return view(sm);
   });

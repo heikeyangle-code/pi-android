@@ -66,9 +66,14 @@ fun ExtensionSpans(
     val text: AnnotatedString = remember(spans, tokens, defaultColor, surfaceBg, richStyle) {
         buildAnnotatedString {
             spans.forEach { span ->
-                val resolvedFg = tokenColorFor(span, tokens) ?: defaultColor
+                val resolvedFg = tokenColorFor(span, tokens) ?: if (span.link != null) palette.mdLink else defaultColor
                 if (!richStyle) {
-                    withStyle(SpanStyle(color = resolvedFg)) {
+                    withStyle(
+                        SpanStyle(
+                            color = resolvedFg,
+                            textDecoration = if (span.link != null) TextDecoration.Underline else null,
+                        ),
+                    ) {
                         append(span.text)
                     }
                 } else {
@@ -76,11 +81,12 @@ fun ExtensionSpans(
                     val fg = if (span.inverse) (resolvedBg ?: surfaceBg) else resolvedFg
                     val bg = if (span.inverse) resolvedFg else (resolvedBg ?: Color.Unspecified)
                     val finalFg = if (span.dim) fg.copy(alpha = 0.65f) else fg
+                    val wantUnderline = span.underline || span.link != null
                     val decoration = when {
-                        span.underline && span.strikethrough -> TextDecoration.combine(
+                        wantUnderline && span.strikethrough -> TextDecoration.combine(
                             listOf(TextDecoration.Underline, TextDecoration.LineThrough),
                         )
-                        span.underline -> TextDecoration.Underline
+                        wantUnderline -> TextDecoration.Underline
                         span.strikethrough -> TextDecoration.LineThrough
                         else -> null
                     }

@@ -145,18 +145,29 @@ try {
   // bindExtensions 要等所有 session_start 处理器（上面那串对话框）跑完，所以 ext.bound 只能在这之后。
   const bound = await h.waitFor(h.evt("ext.bound"), 30000);
   expect("扩展绑定完成（open 的应答没有被它拖住）", bound.data.ok === true, bound.data.error);
-  // 扩展工具的渲染器：renderCall / renderResult 渲成行；同一次调用的 state 共享；没有渲染器的工具返回 null。
+  // 扩展工具的渲染器：renderCall / renderResult 渲成行；同一次调用的 state 共享；没有渲染器的工具返回 null；
+  // 同步调用 render.tool 期间绝不能反向触发 render.invalidate 死循环。
+  const invalidatesBefore = h.frames.filter(h.evt("render.invalidate")).length;
   const rt = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "t1", args: { q: "hi" }, width: 50, result: { content: [{ type: "text", text: "ok" }], isError: true }, expanded: true });
-  expect("render.tool 渲染 call", rt.ok && rt.data.call?.[0]?.includes("q=hi w=50"), JSON.stringify(rt));
+  expect("render.tool 渲染 call", rt.ok && rt.data.call?.[0]?.includes("q=hi w=50") && rt.data.hasRenderer === true && rt.data.shell === "default", JSON.stringify(rt));
   expect("render.tool 渲染 result（同一次调用共享 state，带 isError / expanded）", rt.ok && /^result expanded=true err=true n=\d+$/.test(rt.data.result?.[0]) && rt.data.result?.[1] === "ok", JSON.stringify(rt));
   const rtd = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "t2", args: { q: "d" }, width: 50, result: { content: [{ type: "text", text: "x" }], details: { successfulQueries: 2, totalResults: 7 }, isError: false } });
   expect("render.tool 把 result.details 交给 renderResult（扩展渲染器读的主要是它）", rtd.ok && rtd.data.result?.[2] === 'details={"successfulQueries":2,"totalResults":7}', JSON.stringify(rtd));
   const rt2 = await h.call("render.tool", { toolName: "probe_tool", toolCallId: "t1", args: { q: "hi" }, width: 50 });
   expect("同一 toolCallId 再渲染，state 延续（官方组件持有它）", rt2.ok && Number(/n=(\d+)/.exec(rt2.data.call?.[0] ?? "")?.[1]) > Number(/n=(\d+)/.exec(rt.data.call?.[0] ?? "")?.[1]), JSON.stringify(rt2));
+  await new Promise((r) => setTimeout(r, 120));
+  const invalidatesAfter = h.frames.filter(h.evt("render.invalidate")).length;
+  expect("同步 render.tool 不触发 render.invalidate 死循环", invalidatesAfter === invalidatesBefore, `before=${invalidatesBefore} after=${invalidatesAfter}`);
   const rt3 = await h.call("render.tool", { toolName: "no_such_tool", args: {}, width: 50 });
-  expect("没注册的工具 → null（App 用自己的原生卡）", rt3.ok && rt3.data.call === null && rt3.data.result === null && rt3.data.reason === "no_renderer", JSON.stringify(rt3));
+  expect("没注册的工具 → null（App 用自己的原生卡）", rt3.ok && rt3.data.call === null && rt3.data.result === null && rt3.data.hasRenderer === false && rt3.data.reason === "no_renderer", JSON.stringify(rt3));
   const rt4 = await h.call("render.tool", { toolName: "read", args: { path: "x" }, width: 50 });
   expect("内置工具 SDK 自带渲染器也能出行（App 对内置工具仍用原生卡，这是对照）", rt4.ok && Array.isArray(rt4.data.call), JSON.stringify(rt4));
+  // 切换亮色色板应同步触发官方组件主题重绘（render.invalidate kind=theme）
+  const themeInvPromise = h.waitFor((f) => h.evt("render.invalidate")(f) && f.data?.kind === "theme", 2000);
+  const palLight = await h.call("ui.palette", { palette: { pageBg: "#ffffff", text: "#111111" } });
+  const themeInv = await themeInvPromise;
+  expect("ui.palette 亮色同步官方渲染主题并通知重绘", palLight.ok && themeInv?.data?.kind === "theme", JSON.stringify(themeInv));
+  await h.call("ui.palette", { palette: { pageBg: "#18181b", text: "#d4d4d8" } });
 
   // ---- 4. 协议完整性 ----------------------------------------------------
   expect("扩展的 console.log / stdout.write 没有污染协议流", h.garbage.length === 0, JSON.stringify(h.garbage.slice(0, 2)));

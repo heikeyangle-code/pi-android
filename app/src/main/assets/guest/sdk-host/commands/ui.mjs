@@ -2,7 +2,17 @@
 
 import { ERR, HostError, bool, str } from "../protocol.mjs";
 
-export function register(reg, { hub, surfaces, ui, themeHandle }) {
+function isLightHex(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? ""));
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return r * 0.299 + g * 0.587 + b * 0.114 > 140;
+}
+
+export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
   reg.add("ui.respond", (args) => {
     const hit = hub.answer(str(args, "id"), args.value, bool(args, "cancelled", false));
     // 迟到的回答（超时已收回）不是错误：App 的对话框和宿主的计时器本来就会赛跑。
@@ -45,10 +55,14 @@ export function register(reg, { hub, surfaces, ui, themeHandle }) {
     return { expanded: ui.state.toolsExpanded };
   });
 
-  // App 主题换了：整体换色板，后续渲染生效；已挂载的表面全部重绘。
+  // App 主题换了：整体换色板，同步官方组件明暗主题，已挂载的表面全部重绘。
   reg.add("ui.palette", (args) => {
     if (typeof args.palette !== "object" || args.palette === null) throw new HostError(ERR.BAD_ARGS, "palette 必须是对象");
     themeHandle.setPalette(args.palette);
+    const bgHex = args.palette.pageBg ?? args.palette.userMessageBg ?? args.palette.cardBg;
+    if (typeof bgHex === "string") {
+      controller.syncOfficialTheme?.(isLightHex(bgHex) ? "light" : "dark");
+    }
     surfaces.resize(surfaces.width, surfaces.height);
   });
 }

@@ -151,7 +151,7 @@ fun BlockRenderer(
                 onImageClick = onImageClick,
                 nowMs = nowMs,
             )
-            else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick)
+            else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, onImageClick, nowMs = nowMs)
         }
 
         is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)
@@ -160,10 +160,10 @@ fun BlockRenderer(
 
         is BranchSummary -> BranchSummaryBlock(item, modifier, onBranchClick, showBilledCost)
 
-        is HookMessage -> HookMessageBlock(item, modifier)
+        is HookMessage -> HookMessageBlock(item, modifier, defaultExpanded = toolsDefaultExpanded)
 
         // 扩展自己的 `custom` 条目：有 `registerEntryRenderer` 才会进到这里（见 ChatScreen 的可见项过滤）。
-        is app.pi.rpc.ExtensionEntry -> ExtensionEntryBlock(item, modifier)
+        is app.pi.rpc.ExtensionEntry -> ExtensionEntryBlock(item, modifier, defaultExpanded = toolsDefaultExpanded)
 
         // **pi does not draw `model_change` in the transcript, so neither does this.**
         // The entry exists in the session file (`core/session-manager.ts:64`, written

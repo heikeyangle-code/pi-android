@@ -224,8 +224,14 @@ class HostCommands(
 
     // ---- ui 回路 ----
 
-    /** 扩展工具的渲染结果：[call] / [result] 是带 ANSI 的行；没有渲染器的工具两者皆 null。 */
-    data class ToolRender(val call: List<String>?, val result: List<String>?)
+    /** 扩展工具的渲染结果：[call] / [result] 是带 ANSI 的行；[shell] 为 `"self"` 时由扩展自绘外框。 */
+    data class ToolRender(
+        val call: List<String>?,
+        val result: List<String>?,
+        val shell: String = "default",
+        val hasRenderer: Boolean = call != null || result != null,
+        val label: String? = null,
+    )
 
     /**
      * `render.tool`：让宿主调扩展工具自己的 `renderCall` / `renderResult`，按 [width] 列渲染成行。
@@ -271,7 +277,13 @@ class HostCommands(
             put("width", JsonPrimitive(width))
         }) as? JsonObject
         fun lines(key: String) = (data?.get(key) as? JsonArray)?.map { (it as? JsonPrimitive)?.content ?: it.toString() }
-        return ToolRender(lines("call"), lines("result"))
+        val callLines = lines("call")
+        val resultLines = lines("result")
+        val hasRenderer = (data?.get("hasRenderer") as? JsonPrimitive)?.content?.toBooleanStrictOrNull()
+            ?: (data?.str("reason") != "no_renderer" && (callLines != null || resultLines != null))
+        val shell = data?.str("shell") ?: "default"
+        val label = data?.str("label")?.takeIf { it.isNotBlank() }
+        return ToolRender(call = callLines, result = resultLines, shell = shell, hasRenderer = hasRenderer, label = label)
     }
 
     /**

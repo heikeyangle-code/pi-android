@@ -1,14 +1,9 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,12 +12,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import app.pi.rpc.HookMessage
 import app.pi.ui.render.PiMarkdownText
-import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiTheme
 
 /**
  * `hook-message` (docs/pi-android-ui-spec.md §7.4): an extension-injected
@@ -73,26 +66,13 @@ fun HookMessageBlock(
                     if (collapsible) ExpandLabel(expanded)
                 }
                 if (renderedLines != null) {
-                    // 折叠只给预览：不少扩展的消息渲染器不看 `expanded`，宿主怎么问都吐全量，
-                    // 所以在这里裁剪，卡片才收得起来（工具卡同理，见 `ToolCallBlock`）。
-                    val shown = if (expanded || renderedLines.size <= COLLAPSED_RENDER_LINES) {
-                        renderedLines
-                    } else {
-                        renderedLines.take(COLLAPSED_RENDER_LINES)
-                    }
-                    Column(Modifier.padding(top = PiSpacing.tiny)) {
-                        Column(Modifier.horizontalScroll(rememberScrollState())) {
-                            shown.forEach { app.pi.ui.extension.PanelLine(it, wrap = false) }
-                        }
-                        val hidden = renderedLines.size - shown.size
-                        if (hidden > 0) {
-                            Text(
-                                text = "… 还有 $hidden 行，点卡片展开",
-                                style = PiTheme.text.meta,
-                                color = palette.muted,
-                            )
-                        }
-                    }
+                    app.pi.ui.extension.RenderedAnsiBlock(
+                        lines = renderedLines,
+                        expanded = expanded,
+                        collapsedLimit = COLLAPSED_RENDER_LINES,
+                        modifier = Modifier.padding(top = PiSpacing.tiny),
+                        expandHint = { hidden -> "… 还有 $hidden 行，点卡片展开" },
+                    )
                 } else if (expanded || !collapsible) {
                 // Expanded (or short enough that there is nothing to collapse):
                 // markdown. The renderer's own hook-message component builds a

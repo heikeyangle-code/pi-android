@@ -141,4 +141,32 @@ class AnsiTest {
         assertEquals(0x008000, spans[0].foreground)
         assertTrue(spans.any { it.text == "FAIL" && it.foreground == 0x800000 })
     }
+
+    @Test
+    fun `OSC 8 hyperlinks parse url and strip cleanly`() {
+        val bel = "\u0007"
+        val raw = "see ${esc}]8;;https://example.com${bel}docs${esc}]8;;${bel} now"
+        val spans = Ansi.parse(raw)
+        assertEquals("see docs now", spans.joinToString("") { it.text })
+        assertEquals("https://example.com", spans.first { it.text == "docs" }.link)
+        assertNull(spans.first { it.text == "see " }.link)
+        assertEquals("see docs now", Ansi.strip(raw))
+    }
+
+    @Test
+    fun `APC cursor markers and ST-terminated OSC sequences are dropped cleanly`() {
+        val bel = "\u0007"
+        val raw = "hi${esc}_pi:c${bel} there${esc}]0;title${esc}\\!"
+        assertEquals("hi there!", Ansi.parse(raw).joinToString("") { it.text })
+        assertEquals("hi there!", Ansi.strip(raw))
+    }
+
+    @Test
+    fun `inverse and strikethrough SGR codes toggle cleanly`() {
+        val spans = Ansi.parse("${esc}[7;9mcur${esc}[27;29mplain")
+        assertTrue(spans[0].inverse)
+        assertTrue(spans[0].strikethrough)
+        assertFalse(spans[1].inverse)
+        assertFalse(spans[1].strikethrough)
+    }
 }

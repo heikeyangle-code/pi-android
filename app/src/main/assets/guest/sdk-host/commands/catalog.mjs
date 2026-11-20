@@ -2,6 +2,7 @@
 
 import { ERR, HostError, bad, optStr, str } from "../protocol.mjs";
 import { withState } from "../state.mjs";
+import { sanitizeRenderedLine } from "../ui/surfaces.mjs";
 
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -159,18 +160,53 @@ export function register(reg, { controller }) {
 
   // 渲染一律交给 pi 官方导出的 `ToolExecutionComponent` / `CustomMessageComponent`：render context、
   // 状态、回退、`invalidate` 都是它们的实现，宿主不再自己拼（此前自拼漏了 details / 图片块 / executionStarted…）。
-  // 官方组件读的是 pi 的**全局官方主题**，所以先 `initTheme`；字体色深度由 COLORTERM 决定。
-  let themed = false;
+  // 官方组件读的是 pi 的**全局官方主题**，随 App 通过 `ui.palette` 同步的明暗色板自动切 `light`/`dark`。
+  let activeThemeMode = null;
   const officialTheme = () => {
-    if (!themed) {
+    const wanted = controller.officialThemeMode === "light" ? "light" : "dark";
+    if (activeThemeMode !== wanted) {
       process.env.COLORTERM ||= "truecolor";
-      controller.sdk.initTheme("dark");
-      themed = true;
+      controller.sdk.initTheme(wanted);
+      activeThemeMode = wanted;
     }
     return globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
   };
-  // 组件自己 `ui.requestRender()`（动画、定时刷新）→ 通知 App 重取这一张卡。
-  const tui = (key) => ({ requestRender: () => controller.hub.emit("render.invalidate", key) });
+  controller.syncOfficialTheme = (mode) => {
+    const next = mode === "light" ? "light" : "dark";
+    const changed = controller.officialThemeMode !== next;
+    controller.officialThemeMode = next;
+    if (changed && controller.sdk) {
+      try {
+        process.env.COLORTERM ||= "truecolor";
+        controller.sdk.initTheme(next);
+        activeThemeMode = next;
+      } catch {
+        // ignore if theme init not ready yet
+      }
+      controller.hub.emit("render.invalidate", { kind: "theme" });
+    }
+  };
+
+  // 组件异步 `ui.requestRender()`（动画、定时刷新）→ 合并防抖后只通知 App 重取这一张卡。
+  // 同步执行 `render.tool` 期间由宿主调 `updateArgs`/`markExecutionStarted`/`setArgsComplete` 触发的
+  // `requestRender()` 必须屏蔽，否则会造成 render.tool → render.invalidate → render.tool 死循环。
+  let renderingToolId = null;
+  const invalidateTimers = new Map();
+  const tui = (key) => ({
+    requestRender: () => {
+      const tid = key?.toolCallId ?? null;
+      if (tid && tid === renderingToolId) return;
+      const timerKey = tid ? `tool:${tid}` : "all";
+      if (invalidateTimers.has(timerKey)) return;
+      invalidateTimers.set(
+        timerKey,
+        setTimeout(() => {
+          invalidateTimers.delete(timerKey);
+          controller.hub.emit("render.invalidate", key);
+        }, 60),
+      );
+    },
+  });
 
   reg.add("render.message", (args) => {
     const s = controller.requireSession();
@@ -183,7 +219,7 @@ export function register(reg, { controller }) {
     const component = new CustomMessageComponent(message, renderer, undefined, 0);
     component.setExpanded(Boolean(args.expanded));
     const lines = component.render(Number(args.width) || controller.surfaces.width);
-    return { lines: lines.map(String) };
+    return { lines: lines.map(sanitizeRenderedLine) };
   });
 
   // 扩展用 `registerEntryRenderer` 给自己的 `custom` 会话条目（`appendEntry`）注册的渲染器：
@@ -207,7 +243,7 @@ export function register(reg, { controller }) {
     const component = new CustomEntryComponent(entry, renderer, 0);
     if (!component.hasContent()) return { lines: null, reason: "empty" };
     component.setExpanded(Boolean(args.expanded));
-    return { lines: component.render(Number(args.width) || controller.surfaces.width).map(String) };
+    return { lines: component.render(Number(args.width) || controller.surfaces.width).map(sanitizeRenderedLine) };
   });
 
   // 扩展用 `registerMarkdownTransformer` 改写 markdown（TUI 在 Assistant/UserMessageComponent 里逐条套用）。
@@ -251,38 +287,62 @@ export function register(reg, { controller }) {
     const name = str(args, "toolName");
     // 与 TUI 同一条解析链：扩展用 `registerToolRenderer` 注册的 resolver 先于工具自带的渲染器
     // （interactive-mode.js getRegisteredToolDefinition）——直接取 getToolDefinition 会漏掉被 resolver 接管的工具。
-    const def = s.extensionRunner.resolveToolRenderers(name, () => s.getToolDefinition?.(name));
-    if (!def || (!def.renderCall && !def.renderResult)) return { call: null, result: null, shell: null, reason: "no_renderer" };
+    const toolDef = s.getToolDefinition?.(name);
+    const def = s.extensionRunner.resolveToolRenderers(name, () => toolDef);
+    if (!def || (!def.renderCall && !def.renderResult)) {
+      return { call: null, result: null, shell: null, hasRenderer: false, label: toolDef?.label ?? null, reason: "no_renderer" };
+    }
     officialTheme();
     const width = Number(args.width) || controller.surfaces.width;
     const id = typeof args.toolCallId === "string" && args.toolCallId ? args.toolCallId : name;
     const callArgs = args.args ?? {};
     const cwd = s.sessionManager?.getCwd?.() ?? controller.cfg?.cwd ?? process.cwd();
-    const comp = componentFor(id, name, def, callArgs, cwd);
-    comp.updateArgs(callArgs);
-    if (args.executionStarted !== false) comp.markExecutionStarted();
-    if (args.argsComplete !== false) comp.setArgsComplete();
-    if (args.result) {
-      comp.updateResult(
-        { content: args.result.content ?? [], details: args.result.details, isError: Boolean(args.result.isError), durationMs: Number.isFinite(args.durationMs) ? Number(args.durationMs) : undefined },
-        Boolean(args.isPartial),
-      );
-    }
-    comp.setExpanded(Boolean(args.expanded));
-    const whole = comp.render(width).map(String); // 触发官方的 updateDisplay
-    // 官方组件把 call / result 渲成一个整体；App 的卡片要分开画头和体，所以取它内部的两个子渲染结果。
-    const part = (child) => {
-      try {
-        const lines = child?.render?.(width);
-        return Array.isArray(lines) ? lines.map(String) : null;
-      } catch (error) {
-        return [`[render failed] ${error?.message ?? error}`];
+    const prevRendering = renderingToolId;
+    renderingToolId = id;
+    try {
+      const comp = componentFor(id, name, def, callArgs, cwd);
+      comp.updateArgs(callArgs);
+      if (args.executionStarted !== false) comp.markExecutionStarted();
+      if (args.argsComplete !== false) comp.setArgsComplete();
+      if (args.result) {
+        comp.updateResult(
+          {
+            content: args.result.content ?? [],
+            details: args.result.details,
+            ...(args.result.structuredContent !== undefined ? { structuredContent: args.result.structuredContent } : {}),
+            isError: Boolean(args.result.isError),
+            durationMs: Number.isFinite(args.durationMs) ? Number(args.durationMs) : undefined,
+          },
+          Boolean(args.isPartial),
+        );
       }
-    };
-    let call = part(comp.callRendererComponent);
-    const result = part(comp.resultRendererComponent);
-    if (!call && !result) call = whole; // 渲染器抛了、官方回退了：把官方的整体输出给 App，别让 App 当成「没有渲染器」
-    return { call, result, shell: def.renderShell ?? "default" };
+      comp.setExpanded(Boolean(args.expanded));
+      const whole = comp.render(width).map(sanitizeRenderedLine); // 触发官方的 updateDisplay
+      // 官方组件把 call / result 渲成一个整体；App 的卡片要分开画头和体，所以取它内部的两个子渲染结果。
+      const part = (child) => {
+        try {
+          const lines = child?.render?.(width);
+          return Array.isArray(lines) ? lines.map(sanitizeRenderedLine) : null;
+        } catch (error) {
+          return [`[render failed] ${error?.message ?? error}`];
+        }
+      };
+      let call = part(comp.callRendererComponent);
+      const result = part(comp.resultRendererComponent);
+      // 仅当扩展声明了 renderCall 但抛错退回时，把官方整体回退结果交给 App；
+      // 若扩展只写了 renderResult 且结果尚未到达，保持 call=null，让 App 原生 ToolHeader 渲染干净表头。
+      if (!call && !result && typeof def.renderCall === "function") call = whole;
+      return {
+        call,
+        result,
+        shell: def.renderShell ?? "default",
+        hasRenderer: true,
+        label: toolDef?.label ?? null,
+        annotations: toolDef?.annotations ?? null,
+      };
+    } finally {
+      renderingToolId = prevRendering;
+    }
   });
 }
 

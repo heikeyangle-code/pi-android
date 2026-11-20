@@ -1,19 +1,27 @@
 package app.pi.ui.extension
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,17 +31,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
-import app.pi.host.ExtWorking
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtPanel
 import app.pi.host.ExtStatus
+import app.pi.host.ExtWorking
 import app.pi.ui.blocks.BlockCard
 import app.pi.ui.blocks.BlockCardRowPadding
 import app.pi.ui.blocks.ExpandLabel
@@ -41,22 +51,15 @@ import app.pi.ui.blocks.toggleContent
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.delay
 
 /**
  * 扩展面板：`ctx.ui.setWidget` 的落点——输入框上下各一摞，一个 key 一张卡，按首次出现的顺序。
  *
- * SDK 给扩展的 widget 只有两种内容：字符串行，和一个会自己重绘的终端组件（工厂）。宿主已把后者
- * 渲染成同样的「带 ANSI 的行」（`ui.surface`，见 `host/ExtUiState.kt`），所以这里**只有一条绘制路径**，
- * 不区分来源，也不认识任何具体扩展：
- *
- *  - 收起：前 [COLLAPSED_ROWS] 行，每行一行不折行。面板是常驻的，一次推送不该把对话挤出屏幕。
- *  - 展开（点卡片）：全部行，高度封顶 [EXPANDED_MAX_HEIGHT]、内部可纵向滚；
- *    表格 / 框线（[isPreformatted]）整块一起横向滚，列对齐就是内容，折行等于毁掉它；普通句子照常折行。
- *  - 颜色：扩展用 `theme.fg(…)` 写的 SGR 经 `Ansi.parse` → 主题令牌映射，跟着用户主题走。
- *  - 标题：key 的人话版（`web-activity` → `web activity`）。宿主不知道它「是什么」，所以只换分隔符、不翻译。
- *
- * 宽度：组件按「字符列数」渲染。这里量出一行等宽字符能放多少列，经 [onColumns] 告诉宿主，
- * 宿主据此重绘所有表面——否则工厂组件永远按默认 40 列排版。
+ * 视觉与交互：
+ *  - 卡片顶部用淡色点缀提示可交互性；可交互工厂组件可直接点「操控」胶囊呼出全功能交互面板；
+ *  - 收起只占 [COLLAPSED_ROWS] 行，点卡片平滑展开（带高度上限与内部滚动）；
+ *  - 表格/框线（[isPreformatted]）横向可滚、普通句子自动换行，兼顾手机阅读和对齐内容。
  */
 @Composable
 fun ExtensionWidgetStack(
@@ -69,11 +72,9 @@ fun ExtensionWidgetStack(
     val measurer = rememberTextMeasurer()
     val mono = PiTheme.text.monoSmall
     val charPx = remember(measurer, mono) { measurer.measure("0", mono).size.width.coerceAtLeast(1) }
-    // 左右：页边距各一份 + 卡片左右内边距各一份 + 描边。取整偏小一点没关系，偏大才会被截。
     val chromePx = with(density) { (PiSpacing.composerPageMargin * 2 + CARD_SIDE_PADDING * 2 + 2.dp).roundToPx() }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // 一个高 0 的探针：没有面板时也能量出宽度，所以第一个面板出现时宿主手里已经是对的列数。
         if (onColumns != null) {
             Box(
                 Modifier
@@ -87,7 +88,7 @@ fun ExtensionWidgetStack(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             widgets.forEach { widget ->
                 key(widget.key) {
@@ -108,8 +109,7 @@ fun ExtensionWidgetStack(
 
 /**
  * 扩展工作指示器（`ctx.ui.setWorkingMessage` / `ctx.ui.setWorkingIndicator`）：
- * 流式运行时按扩展声明的 `frames` 与 `intervalMs` 轮播指示帧，并呈现带 ANSI 样式的工作提示文案；
- * 空闲、不可见或扩展未设置时完全不占位。
+ * 紧凑色调胶囊条，按扩展声明的 `frames` 与 `intervalMs` 轮播指示帧，并呈现完整 ANSI 工作提示。
  */
 @Composable
 fun ExtensionWorkingStrip(
@@ -132,17 +132,23 @@ fun ExtensionWorkingStrip(
         }
     }
 
+    val palette = PiTheme.palette
     val glyph = if (frames.isNotEmpty()) frames[frameIndex % frames.size] else "◌"
+    val pillShape = RoundedCornerShape(10.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.composerPageMargin, vertical = PiSpacing.tiny),
-        horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
+            .clip(pillShape)
+            .background(palette.infoBg)
+            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), pillShape)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ExtensionSpans(
             spans = remember(glyph) { chromeSpans(glyph) },
-            defaultColor = PiTheme.palette.accent,
+            defaultColor = palette.accent,
             style = PiTheme.text.monoSmall,
             maxLines = 1,
             richStyle = true,
@@ -150,7 +156,7 @@ fun ExtensionWorkingStrip(
         if (message != null) {
             ExtensionSpans(
                 spans = remember(message) { chromeSpans(message) },
-                defaultColor = PiTheme.palette.muted,
+                defaultColor = palette.text,
                 style = PiTheme.text.meta,
                 modifier = Modifier.weight(1f),
                 maxLines = 2,
@@ -162,11 +168,8 @@ fun ExtensionWorkingStrip(
 }
 
 /**
- * 扩展状态（`ctx.ui.setStatus`）：输入框上方的一行小标签，按 key 排序（pi 的顺序）。
- *
- * 它们是扩展随手给的短字符串（"3/5 ✓"、"indexing…"），所以做成一行、横向可滑的标签，
- * 不占纵向空间；点一下展开成自动换行的整块，再点收回。颜色走 [chromeSpans]。
- * [editorTakeover] 时多一枚灰标签说明"有扩展想接管输入框，手机上不支持"——让用户知道为什么某个扩展像是缺了一块。
+ * 扩展状态（`ctx.ui.setStatus`）：精致色调徽章胶囊条，按 key 排序。
+ * 横向单行紧凑滑动不挤占对话；点一下展开为自动换行的完整胶囊组。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -179,49 +182,123 @@ fun ExtensionStatusStrip(
     if (rows.isEmpty() && !editorTakeover) return
     var expanded by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
-    val chip: @Composable (String, String?) -> Unit = { key, text ->
+    val chipShape = RoundedCornerShape(8.dp)
+
+    val pill: @Composable (String, String?, Boolean) -> Unit = { keyText, valueText, isNotice ->
         Row(
             modifier = Modifier
-                .padding(vertical = 2.dp),
+                .clip(chipShape)
+                .background(if (isNotice) palette.infoBg else palette.cardBg)
+                .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), chipShape)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            if (key.isNotEmpty()) {
-                Text(key, style = PiTheme.text.monoSmall, color = palette.dim, maxLines = 1)
-            }
-            if (text != null) {
-                ExtensionSpans(
-                    spans = remember(text) { chromeSpans(text) },
-                    defaultColor = palette.muted,
+            if (keyText.isNotEmpty()) {
+                Text(
+                    text = keyText,
                     style = PiTheme.text.monoSmall,
-                    modifier = Modifier.padding(start = if (key.isNotEmpty()) 4.dp else 0.dp),
+                    color = palette.dim,
+                    maxLines = 1,
+                )
+            }
+            if (valueText != null) {
+                ExtensionSpans(
+                    spans = remember(valueText) { chromeSpans(valueText) },
+                    defaultColor = if (isNotice) palette.muted else palette.text,
+                    style = PiTheme.text.monoSmall,
                     maxLines = if (expanded) Int.MAX_VALUE else 1,
                     overflow = TextOverflow.Ellipsis,
+                    richStyle = true,
                 )
             }
         }
     }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 2.dp)
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
             .toggleContent(expanded, { expanded = !expanded }),
     ) {
         if (expanded) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                rows.forEach { chip(it.key, it.text) }
-                if (editorTakeover) chip("", "输入框接管：手机上不支持")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                rows.forEach { pill(it.key, it.text, false) }
+                if (editorTakeover) pill("", "扩展编辑器已由原生输入框替代", true)
             }
         } else {
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                rows.forEach { chip(it.key, it.text) }
-                if (editorTakeover) chip("", "输入框接管：手机上不支持")
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                rows.forEach { pill(it.key, it.text, false) }
+                if (editorTakeover) pill("", "扩展编辑器已由原生输入框替代", true)
             }
         }
     }
 }
 
 /**
- * 一块面板：标题（可无）+ 行。小组件、header、footer 共用——它们只是摆放位置不同。
+ * 扩展顶栏/底栏（`ctx.ui.setHeader` / `ctx.ui.setFooter`）的轻量横幅。
+ * 相比普通 widget 卡片更贴边紧凑，支持展开与可交互扩展打开全功能交互面板。
+ */
+@Composable
+internal fun ExtensionChromeBanner(
+    lines: List<String>,
+    collapsedRows: Int,
+    modifier: Modifier = Modifier,
+    onInteract: (() -> Unit)? = null,
+) {
+    val palette = PiTheme.palette
+    var expanded by remember { mutableStateOf(false) }
+    val rows = remember(lines) { trimEmptyEdgeLines(panelRows(lines)) }
+    if (rows.isEmpty()) return
+    val canExpand = rows.size > collapsedRows
+    val shown = if (expanded) rows else rows.take(collapsedRows)
+    val wide = remember(rows) { rows.any { isPreformatted(it) } }
+    val shape = RoundedCornerShape(9.dp)
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .clip(shape)
+            .background(palette.cardBg)
+            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.4f), shape)
+            .then(if (canExpand) Modifier.toggleContent(expanded, { expanded = !expanded }) else Modifier)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .then(if (expanded) Modifier.heightIn(max = EXPANDED_MAX_HEIGHT).verticalScroll(rememberScrollState()) else Modifier),
+        ) {
+            Column(modifier = if (expanded && wide) Modifier.horizontalScroll(rememberScrollState()) else Modifier) {
+                shown.forEach { line -> PanelLine(line, wrap = expanded && !isPreformatted(line)) }
+            }
+            if (canExpand) {
+                Row(
+                    modifier = Modifier.padding(top = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
+                }
+            }
+        }
+        if (onInteract != null) {
+            InteractPill(onClick = onInteract)
+        }
+    }
+}
+
+/**
+ * 一块面板：标题（可无）+ 左侧微accent竖条 + 渲染行。
  * [collapsedRows] 行以内不出现「展开」；点卡片在原地展开，高度封顶、内部滚动。
  */
 @Composable
@@ -234,7 +311,7 @@ internal fun ExtensionPanelCard(
 ) {
     val palette = PiTheme.palette
     var expanded by remember { mutableStateOf(false) }
-    val rows = remember(lines) { panelRows(lines) }
+    val rows = remember(lines) { trimEmptyEdgeLines(panelRows(lines)) }
     if (rows.isEmpty()) return
     val canExpand = rows.size > collapsedRows
     val shown = if (expanded) rows else rows.take(collapsedRows)
@@ -244,27 +321,39 @@ internal fun ExtensionPanelCard(
         color = palette.cardBg,
         modifier = modifier
             .animateContentSize()
-            .toggleContent(expanded, { if (canExpand) expanded = !expanded }),
-        borderColor = palette.borderMuted.copy(alpha = 0.35f),
+            .then(
+                when {
+                    canExpand -> Modifier.toggleContent(expanded, { expanded = !expanded })
+                    onInteract != null -> Modifier.clickable(role = Role.Button, onClick = onInteract)
+                    else -> Modifier
+                },
+            ),
+        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.35f) else palette.borderMuted.copy(alpha = 0.4f),
         padding = BlockCardRowPadding,
         shape = PiShapes.card,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (caption != null || canExpand || onInteract != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (onInteract != null) palette.accent else palette.dim.copy(alpha = 0.7f)),
+                    )
                     Text(
                         text = caption.orEmpty(),
                         modifier = Modifier.weight(1f),
-                        style = PiTheme.text.monoSmall,
-                        color = palette.dim,
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                        color = palette.muted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (onInteract != null) {
-                        app.pi.ui.settings.PiSettingsChip(text = "交互", onClick = onInteract)
+                        InteractPill(onClick = onInteract)
                     }
                     if (canExpand) ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
                 }
@@ -281,6 +370,72 @@ internal fun ExtensionPanelCard(
     }
 }
 
+/**
+ * 扩展渲染行公共块（用于工具卡 `renderCall`/`renderResult`、自定义消息 `registerMessageRenderer`、
+ * 自定义条目 `registerEntryRenderer`）：
+ *  - 自动裁掉首尾无内容空行，避免卡片上下留出难看的空白；
+ *  - 智能换行：普通说明文字自动换行适配手机窄屏，仅对表格/框线（[isPreformatted]）开启横向滚动；
+ *  - 折叠态按 [collapsedLimit] 裁剪，并给出清晰的展开提示。
+ */
+@Composable
+internal fun RenderedAnsiBlock(
+    lines: List<String>,
+    expanded: Boolean,
+    collapsedLimit: Int,
+    modifier: Modifier = Modifier,
+    expandHint: ((hidden: Int) -> String)? = null,
+) {
+    val cleaned = remember(lines) { trimEmptyEdgeLines(panelRows(lines)) }
+    if (cleaned.isEmpty()) return
+    val visible = if (expanded || cleaned.size <= collapsedLimit) cleaned else cleaned.take(collapsedLimit)
+    val hidden = cleaned.size - visible.size
+    val hasWide = remember(visible) { visible.any { isPreformatted(it) } }
+    val palette = PiTheme.palette
+
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        if (hasWide) {
+            Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                visible.forEach { line ->
+                    PanelLine(line, wrap = false)
+                }
+            }
+        } else {
+            visible.forEach { line ->
+                PanelLine(line, wrap = true)
+            }
+        }
+        if (hidden > 0 && expandHint != null) {
+            Text(
+                text = expandHint(hidden),
+                style = PiTheme.text.meta,
+                color = palette.muted,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun InteractPill(onClick: () -> Unit) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(palette.accent.copy(alpha = 0.14f))
+            .border(PiSpacing.hairline, palette.accent.copy(alpha = 0.45f), shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = "操控",
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = palette.accent,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 internal fun PanelLine(raw: String, wrap: Boolean) {
     val spans = remember(raw) { chromeSpans(raw) }
@@ -292,6 +447,14 @@ internal fun PanelLine(raw: String, wrap: Boolean) {
         overflow = TextOverflow.Ellipsis,
         richStyle = true,
     )
+}
+
+/** 裁掉首尾全是空白或仅含 ANSI 转义的空行，中间空行保留（段落呼吸）。 */
+internal fun trimEmptyEdgeLines(rows: List<String>): List<String> {
+    val first = rows.indexOfFirst { stripAnsiControls(it).isNotBlank() }
+    if (first < 0) return emptyList()
+    val last = rows.indexOfLast { stripAnsiControls(it).isNotBlank() }
+    return rows.subList(first, last + 1)
 }
 
 private val CARD_SIDE_PADDING = 10.dp

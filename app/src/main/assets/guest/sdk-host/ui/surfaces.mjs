@@ -21,7 +21,7 @@ const REPAINT_DELAY_MS = 16;
 const CURSOR_MARKER_RE = /\x1b_pi:c\x07/g;
 const FAKE_CURSOR_RE = /\x1b_pi:fc\x07(.*?)(?:\x1b_pi:\/fc\x07|$)/gs;
 
-function sanitizeRenderedLine(raw) {
+export function sanitizeRenderedLine(raw) {
   const s = String(raw);
   if (!s.includes("\x1b_pi:")) return s;
   return s
@@ -247,17 +247,31 @@ export class Surfaces {
     } catch (error) {
       lines = [`[render failed] ${error?.message ?? error}`];
     }
+    const overlayOptions = resolveOverlayOptions(surface.overlayOptions);
+    const interactive = typeof surface.component.handleInput === "function" || typeof surface.component.handleMouse === "function";
+    const frameKey = JSON.stringify([
+      surface.overlay,
+      overlayOptions,
+      surface.hidden,
+      surface.focused,
+      surface.blocked ?? null,
+      interactive,
+      this.width,
+      lines,
+    ]);
+    if (surface.lastFrameKey === frameKey) return;
+    surface.lastFrameKey = frameKey;
     this.hub.emit("ui.surface", {
       surfaceId: surface.id,
       key: surface.key,
       mode: surface.mode,
       overlay: surface.overlay,
-      overlayOptions: resolveOverlayOptions(surface.overlayOptions),
+      overlayOptions,
       hidden: surface.hidden,
       focused: surface.focused,
       blocked: surface.blocked ?? null,
       rev: ++surface.rev,
-      interactive: typeof surface.component.handleInput === "function" || typeof surface.component.handleMouse === "function",
+      interactive,
       width: this.width,
       lines,
     });

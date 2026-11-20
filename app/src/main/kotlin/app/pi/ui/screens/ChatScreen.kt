@@ -130,7 +130,7 @@ import app.pi.ui.render.transcriptGap
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWidgetSurfaceSheet
 import app.pi.ui.extension.toExtensionPalette
-import app.pi.ui.extension.ExtensionPanelCard
+import app.pi.ui.extension.ExtensionChromeBanner
 import app.pi.ui.extension.ExtensionStatusStrip
 import app.pi.ui.extension.FOOTER_COLLAPSED_ROWS
 import app.pi.ui.extension.HEADER_COLLAPSED_ROWS
@@ -1828,13 +1828,17 @@ internal fun ChatBody(
         // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
         // D31.
 
-        // 扩展的 header（`ctx.ui.setHeader`）：顶栏之下的一条细栏，只在扩展挂了才有；点开看全部。
+        // 扩展的 header（`ctx.ui.setHeader`）：顶栏之下的轻量横幅，只在扩展挂了才有；支持展开与交互。
         state.ext.header?.let { header ->
-            ExtensionPanelCard(
-                caption = null,
+            ExtensionChromeBanner(
                 lines = header.lines,
                 collapsedRows = HEADER_COLLAPSED_ROWS,
-                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
+                onInteract = if (header.interactive && header.surfaceId != null) {
+                    { interactingWidgetKey = header.key }
+                } else {
+                    null
+                },
+                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = PiSpacing.tiny),
             )
         }
 
@@ -2462,13 +2466,17 @@ internal fun ChatBody(
             },
             onInteract = { panel -> interactingWidgetKey = panel.key },
         )
-        // 扩展的 footer（`ctx.ui.setFooter`）：宿主把组件渲染成行，这里是一条细栏，点开看全部。
+        // 扩展的 footer（`ctx.ui.setFooter`）：轻量底栏横幅，支持展开与交互。
         state.ext.footer?.let { footer ->
-            ExtensionPanelCard(
-                caption = null,
+            ExtensionChromeBanner(
                 lines = footer.lines,
                 collapsedRows = FOOTER_COLLAPSED_ROWS,
-                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
+                onInteract = if (footer.interactive && footer.surfaceId != null) {
+                    { interactingWidgetKey = footer.key }
+                } else {
+                    null
+                },
+                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = PiSpacing.tiny),
             )
         }
             }
@@ -2478,12 +2486,13 @@ internal fun ChatBody(
     ChatSheetHost(sheet = sheet, onSheet = { sheet = it }, state = state, session = session)
 
     interactingWidgetKey?.let { activeKey ->
-        val activeWidget = state.ext.widgets.firstOrNull { it.key == activeKey && it.surfaceId != null }
-        if (activeWidget == null) {
+        val activePanel = (listOfNotNull(state.ext.header, state.ext.footer) + state.ext.widgets)
+            .firstOrNull { it.key == activeKey && it.surfaceId != null }
+        if (activePanel == null) {
             interactingWidgetKey = null
         } else {
             ExtensionWidgetSurfaceSheet(
-                panel = activeWidget,
+                panel = activePanel,
                 onInput = session::sendSurfaceInput,
                 onMouse = session::sendSurfaceMouse,
                 onResize = session::resizeSurface,

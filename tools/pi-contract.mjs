@@ -1738,7 +1738,6 @@ function checkAppTables(piDir) {
 		fullscreenExitOutput: "TUI 全屏退出后是否回显输出",
 		fullscreenScrollbar: "TUI 全屏滚动条",
 		fullscreenWheelScrollLines: "TUI 全屏鼠标滚轮行数（0.99.0 新键）",
-		markdown: "TUI 的 markdown 渲染档位",
 		outputPad: "TUI 输出左右留白（0|1）",
 		quietStartup: "TUI 启动横幅",
 		showHardwareCursor: "TUI 是否显示硬件光标",

@@ -1192,9 +1192,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             "followUpMode" -> queueModeOf(settingsStore.readString(key))?.let(::setFollowUpMode)
             "compaction.enabled" -> settingsStore.readBoolean(key)?.let(::setAutoCompaction)
             "retry.enabled" -> settingsStore.readBoolean(key)?.let(::setAutoRetry)
+            "cacheWarming" -> settingsStore.readString(key)?.let { mode ->
+                val adv = session?.advanced ?: return@let
+                viewModelScope.launch { runCatching { adv.setCacheMode(mode) } }
+            }
         }
         if (
             key == "hideThinkingBlock" ||
+            key == "markdown.mermaid" ||
             key.startsWith("app.appearance.") ||
             key.startsWith("app.tools.") ||
             key == "app.runtime.keepAlive" ||
@@ -2394,16 +2399,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     sessionLibrary.parseProgress(ev.data)?.let(::onSessionLoadProgress)
                 }
                 if (ev.name == "catalog.changed") {
-                    // 宿主重载了（扩展 runner 重建、技能 / 模板 / 主题重读）：命令表、工具表、资源都可能变了。
+                    // 宿主重载了（扩展 runner 重建、技能 / 模板 / 主题重读）：命令表、工具表、资源与渲染器都可能变了。
                     // 任何入口触发的重载都走到这里，面板不再只在 attach / agent_settled 才更新。
+                    toolRenderCache.reset()
+                    messageRenderCache.reset()
+                    entryRenderCache.reset()
+                    markdownTransformCache.reset()
+                    _renderRev.value += 1
                     refreshCommands()
                     refreshModels() // 扩展可以注册供应商 / 模型
                     refreshState() // 工具表、扩展绑定都在宿主的状态快照里
                 }
                 if (ev.name == "render.invalidate") {
-                    toolRenderCache.reset()
-                    messageRenderCache.reset()
-                    entryRenderCache.reset()
+                    val toolCallId = ((ev.data as? JsonObject)?.get("toolCallId") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    if (toolCallId != null) {
+                        // 定向失效单张工具卡，避免一个异步动画把全会话 200 张卡的缓存清空。
+                        toolRenderCache.invalidateTool(toolCallId)
+                    } else {
+                        toolRenderCache.reset()
+                        messageRenderCache.reset()
+                        entryRenderCache.reset()
+                    }
                     _renderRev.value += 1
                 }
                 if (ev.name == "settings.changed") {

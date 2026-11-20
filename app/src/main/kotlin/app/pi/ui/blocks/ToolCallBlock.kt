@@ -1,12 +1,14 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -46,6 +48,8 @@ fun ToolCallBlock(
     defaultExpanded: Boolean = false,
     /** A tap on a returned image opens it full screen ([PiImageViewer]). */
     onImageClick: ((PiImage) -> Unit)? = null,
+    /** Coarse 1 Hz clock while a tool is running, so slow extension/MCP tools show live elapsed time. */
+    nowMs: Long? = null,
 ) {
     val palette = PiTheme.palette
     // The card's state, derived once: `06 §4`'s fourth state (被拒) is read from the
@@ -169,6 +173,11 @@ fun ToolCallBlock(
     val paramSummary = remember(item.args) { toolParamSummary(item.args) }
     // SDK 工具自带的 renderCall / renderResult（扩展、MCP 工具）。内置工具有原生卡，不问宿主；
     // 没有渲染器时 `rendered` 恒为 null，下面的通用样式原样生效。
+    val liveElapsedMs = if (state == ToolState.Running && item.elapsedMs == null && item.ts > 0L) {
+        ((nowMs ?: System.currentTimeMillis()) - item.ts).coerceAtLeast(0L)
+    } else {
+        item.elapsedMs
+    }
     val toolRenderer = app.pi.ui.extension.LocalToolRenderer.current
     val rendered by androidx.compose.runtime.produceState<app.pi.host.HostCommands.ToolRender?>(
         initialValue = null,
@@ -178,11 +187,46 @@ fun ToolCallBlock(
         value = if (toolRenderer == null || item.toolName in NATIVE_TOOL_NAMES) null
         else toolRenderer.render(item, expanded) ?: value
     }
+    val effectiveTitle = remember(rendered?.label, title) {
+        rendered?.label?.takeIf { it.isNotBlank() } ?: title
+    }
+    val isSelfShell = rendered?.shell == "self" && (rendered?.call != null || rendered?.result != null)
     // The other half of pi's generic call line: `formatToolCallWithArgs(..., expanded = true)`
     // puts one `key: value` per argument, which the one-line title cell cannot (`render-utils.js:60-79`).
     val paramText = remember(item.args) { toolParamLines(item.args).joinToString("\n") }
+    val hasExpandableBody = item.output.isNotEmpty() ||
+        rendered != null ||
+        !script.isNullOrEmpty() ||
+        nestedCalls.isNotEmpty() ||
+        paramText.isNotEmpty() ||
+        item.images.isNotEmpty() ||
+        item.details != null
     ToolActionMenu(command = commandText, output = item.output, fullOutputPath = fullOutputPath) {
         BlockColumn(modifier) {
+            if (isSelfShell) {
+                // `renderShell: "self"` — 扩展工具自绘完整框架，避免外层再套一层重复状态卡和标题行。
+                val selfRender = rendered!!
+                ToolRailFrame {
+                    BlockCard(
+                        color = palette.cardBg,
+                        modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
+                        borderColor = palette.borderMuted.copy(alpha = 0.35f),
+                        padding = ToolCardRowPadding,
+                        shape = TOOL_CARD_SHAPE,
+                    ) {
+                        val combined = remember(selfRender.call, selfRender.result) {
+                            selfRender.call.orEmpty() + selfRender.result.orEmpty()
+                        }
+                        app.pi.ui.extension.RenderedAnsiBlock(
+                            lines = combined,
+                            expanded = expanded,
+                            collapsedLimit = selfRender.call.orEmpty().size + COLLAPSED_RENDER_RESULT_LINES,
+                            expandHint = { hidden -> "… 还有 $hidden 行，点卡片展开" },
+                        )
+                        ToolImages(item.images, onImageClick)
+                    }
+                }
+            } else {
             ToolCard(
                 item,
                 expanded,
@@ -209,33 +253,18 @@ fun ToolCallBlock(
                     // `mcp__docs__search` was showing the one name of the two that pi keeps to
                     // itself. [mcpLabel] is that mapping and answers null for every other tool.
                     // The title cell is unchanged — same row, one line, same tokens.
-                    title = title,
-                    // **The one card pi leaves uncoloured, and the one that shows every
-                    // argument.** pi's fallback path builds the whole body with no `fg` call:
-                    // `contentText.setText(this.formatToolExecution())`, which is
-                    // `theme.fg("toolTitle", theme.bold(this.toolName))` followed by the raw
-                    // JSON arguments (`components/tool-execution.js:311-322`). So the name is
-                    // `toolTitle` (the header's title cell, one line up) and the arguments are
-                    // the terminal's default foreground — `Uncoloured`, which the palette maps
-                    // onto pi's `text` — not `accent` and not a segmented line.
-                    //
-                    // The text is [toolParamSummary], pi's `key=value` list cut to pi's 100
-                    // characters (`render-utils.js:60-79`). This cell used to take
-                    // `item.argsSummary`, which is **one** value with no key: an MCP call's real
-                    // subject (its named parameters) and every argument but the first were
-                    // invisible. `argsSummary` stays where it belongs — the transcript search
-                    // (`screens/ChatScreen.kt`) and the two non-card fallbacks that already use
-                    // it — and the row's shape does not move: one cell, `maxLines = 1`, built
-                    // from arguments whose newlines are JSON-escaped, never a second line.
-                    subject = paramSummary
-                        ?.let { listOf(ToolCallPart(it, ToolCallToken.Uncoloured)) }
-                        .orEmpty(),
-                    // The row's own count, from the `remember` above (F31): this card's
-                    // result is the one with no parse of its own, so the count it hands
-                    // the reading is the incremental one it already keeps.
-                    right = toolHeaderReading(item, state, count = outputLineCount),
+                    title = effectiveTitle,
+                    // 当扩展工具自带 `renderCall` 时，参数展示交给 `rendered.call`，避免标题行再重复一遍原始 key=value。
+                    subject = if (rendered?.call != null) {
+                        emptyList()
+                    } else {
+                        paramSummary
+                            ?.let { listOf(ToolCallPart(it, ToolCallToken.Uncoloured)) }
+                            .orEmpty()
+                    },
+                    right = toolHeaderReading(item, state, elapsedMs = liveElapsedMs, count = outputLineCount),
                     expanded = expanded,
-                    expandable = item.output.isNotEmpty(),
+                    expandable = hasExpandableBody,
                 )
 
                 // ---- pi's codemode content: the script, then its nested calls. ----
@@ -286,29 +315,41 @@ fun ToolCallBlock(
                 // argument under the title (`render-utils.js:60-79`); the collapsed title cell
                 // can only carry one ellipsized line, so an MCP or extension tool's parameters
                 // were unreadable there. Same body budget and the same admission as the script.
-                // 渲染器的行：折叠时就是 SDK 的紧凑样式，展开后宿主按 expanded=true 重画。
-                // 终端行不折行，窄屏横向滑动，和扩展面板同一条规则。
+                // 扩展渲染器的 call / result 分段呈现：普通文案自动换行适配手机，表格/框线才横向滚；
+                // call 与 result 同时存在时用细线隔开，层次分明。
                 rendered?.let { r ->
-                    val all = (r.call.orEmpty() + r.result.orEmpty())
-                    // 折叠只给预览：很多扩展的 renderResult 不看 `expanded`，无论怎么问都吐全量，
-                    // 所以裁剪在这里做，卡片才一定收得起来；展开才给全部。调用行恒保留。
-                    val callCount = r.call.orEmpty().size
-                    val limit = maxOf(callCount, 0) + COLLAPSED_RENDER_RESULT_LINES
-                    val rows = if (expanded || all.size <= limit) all else all.take(limit)
-                    val hidden = all.size - rows.size
-                    if (rows.isNotEmpty()) {
-                        Column(modifier = Modifier.padding(top = PiSpacing.tiny)) {
-                            Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                                rows.forEach { app.pi.ui.extension.PanelLine(it, wrap = false) }
-                            }
-                            if (hidden > 0) {
-                                Text(
-                                    text = "… 还有 $hidden 行，点标题展开",
-                                    style = PiTheme.text.meta,
-                                    color = palette.muted,
-                                )
-                            }
-                        }
+                    val callLines = r.call.orEmpty()
+                    val resultLines = r.result.orEmpty()
+                    if (callLines.isNotEmpty()) {
+                        app.pi.ui.extension.RenderedAnsiBlock(
+                            lines = callLines,
+                            expanded = expanded,
+                            collapsedLimit = if (expanded) Int.MAX_VALUE else COLLAPSED_RENDER_CALL_LINES,
+                            modifier = Modifier.padding(top = PiSpacing.tiny),
+                            expandHint = if (resultLines.isEmpty()) {
+                                { hidden -> "… 还有 $hidden 行，点标题展开" }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                    if (callLines.isNotEmpty() && resultLines.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = PiSpacing.tiny)
+                                .height(PiSpacing.hairline)
+                                .background(palette.borderMuted.copy(alpha = 0.45f)),
+                        )
+                    }
+                    if (resultLines.isNotEmpty()) {
+                        app.pi.ui.extension.RenderedAnsiBlock(
+                            lines = resultLines,
+                            expanded = expanded,
+                            collapsedLimit = COLLAPSED_RENDER_RESULT_LINES,
+                            modifier = Modifier.padding(top = if (callLines.isEmpty()) PiSpacing.tiny else PiSpacing.hairline),
+                            expandHint = { hidden -> "… 还有 $hidden 行，点标题展开" },
+                        )
                     }
                 }
                 if (expanded && rendered?.call == null && script.isNullOrEmpty() && paramText.isNotEmpty()) {
@@ -447,6 +488,7 @@ fun ToolCallBlock(
 
                 ToolFooter(text = footer)
             }
+            }
         }
     }
 }
@@ -466,7 +508,8 @@ fun ToolCallBlock(
  */
 private const val COLLAPSED_OUTPUT_LINES = 200
 
-/** 扩展渲染器的结果在折叠态最多画几行（调用行另算）；pi 终端里同样只给紧凑样式。 */
+/** 扩展渲染器的调用/结果在折叠态最多画几行；pi 终端里同样只给紧凑样式。 */
+private const val COLLAPSED_RENDER_CALL_LINES = 4
 private const val COLLAPSED_RENDER_RESULT_LINES = 5
 
 /** 有原生卡的内置工具：不向宿主要扩展渲染（SDK 给它们的渲染器是终端版，手机用原生卡）。 */

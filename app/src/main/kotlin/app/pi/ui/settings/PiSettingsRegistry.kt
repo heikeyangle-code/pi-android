@@ -627,6 +627,15 @@ object PiSettingsCatalog {
             step = 1024,
             unit = "token",
         ),
+        PiSetting(
+            key = "branchSummary.skipPrompt",
+            title = "切换分支跳过摘要询问",
+            description = "会话树跳转分支时不弹出摘要确认，直接切换。",
+            kind = PiRowKind.Switch,
+            group = G_COMPACTION,
+            section = "压缩",
+            defaultValue = bool(false),
+        ),
         // Implemented: `PiRoot` calls `session.compact()`, i.e. the RPC command
         // `compact` (`rpc-types.ts:44`). The command also takes
         // `customInstructions`, but that needs a text field; the chat palette's
@@ -1075,6 +1084,20 @@ object PiSettingsCatalog {
             group = G_APPEARANCE,
             section = "外观",
             defaultValue = bool(false),
+        ),
+        PiSetting(
+            key = "markdown.mermaid",
+            title = "Mermaid 图表渲染",
+            description = "流式中、完成后渲染 Mermaid 代码块，或关闭只显示源码。",
+            kind = PiRowKind.Value,
+            group = G_APPEARANCE,
+            section = "外观",
+            defaultValue = str("streaming"),
+            options = choices(
+                "streaming" to "流式中实时渲染（默认）",
+                "final" to "仅完成后渲染",
+                "off" to "关闭（仅显示源码）",
+            ),
         ),
         // ------------------------------------------------------------------
         // 10 运行时与诊断

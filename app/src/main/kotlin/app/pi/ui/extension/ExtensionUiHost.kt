@@ -204,10 +204,11 @@ private fun ExtensionSnack(
         // the *tone* colour, which the app chooses — not about a colour the
         // extension chose for its own sentence.
         ExtensionSpans(
-            spans = chromeSpans(message),
+            spans = remember(message) { chromeSpans(message) },
             defaultColor = palette.text,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
+            richStyle = true,
         )
         if (actionLabel != null) {
             Text(

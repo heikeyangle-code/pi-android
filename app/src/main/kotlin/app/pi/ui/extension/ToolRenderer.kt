@@ -28,36 +28,50 @@ internal data class ToolRenderKey(
     val outputLength: Int,
     val argsHash: Int,
     val detailsHash: Int,
+    val imagesCount: Int,
+    val durationMs: Long?,
     val expanded: Boolean,
+    val width: Int = 0,
 )
 
-internal fun toolRenderKey(item: ToolCall, expanded: Boolean) =
+internal fun toolRenderKey(item: ToolCall, expanded: Boolean, width: Int = 0) =
     ToolRenderKey(
-        item.toolCallId,
-        item.status,
-        item.output.length,
-        item.args?.hashCode() ?: 0,
-        (item.details ?: item.liveDetails)?.hashCode() ?: 0,
-        expanded,
+        toolCallId = item.toolCallId,
+        status = item.status,
+        outputLength = item.output.length,
+        argsHash = item.args?.hashCode() ?: 0,
+        detailsHash = (item.details ?: item.liveDetails)?.hashCode() ?: 0,
+        imagesCount = item.images.size,
+        durationMs = item.durationMs,
+        expanded = expanded,
+        width = width,
     )
 
-/** 一个工具名一旦被宿主答过"没有渲染器"，同一会话内不再问。 */
+/** 一个工具名一旦被宿主答过"没有渲染器"，同一会话内不再问（重载后重置）。 */
 internal class ToolRendererCache(private val fetch: suspend (ToolCall, Boolean, Int) -> HostCommands.ToolRender) {
     private val absent = HashSet<String>()
     private val last = HashMap<ToolRenderKey, HostCommands.ToolRender>()
 
     suspend fun render(item: ToolCall, expanded: Boolean, width: Int): HostCommands.ToolRender? {
         if (item.toolName in absent) return null
-        val key = toolRenderKey(item, expanded)
+        val key = toolRenderKey(item, expanded, width)
         last[key]?.let { return it }
         val r = fetch(item, expanded, width)
-        if (r.call == null && r.result == null) {
+        if (!r.hasRenderer) {
             absent += item.toolName
             return null
         }
         if (last.size > 200) last.clear()
         last[key] = r
         return r
+    }
+
+    /** 仅失效单张工具卡的缓存（异步动画/定时刷新不牵连其余卡片）。 */
+    fun invalidateTool(toolCallId: String) {
+        val it = last.entries.iterator()
+        while (it.hasNext()) {
+            if (it.next().key.toolCallId == toolCallId) it.remove()
+        }
     }
 
     fun reset() { absent.clear(); last.clear() }
