@@ -1,20 +1,34 @@
 package app.pi.ui.chat
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -27,11 +41,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.pi.rpc.TranscriptItem
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
@@ -39,44 +59,21 @@ import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
-/**
- * 一条消息能做的事，以及谁来做。
- *
- * 为什么是 CompositionLocal 而不是一路传参：用户消息和助手消息各自在 `BlockRenderer` 下面好几层，
- * 而这几个动作（引用、从此处继续、标签、从上下文隐藏）全是对话页 ViewModel 的事。传参要改五层签名，
- * 而每一层都不关心它们。没提供（预览、测试）时为 null，长按只剩复制和选择文字。
- *
- * [mutating] 为 true 表示 pi 正在生成：宿主会拒绝对会话树的改动（fork / navigate / label / contextEdit），
- * 所以这些行**不显示**，而不是显示出来再弹一条报错。
- */
 class MessageActions(
     val quote: (String) -> Unit,
     val continueFrom: (TranscriptItem) -> Unit,
     val label: (TranscriptItem, String?) -> Unit,
     val hideFromContext: (TranscriptItem) -> Unit,
     val streaming: Boolean,
-    /**
-     * 末尾那张错误卡的行键，只有「现在能重试」时才非 null（没在生成、且错误卡就是最后一行）。
-     * 只有最后一行可以重试：更早的错误之后用户已经继续了对话，再把旧提示发一遍没有意义。
-     */
     val retryKey: String? = null,
     val retry: () -> Unit = {},
 )
 
 val LocalMessageActions = staticCompositionLocalOf<MessageActions?> { null }
 
-/** 把 [text] 变成 Markdown 引用块（每行前加 `> `），末尾留一个空行让用户接着写。 */
 fun quoted(text: String): String =
     text.trimEnd().lineSequence().joinToString("\n") { if (it.isEmpty()) ">" else "> $it" } + "\n\n"
 
-/**
- * 整条消息的长按目标。
- *
- * 旧做法是正文放进系统文本选择容器、卡片边缘挂一个 `DropdownMenu`：长按落在字上就被选择手柄吃掉，
- * 落在边距上才出菜单，**同一个手势两种结果**，而且下拉菜单没有触感、不跟手。现在整条消息只有一个
- * 长按行为：震一下、弹出底部操作面，「选择文字」是面里的一项，进去之后是整条消息的系统自由选择。
- * 点击仍然属于正文里的链接 / 图片 / 折叠，不受影响。
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageActionTarget(
@@ -84,7 +81,6 @@ fun MessageActionTarget(
     role: MessageRole,
     text: String,
     modifier: Modifier = Modifier,
-    /** 用户消息才有：回到这条消息之前分叉，并把原文放回输入框（pi 的 `/fork`）。 */
     onEditAndFork: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -131,44 +127,109 @@ private fun MessageActionSheet(
 ) {
     val actions = LocalMessageActions.current
     val clipboard = LocalClipboardManager.current
+    val palette = PiTheme.palette
     var mode by remember { mutableStateOf(Mode.Menu) }
+
     PiSheet(onDismiss = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             when (mode) {
                 Mode.Menu -> {
                     Text(role.title, style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.height(PiSpacing.blockGap))
-                    Text(
-                        text.trim(),
-                        maxLines = PREVIEW_LINES,
-                        overflow = TextOverflow.Ellipsis,
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
-                    )
-                    Spacer(Modifier.height(PiSpacing.blockGap))
-                    ActionRow("复制全部") {
-                        clipboard.setText(AnnotatedString(text))
-                        onDismiss()
+                    if (text.isNotBlank()) {
+                        Text(
+                            text = text.trim(),
+                            maxLines = PREVIEW_LINES,
+                            overflow = TextOverflow.Ellipsis,
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                        )
                     }
-                    ActionRow("选择文字") { mode = Mode.Select }
-                    if (actions != null) {
-                        ActionRow("引用到输入框") {
-                            actions.quote(quoted(text))
+
+                    // 高频 3/4 列快捷操作网格
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        MessageQuickTile(
+                            icon = Icons.Filled.ContentCopy,
+                            label = "复制全部",
+                            tint = palette.accent,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            clipboard.setText(AnnotatedString(text))
                             onDismiss()
                         }
-                        if (!actions.streaming) {
+                        MessageQuickTile(
+                            icon = Icons.Filled.SelectAll,
+                            label = "选择文字",
+                            tint = palette.border,
+                            modifier = Modifier.weight(1f),
+                        ) { mode = Mode.Select }
+                        if (actions != null) {
+                            MessageQuickTile(
+                                icon = Icons.Filled.FormatQuote,
+                                label = "引用回复",
+                                tint = palette.success,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                actions.quote(quoted(text))
+                                onDismiss()
+                            }
+                        }
+                    }
+
+                    if (actions != null && !actions.streaming) {
+                        val cardShape = RoundedCornerShape(14.dp)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(cardShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .border(1.dp, palette.borderMuted.copy(alpha = 0.4f), cardShape),
+                        ) {
                             if (onEditAndFork != null) {
-                                ActionRow("编辑并从此分叉") {
+                                MessageSheetRow(
+                                    icon = Icons.Filled.Edit,
+                                    label = "编辑并从此分叉",
+                                    subtitle = "回到此处重新编辑，保留原分支",
+                                ) {
                                     onEditAndFork()
                                     onDismiss()
                                 }
+                                MessageSheetDivider()
                             }
-                            ActionRow("从这里继续（开新分支）") {
+                            MessageSheetRow(
+                                icon = Icons.Filled.AccountTree,
+                                label = "从这里继续（开新分支）",
+                                subtitle = "在会话树中以此消息为起点继续对话",
+                            ) {
                                 actions.continueFrom(item)
                                 onDismiss()
                             }
-                            ActionRow("加标签") { mode = Mode.Label }
-                            ActionRow("从模型上下文隐藏", tone = Tone.Caution) {
+                            MessageSheetDivider()
+                            MessageSheetRow(
+                                icon = Icons.Filled.BookmarkBorder,
+                                label = "添加 / 修改标签",
+                                subtitle = "在会话树中快速定位此节点",
+                            ) { mode = Mode.Label }
+                            MessageSheetDivider()
+                            MessageSheetRow(
+                                icon = Icons.Filled.VisibilityOff,
+                                label = "从模型上下文隐藏",
+                                subtitle = "保留显示，但后续请求不再发给模型",
+                                tint = palette.warning,
+                            ) {
                                 actions.hideFromContext(item)
                                 onDismiss()
                             }
@@ -177,40 +238,40 @@ private fun MessageActionSheet(
                 }
 
                 Mode.Select -> {
-                    Text("选择文字", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.height(PiSpacing.blockGap))
-                    // 整条消息的 Markdown 原文，一个选择域：手柄可以从头拖到尾。
+                    Text("自由选择文字", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                     SelectionContainer {
                         Text(
                             text,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = PiSpacing.unit * SELECT_MAX_UNITS)
-                                .verticalScroll(rememberScrollState()),
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .verticalScroll(rememberScrollState())
+                                .padding(12.dp),
                             style = PiTheme.text.prose,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
-                    Spacer(Modifier.height(PiSpacing.blockGap))
-                    ActionRow("返回") { mode = Mode.Menu }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { mode = Mode.Menu }) { Text("返回") }
+                    }
                 }
 
                 Mode.Label -> {
                     var label by remember { mutableStateOf("") }
                     Text("给这条消息加标签", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.height(PiSpacing.blockGap))
                     Text(
-                        "标签写进会话树，在「树」里能一眼找到这里；留空保存 = 清除已有标签。",
+                        "标签写进会话树，在「树」里能一眼找到这里；留空保存即清除已有标签。",
                         style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
+                        color = palette.muted,
                     )
-                    Spacer(Modifier.height(PiSpacing.blockGap))
                     OutlinedTextField(
                         value = label,
                         onValueChange = { label = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("标签") },
+                        placeholder = { Text("输入标签名称") },
                         shape = PiShapes.input,
                     )
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -225,23 +286,91 @@ private fun MessageActionSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
         }
     }
 }
 
-private enum class Tone { Normal, Caution }
+@Composable
+private fun MessageQuickTile(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.42f), shape)
+            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(tint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = tint,
+            )
+        }
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
 
 @Composable
-private fun ColumnScope.ActionRow(label: String, tone: Tone = Tone.Normal, onClick: () -> Unit) {
-    Text(
-        label,
+private fun MessageSheetRow(
+    icon: ImageVector,
+    label: String,
+    subtitle: String? = null,
+    tint: Color? = null,
+    onClick: () -> Unit,
+) {
+    val labelColor = tint ?: MaterialTheme.colorScheme.onSurface
+    val iconColor = tint ?: PiTheme.palette.muted
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = PiSpacing.cardPadding),
-        style = PiType.rowTitle,
-        color = if (tone == Tone.Caution) PiTheme.palette.warning else MaterialTheme.colorScheme.onSurface,
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(19.dp),
+            tint = iconColor,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = PiType.rowTitle, color = labelColor)
+            if (subtitle != null) {
+                Text(subtitle, style = PiTheme.text.meta, color = PiTheme.palette.muted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageSheetDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 45.dp),
+        thickness = PiSpacing.hairlineThin,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
     )
 }
 

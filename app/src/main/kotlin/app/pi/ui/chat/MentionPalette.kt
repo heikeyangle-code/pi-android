@@ -50,9 +50,11 @@ fun MentionPalette(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = PiShapes.card,
-            ) {
+        shadowElevation = 6.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
+    ) {
         LazyColumn(
             modifier = Modifier.heightIn(max = 260.dp).padding(vertical = 4.dp),
         ) {

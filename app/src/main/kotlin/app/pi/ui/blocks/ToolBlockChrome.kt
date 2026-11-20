@@ -1,6 +1,15 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,18 +17,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -329,46 +342,42 @@ internal fun ToolHeader(
     right: String? = toolHeaderReading(item, state),
 ) {
     val palette = PiTheme.palette
-    // One `AnnotatedString` with one span per run. Built here rather than at the seven call
-    // sites: the row's style (`monoSmall`, single line, ellipsis) stays in one place, so no
-    // block can accidentally change anything but a colour. The run-to-span rule itself lives
-    // in [toAnnotatedString], shared with the body rows that carry pi's tokens.
     val subjectText = remember(subject, palette) { subject.toAnnotatedString(palette) }
-    // The two states that spell themselves out (see the KDoc above): `…` and `⊘`.
     val word = toolStateWord(state)
+    val accent = toolAccentColor(state, palette)
+    val runningPulse = if (state == ToolState.Running) {
+        rememberInfiniteTransition(label = "tool-run").animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+            label = "tool-run-alpha",
+        ).value
+    } else {
+        1f
+    }
+    val chevronAngle by animateFloatAsState(if (expanded) 90f else 0f, label = "tool-chevron")
+
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        // **Always drawn, in the state's own colour** (`06 §4`): the icon is the card's
-        // permanent state channel, and `clearAndSetSemantics` is what makes it a *word*
-        // for a screen reader instead of a bare symbol — the glyph character itself is
-        // dropped from the semantics, so TalkBack says 「运行中」 and not 「…」.
-        Text(
-            text = toolStateGlyph(state),
-            modifier = Modifier.clearAndSetSemantics { contentDescription = toolStateLabel(state) },
-            style = PiTheme.text.monoSmall,
-            color = toolAccentColor(state, palette),
-            maxLines = 1,
-        )
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .graphicsLayer { alpha = runningPulse }
+                .clip(CircleShape)
+                .background(accent.copy(alpha = 0.16f))
+                .clearAndSetSemantics { contentDescription = toolStateLabel(state) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = toolStateGlyph(state),
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                color = accent,
+                maxLines = 1,
+            )
+        }
         Spacer(Modifier.width(TOOL_HEADER_GAP))
         Text(
             text = title,
-            // **Bold, because pi bolds it**: `theme.fg("toolTitle", theme.bold(toolName))`
-            // (`components/tool-execution.js:312`, and `:96` for the same header rebuilt on
-            // update). The bundled family carries Regular + Bold and nothing between
-            // (`PiMonoFamily`), so `Bold` is the face pi's bold actually maps onto here —
-            // asking for SemiBold would make Android synthesise a weight the font does not have.
             style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-            // **`toolTitle` — the token pi paints a tool's *name* with.** Every built-in
-            // renderer passes it (`dist/core/tools/renderers/bash.js:21` — the `toolTitle` run
-            // `formatShellCall` builds, and the same token in read/write/edit/grep/find/ls),
-            // and this cell is exactly that name.
-            // It used to be `muted` because v2's prototype draws it `c-muted`; the user's
-            // ruling is that pi's own semantics win (「全修的一致」), so that board line was
-            // superseded and `06 §2` + `docs/pi-android-ui-spec.md` §2.5 were updated with it —
-            // otherwise both documents would describe a colour this row no longer has.
-            //
-            // Nothing moves under pi's own two themes (`toolTitle = text` there), which is why
-            // the difference was invisible until now — and why a theme that *does* distinguish
-            // them is the case this fixes.
             color = palette.toolTitle,
             maxLines = 1,
         )
@@ -383,16 +392,10 @@ internal fun ToolHeader(
         if (word != null) {
             Spacer(Modifier.width(TOOL_HEADER_GAP))
             Text(
-                // 字形那边已经挂了 `contentDescription = 状态词`，这里再让读屏念一遍就是
-                // 「运行中，运行中」。对读屏而言这个词是重复的（`✓`/`✗` 没有词，不受影响）。
                 modifier = Modifier.clearAndSetSemantics {},
                 text = word,
                 style = PiTheme.text.monoSmall,
-                // The same colour the word carried in [ToolFooter] (`palette.text`, not
-                // `muted`): it is a fact the user reads, not a caption — and the glyph
-                // beside it already carries the state's colour, so painting the word too
-                // would be the same channel twice (`06 §4`: 颜色只是第三层).
-                color = palette.text,
+                color = accent,
                 maxLines = 1,
             )
         }
@@ -408,9 +411,11 @@ internal fun ToolHeader(
         if (expandable) {
             Spacer(Modifier.width(TOOL_HEADER_GAP))
             Icon(
-                imageVector = if (expanded) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowRight,
+                imageVector = Icons.Filled.KeyboardArrowRight,
                 contentDescription = null,
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier
+                    .size(15.dp)
+                    .rotate(chevronAngle),
                 tint = palette.bodyOnTool,
             )
         }
@@ -624,13 +629,14 @@ internal fun ToolCard(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
+    val stateAccent = toolAccentColor(state, palette)
     ToolRailFrame(modifier = modifier) {
         BlockCard(
             color = toolContainerColor(state, palette),
-            modifier = Modifier.toggleContent(expanded, onToggle),
-            // No border: `06 §2`'s 1 px status outline is gone (see this composable's KDoc
-            // for the decision). The fill alone is the card's ground.
-            borderColor = null,
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(160))
+                .toggleContent(expanded, onToggle),
+            borderColor = stateAccent.copy(alpha = if (state == ToolState.Running) 0.36f else 0.22f),
             padding = ToolCardRowPadding,
             shape = TOOL_CARD_SHAPE,
             content = content,
@@ -638,16 +644,7 @@ internal fun ToolCard(
     }
 }
 
-/**
- * `06 §2` 工具卡's corner radius, decision D2: v2's board draws this card's shell square
- * (a terminal has no rounds), and the app keeps **8 dp** because a transcript card is a
- * phone container rather than a terminal cell. It is passed to [BlockCard] explicitly,
- * since that card's own default ([BlockCardShape]) is 10 and is shared with the error
- * and custom cards. The diff card passes **this** shape too — it is a tool-card sibling,
- * not one of the plain cards (2026-10-17: it used to take the 10 dp default and was the
- * odd one out beside an `edit` card).
- */
-internal val TOOL_CARD_SHAPE = RoundedCornerShape(8.dp)
+internal val TOOL_CARD_SHAPE = RoundedCornerShape(12.dp)
 
 /**
  * The long-press actions of §4.8, shared by every tool card: the command, the output, and

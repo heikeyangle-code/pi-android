@@ -345,48 +345,59 @@ fun ThinkingPickerSheet(
                 }
                 levels.forEach { level ->
                     val selected = level == current
+                    val levelColor = PiTheme.palette.thinking(level)
+                    val desc = when (level.lowercase()) {
+                        "off" -> "关闭推理，直接最快回复"
+                        "minimal" -> "极简思考，超低延迟"
+                        "low" -> "轻量推理，适合简单任务"
+                        "medium" -> "均衡思考，日常编码推荐"
+                        "high" -> "深度推理，适合复杂架构与排错"
+                        "xhigh" -> "超深推理，攻克高难度问题"
+                        "max" -> "最大思考预算，深度分析"
+                        else -> null
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(PiShapes.card)
                             .background(
-                                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                if (selected) levelColor.copy(alpha = 0.14f)
                                 else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
                             )
                             .clickable {
                                 onPick(level, persistAsDefault)
                                 onDismiss()
                             }
-                            .padding(horizontal = PiSpacing.small, vertical = 12.dp),
+                            .padding(horizontal = 10.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Surface(
-                            shape = PiShapes.badge,
-                            color = PiTheme.palette.thinking(level).copy(alpha = 0.18f),
-                        ) {
-                            Text(
-                                "◐",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                style = PiTheme.text.meta,
-                                color = PiTheme.palette.thinking(level),
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            thinkingLabelOf(level),
-                            modifier = Modifier.weight(1f),
-                            style = PiType.rowTitle,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
+                        Box(
+                            modifier = Modifier
+                                .height(10.dp)
+                                .width(10.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(levelColor),
                         )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                thinkingLabelOf(level),
+                                style = PiType.rowTitle,
+                                color = if (selected) levelColor else MaterialTheme.colorScheme.onSurface,
+                            )
+                            if (desc != null) {
+                                Text(
+                                    desc,
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         if (selected) {
                             Text(
-                                "当前",
-                                style = PiTheme.text.meta,
-                                color = MaterialTheme.colorScheme.primary,
+                                "✓ 当前",
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                                color = levelColor,
                             )
                         }
                     }
@@ -610,10 +621,10 @@ private fun QueueModeRow(
 fun ContextSheet(
     state: PiSessionViewModel.UiState,
     onDismiss: () -> Unit,
+    onCompact: (() -> Unit)? = null,
 ) {
     val stats = state.stats
-    // 外壳归 `PiSheet`（圆角 20、把手、遮罩）；这里只保留内容区自己的宽度上限与标题栏，
-    // 不再在 M3 的 sheet 里再画一层圆角+描边的"卡片壳"。
+    val palette = PiTheme.palette
     PiSheet(onDismiss = onDismiss) {
         Column(
             Modifier
@@ -621,17 +632,37 @@ fun ContextSheet(
                 .padding(horizontal = PiSpacing.pageHorizontal)
                 .widthIn(max = 430.dp),
         ) {
-            Text(
-                "上下文与用量",
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = PiSpacing.pageHorizontal, vertical = 11.dp),
-                style = PiType.title,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "上下文与用量",
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (onCompact != null) {
+                    Text(
+                        text = "压缩上下文",
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.accent.copy(alpha = 0.14f))
+                            .clickable {
+                                onDismiss()
+                                onCompact()
+                            }
+                            .padding(horizontal = 11.dp, vertical = 5.dp),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                        color = palette.accent,
+                    )
+                }
+            }
             HorizontalDivider(
-                thickness = PiSpacing.hairline,
-                color = MaterialTheme.colorScheme.outline,
+                thickness = PiSpacing.hairlineThin,
+                color = MaterialTheme.colorScheme.outlineVariant,
             )
             Column(
                 Modifier

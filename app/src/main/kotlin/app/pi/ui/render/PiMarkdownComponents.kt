@@ -17,6 +17,7 @@ import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -304,13 +305,14 @@ private fun PiMarkdownHeading(
         5 -> typography.h5
         else -> typography.h6
     }
-    val extra = if (PiTheme.typography.isClassic || headingSkipsExtra(model.node)) 0.dp else extraTop
-    // 标题与它领起的正文要「贴」：标题上方 block + extra（26 dp 量级），下方却也是整份 block
-    // （14 dp），邻近性不够，标题像悬在两段中间。把标题自己的高度少报 5 dp，下一块的
-    // block Spacer 就压进来 5 dp —— 下方净间距 9 dp。只画不裁剪，字形不受影响；经典不动。
-    val pull = if (PiTheme.typography.isClassic) 0.dp else 5.dp
-    Box(
+    val palette = PiTheme.palette
+    val classic = PiTheme.typography.isClassic
+    val extra = if (classic || headingSkipsExtra(model.node)) 0.dp else extraTop
+    val pull = if (classic) 0.dp else 5.dp
+    val showRule = !classic && (level == 1 || level == 2)
+    Column(
         Modifier
+            .fillMaxWidth()
             .padding(top = extra)
             .layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints)
@@ -328,6 +330,15 @@ private fun PiMarkdownHeading(
                 MarkdownTokenTypes.ATX_CONTENT
             },
         )
+        if (showRule) {
+            Spacer(Modifier.height(5.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(if (level == 1) 1.dp else 0.5.dp)
+                    .background(palette.mdHr.copy(alpha = if (level == 1) 0.38f else 0.25f)),
+            )
+        }
     }
 }
 
@@ -1010,13 +1021,17 @@ private fun PiTable(model: MarkdownComponentModel) {
             topStart = dimens.tableCornerSize,
             topEnd = dimens.tableCornerSize,
         )
+        val tableShape = RoundedCornerShape(dimens.tableCornerSize)
         CompositionLocalProvider(
             LocalImageTransformer provides transformer,
             LocalPiImageTransformer provides transformer,
             LocalMarkdownDimens provides tableDimens,
         ) {
-            // 整张表统一裁成圆角：隔行底色（下面 rowBlock）与表头底色都是方角矩形，库本身不裁剪子项。
-            Box(modifier = Modifier.clip(RoundedCornerShape(dimens.tableCornerSize))) {
+            Box(
+                modifier = Modifier
+                    .clip(tableShape)
+                    .border(1.dp, palette.borderMuted.copy(alpha = 0.45f), tableShape),
+            ) {
             MarkdownTable(
                 content = model.content,
                 node = model.node,
@@ -1025,7 +1040,7 @@ private fun PiTable(model: MarkdownComponentModel) {
                     Box(
                         modifier = Modifier
                             .clip(headerShape)
-                            .background(palette.mdHr.copy(alpha = 0.14f)),
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f)),
                     ) {
                         if (aligned) {
                             PiTableHeaderCells(
@@ -1043,11 +1058,10 @@ private fun PiTable(model: MarkdownComponentModel) {
                     }
                 },
                 rowBlock = { content, row, tableWidth, tableStyle ->
-                    // 隔行淡底色：数据行从 1 起，偶数行着色；表头/奇数行保持卡片底。
                     val stripe = LocalTableRowIndex.current % 2 == 0
                     Box(
                         modifier = Modifier.background(
-                            if (stripe) palette.mdHr.copy(alpha = 0.06f) else Color.Transparent,
+                            if (stripe) MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f) else Color.Transparent,
                         ),
                     ) {
                     if (aligned) {
@@ -1074,10 +1088,21 @@ private fun PiTable(model: MarkdownComponentModel) {
                         .align(Alignment.CenterEnd)
                         .width(TABLE_FADE_WIDTH)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(dimens.tableCornerSize))
+                        .clip(tableShape)
                         .background(
                             Brush.horizontalGradient(listOf(Color.Transparent, palette.cardBg)),
                         ),
+                )
+                Text(
+                    text = "↔",
+                    style = PiTheme.text.monoSmall,
+                    color = palette.accent,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 6.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(palette.accent.copy(alpha = 0.14f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
             }
         }

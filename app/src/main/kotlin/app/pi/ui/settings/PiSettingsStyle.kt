@@ -1,6 +1,10 @@
 package app.pi.ui.settings
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.offset
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -99,8 +103,8 @@ internal object PiSettingsMetrics {
     /** `06 §2`「列表分隔线左侧 inset 14px」。 */
     val dividerInset: Dp = 14.dp
 
-    /** `06 §2`「分组容器：圆角 10」；卡片同值。 */
-    val cardRadius: Dp = 12.dp
+    /** 设置分组卡片圆角 14。 */
+    val cardRadius: Dp = 14.dp
 
     /** `06 §2`「行内 10px gap」。 */
     val rowGap: Dp = 10.dp
@@ -440,10 +444,25 @@ internal fun PiSettingsSwitch(
     enabled: Boolean = true,
 ) {
     val accent = PiTheme.palette.accent
-    val track = if (checked) accent else MaterialTheme.colorScheme.surfaceContainerHighest
-    val border = if (checked) accent else MaterialTheme.colorScheme.outline
+    val track by animateColorAsState(
+        targetValue = if (checked) accent else MaterialTheme.colorScheme.surfaceContainerHighest,
+        animationSpec = tween(160),
+        label = "switchTrack",
+    )
+    val border by animateColorAsState(
+        targetValue = if (checked) accent else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+        animationSpec = tween(160),
+        label = "switchBorder",
+    )
+    val travel = PiSettingsMetrics.switchWidth - PiSettingsMetrics.switchPadding * 2 - PiSettingsMetrics.switchKnob
+    val knobOffset by animateDpAsState(
+        targetValue = if (checked) travel else 0.dp,
+        animationSpec = tween(160),
+        label = "switchKnob",
+    )
     Box(
         modifier = modifier
+            .alpha(if (enabled) 1f else 0.45f)
             .size(
                 width = PiSettingsMetrics.switchWidth,
                 height = PiSettingsMetrics.switchHeight,
@@ -458,15 +477,15 @@ internal fun PiSettingsSwitch(
                 onValueChange = onCheckedChange,
             )
             .padding(PiSettingsMetrics.switchPadding),
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+        contentAlignment = Alignment.CenterStart,
     ) {
         Box(
             Modifier
+                .offset(x = knobOffset)
                 .size(PiSettingsMetrics.switchKnob)
                 .clip(CircleShape)
-                // 开 = page（旋钮压在 accent 上），关 = muted（§2 的 `--page` / `--muted`）。
                 .background(
-                    if (checked) MaterialTheme.colorScheme.surface else PiTheme.palette.muted,
+                    if (checked) Color.White else PiTheme.palette.muted,
                 ),
         )
     }

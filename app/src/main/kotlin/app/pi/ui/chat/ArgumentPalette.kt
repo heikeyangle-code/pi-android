@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiResponses
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -37,7 +38,9 @@ fun ArgumentPalette(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 6.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         Column {
             if (hint != null) {
@@ -98,7 +101,9 @@ fun ExtensionAutocompletePalette(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 6.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         LazyColumn(Modifier.heightIn(max = PiSpacing.paletteMaxHeight)) {
             items(items, key = { it.value }) { item ->

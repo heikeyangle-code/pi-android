@@ -268,7 +268,7 @@ internal fun BlockActionMenu(
  * user-message bubble's radius, and `05 §3.3` decided the bubble keeps 16 dp while
  * the transcript's cards tighten to v2's 10.
  */
-internal val BlockCardShape = RoundedCornerShape(10.dp)
+internal val BlockCardShape = RoundedCornerShape(14.dp)
 
 /**
  * A tonal container card: v2's 10dp radius, no elevation, palette colour.

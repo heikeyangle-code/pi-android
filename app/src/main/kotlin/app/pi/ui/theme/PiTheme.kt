@@ -86,7 +86,7 @@ object PiSpacing {
     // `surfaceContainerLow` 的卡片底色和 1.5 / 2dp 描边承担。
 
     /** 悬浮输入框的圆角。 */
-    val composerRadius = 26.dp
+    val composerRadius = 22.dp
 
     /** 输入框与屏幕底边（导航条 / 键盘之上）的距离。 */
     val composerBottomGap = 8.dp
@@ -630,19 +630,17 @@ private fun PiPalette.colorScheme(): androidx.compose.material3.ColorScheme {
         onSurfaceVariant = muted,
         surfaceTint = accent,
 
-        // Elevation ladder: pi only defines pageBg and cardBg, so the middle
-        // tones are derived by blending the card toward the foreground. Works
-        // for both themes and keeps every surface inside pi's palette.
+        // Elevation ladder: crisp layered separation for both dark obsidian and light paper themes.
         surfaceContainerLowest = pageBg,
         surfaceContainerLow = cardBg,
-        surfaceContainer = cardBg.elevate(text, 0.03f),
-        surfaceContainerHigh = cardBg.elevate(text, 0.06f),
-        surfaceContainerHighest = cardBg.elevate(text, 0.10f),
-        surfaceBright = cardBg.elevate(text, 0.12f),
+        surfaceContainer = if (pageBg.luminanceIsDark()) cardBg.elevate(text, 0.04f) else pageBg.elevate(text, 0.025f),
+        surfaceContainerHigh = if (pageBg.luminanceIsDark()) cardBg.elevate(text, 0.075f) else pageBg.elevate(text, 0.05f),
+        surfaceContainerHighest = if (pageBg.luminanceIsDark()) cardBg.elevate(text, 0.12f) else pageBg.elevate(text, 0.085f),
+        surfaceBright = cardBg.elevate(text, 0.14f),
         surfaceDim = pageBg.elevate(text, 0.02f),
 
         outline = borderMuted,
-        outlineVariant = borderMuted.copy(alpha = 0.55f),
+        outlineVariant = borderMuted.copy(alpha = if (pageBg.luminanceIsDark()) 0.65f else 0.72f),
 
         error = error,
         onError = onAccent,

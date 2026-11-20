@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -22,7 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
@@ -240,17 +243,27 @@ internal fun PiSettingsEntryRow(
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector? = null,
+    leadingTint: Color? = null,
     monoTitle: Boolean = false,
     expanded: Boolean? = null,
 ) {
     PiSettingsRowShell(highlighted = false, modifier = modifier, onClick = onClick) {
         if (leadingIcon != null) {
-            Icon(
-                leadingIcon,
-                contentDescription = null,
-                tint = PiTheme.palette.muted,
-                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            )
+            val iconTint = leadingTint ?: PiTheme.palette.accent
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(iconTint.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    leadingIcon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
         }
         RowBody(
             title = title,

@@ -1,5 +1,8 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -7,8 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -20,6 +23,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -119,37 +124,21 @@ fun DiffBlock(
             // card and draws no node at all. It carries **no duration tick** either (`06 §2`:
             // diff 卡不显示 — nothing here was timed, and the row is already the densest in
             // the stream).
+            val chevronAngle by animateFloatAsState(if (expanded) 90f else 0f, label = "diff-chevron")
             ToolRailFrame {
                 BlockCard(
                     color = palette.toolPendingBg,
-                    // F28: same content-region gesture as the tool card.
-                    modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-                    // **No border**, for the tool card's reason: `06 §2`'s 1 px status outline is
-                    // gone from that card too (`ToolBlockChrome.ToolCard`'s KDoc), and the diff is
-                    // neutral by definition — the fill alone is the card's ground.
-                    borderColor = null,
-                    // The tool card's own row inset (`ToolCardRowPadding`, 10 / 7): the two
-                    // cards sit in the same stream, so they read as one geometry.
+                    modifier = Modifier
+                        .animateContentSize(animationSpec = tween(160))
+                        .toggleContent(expanded, { expanded = !expanded }),
+                    borderColor = palette.borderMuted.copy(alpha = 0.45f),
                     padding = ToolCardRowPadding,
-                    // The tool card's 8 dp, from its one definition — not a second copy of the
-                    // number, which would drift from `TOOL_CARD_SHAPE`.
                     shape = TOOL_CARD_SHAPE,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = item.toolName.ifEmpty { "diff" },
-                            // **Bold, because the tool card bolds it**: pi paints every tool name
-                            // `theme.bold`ed (`components/tool-execution.js:312`), and this header's
-                            // first cell is the same cell (`ToolBlockChrome.ToolHeader`).
                             style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                            // The leading cell of a tool card is the tool's **name**, and pi paints every
-                            // tool name with `toolTitle` (`core/tools/renderers/edit.js:53`, `write.js:90`,
-                            // `read.js:27`, and the fallback header at
-                            // `components/tool-execution.js:91`). This card's name is the one from the call
-                            // it was lifted out of (`rpc/.../Transcript.kt:541-564` passes `toolName`
-                            // through), so it is the same cell and takes the same token. It used to be
-                            // `muted` because v2's prototype draws it so; the 「全修的一致」 ruling puts
-                            // pi's semantics first (`07` D40.1).
                             color = palette.toolTitle,
                             maxLines = 1,
                         )
@@ -158,34 +147,41 @@ fun DiffBlock(
                             text = item.path.ifEmpty { "未命名文件" },
                             modifier = Modifier.weight(1f),
                             style = PiTheme.text.monoSmall,
-                            // A path in a tool card is `accent`: pi's `renderToolPath` returns
-                            // `theme.fg("accent", shortenPath(value))`
-                            // (`core/tools/render-utils.js:57-63`), and `edit`/`write` hand that to the
-                            // card's path cell (`renderers/edit.js:52`, `write.js:89`). `text` was v2's
-                            // `c-text`; pi's token wins on the same ruling as the name above. Same shape
-                            // as `ToolHeader`'s `toolPathPart`, spelled out here because this card has its
-                            // own header row instead of going through `ToolHeader`.
                             color = palette.accent,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Spacer(Modifier.width(PiSpacing.inline))
-                        Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
-                        Spacer(Modifier.width(PiSpacing.gutter))
-                        Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
-                        Spacer(Modifier.width(PiSpacing.inline))
-                        // v2's diff card carries the same disclosure chevron as a tool card's
-                        // header (`direction-b-v2.html:1523`). There is no second row any more: the
-                        // card folds to this one line, exactly like a tool card, so the row below
-                        // holds the body and nothing else.
+                        Spacer(Modifier.width(6.dp))
+                        if (item.added > 0) {
+                            Text(
+                                text = "+${item.added}",
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(palette.toolDiffAdded.copy(alpha = 0.14f))
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                                color = palette.toolDiffAdded,
+                            )
+                        }
+                        if (item.removed > 0) {
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "−${item.removed}",
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(palette.toolDiffRemoved.copy(alpha = 0.14f))
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                                color = palette.toolDiffRemoved,
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
                         Icon(
-                            imageVector = if (expanded) {
-                                Icons.Filled.KeyboardArrowDown
-                            } else {
-                                Icons.Filled.KeyboardArrowRight
-                            },
+                            imageVector = Icons.Filled.KeyboardArrowRight,
                             contentDescription = null,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier
+                                .size(15.dp)
+                                .rotate(chevronAngle),
                             tint = palette.bodyOnTool,
                         )
                     }

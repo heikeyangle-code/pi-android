@@ -102,7 +102,13 @@ fun SettingsHome(
                 return@LazyColumn
             }
 
-            fun groupCards(label: String, ids: List<String>, lead: List<HomeEntry> = emptyList()) {
+            val palette = PiTheme.palette
+            fun groupCards(
+                label: String,
+                ids: List<String>,
+                lead: List<HomeEntry> = emptyList(),
+                tint: androidx.compose.ui.graphics.Color = palette.accent,
+            ) {
                 val groups = ids.mapNotNull { id -> PiSettingsCatalog.groups.firstOrNull { it.id == id } }
                 if (groups.isEmpty() && lead.isEmpty()) return
                 item(key = "label:$label") { HomeSectionLabel(label) }
@@ -117,12 +123,13 @@ fun SettingsHome(
                                 supporting = entry.supporting,
                                 onClick = entry.onClick,
                                 leadingIcon = entry.icon,
+                                leadingTint = entry.tint,
                             )
                         }
                         groups.forEach { group ->
                             if (!first) PiSettingsHairline()
                             first = false
-                            GroupEntry(group, store, freshness) { onOpenGroup(group.id) }
+                            GroupEntry(group, store, freshness, tint) { onOpenGroup(group.id) }
                         }
                     }
                 }
@@ -132,13 +139,13 @@ fun SettingsHome(
                 "模型与连接",
                 emptyList(),
                 lead = listOfNotNull(
-                    onOpenModels?.let { HomeEntry("模型与供应商", "订阅登录、API Key、自定义模型、思考等级与缓存", Icons.Filled.Timeline, it) },
-                    onOpenMcp?.let { HomeEntry("MCP 服务器", "接入外部工具服务器：连接检测、OAuth 登录、暴露方式", Icons.Filled.Extension, it) },
+                    onOpenModels?.let { HomeEntry("模型与供应商", "订阅登录、API Key、自定义模型、思考等级与缓存", Icons.Filled.Timeline, palette.accent, it) },
+                    onOpenMcp?.let { HomeEntry("MCP 服务器", "接入外部工具服务器：连接检测、OAuth 登录、暴露方式", Icons.Filled.Extension, palette.border, it) },
                 ),
             )
-            groupCards("扩展与工具", listOf("resources", "tools"))
-            groupCards("对话与提示词", listOf("prompts", "messages", "compaction", "retry"))
-            groupCards("外观", listOf("appearance"))
+            groupCards("扩展与工具", listOf("resources", "tools"), tint = palette.success)
+            groupCards("对话与提示词", listOf("prompts", "messages", "compaction", "retry"), tint = palette.mdLink)
+            groupCards("外观", listOf("appearance"), tint = palette.warning)
             item(key = "label:系统") { HomeSectionLabel("系统") }
             item(key = "card:系统") {
                 PiSettingsCard {
@@ -147,6 +154,7 @@ fun SettingsHome(
                         supporting = PiSettingsCatalog.groups.firstOrNull { it.id == "runtime" }?.summary?.invoke(store),
                         onClick = { onOpenGroup("runtime") },
                         leadingIcon = Icons.Filled.Build,
+                        leadingTint = palette.muted,
                     )
                     if (onOpenOther != null) {
                         PiSettingsHairline()
@@ -155,6 +163,7 @@ fun SettingsHome(
                             supporting = "终端、设备能力、安全与隐私、开源许可",
                             onClick = onOpenOther,
                             leadingIcon = Icons.Filled.MoreVert,
+                            leadingTint = palette.muted,
                         )
                     }
                 }
@@ -167,6 +176,7 @@ private class HomeEntry(
     val title: String,
     val supporting: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val tint: androidx.compose.ui.graphics.Color,
     val onClick: () -> Unit,
 )
 
@@ -188,6 +198,7 @@ private fun GroupEntry(
     group: PiSettingsGroup,
     store: PiSettingsStore,
     freshness: Int,
+    tint: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
 ) {
     val summary = remember(store, group.id, freshness) { group.summary(store) }
@@ -196,5 +207,6 @@ private fun GroupEntry(
         supporting = summary,
         onClick = onClick,
         leadingIcon = group.icon,
+        leadingTint = tint,
     )
 }

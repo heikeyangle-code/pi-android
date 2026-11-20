@@ -69,7 +69,7 @@ internal object PiSheetChromeMetrics {
      *
      * 自绘外壳用它裁面板（`clip`）；M3 外壳把它喂给 `shape` 参数。
      */
-    val topRadius: Dp = PiSettingsMetrics.sheetTopRadius
+    val topRadius: Dp = 24.dp
 
     /** 面板形状：两个上角圆、两个下角贴屏底不圆。 */
     val shape: RoundedCornerShape = RoundedCornerShape(
@@ -77,16 +77,16 @@ internal object PiSheetChromeMetrics {
         topEnd = topRadius,
     )
 
-    /** 把手 `32×3`。 */
-    val handleWidth: Dp = PiSettingsMetrics.sheetHandleWidth
-    val handleHeight: Dp = PiSettingsMetrics.sheetHandleHeight
+    /** 把手 `36×4` 胶囊条。 */
+    val handleWidth: Dp = 36.dp
+    val handleHeight: Dp = 4.dp
 
-    /** 把手圆角 2：32×3 的细横条上，2 与胶囊肉眼无差，但两套壳必须同值。 */
-    val handleRadius: Dp = 2.dp
+    /** 把手圆角 999。 */
+    val handleRadius: Dp = 999.dp
 
-    /** 把手上方 8、下方 6：这条 6 是「把手与下面第一行之间」的呼吸，两套壳共用。 */
-    val handleTopPadding: Dp = 8.dp
-    val handleBottomGap: Dp = 6.dp
+    /** 把手上方 10、下方 8。 */
+    val handleTopPadding: Dp = 10.dp
+    val handleBottomGap: Dp = 8.dp
 
     /** 头部 `12px 14px 8px`；14 与设置面的页边同值。 */
     val headTop: Dp = PiSettingsMetrics.sheetHeadTop

@@ -1,31 +1,47 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.ThinkingBlock
@@ -34,15 +50,13 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
 import app.pi.ui.theme.numeric
 
-/**
- * `thinking-block` (docs/pi-android-ui-spec.md §7.4): collapsed to a 32dp line
- * with the thinking-level colour stripe (the app's signature visual), expanding
- * to italic text in `thinkingText`. The level is always spelled out in words as
- * well, because colour must never be the only channel.
- */
 /** 扩展给折叠思考块定的标题（已去掉颜色码）；null = 用 App 自己的措辞。 */
 val LocalThinkingLabel = staticCompositionLocalOf<String?> { null }
 
+/**
+ * 现代思考过程卡片：柔和圆角容器 + 思考等级色点（思考中平滑呼吸）+ 耗时与等级胶囊 +
+ * 平滑旋转箭头与内容展开动画。
+ */
 @Composable
 fun ThinkingBlockBlock(
     item: ThinkingBlock,
@@ -50,150 +64,117 @@ fun ThinkingBlockBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
-    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
-    // row, exactly as pi re-applies expansion to all of its children.
     var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val pen = palette.thinking(item.level ?: "medium")
     val levelLabel = item.level?.takeIf { it.isNotBlank() }?.let { PiThinkingLevel.fromWire(it).label }
-    // The row is a **two-voice** line, which is rule #7 (`docs/pi-android-ui-spec.md` §1) applied
-    // to a row that used to speak with three: the word 「思考」 and the streaming verb are the
-    // app's own copy (UI face), while the elapsed time is a measurement the engine produced —
-    // so it is set in the machine face, exactly like the tool card's own footer reading
-    // (`ToolBlockChrome.toolHeaderReading` → `monoSmall`). Keeping the duration inside the
-    // Chinese string was the odd one out: it changed the sentence's advance width as it
-    // ticked, and it left the row with one voice per fragment.
-    // 扩展用 `ctx.ui.setHiddenThinkingLabel` 换掉折叠思考块的标题（pi 的同名接口）；
-    // 无扩展设置时仍是 App 自己的「思考中… / 思考」。
     val custom = LocalThinkingLabel.current
-    val headline = custom ?: if (item.streaming) "思考中…" else "思考"
+    val headline = custom ?: if (item.streaming) "正在深度思考…" else "思考过程"
     val headlineDuration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
 
+    val pulse: State<Float>? = if (item.streaming) {
+        rememberInfiniteTransition(label = "think-pulse").animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
+            label = "think-pulse-alpha",
+        )
+    } else {
+        null
+    }
+    val turn by animateFloatAsState(if (expanded) 90f else 0f, label = "think-chevron")
+
     BlockColumn(modifier) {
-        // F28: the whole block is the toggle target, which is what pi does —
-        // `components/assistant-message.ts:160-166` wraps the entire thinking
-        // component in the `MouseRegion` that flips its visibility.
-        ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // `06 §3` 构件 7 + v2's `ThinkRow`: a `3px` stripe as tall as the row's
-                // own text block (`height:18`), not the 32 dp status row this used to
-                // take from spec §7.4 — the frozen board draws the stripe shorter than
-                // the line so it reads as a pen stroke beside the words rather than a
-                // band around them (`direction-b-v2.html:905`).
-                // 思考中：笔画轻轻呼吸，一眼看出「还在想」；结束后静止。
-                val pulse: State<Float>? = if (item.streaming) {
-                    rememberInfiniteTransition(label = "think-pulse").animateFloat(
-                        initialValue = 0.4f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-                        label = "think-pulse-alpha",
-                    )
-                } else {
-                    null
-                }
-                AccentStripe(
-                    pen,
-                    THINK_STRIPE_HEIGHT,
-                    Modifier.graphicsLayer { alpha = pulse?.value ?: 1f },
-                )
-                Spacer(Modifier.width(THINK_ROW_GAP))
-                Text(
-                    text = headline,
-                    // v2: `t14 w5` — the row's headline is 14 sp at weight 500.
-                    style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
-                    // F13: this is a body role, so it takes the 4.5:1 variant
-                    // (`thinkingText` and `muted` are the same #808080 in pi's dark
-                    // theme; 4.47:1 on the canvas is under the floor).
-                    color = palette.thinkingBodyOnCanvas,
-                )
-                if (headlineDuration != null) {
-                    // The engine's own measurement, in the machine face (rule #7). The gap
-                    // is the same 8 dp the stripe/level use, so the row still has one
-                    // rhythm; the colour is the body colour rather than the level's pen,
-                    // because the duration is not a level.
-                    Spacer(Modifier.width(THINK_ROW_GAP))
-                    Text(
-                        text = headlineDuration,
-                        style = PiTheme.text.numeric,
-                        color = palette.thinkingBodyOnCanvas,
-                    )
-                }
-                if (levelLabel != null) {
-                    Spacer(Modifier.width(THINK_ROW_GAP))
-                    Text(
-                        text = levelLabel,
-                        // The level is now pi's own identifier (`off`…`max`, see
-                        // `PiThinkingLevel`), so it takes the app's *machine* face rather
-                        // than the UI one — rule #7 (`docs/pi-android-ui-spec.md` §1):
-                        // anything the engine emitted is set in mono, and that is what
-                        // makes it read as a tag beside the Chinese headline instead of as
-                        // a second word in the sentence. Same 12 sp step as `meta`, so the
-                        // row's rhythm is unchanged; the colour stays the level's pen
-                        // (`getThinkingBorderColor`'s ramp), which is the one channel that
-                        // already carries the level.
-                        style = PiTheme.text.monoSmall,
-                        color = pen,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                // 右侧小 ›，展开时转 90°：只负责告诉人「这一行能点」，状态仍由文字承担。
-                val turn by animateFloatAsState(if (expanded) 90f else 0f, label = "think-chevron")
-                Text(
-                    text = "›",
-                    modifier = Modifier.rotate(turn).padding(horizontal = THINK_ROW_GAP / 2),
-                    style = PiTheme.text.prose,
-                    color = palette.muted,
-                )
-            }
-            if (expanded) {
-                // One scope around the body: the thinking text is model prose like any
-                // other and the user asked for it to be selectable. This block has no
-                // actions of its own, so nothing has to move to a ⋮ here.
-                SelectableContent {
-                    Text(
-                        text = item.text.ifEmpty { "（无思考内容）" },
-                        // v2: `t14`, italic, in the tool-body grey, indented past the stripe
-                        // (`paddingLeft:11`) and one 6 dp step below the headline row.
-                        modifier = Modifier
-                            // 展开后笔画沿正文一路向下：淡一档的同色竖线，和标题行的笔画
-                            // 连成一笔，一眼看出这段正文属于哪一次思考。
-                            .drawBehind {
-                                drawRoundRect(
-                                    color = pen.copy(alpha = 0.35f),
-                                    topLeft = Offset(0f, 0f),
-                                    size = Size(THINK_STRIPE_WIDTH.toPx(), size.height),
-                                    cornerRadius = CornerRadius(THINK_STRIPE_WIDTH.toPx() / 2f),
-                                )
-                            }
-                            .padding(start = THINK_BODY_INDENT, top = PiSpacing.gutter),
-                        // 不再用斜体：系统字没有中文斜体，Android 会把汉字硬斜 12°，字形发虚；
-                        // 思考与回答的区分已经由「小一号 + 淡色 + 左缩进」承担。
-                        style = PiTheme.text.prose.let {
-                            it.copy(fontSize = it.fontSize * 0.93f, lineHeight = it.lineHeight * 0.96f)
-                        },
-                        color = palette.thinkingBodyOnCanvas,
-                    )
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(animationSpec = tween(180)),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(
+                width = 1.dp,
+                color = pen.copy(alpha = if (item.streaming) 0.45f else 0.22f),
+            ),
+        ) {
+            ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .graphicsLayer { alpha = pulse?.value ?: 1f }
+                                .clip(CircleShape)
+                                .background(pen),
+                        )
+                        Text(
+                            text = headline,
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                            color = palette.thinkingBodyOnCanvas,
+                        )
+                        if (levelLabel != null) {
+                            Text(
+                                text = levelLabel,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(pen.copy(alpha = 0.14f))
+                                    .padding(horizontal = 7.dp, vertical = 1.dp),
+                                style = PiTheme.text.monoSmall,
+                                color = pen,
+                            )
+                        }
+                        if (headlineDuration != null) {
+                            Text(
+                                text = headlineDuration,
+                                style = PiTheme.text.monoSmall,
+                                color = palette.muted,
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Icon(
+                            imageVector = Icons.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .rotate(turn),
+                            tint = palette.muted,
+                        )
+                    }
+                    if (expanded) {
+                        SelectableContent {
+                            Text(
+                                text = item.text.ifEmpty { "（无思考内容）" },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .drawBehind {
+                                        drawRoundRect(
+                                            color = pen.copy(alpha = 0.42f),
+                                            topLeft = Offset(0f, 0f),
+                                            size = Size(THINK_STRIPE_WIDTH.toPx(), size.height),
+                                            cornerRadius = CornerRadius(THINK_STRIPE_WIDTH.toPx() / 2f),
+                                        )
+                                    }
+                                    .padding(start = THINK_BODY_INDENT),
+                                style = PiTheme.text.prose.let {
+                                    it.copy(fontSize = it.fontSize * 0.92f, lineHeight = it.lineHeight * 0.96f)
+                                },
+                                color = palette.thinkingBodyOnCanvas,
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-/** v2's `ThinkRow` stripe: `width:3,height:18`. */
-private val THINK_STRIPE_HEIGHT = 18.dp
+private val THINK_STRIPE_WIDTH = 2.5.dp
 
-/** 展开后正文左侧竖线的宽度：和标题行的笔画同宽。 */
-private val THINK_STRIPE_WIDTH = PiSpacing.stripe
-
-/** v2's `ThinkRow` `gap:8` — between the stripe, the headline and the level word. */
-private val THINK_ROW_GAP = 8.dp
-
-/**
- * v2's expanded thinking body sits `paddingLeft:11` — just past the 3 dp stripe.
- *
- * `internal` rather than `private` because it is **also the tool card's own left edge**
- * ([RAIL_INDENT] in `ToolRail.kt`): both are "where the content starts inside a row that
- * carries a marker on its left", and this app used to have three different left edges for
- * one column — prose 0, the thinking body 11, a tool card 26. One number, one place.
- */
 internal val THINK_BODY_INDENT = 11.dp

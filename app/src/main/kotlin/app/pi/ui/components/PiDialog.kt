@@ -236,24 +236,33 @@ fun PiDialogAction(
     enabled: Boolean = true,
     tone: Color? = null,
 ) {
+    val palette = PiTheme.palette
+    val accentColor = tone ?: palette.accent
+    val bg = when {
+        !primary -> Color.Transparent
+        !enabled -> palette.muted.copy(alpha = 0.14f)
+        else -> accentColor.copy(alpha = 0.16f)
+    }
+    val fg = when {
+        !enabled -> palette.muted
+        tone != null -> tone
+        primary -> palette.accent
+        else -> palette.text
+    }
     Text(
         text = label,
         modifier = modifier
             .clip(PiDialogActionShape)
+            .background(bg)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(
                 horizontal = PiDialogActionPaddingHorizontal,
                 vertical = PiDialogActionPaddingVertical,
             ),
         style = MaterialTheme.typography.bodyMedium.copy(
-            fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal,
+            fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium,
         ),
-        color = when {
-            !enabled -> PiTheme.palette.muted
-            tone != null -> tone
-            primary -> PiTheme.palette.accent
-            else -> PiTheme.palette.text
-        },
+        color = fg,
     )
 }
 
@@ -302,19 +311,16 @@ fun PiAutoFocus(requester: FocusRequester) {
 // Literals here rather than members of a theme object, cited one by one, so this
 // component carries its own evidence (`06 §2` 的「对话框」一行 + `.b-dlg`).
 
-/** `06 §2`「对话框：最大宽 330」。 */
-private val PiDialogMaxWidth = 330.dp
+/** 现代对话框：最大宽 340，圆角 20，舒适留白。 */
+private val PiDialogMaxWidth = 340.dp
 
-/** `06 §2`「圆角 14」。 */
-private val PiDialogShape = RoundedCornerShape(14.dp)
+private val PiDialogShape = RoundedCornerShape(20.dp)
 
-/** `.b-dlgwrap`：`padding:22px`，也就是对话框离屏边的最小距离。 */
 private val PiDialogWrapPadding = 22.dp
 
-/** `06 §2`「`padding:18px 16px 12px`」：上 / 左右 / 下三档各一个数。 */
-private val PiDialogPaddingTop = 18.dp
-private val PiDialogPaddingHorizontal = 16.dp
-private val PiDialogPaddingBottom = 12.dp
+private val PiDialogPaddingTop = 20.dp
+private val PiDialogPaddingHorizontal = 20.dp
+private val PiDialogPaddingBottom = 16.dp
 private val PiDialogContentPadding = PaddingValues(
     start = PiDialogPaddingHorizontal,
     end = PiDialogPaddingHorizontal,
@@ -322,21 +328,16 @@ private val PiDialogContentPadding = PaddingValues(
     bottom = PiDialogPaddingBottom,
 )
 
-/** `.b-scrim`：`rgba(0,0,0,.32)`。 */
-private const val PiDialogScrimAlpha = 0.32f
+private const val PiDialogScrimAlpha = 0.45f
 
-/** `06 §2`「线宽：全篇只有 1px」。 */
 private val PiDialogHairline = 1.dp
 
-/** `.b-dlg` 标题行 `gap:7`。 */
-private val PiDialogTitleGap = 7.dp
+private val PiDialogTitleGap = 8.dp
 
-/** `.b-dlg` 正文/控件距上一行的 10，以及动作行上方 14、动作之间 6。 */
 private val PiDialogControlGap = 10.dp
-private val PiDialogActionGap = 14.dp
-private val PiDialogActionGapInner = 6.dp
+private val PiDialogActionGap = 18.dp
+private val PiDialogActionGapInner = 8.dp
 
-/** `.press` 按钮：`padding:7px 12px`、`border-radius:8`。 */
-private val PiDialogActionPaddingHorizontal = 12.dp
-private val PiDialogActionPaddingVertical = 7.dp
-private val PiDialogActionShape = RoundedCornerShape(8.dp)
+private val PiDialogActionPaddingHorizontal = 14.dp
+private val PiDialogActionPaddingVertical = 8.dp
+private val PiDialogActionShape = RoundedCornerShape(10.dp)

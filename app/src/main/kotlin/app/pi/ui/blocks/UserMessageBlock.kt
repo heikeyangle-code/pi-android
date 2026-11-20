@@ -1,5 +1,6 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.layout.layout
 import kotlin.math.roundToInt
@@ -124,8 +125,9 @@ fun UserMessageBlock(
                 }
                 .padding(bottom = 10.dp),
             // `borderRadius:12`.
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 4.dp, bottomStart = 16.dp),
+            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 5.dp, bottomStart = 18.dp),
             color = palette.userMessageBg,
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.22f)),
         ) {
             Column(
                 // The board's `padding:12`, both axes.

@@ -94,7 +94,11 @@ internal fun ChatSheetHost(
 
         ChatSheet.Stats -> SessionStatsSheet(state = state, onDismiss = { onSheet(null) })
 
-        ChatSheet.Context -> ContextSheet(state = state, onDismiss = { onSheet(null) })
+        ChatSheet.Context -> ContextSheet(
+            state = state,
+            onDismiss = { onSheet(null) },
+            onCompact = { session.compact() },
+        )
 
         ChatSheet.Fork -> ForkPickerSheet(
             messages = state.forkMessages,

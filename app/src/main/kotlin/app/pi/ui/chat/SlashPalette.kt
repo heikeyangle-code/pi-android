@@ -51,12 +51,13 @@ fun SlashPalette(
     onPick: (PiSlashCommand) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 随查询词 / 命令表变化才重算：流式输出时对话页每个 token 重组一次，面板开着的那几秒不该每帧过滤。
     val matches = remember(commands, query) { filterPalette(commands, query) }
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = PiShapes.card,
+        shadowElevation = 6.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.55f)),
     ) {
         if (matches.isEmpty()) {
             Text(

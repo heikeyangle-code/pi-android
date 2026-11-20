@@ -1,78 +1,62 @@
 package app.pi.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.ui.Boot
 import app.pi.ui.components.PiType
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * First-launch and boot-failure surface.
- *
- * This screen exists instead of a spinner because the first launch genuinely
- * takes tens of seconds (unpacking a Linux userland) and because one step can
- * honestly fail: Android 10+ refuses to execute files in the app's own data
- * directory, and this app's entire runtime lives there. When that happens the
- * user needs to know *which* step failed and what it means, not a generic error.
- *
- * ## Geometry (v2 `direction-b-v2.html` `.b-boot`)
- *
- * One centred column of 30 dp inline padding: the state's title at `17/600`, a body
- * line, and the one action. The three states are `phone59` (准备启动本地引擎),
- * `phone60` (正在安装运行时, with the segmented bar) and `phone61` (引擎没有在运行,
- * with the v2 error block). The copy is the product's own (`02-real-content.md` §7.3)
- * and is not touched by this batch.
- *
- * The board's `52` circle badge is **not drawn**: it carried the app's mark, that
- * mark is gone with the old icon, and the user asked for no badge here at all
- * (2026-10-05). The failure state keeps its own signal in the words below and in
- * the error block's `✗` — the same 三重编码 the rest of the app uses (symbol, then
- * word, then colour), which is what makes the dead-engine state readable without
- * colour.
- *
- * `StepBar` keeps the hand-drawn `Box` pair the file always had (see its KDoc);
- * only its shape changed, from a continuous fill to v2's segmented bar.
+ * 首次安装初始化与引擎恢复页：
+ *  - 品牌 `π` 徽章 + 清晰的步骤进度条与实时步骤卡片；
+ *  - 失败态：结构化诊断卡片 + 一键复制错误详情 + 主按钮重试 + 危险操作独立区分。
  */
 @Composable
 fun BootScreen(
     boot: Boot,
     onRetry: () -> Unit,
-    /**
-     * The explicit repair action: rebuild the volatile runtime tree from the APK.
-     *
-     * A separate callback rather than a mode of [onRetry], because it is a different
-     * decision with a different cost: it deletes everything installed inside the guest,
-     * where a retry re-runs the ordinary (non-destructive) boot. This is the app's only
-     * caller of `RuntimeProvisioner.ensureReady(rebuild = true)`.
-     */
     onRebuild: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -81,83 +65,112 @@ fun BootScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = BootPagePadding),
+            .padding(horizontal = 28.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        val isFailed = boot is Boot.Failed
+        val emblemTint = if (isFailed) palette.error else palette.accent
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(emblemTint.copy(alpha = 0.14f))
+                .border(1.dp, emblemTint.copy(alpha = 0.36f), RoundedCornerShape(20.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = if (isFailed) "!" else "π",
+                style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
+                color = emblemTint,
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
         when (boot) {
             Boot.Idle -> {
-                Spacer(Modifier.height(BootHeadingGap))
                 BootHeading("准备启动本地引擎")
-                Spacer(Modifier.height(BootBodyGap))
-                BootParagraph("首次启动要准备 Linux 运行环境，需要几分钟。不需要 root。")
-                Spacer(Modifier.height(BootActionGap))
-                BootButton("开始", onRetry)
+                Spacer(Modifier.height(10.dp))
+                BootParagraph("首次启动需要解压并配置本地 Linux 运行环境，全程在设备离线完成，无需 root。")
+                Spacer(Modifier.height(24.dp))
+                BootButton(label = "开始准备", onClick = onRetry)
             }
 
             is Boot.Working -> {
-                Spacer(Modifier.height(BootHeadingGap))
-                BootHeading("正在安装运行时")
-                Spacer(Modifier.height(BootBodyGap))
-                // The step name is the only line on this screen that is *doing*
-                // something, so it carries the text colour while everything around
-                // it is muted.
-                Text(
-                    text = boot.step.label,
+                BootHeading("正在初始化运行环境")
+                Spacer(Modifier.height(16.dp))
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    style = PiTheme.text.prose,
-                    color = palette.text,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(BootStepGap))
-                Text(
-                    text = "步骤 ${boot.step.index + 1} / ${boot.step.total}",
-                    style = PiTheme.text.meta,
-                    color = palette.muted,
-                )
-                Spacer(Modifier.height(BootBarGapAbove))
-                StepBar(boot.step)
-                Spacer(Modifier.height(BootWorkNoteGap))
-                BootParagraph("只在首次启动时做一次，之后冷启动是秒级。")
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, palette.borderMuted.copy(alpha = 0.45f)),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = boot.step.label,
+                                modifier = Modifier.weight(1f),
+                                style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
+                                color = palette.text,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${boot.step.index + 1} / ${boot.step.total}",
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(palette.accent.copy(alpha = 0.14f))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = palette.accent,
+                            )
+                        }
+                        StepBar(boot.step)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                BootParagraph("仅首次安装需要数分钟，完成后日常冷启动为秒级。")
             }
 
             is Boot.Failed -> {
-                // 标题与解释**按真实原因**来（`EngineFailureClassify`）：运行环境没装好、
-                // 被系统结束、内存耗尽、参数/扩展错、切工作区失败 —— 五类不是同一件事，
-                // 需要的动作也不同。以前它们共用一句「引擎没有在运行」，用户只能猜。
-                Spacer(Modifier.height(BootHeadingGap))
                 BootHeading(boot.failure.title)
-                Spacer(Modifier.height(BootCardGap))
+                Spacer(Modifier.height(16.dp))
                 BootErrorCard(message = boot.failure.explanation, detail = boot.failure.detail)
-                Spacer(Modifier.height(BootCardActionGap))
-                BootButton("重试", onRetry)
-                if (boot.failure.rebuildOffered) {
-                    Spacer(Modifier.height(BootCardActionGap))
-                    // The repair action, and the one place the user can reach it. It is
-                    // visually the destructive one (error fill, not the accent) because it
-                    // is the only button in this app that deletes anything inside the guest.
-                    //
-                    // **Only for "the runtime could not be prepared".** A mid-session engine
-                    // exit reaches this screen with `rebuildOffered = false`: wiping the guest
-                    // cannot fix a killed or crashed process, and the button's presence is
-                    // what turned one crash into "点了重建、装的东西没了、还是崩".
-                    BootButton("重建运行时", onRebuild, destructive = true)
-                    Spacer(Modifier.height(BootNoteGap))
-                    BootParagraph(
-                        "重建会删掉 guest 里你自己装的东西：apt/pip 包、npm -g 包、" +
-                            "/usr/local/bin 下的文件、/root 下除 .pi/agent 之外的文件。" +
-                            "工作区、会话、设置和凭证在易失树之外，不会被删。",
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BootButton(
+                        label = "重试启动",
+                        onClick = onRetry,
+                        modifier = Modifier.weight(1f),
                     )
-                } else {
-                    Spacer(Modifier.height(BootNoteGap))
-                    BootParagraph(
-                        "运行环境本身是好的：这是引擎跑着跑着自己退出了（被系统回收、内存不足、" +
-                            "或者启动参数/扩展出错）。重建运行环境修不好这类退出，只会删掉你在 " +
-                            "guest 里装的东西，所以这里没有那个按钮。",
-                    )
+                    if (boot.failure.rebuildOffered) {
+                        BootButton(
+                            label = "重建运行时",
+                            onClick = onRebuild,
+                            destructive = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
-                Spacer(Modifier.height(BootNoteGap))
-                BootParagraph("如果反复失败，把这个提示连同它下面的文字发给我。")
+                Spacer(Modifier.height(14.dp))
+                BootParagraph(
+                    if (boot.failure.rebuildOffered) {
+                        "重建仅清理易失的 guest 运行时（apt/pip/npm 全局包）；你的工作区、会话、设置和登录凭证均不受影响。"
+                    } else {
+                        "运行环境本身完好，本次为进程运行中退出（系统回收内存或扩展异常）。直接点击「重试启动」即可恢复。"
+                    },
+                )
             }
 
             Boot.Ready -> Unit
@@ -165,26 +178,16 @@ fun BootScreen(
     }
 }
 
-// ---------------------------------------------------------------- the three states
-
-/** `17/600` — `PiType.title`, the screen-title role (it shifts with 字号). */
 @Composable
 private fun BootHeading(text: String) {
     Text(
         text = text,
-        style = PiType.title,
+        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
         color = PiTheme.palette.text,
+        textAlign = TextAlign.Center,
     )
 }
 
-/**
- * `14` body copy, centred.
- *
- * `.b-boot` is `text-align:center`, so a line that wraps has to be centred as a
- * paragraph, which needs the full width plus [TextAlign.Center] — a centred
- * *composable* whose text is start-aligned would leave the second line hanging
- * left.
- */
 @Composable
 private fun BootParagraph(text: String) {
     Text(
@@ -196,166 +199,190 @@ private fun BootParagraph(text: String) {
     )
 }
 
-/**
- * The v2 error block (`06 §2` 错误块): radius 10, `tool-error` fill, a 1 px
- * `error` at 45 %, a 3 px `error` stripe down the left edge, `padding:10px 12px`.
- *
- * `phone61` shows the message at `14` in the text colour and the detail as a
- * monospace `12` in `bodyOnTool` — that token exists for exactly this (text on a
- * tool surface, contrast-corrected against all three tool fills), which is why
- * the detail is not painted `error` as well: the block is already red, and a red
- * machine line at 12 px is the least readable thing on the screen.
- *
- * The stripe sits outside the padding, flush with the card's left edge, the same
- * way `PiPackagesScreen`'s invalid-trust card draws it.
- */
 @Composable
 private fun BootErrorCard(message: String, detail: String?) {
     val palette = PiTheme.palette
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(BootCardRadius),
-        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(16.dp),
+        color = palette.toolErrorBg,
+        border = BorderStroke(1.dp, palette.error.copy(alpha = 0.35f)),
     ) {
-        Row(
-            Modifier
+        Column(
+            modifier = Modifier
                 .fillMaxWidth()
-                .height(IntrinsicSize.Min),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(
-                Modifier
-                    .width(PiSpacing.stripe)
-                    .fillMaxHeight()
-                    .background(palette.error),
-            )
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(palette.error.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "✗",
+                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                        color = palette.error,
+                    )
+                }
                 Text(
-                    text = "✗",
-                    style = PiTheme.text.mono,
+                    text = "诊断信息",
+                    modifier = Modifier.weight(1f),
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                     color = palette.error,
                 )
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = message,
-                        style = PiTheme.text.prose,
-                        color = palette.text,
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(palette.error.copy(alpha = 0.14f))
+                        .clickable {
+                            val dump = buildString {
+                                append(message)
+                                if (!detail.isNullOrBlank()) {
+                                    append("\n\n")
+                                    append(detail)
+                                }
+                            }
+                            clipboard.setText(AnnotatedString(dump))
+                            copied = true
+                        }
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = palette.error,
                     )
-                    if (!detail.isNullOrBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = detail,
-                            style = PiTheme.text.monoSmall,
-                            color = palette.bodyOnTool,
-                        )
-                    }
+                    Text(
+                        text = if (copied) "已复制" else "复制详情",
+                        style = PiTheme.text.meta,
+                        color = palette.error,
+                    )
                 }
+            }
+            Text(
+                text = message,
+                style = PiTheme.text.prose,
+                color = palette.text,
+            )
+            if (!detail.isNullOrBlank()) {
+                Text(
+                    text = detail,
+                    style = PiTheme.text.monoSmall,
+                    color = palette.bodyOnTool,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.14f))
+                        .padding(10.dp),
+                )
             }
         }
     }
 }
 
-/**
- * The one action of a state: v2's `Btn primary` — 34 high, `padding:0 12px`,
- * radius 8, accent fill, the page colour as its label colour.
- *
- * Built from a `Box` rather than `Button` because M3's `Button` enforces a 48 dp
- * minimum interactive size and a 40 dp minimum height, which would make this
- * button visibly taller than the board's. The label is `14/600` rather than the
- * board's `13`: the app has no sans 13 role (`B7` owns the type scale), and 14 is
- * the role every other button label in this app already uses.
- *
- * [destructive] swaps the accent fill for the error fill. It is reserved for the one
- * action on this screen that deletes something inside the guest (`重建运行时`), so the
- * two buttons cannot be confused at a glance.
- */
 @Composable
-private fun BootButton(label: String, onClick: () -> Unit, destructive: Boolean = false) {
+private fun BootButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    destructive: Boolean = false,
+) {
     val palette = PiTheme.palette
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(BootButtonRadius))
-            .background(if (destructive) palette.error else palette.accent)
-            .clickable(role = Role.Button, onClick = onClick)
-            .height(BootButtonHeight)
-            .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.Center,
+    val shape = RoundedCornerShape(12.dp)
+    val bg = if (destructive) palette.error.copy(alpha = 0.16f) else palette.accent
+    val fg = if (destructive) palette.error else Color.White
+    val border = if (destructive) BorderStroke(1.dp, palette.error.copy(alpha = 0.42f)) else null
+    Surface(
+        modifier = modifier
+            .height(44.dp)
+            .clip(shape)
+            .clickable(role = Role.Button, onClick = onClick),
+        shape = shape,
+        color = bg,
+        border = border,
     ) {
-        Text(
-            text = label,
-            style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
-            color = palette.pageBg,
-        )
-    }
-}
-
-/**
- * Hand-drawn progress bar rather than `LinearProgressIndicator`.
- *
- * Deliberate: the indicator's `progress` parameter changed shape between Compose
- * releases, and this app is built somewhere that cannot compile-check locally on
- * every machine. A `Row` of `Box`es has no such surface area.
- *
- * v2 (`phone60`) draws one `4`-high segment per step with a `2` gap and fills a
- * segment only once its step is reached, so the bar counts steps rather than
- * interpolating within one. `RuntimeProvisioner.Step.fraction` is
- * `index / total`, i.e. the same information one step behind, and the board's
- * "步骤 3 / 7" fills three segments — which is why the current step counts as
- * reached.
- */
-@Composable
-private fun StepBar(step: RuntimeProvisioner.Step) {
-    val palette = PiTheme.palette
-    val total = step.total.coerceAtLeast(1)
-    val reached = (step.index + 1).coerceIn(0, total)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(BootBarSegmentGap),
-    ) {
-        repeat(total) { index ->
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(BootBarHeight)
-                    .background(if (index < reached) palette.accent else palette.borderMuted),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!destructive) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                    tint = fg,
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = label,
+                style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                color = fg,
             )
         }
     }
 }
 
-// -------------------------------------------------------------- the board's numbers
-
-/** `.b-boot{padding:0 30px}`: the boot surface's own inline margin (not the page 14). */
-private val BootPagePadding = 30.dp
-
-/** `.b-boot-bar i{height:4px}` / `.b-boot-bar{gap:2px}`. */
-private val BootBarHeight = 4.dp
-private val BootBarSegmentGap = 2.dp
-
-/** The failure card's `border-radius:10px`. */
-private val BootCardRadius = 10.dp
-
-/** `Btn{height:34px;borderRadius:8px}`. */
-private val BootButtonHeight = 34.dp
-private val BootButtonRadius = 8.dp
-
-/**
- * The board's per-state rhythm, read off `phone59`–`phone61`:
- * `mt18` above the title (badge→title on the board; the badge is not drawn any more),
- * `mt10` title→body, `mt4` step name→counter, `mt18` counter→bar, `mt16`
- * title→error card, and the action's own top gap — 20 after the idle body, 16 after
- * the failure card.
- */
-private val BootHeadingGap = 18.dp
-private val BootBodyGap = 10.dp
-private val BootStepGap = 4.dp
-private val BootBarGapAbove = 18.dp
-private val BootCardGap = 16.dp
-private val BootActionGap = 20.dp
-private val BootCardActionGap = 16.dp
-private val BootWorkNoteGap = 14.dp
-private val BootNoteGap = 18.dp
+@Composable
+private fun StepBar(step: RuntimeProvisioner.Step) {
+    val palette = PiTheme.palette
+    val total = step.total.coerceAtLeast(1)
+    val reached = (step.index + 1).coerceIn(0, total)
+    val targetFraction = reached.toFloat() / total.toFloat()
+    val animatedFraction by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = tween(260),
+        label = "bootProgress",
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.borderMuted.copy(alpha = 0.4f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(animatedFraction.coerceIn(0.04f, 1f))
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(palette.accent),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            repeat(total) { index ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(
+                            if (index < reached) palette.accent.copy(alpha = 0.75f)
+                            else palette.borderMuted.copy(alpha = 0.3f),
+                        ),
+                )
+            }
+        }
+    }
+}

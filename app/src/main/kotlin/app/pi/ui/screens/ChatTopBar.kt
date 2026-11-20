@@ -1,6 +1,12 @@
 package app.pi.ui.screens
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,17 +15,32 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.UnfoldLess
+import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,235 +53,489 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.chat.ChatAction
-import app.pi.ui.components.PiMenu
-import app.pi.ui.components.PiMenuItem
-import app.pi.ui.components.PiMenuPlacement
+import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 
 /**
- * 聊天页顶栏：状态点 + 会话标题（点开会话列表）、搜索、工作区、⋮ 菜单。
- *
- * 从 `ChatBody` 拆出来：顶栏只关心「显示什么、点了通知谁」，不碰列表/输入框的任何局部状态。
- * 搜索开关、跳转提问、展开工具输出都是回调，真正的状态仍在 `ChatBody`；菜单里每一项
- * 「做什么」只有 `ChatBody.perform` 里那一份（[onAction]），命令面板的同名行走同一个函数。
+ * 全新现代对话顶栏 + 分类命令中心底部面板：
+ *  - 左侧：动态呼吸引擎状态点 + 会话标题 + 工作区微标签 + 下拉箭头（一键打开会话列表/会话树）；
+ *  - 右侧：+ 新建会话（一键直达！）、搜索、工作区、⋯ 更多（打开现代网格+分组底部命令面板，彻底取代旧版 19 行细长弹窗）。
  */
 @Composable
 internal fun ChatTopBar(
     engineLabel: String,
     sessionTitle: String?,
+    workspaceName: String? = null,
     searchOpen: Boolean,
     scrolled: Boolean,
     toolsExpanded: Boolean,
     onOpenSessions: () -> Unit,
     onOpenWorkspace: () -> Unit,
-    /** [clearOnClose]：菜单里的「关闭查找」同时清空关键词；顶栏的放大镜只收起。 */
     onToggleSearch: (clearOnClose: Boolean) -> Unit,
-    /** 跳到上一条（false）/ 下一条（true）用户提问。 */
     onJumpQuestion: (forward: Boolean) -> Unit,
     onToggleTools: () -> Unit,
     onAction: (ChatAction) -> Unit,
 ) {
-    var overflow by remember { mutableStateOf(false) }
+    var commandCenterOpen by remember { mutableStateOf(false) }
+    val palette = PiTheme.palette
+    val tone = engineStateTone(engineLabel)
+    val engineDotColor = stateToneColor(tone, palette)
+    val isActiveWork = tone == StateTone.Warning
+    val dotAlpha = if (isActiveWork) {
+        rememberInfiniteTransition(label = "engine-dot").animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
+            label = "engine-dot-alpha",
+        ).value
+    } else {
+        1f
+    }
+    val widePhone = LocalConfiguration.current.screenWidthDp >= 360
+
     Column(
         Modifier
             .fillMaxWidth()
-            // **不透明先于 inset**：背景画在状态栏后面，顶栏和页面同色，内容不会在
-            // 状态栏/标题下面透出半截。edge-to-edge 把状态栏报成 inset，所以顺序是
-            // background → statusBarsPadding。
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                // 56dp：标准顶栏高度。单行标题 + 7dp 状态点 + 28dp 模型 chip 都在里面。
                 .height(PiSpacing.chatTopBarHeight)
-                .padding(horizontal = PiSpacing.pageHorizontal),
+                .padding(start = 12.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            // v2's `TopBar` `gap:10` between the title block and the right cluster.
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // 左侧：状态点 + 会话标题 + ▾。整块可点，行为仍是打开会话列表；
-            // 引擎状态从一整行收成一个 7dp 的点，颜色沿用原来对勾的 tone。
-            val engineDotColor = stateToneColor(engineStateTone(engineLabel), PiTheme.palette)
-            val showSearchAction = LocalConfiguration.current.screenWidthDp >= 360
+            // 左侧：会话入口胶囊（状态点 + 会话名 + 工作区副标 + ▾）
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(PiSpacing.chatTopBarAction)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions),
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions)
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(PiSpacing.chatTopBarStatusDot)
+                        .size(8.dp)
+                        .graphicsLayer { alpha = dotAlpha }
                         .clip(CircleShape)
                         .background(engineDotColor)
                         .semantics { contentDescription = "引擎：$engineLabel" },
                 )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    // pi 自己的会话名（`set_session_name` / `session_info_changed`）。
-                    // 拿不到就只写「会话」；`setTitle` 是终端窗口标题，不再冒充 App 标题。
-                    text = sessionTitle ?: "会话",
-                    modifier = Modifier.weight(1f, fill = false),
-                    style = if (sessionTitle != null) PiType.topBarTitle else PiType.topBarPlaceholder,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    Icons.Filled.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Spacer(Modifier.width(9.dp))
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = sessionTitle ?: "新对话",
+                            modifier = Modifier.weight(1f, fill = false),
+                            style = PiType.topBarTitle,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = palette.muted,
+                        )
+                    }
+                    if (!workspaceName.isNullOrBlank()) {
+                        Text(
+                            text = workspaceName,
+                            style = PiTheme.text.monoSmall,
+                            color = palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
+
+            // 右侧高频直达图标：新建对话 + 搜索 + 工作区 + 更多
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // 模型 chip 已经挪到输入框工具行（2026-10-26）：顶栏把这段宽度
-                // 还给会话标题，模型名和环 / 发送放在同一条能看见输入状态的行里。
-                // 读模型名的两个来源（`meta.model` 与 transcript 最后一条
-                // `model_change`）原样搬到 `ChatBody`，喂给下面那颗 chip。
-                if (showSearchAction) {
+                ChatTopBarAction(
+                    onClick = { onAction(ChatAction.NewSession) },
+                    contentDescription = "新建会话",
+                    icon = Icons.Filled.Add,
+                )
+                if (widePhone) {
                     ChatTopBarAction(
                         onClick = { onToggleSearch(false) },
                         contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
                         icon = Icons.Filled.Search,
+                        highlighted = searchOpen,
                     )
                 }
-                // 工作区：和会话页顶栏同一个 `FolderOpen` 图标，不再只藏在 ⋮ 里。
                 ChatTopBarAction(
                     onClick = onOpenWorkspace,
                     contentDescription = "工作区",
                     icon = Icons.Filled.FolderOpen,
                 )
-                // 顶栏右侧保留高频入口；「重新加载扩展与资源」（SDK `session.reload`）收在 ⋮ 菜单中。
-                // ⋮ 菜单统一使用 `PiMenu` 外壳，保持与输入框菜单一致。
-                Box {
-                    ChatTopBarAction(
-                        onClick = { overflow = true },
-                        contentDescription = "更多",
-                        icon = Icons.Filled.MoreVert,
-                    )
-                    // Composed only while it is open. `PiMenu` returns immediately
-                    // when `!expanded`, but `items = buildList { … }` is evaluated at
-                    // *this* call site, so the ~20 rows, their lambdas and their
-                    // captured state were rebuilt on every recomposition of this
-                    // screen — which is once per streamed token — for a menu nobody
-                    // had opened. The popup still anchors to the same `Box`, so
-                    // nothing about its position changes.
-                    if (overflow) PiMenu(
-                        expanded = true,
-                        onDismiss = { overflow = false },
-                        // This anchor is at the top of the screen, so the menu
-                        // opens **downwards**; the composer's ⋮ is the mirror
-                        // image and opens upwards. Neither flips itself.
-                        placement = PiMenuPlacement.Below,
-                        items = buildList {
-                            // 一个入口、三组、两道分隔线（此前是 19 项平铺的抽屉）。每项的「做什么」
-                            // 只有 `perform` 里那一份，命令面板的同名行走的是同一个函数；
-                            // 顺序是：先「对这段对话做什么」，再「对会话做什么」，再「模型」，最后「全局」。
-                            //
-                            // 去掉的两项：「命令面板」（输入框工具行就有 `/`）和「循环切换思考等级」
-                            // （输入框的思考等级文字就是它；菜单里只留选择器）。
-                            //
-                            // ---- 对话（只改你看到的，不动会话）
-                            if (!showSearchAction) {
-                                add(
-                                    PiMenuItem(
-                                        if (searchOpen) "关闭对话内查找" else "在对话里查找",
-                                    ) {
-                                        onToggleSearch(true)
-                                    },
-                                )
-                            }
-                            add(
-                                PiMenuItem("跳到上一条提问") {
-                                    onJumpQuestion(false)
-                                },
-                            )
-                            add(
-                                PiMenuItem("跳到下一条提问") {
-                                    onJumpQuestion(true)
-                                },
-                            )
-                            add(PiMenuItem("复制最后一条回复") { onAction(ChatAction.CopyLastAssistant) })
-                            add(
-                                PiMenuItem(
-                                    if (toolsExpanded) "收起全部工具输出" else "展开全部工具输出",
-                                ) { onToggleTools() },
-                            )
-                            // ---- 会话
-                            add(PiMenuItem("新建会话", dividerBefore = true) { onAction(ChatAction.NewSession) })
-                            add(PiMenuItem("会话树") { onAction(ChatAction.OpenTree) })
-                            add(PiMenuItem("从历史消息分叉") { onAction(ChatAction.PickFork) })
-                            add(PiMenuItem("复制当前会话") { onAction(ChatAction.CloneSession) })
-                            add(PiMenuItem("重命名") { onAction(ChatAction.RenameSession) })
-                            add(PiMenuItem("导出会话（HTML + 可导入文件）") { onAction(ChatAction.ExportSession) })
-                            add(PiMenuItem("会话信息") { onAction(ChatAction.SessionStats) })
-                            add(PiMenuItem("上下文与用量") { onAction(ChatAction.ContextUsage) })
-                            add(PiMenuItem("会话与队列") { onAction(ChatAction.ToolsSheet) })
-                            // ---- 模型
-                            add(PiMenuItem("选择模型…", dividerBefore = true) { onAction(ChatAction.PickModel) })
-                            add(PiMenuItem("下一个模型") { onAction(ChatAction.CycleModel) })
-                            add(PiMenuItem("思考等级…") { onAction(ChatAction.PickThinking) })
-                            // ---- 全局
-                            add(PiMenuItem("重新加载扩展与资源", dividerBefore = true) { onAction(ChatAction.ReloadResources) })
-                            // 「设置」是离开这一屏，所以单独排在最后；终端入口已经被用户裁掉，
-                            // 设置首页那一行是唯一的门。
-                            add(PiMenuItem("设置") { onAction(ChatAction.OpenSettings) })
-                        },
-                    )
-                }
+                ChatTopBarAction(
+                    onClick = { commandCenterOpen = true },
+                    contentDescription = "更多操作",
+                    icon = Icons.Filled.MoreHoriz,
+                )
             }
         }
-        // 0.5dp 发丝线只在滚动/惯性期间出现；一停就收回。
         if (scrolled) {
             HorizontalDivider(
                 thickness = PiSpacing.hairlineThin,
-                color = PiTheme.palette.borderMuted.copy(alpha = 0.55f),
+                color = palette.borderMuted.copy(alpha = 0.55f),
             )
+        }
+    }
+
+    if (commandCenterOpen) {
+        ChatCommandCenterSheet(
+            engineLabel = engineLabel,
+            searchOpen = searchOpen,
+            toolsExpanded = toolsExpanded,
+            onDismiss = { commandCenterOpen = false },
+            onToggleSearch = {
+                commandCenterOpen = false
+                onToggleSearch(true)
+            },
+            onJumpQuestion = { forward ->
+                commandCenterOpen = false
+                onJumpQuestion(forward)
+            },
+            onToggleTools = {
+                commandCenterOpen = false
+                onToggleTools()
+            },
+            onAction = { action ->
+                commandCenterOpen = false
+                onAction(action)
+            },
+        )
+    }
+}
+
+@Composable
+private fun ChatCommandCenterSheet(
+    engineLabel: String,
+    searchOpen: Boolean,
+    toolsExpanded: Boolean,
+    onDismiss: () -> Unit,
+    onToggleSearch: () -> Unit,
+    onJumpQuestion: (forward: Boolean) -> Unit,
+    onToggleTools: () -> Unit,
+    onAction: (ChatAction) -> Unit,
+) {
+    val palette = PiTheme.palette
+    PiSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "对话操作",
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = engineLabel,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        .padding(horizontal = 9.dp, vertical = 3.dp),
+                    style = PiTheme.text.meta,
+                    color = stateToneColor(engineStateTone(engineLabel), palette),
+                )
+            }
+
+            // 顶部 2×3 快捷磁贴网格
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QuickTile(
+                        icon = Icons.Filled.Add,
+                        label = "新建会话",
+                        tint = palette.accent,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.NewSession) },
+                    )
+                    QuickTile(
+                        icon = Icons.Filled.AccountTree,
+                        label = "会话树",
+                        tint = palette.border,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.OpenTree) },
+                    )
+                    QuickTile(
+                        icon = if (toolsExpanded) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
+                        label = if (toolsExpanded) "收起工具" else "展开工具",
+                        tint = palette.warning,
+                        modifier = Modifier.weight(1f),
+                        onClick = onToggleTools,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QuickTile(
+                        icon = Icons.Filled.Refresh,
+                        label = "重载扩展",
+                        tint = palette.success,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.ReloadResources) },
+                    )
+                    QuickTile(
+                        icon = Icons.Filled.Share,
+                        label = "导出会话",
+                        tint = palette.mdLink,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.ExportSession) },
+                    )
+                    QuickTile(
+                        icon = Icons.Filled.Settings,
+                        label = "设置",
+                        tint = palette.muted,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.OpenSettings) },
+                    )
+                }
+            }
+
+            // 导航与内容组
+            ActionGroupCard(title = "浏览与导航") {
+                SheetActionRow(
+                    icon = Icons.Filled.Search,
+                    label = if (searchOpen) "关闭对话内查找" else "在对话里查找",
+                    onClick = onToggleSearch,
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.KeyboardArrowUp,
+                    label = "跳到上一条提问",
+                    onClick = { onJumpQuestion(false) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.KeyboardArrowDown,
+                    label = "跳到下一条提问",
+                    onClick = { onJumpQuestion(true) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.ContentCopy,
+                    label = "复制最后一条回复",
+                    onClick = { onAction(ChatAction.CopyLastAssistant) },
+                )
+            }
+
+            // 会话管理组
+            ActionGroupCard(title = "当前会话") {
+                SheetActionRow(
+                    icon = Icons.Filled.Edit,
+                    label = "重命名会话",
+                    onClick = { onAction(ChatAction.RenameSession) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.AccountTree,
+                    label = "从历史消息分叉",
+                    subtitle = "回到某条消息创建新分支会话",
+                    onClick = { onAction(ChatAction.PickFork) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.ContentCopy,
+                    label = "复制当前会话",
+                    onClick = { onAction(ChatAction.CloneSession) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.Tune,
+                    label = "会话与队列设置",
+                    subtitle = "引导/后续模式、自动压缩、重试",
+                    onClick = { onAction(ChatAction.ToolsSheet) },
+                )
+                SheetHairline()
+                SheetActionRow(
+                    icon = Icons.Filled.Info,
+                    label = "会话信息与统计",
+                    onClick = { onAction(ChatAction.SessionStats) },
+                )
+            }
         }
     }
 }
 
-/**
- * 对话页顶栏的一枚图标动作：48dp 热区、24dp 字形、统一 `onSurface`。
- *
- * 原来的 `PiTopBarIcon` 是 30dp 框 + 17dp 字形；对话页顶栏现在只放三枚 24dp 字形，
- * 统一到 48dp 热区后比别处更松快，所以单独留这一套，别的屏仍用 `PiTopBarIcon`。
- */
+@Composable
+private fun QuickTile(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.45f), shape)
+            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(tint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = tint,
+            )
+        }
+        Text(
+            text = label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ActionGroupCard(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = title,
+            modifier = Modifier.padding(start = 4.dp),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = PiTheme.palette.muted,
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .border(1.dp, PiTheme.palette.borderMuted.copy(alpha = 0.4f), shape),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SheetActionRow(
+    icon: ImageVector,
+    label: String,
+    subtitle: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(19.dp),
+            tint = PiTheme.palette.muted,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = PiType.rowTitle,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SheetHairline() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 45.dp),
+        thickness = PiSpacing.hairlineThin,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+    )
+}
+
 @Composable
 private fun ChatTopBarAction(
     onClick: () -> Unit,
     contentDescription: String,
     icon: ImageVector,
+    highlighted: Boolean = false,
 ) {
+    val accent = PiTheme.palette.accent
     Box(
         modifier = Modifier
-            .size(PiSpacing.chatTopBarAction)
+            .size(40.dp)
             .clip(CircleShape)
+            .background(if (highlighted) accent.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClickLabel = contentDescription, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(PiSpacing.chatTopBarGlyph),
-            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(21.dp),
+            tint = if (highlighted) accent else MaterialTheme.colorScheme.onSurface,
         )
     }
 }

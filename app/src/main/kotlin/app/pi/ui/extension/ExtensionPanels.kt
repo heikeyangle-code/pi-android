@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -21,6 +22,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +46,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtPanel
 import app.pi.host.ExtStatus
@@ -48,18 +55,20 @@ import app.pi.ui.blocks.BlockCard
 import app.pi.ui.blocks.BlockCardRowPadding
 import app.pi.ui.blocks.ExpandLabel
 import app.pi.ui.blocks.toggleContent
+import app.pi.ui.components.PiSheet
+import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
 /**
- * 扩展面板：`ctx.ui.setWidget` 的落点——输入框上下各一摞，一个 key 一张卡，按首次出现的顺序。
+ * 扩展面板堆栈：`ctx.ui.setWidget` 的落点。
  *
- * 视觉与交互：
- *  - 卡片顶部用淡色点缀提示可交互性；可交互工厂组件可直接点「操控」胶囊呼出全功能交互面板；
- *  - 收起只占 [COLLAPSED_ROWS] 行，点卡片平滑展开（带高度上限与内部滚动）；
- *  - 表格/框线（[isPreformatted]）横向可滚、普通句子自动换行，兼顾手机阅读和对齐内容。
+ * 为彻底杜绝扩展组件堆积后挤占聊天视口与输入区：
+ *  - 整摞面板带有严格的 [maxStackHeight] 高度上限并支持内部纵向滚动；
+ *  - 单张卡片默认折叠为紧凑摘要，展开有高度封顶；
+ *  - 可交互工厂组件直接给出「操控」胶囊呼出全功能交互表面。
  */
 @Composable
 fun ExtensionWidgetStack(
@@ -67,6 +76,7 @@ fun ExtensionWidgetStack(
     modifier: Modifier = Modifier,
     onColumns: ((Int) -> Unit)? = null,
     onInteract: ((ExtPanel) -> Unit)? = null,
+    maxStackHeight: Dp = DEFAULT_STACK_MAX_HEIGHT,
 ) {
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -84,11 +94,18 @@ fun ExtensionWidgetStack(
             )
         }
         if (widgets.isEmpty()) return@Column
-        Column(
-            modifier = Modifier
+        val scrollModifier = if (maxStackHeight < Dp.Infinity) {
+            Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .heightIn(max = maxStackHeight)
+                .verticalScroll(rememberScrollState())
+        } else {
+            Modifier.fillMaxWidth()
+        }
+        Column(
+            modifier = scrollModifier
+                .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             widgets.forEach { widget ->
                 key(widget.key) {
@@ -108,8 +125,203 @@ fun ExtensionWidgetStack(
 }
 
 /**
- * 扩展工作指示器（`ctx.ui.setWorkingMessage` / `ctx.ui.setWorkingIndicator`）：
- * 紧凑色调胶囊条，按扩展声明的 `frames` 与 `intervalMs` 轮播指示帧，并呈现完整 ANSI 工作提示。
+ * 紧凑单行扩展收起条：
+ *  - 当软键盘弹出时自动折叠所有大块扩展面板（above/below widgets、footer），绝不遮挡消息或挤爆输入区；
+ *  - 当用户手动折叠扩展区时，用这一行保留实时状态预览、计数、一键展开和直接「操控」入口。
+ */
+@Composable
+fun ExtensionDockSummaryBar(
+    working: ExtWorking,
+    streaming: Boolean,
+    statusCount: Int,
+    widgetCount: Int,
+    hasChrome: Boolean,
+    interactivePanel: ExtPanel?,
+    collapsedByUser: Boolean,
+    imeVisible: Boolean,
+    onToggleCollapse: () -> Unit,
+    onOpenInspector: () -> Unit,
+    onInteract: ((ExtPanel) -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    val totalItems = widgetCount + (if (hasChrome) 1 else 0) + (if (statusCount > 0) 1 else 0)
+    val workingMessage = if (streaming && working.visible) working.message?.takeIf { it.isNotBlank() } else null
+    if (totalItems == 0 && workingMessage == null) return
+
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, palette.borderMuted.copy(alpha = 0.55f), shape)
+            .clickable(
+                onClickLabel = if (imeVisible) "查看全部扩展面板" else if (collapsedByUser) "展开扩展面板" else "收起扩展面板",
+                onClick = if (imeVisible) onOpenInspector else onToggleCollapse,
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(if (workingMessage != null) palette.warning else palette.accent),
+        )
+        if (workingMessage != null) {
+            ExtensionSpans(
+                spans = remember(workingMessage) { chromeSpans(workingMessage) },
+                defaultColor = palette.text,
+                style = PiTheme.text.meta,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                richStyle = true,
+            )
+        } else {
+            val summary = buildString {
+                append("扩展面板")
+                val parts = buildList {
+                    if (widgetCount > 0) add("$widgetCount 组件")
+                    if (statusCount > 0) add("$statusCount 状态")
+                    if (hasChrome) add("顶/底栏")
+                }
+                if (parts.isNotEmpty()) append(" · ").append(parts.joinToString(" · "))
+            }
+            Text(
+                text = summary,
+                modifier = Modifier.weight(1f),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = palette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (interactivePanel != null && onInteract != null) {
+            InteractPill(onClick = { onInteract(interactivePanel) })
+        }
+        if (imeVisible) {
+            Text(
+                text = "查看",
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = palette.accent,
+            )
+        } else {
+            Icon(
+                imageVector = if (collapsedByUser) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (collapsedByUser) "展开" else "收起",
+                modifier = Modifier.size(16.dp),
+                tint = palette.muted,
+            )
+        }
+    }
+}
+
+/**
+ * 扩展面板完整检视抽屉：软键盘开启或面板过多时一键查看全部 header / status / widgets / footer。
+ */
+@Composable
+fun ExtensionWidgetsSheet(
+    header: ExtPanel?,
+    footer: ExtPanel?,
+    statuses: List<ExtStatus>,
+    widgets: List<ExtPanel>,
+    editorTakeover: Boolean,
+    onInteract: (ExtPanel) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    PiSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "扩展面板",
+                    modifier = Modifier.weight(1f),
+                    style = PiType.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable(onClickLabel = "关闭", onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        modifier = Modifier.size(18.dp),
+                        tint = palette.muted,
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (statuses.isNotEmpty() || editorTakeover) {
+                    ExtensionStatusStrip(statuses = statuses, editorTakeover = editorTakeover)
+                }
+                header?.let { h ->
+                    ExtensionPanelCard(
+                        caption = "顶栏 · ${widgetCaption(h.key) ?: h.key}",
+                        lines = h.lines,
+                        collapsedRows = 6,
+                        onInteract = if (h.interactive && h.surfaceId != null) {
+                            { onDismiss(); onInteract(h) }
+                        } else {
+                            null
+                        },
+                    )
+                }
+                widgets.forEach { w ->
+                    key(w.key) {
+                        ExtensionPanelCard(
+                            caption = widgetCaption(w.key) ?: w.key,
+                            lines = w.lines,
+                            collapsedRows = 6,
+                            onInteract = if (w.interactive && w.surfaceId != null) {
+                                { onDismiss(); onInteract(w) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                }
+                footer?.let { f ->
+                    ExtensionPanelCard(
+                        caption = "底栏 · ${widgetCaption(f.key) ?: f.key}",
+                        lines = f.lines,
+                        collapsedRows = 6,
+                        onInteract = if (f.interactive && f.surfaceId != null) {
+                            { onDismiss(); onInteract(f) }
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 扩展工作指示器（`ctx.ui.setWorkingMessage` / `ctx.ui.setWorkingIndicator`）。
  */
 @Composable
 fun ExtensionWorkingStrip(
@@ -141,7 +353,7 @@ fun ExtensionWorkingStrip(
             .padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp)
             .clip(pillShape)
             .background(palette.infoBg)
-            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), pillShape)
+            .border(PiSpacing.hairline, palette.warning.copy(alpha = 0.28f), pillShape)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -168,8 +380,7 @@ fun ExtensionWorkingStrip(
 }
 
 /**
- * 扩展状态（`ctx.ui.setStatus`）：精致色调徽章胶囊条，按 key 排序。
- * 横向单行紧凑滑动不挤占对话；点一下展开为自动换行的完整胶囊组。
+ * 扩展状态（`ctx.ui.setStatus`）：单行紧凑可横滑徽章胶囊，点击展开自动换行。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -182,14 +393,14 @@ fun ExtensionStatusStrip(
     if (rows.isEmpty() && !editorTakeover) return
     var expanded by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
-    val chipShape = RoundedCornerShape(8.dp)
+    val chipShape = RoundedCornerShape(9.dp)
 
     val pill: @Composable (String, String?, Boolean) -> Unit = { keyText, valueText, isNotice ->
         Row(
             modifier = Modifier
                 .clip(chipShape)
-                .background(if (isNotice) palette.infoBg else palette.cardBg)
-                .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), chipShape)
+                .background(if (isNotice) palette.infoBg else MaterialTheme.colorScheme.surfaceContainer)
+                .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), chipShape)
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -227,7 +438,7 @@ fun ExtensionStatusStrip(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 rows.forEach { pill(it.key, it.text, false) }
-                if (editorTakeover) pill("", "扩展编辑器已由原生输入框替代", true)
+                if (editorTakeover) pill("", "扩展编辑器已由原生输入框接管", true)
             }
         } else {
             Row(
@@ -235,15 +446,14 @@ fun ExtensionStatusStrip(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 rows.forEach { pill(it.key, it.text, false) }
-                if (editorTakeover) pill("", "扩展编辑器已由原生输入框替代", true)
+                if (editorTakeover) pill("", "扩展编辑器已由原生输入框接管", true)
             }
         }
     }
 }
 
 /**
- * 扩展顶栏/底栏（`ctx.ui.setHeader` / `ctx.ui.setFooter`）的轻量横幅。
- * 相比普通 widget 卡片更贴边紧凑，支持展开与可交互扩展打开全功能交互面板。
+ * 扩展顶栏/底栏（`ctx.ui.setHeader` / `ctx.ui.setFooter`）轻量横幅。
  */
 @Composable
 internal fun ExtensionChromeBanner(
@@ -259,15 +469,15 @@ internal fun ExtensionChromeBanner(
     val canExpand = rows.size > collapsedRows
     val shown = if (expanded) rows else rows.take(collapsedRows)
     val wide = remember(rows) { rows.any { isPreformatted(it) } }
-    val shape = RoundedCornerShape(9.dp)
+    val shape = RoundedCornerShape(10.dp)
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .animateContentSize()
             .clip(shape)
-            .background(palette.cardBg)
-            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.4f), shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), shape)
             .then(if (canExpand) Modifier.toggleContent(expanded, { expanded = !expanded }) else Modifier)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Top,
@@ -297,10 +507,6 @@ internal fun ExtensionChromeBanner(
     }
 }
 
-/**
- * 一块面板：标题（可无）+ 左侧微accent竖条 + 渲染行。
- * [collapsedRows] 行以内不出现「展开」；点卡片在原地展开，高度封顶、内部滚动。
- */
 @Composable
 internal fun ExtensionPanelCard(
     caption: String?,
@@ -318,7 +524,7 @@ internal fun ExtensionPanelCard(
     val wide = remember(rows) { rows.any { isPreformatted(it) } }
 
     BlockCard(
-        color = palette.cardBg,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier
             .animateContentSize()
             .then(
@@ -328,9 +534,9 @@ internal fun ExtensionPanelCard(
                     else -> Modifier
                 },
             ),
-        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.35f) else palette.borderMuted.copy(alpha = 0.4f),
+        borderColor = if (onInteract != null) palette.borderAccent.copy(alpha = 0.42f) else palette.borderMuted.copy(alpha = 0.45f),
         padding = BlockCardRowPadding,
-        shape = PiShapes.card,
+        shape = RoundedCornerShape(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (caption != null || canExpand || onInteract != null) {
@@ -370,13 +576,6 @@ internal fun ExtensionPanelCard(
     }
 }
 
-/**
- * 扩展渲染行公共块（用于工具卡 `renderCall`/`renderResult`、自定义消息 `registerMessageRenderer`、
- * 自定义条目 `registerEntryRenderer`）：
- *  - 自动裁掉首尾无内容空行，避免卡片上下留出难看的空白；
- *  - 智能换行：普通说明文字自动换行适配手机窄屏，仅对表格/框线（[isPreformatted]）开启横向滚动；
- *  - 折叠态按 [collapsedLimit] 裁剪，并给出清晰的展开提示。
- */
 @Composable
 internal fun RenderedAnsiBlock(
     lines: List<String>,
@@ -422,14 +621,14 @@ private fun InteractPill(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(shape)
-            .background(palette.accent.copy(alpha = 0.14f))
+            .background(palette.accent.copy(alpha = 0.16f))
             .border(PiSpacing.hairline, palette.accent.copy(alpha = 0.45f), shape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 9.dp, vertical = 3.dp),
     ) {
         Text(
             text = "操控",
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
             color = palette.accent,
             maxLines = 1,
         )
@@ -449,7 +648,6 @@ internal fun PanelLine(raw: String, wrap: Boolean) {
     )
 }
 
-/** 裁掉首尾全是空白或仅含 ANSI 转义的空行，中间空行保留（段落呼吸）。 */
 internal fun trimEmptyEdgeLines(rows: List<String>): List<String> {
     val first = rows.indexOfFirst { stripAnsiControls(it).isNotBlank() }
     if (first < 0) return emptyList()
@@ -458,4 +656,5 @@ internal fun trimEmptyEdgeLines(rows: List<String>): List<String> {
 }
 
 private val CARD_SIDE_PADDING = 10.dp
-private val EXPANDED_MAX_HEIGHT = 280.dp
+private val EXPANDED_MAX_HEIGHT = 200.dp
+private val DEFAULT_STACK_MAX_HEIGHT = 136.dp

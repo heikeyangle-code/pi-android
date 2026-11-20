@@ -416,13 +416,12 @@ fun PiSeg(
     }
 }
 
-/** `Seg` 的取值：外圆角 8、`padding:2`、项高 24、`padding:0 10`、项圆角 6、gap 2。 */
-private val SEG_SHAPE = RoundedCornerShape(8.dp)
-private val SEG_ITEM_SHAPE = RoundedCornerShape(6.dp)
-private val SEG_PADDING = 2.dp
-private val SEG_ITEM_GAP = 2.dp
-private val SEG_ITEM_HEIGHT = 24.dp
-private val SEG_ITEM_PADDING = 10.dp
+private val SEG_SHAPE = RoundedCornerShape(10.dp)
+private val SEG_ITEM_SHAPE = RoundedCornerShape(8.dp)
+private val SEG_PADDING = 3.dp
+private val SEG_ITEM_GAP = 3.dp
+private val SEG_ITEM_HEIGHT = 28.dp
+private val SEG_ITEM_PADDING = 12.dp
 
 @Composable
 fun PiRoot() {

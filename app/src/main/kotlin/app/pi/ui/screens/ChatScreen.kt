@@ -1,15 +1,23 @@
 package app.pi.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import app.pi.engine.PiEngineSession
+import app.pi.ui.extension.ExtensionWidgetsSheet
+import kotlinx.coroutines.flow.conflate
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import app.pi.settings.readBoolean
@@ -378,29 +386,16 @@ internal fun ChatBody(
     var draft by session.composerDraft.text
     var attachments by session.composerDraft.attachments
 
-    // 悬浮输入框的几何。输入框量自己的高度（`onSizeChanged`），列表的底边留白用它 +
-    // 24；键盘/导航条只抬输入框那一层，列表照旧铺到屏幕底边。
-    //
-    // IME 与导航条用 `union` 合并成一个 inset 而不是各自加一次：两者都在底部，
-    // 相加会让输入框在键盘上方多出一条导航条的高度。
+    // 底部工作台与软键盘感知：
+    // 对话流与底部工作台采用真实的弹性 Column 上下布局（非悬浮覆盖），从结构上彻底杜绝
+    // 输入框、队列、Bash 面板或上下扩展组件遮挡最后几行消息的问题。
+    val density = LocalDensity.current
     val dockInsets = WindowInsets.navigationBars.union(WindowInsets.ime)
-    val dockBottom = dockInsets.asPaddingValues().calculateBottomPadding()
-    var composerHeightPx by remember { mutableStateOf(0) }
-    var aboveComposerHeightPx by remember { mutableStateOf(0) }
-    val composerHeight = with(LocalDensity.current) { composerHeightPx.toDp() }
-    val composerSlot = composerHeight + PiSpacing.composerBottomGap
-    val aboveComposerSlot = with(LocalDensity.current) { aboveComposerHeightPx.toDp() }
-    // 输入框上方那几张持久卡（排队 / 导出 / 扩展状态 / widget / bash）也占列表底边：
-    // 不算它们的高度，最后一条回复会被其中一张盖住 —— 恰好是最需要看的时候。
-    // 命令面板和附件条是瞬时的，没有算进来。
-    val listBottomClearance =
-        composerSlot + aboveComposerSlot + dockBottom + PiSpacing.composerListClearance
-    // The same clearance in the list's own unit. `TailViewport.pinToTail` targets
-    // `viewportEndOffset - contentPadding.bottom` — the item offset the content's end
-    // reaches at maximum scroll, i.e. the composer's top minus 24 dp — not the screen's
-    // bottom. Compose rounds this very `Dp` for `afterContentPadding`, with the same
-    // density, so the two agree to the pixel.
-    val listBottomClearancePx = with(LocalDensity.current) { listBottomClearance.roundToPx() }
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val listBottomPad = 14.dp
+    val listBottomPadPx = with(density) { listBottomPad.roundToPx() }
+    var widgetsCollapsedByUser by rememberSaveable { mutableStateOf(false) }
+    var widgetsInspectorOpen by remember { mutableStateOf(false) }
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
     // `remember` on purpose.
@@ -1107,114 +1102,59 @@ internal fun ChatBody(
         derivedStateOf { !listState.canScrollForward }
     }
 
-    // The settle pass — 「差几个像素到不了真底部」的那一半. A publication's pin is
-    // computed from the frame after it, but the tail row can still change height
-    // **without any key above moving**: the final markdown parse lands on
-    // `Dispatchers.Default` a beat later, an image's intrinsic size arrives later
-    // still. Neither bumps `revision`/`streaming`/any other key, so the follow simply
-    // stopped a few pixels short of the true end until the user touched the list (or
-    // switched screens — which is what the report said re-driven it). This collector
-    // turns that silent settle into a key. While streaming it stays quiet (growth
-    // there is already driven by `state.revision`), and a drag is the user's
-    // business — never a re-pin trigger.
-    var tailSize by remember(sessionKey) { mutableStateOf(-1) }
-    val streamingNow by rememberUpdatedState(state.streaming)
+    // 触底跟随核心信号：通过长生命周期 snapshotFlow + conflate() 连续观测真实布局与流式更新。
+    // 不再用 `LaunchedEffect(state.revision, ...)`——高频 token 到达时重启协程会打断 `withFrameNanos`，
+    // 且旧版在流式期间禁用了末行高度监听导致 Markdown 异步排版撑高后漏钉。
+    // 现在流式增长、Markdown 异步落地、图片解码、软键盘升降、扩展面板展开/收起都走同一条非阻塞观测链。
+    val latestRevision by rememberUpdatedState(state.revision)
+    val latestRenderedCount by rememberUpdatedState(renderedItems.size)
     LaunchedEffect(listState, sessionKey) {
         snapshotFlow {
             val info = listState.layoutInfo
-            val tailItem = info.visibleItemsInfo.lastOrNull()
-            if (
-                tailItem != null &&
-                tailItem.index == info.totalItemsCount - 1 &&
-                !listState.isScrollInProgress &&
-                !streamingNow
-            ) {
-                tailItem.size
-            } else {
-                -1
-            }
-        }.collect { size -> tailSize = size }
-    }
-
-    LaunchedEffect(
-        state.revision,
-        state.streaming,
-        renderedItems.size,
-        // `following` is deliberately **not** a key (see above: the machine owns it and
-        // writing it here would restart this effect). The two keys that replace its old
-        // two jobs are `scrolling` (the gesture edges) and `atBottom` (the moment the
-        // user's own scroll reaches the end, which is when a paused follow has to be
-        // observed again so it can re-arm).
-        scrolling,
-        atBottom,
-        tailPoke,
-        sessionKey,
-        // 输入框一浮起来，"最新"的位置就由它和 inset 决定：高度动画、键盘弹出都要把
-        // 尾巴重新钉到新的可见底边，否则最后几行会停在输入框下面。它同时是 pin 的
-        // `bottomContentPaddingPx`（按 px 传下去）：列表真正的末尾是 `viewportEndOffset`
-        // 减掉这段留白，而不是屏幕底边。
-        listBottomClearance,
-        // The tail row's settled height, from the collector above: the one geometry
-        // fact that can change with no other key moving (final parse / image size).
-        tailSize,
-    ) {
-        // **No early return while paused.** A transcript that is not following must still
-        // be observed: "the user scrolled back to the bottom" and "a new row arrived
-        // while the viewport happened to be at the end" are both facts only the machine
-        // can turn back into `following = true` (`TailFollow.onSnapshot`'s rule 3, and
-        // harness group I), and a machine that is skipped while paused can never see
-        // either. Feeding it costs one arithmetic pass per publication and issues no
-        // scroll while paused (`TailDecision.pin` is null whenever `!following`).
-        //
-        // One frame, so the rows this publication added have been measured: reading
-        // `layoutInfo` before the layout pass would compute the pin from the previous
-        // frame's geometry. This is a *wait*, not an observation — nothing here is
-        // re-triggered by the measure that follows it.
-        withFrameNanos { }
-        // The state the machine went into this observation with, for the pause
-        // transition below.
-        val wasFollowing = following
-        val info = listState.layoutInfo
-        val last = info.visibleItemsInfo.lastOrNull()
-        val decision = tail.onSnapshot(
-            TailSnapshot(
-                transcriptRows = transcriptRows,
+            val last = info.visibleItemsInfo.lastOrNull()
+            TailObservation(
+                revision = latestRevision,
+                renderedCount = latestRenderedCount,
                 poke = tailPoke,
-                viewport = TailViewport(
-                    totalItems = info.totalItemsCount,
-                    firstVisibleIndex = listState.firstVisibleItemIndex,
-                    firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
-                    lastVisibleIndex = last?.index ?: -1,
-                    lastVisibleOffsetPx = last?.offset ?: 0,
-                    lastVisibleSizePx = last?.size ?: 0,
-                    viewportEndOffsetPx = info.viewportEndOffset,
-                    // The list's true end is `viewportEndOffset` minus this padding: at
-                    // maximum scroll the content's end sits above the floating composer,
-                    // not at the screen's bottom edge. It is the same value the
-                    // `LazyColumn` below passes as `contentPadding.bottom`, in pixels.
-                    bottomContentPaddingPx = listBottomClearancePx,
-                    isScrollInProgress = listState.isScrollInProgress,
-                    atBottom = !listState.canScrollForward,
+                totalItems = info.totalItemsCount,
+                firstVisibleIndex = listState.firstVisibleItemIndex,
+                firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
+                lastVisibleIndex = last?.index ?: -1,
+                lastVisibleOffsetPx = last?.offset ?: 0,
+                lastVisibleSizePx = last?.size ?: 0,
+                viewportEndOffsetPx = info.viewportEndOffset,
+                isScrollInProgress = listState.isScrollInProgress,
+                atBottom = !listState.canScrollForward,
+            )
+        }.conflate().collect { obs ->
+            withFrameNanos { }
+            val wasFollowing = following
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            val decision = tail.onSnapshot(
+                TailSnapshot(
+                    transcriptRows = transcriptRows,
+                    poke = obs.poke,
+                    viewport = TailViewport(
+                        totalItems = info.totalItemsCount,
+                        firstVisibleIndex = listState.firstVisibleItemIndex,
+                        firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
+                        lastVisibleIndex = last?.index ?: -1,
+                        lastVisibleOffsetPx = last?.offset ?: 0,
+                        lastVisibleSizePx = last?.size ?: 0,
+                        viewportEndOffsetPx = info.viewportEndOffset,
+                        bottomContentPaddingPx = listBottomPadPx,
+                        isScrollInProgress = listState.isScrollInProgress,
+                        atBottom = !listState.canScrollForward,
+                    ),
                 ),
-            ),
-        )
-        // Unconditional. The removed `if (following != decision.following)` guard was a
-        // second writer that could leave the mirror armed while the machine was paused
-        // (and the badge counting as if it were not), so the two states could disagree
-        // for as long as nothing else moved a key.
-        following = decision.following
-        // The machine pauses on the gesture frame (rule 2), not in the collector: read
-        // `pausedRows` off the transition, never on every snapshot, or the accumulated
-        // unread count would be re-baselined by each token that arrives while paused.
-        if (wasFollowing && !decision.following) pausedRows = transcriptRows
-        val pin = decision.pin
-        // `requestScrollToItem` is the whole reason this is not a stutter: it applies
-        // the position at the next remeasure instead of animating, so it starts no
-        // scroll session, is never cancelled by the next token and can never be
-        // mistaken for the user's hand. The `isScrollInProgress` re-read closes the gap
-        // between the snapshot and this line — the follow must never cancel a drag.
-        if (pin != null && !listState.isScrollInProgress) {
-            listState.requestScrollToItem(pin.index, pin.offsetPx)
+            )
+            following = decision.following
+            if (wasFollowing && !decision.following) pausedRows = transcriptRows
+            val pin = decision.pin
+            if (pin != null && !listState.isScrollInProgress) {
+                listState.requestScrollToItem(pin.index, pin.offsetPx)
+            }
         }
     }
 
@@ -1746,6 +1686,7 @@ internal fun ChatBody(
         ChatTopBar(
             engineLabel = session.engineLabel(state),
             sessionTitle = state.meta.sessionName?.takeIf { it.isNotBlank() },
+            workspaceName = state.workspace.name.takeIf { it.isNotBlank() },
             searchOpen = searchOpen,
             scrolled = topBarScrolled,
             toolsExpanded = toolsExpanded,
@@ -1828,106 +1769,46 @@ internal fun ChatBody(
         // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
         // D31.
 
-        // 扩展的 header（`ctx.ui.setHeader`）：顶栏之下的轻量横幅，只在扩展挂了才有；支持展开与交互。
-        state.ext.header?.let { header ->
-            ExtensionChromeBanner(
-                lines = header.lines,
-                collapsedRows = HEADER_COLLAPSED_ROWS,
-                onInteract = if (header.interactive && header.surfaceId != null) {
-                    { interactingWidgetKey = header.key }
-                } else {
-                    null
-                },
-                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = PiSpacing.tiny),
-            )
+        // 扩展的 header（`ctx.ui.setHeader`）：软键盘关闭且未手动收起时显示在顶栏下方；
+        // 键盘弹出时自动收进底部扩展摘要条，避免挤压聊天视口。
+        if (!imeVisible && !widgetsCollapsedByUser) {
+            state.ext.header?.let { header ->
+                ExtensionChromeBanner(
+                    lines = header.lines,
+                    collapsedRows = HEADER_COLLAPSED_ROWS,
+                    onInteract = if (header.interactive && header.surfaceId != null) {
+                        { interactingWidgetKey = header.key }
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
+                )
+            }
         }
 
-        // **The transcript fills the page; the composer floats over it.**
-        //
-        // 这一层 Box 从顶栏/搜索条之下一直铺到屏幕底边（输入框、键盘都不再切它），
-        // 输入框和它的浮层作为同一块底栏 `align(BottomCenter)` 叠在上面。列表因此
-        // 满屏，滚动的文字可以从输入框底下穿过。
-        //
-        // 代价就是这里必然有「量输入框 → 填列表底边留白」的一次反馈：`Composer`
-        // 高度由 `onSizeChanged` 量出来，列表的 `contentPadding.bottom` 取其值 +
-        // [PiSpacing.composerListClearance]。这不是历史里那个 `rememberSaveable` 的位置 bug，
-        // 而是悬浮输入框唯一能让最后一行停在输入框上方的办法；量到的值只影响
-        // `contentPadding`，不参与列表自身的测量，所以不会形成 measure → pad →
-        // measure 的循环。
+        // 真实弹性聊天视口：永远位于顶栏之下、底部工作台之上，0 像素遮挡！
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
-        if (!emptyTranscript) {
-            // `app.appearance.typography`: the transcript's block rhythm, one of the
-            // preset's own rows (`PiTypographyProfile.blockSpacing`). F11
-            // (`docs/rendering-review.md`): blocks used to pad themselves as well, so
-            // the real gap was 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the
-            // prose column lost 16 dp on each side; the list is now the only place
-            // that margins.
-            //
-            // B7: the base gap is **8**, not 16. `06 §2`「块间距 8」 is v2's rhythm
-            // (every card in the frozen board carries `marginBottom:8`), and the four
-            // presets hang off it — 经典 8 / 紧凑 4 / 舒适 8 / 宽松 12 — so the row
-            // still moves the stream and the default is the design's.
-            //
-            // The rail used to have a stake in this number: `ToolRail` bridged the list's
-            // own gap by drawing 8 dp *past* each card's bottom edge, so the line joined
-            // two cards while the gap happened to be 8 (舒适, the default) and left a hole
-            // at 宽松's 12. Neither the constant nor the line exists any more — a tool card
-            // draws no rail at all, its state glyph is a cell of its own header row
-            // (`ui/blocks/ToolRail.kt`) — so this value is now the list's rhythm and
-            // nothing else's, and no two places have to agree about it.
+            if (emptyTranscript) {
+                ChatEmptyWelcome(
+                    workspaceName = state.workspace.name,
+                    modelLabel = modelLabel,
+                    onPickPrompt = { prompt -> draft = prompt },
+                    onOpenSessions = onOpenSessions,
+                    onOpenWorkspace = onOpenWorkspace,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
             val blockSpacing = prefs.typographyProfile.blockSpacing
-            // The page margin is **14 at every density** (`06 §2`「屏水平 14px」,
-            // `direction-b-v2.html:1376`: `.b-scroll{padding:10px 14px 12px}`). The
-            // compact step used to narrow it to 12 as well, which put the transcript's
-            // left edge out of line with the AppBar's own 14 and with every other
-            // screen; the density preference moves the *block rhythm*, not the page.
-            // 排版 follows the same rule: no preset moves this 14.
-            //
-            // ---------------------------------------------------------------- 加载更早
-            //
-            // **The 「加载更早」 row is not an item of this list any more** — it is drawn as
-            // an overlay over the list's own top padding, at the exact place the item used
-            // to occupy (`docs/scroll-diagnosis.md` §3.4, landed as D51).
-            //
-            // Why it had to leave: while it was item 0, its key (`transcript-earlier`)
-            // stayed at index 0 across a batch, so the `LazyColumn`'s key anchoring held
-            // *it* still and the content slid by the whole batch underneath. Compensating by
-            // hand (`prependAnchoredIndex`, now deleted) moved the viewport top to the old
-            // first content row instead, which cost the sentinel's own height — 30–45 dp of
-            // movement on every batch. With the row outside the list, the viewport's first
-            // item is a real transcript row and the anchoring is simply correct.
-            //
-            // What must stay identical, and how it is kept:
-            //  - **the same height and the same place.** `earlierRowHeightPx` is the height
-            //    the `Row` below measures itself at (`max(24 dp icon, the text's measured
-            //    line box) + 8 + 8`), measured *before* the list composes, so the list can
-            //    put it in `contentPadding.top` and the overlay can sit above the first row
-            //    by exactly that much plus the block gap the list no longer inserts for it;
-            //  - **the same appearance**: the same `Icon` + 6 dp + `Text(PiTheme.text.meta)`
-            //    in the same centred `Row`, painted on the page's own ground;
-            //  - **the same click**: `fillMaxWidth().clickable{…}.padding(vertical = 8.dp)`,
-            //    the same order, so the ripple covers the same area.
-            //
-            // The list keeps `Arrangement.spacedBy(blockSpacing)` for its own rows, and the
-            // reserved band is `earlierRowHeight + blockSpacing` so the first row sits
-            // where it did when the sentinel was an item with a gap under it.
             val earlierRowHeightValue = earlierRowHeight(earlierText.orEmpty())
-            // Where the overlay sits, and how much of the list's own top padding is the band
-            // it occupies: exactly the row's height plus the block gap the list no longer
-            // inserts between it and the first message.
             val earlierBand = if (showsEarlierRow) earlierRowHeightValue + blockSpacing else 0.dp
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                // The vertical ends are not the block gap: they are the scroll
-                // container's own `10` top (plus the sentinel's reserved band, when there
-                // is one) and `12` bottom.
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
                     top = 10.dp + earlierBand,
-                    // 悬浮输入框 + 它下面的 inset + 一圈呼吸空间；见 [composerSlot] 的注释。
-                    bottom = listBottomClearance,
+                    bottom = listBottomPad,
                 ),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
@@ -2194,44 +2075,25 @@ internal fun ChatBody(
                 }
             }
 
-            // 「回到最新」只看用户意图（`following`），不再并上 `!atBottom`。流式跟随时每个
-            // token 都先把末行撑高、下一帧才钉回底：`canScrollForward` 在这一帧里是 true，
-            // `atBottom` 闪成 false，箭头就随每个 token 闪一下（用户报的「一直跳动」）。
-            // 跟随中的「暂时没贴底」是机器自己正在追的状态，不是读者离开了底部；读者真的
-            // 往上滑，机器在手势那一帧就 `pause()`，`following` 变 false，箭头照样出现。
             val showDown = !following
-            if (showUp || showDown) {
+            AnimatedVisibility(
+                visible = showUp || showDown,
+                enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                exit = fadeOut() + scaleOut(targetScale = 0.85f),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 10.dp, bottom = 10.dp),
+            ) {
                 Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        // 视觉 36、点击 48；两枚用 0 间距让 48 的点击框相接，
-                        // 圆与圆之间仍是 12dp 的视觉缝（48 − 36）。
-                        //
-                        // 位置：外框底边 = clearance − 18；48 的点击框里 36 的
-                        // 圆再上收 6，视觉底边正好落在「输入框（含持久卡）顶边 + 12」。
-                        .padding(
-                            start = 12.dp,
-                            top = 12.dp,
-                            // 点击框 48、圆 36：end 6 + 内圈 6 = 视觉右缘 12。
-                            end = 6.dp,
-                            bottom = listBottomClearance - 18.dp,
-                        ),
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     if (showUp) {
                         ScrollArrowButton(
                             icon = Icons.Filled.KeyboardArrowUp,
                             label = "回到顶部",
                             onClick = {
-                                // Navigation, not following: pi's `disableFollow`
-                                // semantics for anything that reveals a row.
                                 pauseTail()
-                                // Row 0 of the whole transcript. `reveal` is the app's
-                                // existing "materialise the rows I need, then go there"
-                                // primitive (the prompt jumps use it), and it is what
-                                // keeps this honest: the window is a rendering budget,
-                                // not a limit on what the user may look at.
                                 windowOpen = true
                                 reveal(0)
                             },
@@ -2241,12 +2103,8 @@ internal fun ChatBody(
                         ScrollArrowButton(
                             icon = Icons.Filled.KeyboardArrowDown,
                             label = "回到最新",
-                            unread = unseenRows > 0,
+                            unreadCount = unseenRows,
                             onClick = {
-                                // Closing the window is the counterpart of the up
-                                // arrow's `windowOpen = true`: following the tail means
-                                // the last-50 window again, not a transcript the user
-                                // once opened all the way.
                                 windowOpen = false
                                 reArmTail()
                             },
@@ -2256,8 +2114,6 @@ internal fun ChatBody(
             }
             }
 
-            // 顶栏下方 12dp 的页面底色渐隐：只在滚动/惯性期间出现，让移动中的内容
-            // 从顶栏边缘"化"进去。只画，不拦触摸。
             if (topBarScrolled) {
                 Box(
                     modifier = Modifier
@@ -2277,213 +2133,157 @@ internal fun ChatBody(
                 )
             }
 
-            // 悬浮底栏：队列行 / 附件条 / 命令面板 / 输入框都叠在列表之上，整层被
-            // 键盘和导航条抬起。输入框自己只负责左右 12、底 8。
-            Column(
+            // 瞬时自动补全浮层（`/` 命令、`@` 文件、参数、扩展补全）：悬浮在聊天视口底缘正上方，不挤动列表滚动位置
+            ChatTransientPalettes(
+                state = state,
+                session = session,
+                draft = draft,
+                onDraft = { draft = it },
+                mentionPrefix = mentionPrefix,
+                onPickCommand = { command, args -> pick(command, args) },
+                argContext = argContext,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .windowInsetsPadding(dockInsets),
-            ) {
-
-        ChatDockCards(
-            state = state,
-            session = session,
-            draft = draft,
-            onDraft = { draft = it },
-            attachments = attachments,
-            onAttachments = { attachments = it },
-            mentionPrefix = mentionPrefix,
-            onPickCommand = { command, args -> pick(command, args) },
-            argContext = argContext,
-            onInteractWidget = { panel -> interactingWidgetKey = panel.key },
-            onAboveHeight = { aboveComposerHeightPx = it },
-        )
-
-        // 悬浮输入框本体：左右 12、底 8。`onSizeChanged` 量的是 Composer 自己的高度
-        // （不含左右/底部 padding），列表的底边留白用它换算。
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = PiSpacing.composerPageMargin)
-                .padding(bottom = PiSpacing.composerBottomGap)
-                .onSizeChanged { composerHeightPx = it.height },
-        ) {
-        Composer(
-            draft = draft,
-            // One picker for everything: `*/*`, and the callback decides which of
-            // pi's two channels the file goes down (see the attachment note above).
-            onPickAttachment = { attachmentPicker.launch("*/*") },
-            // The reading the transcript's status row used to carry. The ring is always
-            // drawn; the total falls back to the model's own window (pi's footer rule).
-            contextUsage = state.stats?.contextUsage,
-            onOpenContext = { perform(ChatAction.ContextUsage) },
-            // 顶栏那颗 chip 挪到工具行之后，模型名和「打开模型面板」的动作从这里进。
-            modelLabel = modelLabel,
-            onOpenModel = { perform(ChatAction.PickModel) },
-            onCycleModel = { perform(ChatAction.CycleModel) },
-            onDraftChange = { draft = it },
-            thinkingLevel = state.meta.thinkingLevel,
-            streaming = state.streaming,
-            canFollowUp = state.streaming && draft.isNotBlank(),
-            // `steer` carries attachments as well as text, so it is enabled by
-            // either — the same rule the send button's own "an image with no caption
-            // is still a message" branch uses.
-            canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
-            onCycleThinking = { session.cycleThinkingLevel() },
-            onPickThinking = { sheet = ChatSheet.Thinking },
-            onOpenPalette = { if (draft.isBlank()) draft = "/" },
-            onOpenBash = { if (draft.isBlank()) draft = "!" },
-            // `!!` types both characters: it is a different pi mode, not a double
-            // `!` (`interactive-mode.ts:933`).
-            onOpenBashExcluded = { if (draft.isBlank()) draft = "!!" },
-            // `@` sits behind the phone keyboard's symbol page, and a mention only
-            // opens at a token boundary (`PiFileMentions.prefixOf`, pi's
-            // `PATH_DELIMITERS`), so this chip types exactly the trigger character —
-            // nothing else, which is why it does nothing when a mention is already
-            // open. The `/` and `!` chips beside it are the same kind of affordance.
-            onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
-            onSteer = {
-                // `session.send` **is** the steer route mid-turn: it picks
-                // `streamingBehavior: "steer"` whenever the transcript is streaming
-                // (`PiSessionViewModel.kt`'s `send`), which is exactly this chip's
-                // condition, and it echoes the row locally so the message is visible
-                // before pi answers.
-                session.send(draft, attachments)
-                draft = ""
-                attachments = emptyList()
-                reArmTail()
-                dismissKeys()
-            },
-            onSend = {
-                when (val route = routeComposerText(draft, state.commands)) {
-                    // An image with no caption is still a message.
-                    ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
-                        session.send("", attachments)
-                        attachments = emptyList()
-                        reArmTail()
-                        dismissKeys()
-                    }
-                    is ComposerRoute.Message -> {
-                        session.send(route.text, attachments)
-                        draft = ""
-                        attachments = emptyList()
-                        // Spec §4.5: 发送后清空输入、插入用户消息、**滚动到底**. The
-                        // machine re-arms and the poke makes it pin without waiting for
-                        // the next layout pass, so the user sees their own message
-                        // rather than a transcript they had scrolled up into.
-                        reArmTail()
-                        // The message is on the wire, so the keyboard has done its
-                        // job: dropping it is what turns the send into "watch the
-                        // answer" instead of "read through a half-covered screen"
-                        // ([dismissComposerKeys]).
-                        dismissKeys()
-                    }
-                    is ComposerRoute.Bash -> {
-                        session.runBash(route.command, route.excludeFromContext)
-                        draft = ""
-                        // `!` runs too: the command left the composer and output is
-                        // about to stream into the panel above it.
-                        dismissKeys()
-                    }
-                    is ComposerRoute.Command -> {
-                        draft = ""
-                        pick(route.command, route.args)
-                    }
-                    // The draft stays: the notice explains what to do, and throwing
-                    // the user's text away would make the explanation harder to act
-                    // on. For the same reason the keyboard stays — nothing was sent,
-                    // and taking the keys away from text the user still owns is the
-                    // one way this change could feel like a bug.
-                    // `/name` where pi has the command but this palette does not list
-                    // it: a statement of fact plus this app's own door, never a
-                    // "retry it as prose" — the old wording told the user to drop the
-                    // slash and send it as a message, which is exactly wrong for a name
-                    // pi *does* implement.
-                    //
-                    // pi 的内建命令全部在面板里（见 `builtinRows`），所以这里只剩真正的手误：
-                    // 名字不是内建、也不是扩展/模板/技能。
-                    is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
-                }
-            },
-            // pi's Escape (`interactive-mode.js:2416-2418`):
-            // `restoreQueuedMessagesToEditor({ abort: true })` clears the queue,
-            // puts the queued text **and** the current editor text back into the
-            // editor (`:3891-3910`), then aborts. Dropping the queued text here is
-            // what made Stop silently destroy what the user had typed.
-            // 清空 and 后续 are no longer Composer parameters: the designer's overflow
-            // ladder moved both out of the key row and into this screen's ⋮ menu, so
-            // the composer does not gate or run them any more.
-            // 清空 is the composer's own ⋮ entry (`ComposerMenu`); the editor it
-            // clears is the draft plus the attachments staged for it.
-            canClear = draft.isNotBlank() || attachments.isNotEmpty(),
-            onClear = {
-                draft = ""
-                attachments = emptyList()
-            },
-            onFollowUp = {
-                // pi's alt+enter: queue this message for after the current turn
-                // (`interactive-mode.js:3653-3682`; the call is at `:3674` —
-                // `session.prompt(text, { streamingBehavior: "followUp" })`). Only
-                // offered while streaming, because that is the only time pi's own
-                // binding queues rather than submits (`:3679-3682`).
-                //
-                // The attachments go with it: pi's own call hands the editor's images
-                // to `_queueFollowUp` (`core/agent-session.js:1639-1642`), and F21's
-                // finding in `docs/gap-disposition.md` §10 found this call dropping
-                // them — the chip looked like it queued the message and the picture
-                // was silently gone.
-                //
-                // Nothing is echoed into the transcript here — a queued message is
-                // drawn in the pending row above the composer until pi actually
-                // delivers it, which is what official pi does
-                // (`interactive-mode.js:3873-3889`). The row appears when pi confirms
-                // it. See `PiEngineSession.prompt`.
-                session.sendFollowUp(draft, attachments)
-                draft = ""
-                attachments = emptyList()
-                // Spec §4.5's 发送行为: a send lands on the newest row. Queued text
-                // included — the queue row is chrome next to the composer, but the
-                // turn it belongs to is at the tail.
-                reArmTail()
-                // Queued is still delivered, so this is a "sent" for the same reason a
-                // normal send is: the text left the composer and the user is done
-                // typing it. See [dismissComposerKeys].
-                dismissKeys()
-            },
-            onStop = {
-                session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
-            },
-        )
-        }
-
-        // `belowEditor` widgets sit after the composer's key-hint strip, which is
-        // the app's footer; pi puts them between editor and footer, and the
-        // difference is invisible at this density.
-        ExtensionWidgetStack(
-            widgets = remember(state.ext.widgets) {
-                state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
-            },
-            onInteract = { panel -> interactingWidgetKey = panel.key },
-        )
-        // 扩展的 footer（`ctx.ui.setFooter`）：轻量底栏横幅，支持展开与交互。
-        state.ext.footer?.let { footer ->
-            ExtensionChromeBanner(
-                lines = footer.lines,
-                collapsedRows = FOOTER_COLLAPSED_ROWS,
-                onInteract = if (footer.interactive && footer.surfaceId != null) {
-                    { interactingWidgetKey = footer.key }
-                } else {
-                    null
-                },
-                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = PiSpacing.tiny),
+                    .padding(bottom = 4.dp),
             )
         }
+
+        // 底部工作台：独立位于聊天视口下方，由导航条与软键盘整体抬升，与消息流零重叠。
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(pageBackground)
+                .windowInsetsPadding(dockInsets),
+        ) {
+            ChatDockStatusAndWidgets(
+                state = state,
+                session = session,
+                draft = draft,
+                onDraft = { draft = it },
+                attachments = attachments,
+                onAttachments = { attachments = it },
+                imeVisible = imeVisible,
+                widgetsCollapsedByUser = widgetsCollapsedByUser,
+                onToggleWidgetsCollapse = { widgetsCollapsedByUser = !widgetsCollapsedByUser },
+                onOpenWidgetsInspector = { widgetsInspectorOpen = true },
+                onInteractWidget = { panel -> interactingWidgetKey = panel.key },
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSpacing.composerPageMargin)
+                    .padding(top = 4.dp, bottom = PiSpacing.composerBottomGap),
+            ) {
+                Composer(
+                    draft = draft,
+                    onPickAttachment = { attachmentPicker.launch("*/*") },
+                    contextUsage = state.stats?.contextUsage,
+                    onOpenContext = { perform(ChatAction.ContextUsage) },
+                    modelLabel = modelLabel,
+                    onOpenModel = { perform(ChatAction.PickModel) },
+                    onCycleModel = { perform(ChatAction.CycleModel) },
+                    onDraftChange = { draft = it },
+                    thinkingLevel = state.meta.thinkingLevel,
+                    streaming = state.streaming,
+                    canFollowUp = state.streaming && draft.isNotBlank(),
+                    canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
+                    onCycleThinking = { session.cycleThinkingLevel() },
+                    onPickThinking = { sheet = ChatSheet.Thinking },
+                    onOpenPalette = { if (draft.isBlank()) draft = "/" },
+                    onOpenBash = { if (draft.isBlank()) draft = "!" },
+                    onOpenBashExcluded = { if (draft.isBlank()) draft = "!!" },
+                    onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
+                    onSteer = {
+                        session.send(draft, attachments)
+                        draft = ""
+                        attachments = emptyList()
+                        reArmTail()
+                        dismissKeys()
+                    },
+                    onSend = {
+                        when (val route = routeComposerText(draft, state.commands)) {
+                            ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
+                                session.send("", attachments)
+                                attachments = emptyList()
+                                reArmTail()
+                                dismissKeys()
+                            }
+                            is ComposerRoute.Message -> {
+                                session.send(route.text, attachments)
+                                draft = ""
+                                attachments = emptyList()
+                                reArmTail()
+                                dismissKeys()
+                            }
+                            is ComposerRoute.Bash -> {
+                                session.runBash(route.command, route.excludeFromContext)
+                                draft = ""
+                                dismissKeys()
+                            }
+                            is ComposerRoute.Command -> {
+                                draft = ""
+                                pick(route.command, route.args)
+                            }
+                            is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
+                        }
+                    },
+                    canClear = draft.isNotBlank() || attachments.isNotEmpty(),
+                    onClear = {
+                        draft = ""
+                        attachments = emptyList()
+                    },
+                    onFollowUp = {
+                        session.sendFollowUp(draft, attachments)
+                        draft = ""
+                        attachments = emptyList()
+                        reArmTail()
+                        dismissKeys()
+                    },
+                    onStop = {
+                        session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
+                    },
+                )
+            }
+
+            // 输入框下方的扩展组件与底栏：软键盘打开或用户折叠时自动收进顶部摘要条，绝不把输入框顶出屏幕。
+            if (!imeVisible && !widgetsCollapsedByUser) {
+                ExtensionWidgetStack(
+                    widgets = remember(state.ext.widgets) {
+                        state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
+                    },
+                    onInteract = { panel -> interactingWidgetKey = panel.key },
+                    maxStackHeight = 112.dp,
+                )
+                state.ext.footer?.let { footer ->
+                    ExtensionChromeBanner(
+                        lines = footer.lines,
+                        collapsedRows = FOOTER_COLLAPSED_ROWS,
+                        onInteract = if (footer.interactive && footer.surfaceId != null) {
+                            { interactingWidgetKey = footer.key }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
+                    )
+                }
             }
         }
     }
 
     ChatSheetHost(sheet = sheet, onSheet = { sheet = it }, state = state, session = session)
+
+    if (widgetsInspectorOpen) {
+        ExtensionWidgetsSheet(
+            header = state.ext.header,
+            footer = state.ext.footer,
+            statuses = state.ext.statuses,
+            widgets = state.ext.widgets,
+            editorTakeover = state.ext.editorTakeover,
+            onInteract = { panel -> interactingWidgetKey = panel.key },
+            onDismiss = { widgetsInspectorOpen = false },
+        )
+    }
 
     interactingWidgetKey?.let { activeKey ->
         val activePanel = (listOfNotNull(state.ext.header, state.ext.footer) + state.ext.widgets)
@@ -2601,95 +2401,185 @@ private const val TRANSCRIPT_WINDOW_STEP = 50
 private const val FRESH_ROW_KEYS_MAX = 200
 
 
-/** The floating scroll arrow's visual diameter; the tap target is [SCROLL_ARROW_TAP]. */
-private val SCROLL_ARROW_SIZE = PiSpacing.scrollArrowVisual
-
-private val SCROLL_ARROW_TAP = PiSpacing.scrollArrowTap
-
+private data class TailObservation(
+    val revision: Long,
+    val renderedCount: Int,
+    val poke: Long,
+    val totalItems: Int,
+    val firstVisibleIndex: Int,
+    val firstVisibleOffsetPx: Int,
+    val lastVisibleIndex: Int,
+    val lastVisibleOffsetPx: Int,
+    val lastVisibleSizePx: Int,
+    val viewportEndOffsetPx: Int,
+    val isScrollInProgress: Boolean,
+    val atBottom: Boolean,
+)
 
 /**
- * Idle opacity of a scroll arrow. The buttons sit over the transcript, so at rest
- * they must not compete with the text; pressing one brings it to full opacity for as
- * long as the touch lasts, which is the feedback the user asked for (「半透明一点」
- * without losing the press).
- */
-private const val SCROLL_ARROW_IDLE_ALPHA = 0.62f
-
-
-/**
- * One of the transcript's two floating scroll arrows (spec §4.5's affordance, in the
- * shape the user ruled for).
- *
- * A circle with `surfaceContainerHigh`, a `borderMuted` hairline and **no** shadow —
- * the three values the 「回到最新」 pill already used, so this introduces no new
- * colour (`direction-b-v2.html:1510`, `04 §2.3` 层级不用阴影). The glyph is the same
- * Material chevron the block chrome and the composer already draw; no emoji, no text.
- *
- * @param unread draws the 5 dp badge — the board's badge swatch (`06` §「徽标」:
- *   色块 5×5 圆角 1) in the accent. It replaces the old pill's 「· N」 count: the user
- *   asked for one arrow with no words, and the *fact* that something arrived is what
- *   the count was there to say, not the number.
+ * 新会话极简欢迎画布：不写废话说明，只提供工作区身份胶囊和三条高频起手快捷提示。
  */
 @Composable
-private fun ScrollArrowButton(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    unread: Boolean = false,
+private fun ChatEmptyWelcome(
+    workspaceName: String,
+    modelLabel: String?,
+    onPickPrompt: (String) -> Unit,
+    onOpenSessions: () -> Unit,
+    onOpenWorkspace: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    Box(
-        modifier = Modifier
-            .size(SCROLL_ARROW_TAP)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClickLabel = label,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
+    val palette = PiTheme.palette
+    Column(
+        modifier = modifier.padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(SCROLL_ARROW_SIZE)
-                .alpha(if (pressed) 1f else SCROLL_ARROW_IDLE_ALPHA)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .border(1.dp, PiTheme.palette.borderMuted, CircleShape),
+                .size(56.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(palette.accent.copy(alpha = 0.14f))
+                .border(1.dp, palette.accent.copy(alpha = 0.35f), RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurface,
+            Text(
+                text = "π",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                color = palette.accent,
             )
-            if (unread) {
-                Box(
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "准备就绪",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = palette.text,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = workspaceName.ifBlank { "默认工作区" },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .clickable(onClick = onOpenWorkspace)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                style = PiTheme.text.monoSmall,
+                color = palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!modelLabel.isNullOrBlank()) {
+                Text(
+                    text = modelLabel,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(5.dp)
-                        .clip(RoundedCornerShape(1.dp))
-                        .background(PiTheme.palette.accent),
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = PiTheme.text.monoSmall,
+                    color = palette.accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
                 )
+            }
+        }
+        Spacer(Modifier.height(22.dp))
+        val starters = listOf(
+            "帮我梳理当前工作区的目录结构和核心文件",
+            "检查项目里最近的改动和潜在问题",
+            "/resume",
+        )
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            starters.forEach { prompt ->
+                val isResume = prompt == "/resume"
+                val label = if (isResume) "查看历史会话与会话树…" else prompt
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .border(1.dp, palette.borderMuted.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                        .clickable {
+                            if (isResume) onOpenSessions() else onPickPrompt(prompt)
+                        }
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = label,
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.prose,
+                        color = palette.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
 }
 
+@Composable
+private fun ScrollArrowButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    unreadCount: Int = 0,
+) {
+    val palette = PiTheme.palette
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val hasUnread = unreadCount > 0
+    val shape = RoundedCornerShape(999.dp)
+    Row(
+        modifier = Modifier
+            .shadow(elevation = 4.dp, shape = shape, clip = false)
+            .alpha(if (pressed || hasUnread) 1f else 0.84f)
+            .clip(shape)
+            .background(
+                if (hasUnread) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
+            )
+            .border(
+                width = 1.dp,
+                color = if (hasUnread) palette.accent else palette.borderMuted.copy(alpha = 0.65f),
+                shape = shape,
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = ripple(color = MaterialTheme.colorScheme.onSurface),
+                onClickLabel = label,
+                onClick = onClick,
+            )
+            .padding(
+                horizontal = if (hasUnread) 11.dp else 9.dp,
+                vertical = 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(18.dp),
+            tint = if (hasUnread) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onSurface,
+        )
+        if (hasUnread) {
+            Text(
+                text = if (unreadCount > 99) "99+" else "$unreadCount",
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+                color = androidx.compose.ui.graphics.Color.White,
+                maxLines = 1,
+            )
+        }
+    }
+}
 
-/**
- * `rememberSaveable`'s saver for the follow machine.
- *
- * A configuration change must not turn a paused follow back into an armed one:
- * `LazyListState` restores its own scroll position, so coming back armed would yank a
- * reader who had scrolled up into history to the bottom on the next token. The three
- * ints are the machine's own state (`ui/chat/TailFollow.kt`, [TailFollow.savedState]);
- * the anchors are deliberately not among them, because they describe a single layout
- * pass and a fresh layout compared against a stale one would read as a user gesture.
- */
 private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
     save = { it.savedState() },
     restore = { saved -> TailFollow.fromSavedState(saved) },

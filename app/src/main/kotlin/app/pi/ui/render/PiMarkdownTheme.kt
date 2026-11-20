@@ -186,18 +186,9 @@ internal fun piMarkdownColors(
 ): MarkdownColors =
     DefaultMarkdownColors(
         text = textColor ?: palette.text,
-        // pi has no code background on either surface: the terminal's fence is its
-        // own text, and the export is explicit about it (`pre { background:
-        // transparent }`, `pre code { background: none }` — `template.css:900-909`).
-        // Transparent is therefore the faithful value, not a pi token borrowed for
-        // a surface pi does not have.
         codeBackground = Color.Transparent,
-        // 行内代码**不要底色**：库把行内代码的底色铺满整行高度（不是字高），在浅色主题里
-        // 就是一个比字还高、左右带空隙的紫框（真机截图确认过，曾经加过 14% 淡底，已撤）。
-        inlineCodeBackground = Color.Transparent,
-        // 分割线：`mdHr` 是 #9DA5A9 满不透明，细线也亮得像一道裂缝；压到 35%，
-        // 仍看得见但不再切断阅读。所有档位一致。
-        dividerColor = palette.mdHr.copy(alpha = 0.35f),
+        inlineCodeBackground = palette.mdCode.copy(alpha = 0.11f),
+        dividerColor = palette.mdHr.copy(alpha = 0.42f),
         tableBackground = palette.cardBg,
         // One value for both slots: the renderer uses this flag for its own
         // derived container/on-container pairs, and the alert accents below
