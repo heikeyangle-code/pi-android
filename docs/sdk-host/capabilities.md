@@ -17,7 +17,7 @@
 | 官方默认工具 `read/bash/edit/write` | 已接 | 创建会话即带（测试断言） |
 | 其余官方工具 `grep/find/ls` | 已接 | `catalog.tools` 看全集，`catalog.setTools` 启用 |
 | `powershell` 工具 | 不适用 | 仅 Windows |
-| 会话库：搜索 / 只读预览 / 任意会话改名 / 删除 / 书签 / 当前分支 / 上下文编辑 | 已接（宿主） | `session.search/read/rename/delete/label/path/contextEdit`；设计见 `sessions.md` |
+| 会话库：任意会话改名 / 删除（trash→unlink）/ 只读读取 / 书签 / 当前分支 / 上下文编辑 | 已接 | `session.rename/delete/read/label/path/contextEdit`；列表与搜索见下一行，设计见 `sessions.md` |
 | 提示图片 | 已接 | `session.prompt.images` |
 | 排队：steer / follow-up、两种模式 | 已接 | `session.steer/followUp`、`queue.*Mode`、`session.clearQueue` |
 | 用户 bash（`!cmd`）+ 扩展 `user_bash` 钩子 | 已接 | `session.bash` / `session.abortBash` |
@@ -58,7 +58,7 @@
 | 能力 | 状态 | 命令 |
 |---|---|---|
 | 新建 / 恢复 / 切换 | 已接 | `session.new` / `session.open{session}` / `session.switch` |
-| 列会话 | 已接 | `session.list`（本目录或全部） |
+| 列会话（`/resume` 选择器：排序 / 仅命名 / 搜索语法 / 树 / 进度 / 取消） | 已接 | `session.list` / `session.list.cancel` + 事件 `sessions.progress`；官方组件逐行比对 |
 | 分叉（从某条用户消息） | 已接 | `session.forkMessages` + `session.fork` |
 | 克隆 | 已接 | `session.clone` |
 | 会话树、条目、叶子 | 已接 | `session.tree` / `session.entries` |

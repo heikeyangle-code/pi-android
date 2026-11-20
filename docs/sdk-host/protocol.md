@@ -51,7 +51,10 @@ stderr 是日志，不是协议。源码：`app/src/main/assets/guest/sdk-host/p
 | `session.steer` / `session.followUp` | `message`, `images?` | `{disposition}` | |
 | `session.abort` · `session.clearQueue` | | | |
 | `session.new` · `session.switch` · `session.fork` · `session.clone` | `parentSession?` · `sessionPath` · `entryId` · — | `{cancelled,…}` | 会触发会话替换，epoch +1 |
-| `session.messages` · `session.entries` · `session.tree` · `session.stats` · `session.lastText` · `session.forkMessages` · `session.list` | `since?`（entries）、`all?`（list） | | 读 |
+| `session.messages` · `session.entries` · `session.tree` · `session.stats` · `session.lastText` · `session.forkMessages` | `since?`（entries） | | 读 |
+| `session.list` · `session.list.cancel` | `scope?` `sortMode?` `nameFilter?` `query?` `refresh?` `groupByCwd?` | `{scope, rows, total, queryError}` | 官方 `/resume` 选择器；读盘时发 `sessions.progress {scope, loaded, total, rows?}`；其余只重算缓存视图 |
+| `session.rename` · `session.delete` | `path`, `name` · `path` | `{…}` · `{path, method: trash\|unlink}` | 删除：当前会话 → `busy`；`trash` 不可用才 unlink |
+| `model.resolve` | `query` | `{model: {provider,id,name}\|null}` | `/model <引用>` 第一步：官方 `findExactModelReferenceMatch`；命中由 App 接着 `model.set`，否则开选择器预填 |
 | `session.name` · `session.compact` · `session.export` · `session.reload` | | | |
 | `session.retry` · `session.autoCompaction` | `enabled?`, `abort?` / `enabled` | | |
 | `session.bash` · `session.abortBash` | `command`, `excludeFromContext?` | bash 结果 | 用户 `!cmd`，先走扩展的 `user_bash` |

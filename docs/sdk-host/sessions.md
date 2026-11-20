@@ -1,91 +1,52 @@
-# 会话管理：整块按官方 SDK 重做
+# 会话管理
 
-状态：
-- 宿主侧已做完并有测试（110 条）。
-- Kotlin 数据层已换：`SessionLibrary`（`app/pi/session/SessionLibrary.kt`）经宿主命令做列表/搜索/改名/删除，
-  `PiSessionViewModel` 的 `refreshSessions/deleteSession/renameSessionFromList` 已改用它；用真宿主端到端测过
-  （`host-session` harness，含路径换算、越界拒绝、改名、删除、搜索）。引擎一就绪会补读一次列表。
-- **还没做**：新会话库页/树页的界面；转录加载仍走 `SessionFileReader`（§3.3）；旧扫盘层（`PiSessionStore` 等）
-  还在、尚未删除（它们的 harness 要先逐个核对）。列表的 `model` 字段现在恒为 null（SDK 的 `SessionInfo` 不带模型），
-  `SessionsScreen` 上的「模型」徽标会消失 —— 新设计本来就不显示它。
-- 没过 Gradle、没上机。
+会话**列表**由宿主用官方 `SessionManager` 读；App 不再自己扫盘、不再维护索引。会话**内容**（转录、树）仍走各自的宿主命令。
 
-## 1. 现状审计：这一整块是为 RPC 的缺口写的
+## 1. 会话列表（`/resume` 选择器）
 
-RPC 没有「列会话」「读别的会话」「树导航」，所以 App 自己补了一层（约 2800 行 Kotlin，`app/pi/session/*`）：
+对照官方 `dist/modes/interactive/components/session-selector.js` 与 `session-selector-search.js`。
 
-| 文件 | 行数 | 为什么存在 | 换成什么 |
-|---|---|---|---|
-| `PiSessionStore.kt` | 1048 | 扫目录、解析 JSONL 出列表行；合并「同 id 两份文件」 | `session.list` / `session.search`（`SessionManager.list/listAll`，宿主已接） |
-| `SessionFileReader.kt` | 838 | 自己解析会话文件还原转录、树 | `session.entries`（分页/`since`）、`session.tree`、`session.read`（只读预览别的会话） |
-| `SessionFileScan.kt` / `PiSessionIndex.kt` | 154 / 302 | 摘要索引落盘缓存 | 宿主 SDK 自己扫；手机上慢的话在宿主侧加缓存，不在 Kotlin 里 |
-| `SessionResume.kt` | 246 | `--session-id` 找不到时**用同一个 id 新建文件**，一段对话劈成两份（见该文件 KDoc） | `session.open {session:{file}}` 直接按**路径**打开；这个 bug 类整个消失 |
-| `ui/chat/SessionTreeScreen.kt` | 1179 | 树页，靠 `pi-android-bridge` 扩展绕路导航 | `session.tree` + `session.navigate`（官方 `/tree`） |
-| `ui/screens/SessionsScreen.kt` | 1351 | 会话列表页 | 新「会话库」，见 §3 |
-
-结论：**这块要推翻，不是迁移。** 迁移会把「同 id 合并」「前缀判定」这些只为 RPC 缺陷存在的复杂度原样带过去。
-
-## 2. SDK 覆盖对照（逐项）
-
-| SDK 能力（`SessionManager` / `AgentSession`） | 宿主命令 | 状态 |
+| 官方行为 | 在哪 | 说明 |
 |---|---|---|
-| `list` / `listAll` | `session.list`（默认不带 `allMessagesText`，`text:true` 才带） | 已接 |
-| 全文搜索（`SessionInfo.allMessagesText`） | `session.search` | **本轮新增** |
-| `open(path)` 只读预览别的会话 | `session.read`（`summary`/`branch`/`entries` 分页） | **本轮新增** |
-| `appendSessionInfo`（给任意会话改名） | `session.rename`（当前会话走 `setSessionName`） | **本轮新增** |
-| 删会话 | `session.delete`（只许会话目录内、不许删当前） | **本轮新增**（SDK 无此 API，宿主只做 unlink） |
-| `appendLabelChange` / `getLabel`（书签） | `session.label`；树节点自带 `label` | **本轮新增** |
-| `getBranch`（叶到根） | `session.path` | **本轮新增** |
-| `appendContextEdit`（隐藏/替换更早条目对模型的可见内容） | `session.contextEdit` | **本轮新增** |
-| `getTree` / `getEntries` / `navigateTree` | `session.tree/entries/navigate` | 已接 |
-| `newSession/switchSession/fork/clone` | `session.new/switch/fork/clone` | 已接 |
-| `importFromJsonl` / `exportToHtml` | `session.import/export` | 已接 |
-| `compact`、自动压缩、重试 | `session.compact/autoCompaction/retry` | 已接 |
-| `parentSessionPath`（分叉谱系） | 在 `session.list` 行里 | 已接（UI 未用） |
-| `list` 的 `onProgress` / `signal` | — | **未接**：几百个会话时列表该流式出；需要「进度事件 + 取消」，下一步加 |
-| `findById`、`forkFrom`（跨 cwd 分叉）、`continueRecent` | `session.open` 的 `session.id/continue` 已覆盖前两种；`forkFrom` 未接 | 部分 |
-| `branchWithSummary` | 经 `session.navigate {summarize}` | 已接（间接） |
-| `UsageEntry`（`appendUsage`） | 进 `session.entries`/`stats`；会话级成本汇总 UI 未做 | 数据有，UI 无 |
+| `SessionManager.list(cwd, dir)` / `listAll(dir)`，并发读文件，`onProgress(loaded, total, partial)` | 宿主 `commands/sessionlist.mjs` | 全量读文件是冷加载慢的固有原因，只能靠「读一次、常驻」来改善体感 |
+| threaded / recent / relevance 三种排序（Ctrl+S）、仅命名（Ctrl+N）、搜索语法（`re:` / `"短语"` / 模糊） | `filterAndSortSessions`、`parseSearchQuery`、`hasSessionName` | **直接按文件 URL import 官方文件**（它们不在包的公开出口里，先例：`catalog.mjs` 读 `slash-commands.js`），不重写 |
+| `buildSessionTree` / `flattenSessionTree`（模块私有） | `sessionlist.mjs` 移植 | 用官方 `SessionSelectorComponent` 真渲染出的行序和前缀做标准答案：`tools/collect-session-list-fixtures.mjs` → `app/src/test/resources/pi-session-list-fixtures/list.json`，`tools/sdk-host/test.mjs`「会话列表对照官方组件」逐行比对，CI 里 `--check` |
+| 行文字 = 会话名 else 首条消息，控制字符换成空格；右侧 `cwd 条数 时间` | `app/pi/session/list/SessionListModel.kt` | 同一份 list.json 比对（`session-list-model` harness） |
+| 重命名（Ctrl+R）、删除（Ctrl+D，当前会话不可删，先试 `trash` 再 unlink）、改动后重读 | `session.rename` / `session.delete {path, method}` | 长按面板只有这两件事，外加点一行恢复——官方就这三个 |
+| 取消在途加载（`cancelLoads`） | `session.list.cancel` | |
 
-**没有伪装完成的部分**：`list` 进度流、`forkFrom`、成本汇总 UI。
+### 命令与事件
 
-## 3. UI 方案（按我的审美；只做 SDK 给得出的）
+- `session.list {scope, sortMode, nameFilter, query, refresh, groupByCwd}` → `{scope, rows, total, queryError}`。没有缓存或 `refresh:true` 才读盘，读的过程中发 `sessions.progress {scope, loaded, total, rows?}`；其余只用宿主缓存重算视图（换排序 / 过滤 / 搜索是毫秒级）。缓存按「会话目录 + cwd」作废，改名 / 删除 / `session.open` 换目录都会作废。
+- `session.list.cancel` → `{cancelled}`。
+- `session.delete {path}` → `{path, method: "trash"|"unlink"}`；当前会话 → `busy`。
+- `session.read` 仍在：只读读取别的会话（摘要 / 分支 / 分页条目），转录与会话树用它。
 
-### 3.1 会话库（取代 `SessionsScreen`）
-- **搜索优先**：顶部一个搜索框，输入即 `session.search`（防抖 250ms），结果行带命中片段高亮。空态才显示分组列表。
-- 列表按「今天 / 昨天 / 本周 / 更早」分组；每行：名字（没有就取 `firstMessage` 首行）、条数、相对时间、
-  分叉来源小标（`parentSessionPath` → 「分叉自 xxx」，点它跳到父会话）。
-- **点一行 = 只读预览**（底部半屏，`session.read` 摘要 + 最近分支的前几条），预览里按钮：「打开」（`session.switch`）、
-  「重命名」、「导出 HTML」、「删除」。**不为了看一眼就切会话**。
-- 长按多选 → 批量删除（逐个 `session.delete`，当前会话灰掉并说明原因）。
-- 当前会话置顶、带一个实心点。打开另一个会话**不重启引擎进程**（`session.switch`，epoch +1，旧尾巴被丢）。
+### 与官方有意不同的地方（App 层，不是 pi 的概念）
 
-### 3.2 会话树（取代 `SessionTreeScreen`）
-- 数据只来自 `session.tree`；当前叶到根的路径用 `session.path` 高亮；同一父下的兄弟节点折叠成「3 个分支」可展开。
-- 节点按类型有不同的轻量外观：用户消息（文字摘要）、助手（模型+是否含工具调用）、压缩、分支摘要、模型/思考变更、
-  标签。**默认过滤成「只看用户消息 + 有标签的」**，因为长会话里工具结果会淹没结构；右上角切到「全部」。
-- 点节点 → 底部操作条：「跳到这里」（`session.navigate`，弹出选项：是否摘要被离开的分支、自定义摘要指示语、给目标打标签）、
-  「从这里分叉」（`session.fork`）、「加/改标签」（`session.label`）、「从模型上下文隐藏」（`session.contextEdit`，
-  明确写「只影响模型看到的，不删记录」）。
-- 标签就是书签：树顶有「书签」入口，列出所有带标签的节点，一点即跳。
+1. **读一次、常驻，打开不重读。** 官方每次打开选择器都重读磁盘；手机上读一遍要几秒，所以 `PiSessionViewModel` 在**引擎就绪时后台读一次**，之后列表屏直接用手上的行（秒开）。会话文件 / 工作区 / 消息数（到 2 为止）变了，VM 在后台**静默**重读，不依赖列表屏开着。手上有行时任何读取都不出转圈或进度条，读完无声替换；只有「一行都没有、正在读」才显示进度。上次的列表落盘（`filesDir/pi/session-list-cache.json`），冷启动先画它。
+2. **按工作区分组。** 官方「全部」范围每行右侧写 cwd；手机上改成每个 cwd 一张可折叠的卡，当前工作区置顶、其余按最近活动降序。列表因此恒为「全部」范围，没有 current / all 开关。`groupByCwd:true` 让宿主在 threaded 视图下**每个目录各自成树**（父会话在别的目录时，子会话在本组里是根，跨组的连线画不出来）；组内规则仍是官方的 build / flatten。
+3. 树里的层级画成真线条（depth / isLast / ancestorContinues 取自官方 3 字符前缀的手机版）。
 
-### 3.3 转录加载与恢复
-- 进会话：用 `state`（宿主持有）+ `session.entries` 分页向上翻（`since` 做增量），**Kotlin 不再解析会话文件**。
-- 恢复：App 重启后 `session.open {session:{file: 上次路径}}`；没有「按 id 认」这一步，也就没有劈成两份的路径。
+### 缺失工作目录的恢复
 
-## 4. 删除清单与顺序（每步可独立合并）
-1. 新会话库页 + 树页接宿主命令，旧页保留但不再入口（可回退）。
-2. 转录加载改 `session.entries`；`SessionFileReader` 的调用点清零。
-3. 重启恢复改按路径；`SessionResume` / `--session-id` 渲染清零。
-4. 删 `PiSessionStore` / `SessionFileScan` / `PiSessionIndex` / `SessionFileReader` / `SessionResume` 与它们的 harness
-   （`sessions`、`session-resume`、`session-identity`、`session-replay-cost`、`session-entry-detail` 各自确认被什么新测试覆盖后再删）。
-5. 删 `pi-android-bridge` 里只为树导航存在的部分。
+会话头记录的 cwd 在这台设备上不存在时，官方 `/resume` 会提示后以 `cwdOverride` 重试（`session-cwd.js` 的 `MissingSessionCwdError`）。宿主 `session.switch` 回 `cwd_missing`（带原因文本），App 弹确认框：「继续打开」（以当前工作区重试）、「分支到此」（`session.forkFrom`）、取消。
 
-## 5. 自审
-- **删旧 harness 前必须先看它们钉的是不是「真行为」**：`session-replay-cost`、`session-entry-detail` 钉的可能是展示逻辑而不是扫盘，
-  不能一刀切。
-- **手机上 `listAll` 的耗时没测过**；平铺目录里几百个文件时，宿主逐个读头部。要么加进度流（§2 未接项），要么宿主侧缓存摘要。
-- **`session.delete` 是 unlink，没有回收站**。UI 必须二次确认；考虑先移到 `sessions/.trash` 保留 7 天（未做）。
-- **`session.contextEdit` 的 UI 说明要非常清楚**，否则用户会以为是删除。
-- **预览用 `SessionManager.open` 读整个文件**，超大会话会慢；`mode:"entries"` 分页只是少传，不是少读。
-- 搜索用的是 SDK 的 `allMessagesText`（用户+助手文本）；**不含工具结果**，这与桌面 pi 一致，但要在 UI 上写明。
+## 2. 会话内容（未变）
+
+| 需求 | 宿主命令 |
+|---|---|
+| 转录（分页 / `since` 增量） | `session.entries` / `session.messages` |
+| 会话树、跳转、摘要 | `session.tree` / `session.navigate`（官方 `/tree`） |
+| 书签、当前分支、上下文编辑 | `session.label` / `session.path` / `session.contextEdit` |
+| 新建 / 打开 / 切换 / 分叉 / 复制 | `session.new` / `session.open` / `session.switch` / `session.fork` / `session.clone` |
+| 导入 / 导出 | `session.import` / `session.export` / `session.exportJsonl` |
+
+`SessionFileReader`（转录还原）和 `SessionResume`（引擎重启时认回对话）仍在 Kotlin 侧，由转录加载与重启恢复使用；列表这条线上的旧扫盘层（`PiSessionStore` / `PiSessionIndex` / `SessionFileScan`）已删除。
+
+## 3. 没验证 / 已知局限
+
+- 本机没有真机和真实的大会话库：**加载速度没有实测**；改进来自「后台预读 + 常驻 + 静默刷新」，不是读得更快。
+- 所有 Compose 界面（`SessionsScreen.kt` 等）本机未编译，需 CI / 真机看。
+- 搜索用 SDK 的 `allMessagesText`（用户 + 助手文本），**不含工具结果**，与桌面 pi 一致。
+- `session.delete` 优先移到回收站（`trash` 命令可用时），否则直接 unlink；UI 总是先确认。

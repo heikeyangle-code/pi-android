@@ -20,7 +20,7 @@ Node 宿主 sdk-host（app/src/main/assets/guest/sdk-host/）   ← 只做适配
 - 旧做法是起 `pi --mode rpc` 说 RPC 协议。**已废弃**：RPC 模式给扩展的 UI 有 17 处桩，协议形状限制太多。现在 App 起自己的 Node 宿主，宿主用 SDK 建会话。设计全部在 `docs/sdk-host/`，从 `docs/sdk-host/README.md` 读起。
 - Kotlin 侧：`app/src/main/kotlin/app/pi/`（`host/` 是宿主客户端与命令，`engine/` 是会话封装，`ui/` 是界面，`session/`、`settings/`、`runtime/`、`packages/` 是各块的纯逻辑）；`rpc/` 模块是 pi 数据结构（消息、会话条目、事件）的 Kotlin 模型。
 - 宿主：`controller.mjs`（会话运行时、单点重绑）、`commands/*.mjs`（命令表）、`ui/`（扩展 UI 对象）、`state.mjs`（持状态并主动推送）。
-- 基线：分支 `feat/sdk-host`，pi 1.5.0。
+- 基线：分支 `main`（直接往上推，不再用 `feat/sdk-host` 等功能分支），pi 1.5.2。
 
 ## 第一原则：官方 SDK 优先，不重新发明
 
@@ -113,7 +113,7 @@ SDK 的行为、字段名、默认值、边界条件，**一律读源码确认�
 - 代码注释、文档用中文，英文标识符照旧；注释写「为什么」和「对照的官方位置」，不写「做了什么」的流水账。
 - 不留死代码、不留「以后再删」的兼容层。接管完成就删旧路径。
 - 不为了通过检查而改检查；检查红了先搞清楚是代码错还是检查过时，过时就按官方重新生成标准答案。
-- 提交信息写清楚**对照了什么、验证了什么**；一次提交一件事。推送前先 `git fetch` 并合并 `origin/feat/sdk-host`。
+- 提交信息写清楚**对照了什么、验证了什么**；一次提交一件事。推送前先 `git fetch` 并合并 `origin/main`。
 - 不要把会话文件（`session-*.jsonl`，已在 `.gitignore`）、密钥、`keystore/` 提交进去。
 - 不使用子代理替自己做对照和验证；对照 SDK 源码这件事要自己读。
 

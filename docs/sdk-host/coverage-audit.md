@@ -59,7 +59,7 @@
 
 ## SessionManager（见 `sessions.md`）
 list / listAll / open / getTree / getBranch / appendSessionInfo / appendLabelChange / appendContextEdit：
-宿主全部有（`session.list/search/read/rename/delete/label/path/contextEdit/tree/entries`）；
+宿主全部有（`session.list/read/rename/delete/label/path/contextEdit/tree/entries`；全文搜索并入 `session.list` 的 `query`）；
 `list` 的进度与取消、`forkFrom` **未接**。
 
 ## SettingsManager
