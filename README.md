@@ -224,7 +224,7 @@ The host protocol uses JSON Lines, with typed commands, events, state updates, a
 
 The SDK Host integration has been merged into the main branch. The broader migration and integration work continues to evolve; not every remaining service should be assumed to have completed the transition.
 
-See [`docs/sdk-host/`](docs/sdk-host/README.md) for implementation details and migration notes.
+See [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md) and [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md) for host architecture and wire protocol details.
 
 ---
 
@@ -246,7 +246,7 @@ See [`docs/sdk-host/`](docs/sdk-host/README.md) for implementation details and m
 
 The project pins:
 
-- `@earendil-works/pi-coding-agent`: **1.5.0**
+- `@earendil-works/pi-coding-agent`: **1.5.2**
 
 The engine version is managed through the repository's dependency and runtime tooling.
 
@@ -274,26 +274,21 @@ cd pi-android
 ```bash
 ./gradlew :rpc:test
 
-node tools/pi-contract.mjs
-
 node tools/sdk-host/contract.mjs
 node tools/sdk-host/test.mjs
-
-bash tools/run-app-pure-checks.sh
 ```
 
 ### What a green build does and does not prove
 
-Every push runs the protocol, APK (`targetSdk` 28 and 36), upstream-contract, pure-logic, comment, UI-consistency and TAWCROOT jobs. Green means: it compiles, the contract against the pinned pi version still holds, and everything that can be checked without a device passes.
+Every push runs the `:rpc` JVM unit tests, SDK Host real-engine tests, static safety guards, TAWCROOT native build, and APK (`targetSdk` 28 and 36) release builds. Green means: it compiles, the host contract and behaviour against the pinned Pi SDK pass, and both signed APKs assemble cleanly.
 
-It does not mean every screen has been exercised on a phone. Runtime switching, the three backends, extension UI and other device-level behaviour are verified by hand on real hardware — and the TAWCROOT backend is the least proven of the three, still being stabilised.
+It does not mean every screen has been exercised on a phone. Runtime switching, the three backends, extension UI and other device-level behaviour are verified by hand on real hardware.
 
 For SDK Host implementation details, see:
 
-- [`docs/sdk-host/README.md`](docs/sdk-host/README.md)
 - [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md)
 - [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md)
-- [`docs/sdk-host/migration.md`](docs/sdk-host/migration.md)
+- [`docs/runtime-engines.md`](docs/runtime-engines.md)
 
 ---
 

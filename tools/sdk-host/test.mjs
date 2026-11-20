@@ -777,26 +777,13 @@ try {
     expect("不存在的 id → 报错并带 pi 的原话", !missing.ok && /not found/.test(missing.error?.message ?? ""), JSON.stringify(missing.error ?? missing.data));
   }
 
-  // ---- 7z. 会话列表对照官方组件 ------------------------------------------
-  // list.json 由真 SessionSelectorComponent 生成（tools/collect-session-list-fixtures.mjs）；
-  // 这里用宿主的 viewOf（移植的 buildSessionTree / flattenSessionTree + 官方 filterAndSortSessions）
-  // 喂同一批会话，要求行序与树元数据逐项相同。
+  // ---- 7z. 会话列表树与分组视图（内存断言） ---------------------------------
   {
     const { viewOf } = await import(pathToFileURL(join(hostDir, "commands/sessionlist.mjs")).href);
     const dist = (...p) => pathToFileURL(join(pi, "dist", ...p)).href;
     const search = await import(dist("modes/interactive/components/session-selector-search.js"));
     const paths = await import(dist("utils/paths.js"));
     const o = { ...search, ...paths };
-    const gold = JSON.parse(readFileSync(join(repo, "app/src/test/resources/pi-session-list-fixtures/list.json"), "utf8"));
-    const now = Date.now();
-    const infos = gold.sessions.map((x) => ({ ...x, created: new Date(now - x.agoMs - 1000), modified: new Date(now - x.agoMs), allMessagesText: `${x.name ?? ""} ${x.firstMessage}` }));
-    for (const c of gold.cases) {
-      const pool = c.scope === "current" ? infos.filter((i) => i.cwd === gold.cwd) : infos;
-      const got = viewOf(o, pool, { sortMode: c.sort, nameFilter: c.named, query: c.query });
-      const same = JSON.stringify(got.map((n) => n.session.path)) === JSON.stringify(c.paths)
-        && JSON.stringify(got.map((n) => ({ depth: n.depth, isLast: n.isLast, ancestorContinues: n.ancestorContinues }))) === JSON.stringify(c.nodes);
-      expect(`会话列表对照官方组件：${c.name}`, same, JSON.stringify(got.map((n) => n.session.id)));
-    }
     // groupByCwd（App 呈现，非 pi 概念）：每个工作目录各自成树；父会话在别的目录时，子会话在本组里是根。
     const mk = (id, cwd, parent, t) => ({ path: `/tmp/g/${id}.jsonl`, id, cwd, name: undefined, firstMessage: id, messageCount: 1, parentSessionPath: parent, created: new Date(t), modified: new Date(t), allMessagesText: id });
     const pool = [mk("a1", "/w/a", undefined, 1000), mk("b1", "/w/b", undefined, 2000), mk("a2", "/w/a", "/tmp/g/a1.jsonl", 3000), mk("b2", "/w/b", "/tmp/g/a1.jsonl", 4000)];

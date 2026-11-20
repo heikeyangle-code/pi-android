@@ -1,31 +1,8 @@
 name: ci
 
-# Everything that can be verified without a phone runs here. The phone is the
-# only place the runtime can be validated, so everything else is pushed left:
-# protocol unit tests, both targetSdk variants, and the runtime assembly.
-#
-# Building on x86_64 runners is also the *only* place an Android APK can be
-# built today: Google ships AAPT2 for Linux as an x86_64 binary, so an aarch64
-# host cannot run it.
-
 on:
   push:
-    # `main` 是发布线，`proroot-*` 是长期存在的实验线：那条线上的东西（见
-    # `design/ui-refactor/07-construction-decisions.md` D44）**只能在真机上验证**，
-    # 而真机验证需要一份能装的包 —— 所以它必须和 main 一样每次都跑，否则分支推上去
-    # 既没有 CI 也没有 artifact，只能靠人手点 `workflow_dispatch`。
-    #
-    # 这里故意不写 `branches: ['**']`：一次性的分支不值得每次都花掉两个 targetSdk
-    # 变体的完整构建（含 ~65 MB 运行时装配），而 PR 那一侧本来就覆盖了评审场景。
-    #
-    # `feat/sdk-host` 是**长期存在的迁移线**（把引擎宿主从 `pi --mode rpc` 换成官方 SDK），
-    # 它改的是 Kotlin 侧的引擎边界，分支上没有 CI 就等于盲改 —— 所以按 `proroot-*`
-    # 的同样理由给它开构建。合并/放弃这条线时，把这一项删掉。
-    branches: [main, 'proroot-*', 'feat/sdk-host*']
-    # 纯文案 / 纯截图 / 纯标志图改动不进构建。一次 main 上的 push 会跑两个 targetSdk
-    # 变体的完整构建（含 ~65 MB 运行时装配），而改一个字的 README 不可能让它们变红。
-    # 注意只列「构建不可能读」的东西：`docs/` 里目前全是 markdown 与截图，
-    # 一旦往里放会被构建读到的产物（JSON 夹具之类），这条清单就得收紧。
+    branches: [main, 'proroot-*']
     paths-ignore:
       - '**.md'
       - 'docs/screenshots/**'
@@ -64,28 +41,87 @@ jobs:
           path: rpc/build/reports/tests/test
           if-no-files-found: ignore
 
+  sdk-host:
+    name: SDK Host (real Pi SDK contract & tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Cache the pinned engine
+        uses: actions/cache@v4
+        with:
+          path: build/pi-contract
+          key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
+      - name: Install the pinned engine
+        run: |
+          version="$(node -e 'const t=require("fs").readFileSync("tools/fetch-runtime.mjs","utf8");process.stdout.write(/const PI_VERSION = "([^"]+)"/.exec(t)[1])')"
+          mkdir -p build/pi-contract
+          ( cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$version" )
+          test -d "build/pi-contract/node_modules/@earendil-works/pi-coding-agent/dist"
+      - name: sdk-host contract (SDK surface the host depends on)
+        run: node tools/sdk-host/contract.mjs
+      - name: sdk-host behaviour (bundle entry)
+        run: node tools/sdk-host/test.mjs
+      - name: sdk-host behaviour (package fallback)
+        run: node tools/sdk-host/test.mjs --no-bundle
+      - name: sdk-host behaviour (proroot scandir patch)
+        run: node tools/sdk-host/test.mjs --scandir-fix
+
+  static-guards:
+    name: Static safety guards (Kotlin & Android APIs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject nested Kotlin block comments
+        run: python3 tools/check-nested-comments.py
+      - name: Reject Java 11+ APIs Android runtime does not have
+        run: bash tools/check-android-apis.sh
+
+  tawcroot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        continue-on-error: true
+      - name: Ensure an NDK is available
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::no Android SDK at $SDK"
+            exit 1
+          fi
+          if ! ls -d "$SDK"/ndk/* >/dev/null 2>&1; then
+            sdkm="$(command -v sdkmanager || find "$SDK/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | sort -V | tail -1)"
+            [ -n "$sdkm" ] || { echo "::error::no sdkmanager under $SDK"; exit 1; }
+            yes 2>/dev/null | "$sdkm" --licenses >/dev/null 2>&1 || true
+            yes 2>/dev/null | "$sdkm" --install "ndk;27.2.12479018" >/dev/null 2>&1 || true
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          ls -d "$SDK"/ndk/* || { echo "::error::still no NDK under $SDK/ndk"; exit 1; }
+      - name: Build libtawcroot.so from the pinned tag
+        run: bash tools/build-tawcroot.sh "$RUNNER_TEMP/tawcroot-out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libtawcroot
+          path: ${{ runner.temp }}/tawcroot-out/libtawcroot.so
+
   apk:
     name: APK (${{ matrix.variant }})
     runs-on: ubuntu-latest
-    # tawcroot 先构建，APK 再把 `libtawcroot.so` 打进去。**没有它，设置里选 tawcroot
-    # 只会得到「缺组件」并回退 proot** —— 这正是用户在 2026-11-15 装出来的那版
-    # （二进制只在 tawcroot 任务的 artifact 里，APK 里没有）。
     needs: tawcroot
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Known-good sandbox: what Termux pins. Sideload via F-Droid / APK.
           - variant: sideload28
             targetSdk: 28
-          # Play-viable: proot loader is exec'd from nativeLibraryDir and maps
-          # the guest binaries. Must be proven on hardware before it ships.
           - variant: modern36
             targetSdk: 36
     steps:
       - uses: actions/checkout@v4
-      # tawcroot 的产物进 jniLibs：`lib*.so` 才会被 Android 解到 nativeLibraryDir，
-      # 而那正是 `PiRuntime.tawcrootBinary()` 去看的位置。
       - uses: actions/download-artifact@v4
         with:
           name: libtawcroot
@@ -101,18 +137,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # `setup-android` 只是把 runner **已经装好**的 SDK 接上环境并接受许可；它自己
-      # 那次 `sdkmanager --licenses` 是整条流水线里唯一会「因为 runner 侧的仓库/网络
-      # 抖动而 exit 1」的步骤 —— 实测在 4cc3003 与 47129a2 两次运行里连环失败，而同一
-      # 批次里 5 个代码检查（注释守卫 / 纯逻辑 / 协议单测 / pi 契约）全绿。所以它改成
-      # **失败不致命**，后面那一步负责把环境变量补齐并自己接受许可：action 正常时是幂等
-      # 的空操作，action 挂掉时构建照常进行。SDK 本身缺失会在这里明确报错，不会静默
-      # 走到 Gradle 才炸。
       - uses: android-actions/setup-android@v3
         continue-on-error: true
       - name: Ensure an Android SDK is on the environment
         run: |
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           if [ ! -d "$SDK" ]; then
             echo "::error::no Android SDK found at $SDK on this runner"
             exit 1
@@ -122,14 +151,8 @@ jobs:
             echo "ANDROID_SDK_ROOT=$SDK"
             echo "PATH=$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
           } >> "$GITHUB_ENV"
-          # 2>/dev/null + `|| true`：许可早就接受过时 sdkmanager 仍可能因为仓库不可达
-          # 而返回非零，那不该让构建失败；真缺平台时 Gradle 会用它自己的下载器去取。
           yes 2>/dev/null | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
       - uses: gradle/actions/setup-gradle@v4
-
-      # The runtime is assembled from pinned upstreams rather than committed:
-      # ~65 MB of third-party binaries stay out of git, and every byte is
-      # traceable to a SHA-256 in runtime.lock.json (checked by the tool).
       - name: Cache upstream artifacts
         uses: actions/cache@v4
         with:
@@ -140,24 +163,13 @@ jobs:
         run: |
           sudo apt-get install -y -qq dpkg-dev xz-utils
           node tools/fetch-runtime.mjs
-
       - name: Assemble arm64 release APK
         run: |
           set -o pipefail
-          # 手机上的 `gradle.properties` 把 Kotlin daemon 压在 768m（本机只有约 1.5G
-          # 可用），但 CI runner 有足够内存；这条大 Compose 文件在 codegen 阶段
-          # 会 GC overhead，sideload28 就这样红过一次，而 modern36 只是侥幸过。
-          # 只在 CI 提高 Kotlin daemon 堆，手机上的默认值不动。
           ./gradlew :app:assembleRelease \
             -Ppi.targetSdk=${{ matrix.targetSdk }} \
             -Pkotlin.daemon.jvmargs=-Xmx2g \
             --console=plain 2>&1 | tee /tmp/assemble.log
-      # A red build has to be *readable* by whoever has to fix it. The job log needs
-      # admin rights on the repository; `::error::` annotations do not — they are
-      # readable through the REST API by anyone who can see the run. Those two facts
-      # are why this step exists: the first red build of this batch reported only
-      # "Process completed with exit code 1", and the Kotlin error that caused it had
-      # to be reconstructed by reasoning.
       - name: Report Kotlin errors as annotations
         if: failure()
         run: |
@@ -168,76 +180,24 @@ jobs:
         run: |
           ls -lh app/build/outputs/apk/release/
           find app/build/outputs/apk -name '*.apk' -printf '%f %s bytes\n'
-      # The runtime the app ships is the one thing in this repository that a
-      # compiler cannot check: the payloads are opaque archives handed to the
-      # guest, and every failure mode below is silent at build time.
-      #
-      # Two of them have already shipped:
-      #
-      #   1. The Android Gradle Plugin gunzips an asset whose *file extension* is
-      #      `gz` while merging assets (AssetItem.shouldBeUngzipped:
-      #      Files.getFileExtension(name).equals("gz")) and renames it with
-      #      Files.getNameWithoutExtension, so `ubuntu-base.tar.gz` (28.5 MiB)
-      #      landed in the APK as `ubuntu-base.tar` (106 MB of uncompressed tar)
-      #      while `RuntimeProvisioner` still asked for
-      #      `runtime/ubuntu-base.tar.gz`. `AssetManager.open()` answered with a
-      #      bare-path FileNotFoundException and the app never provisioned a
-      #      runtime. Not AAPT2 - aapt2 2.20 ships both names unchanged - which is
-      #      why the fix is the *name*, `*.tgz`, and not a flag: the rename happens
-      #      before aapt2 ever sees the file.
-      #
-      #   2. An earlier version of this step only counted `assets/runtime/`
-      #      entries and asked how many were `Stored`. That check passed a
-      #      458,824,004-byte APK whose payloads had been renamed by (1) - it
-      #      checked neither names nor sizes. A green tick here is only worth
-      #      what it measures.
-      #
-      # So this step compares the APK against the files that were actually staged:
-      #   * same names, both directions - nothing renamed away (1) and nothing
-      #     extra invented;
-      #   * every entry `Stored`, because `AssetManager.openFd()` refuses a
-      #     deflated entry and that is `openPayload`'s third and last access layer;
-      #   * same byte counts. A `Stored` entry's uncompressed length *is* the file
-      #     on disk, so this is exact equality, and it is the assertion (1) cannot
-      #     survive: 28.5 MiB does not equal 106 MB;
-      #   * a ceiling on the APK itself, so a future packaging accident surfaces as
-      #     a number rather than as a bug report from a phone.
-      # The APK has to carry a certificate, and it has to be the sideload one.
-      #
-      # This gate exists because a build reached devices **unsigned**: the installer said
-      # 「该安装包未包含任何证书」 and the only way past it was re-signing with MT Manager —
-      # while CI was green. Nothing here had ever looked at the signature, and the payload
-      # step below happily took `ls *.apk | head -1`, so an `-unsigned` output would have
-      # been inspected and uploaded like any other. Two assertions close that: no
-      # `*unsigned*` artefact may exist in the output directory, and the shipped APK's
-      # certificate must be `keystore/pi-sideload.jks` (whose SHA-256 is pinned below and
-      # whose private key is the only one existing installs can update over).
       - name: Verify the release APK is signed with the sideload key
         run: |
-          # `set -e` is on for `run:` steps, so every lookup below has to be allowed to fail
-          # *locally*: the first version of this step exited 2 with no output at all because
-          # `apksigner="$(ls -d ...)"` found nothing on the runner's SDK layout and killed
-          # the shell before the `if` that was supposed to explain it.
           set -uo pipefail
           sdk="${ANDROID_HOME:-${SDK:-}}"
-          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null             | sort -V | tail -1)"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1)"
           if [ -z "$apksigner" ] || [ ! -x "$apksigner" ]; then
-            echo "::error::no apksigner under ${sdk:-<unset SDK>}/build-tools; the signature can not be verified"
-            find "$sdk" -maxdepth 3 -name 'apksigner*' 2>/dev/null | head -5
+            echo "::error::no apksigner under ${sdk:-<unset SDK>}/build-tools"
             exit 1
           fi
-          echo "apksigner: $apksigner"
-          ls -l app/build/outputs/apk/release/
           mapfile -t all < <(ls app/build/outputs/apk/release/*.apk 2>/dev/null || true)
           if [ "${#all[@]}" -eq 0 ]; then
-            echo "::error::no APK under app/build/outputs/apk/release; assembleRelease did not produce one"
+            echo "::error::no APK under app/build/outputs/apk/release"
             exit 1
           fi
-          printf 'outputs: %s\n' "${all[@]}"
           for f in "${all[@]}"; do
             case "$f" in
               *unsigned*)
-                echo "::error::assembleRelease produced $f; the signingConfig did not apply (keystore/pi-sideload.jks is committed, so the build lost it)"
+                echo "::error::assembleRelease produced $f; signingConfig did not apply"
                 exit 1
                 ;;
             esac
@@ -246,66 +206,39 @@ jobs:
           "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
           expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
           if ! grep -qi "$expected" /tmp/apksigner.txt; then
-            echo "::error::$apk is not signed with keystore/pi-sideload.jks; devices with the app installed could not update over it"
+            echo "::error::$apk is not signed with keystore/pi-sideload.jks"
             exit 1
           fi
-      # 这一类"构建出来了但没进包"的错，只有解包 APK 才看得见：tawcroot 任务成功、
-      # artifact 也在，但 APK 没下载它 —— 2026-11-15 用户装完才发现「缺组件」。
-      # 所以在打包产物上断言一次，别让下一个人靠安装来验证。
-      - name: Verify runtime payloads are stored uncompressed and unrecompressed
+      - name: Verify runtime payloads are stored uncompressed
         run: |
           set -euo pipefail
           apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
           apk_bytes="$(stat -c %s "$apk")"
-          echo "inspecting $apk ($apk_bytes bytes)"
-          # 运行时二进制必须在**产物**里，而不只是 jniLibs 里：打包规则（jniLibs.excludes、
-          # abiFilters、splits）可以在构建成功的前提下把它丢掉。与"文件放进了源码树"
-          # 是两条不同的断言；这里只是对已生成的 APK 多跑一次 `unzip -l`，1~2 秒。
           if ! unzip -l "$apk" | grep -qE 'lib/arm64-v8a/libtawcroot\.so'; then
-            echo "::error::$apk has no lib/arm64-v8a/libtawcroot.so; selecting tawcroot would only report 缺组件 and fall back to proot"
+            echo "::error::$apk has no lib/arm64-v8a/libtawcroot.so"
             exit 1
           fi
           staged=app/src/main/assets/runtime
-          ls -l "$staged"
-
-          # Name, uncompressed length and method for every assets/runtime entry.
-          unzip -lv "$apk" \
-            | awk '$8 ~ /^assets\/runtime\// { print $1, $2, $8 }' \
-            | sort -k3 > /tmp/apk-payloads.txt
-          cat /tmp/apk-payloads.txt
-
-          # The same three facts for every staged file, in the same order.
+          unzip -lv "$apk" | awk '$8 ~ /^assets\/runtime\// { print $1, $2, $8 }' | sort -k3 > /tmp/apk-payloads.txt
           for f in "$staged"/*; do
             printf '%s %s %s\n' "$(stat -c %s "$f")" Stored "assets/runtime/$(basename "$f")"
           done | sort -k3 > /tmp/staged-payloads.txt
-          echo "--- staged ---"
-          cat /tmp/staged-payloads.txt
-
           fail=0
           if [ "$(wc -l < /tmp/apk-payloads.txt)" -lt 5 ]; then
-            echo "::error::expected at least five runtime payloads in the APK, found $(wc -l < /tmp/apk-payloads.txt)"
+            echo "::error::expected at least five runtime payloads in the APK"
             fail=1
           fi
           if ! diff -u /tmp/staged-payloads.txt /tmp/apk-payloads.txt; then
-            echo "::error::the APK's runtime payloads are not the staged ones (name, size or method differ); a rename here is what AAPT2 does to *.gz assets"
+            echo "::error::the APK's runtime payloads differ from staged files"
             fail=1
           fi
           if [ "$apk_bytes" -gt $((200 * 1024 * 1024)) ]; then
-            echo "::error::APK is $((apk_bytes / 1024 / 1024)) MiB, over the 200 MiB ceiling; payloads are probably being stored expanded"
+            echo "::error::APK is $((apk_bytes / 1024 / 1024)) MiB, over the 200 MiB ceiling"
             fail=1
           fi
-
-          # The digest the app stamps a device with, and reads back on every boot to
-          # decide whether the tree already unpacked matches the payloads in this APK.
-          # It is generated by tools/fetch-runtime.mjs; the app asks for it by the
-          # name in RuntimeProvisioner.REVISION_ASSET and falls back to the
-          # hand-written RUNTIME_REVISION when it is absent. That fallback is the bug
-          # this asset exists to remove, so a rename on either side - or an assembler
-          # that stopped writing it - has to fail here rather than on a device.
           rev="$(unzip -p "$apk" assets/runtime-revision.txt 2>/dev/null | tr -d '[:space:]' || true)"
-          echo "assets/runtime-revision.txt: '${rev}' (${#rev} characters)"
           if [ "${#rev}" -ne 16 ]; then
-            echo "::error::assets/runtime-revision.txt is missing or is not a 16-character digest (got '${rev}'); every device would fall back to RUNTIME_REVISION and keep whatever it unpacked last"
+            echo "::error::assets/runtime-revision.txt missing or invalid: '${rev}'"
             fail=1
           fi
           exit "$fail"
@@ -314,258 +247,3 @@ jobs:
           name: pi-android-${{ matrix.variant }}
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
-
-      # The licence assets are *generated* from the pinned artifacts, which makes
-      # them the one app-owned file set that can go stale without anything failing.
-      # Bump a URL or a version in runtime.lock.json and the APK still builds, still
-      # installs, and the notices quietly describe the previous release. Nothing on
-      # a device can notice — a user cannot tell that the git version printed in the
-      # notices is not the git in the payload — and no reviewer diffs 130 generated
-      # files by hand. So the invariant is asserted here, where the artifacts are:
-      # regenerate from the lockfile and require the committed assets to be exactly
-      # the result. "Remember to re-run the generator" is the same arrangement as the
-      # hand-written runtime revision this repository already replaced, for the same
-      # reason: a step a person must remember is a step that eventually is not done.
-      #
-      # The coverage check is not redundant with it, because regeneration cannot see
-      # the bug class that already happened once. For three Ubuntu packages
-      # `usr/share/doc/<pkg>` is a *symlink* to another package, so a generator that
-      # only looked for `usr/share/doc/<pkg>/copyright` reported them as shipping no
-      # licence text when the text was one symlink away — and re-running that
-      # generator reproduces the same wrong answer. The property is therefore checked
-      # against the output instead: every package the payload installs has a notice.
-      - name: Verify the licence assets match the pinned runtime
-        run: |
-          set -euo pipefail
-          python3 tools/build-license-assets.py --fetch-missing
-
-          # Modified, added or deleted: all three are drift, and `git diff` alone
-          # would miss a newly generated file because it is still untracked.
-          drift="$(git status --porcelain -- app/src/main/assets/licenses)"
-          if [ -n "$drift" ]; then
-            echo "$drift"
-            echo "::error::app/src/main/assets/licenses/** is not what tools/build-license-assets.py produces from the pinned artifacts; a licence notice is describing a different release than the app ships"
-            exit 1
-          fi
-          echo "licence assets are exactly what the pinned artifacts produce"
-
-          python3 - <<'PY'
-          import sys
-
-          assets = "app/src/main/assets/licenses"
-          manifest = set()
-          for line in open(f"{assets}/manifest.txt", encoding="utf-8"):
-              line = line.rstrip("\n")
-              if line and not line.startswith("#"):
-                  manifest.add(line.split("\t")[0])
-
-          packages = [
-              line.split("\t")[0]
-              for line in open(f"{assets}/ubuntu-packages.txt", encoding="utf-8")
-              if line.strip()
-          ]
-          missing = [p for p in packages if f"ubuntu-copyright-{p}.txt" not in manifest]
-          if missing:
-              print(
-                  f"::error::{len(missing)} of {len(packages)} packages installed by the "
-                  f"runtime payload have no licence notice: {', '.join(missing)}"
-              )
-              sys.exit(1)
-          print(f"licence coverage: {len(packages)}/{len(packages)} payload packages have their own notice")
-          PY
-
-  # `app/src/test/**` was previously compiled and run by nothing at all: the
-  # `protocol` job runs `:rpc:test` only, `assembleRelease` does not compile the
-  # unit-test source set, and `tools/typecheck.sh` compiles `app/src/main/kotlin`
-  # only. Both harnesses there are bare `main()` functions with a hand-rolled
-  # `check()` — they import no test framework and call `exitProcess(1)` on failure
-  # — so they need no Gradle test configuration, which is just as well because
-  # `app/build.gradle.kts` declares no `testImplementation`. This job compiles each
-  # harness together with its Android-free main closure using kotlinc fetched from
-  # Maven Central and runs it; a failed assertion reds the job. No Android SDK, no
-  # Gradle, no AAPT2: it is a pure-JVM check, which is the point — it can run on a
-  # machine that cannot build the APK.
-  pure-checks:
-    name: App pure-logic checks (bare JVM)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      # Holds the ~57 MB Kotlin compiler and the closure jars, keyed on the
-      # version catalog the script reads its versions from.
-      - name: Cache the Kotlin compiler and check libraries
-        uses: actions/cache@v4
-        with:
-          path: build/pure-checks
-          key: pi-pure-checks-deps-${{ hashFiles('gradle/libs.versions.toml') }}
-      # `runtime-extract-real` unpacks the **real** Ubuntu base through the app's own
-      # `TarExtractor` and asserts the guest's own `/bin/bash` is there and executable.
-      # That is the check whose absence let a first install on a device report
-      # `proot error: '/bin/bash' not found` (2026-11-03) after a "successful" unpack.
-      # The URL comes from the lock file, so this download is the same bytes the APK
-      # carries; it fails the job if the pinned upstream is gone rather than silently
-      # skipping the harness.
-      - name: Fetch the pinned Ubuntu base payload
-        run: |
-          set -o pipefail
-          url="$(node -e 'process.stdout.write(require("./runtime.lock.json").artifacts.ubuntuBase.url)')"
-          mkdir -p build/downloads
-          curl -fsSL --retry 3 --retry-delay 2 -o build/downloads/ubuntu-base.tar.gz "$url"
-          ls -l build/downloads/ubuntu-base.tar.gz
-      # `host-session` 是唯一跑「真宿主 + 真 pi」的纯逻辑 harness（PiEngineSession →
-      # 成帧器 → 状态机 → transcript）。没有 `build/pi-contract` 它会打印 SKIP 然后 exit 0 ——
-      # 而 exit 0 没有 `harness: OK` 在 run-app-pure-checks.sh 里算失败（对，它红过）。
-      # 引擎树与 pi-contract job 共用同一个缓存键，命中时 npm 只是 up-to-date。
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Cache the pinned engine (for the host-session harness)
-        uses: actions/cache@v4
-        with:
-          path: build/pi-contract
-          key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
-      - name: Install the pinned engine
-        run: |
-          version="$(node -e 'const t=require("fs").readFileSync("tools/fetch-runtime.mjs","utf8");process.stdout.write(/const PI_VERSION = "([^"]+)"/.exec(t)[1])')"
-          mkdir -p build/pi-contract
-          ( cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$version" )
-          test -d "build/pi-contract/node_modules/@earendil-works/pi-coding-agent/dist"
-      - name: Run app/src/test harnesses
-        run: |
-          set -o pipefail
-          bash tools/run-app-pure-checks.sh 2>&1 | tee /tmp/pure-checks.log
-      - name: Report harness failures as annotations
-        if: failure()
-        run: |
-          grep -E "error:|FAILED|^FAIL " /tmp/pure-checks.log | tail -40 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-
-  # The engine is pinned (`PI_VERSION` in tools/fetch-runtime.mjs) but this app does
-  # not fork it: it reads pi's files, sends pi's RPC commands and ships extensions
-  # into pi. Every one of those is a *fact about the pinned engine*, written down in
-  # App code with a `file:line` that describes one version. Bumping the pin without
-  # this job keeps the app compiling while the facts move underneath it — which is
-  # how §M11 (a capability silently downgraded) and §M12 (config keys silently
-  # deleted) both reached a device. `tools/pi-contract.mjs` asserts the surface and
-  # the behaviour, and every failure names the App code that has to be re-read.
-  contract:
-    name: pi contract (pinned engine)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-      # Installing the pinned engine is the bulk of this job's wall time; the key
-      # names the version so a bump re-installs exactly once.
-      - name: Cache the pinned engine
-        uses: actions/cache@v4
-        with:
-          path: build/pi-contract
-          key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
-      - name: Assert the app's assumptions about the pinned engine
-        run: node tools/pi-contract.mjs
-      # sdk-host（feat/sdk-host 迁移线）：先断言宿主依赖的 SDK 面还在，再用真引擎驱动一遍，
-      # 分别在「打包入口 / 包名回退 / 模拟 proroot 的 scandir 补丁」三种条件下。
-      # 升级 pi 时这三步红了，按 docs/sdk-host/upgrading.md 处理。
-      - name: sdk-host contract (SDK surface the host depends on)
-        run: node tools/sdk-host/contract.mjs
-      - name: sdk-host behaviour (bundle entry)
-        run: node tools/sdk-host/test.mjs
-      - name: sdk-host behaviour (package fallback)
-        run: node tools/sdk-host/test.mjs --no-bundle
-      - name: sdk-host behaviour (proroot scandir patch)
-        run: node tools/sdk-host/test.mjs --scandir-fix
-      # The other half of the tool-output check. The `pure-checks` job asserts the App still
-      # parses the committed fixture; this asserts the fixture is still what the pinned
-      # engine produces, by running pi's own tool implementations against a fixed workspace
-      # and diffing the capture. It runs here rather than as its own job because the engine
-      # this step needs is exactly the one the step above just installed (`--pi` points at
-      # it), so it adds no download and no `npm install` of its own. Without this half a
-      # stale capture would keep passing forever: the fixture and the parser would agree
-      # with each other and with nothing pi actually emits.
-      - name: Assert the committed tool fixtures match the pinned engine
-        run: node tools/collect-tool-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
-
-      # 会话树：`TreeModel.kt` 是 SDK `/tree` 的移植，标准答案由 SDK 自己的 TreeSelectorComponent 生成。
-      # 这一步断言标准答案仍是固定版本的引擎会产出的；引擎升级改了树的规则，这里先红，再去改移植。
-      - name: Assert the committed session-tree fixture matches the pinned engine
-        run: node tools/collect-tree-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
-
-      # 会话列表：宿主 `sessionlist.mjs` 与 Kotlin `SessionListModel.kt` 移植了 `/resume` 选择器的树与行文字，
-      # 标准答案由 SDK 自己的 SessionSelectorComponent 生成。
-      - name: Assert the committed session-list fixture matches the pinned engine
-        run: node tools/collect-session-list-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
-
-  # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
-  # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,
-  # the outer comment stays open, and the compiler swallows the rest of the file. The
-  # errors it then reports are at the top of the file and describe the symptom
-  # ("Parameter name expected", "'key' overrides nothing"), with one honest "Unclosed
-  # comment" at the very last line. That has cost a full CI cycle five times in this
-  # repository, in five different files, and every time the fix was one character.
-  # Warnings in task briefs do not work; a check does.
-  comments:
-    name: Kotlin comment nesting guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Reject nested block comments
-        run: python3 tools/check-nested-comments.py
-
-  # The UI is being unified onto one set of tokens and components (`PiSheet`,
-  # `PiTopBarIcon`, `PiSettingsCard` + `PiSettingsMetrics.groupGap`). None of that
-  # is type-checked: a new `ModalBottomSheet(` call, a fresh
-  # `MaterialTheme.typography.*`, or one more hard-coded `12.dp` all compile, and
-  # the drift only shows up on a phone. `tools/check-ui-consistency.sh` turns the
-  # invariants into a gate: rule 1 is a hard failure (only `PiSheet.kt` may call
-  # `ModalBottomSheet`), rules 2 and 3 are ratchets against baselines written down
-  # in the script itself. No JDK, no Android SDK, no Gradle — grep/sed/awk/find.
-  ui-consistency:
-    name: UI consistency (tokens & components)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check UI consistency
-        run: bash tools/check-ui-consistency.sh
-      # compileSdk 37 让 Java 11 的 `Path.of` / `Files.readString` 编译通过，真机没有：
-      # 0.1.7 的「运行时解包失败 / No static method of(...)」就是这类。见脚本头部。
-      - name: Reject Java 11+ APIs Android's runtime does not have
-        run: bash tools/check-android-apis.sh
-
-  # tawcroot 从钉死的提交构建（无二进制下载）。不挡合并：构建脚本依赖上游的 build.sh，
-  # 上游改了它这里才会红；没有产物时 App 把 tawcroot 判「缺组件」并回退 proot。
-  tawcroot:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # 与 APK 任务同样的 SDK 接法（runner 自带 SDK，action 挂不上去也不致命）。
-      - uses: android-actions/setup-android@v3
-        continue-on-error: true
-      - name: Ensure an NDK is available
-        run: |
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          if [ ! -d "$SDK" ]; then
-            echo "::error::no Android SDK at $SDK"
-            exit 1
-          fi
-          if ! ls -d "$SDK"/ndk/* >/dev/null 2>&1; then
-            # runner 的 cmdline-tools 目录名随镜像变（16.0 / latest 都见过），别写死。
-            sdkm="$(command -v sdkmanager || find "$SDK/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | sort -V | tail -1)"
-            [ -n "$sdkm" ] || { echo "::error::no sdkmanager under $SDK"; exit 1; }
-            yes 2>/dev/null | "$sdkm" --licenses >/dev/null 2>&1 || true
-            yes 2>/dev/null | "$sdkm" --install "ndk;27.2.12479018" >/dev/null 2>&1 || true
-          fi
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          ls -d "$SDK"/ndk/* || { echo "::error::still no NDK under $SDK/ndk"; exit 1; }
-      - name: Build libtawcroot.so from the pinned tag
-        run: bash tools/build-tawcroot.sh "$RUNNER_TEMP/tawcroot-out"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: libtawcroot
-          path: ${{ runner.temp }}/tawcroot-out/libtawcroot.so

@@ -224,7 +224,7 @@ Host 协议采用 JSON Lines（JSONL），支持类型化命令、事件、状�
 
 SDK Host 集成已经合并进入主开发分支，但更广泛的迁移和集成工作仍在持续推进，不能将尚未迁移完成的服务视为已经全部完成。
 
-具体实现和迁移说明见 [`docs/sdk-host/`](docs/sdk-host/README.md)。
+具体架构与协议说明见 [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md) 和 [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md)。
 
 ---
 
@@ -246,7 +246,7 @@ SDK Host 集成已经合并进入主开发分支，但更广泛的迁移和集�
 
 当前项目锁定的版本：
 
-- `@earendil-works/pi-coding-agent`：**1.5.0**
+- `@earendil-works/pi-coding-agent`：**1.5.2**
 
 引擎版本通过仓库中的依赖和运行时工具统一管理。
 
@@ -274,26 +274,21 @@ cd pi-android
 ```bash
 ./gradlew :rpc:test
 
-node tools/pi-contract.mjs
-
 node tools/sdk-host/contract.mjs
 node tools/sdk-host/test.mjs
-
-bash tools/run-app-pure-checks.sh
 ```
 
 ### 构建变绿能证明什么、不能证明什么
 
-每次推送都会跑协议、APK（`targetSdk` 28 与 36 两个变体）、上游契约、纯逻辑、注释、UI 一致性和 TAWCROOT 这些任务。绿代表：能编译、对钉住的 pi 版本的契约仍然成立、所有不依赖设备就能查的东西都过了。
+每次推送都会跑 `:rpc` 协议单测、SDK Host 真引擎契约与集成测试、静态安全守卫、TAWCROOT 构建，以及 APK（`targetSdk` 28 与 36）签名打包。绿代表：能编译、宿主对固定版本 Pi SDK 的契约与行为通过、两个变体的签名 APK 装配完整。
 
-它**不**代表每一屏都在真机上跑过。运行时切换、三套后端、扩展 UI 以及其它设备级行为都是手工在真机上验的 —— 其中 TAWCROOT 是三者里最没跑熟的，仍在收敛。
+它**不**代表每一屏都在真机上跑过。运行时切换、三套后端、扩展 UI 以及其它设备级行为需要在真机上验证。
 
-SDK Host 的实现文档：
+SDK Host 的核心文档：
 
-- [`docs/sdk-host/README.md`](docs/sdk-host/README.md)
 - [`docs/sdk-host/architecture.md`](docs/sdk-host/architecture.md)
 - [`docs/sdk-host/protocol.md`](docs/sdk-host/protocol.md)
-- [`docs/sdk-host/migration.md`](docs/sdk-host/migration.md)
+- [`docs/runtime-engines.md`](docs/runtime-engines.md)
 
 ---
 
