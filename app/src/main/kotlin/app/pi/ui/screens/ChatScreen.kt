@@ -2076,7 +2076,7 @@ internal fun ChatBody(
             }
 
             val showDown = !following
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = showUp || showDown,
                 enter = fadeIn() + scaleIn(initialScale = 0.85f),
                 exit = fadeOut() + scaleOut(targetScale = 0.85f),
@@ -2402,7 +2402,7 @@ private const val FRESH_ROW_KEYS_MAX = 200
 
 
 private data class TailObservation(
-    val revision: Long,
+    val revision: Int,
     val renderedCount: Int,
     val poke: Long,
     val totalItems: Int,

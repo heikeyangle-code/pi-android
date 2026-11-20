@@ -53,6 +53,7 @@ fun SettingsHome(
                 it.key.contains(q, ignoreCase = true)
         }.take(40)
     }
+    val palette = PiTheme.palette
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "设置", onBack = onBack)
         LazyColumn(
@@ -102,7 +103,6 @@ fun SettingsHome(
                 return@LazyColumn
             }
 
-            val palette = PiTheme.palette
             fun groupCards(
                 label: String,
                 ids: List<String>,
