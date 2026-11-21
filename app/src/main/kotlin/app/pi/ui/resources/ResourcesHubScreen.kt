@@ -51,7 +51,9 @@ import app.pi.host.ExtensionsAccess
 import app.pi.host.HostAdvanced
 import app.pi.i18n.tr
 import app.pi.packages.PiProjectTrust
+import app.pi.packages.PiResourceCatalog.Layer
 import app.pi.packages.PiResourceCatalog.Type
+import app.pi.ui.PiSeg
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.PiSheet
@@ -217,9 +219,26 @@ private fun Hub(
         item { TrustCard(model, onOpenTrustPolicy) }
 
         item {
+            PiSeg(
+                options = listOf(tr("全局视图", "Global View"), tr("本项目视图", "Project View")),
+                selectedIndex = if (model.effectiveLayer == Layer.Global) 0 else 1,
+                onSelect = { idx ->
+                    if (idx == 0 || model.projectUsable) {
+                        model.layer = if (idx == 0) Layer.Global else Layer.Project
+                    }
+                },
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            )
+        }
+
+        item {
             val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                ModelsSectionLabel(if (model.hasLoaded) tr("pi 已加载", "Loaded by Pi") else tr("读取中…", "Loading…"))
+                ModelsSectionLabel(
+                    if (!model.hasLoaded) tr("读取中…", "Loading…")
+                    else if (model.effectiveLayer == Layer.Project) tr("pi 已加载 · 本项目视图", "Loaded by Pi · Project View")
+                    else tr("pi 已加载 · 全局视图", "Loaded by Pi · Global View"),
+                )
                 ModelsCard {
                     Column {
                         listOf(
@@ -464,9 +483,17 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
                     )
                     if (st.needsTrust) TagPill(tr("含 .pi 资源", "Has .pi resources"), tone = PiTheme.palette.accent)
                 }
-                Text(PiProjectTrust.explanation(st), style = PiTheme.text.meta, color = PiTheme.palette.muted)
-                PiProjectTrust.recordNote(st)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim) }
-                Text(st.cwd, style = PiTheme.text.monoSmall, color = PiTheme.palette.dim, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = shortPath(st.cwd),
+                    style = PiTheme.text.monoSmall,
+                    color = PiTheme.palette.dim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!st.trusted || expanded) {
+                    Text(PiProjectTrust.explanation(st), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                    PiProjectTrust.recordNote(st)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim) }
+                }
                 error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
                 if (expanded) {
                     TrustOptionList(
