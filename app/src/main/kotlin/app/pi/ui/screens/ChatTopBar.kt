@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
@@ -63,6 +64,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.chat.ChatAction
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
@@ -130,7 +132,7 @@ internal fun ChatTopBar(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions)
+                    .clickable(onClickLabel = tr("打开会话列表", "Open sessions"), onClick = onOpenSessions)
                     .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -140,13 +142,13 @@ internal fun ChatTopBar(
                         .graphicsLayer { alpha = dotAlpha?.value ?: 1f }
                         .clip(CircleShape)
                         .background(engineDotColor)
-                        .semantics { contentDescription = "引擎：$engineLabel" },
+                        .semantics { contentDescription = tr("引擎：$engineLabel", "Engine: $engineLabel") },
                 )
                 Spacer(Modifier.width(9.dp))
                 Column(modifier = Modifier.weight(1f, fill = false)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = sessionTitle ?: "新对话",
+                            text = sessionTitle ?: tr("新对话", "New Chat"),
                             modifier = Modifier.weight(1f, fill = false),
                             style = PiType.topBarTitle,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -177,25 +179,25 @@ internal fun ChatTopBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ChatTopBarAction(
                     onClick = { onAction(ChatAction.NewSession) },
-                    contentDescription = "新建会话",
+                    contentDescription = tr("新建会话", "New session"),
                     icon = Icons.Filled.Add,
                 )
                 if (widePhone) {
                     ChatTopBarAction(
                         onClick = { onToggleSearch(false) },
-                        contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
+                        contentDescription = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
                         icon = Icons.Filled.Search,
                         highlighted = searchOpen,
                     )
                 }
                 ChatTopBarAction(
                     onClick = onOpenWorkspace,
-                    contentDescription = "工作区",
+                    contentDescription = tr("工作区", "Workspace"),
                     icon = Icons.Filled.FolderOpen,
                 )
                 ChatTopBarAction(
                     onClick = { commandCenterOpen = true },
-                    contentDescription = "更多操作",
+                    contentDescription = tr("更多操作", "More actions"),
                     icon = Icons.Filled.MoreHoriz,
                 )
             }
@@ -261,7 +263,7 @@ private fun ChatCommandCenterSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "对话操作",
+                    text = tr("对话操作", "Chat Actions"),
                     modifier = Modifier.weight(1f),
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -277,32 +279,32 @@ private fun ChatCommandCenterSheet(
                 )
             }
 
-            // 顶部 2×3 快捷磁贴网格
+            // 顶部 2×3 快捷磁贴网格（高频核心入口，不再与顶栏「+ 新建会话」重复）
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     QuickTile(
-                        icon = Icons.Filled.Add,
-                        label = "新建会话",
-                        tint = palette.accent,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onAction(ChatAction.NewSession) },
-                    )
-                    QuickTile(
                         icon = Icons.Filled.AccountTree,
-                        label = "会话树",
-                        tint = palette.border,
+                        label = tr("会话树", "Session Tree"),
+                        tint = palette.accent,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.OpenTree) },
                     )
                     QuickTile(
-                        icon = if (toolsExpanded) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
-                        label = if (toolsExpanded) "收起工具" else "展开工具",
-                        tint = palette.warning,
+                        icon = Icons.Filled.Article,
+                        label = tr("系统提示词", "System Prompt"),
+                        tint = palette.borderAccent,
                         modifier = Modifier.weight(1f),
-                        onClick = onToggleTools,
+                        onClick = { onAction(ChatAction.ViewSystemPrompt) },
+                    )
+                    QuickTile(
+                        icon = Icons.Filled.Refresh,
+                        label = tr("重载扩展", "Reload"),
+                        tint = palette.success,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.ReloadResources) },
                     )
                 }
                 Row(
@@ -310,22 +312,22 @@ private fun ChatCommandCenterSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     QuickTile(
-                        icon = Icons.Filled.Refresh,
-                        label = "重载扩展",
-                        tint = palette.success,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onAction(ChatAction.ReloadResources) },
-                    )
-                    QuickTile(
                         icon = Icons.Filled.Share,
-                        label = "导出会话",
+                        label = tr("导出会话", "Export"),
                         tint = palette.mdLink,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.ExportSession) },
                     )
                     QuickTile(
+                        icon = Icons.Filled.Info,
+                        label = tr("会话信息", "Session Info"),
+                        tint = palette.warning,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAction(ChatAction.SessionStats) },
+                    )
+                    QuickTile(
                         icon = Icons.Filled.Settings,
-                        label = "设置",
+                        label = tr("设置", "Settings"),
                         tint = palette.muted,
                         modifier = Modifier.weight(1f),
                         onClick = { onAction(ChatAction.OpenSettings) },
@@ -333,65 +335,66 @@ private fun ChatCommandCenterSheet(
                 }
             }
 
-            // 导航与内容组
-            ActionGroupCard(title = "浏览与导航") {
+            // 显示与导航组
+            ActionGroupCard(title = tr("显示与导航", "View & Navigation")) {
+                SheetActionRow(
+                    icon = if (toolsExpanded) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
+                    label = if (toolsExpanded) tr("收起全部工具输出", "Collapse all tool outputs") else tr("展开全部工具输出", "Expand all tool outputs"),
+                    trailingBadge = if (toolsExpanded) tr("已展开", "Expanded") else tr("已收起", "Collapsed"),
+                    onClick = onToggleTools,
+                )
+                SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.Search,
-                    label = if (searchOpen) "关闭对话内查找" else "在对话里查找",
+                    label = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
                     onClick = onToggleSearch,
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.KeyboardArrowUp,
-                    label = "跳到上一条提问",
+                    label = tr("跳到上一条提问", "Previous prompt"),
                     onClick = { onJumpQuestion(false) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.KeyboardArrowDown,
-                    label = "跳到下一条提问",
+                    label = tr("跳到下一条提问", "Next prompt"),
                     onClick = { onJumpQuestion(true) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.ContentCopy,
-                    label = "复制最后一条回复",
+                    label = tr("复制最后一条回复", "Copy last response"),
                     onClick = { onAction(ChatAction.CopyLastAssistant) },
                 )
             }
 
             // 会话管理组
-            ActionGroupCard(title = "当前会话") {
+            ActionGroupCard(title = tr("当前会话", "Current Session")) {
                 SheetActionRow(
                     icon = Icons.Filled.Edit,
-                    label = "重命名会话",
+                    label = tr("重命名会话", "Rename session"),
                     onClick = { onAction(ChatAction.RenameSession) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.AccountTree,
-                    label = "从历史消息分叉",
-                    subtitle = "回到某条消息创建新分支会话",
+                    label = tr("从历史消息分叉", "Fork from message"),
+                    subtitle = tr("回到某条消息创建新分支会话", "Create a new session branched from an earlier message"),
                     onClick = { onAction(ChatAction.PickFork) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.ContentCopy,
-                    label = "复制当前会话",
+                    label = tr("复制当前会话", "Clone session"),
                     onClick = { onAction(ChatAction.CloneSession) },
                 )
                 SheetHairline()
                 SheetActionRow(
                     icon = Icons.Filled.Tune,
-                    label = "会话与队列设置",
-                    subtitle = "引导/后续模式、自动压缩、重试",
+                    label = tr("会话与队列设置", "Session & queue settings"),
+                    subtitle = tr("引导/后续模式、自动压缩、重试", "Steer/follow-up mode, auto-compaction, retry"),
                     onClick = { onAction(ChatAction.ToolsSheet) },
-                )
-                SheetHairline()
-                SheetActionRow(
-                    icon = Icons.Filled.Info,
-                    label = "会话信息与统计",
-                    onClick = { onAction(ChatAction.SessionStats) },
                 )
             }
         }
@@ -471,6 +474,7 @@ private fun SheetActionRow(
     icon: ImageVector,
     label: String,
     subtitle: String? = null,
+    trailingBadge: String? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -504,6 +508,18 @@ private fun SheetActionRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        if (trailingBadge != null) {
+            Text(
+                text = trailingBadge,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
         }
     }
 }

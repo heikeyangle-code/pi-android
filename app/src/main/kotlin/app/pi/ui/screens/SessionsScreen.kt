@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
@@ -111,9 +112,15 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.tree.SessionTreeView
 
 /** 覆盖层里的两个视图，同一条分段控件切换（`03-navigation-decision.md`）。 */
-enum class SessionsView(val label: String) {
-    List("会话"),
-    Tree("会话树"),
+enum class SessionsView {
+    List,
+    Tree;
+
+    val label: String
+        get() = when (this) {
+            List -> tr("会话", "Sessions")
+            Tree -> tr("会话树", "Session Tree")
+        }
 }
 
 /**
@@ -227,14 +234,14 @@ fun SessionsScreen(
                             searchOpen = !searchOpen
                             if (!searchOpen) session.setSessionQuery("")
                         },
-                        contentDescription = if (searchOpen) "收起搜索" else "搜索会话",
+                        contentDescription = if (searchOpen) tr("收起搜索", "Hide search") else tr("搜索会话", "Search sessions"),
                         icon = Icons.Filled.Search,
                     )
                 }
-                PiTopBarIcon(onClick = onOpenWorkspace, contentDescription = "工作区", icon = Icons.Filled.FolderOpen)
-                PiTopBarIcon(onClick = onOpenSettings, contentDescription = "设置", icon = Icons.Filled.Settings)
+                PiTopBarIcon(onClick = onOpenWorkspace, contentDescription = tr("工作区", "Workspace"), icon = Icons.Filled.FolderOpen)
+                PiTopBarIcon(onClick = onOpenSettings, contentDescription = tr("设置", "Settings"), icon = Icons.Filled.Settings)
                 Box {
-                    PiTopBarIcon(onClick = { menuOpen = true }, contentDescription = "更多", icon = Icons.Filled.MoreVert)
+                    PiTopBarIcon(onClick = { menuOpen = true }, contentDescription = tr("更多", "More"), icon = Icons.Filled.MoreVert)
                     if (menuOpen) PiMenu(
                         expanded = true,
                         onDismiss = { menuOpen = false },
@@ -242,16 +249,16 @@ fun SessionsScreen(
                         items = buildList {
                             if (view == SessionsView.List) {
                                 // 官方 Ctrl+P：每行多印一条完整路径。
-                                add(PiMenuItem(if (list.showPath) "隐藏路径" else "显示路径") {
+                                add(PiMenuItem(if (list.showPath) tr("隐藏路径", "Hide paths") else tr("显示路径", "Show paths")) {
                                     menuOpen = false
                                     session.toggleSessionPath()
                                 })
                             }
-                            add(PiMenuItem("导入会话") {
+                            add(PiMenuItem(tr("导入会话", "Import session")) {
                                 menuOpen = false
                                 importPicker.launch("*/*")
                             })
-                            add(PiMenuItem(if (view == SessionsView.List) "刷新会话列表" else "刷新会话树") {
+                            add(PiMenuItem(if (view == SessionsView.List) tr("刷新会话列表", "Refresh sessions") else tr("刷新会话树", "Refresh session tree")) {
                                 menuOpen = false
                                 if (view == SessionsView.List) session.refreshSessions() else session.refreshTree()
                             })
@@ -314,9 +321,9 @@ fun SessionsScreen(
                 // 官方 Ctrl+S 的循环顺序：threaded → recent → relevance → threaded。
                 SessionFilterPill(
                     text = when (list.query.sort) {
-                        SessionSort.Threaded -> "按树"
-                        SessionSort.Recent -> "按时间"
-                        SessionSort.Relevance -> "按相关度"
+                        SessionSort.Threaded -> tr("按树", "Threaded")
+                        SessionSort.Recent -> tr("按时间", "Recent")
+                        SessionSort.Relevance -> tr("按相关度", "Relevance")
                     },
                     glyph = "↕",
                     active = false,
@@ -331,16 +338,16 @@ fun SessionsScreen(
                     },
                 )
                 SessionFilterPill(
-                    text = "仅命名",
+                    text = tr("仅命名", "Named only"),
                     glyph = if (list.query.namedOnly) "✓" else "○",
                     active = list.query.namedOnly,
                     onClick = { session.setSessionNamedOnly(!list.query.namedOnly) },
                 )
                 if (collapsedGroups.isNotEmpty() && list.query.query.isBlank()) {
-                    SessionFilterPill(text = "展开全部", glyph = "▾", active = false, onClick = { collapsedGroups = emptySet() })
+                    SessionFilterPill(text = tr("展开全部", "Expand all"), glyph = "▾", active = false, onClick = { collapsedGroups = emptySet() })
                 } else if (groups.size > 1 && list.query.query.isBlank()) {
                     SessionFilterPill(
-                        text = "折叠其他",
+                        text = tr("折叠其他", "Collapse others"),
                         glyph = "▸",
                         active = false,
                         onClick = { collapsedGroups = groups.filterNot { it.current }.map { it.cwd }.toSet() },
@@ -394,33 +401,33 @@ fun SessionsScreen(
                     rows.isEmpty() && list.loading -> SessionsLoading(list.loaded, list.loadTotal)
                     rows.isEmpty() && list.failed -> SessionsEmpty(
                         icon = Icons.Filled.Warning,
-                        title = "读不到会话列表",
-                        body = "这一次读取失败了，不是没有会话。可以再试一次。",
-                        actionLabel = "重试",
+                        title = tr("读不到会话列表", "Failed to load sessions"),
+                        body = tr("这一次读取失败了，不是没有会话。可以再试一次。", "Loading failed this time — it does not mean there are no sessions. Please try again."),
+                        actionLabel = tr("重试", "Retry"),
                         onAction = { session.refreshSessions() },
                     )
                     rows.isEmpty() && list.queryError != null -> SessionsEmpty(
                         icon = Icons.Filled.Warning,
-                        title = "搜索写法有误",
+                        title = tr("搜索写法有误", "Invalid search syntax"),
                         body = list.queryError.orEmpty(),
                     )
                     // 官方空态（`SessionList.render`）：各自带官方给的下一步。
                     rows.isEmpty() && noQuery && list.query.namedOnly -> SessionsEmpty(
                         icon = Icons.Filled.Forum,
-                        title = "没有已命名的会话",
-                        body = "所有会话都还没有名字。",
-                        actionLabel = "显示全部会话",
+                        title = tr("没有已命名的会话", "No named sessions"),
+                        body = tr("所有会话都还没有名字。", "None of your sessions have a name yet."),
+                        actionLabel = tr("显示全部会话", "Show all sessions"),
                         onAction = { session.setSessionNamedOnly(false) },
                     )
                     rows.isEmpty() && noQuery -> SessionsEmpty(
                         icon = Icons.Filled.Forum,
-                        title = "还没有会话",
-                        body = "发出第一条消息后，会话就会出现在这里。",
+                        title = tr("还没有会话", "No sessions yet"),
+                        body = tr("发出第一条消息后，会话就会出现在这里。", "Your sessions will appear here after you send your first message."),
                     )
                     rows.isEmpty() -> SessionsEmpty(
                         icon = Icons.Filled.Search,
-                        title = "没有匹配的会话",
-                        body = "换一个关键词，或关掉「仅命名」。",
+                        title = tr("没有匹配的会话", "No matching sessions"),
+                        body = tr("换一个关键词，或关掉「仅命名」。", "Try a different keyword or turn off \"Named only\"."),
                     )
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -483,7 +490,7 @@ fun SessionsScreen(
                                 if (group.rows.isEmpty()) {
                                     item(key = "empty:${group.cwd}") {
                                         Text(
-                                            "这个工作区还没有会话",
+                                            tr("这个工作区还没有会话", "No sessions in this workspace yet"),
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(horizontal = PiSettingsMetrics.pageHorizontal)
@@ -521,7 +528,7 @@ fun SessionsScreen(
                         }
                         item(key = "hint") {
                             Text(
-                                "长按一行：重命名、删除。当前会话要切换到别的会话后才能删除。",
+                                tr("长按一行：重命名、删除。当前会话要切换到别的会话后才能删除。", "Long-press a row to rename or delete. Switch away from the active session before deleting it."),
                                 modifier = Modifier.padding(
                                     start = PiSettingsMetrics.pageHorizontal,
                                     end = PiSettingsMetrics.pageHorizontal,
@@ -575,7 +582,7 @@ fun SessionsScreen(
                 Text(
                     buildString {
                         append(sessionAgeLabel(System.currentTimeMillis() - acting.lastActivityAt))
-                        append(" · ").append(acting.messageCount).append(" 条")
+                        append(" · ").append(acting.messageCount).append(tr(" 条", if (acting.messageCount == 1) " msg" else " msgs"))
                         if (acting.cwdShort.isNotEmpty()) append(" · ").append(acting.cwdShort)
                     },
                     modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
@@ -595,7 +602,7 @@ fun SessionsScreen(
             }
             SessionActionRow(
                 icon = Icons.Filled.Edit,
-                label = "重命名",
+                label = tr("重命名", "Rename"),
                 tone = MaterialTheme.colorScheme.onSurface,
                 iconTint = PiTheme.palette.accent,
             ) {
@@ -604,7 +611,7 @@ fun SessionsScreen(
             }
             SessionActionRow(
                 icon = Icons.Filled.Delete,
-                label = if (actingIsCurrent) "删除（当前会话不能删，先切换到别的会话）" else "删除会话",
+                label = if (actingIsCurrent) tr("删除（当前会话不能删，先切换到别的会话）", "Delete (switch away from active session first)") else tr("删除会话", "Delete session"),
                 tone = if (actingIsCurrent) PiTheme.palette.muted else PiTheme.palette.error,
                 iconTint = if (actingIsCurrent) PiTheme.palette.muted else PiTheme.palette.error,
                 enabled = !actingIsCurrent,
@@ -614,7 +621,7 @@ fun SessionsScreen(
             }
             SessionActionRow(
                 icon = Icons.Filled.Close,
-                label = "取消",
+                label = tr("取消", "Cancel"),
                 tone = PiTheme.palette.muted,
                 iconTint = PiTheme.palette.muted,
             ) { actions = null }
@@ -641,20 +648,20 @@ fun SessionsScreen(
         val isActive = pending.isCurrent || (activeFile != null && pending.file.name == activeFile)
         PiDialog(onDismissRequest = { confirming = null }) {
             PiDialogTitle(
-                title = "删除会话",
+                title = tr("删除会话", "Delete Session"),
                 glyph = if (isActive) "⊘" else "!",
                 glyphTone = if (isActive) PiTheme.palette.muted else PiTheme.palette.error,
             )
             PiDialogBody(
                 if (isActive) {
-                    "「${pending.displayName}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。"
+                    tr("「${pending.displayName}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。", "\"${pending.displayName}\" is the active session and pi is writing to it. Switch to another session before deleting.")
                 } else {
-                    "删除「${pending.displayName}」？有回收站时会移到回收站，没有就直接删除，无法恢复。"
+                    tr("删除「${pending.displayName}」？有回收站时会移到回收站，没有就直接删除，无法恢复。", "Delete \"${pending.displayName}\"? It will be moved to Trash if available, or permanently deleted.")
                 },
             )
             PiDialogActions {
                 PiDialogAction(
-                    label = "删除",
+                    label = tr("删除", "Delete"),
                     primary = true,
                     enabled = !isActive,
                     tone = PiTheme.palette.error,
@@ -663,7 +670,7 @@ fun SessionsScreen(
                         confirming = null
                     },
                 )
-                PiDialogAction(label = "取消", primary = false, onClick = { confirming = null })
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { confirming = null })
             }
         }
     }
@@ -674,7 +681,7 @@ fun SessionsScreen(
     if (missingPrompt != null) {
         PiDialog(onDismissRequest = { session.dismissCwdMissing() }) {
             PiDialogTitle(
-                title = "原工作目录不可用",
+                title = tr("原工作目录不可用", "Original Directory Unavailable"),
                 glyph = "!",
                 glyphTone = PiTheme.palette.warning,
             )
@@ -682,13 +689,13 @@ fun SessionsScreen(
                 buildString {
                     append(missingPrompt.reason)
                     missingPrompt.issue?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(it) }
-                    append("\n\n可在当前工作区继续打开，或分支一份新会话到当前工作区。")
+                    append(tr("\n\n可在当前工作区继续打开，或分支一份新会话到当前工作区。", "\n\nYou can resume it in the current workspace, or fork a new session here."))
                 },
             )
             PiDialogActions {
-                PiDialogAction(label = "取消", primary = false, onClick = { session.dismissCwdMissing() })
-                PiDialogAction(label = "继续打开", primary = false, onClick = { session.resolveCwdMissingContinue() })
-                PiDialogAction(label = "分支到此", primary = true, onClick = { session.resolveCwdMissingFork() })
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { session.dismissCwdMissing() })
+                PiDialogAction(label = tr("继续打开", "Resume"), primary = false, onClick = { session.resolveCwdMissingContinue() })
+                PiDialogAction(label = tr("分支到此", "Fork here"), primary = true, onClick = { session.resolveCwdMissingFork() })
             }
         }
     }
@@ -696,12 +703,12 @@ fun SessionsScreen(
 
 /** 顶栏右侧的文字：搜索加载中给出明确提示，首次读取展示进度，平时展示匹配数/总数。 */
 private fun sessionCountText(list: app.pi.ui.PiSessionViewModel.SessionListState): String = when {
-    list.loading && list.query.query.isNotBlank() && list.loadTotal > 0 -> "搜索 ${list.loaded}/${list.loadTotal}"
-    list.loading && list.query.query.isNotBlank() -> "搜索中…"
-    list.rows.isEmpty() && list.loading && list.loadTotal > 0 -> "读取 ${list.loaded}/${list.loadTotal}"
-    list.rows.isEmpty() && list.loading -> "读取中…"
-    list.total > list.rows.size -> "${list.rows.size}/${list.total} 条"
-    else -> "${list.rows.size} 条"
+    list.loading && list.query.query.isNotBlank() && list.loadTotal > 0 -> tr("搜索 ${list.loaded}/${list.loadTotal}", "Searching ${list.loaded}/${list.loadTotal}")
+    list.loading && list.query.query.isNotBlank() -> tr("搜索中…", "Searching…")
+    list.rows.isEmpty() && list.loading && list.loadTotal > 0 -> tr("读取 ${list.loaded}/${list.loadTotal}", "Loading ${list.loaded}/${list.loadTotal}")
+    list.rows.isEmpty() && list.loading -> tr("读取中…", "Loading…")
+    list.total > list.rows.size -> tr("${list.rows.size}/${list.total} 条", "${list.rows.size}/${list.total}")
+    else -> tr("${list.rows.size} 条", "${list.rows.size}")
 }
 
 /** 带可选动作按钮的空态。动作就是官方在同一处给出的下一步（按 Tab 看全部 / 显示全部）。 */
@@ -786,7 +793,7 @@ private fun SessionSearchField(query: String, loading: Boolean, onChange: (Strin
                 )
                 Box(Modifier.weight(1f)) {
                     if (localInput.isEmpty()) {
-                        Text("搜索名字、内容、目录", style = PiTheme.text.monoSmall, color = PiTheme.palette.muted)
+                        Text(tr("搜索名字、内容、目录", "Search name, content, or folder"), style = PiTheme.text.monoSmall, color = PiTheme.palette.muted)
                     }
                     BasicTextField(
                         value = localInput,
@@ -802,14 +809,14 @@ private fun SessionSearchField(query: String, loading: Boolean, onChange: (Strin
                 }
                 if (loading) {
                     Text(
-                        "索引中…",
+                        tr("索引中…", "Indexing…"),
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.accent,
                     )
                 }
                 if (localInput.isNotEmpty()) {
                     Text(
-                        "清除",
+                        tr("清除", "Clear"),
                         modifier = Modifier.clickable {
                             localInput = ""
                             onChange("")
@@ -821,7 +828,7 @@ private fun SessionSearchField(query: String, loading: Boolean, onChange: (Strin
             }
         }
         Text(
-            error ?: "re:<正则> 正则匹配 · \"短语\" 精确匹配",
+            error ?: tr("re:<正则> 正则匹配 · \"短语\" 精确匹配", "re:<pattern> regex · \"phrase\" exact"),
             modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap, start = SESSIONS_SEARCH_PADDING),
             style = PiTheme.text.meta,
             color = if (error != null) PiTheme.palette.error else PiTheme.palette.muted,
@@ -932,14 +939,14 @@ private fun SessionListRow(
                         horizontalArrangement = Arrangement.spacedBy(SESSIONS_ROW_PROP_GAP),
                     ) {
                         Text(
-                            sessionAgeLabel(System.currentTimeMillis() - summary.lastActivityAt) + " · " + summary.messageCount + " 条",
+                            sessionAgeLabel(System.currentTimeMillis() - summary.lastActivityAt) + " · " + summary.messageCount + tr(" 条", if (summary.messageCount == 1) " msg" else " msgs"),
                             style = PiTheme.text.meta.copy(fontFeatureSettings = "tnum"),
                             color = PiTheme.palette.muted,
                             maxLines = 1,
                         )
                         if (active) {
                             Text(
-                                text = "当前",
+                                text = tr("当前", "Current"),
                                 modifier = Modifier
                                     .clip(PiShapes.tag)
                                     .background(accent.copy(alpha = 0.16f))
@@ -949,10 +956,10 @@ private fun SessionListRow(
                                 maxLines = 1,
                             )
                         }
-                        if (named) SessionTag("已命名")
+                        if (named) SessionTag(tr("已命名", "Named"))
                         if (!workspaceTag.isNullOrBlank()) SessionTag(workspaceTag)
                         if (forkedFrom != null) {
-                            SessionTag(if (forkedFrom.length > SESSIONS_TAG_NAME_MAX) "分支" else "来自 $forkedFrom")
+                            SessionTag(if (forkedFrom.length > SESSIONS_TAG_NAME_MAX) tr("分支", "Fork") else tr("来自 $forkedFrom", "From $forkedFrom"))
                         }
                     }
                     if (showPath) {
@@ -970,12 +977,12 @@ private fun SessionListRow(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .clickable(onClickLabel = "会话操作", onClick = onLongPress),
+                        .clickable(onClickLabel = tr("会话操作", "Session actions"), onClick = onLongPress),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "更多操作",
+                        contentDescription = tr("更多操作", "More actions"),
                         tint = PiTheme.palette.dim,
                         modifier = Modifier.size(17.dp),
                     )
@@ -1098,7 +1105,7 @@ private fun WorkspaceGroupHeader(
                 overflow = TextOverflow.Ellipsis,
             )
             if (current) {
-                Text("当前工作区", style = PiTheme.text.meta, color = accent, maxLines = 1)
+                Text(tr("当前工作区", "Current workspace"), style = PiTheme.text.meta, color = accent, maxLines = 1)
             }
         }
         if (onNewSession != null) {
@@ -1113,12 +1120,12 @@ private fun WorkspaceGroupHeader(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Add,
-                    contentDescription = "在当前工作区新建会话",
+                    contentDescription = tr("在当前工作区新建会话", "New session in current workspace"),
                     tint = accent,
                     modifier = Modifier.size(13.dp),
                 )
                 Text(
-                    text = "新建",
+                    text = tr("新建", "New"),
                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                     color = accent,
                     maxLines = 1,
@@ -1172,11 +1179,11 @@ private fun SessionFilterPill(text: String, glyph: String, active: Boolean, onCl
 private fun SessionsLoading(loaded: Int, total: Int) {
     SessionsEmpty(
         icon = Icons.Filled.Refresh,
-        title = "正在读取会话…",
+        title = tr("正在读取会话…", "Loading sessions…"),
         body = if (total > 0) {
-            "已读 $loaded/$total 个会话文件，读到的会陆续出现。只有这一次会慢，之后打开列表是即时的。"
+            tr("已读 $loaded/$total 个会话文件，读到的会陆续出现。只有这一次会慢，之后打开列表是即时的。", "Loaded $loaded/$total session files; results appear as they load. Only this first load is slow — reopening is instant.")
         } else {
-            "正在打开会话目录。会话多的时候需要几秒，之后打开列表是即时的。"
+            tr("正在打开会话目录。会话多的时候需要几秒，之后打开列表是即时的。", "Opening session directory. This may take a few seconds with many sessions; reopening is instant.")
         },
         progress = if (total > 0) (loaded.toFloat() / total).coerceIn(0f, 1f) else null,
     )
@@ -1265,7 +1272,7 @@ private fun NewSessionButton(onClick: () -> Unit) {
             tint = MaterialTheme.colorScheme.onPrimary,
         )
         Text(
-            "新建会话",
+            tr("新建会话", "New Session"),
             style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onPrimary,
         )

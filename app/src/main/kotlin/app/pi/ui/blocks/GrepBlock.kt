@@ -13,6 +13,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
@@ -71,7 +73,7 @@ internal fun GrepBlock(
     // [truncationNotice] because pi's grep warning line carries **three** counts
     // (`renderers/grep.js:194-206`) and this app read only one of them: a search cut at pi's
     // 100-match limit, or one whose long lines were dropped, used to report nothing at all.
-    val notice = remember(item.details, fullOutputPath) {
+    val notice = remember(item.details, fullOutputPath, PiLocale.isZh) {
         grepNotice(fullOutputPath, item.details)
     }
     val plan = remember(body, expanded, fullOutput) {
@@ -87,7 +89,7 @@ internal fun GrepBlock(
     // One exit point for this row ([toolFooterText]): only `已截断` / `无输出` are left to it,
     // because the state, the two counts, pi's exit code and the duration all live in the
     // header's reading now.
-    val footer = remember(item.output, item.outputTruncated, state) {
+    val footer = remember(item.output, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
@@ -109,8 +111,8 @@ internal fun GrepBlock(
                         item,
                         state,
                         count = body.matchCount,
-                        unit = "处",
-                        extra = if (body.fileCount > 1) "${body.fileCount} 个文件" else null,
+                        unit = tr("处", if (body.matchCount == 1) "match" else "matches"),
+                        extra = if (body.fileCount > 1) tr("${body.fileCount} 个文件", "${body.fileCount} files") else null,
                     ),
                     expanded = expanded,
                     expandable = hasBody,
@@ -118,7 +120,7 @@ internal fun GrepBlock(
                 if (expanded) {
                     when {
                         body.empty -> Text(
-                            text = "没有匹配",
+                            text = tr("没有匹配", "No matches found"),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                         )
@@ -140,12 +142,12 @@ internal fun GrepBlock(
                     }
                     if (omitted > 0 && !fullOutput) {
                         ExpandAllLabel(
-                            text = "展开全部（还有 $omitted 处）",
+                            text = tr("展开全部（还有 $omitted 处）", "Show all ($omitted more)"),
                             onClick = { fullOutput = true },
                         )
                     } else if (omitted > 0) {
                         Text(
-                            text = "还有 $omitted 处未显示",
+                            text = tr("还有 $omitted 处未显示", "$omitted more not shown"),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -181,7 +183,7 @@ private fun GrepGroupHeading(path: String, matches: Int) {
         // draws the file name `c-text`). pi's `toolTitle` is the tool *name*'s
         // colour, not a body row's.
         MonoText(text = path, color = palette.text, modifier = Modifier.weight(1f), maxLines = 1)
-        Text(text = "$matches 处", style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
+        Text(text = tr("$matches 处", if (matches == 1) "1 match" else "$matches matches"), style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.render.rich.html.PiHtmlBlockView
 import app.pi.ui.render.rich.html.splitHtmlSvg
 import app.pi.ui.render.rich.svg.PiSvgFenceView
@@ -51,12 +52,12 @@ internal fun PiHtmlFence(
         PiRichCodeBlock(
             code = code, info = info, highlighted = highlighted, style = style,
             palette = palette, classic = classic,
-            extraMenu = listOf(PiCardMenuItem("预览渲染") { preview = true }),
+            extraMenu = listOf(PiCardMenuItem(tr("预览渲染", "Preview Rendered")) { preview = true }),
         )
     } else {
         PiRichCardFrame(
             code = code, info = info, palette = palette,
-            menu = listOf(PiCardMenuItem("查看源码") { preview = false }),
+            menu = listOf(PiCardMenuItem(tr("查看源码", "View Source")) { preview = false }),
         ) {
             PiHtmlSegments(
                 text = code,

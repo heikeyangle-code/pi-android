@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.engine.PiEngineSession
+import app.pi.i18n.tr
 import app.pi.ui.extension.ExtensionWidgetsSheet
 import kotlinx.coroutines.flow.conflate
 import androidx.compose.ui.semantics.contentDescription
@@ -543,12 +544,18 @@ internal fun ChatBody(
             suspend fun reportCopyFailure(failure: WorkspaceCopy) {
                 when (failure) {
                     WorkspaceCopy.Unreadable -> session.notifyUser(
-                        "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。请重新选择，或先把文件存到手机上再选。",
+                        tr(
+                            "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。请重新选择，或先把文件存到手机上再选。",
+                            "Cannot read this file: the source could not open it (permission denied or file deleted). Try picking it again or save it locally first.",
+                        ),
                         warning = true,
                     )
                     is WorkspaceCopy.OutOfSpace -> session.notifyUser(workspaceOutOfSpaceText(failure), warning = true)
                     WorkspaceCopy.WriteFailed -> session.notifyUser(
-                        "写不进工作区（目录不可写，或写入过程中空间用尽）。这个文件没有被复制，也没有加进这条消息。",
+                        tr(
+                            "写不进工作区（目录不可写，或写入过程中空间用尽）。这个文件没有被复制，也没有加进这条消息。",
+                            "Could not write to workspace (directory not writable or disk full). The file was not copied or added to this message.",
+                        ),
                         warning = true,
                     )
                     is WorkspaceCopy.Copied -> Unit
@@ -589,7 +596,10 @@ internal fun ChatBody(
                         uri = uri,
                         sourceUri = uri,
                         bytes = null,
-                        why = "当前模型单条消息最多内联 $maxPerMessage 张图片",
+                        why = tr(
+                            "当前模型单条消息最多内联 $maxPerMessage 张图片",
+                            "the current model allows at most $maxPerMessage inline images per message",
+                        ),
                     )
                     continue
                 }
@@ -602,14 +612,20 @@ internal fun ChatBody(
                 }
                 when {
                     bytes == null || bytes.isEmpty() -> session.notifyUser(
-                        "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
+                        tr(
+                            "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
+                            "Failed to read selected image: unable to open file (permission denied or deleted). Please pick another image.",
+                        ),
                         warning = true,
                     )
                     bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> fallbackInline(
                         uri = uri,
                         sourceUri = uri,
                         bytes = null,
-                        why = "原图超过 ${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB，没有整张读进内存来压缩",
+                        why = tr(
+                            "原图超过 ${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB，没有整张读进内存来压缩",
+                            "original image exceeds ${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB and was not loaded into memory for resizing",
+                        ),
                     )
                     else -> {
                         val image = withContext(Dispatchers.IO) {
@@ -621,10 +637,17 @@ internal fun ChatBody(
                                 sourceUri = null,
                                 bytes = bytes,
                                 why = if (autoResize) {
-                                    "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
-                                        "base64 ${mibLabel(limits.maxBase64Chars)} MB）压不出足够小的版本"
+                                    tr(
+                                        "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
+                                            "base64 ${mibLabel(limits.maxBase64Chars)} MB）压不出足够小的版本",
+                                        "could not resize within the current model's limits (max ${limits.maxWidth}×${limits.maxHeight}, " +
+                                            "base64 ${mibLabel(limits.maxBase64Chars)} MB)",
+                                    )
                                 } else {
-                                    "自动缩放关着（images.autoResize: false），这张图也不是 pi 能直接内联的格式，转换不出来"
+                                    tr(
+                                        "自动缩放关着（images.autoResize: false），这张图也不是 pi 能直接内联的格式，转换不出来",
+                                        "auto-resize is off (images.autoResize: false) and this format could not be converted for inline sending",
+                                    )
                                 },
                             )
                         } else {
@@ -638,10 +661,16 @@ internal fun ChatBody(
                                     uri = uri,
                                     sourceUri = null,
                                     bytes = bytes,
-                                    why = "本条消息的内联额度不够（上限 ${mibLabel(verdict.limitBytes)} MB，" +
-                                        "已用 ${mibLabel(verdict.usedBytes)} MB，这张" +
-                                        (if (autoResize) "压缩后 " else "原图 ") +
-                                        "${mibLabel(verdict.candidateBytes)} MB）",
+                                    why = tr(
+                                        "本条消息的内联额度不够（上限 ${mibLabel(verdict.limitBytes)} MB，" +
+                                            "已用 ${mibLabel(verdict.usedBytes)} MB，这张" +
+                                            (if (autoResize) "压缩后 " else "原图 ") +
+                                            "${mibLabel(verdict.candidateBytes)} MB）",
+                                        "not enough inline budget left in this message (limit ${mibLabel(verdict.limitBytes)} MB, " +
+                                            "used ${mibLabel(verdict.usedBytes)} MB, this image " +
+                                            (if (autoResize) "resized " else "original ") +
+                                            "${mibLabel(verdict.candidateBytes)} MB)",
+                                    ),
                                 )
                             }
                         }
@@ -1531,7 +1560,10 @@ internal fun ChatBody(
             ChatAction.ImportSession -> {
                 if (args.isNotBlank()) {
                     session.notifyUser(
-                        "本应用改用文件选择器导入，参数「$args」被忽略：请在选择器里挑那个 .jsonl 文件。",
+                        tr(
+                            "本应用改用文件选择器导入，参数「$args」被忽略：请在选择器里挑那个 .jsonl 文件。",
+                            "This app imports via the file picker; argument \"$args\" was ignored. Please select the .jsonl file in the picker.",
+                        ),
                     )
                 }
                 importPicker.launch("*/*")
@@ -1572,13 +1604,19 @@ internal fun ChatBody(
             ChatAction.ReloadResources -> session.reloadResources()
             ChatAction.BugReport -> session.generateBugReport(args.takeIf { it.isNotBlank() }) { text ->
                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
-                session.notifyUser("问题报告已复制（${text.length} 字），可以直接粘贴发给 pi 开发者。")
+                session.notifyUser(
+                    tr(
+                        "问题报告已复制（${text.length} 字），可以直接粘贴发给 pi 开发者。",
+                        "Bug report copied (${text.length} chars). You can paste it directly to share with pi developers.",
+                    ),
+                )
             }
             ChatAction.ContextUsage -> {
                 session.refreshStats()
                 sheet = ChatSheet.Context
             }
             ChatAction.ToolsSheet -> sheet = ChatSheet.Tools
+            ChatAction.ViewSystemPrompt -> sheet = ChatSheet.SystemPrompt
             ChatAction.TriggerShortcut -> {
                 val key = command?.shortcutKey ?: command?.name
                 if (!key.isNullOrBlank()) session.triggerExtensionShortcut(key)
@@ -2010,7 +2048,7 @@ internal fun ChatBody(
                     if (showUp) {
                         ScrollArrowButton(
                             icon = Icons.Filled.KeyboardArrowUp,
-                            label = "回到顶部",
+                            label = tr("回到顶部", "Scroll to top"),
                             onClick = {
                                 pauseTail()
                                 windowOpen = true
@@ -2021,7 +2059,7 @@ internal fun ChatBody(
                     if (showDown) {
                         ScrollArrowButton(
                             icon = Icons.Filled.KeyboardArrowDown,
-                            label = "回到最新",
+                            label = tr("回到最新", "Jump to latest"),
                             unreadCount = unseenRows,
                             onClick = {
                                 windowOpen = false
@@ -2209,7 +2247,7 @@ internal fun ChatBody(
                 if (uri != null) {
                     handlePickedUris(listOf(uri))
                 } else {
-                    session.notifyUser("剪贴板里当前没有可读取的图片。", warning = true)
+                    session.notifyUser(tr("剪贴板里当前没有可读取的图片。", "No readable image found in clipboard."), warning = true)
                 }
             },
             onInsertMention = {
@@ -2396,7 +2434,7 @@ private fun ChatEmptyWelcome(
         }
         Spacer(Modifier.height(14.dp))
         Text(
-            text = "准备就绪",
+            text = tr("准备就绪", "Ready"),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
             color = palette.text,
         )
@@ -2406,7 +2444,7 @@ private fun ChatEmptyWelcome(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = workspaceName.ifBlank { "默认工作区" },
+                text = workspaceName.ifBlank { tr("默认工作区", "Default Workspace") },
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -2433,8 +2471,8 @@ private fun ChatEmptyWelcome(
         }
         Spacer(Modifier.height(22.dp))
         val starters = listOf(
-            "帮我梳理当前工作区的目录结构和核心文件",
-            "检查项目里最近的改动和潜在问题",
+            tr("帮我梳理当前工作区的目录结构和核心文件", "Summarize the directory structure and key files in this workspace"),
+            tr("检查项目里最近的改动和潜在问题", "Review recent changes and potential issues in this project"),
             "/resume",
         )
         Column(
@@ -2444,7 +2482,7 @@ private fun ChatEmptyWelcome(
         ) {
             starters.forEach { prompt ->
                 val isResume = prompt == "/resume"
-                val label = if (isResume) "查看历史会话与会话树…" else prompt
+                val label = if (isResume) tr("查看历史会话与会话树…", "Browse past sessions & session tree…") else prompt
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

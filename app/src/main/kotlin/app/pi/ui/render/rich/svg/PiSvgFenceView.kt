@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import app.pi.i18n.tr
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
@@ -172,12 +173,12 @@ fun PiSvgFenceView(
                 return@LaunchedEffect
             }
             if (source.isBlank()) {
-                draw = PiSvgDraw.Unavailable("SVG 内容为空")
+                draw = PiSvgDraw.Unavailable(tr("SVG 内容为空", "SVG content is empty"))
                 return@LaunchedEffect
             }
             if (source.length > PI_SVG_MAX_SOURCE_CHARS) {
                 draw = PiSvgDraw.Unavailable(
-                    "源码超过 ${PI_SVG_MAX_SOURCE_CHARS / 1024} KiB，未渲染",
+                    tr("源码超过 ${PI_SVG_MAX_SOURCE_CHARS / 1024} KiB，未渲染", "Source exceeds ${PI_SVG_MAX_SOURCE_CHARS / 1024} KiB; not rendered"),
                 )
                 return@LaunchedEffect
             }
@@ -199,7 +200,7 @@ fun PiSvgFenceView(
                 // 引擎之外的意外（含 AndroidSVG 内部抛出的 Error）：同样回退源码，
                 // 一条消息里的围栏不能把整个会话带崩。
                 PiSvgDraw.Unavailable(
-                    "SVG 渲染失败：${error.message ?: error::class.java.simpleName}",
+                    tr("SVG 渲染失败：${error.message ?: error::class.java.simpleName}", "SVG render failed: ${error.message ?: error::class.java.simpleName}"),
                 )
             }
             (draw as? PiSvgDraw.Ready)?.let { PiSvgDrawCache.put(PiSvgDrawKey(source, widthPx), it) }
@@ -211,7 +212,7 @@ fun PiSvgFenceView(
         val image = ready?.takeIf { !showSource }
 
         val status: String? = when (draw) {
-            PiSvgDraw.Streaming -> "生成中…"
+            PiSvgDraw.Streaming -> tr("生成中…", "Streaming…")
             else -> null
         }
 
@@ -223,7 +224,7 @@ fun PiSvgFenceView(
             menu = buildList {
                 if (image != null) {
                     add(
-                        PiCardMenuItem("适应屏幕") {
+                        PiCardMenuItem(tr("适应屏幕", "Fit to screen")) {
                             scale = PI_SVG_MIN_ZOOM
                             offset = Offset.Zero
                         },
@@ -231,7 +232,7 @@ fun PiSvgFenceView(
                 }
                 if (ready != null) {
                     add(
-                        PiCardMenuItem(if (showSource) "查看图" else "查看 SVG 源码") {
+                        PiCardMenuItem(if (showSource) tr("查看图", "View diagram") else tr("查看 SVG 源码", "View SVG source")) {
                             pinMode = if (showSource) 2 else 1
                         },
                     )
@@ -262,6 +263,8 @@ fun PiSvgFenceView(
                     }
                 }
                 val playingSvg = if (decided) PiSvgAnimationSlots.isActive(animKey) else room
+                val animSvgDesc = tr("动画 SVG", "Animated SVG")
+                val staticSvgDesc = tr("SVG 渲染图", "SVG image")
                 if (isAnimatedSvg && playingSvg) {
                     PiSvgAnimatedView(
                         svg = image.animatedSvg,
@@ -274,7 +277,7 @@ fun PiSvgFenceView(
                                 if (darkPage) Modifier.clip(shape).background(Color(0xFFF4F4F2)) else Modifier,
                             )
                             .clipToBounds()
-                            .semantics { contentDescription = "动画 SVG" },
+                            .semantics { contentDescription = animSvgDesc },
                     )
                 } else Box {
                 Canvas(
@@ -301,7 +304,7 @@ fun PiSvgFenceView(
                                 offset = nextOffset
                             }
                         }
-                        .semantics { contentDescription = "SVG 渲染图" },
+                        .semantics { contentDescription = staticSvgDesc },
                 ) {
                     val fit = piSvgFitScale(
                         viewWidth = size.width,
@@ -329,7 +332,7 @@ fun PiSvgFenceView(
                 if (isAnimatedSvg) {
                     // 名额用完时的静态图：点一下才开始播（会顶掉最早在播的那个）。
                     Text(
-                        text = "▶ 播放动画",
+                        text = tr("▶ 播放动画", "▶ Play animation"),
                         style = PiTheme.text.monoSmall,
                         color = palette.accent,
                         modifier = Modifier
@@ -351,7 +354,7 @@ fun PiSvgFenceView(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "渲染中…",
+                        text = tr("渲染中…", "Rendering…"),
                         style = PiTheme.text.monoSmall,
                         color = palette.dim,
                     )
@@ -436,7 +439,7 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
         throw cancellation
     } catch (error: Throwable) {
         return PiSvgDraw.Unavailable(
-            "SVG 安全检查失败：${error.message ?: error::class.java.simpleName}",
+            tr("SVG 安全检查失败：${error.message ?: error::class.java.simpleName}", "SVG safety check failed: ${error.message ?: error::class.java.simpleName}"),
         )
     }
     val safe = when (sanitized) {
@@ -448,7 +451,7 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
     val svg = try {
         SVG.getFromString(PiSvgFit.compat(safe))
     } catch (error: Exception) {
-        return PiSvgDraw.Unavailable("SVG 解析失败：${error.message ?: error::class.java.simpleName}")
+        return PiSvgDraw.Unavailable(tr("SVG 解析失败：${error.message ?: error::class.java.simpleName}", "SVG parse failed: ${error.message ?: error::class.java.simpleName}"))
     }
     PiSvgFit.fill(svg)
 
@@ -468,7 +471,7 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
         // 例外即失败：`renderToPicture` 抛异常时不会有半张图交回来。
         svg.renderToPicture(baseWidth, baseHeight)
     } catch (error: Exception) {
-        return PiSvgDraw.Unavailable("SVG 绘制失败：${error.message ?: error::class.java.simpleName}")
+        return PiSvgDraw.Unavailable(tr("SVG 绘制失败：${error.message ?: error::class.java.simpleName}", "SVG render failed: ${error.message ?: error::class.java.simpleName}"))
     }
     return PiSvgDraw.Ready(
         picture, baseWidth, baseHeight, aspect,
@@ -685,7 +688,7 @@ private fun PiSvgSourceBlock(source: String, notice: String?) {
         )
         if (hidden > 0) {
             Text(
-                text = "… 还有 $hidden 行，复制源码查看完整内容",
+                text = tr("… 还有 $hidden 行，复制源码查看完整内容", "… $hidden more line(s); copy source for full content"),
                 style = PiTheme.text.monoSmall,
                 color = palette.muted,
                 modifier = Modifier.padding(top = 4.dp),

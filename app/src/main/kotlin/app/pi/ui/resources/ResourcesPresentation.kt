@@ -1,5 +1,6 @@
 package app.pi.ui.resources
 
+import app.pi.i18n.tr
 import app.pi.packages.PiLoadedResources
 import app.pi.packages.PiLoadedResources.DiagKind
 import app.pi.packages.PiResourceCatalog
@@ -52,12 +53,14 @@ fun typeSummary(type: Type, ov: Overview): String {
     val loaded = ov.loaded[type] ?: 0
     val off = ov.disabled[type] ?: 0
     return when {
-        loaded == 0 && off == 0 -> "没有"
-        off == 0 -> "$loaded 个已加载"
-        loaded == 0 -> "$off 个已关闭"
-        else -> "$loaded 个已加载 · $off 个已关闭"
+        loaded == 0 && off == 0 -> tr("没有", "None")
+        off == 0 -> tr("$loaded 个已加载", "$loaded loaded")
+        loaded == 0 -> tr("$off 个已关闭", "$off disabled")
+        else -> tr("$loaded 个已加载 · $off 个已关闭", "$loaded loaded · $off disabled")
     }
 }
+
+internal val TAG_NOT_LOADED: String get() = tr("未加载", "Not loaded")
 
 // ------------------------------------------------------------------ 一类资源的列表
 
@@ -80,39 +83,39 @@ fun infoFor(item: PiResourceCatalog.Item, effective: Boolean, loaded: PiLoadedRe
     Type.Extensions -> {
         val e = loaded.extensions.firstOrNull { it.path == item.path || it.resolvedPath == item.path }
         if (e == null) {
-            RowInfo(false, null, if (effective) listOf("未加载") else emptyList())
+            RowInfo(false, null, if (effective) listOf(TAG_NOT_LOADED) else emptyList())
         } else {
             RowInfo(
                 loaded = true,
                 description = null,
                 tags = listOfNotNull(
-                    e.commands.size.takeIf { it > 0 }?.let { "$it 命令" },
-                    e.tools.size.takeIf { it > 0 }?.let { "$it 工具" },
-                    e.flags.size.takeIf { it > 0 }?.let { "$it 参数" },
-                    e.shortcuts.size.takeIf { it > 0 }?.let { "$it 快捷键" },
-                ).ifEmpty { if (e.events.isNotEmpty()) listOf("监听事件") else emptyList() },
+                    e.commands.size.takeIf { it > 0 }?.let { tr("$it 命令", "$it cmds") },
+                    e.tools.size.takeIf { it > 0 }?.let { tr("$it 工具", "$it tools") },
+                    e.flags.size.takeIf { it > 0 }?.let { tr("$it 参数", "$it flags") },
+                    e.shortcuts.size.takeIf { it > 0 }?.let { tr("$it 快捷键", "$it keys") },
+                ).ifEmpty { if (e.events.isNotEmpty()) listOf(tr("监听事件", "Event hooks")) else emptyList() },
             )
         }
     }
     Type.Skills -> {
         val k = loaded.skills.firstOrNull { it.filePath == item.path }
         if (k == null) {
-            RowInfo(false, null, if (effective) listOf("未加载") else emptyList())
+            RowInfo(false, null, if (effective) listOf(TAG_NOT_LOADED) else emptyList())
         } else {
-            RowInfo(true, k.description.ifBlank { null }, listOfNotNull("/skill:${k.name}", if (k.disableModelInvocation) "仅手动调用" else null))
+            RowInfo(true, k.description.ifBlank { null }, listOfNotNull("/skill:${k.name}", if (k.disableModelInvocation) tr("仅手动调用", "Manual only") else null))
         }
     }
     Type.Prompts -> {
         val p = loaded.prompts.firstOrNull { it.filePath == item.path }
         if (p == null) {
-            RowInfo(false, null, if (effective) listOf("未加载") else emptyList())
+            RowInfo(false, null, if (effective) listOf(TAG_NOT_LOADED) else emptyList())
         } else {
             RowInfo(true, p.description.ifBlank { null }, listOfNotNull("/${p.name}", p.argumentHint?.takeIf { it.isNotBlank() }))
         }
     }
     Type.Themes -> {
         val t = loaded.themes.firstOrNull { it.path == item.path }
-        if (t == null) RowInfo(false, null, if (effective) listOf("未加载") else emptyList()) else RowInfo(true, null, emptyList())
+        if (t == null) RowInfo(false, null, if (effective) listOf(TAG_NOT_LOADED) else emptyList()) else RowInfo(true, null, emptyList())
     }
 }
 
@@ -157,16 +160,21 @@ fun describeDiagnostic(d: PiLoadedResources.Diagnostic): String {
     val c = d.collision
     if (d.kind == DiagKind.Collision && c != null) {
         val kind = Type.of(c.resourceType + "s")?.label ?: c.resourceType
-        return "$kind「${c.name}」重名：用了 ${shortPath(c.winnerPath)}，忽略了 ${shortPath(c.loserPath)}"
+        val winner = shortPath(c.winnerPath)
+        val loser = shortPath(c.loserPath)
+        return tr(
+            "$kind「${c.name}」重名：用了 $winner，忽略了 $loser",
+            "$kind \"${c.name}\" collision: kept $winner, ignored $loser",
+        )
     }
-    val where = d.path?.takeIf { it.isNotBlank() }?.let { "（${shortPath(it)}）" }.orEmpty()
+    val where = d.path?.takeIf { it.isNotBlank() }?.let { tr("（${shortPath(it)}）", " (${shortPath(it)})") }.orEmpty()
     return d.message.trim() + where
 }
 
 fun diagnosticLabel(kind: DiagKind): String = when (kind) {
-    DiagKind.Error -> "错误"
-    DiagKind.Warning -> "警告"
-    DiagKind.Collision -> "重名"
+    DiagKind.Error -> tr("错误", "Error")
+    DiagKind.Warning -> tr("警告", "Warning")
+    DiagKind.Collision -> tr("重名", "Collision")
 }
 
 /** 某一类资源相关的诊断。扩展没有 `ResourceDiagnostic`，它的问题是加载错误 / 警告，单独给。 */
@@ -190,9 +198,9 @@ data class ContextRow(val path: String, val role: String, val size: Long, val tr
  * `addendum`（追加）→ `project_context`（上下文文件）→ 技能清单 → cwd。
  */
 fun contextRows(loaded: PiLoadedResources.Loaded): List<ContextRow> = buildList {
-    loaded.systemPrompt?.let { add(ContextRow(it, "替换系统提示", 0, false)) }
-    loaded.appendSystemPrompt.forEach { add(ContextRow(it, "追加到系统提示", 0, false)) }
-    loaded.contextFiles.forEach { add(ContextRow(it.path, "上下文文件", it.body.size, it.body.truncated)) }
+    loaded.systemPrompt?.let { add(ContextRow(it, tr("替换系统提示", "Replaces System Prompt"), 0, false)) }
+    loaded.appendSystemPrompt.forEach { add(ContextRow(it, tr("追加到系统提示", "Appends to System Prompt"), 0, false)) }
+    loaded.contextFiles.forEach { add(ContextRow(it.path, tr("上下文文件", "Context File"), it.body.size, it.body.truncated)) }
 }
 
 // ------------------------------------------------------------------ 扩展包的来源
@@ -213,31 +221,42 @@ fun sourceView(source: String, kind: String, name: String?, version: String?, pi
     val s = source.trim()
     return when (kind) {
         "npm" -> SourceView(
-            headline = "npm 包 ${name ?: s}",
-            tags = listOfNotNull(version?.let { if (pinned) "固定 @$it" else "版本范围 $it" }, if (pinned) "更新会跳过" else null),
+            headline = tr("npm 包 ${name ?: s}", "npm package ${name ?: s}"),
+            tags = listOfNotNull(
+                version?.let { if (pinned) tr("固定 @$it", "Pinned @$it") else tr("版本范围 $it", "Range $it") },
+                if (pinned) tr("更新会跳过", "Skipped on update") else null,
+            ),
             warning = null,
             pinned = pinned,
         )
         "git" -> SourceView(
-            headline = "git 仓库 ${name ?: s}",
-            tags = listOfNotNull(if (pinned) "固定到 ${version ?: "某个 ref"}" else "跟随默认分支", if (pinned) "更新会跳过" else null),
+            headline = tr("git 仓库 ${name ?: s}", "git repo ${name ?: s}"),
+            tags = listOfNotNull(
+                if (pinned) tr("固定到 ${version ?: "某个 ref"}", "Pinned to ${version ?: "ref"}") else tr("跟随默认分支", "Tracks default branch"),
+                if (pinned) tr("更新会跳过", "Skipped on update") else null,
+            ),
             warning = null,
             pinned = pinned,
         )
         "local" -> SourceView(
-            headline = "本地路径 ${name ?: s}",
-            tags = listOf("本地"),
-            warning = if (looksLikePath(s)) null else "没有 npm: 或 git: 前缀，pi 会把「$s」当作本地路径。要装 npm 包请写 npm:$s。",
+            headline = tr("本地路径 ${name ?: s}", "Local path ${name ?: s}"),
+            tags = listOf(tr("本地", "Local")),
+            warning = if (looksLikePath(s)) null else tr("没有 npm: 或 git: 前缀，pi 会把「$s」当作本地路径。要装 npm 包请写 npm:$s。", "Without an npm: or git: prefix, pi treats \"$s\" as a local path. Use npm:$s to install an npm package."),
             pinned = false,
         )
-        else -> SourceView("无法识别的来源", emptyList(), "pi 解析不了这个来源。npm 包写 npm:名字，git 写 git:github.com/用户/仓库 或完整的 https:// 地址。", false)
+        else -> SourceView(
+            tr("无法识别的来源", "Unrecognized source"),
+            emptyList(),
+            tr("pi 解析不了这个来源。npm 包写 npm:名字，git 写 git:github.com/用户/仓库 或完整的 https:// 地址。", "Pi cannot parse this source. Use npm:<name> for npm packages, or git:github.com/user/repo or a full https:// URL for git."),
+            false,
+        )
     }
 }
 
 /** 一个已配置包那一行的标签：层级 + 来源种类 + 固定 + 过滤。 */
 fun packageTags(scope: String, filtered: Boolean, installed: Boolean, view: SourceView): List<String> = buildList {
-    add(if (scope == "project") "本项目" else "全局")
+    add(if (scope == "project") tr("本项目", "Project") else tr("全局", "Global"))
     addAll(view.tags)
-    if (filtered) add("只加载其中一部分")
-    if (!installed) add("没装好")
+    if (filtered) add(tr("只加载其中一部分", "Filtered"))
+    if (!installed) add(tr("没装好", "Not installed"))
 }

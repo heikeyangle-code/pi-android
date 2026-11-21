@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.pi.i18n.tr
 import app.pi.packages.PiResourceCatalog.Parsed
 import app.pi.packages.PiResourceFile
 import app.pi.ui.PiTopBar
@@ -89,7 +90,7 @@ internal fun ResourceFileEditor(
             when (val r = model.writeFile(cur.path, draft, PiResourceFile.Stamp(cur.size, cur.mtimeMs))) {
                 is Parsed.Ok -> {
                     doc = cur.copy(text = draft, size = r.value.size, mtimeMs = r.value.mtimeMs)
-                    message = "已保存。回到枢纽页点「重新加载」后，正在运行的会话才会读到。"
+                    message = tr("已保存。回到枢纽页点「重新加载」后，正在运行的会话才会读到。", "Saved. Tap \"Reload\" on the hub for the running session to pick up the change.")
                 }
                 is Parsed.Error -> failure = r.message
             }
@@ -99,15 +100,15 @@ internal fun ResourceFileEditor(
 
     Column(Modifier.fillMaxSize().imePadding()) {
         PiTopBar(
-            title = d?.let { it.kind.label + " · " + it.rel.substringAfterLast('/') } ?: "编辑",
+            title = d?.let { it.kind.label + " · " + it.rel.substringAfterLast('/') } ?: tr("编辑", "Edit"),
             onBack = { leave() },
             actions = {
-                if (d?.writable == true) PrimaryAction(if (saving) "保存中…" else "保存", enabled = canSave, onClick = { save() })
+                if (d?.writable == true) PrimaryAction(if (saving) tr("保存中…", "Saving…") else tr("保存", "Save"), enabled = canSave, onClick = { save() })
             },
         )
         when {
             loadError != null -> PiInfoNote(loadError.orEmpty(), tone = PiTheme.palette.error)
-            d == null -> PiInfoNote("读取中…")
+            d == null -> PiInfoNote(tr("读取中…", "Loading…"))
             else -> Column(
                 Modifier.weight(1f).padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 verticalArrangement = Arrangement.spacedBy(PiSpacing.inline),
@@ -115,8 +116,8 @@ internal fun ResourceFileEditor(
                 TagRow(
                     listOfNotNull(
                         d.scope.label.ifEmpty { null },
-                        if (d.writable) "可编辑" else "只读",
-                        if (dirty) "未保存" else null,
+                        if (d.writable) tr("可编辑", "Editable") else tr("只读", "Read-only"),
+                        if (dirty) tr("未保存", "Unsaved") else null,
                     ),
                 )
                 Text(d.path, style = PiTheme.text.monoSmall, color = PiTheme.palette.dim)
@@ -151,26 +152,26 @@ internal fun ResourceFileEditor(
     if (askDiscard) {
         PiSettingsDialog(
             onDismissRequest = { askDiscard = false },
-            title = "放弃未保存的改动？",
-            body = "这份文件有没保存的修改，现在返回会丢掉它们。",
-            confirmationLabel = "放弃",
+            title = tr("放弃未保存的改动？", "Discard unsaved changes?"),
+            body = tr("这份文件有没保存的修改，现在返回会丢掉它们。", "This file has unsaved changes that will be lost if you leave now."),
+            confirmationLabel = tr("放弃", "Discard"),
             onConfirm = { askDiscard = false; onClose() },
             confirmationTone = PiTheme.palette.error,
-            dismissalLabel = "继续编辑",
+            dismissalLabel = tr("继续编辑", "Keep Editing"),
             onDismissButton = { askDiscard = false },
         )
     }
     if (askDelete && d != null) {
         PiSettingsDialog(
             onDismissRequest = { askDelete = false },
-            title = deleteLabel(d) + "？",
+            title = deleteLabel(d) + tr("？", "?"),
             sub = d.path,
             body = if (d.kind == PiResourceFile.Kind.Skill && d.rel.substringAfterLast('/') == "SKILL.md") {
-                "会删掉整个技能目录，包括里面的 references/、scripts/ 等所有文件。不可撤销。"
+                tr("会删掉整个技能目录，包括里面的 references/、scripts/ 等所有文件。不可撤销。", "This deletes the entire skill directory, including references/, scripts/, and all other files inside. This cannot be undone.")
             } else {
-                "文件会被删除，不可撤销。"
+                tr("文件会被删除，不可撤销。", "This file will be permanently deleted. This cannot be undone.")
             },
-            confirmationLabel = "删除",
+            confirmationLabel = tr("删除", "Delete"),
             onConfirm = {
                 askDelete = false
                 scope.launch {
@@ -181,14 +182,14 @@ internal fun ResourceFileEditor(
                 }
             },
             confirmationTone = PiTheme.palette.error,
-            dismissalLabel = "取消",
+            dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { askDelete = false },
         )
     }
 }
 
 private fun deleteLabel(d: PiResourceFile.Doc): String =
-    if (d.kind == PiResourceFile.Kind.Skill && d.rel.substringAfterLast('/') == "SKILL.md") "删除整个技能" else "删除这个文件"
+    if (d.kind == PiResourceFile.Kind.Skill && d.rel.substringAfterLast('/') == "SKILL.md") tr("删除整个技能", "Delete Entire Skill") else tr("删除这个文件", "Delete File")
 
 // ------------------------------------------------------------------ 新建
 
@@ -213,7 +214,7 @@ internal fun NewResourceDialog(
 
     PiSettingsDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = "新建",
+        title = tr("新建", "New"),
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                 if (initial == null) {
@@ -224,15 +225,15 @@ internal fun NewResourceDialog(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(text = "全局", active = !project, onClick = { project = false })
-                    PiSettingsChip(text = "本项目", active = project, enabled = model.projectUsable, onClick = { project = true })
+                    PiSettingsChip(text = tr("全局", "Global"), active = !project, onClick = { project = false })
+                    PiSettingsChip(text = tr("本项目", "Project"), active = project, enabled = model.projectUsable, onClick = { project = true })
                 }
-                if (!model.projectUsable) Text("项目还没被信任，只能建全局的。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                if (!model.projectUsable) Text(tr("项目还没被信任，只能建全局的。", "Project is not trusted yet; only global resources can be created."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                 PiEditorField(value = name, onValueChange = { name = it; failure = null }, placeholder = type.nameHint)
                 (nameError ?: failure)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             }
         },
-        confirmationLabel = if (busy) "创建中…" else "创建",
+        confirmationLabel = if (busy) tr("创建中…", "Creating…") else tr("创建", "Create"),
         confirmationEnabled = !busy && name.isNotEmpty() && nameError == null,
         onConfirm = {
             busy = true
@@ -243,7 +244,7 @@ internal fun NewResourceDialog(
                 }
             }
         },
-        dismissalLabel = "取消",
+        dismissalLabel = tr("取消", "Cancel"),
         onDismissButton = { if (!busy) onDismiss() },
     )
 }
@@ -257,15 +258,15 @@ internal fun NewContextDialog(model: ResourcesModel, onDismiss: () -> Unit, onCr
     var project by remember { mutableStateOf(false) }
     PiSettingsDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = "新建上下文文件",
+        title = tr("新建上下文文件", "New Context File"),
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(text = "全局", active = !project, onClick = { project = false })
-                    PiSettingsChip(text = "本项目", active = project, enabled = model.projectUsable, onClick = { project = true })
+                    PiSettingsChip(text = tr("全局", "Global"), active = !project, onClick = { project = false })
+                    PiSettingsChip(text = tr("本项目", "Project"), active = project, enabled = model.projectUsable, onClick = { project = true })
                 }
                 PiResourceFile.CONTEXT_FILES.forEach { (file, hint) ->
-                    val where = if (project) "项目" else "全局"
+                    val where = if (project) tr("项目", "Project") else tr("全局", "Global")
                     Column(Modifier.fillMaxWidth().padding(vertical = PiSpacing.small)) {
                         PiSettingsChip(
                             text = "$where $file",
@@ -286,7 +287,7 @@ internal fun NewContextDialog(model: ResourcesModel, onDismiss: () -> Unit, onCr
                 failure?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             }
         },
-        dismissalLabel = "取消",
+        dismissalLabel = tr("取消", "Cancel"),
         onDismissButton = { if (!busy) onDismiss() },
     )
 }

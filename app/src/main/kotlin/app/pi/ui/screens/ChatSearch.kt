@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.AssistantText
 import app.pi.rpc.BranchSummary
 import app.pi.rpc.CompactionMarker
@@ -239,7 +240,7 @@ internal fun SearchBar(
                     Box {
                         if (query.isEmpty()) {
                             Text(
-                                text = "搜索对话内容…",
+                                text = tr("搜索对话内容…", "Search conversation…"),
                                 style = PiTheme.text.prose,
                                 color = palette.muted,
                                 maxLines = 1,
@@ -267,13 +268,13 @@ internal fun SearchBar(
             }
             SearchNavButton(
                 icon = Icons.Filled.KeyboardArrowUp,
-                label = "上一个匹配",
+                label = tr("上一个匹配", "Previous match"),
                 enabled = matchCount > 0,
                 onClick = onPrevious,
             )
             SearchNavButton(
                 icon = Icons.Filled.KeyboardArrowDown,
-                label = "下一个匹配",
+                label = tr("下一个匹配", "Next match"),
                 enabled = matchCount > 0,
                 onClick = onNext,
             )
@@ -282,12 +283,12 @@ internal fun SearchBar(
                     .size(28.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable(onClickLabel = "关闭查找", onClick = onClose),
+                    .clickable(onClickLabel = tr("关闭查找", "Close search"), onClick = onClose),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "关闭查找",
+                    contentDescription = tr("关闭查找", "Close search"),
                     tint = palette.muted,
                     modifier = Modifier.size(15.dp),
                 )

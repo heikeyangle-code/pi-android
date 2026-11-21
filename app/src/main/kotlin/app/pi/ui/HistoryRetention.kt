@@ -1,5 +1,7 @@
 package app.pi.ui
 
+import app.pi.i18n.tr
+
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -259,15 +261,15 @@ internal fun cursorAfter(read: BackwardRead): CursorDecision = when (read) {
     BackwardRead.AtFileStart -> CursorDecision(reachedStart = true)
     BackwardRead.WithheldLine -> CursorDecision(
         reachedStart = false,
-        stop = HistoryStop("上面有一段内容太大，读不出来"),
+        stop = HistoryStop(tr("上面有一段内容太大，读不出来", "An earlier entry is too large to read")),
     )
     BackwardRead.UnreadableRange -> CursorDecision(
         reachedStart = false,
-        stop = HistoryStop("这个文件读不出更早的内容了"),
+        stop = HistoryStop(tr("这个文件读不出更早的内容了", "Cannot read earlier entries from this file")),
     )
     is BackwardRead.ReadFailed -> CursorDecision(
         reachedStart = false,
-        stop = HistoryStop("读取失败：${read.detail}"),
+        stop = HistoryStop(tr("读取失败：${read.detail}", "Read failed: ${read.detail}")),
     )
 }
 
@@ -308,11 +310,11 @@ internal fun earlierRowText(
     reachedStart: Boolean,
     stop: HistoryStop?,
 ): String? {
-    if (hiddenCount > 0) return "加载更早的 $hiddenCount 条"
+    if (hiddenCount > 0) return tr("加载更早的 $hiddenCount 条", "Load $hiddenCount earlier")
     if (!cursorKnown) return null
-    if (loading) return "正在读取更早的内容…"
-    if (stop != null) return "读不到更早的内容（${stop.reason}）"
-    return if (reachedStart) null else "加载更早的内容"
+    if (loading) return tr("正在读取更早的内容…", "Loading earlier messages…")
+    if (stop != null) return tr("读不到更早的内容（${stop.reason}）", "Cannot load earlier (${stop.reason})")
+    return if (reachedStart) null else tr("加载更早的内容", "Load earlier messages")
 }
 
 // --------------------------------------------------------------- the retained copy

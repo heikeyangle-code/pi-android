@@ -1,18 +1,9 @@
 package app.pi.ui.settings
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -22,11 +13,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.DeviceCapabilityStore
-import app.pi.host.HostAdvanced
+import app.pi.i18n.tr
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
@@ -34,11 +23,7 @@ import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
-import app.pi.ui.PromptFileFacts
-import app.pi.ui.components.PiSheet
 import app.pi.ui.device.DeviceCapabilityScreen
-import app.pi.ui.theme.PiSpacing
-import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -199,11 +184,6 @@ fun PiSettingsStack(
     var diagnostics by rememberSaveable { mutableStateOf(false) }
     // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器。
     var mcp by rememberSaveable { mutableStateOf(false) }
-    // 归位自原 EngineScreen 的轻量动作浮层：查看生效系统提示词 / 问题报告 / 实时工具启停。
-    var textSheet by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var liveToolsOpen by remember { mutableStateOf(false) }
-    var actionNote by remember { mutableStateOf<Pair<String, String>?>(null) }
-    val clipboard = LocalClipboardManager.current
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -352,32 +332,7 @@ fun PiSettingsStack(
         RuntimeSwitchAction.Target.valueOf(runtimeSelection.selectedEngine.name),
     )
         ?: runtimeStatus?.summary
-        ?: "未读取"
-
-    // 「系统提示词」那一组里那一条**只读读数**：pi 会读的那几份提示词文件（两份名字 × 两个层级）。
-    //
-    // **一次 stat、两处用**：值给行（`valueOverrides`），存在的文件按 pi 的顺序逐行给行下面的
-    // 证据块（`detailOverrides` —— 见 `SettingsGroupScreen`：只读行的值只有一行，多行的东西写在
-    // 行下面）。两者必须出自**同一次**读数，否则行与它自己的证据会各说一套。
-    //
-    // 它读的是**文件**，所以不能放进 store 的 `read(key)`（那是每帧每行都要走的路径），只能在这
-    // 里读一次。键是 `PROMPT_SOURCE_KEY`；值只报能证明的事实 —— 哪几份文件存在、在哪一级；那条
-    // 「工作区那份受信任时优先」的规则写在行的描述里，不在这里猜一个裁决
-    // （`PromptFileFacts` 的 KDoc 写了为什么）。
-    //
-    // epoch 用 `rowsEpoch`（外部改动 + 本进程写入）而不是只 `filesEpoch`：在设置页里
-    // 编辑提示词走的正是本进程写入那一半，`writeEpoch` 必须能把这行重读一次。
-    // `SETTINGS_WATCHED` 里的两个文件名管的是另一半（在「Pi 文件」或终端里改）。
-    var promptReading by remember { mutableStateOf<PromptFileFacts.Reading?>(null) }
-    LaunchedEffect(workspacePath, rowsEpoch, paths) {
-        promptReading = withContext(Dispatchers.IO) {
-            runCatching { PromptFileFacts.read(paths.agentDir, workspace) }.getOrNull()
-        }
-    }
-    val promptOverrides =
-        promptReading?.let { mapOf(PROMPT_SOURCE_KEY to PromptFileFacts.value(it)) } ?: emptyMap()
-    val promptDetailOverrides = promptReading?.let { PromptFileFacts.detail(it) }
-        ?.let { mapOf(PROMPT_SOURCE_KEY to it) } ?: emptyMap()
+        ?: tr("未读取", "Not loaded")
 
     val engineMatrix = engineMatrixOverrides(engineStatuses)
     val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText, engineMatrix.first) {
@@ -405,6 +360,12 @@ fun PiSettingsStack(
             resources = true
         } else if (key == "hub:models") {
             modelFlow = true
+        } else if (key == "hub:prompts") {
+            groupId = "prompts"
+            highlightKey = null
+        } else if (key == "hub:tools") {
+            groupId = "tools"
+            highlightKey = null
         } else if (setting != null && setting.group == G_MODELS_SCREEN) {
             modelFlow = true
         } else if (setting != null) {
@@ -431,19 +392,6 @@ fun PiSettingsStack(
     val hostActions: Map<String, () -> Unit> = mapOf(
         "app.runtime.restartEngine" to { restartPrompt = true },
         "app.runtime.diagnostics" to { diagnostics = true },
-        "app.prompts.viewEffective" to {
-            val api = advanced()
-            if (api == null) {
-                actionNote = "查看系统提示词" to "引擎未运行，启动后再来读取当前生效的完整系统提示词。"
-            } else {
-                scope.launch {
-                    runCatching { api.systemPrompt() }
-                        .onSuccess { textSheet = "当前生效系统提示词" to it.ifBlank { "（空）" } }
-                        .onFailure { actionNote = "查看系统提示词" to "读取失败：${it.message}" }
-                }
-            }
-        },
-        "app.tools.manageLive" to { liveToolsOpen = true },
     )
 
     BackHandler(enabled = true) {
@@ -535,6 +483,29 @@ fun PiSettingsStack(
                 },
             )
 
+            currentGroup == "tools" -> ToolsScreen(
+                store = effectiveStore,
+                freshness = rowsEpoch,
+                contentPadding = contentPadding,
+                advanced = advanced,
+                onSettingWritten = handleSettingWritten,
+                onBack = {
+                    groupId = null
+                    highlightKey = null
+                },
+            )
+
+            currentGroup == "prompts" -> app.pi.ui.resources.SystemPromptHostScreen(
+                contentPadding = contentPadding,
+                access = extensionsAccess,
+                store = effectiveStore,
+                onSettingWritten = handleSettingWritten,
+                onBack = {
+                    groupId = null
+                    highlightKey = null
+                },
+            )
+
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
                 store = effectiveStore,
@@ -551,12 +522,12 @@ fun PiSettingsStack(
                 onSettingWritten = handleSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
-                valueOverrides = runtimeOverrides(facts) + promptOverrides,
+                valueOverrides = runtimeOverrides(facts),
                 detailOverrides = (if (runtimeSwitch.inFlight) {
                     emptyMap()
                 } else {
                     runtimeDetailOverrides(runtimeStatus)
-                }) + promptDetailOverrides +
+                }) +
                     (if (runtimeSwitch.inFlight || engineMatrix.second.isEmpty()) {
                         emptyMap()
                     } else {
@@ -604,34 +575,6 @@ fun PiSettingsStack(
         }
     }
 
-    textSheet?.let { (title, body) ->
-        PiSheet(onDismiss = { textSheet = null }, fullHeight = true) {
-            Column(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(title, style = PiTheme.text.prose, color = PiTheme.palette.text)
-                    PiSettingsChip(text = "复制", onClick = { clipboard.setText(AnnotatedString(body)) })
-                }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = PiSpacing.small)) {
-                    Text(body, style = PiTheme.text.monoSmall, color = PiTheme.palette.text)
-                }
-            }
-        }
-    }
-
-    if (liveToolsOpen) {
-        LiveToolsSheet(advanced = advanced, onDismiss = { liveToolsOpen = false })
-    }
-
-    actionNote?.let { (title, body) ->
-        PiSettingsDialog(
-            onDismissRequest = { actionNote = null },
-            title = title,
-            body = body,
-            confirmationLabel = "知道了",
-            onConfirm = { actionNote = null },
-        )
-    }
-
     // The 进程 section's "restart so these take effect" step. Two dialogs, not
     // one: the first states the cost before anything happens, the second reports
     // what the engine answered (it refuses on its own while a turn is running, and
@@ -639,24 +582,33 @@ fun PiSettingsStack(
     if (restartPrompt) {
         PiSettingsDialog(
             onDismissRequest = { restartPrompt = false },
-            title = "重启引擎",
+            title = tr("重启引擎", "Restart Engine"),
             body = if (isTurnRunning()) {
-                "现在有回合正在运行。重启会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；" +
-                    "已写入磁盘的会话不会丢失。"
+                tr(
+                    "现在有回合正在运行。重启会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；" +
+                        "已写入磁盘的会话不会丢失。",
+                    "A turn is currently running. Restarting will abort the active model call, tool calls, and running commands; saved sessions will not be lost.",
+                )
             } else {
-                "重启会终止正在进行的回合，已写入磁盘的会话不会丢失。"
+                tr(
+                    "重启会终止正在进行的回合，已写入磁盘的会话不会丢失。",
+                    "Restarting interrupts any active turn. Sessions already written to disk will not be lost.",
+                )
             },
-            confirmationLabel = "重启",
+            confirmationLabel = tr("重启", "Restart"),
             onConfirm = {
                 restartPrompt = false
                 val engine = restartEngine
                 if (engine == null) {
-                    restartNote = "重启未接入：设置页还没有拿到引擎的重启入口。文件与设置都已保存。"
+                    restartNote = tr(
+                        "重启未接入：设置页还没有拿到引擎的重启入口。文件与设置都已保存。",
+                        "Restart unavailable: no engine restart handler is connected. Files and settings have been saved.",
+                    )
                 } else {
                     scope.launch {
-                        restartNote = when (val outcome = engine("设置里更改了进程开关", false)) {
+                        restartNote = when (val outcome = engine(tr("设置里更改了进程开关", "Process settings changed"), false)) {
                             is EngineRestartCoordinator.Outcome.Ok ->
-                                "引擎已重启，新的进程设置已生效。"
+                                tr("引擎已重启，新的进程设置已生效。", "Engine restarted. New process settings are now active.")
 
                             is EngineRestartCoordinator.Outcome.Refused -> outcome.message
                             is EngineRestartCoordinator.Outcome.Failed -> outcome.message
@@ -664,7 +616,7 @@ fun PiSettingsStack(
                     }
                 }
             },
-            dismissalLabel = "取消",
+            dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { restartPrompt = false },
         )
     }
@@ -673,9 +625,9 @@ fun PiSettingsStack(
     if (restartResult != null) {
         PiSettingsDialog(
             onDismissRequest = { restartNote = null },
-            title = "重启引擎",
+            title = tr("重启引擎", "Restart Engine"),
             body = restartResult,
-            confirmationLabel = "知道了",
+            confirmationLabel = tr("知道了", "OK"),
             onConfirm = { restartNote = null },
         )
     }
@@ -706,80 +658,3 @@ private val SETTINGS_WATCHED = listOf(
     "prompts",
     "themes",
 )
-
-/**
- * 「系统提示词来源」那一行只读读数的键（注册表里的 `app.prompts.effectiveSource`）。
- *
- * 值不在 store 里：它由 `PiSettingsStack` 在 IO 上从两个 `SYSTEM.md` 算出来，作为
- * `valueOverrides` 的一项交给行渲染 —— 与「已发现的主题」那四条同一个分工。常量放在这里
- * 而不是注册表里，是因为它是**宿主**这一侧的键：注册表只声明行。
- */
-private const val PROMPT_SOURCE_KEY = "app.prompts.effectiveSource"
-
-/** 当前会话实时工具启停面板（原 `EngineScreen` 的工具段，现归位到「工具」分组）。 */
-@Composable
-private fun LiveToolsSheet(
-    advanced: () -> HostAdvanced?,
-    onDismiss: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var reload by remember { mutableStateOf(0) }
-    var tools by remember { mutableStateOf<List<HostAdvanced.ToolDetail>?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(reload) {
-        val api = advanced()
-        if (api == null) {
-            tools = emptyList()
-            error = "引擎未运行，启动后可查看和即时切换当前会话的工具。"
-        } else {
-            runCatching { api.tools() }
-                .onSuccess { tools = it; error = null }
-                .onFailure { error = it.message ?: "读取工具失败" }
-        }
-    }
-
-    PiSheet(onDismiss = onDismiss, fullHeight = true) {
-        Column(
-            modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
-            verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
-        ) {
-            val list = tools
-            Text(
-                if (list == null) "当前会话工具" else "当前会话工具（${list.count { it.active }} / ${list.size} 启用）",
-                style = PiTheme.text.prose,
-                color = PiTheme.palette.text,
-            )
-            error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
-            if (list == null) {
-                Text("读取中…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
-            } else {
-                LazyColumn(Modifier.weight(1f)) {
-                    items(list.size) { i ->
-                        val t = list[i]
-                        if (i > 0) PiSettingsHairline()
-                        PiSettingsToggleRow(
-                            title = t.name,
-                            supporting = listOfNotNull(
-                                t.description.lineSequence().firstOrNull()?.take(100),
-                                t.source?.let { "来自 $it" },
-                                if (t.active && !t.callable) "已启用但当前不可调用" else null,
-                            ).joinToString(" · ").ifEmpty { null },
-                            checked = t.active,
-                            onCheckedChange = { on ->
-                                val api = advanced() ?: return@PiSettingsToggleRow
-                                val names = list.filter { it.active && it.name != t.name }.map { it.name } +
-                                    if (on) listOf(t.name) else emptyList()
-                                scope.launch {
-                                    runCatching { api.setActiveTools(names) }
-                                        .onSuccess { reload++ }
-                                        .onFailure { error = it.message ?: "更新工具失败" }
-                                }
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}

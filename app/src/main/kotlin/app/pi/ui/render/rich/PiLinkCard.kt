@@ -1,5 +1,7 @@
 package app.pi.ui.render.rich
 
+import app.pi.i18n.tr
+
 /**
  * The **pure URL model** behind the lightweight link card (`§十一.3` of
  * `docs/plans/rich-rendering-upgrade.md`).
@@ -38,15 +40,27 @@ package app.pi.ui.render.rich
  */
 
 /** The URL-only type shown on the card. The label is the visible string. */
-enum class LinkKind(val label: String) {
-    WebPage("网页"),
-    Image("图片"),
-    Document("文档"),
-    Archive("压缩包"),
-    Code("代码"),
-    Video("视频"),
-    Audio("音频"),
-    Other("链接"),
+enum class LinkKind {
+    WebPage,
+    Image,
+    Document,
+    Archive,
+    Code,
+    Video,
+    Audio,
+    Other;
+
+    val label: String
+        get() = when (this) {
+            WebPage -> tr("网页", "Web")
+            Image -> tr("图片", "Image")
+            Document -> tr("文档", "Doc")
+            Archive -> tr("压缩包", "Archive")
+            Code -> tr("代码", "Code")
+            Video -> tr("视频", "Video")
+            Audio -> tr("音频", "Audio")
+            Other -> tr("链接", "Link")
+        }
 }
 
 /**

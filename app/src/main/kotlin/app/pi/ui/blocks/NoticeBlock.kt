@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.Notice
 import app.pi.ui.theme.PiTheme
 
@@ -82,7 +83,7 @@ fun NoticeBlock(
                     )
                 }
                 Text(
-                    text = item.text.ifEmpty { "（无内容）" },
+                    text = item.text.ifEmpty { tr("（无内容）", "(Empty)") },
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta,
                     color = color,

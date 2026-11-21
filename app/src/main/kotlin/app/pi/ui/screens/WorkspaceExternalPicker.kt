@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.runtime.WorkspaceChoice
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiTheme
@@ -147,31 +148,39 @@ internal fun WorkspaceExternalPicker(
 @Composable
 private fun WorkspaceExternalIntro(onClose: () -> Unit, onAsk: () -> Unit) {
     WsSheet(
-        title = "需要「所有文件访问」",
+        title = tr("需要「所有文件访问」", "\"All files access\" required"),
         onClose = onClose,
-        subtitle = "只有把设备目录当工作区时才需要它。",
-        footer = "授权之后回到这里就能浏览设备目录；App 私有目录里的工作区不需要任何权限。",
+        subtitle = tr("只有把设备目录当工作区时才需要它。", "Only needed when using a device folder as a workspace."),
+        footer = tr("授权之后回到这里就能浏览设备目录；App 私有目录里的工作区不需要任何权限。", "Return here after granting access to browse device folders. App-private workspaces need no permissions."),
     ) {
         WsNotice(
-            text = "工作区必须是设备的**真实目录**：引擎要把它 bind 进 guest 并作为工作目录，" +
-                "而系统文档选择器给的是内容 URI，绑不了。所以这一项要的是「所有文件访问」。",
+            text = tr(
+                "工作区必须是设备的**真实目录**：引擎要把它 bind 进 guest 并作为工作目录，" +
+                    "而系统文档选择器给的是内容 URI，绑不了。所以这一项要的是「所有文件访问」。",
+                "A workspace must be a real device directory: the engine binds it into the guest as its working directory, " +
+                    "whereas the system document picker returns a content URI that cannot be bound. This is why \"All files access\" is required.",
+            ),
             tone = StateTone.Warning,
             glyph = "!",
         )
         WsCard {
             WsRow(
-                title = "去系统设置授权",
+                title = tr("去系统设置授权", "Grant in System Settings"),
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = { PickerFolderGlyph() },
-                meta = "打开本应用的「所有文件访问」页；回来时会重新检查，没开就还是这一屏。",
+                meta = tr("打开本应用的「所有文件访问」页；回来时会重新检查，没开就还是这一屏。", "Opens this app's \"All files access\" page. Access is re-checked when you return."),
                 onClick = onAsk,
             )
         }
         Text(
-            "授权页由系统提供：本应用无法替你打开那个开关。Android 11 起这一项在「设置 → 应用 → " +
-                "本应用 → 特殊应用权限 → 所有文件访问」；Android 10 及更早用的是普通存储权限，" +
-                "点上面那一行会直接弹系统的授权框。",
+            tr(
+                "授权页由系统提供：本应用无法替你打开那个开关。Android 11 起这一项在「设置 → 应用 → " +
+                    "本应用 → 特殊应用权限 → 所有文件访问」；Android 10 及更早用的是普通存储权限，" +
+                    "点上面那一行会直接弹系统的授权框。",
+                "The permission screen is managed by Android; this app cannot toggle it for you. On Android 11+, go to Settings → Apps → " +
+                    "this app → Special app access → All files access. On Android 10 and earlier, tapping above prompts for standard storage permission.",
+            ),
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
@@ -223,8 +232,8 @@ private fun WorkspaceExternalBrowser(
     }
 
     val here = current ?: run {
-        WsSheet(title = "选择设备目录", onClose = onClose) {
-            WsNotice(text = "这台设备没有报告任何可用的存储卷。", tone = StateTone.Warning, glyph = "!")
+        WsSheet(title = tr("选择设备目录", "Select Device Folder"), onClose = onClose) {
+            WsNotice(text = tr("这台设备没有报告任何可用的存储卷。", "No available storage volumes reported on this device."), tone = StateTone.Warning, glyph = "!")
         }
         return
     }
@@ -233,10 +242,10 @@ private fun WorkspaceExternalBrowser(
     val levelHere = level?.takeIf { it.dir.absolutePath == here }
     val refusal = when {
         levelHere == null -> WorkspaceChoice.pickRefusal(here, volumes, readable = true)
-            ?: "正在读这个目录…"
+            ?: tr("正在读这个目录…", "Reading directory…")
         else -> WorkspaceChoice.pickRefusal(here, volumes, levelHere.readable)
             ?: if (!levelHere.writable) {
-                "这个目录不可写（只读目录，或没有写权限）：pi 要在里面建文件，选它也用不了。"
+                tr("这个目录不可写（只读目录，或没有写权限）：pi 要在里面建文件，选它也用不了。", "This directory is not writable (read-only or missing write permission). Pi needs to create files inside the workspace.")
             } else {
                 null
             }
@@ -246,15 +255,19 @@ private fun WorkspaceExternalBrowser(
     // 不能选时它灰着，原因在正文顶部那条提示里（每一次拒绝都有一句话）。
     val volumeRoot = volumes.firstOrNull { here == it || here.startsWith(it.trimEnd('/') + "/") }
     WsSheet(
-        title = "选择设备目录",
+        title = tr("选择设备目录", "Select Device Folder"),
         onClose = onClose,
         subtitle = here,
         subtitleMono = true,
         trailing = {
-            Button(onClick = { onPick(here) }, enabled = refusal == null) { Text("选择") }
+            Button(onClick = { onPick(here) }, enabled = refusal == null) { Text(tr("选择", "Select")) }
         },
-        footer = "选中的目录会成为 pi 的现场目录：项目设置、技能、提示词都从它的 .pi 里读，" +
-            "在里面写文件就是写到设备上这个目录。",
+        footer = tr(
+            "选中的目录会成为 pi 的现场目录：项目设置、技能、提示词都从它的 .pi 里读，" +
+                "在里面写文件就是写到设备上这个目录。",
+            "The selected folder becomes pi's working directory: project settings, skills, and prompts load from its .pi folder, " +
+                "and file writes go directly to this folder on your device.",
+        ),
         maxBodyHeight = EXTERNAL_SHEET_BODY_MAX,
     ) {
         // 多个存储卷（内置 + 存储卡）才出现：一键换卷。
@@ -271,7 +284,7 @@ private fun WorkspaceExternalBrowser(
             ) {
                 volumes.forEachIndexed { index, root ->
                     WsChip(
-                        text = if (index == 0) "内部存储" else root.substringAfterLast('/'),
+                        text = if (index == 0) tr("内部存储", "Internal Storage") else root.substringAfterLast('/'),
                         solid = root == volumeRoot,
                         onClick = { current = root },
                     )
@@ -281,7 +294,7 @@ private fun WorkspaceExternalBrowser(
 
         // 面包屑：从卷根到这里，每一段都能点 —— 比一行「上一级」多出「直接跳回第 N 层」。
         if (volumeRoot != null) {
-            val rootLabel = if (volumes.indexOf(volumeRoot) <= 0) "内部存储" else volumeRoot.substringAfterLast('/')
+            val rootLabel = if (volumes.indexOf(volumeRoot) <= 0) tr("内部存储", "Internal Storage") else volumeRoot.substringAfterLast('/')
             val segments = here.removePrefix(volumeRoot).trim('/').split('/').filter { it.isNotEmpty() }
             val scroll = rememberScrollState()
             LaunchedEffect(here) { scroll.animateScrollTo(scroll.maxValue) }
@@ -318,13 +331,13 @@ private fun WorkspaceExternalBrowser(
         }
 
         if (loading && levelHere == null) {
-            WsNotice(text = "正在读这个目录…", tone = StateTone.Muted, glyph = "·")
+            WsNotice(text = tr("正在读这个目录…", "Reading directory…"), tone = StateTone.Muted, glyph = "·")
         }
 
         val children = levelHere?.children
         if (children != null && children.isEmpty()) {
             WsNotice(
-                text = "这个目录里没有子目录（空目录也可以当工作区）。",
+                text = tr("这个目录里没有子目录（空目录也可以当工作区）。", "No subfolders in this directory (an empty folder can still be used as a workspace)."),
                 tone = StateTone.Muted,
                 glyph = "·",
             )
@@ -333,7 +346,7 @@ private fun WorkspaceExternalBrowser(
             // 一张卡、`forEachIndexed` 的行，**不是** `LazyColumn`：`WsSheet` 的正文本身是
             // `verticalScroll` + 有上限的 `Column`，里面再放纵向懒列表是「无限高约束下测量
             // 可滚动组件」，那是崩溃不是慢。子目录数有 `EXTERNAL_MAX_CHILDREN` 封顶，列是有界的。
-            WsSectionHeader(label = "子目录", count = "${children.size}")
+            WsSectionHeader(label = tr("子目录", "Subfolders"), count = "${children.size}")
             WsCard {
                 children.forEachIndexed { index, child ->
                     if (index > 0) WsHairline(startInset = WsIconHairlineStart)
@@ -343,14 +356,14 @@ private fun WorkspaceExternalBrowser(
                         mono = false,
                         lead = { PickerFolderGlyph() },
                         badge = if (child.count == null) {
-                            { WsBadge(text = "读不到", tone = StateTone.Warning) }
+                            { WsBadge(text = tr("读不到", "Unreadable"), tone = StateTone.Warning) }
                         } else {
                             null
                         },
                         meta = when {
-                            child.count == null -> "没有权限，或者这个卷现在不可用。"
-                            child.count == 0 -> "空目录"
-                            else -> "${child.count} 个条目"
+                            child.count == null -> tr("没有权限，或者这个卷现在不可用。", "Permission denied or this volume is currently unavailable.")
+                            child.count == 0 -> tr("空目录", "Empty folder")
+                            else -> tr("${child.count} 个条目", if (child.count == 1) "1 item" else "${child.count} items")
                         },
                         trail = if (child.count == null) {
                             null
@@ -373,8 +386,12 @@ private fun WorkspaceExternalBrowser(
         }
         if (children != null && levelHere?.truncated == true) {
             WsNotice(
-                text = "这个目录里还有更多子目录，这里只列了前 $EXTERNAL_MAX_CHILDREN 个；" +
-                    "从上面逐级下去，或者点面包屑换一条路。",
+                text = tr(
+                    "这个目录里还有更多子目录，这里只列了前 $EXTERNAL_MAX_CHILDREN 个；" +
+                        "从上面逐级下去，或者点面包屑换一条路。",
+                    "This directory has more subfolders; only the first $EXTERNAL_MAX_CHILDREN are shown. " +
+                        "Navigate deeper above or tap the breadcrumbs to switch paths.",
+                ),
                 tone = StateTone.Muted,
                 glyph = "·",
             )

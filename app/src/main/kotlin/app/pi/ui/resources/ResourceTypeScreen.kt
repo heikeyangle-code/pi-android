@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.packages.PiLoadedResources
 import app.pi.packages.PiResourceCatalog
 import app.pi.packages.PiResourceCatalog.Layer
@@ -49,6 +50,7 @@ import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSwitch
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.launch
 
 /**
  * 一类资源（扩展 / 技能 / 提示模板 / 主题）的列表：**开关清单**（pi 的 `pi config`，含没开的）按来源分段，
@@ -75,7 +77,7 @@ internal fun ResourceTypeScreen(
             title = type.label,
             onBack = onBack,
             actions = {
-                creatableOf(type)?.let { PiSettingsChip(text = "新建", onClick = { creating = true }) }
+                creatableOf(type)?.let { PiSettingsChip(text = tr("新建", "New"), onClick = { creating = true }) }
             },
         )
         val sections = if (snapshot == null) emptyList() else sections(type, snapshot, layer, model.loaded, query)
@@ -87,28 +89,28 @@ internal fun ResourceTypeScreen(
         ) {
             item {
                 PiSeg(
-                    options = listOf("全局", "本项目"),
+                    options = listOf(tr("全局", "Global"), tr("本项目", "Project")),
                     selectedIndex = if (layer == Layer.Global) 0 else 1,
                     onSelect = { if (model.projectUsable) model.layer = if (it == 0) Layer.Global else Layer.Project },
                     modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }
             if (!model.projectUsable) {
-                item { PiInfoNote("这个项目还没被信任：pi 不读项目里的 .pi 资源，所以只能改全局。去枢纽页的「项目信任」表态后才能改项目层。", tone = PiTheme.palette.warning) }
+                item { PiInfoNote(tr("这个项目还没被信任：pi 不读项目里的 .pi 资源，所以只能改全局。去枢纽页的「项目信任」表态后才能改项目层。", "This project is not trusted yet: pi does not load project .pi resources, so only global settings can be edited. Review Project Trust on the hub to configure project overrides."), tone = PiTheme.palette.warning) }
             }
             model.error?.let { item { PiInfoNote(it, tone = PiTheme.palette.error) } }
             item {
                 PiEditorField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = "搜索名字、描述、路径",
+                    placeholder = tr("搜索名字、描述、路径", "Search name, description, path"),
                     modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }
             if (diagnostics.isNotEmpty()) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                        ModelsSectionLabel("pi 报告的问题 · ${diagnostics.size}")
+                        ModelsSectionLabel(tr("pi 报告的问题 · ${diagnostics.size}", "Issues Reported by Pi · ${diagnostics.size}"))
                         ModelsCard {
                             Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                                 diagnostics.forEach {
@@ -127,9 +129,9 @@ internal fun ResourceTypeScreen(
                 }
             }
             if (snapshot == null) {
-                item { PiInfoNote(if (model.loading) "正在向 pi 读取…" else "还没读到。点右上角刷新重试。") }
+                item { PiInfoNote(if (model.loading) tr("正在向 pi 读取…", "Loading from pi…") else tr("还没读到。点右上角刷新重试。", "Not loaded yet. Tap refresh in the top right to retry.")) }
             } else if (sections.isEmpty()) {
-                item { PiInfoNote(if (query.isBlank()) emptyHint(type) else "没有匹配「$query」的${type.label}。") }
+                item { PiInfoNote(if (query.isBlank()) emptyHint(type) else tr("没有匹配「$query」的${type.label}。", "No ${type.label} matching \"$query\".")) }
             }
             sections.forEach { section ->
                 item(key = "s:${section.group.key}") {
@@ -158,9 +160,11 @@ internal fun ResourceTypeScreen(
     detail?.let { row ->
         ResourceDetailSheet(
             row = row,
+            model = model,
             loaded = model.loaded,
             onDismiss = { detail = null },
             onEdit = { path -> detail = null; onEdit(path) },
+            onDeleted = { detail = null; model.refresh() },
         )
     }
     creatableOf(type)?.let { c ->
@@ -183,20 +187,20 @@ private fun creatableOf(type: Type): app.pi.packages.PiResourceFile.Creatable? =
 }
 
 private fun emptyHint(type: Type): String = when (type) {
-    Type.Extensions -> "还没有扩展。装一个扩展包，或把 .ts / .js 放进 ~/.pi/agent/extensions（项目里是 .pi/extensions）。"
-    Type.Skills -> "还没有技能。技能是带 SKILL.md 的目录，放进 ~/.pi/agent/skills 或项目的 .pi/skills、.agents/skills。"
-    Type.Prompts -> "还没有提示模板。把 .md 文件放进 ~/.pi/agent/prompts，文件名就是 /命令名。"
-    Type.Themes -> "还没有自定义主题。把主题 .json 放进 ~/.pi/agent/themes。"
+    Type.Extensions -> tr("还没有扩展。装一个扩展包，或把 .ts / .js 放进 ~/.pi/agent/extensions（项目里是 .pi/extensions）。", "No extensions yet. Install a package or place .ts / .js files in ~/.pi/agent/extensions (or .pi/extensions in a project).")
+    Type.Skills -> tr("还没有技能。技能是带 SKILL.md 的目录，放进 ~/.pi/agent/skills 或项目的 .pi/skills、.agents/skills。", "No skills yet. Skills are folders containing SKILL.md under ~/.pi/agent/skills or project .pi/skills / .agents/skills.")
+    Type.Prompts -> tr("还没有提示模板。把 .md 文件放进 ~/.pi/agent/prompts，文件名就是 /命令名。", "No prompt templates yet. Place .md files in ~/.pi/agent/prompts; the filename becomes the /command name.")
+    Type.Themes -> tr("还没有自定义主题。把主题 .json 放进 ~/.pi/agent/themes。", "No custom themes yet. Place theme .json files in ~/.pi/agent/themes.")
 }
 
 private fun sectionTitle(s: SourceSection): String {
     val kind = when (s.group.kind) {
-        SourceKind.Package -> "包"
-        SourceKind.Settings -> "设置里列的"
-        SourceKind.Directory -> "目录"
-        SourceKind.Builtin -> "内置"
+        SourceKind.Package -> tr("包", "Package")
+        SourceKind.Settings -> tr("设置里列的", "Settings")
+        SourceKind.Directory -> tr("目录", "Directory")
+        SourceKind.Builtin -> tr("内置", "Built-in")
     }
-    return s.group.label + " · " + kind + (if (s.inherited) " · 继承自全局" else "")
+    return s.group.label + " · " + kind + (if (s.inherited) tr(" · 继承自全局", " · Inherited from Global") else "")
 }
 
 @Composable
@@ -247,19 +251,20 @@ private fun ResourceRowView(
 }
 
 private fun rowTags(row: ResourceRow, layer: Layer): List<String> = buildList {
-    if (row.effective && !row.info.loaded) add("未加载") else addAll(row.info.tags.filter { it != "未加载" })
-    if (!row.effective) add("已关闭")
-    if (layer == Layer.Project && row.item.override == Override.Load) add("本项目强制加载")
-    if (layer == Layer.Project && row.item.override == Override.Unload) add("本项目已屏蔽")
+    val notLoadedTag = TAG_NOT_LOADED
+    if (row.effective && !row.info.loaded) add(notLoadedTag) else addAll(row.info.tags.filter { it != notLoadedTag })
+    if (!row.effective) add(tr("已关闭", "Disabled"))
+    if (layer == Layer.Project && row.item.override == Override.Load) add(tr("本项目强制加载", "Forced in Project"))
+    if (layer == Layer.Project && row.item.override == Override.Unload) add(tr("本项目已屏蔽", "Blocked in Project"))
 }.distinct().take(5)
 
 /** 项目层的三态，用 pi 的符号：继承（跟随全局）/ + 加载 / − 屏蔽；点一下走一格。 */
 @Composable
 private fun OverrideChip(item: PiResourceCatalog.Item, effective: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val (glyph, word) = when (item.override) {
-        Override.Load -> "+" to "加载"
-        Override.Unload -> "−" to "屏蔽"
-        Override.Inherit -> (if (effective) "●" else "○") to (if (effective) "继承·开" else "继承·关")
+        Override.Load -> "+" to tr("加载", "Load")
+        Override.Unload -> "−" to tr("屏蔽", "Block")
+        Override.Inherit -> (if (effective) "●" else "○") to (if (effective) tr("继承·开", "Inherit · On") else tr("继承·关", "Inherit · Off"))
     }
     PiSettingsChip(text = word, glyph = glyph, active = item.override != Override.Inherit, enabled = enabled, onClick = onClick)
 }
@@ -267,45 +272,81 @@ private fun OverrideChip(item: PiResourceCatalog.Item, effective: Boolean, enabl
 // ------------------------------------------------------------------ 详情
 
 @Composable
-private fun ResourceDetailSheet(row: ResourceRow, loaded: PiLoadedResources.Loaded, onDismiss: () -> Unit, onEdit: (String) -> Unit) {
+private fun ResourceDetailSheet(
+    row: ResourceRow,
+    model: ResourcesModel,
+    loaded: PiLoadedResources.Loaded,
+    onDismiss: () -> Unit,
+    onEdit: (String) -> Unit,
+    onDeleted: () -> Unit,
+) {
     val item = row.item
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var askDelete by remember(item.path) { mutableStateOf(false) }
+    var deleteError by remember(item.path) { mutableStateOf<String?>(null) }
+    val userOwnedPath = item.path.startsWith("/") && (
+        item.path.contains("/.pi/agent/") ||
+            item.path.contains("/.agents/skills/") ||
+            item.path.contains("/.pi/skills/") ||
+            item.path.contains("/.pi/prompts/") ||
+            item.path.contains("/.pi/themes/") ||
+            item.path.contains("/.pi/extensions/")
+        ) && !item.path.contains("/node_modules/") && !item.path.contains("/git/")
+
     PiSheet(onDismiss = onDismiss, fullHeight = true) {
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter + PiSpacing.inline),
         ) {
             Text(item.name, style = PiTheme.text.prose, color = PiTheme.palette.text)
-            TagRow(listOf(item.type.label) + (if (row.effective) listOf("已开启") else listOf("已关闭")) + (if (row.info.loaded) listOf("已加载") else emptyList()))
-            Fact("路径", item.path)
-            // 内置扩展（`builtin:名字`）没有文件可看；其余都能打开：自己的可改，来自包的只读。
+            TagRow(listOf(item.type.label) + (if (row.effective) listOf(tr("已开启", "Enabled")) else listOf(tr("已关闭", "Disabled"))) + (if (row.info.loaded) listOf(tr("已加载", "Loaded")) else emptyList()))
+            Fact(tr("路径", "Path"), item.path)
+            // 内置扩展（`builtin:名字`）没有文件可看；其余都能打开：自己的可改/可删，来自包的只读。
             if (item.path.startsWith("/")) {
-                PiSettingsChip(text = "打开 / 编辑文件", onClick = { onEdit(item.path) })
+                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
+                    PiSettingsChip(text = tr("打开 / 编辑文件", "Open / Edit File"), onClick = { onEdit(item.path) })
+                    if (userOwnedPath) {
+                        PiSettingsChip(text = tr("删除", "Delete"), onClick = { askDelete = true })
+                    }
+                }
             }
+            deleteError?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             when (item.type) {
                 Type.Extensions -> ExtensionDetail(loaded.extensions.firstOrNull { it.path == item.path || it.resolvedPath == item.path })
                 Type.Skills -> {
                     val k = loaded.skills.firstOrNull { it.filePath == item.path }
                     if (k == null) NotLoaded(row.effective) else {
-                        Fact("命令", "/skill:${k.name}")
-                        if (k.description.isNotBlank()) Fact("描述", k.description)
-                        Fact("模型自动调用", if (k.disableModelInvocation) "否，只能手动 /skill:${k.name}" else "是，模型认为合适时会自己用")
+                        Fact(tr("命令", "Command"), "/skill:${k.name}")
+                        if (k.description.isNotBlank()) Fact(tr("描述", "Description"), k.description)
+                        Fact(
+                            tr("模型自动调用", "Auto Model Invocation"),
+                            if (k.disableModelInvocation) {
+                                tr("否，只能手动 /skill:${k.name}", "No, manual /skill:${k.name} only")
+                            } else {
+                                tr("是，模型认为合适时会自己用", "Yes, model may invoke it automatically")
+                            },
+                        )
                         sourceFacts(k.source)
                     }
                 }
                 Type.Prompts -> {
                     val p = loaded.prompts.firstOrNull { it.filePath == item.path }
                     if (p == null) NotLoaded(row.effective) else {
-                        Fact("命令", "/${p.name}" + (p.argumentHint?.let { " $it" } ?: ""))
-                        if (p.description.isNotBlank()) Fact("描述", p.description)
+                        Fact(tr("命令", "Command"), "/${p.name}" + (p.argumentHint?.let { " $it" } ?: ""))
+                        if (p.description.isNotBlank()) Fact(tr("描述", "Description"), p.description)
                         sourceFacts(p.source)
-                        Fact("正文" + if (p.body.truncated) "（前 ${p.body.text.length} 字，共 ${p.body.size}）" else "", p.body.text, mono = true)
+                        Fact(
+                            tr("正文", "Body") + if (p.body.truncated) tr("（前 ${p.body.text.length} 字，共 ${p.body.size}）", " (first ${p.body.text.length} of ${p.body.size} chars)") else "",
+                            p.body.text,
+                            mono = true,
+                        )
                     }
                 }
                 Type.Themes -> {
                     val t = loaded.themes.firstOrNull { it.path == item.path }
                     if (t == null) NotLoaded(row.effective) else {
                         sourceFacts(t.source)
-                        Text("在「设置 → 外观 → 主题」里选用。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        Text(tr("在「设置 → 外观 → 主题」里选用。", "Select in Settings → Appearance → Theme."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                     }
                 }
             }
@@ -313,6 +354,32 @@ private fun ResourceDetailSheet(row: ResourceRow, loaded: PiLoadedResources.Load
                 Text(describeDiagnostic(it), style = PiTheme.text.meta, color = PiTheme.palette.warning)
             }
         }
+    }
+    if (askDelete) {
+        val isSkillDir = item.type == Type.Skills && item.path.endsWith("/SKILL.md")
+        app.pi.ui.settings.PiSettingsDialog(
+            onDismissRequest = { askDelete = false },
+            title = if (isSkillDir) tr("删除整个技能？", "Delete entire skill?") else tr("删除这个资源文件？", "Delete this resource file?"),
+            sub = item.path,
+            body = if (isSkillDir) {
+                tr("会删除整个技能目录及其中的所有脚本与参考文档，不可撤销。", "This deletes the entire skill folder including scripts and references. This cannot be undone.")
+            } else {
+                tr("文件将被永久删除，不可撤销。", "This file will be permanently deleted. This cannot be undone.")
+            },
+            confirmationLabel = tr("删除", "Delete"),
+            onConfirm = {
+                askDelete = false
+                scope.launch {
+                    when (val r = model.deleteFile(item.path)) {
+                        is PiResourceCatalog.Parsed.Ok -> onDeleted()
+                        is PiResourceCatalog.Parsed.Error -> deleteError = r.message
+                    }
+                }
+            },
+            confirmationTone = PiTheme.palette.error,
+            dismissalLabel = tr("取消", "Cancel"),
+            onDismissButton = { askDelete = false },
+        )
     }
 }
 
@@ -324,7 +391,7 @@ private fun diagnosticsForPath(type: Type, loaded: PiLoadedResources.Loaded, pat
 @Composable
 private fun NotLoaded(effective: Boolean) {
     Text(
-        if (effective) "pi 这次没有加载它（可能被同名资源挤掉、格式不对，或项目未被信任）。看上面的问题列表。" else "已关闭，pi 不会加载。",
+        if (effective) tr("pi 这次没有加载它（可能被同名资源挤掉、格式不对，或项目未被信任）。看上面的问题列表。", "Pi did not load this resource (name collision, invalid format, or untrusted project). See the issues list above.") else tr("已关闭，pi 不会加载。", "Disabled; pi will not load it."),
         style = PiTheme.text.meta,
         color = PiTheme.palette.muted,
     )
@@ -335,26 +402,26 @@ private fun sourceFacts(s: PiLoadedResources.Source?) {
     if (s == null) return
     val scope = s.scope.label.ifEmpty { null }
     val origin = when (s.origin) {
-        PiLoadedResources.Origin.Package -> "来自包" + (s.source?.let { " $it" } ?: "")
-        PiLoadedResources.Origin.TopLevel -> "顶层（目录或设置里直接列的）"
+        PiLoadedResources.Origin.Package -> tr("来自包", "From package") + (s.source?.let { " $it" } ?: "")
+        PiLoadedResources.Origin.TopLevel -> tr("顶层（目录或设置里直接列的）", "Top-level (directory or settings entry)")
         PiLoadedResources.Origin.Unknown -> null
     }
-    listOfNotNull(scope, origin).takeIf { it.isNotEmpty() }?.let { Fact("来源", it.joinToString(" · ")) }
+    listOfNotNull(scope, origin).takeIf { it.isNotEmpty() }?.let { Fact(tr("来源", "Source"), it.joinToString(" · ")) }
 }
 
 @Composable
 private fun ExtensionDetail(e: PiLoadedResources.Extension?) {
     if (e == null) {
-        Text("pi 这次没有加载这个扩展（关闭、加载出错，或项目未被信任）。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+        Text(tr("pi 这次没有加载这个扩展（关闭、加载出错，或项目未被信任）。", "Pi did not load this extension (disabled, load error, or untrusted project)."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
         return
     }
     sourceFacts(e.source)
-    if (e.commands.isNotEmpty()) Fact("命令", e.commands.joinToString("\n") { "/" + it.name + (it.description?.let { d -> " — $d" } ?: "") })
-    if (e.tools.isNotEmpty()) Fact("工具", e.tools.joinToString("\n") { it.name + (it.description?.let { d -> " — ${d.lineSequence().first()}" } ?: "") })
-    if (e.flags.isNotEmpty()) Fact("启动参数", e.flags.joinToString("\n") { "--" + it.name + (if (it.isBoolean) "" else " <值>") + (it.description?.let { d -> " — $d" } ?: "") })
-    if (e.shortcuts.isNotEmpty()) Fact("快捷键", e.shortcuts.joinToString("\n") { it.shortcut + (it.description?.let { d -> " — $d" } ?: "") })
-    if (e.events.isNotEmpty()) Fact("监听的事件", e.events.joinToString("、"))
-    if (e.registered == 0 && e.events.isEmpty()) Text("它没有注册命令、工具、参数或快捷键。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+    if (e.commands.isNotEmpty()) Fact(tr("命令", "Commands"), e.commands.joinToString("\n") { "/" + it.name + (it.description?.let { d -> " — $d" } ?: "") })
+    if (e.tools.isNotEmpty()) Fact(tr("工具", "Tools"), e.tools.joinToString("\n") { it.name + (it.description?.let { d -> " — ${d.lineSequence().first()}" } ?: "") })
+    if (e.flags.isNotEmpty()) Fact(tr("启动参数", "Flags"), e.flags.joinToString("\n") { "--" + it.name + (if (it.isBoolean) "" else tr(" <值>", " <value>")) + (it.description?.let { d -> " — $d" } ?: "") })
+    if (e.shortcuts.isNotEmpty()) Fact(tr("快捷键", "Shortcuts"), e.shortcuts.joinToString("\n") { it.shortcut + (it.description?.let { d -> " — $d" } ?: "") })
+    if (e.events.isNotEmpty()) Fact(tr("监听的事件", "Events"), e.events.joinToString(tr("、", ", ")))
+    if (e.registered == 0 && e.events.isEmpty()) Text(tr("它没有注册命令、工具、参数或快捷键。", "Does not register any commands, tools, flags, or shortcuts."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
 }
 
 @Composable

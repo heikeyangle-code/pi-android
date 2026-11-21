@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import app.pi.i18n.tr
 import app.pi.runtime.GuestEngine
 import app.pi.runtime.RuntimeSelection
 import kotlinx.serialization.json.JsonElement
@@ -79,7 +80,7 @@ class AppOnlySettingsStore(
      */
     private val runtimeStatus: String,
     /** 「各运行时状态」那一行的摘要；同样由调用方给，store 不碰探针。 */
-    private val engineMatrix: String = "未读取",
+    private val engineMatrix: String = tr("未读取", "Not loaded"),
 ) : PiSettingsStore {
 
     override fun read(key: String): JsonElement? = when (key) {

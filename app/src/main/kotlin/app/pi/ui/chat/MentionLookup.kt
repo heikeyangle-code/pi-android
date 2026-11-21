@@ -1,5 +1,7 @@
 package app.pi.ui.chat
 
+import app.pi.i18n.tr
+
 /**
  * What one `@` lookup produced, and which of the guest's failure shapes it was.
  *
@@ -60,13 +62,22 @@ internal fun mentionUnavailableSentence(
     !runtimeReady -> mentionRuntimeNotReadySentence()
 
     launchError != null ->
-        "@ 提及失败：运行时没能启动（${detailOf(launchError, stderr)}）。"
+        tr(
+            "@ 提及失败：运行时没能启动（${detailOf(launchError, stderr)}）。",
+            "@ mention failed: runtime could not start (${detailOf(launchError, stderr)}).",
+        )
 
     timedOut ->
-        "@ 提及超时：fd 在 10 秒内没有返回。工作区太大时可能出现，可以缩小目录范围或直接输入路径。"
+        tr(
+            "@ 提及超时：fd 在 10 秒内没有返回。工作区太大时可能出现，可以缩小目录范围或直接输入路径。",
+            "@ mention timed out: fd did not respond within 10s. Try narrowing the folder or typing the path directly.",
+        )
 
     exitCode == null ->
-        "@ 提及失败：fd 被中断，没有返回任何结果。"
+        tr(
+            "@ 提及失败：fd 被中断，没有返回任何结果。",
+            "@ mention failed: fd was interrupted before returning results.",
+        )
 
     // fd ran and exited: pi treats *any* non-zero exit as "no candidates"
     // (`autocomplete.ts:196-200`), so this is an answer and not a failure. The composer
@@ -84,10 +95,13 @@ internal fun mentionUnavailableSentence(
  * function, so there is still exactly one wording for it.
  */
 internal fun mentionRuntimeNotReadySentence(): String =
-    "@ 提及暂时用不了：运行时还没就绪，无法运行 fd。装好或重启引擎后再试。"
+    tr(
+        "@ 提及暂时用不了：运行时还没就绪，无法运行 fd。装好或重启引擎后再试。",
+        "@ mention unavailable: runtime is not ready to run fd. Wait for setup or restart the engine.",
+    )
 
 /** The launch failure's own words, with stderr as the fallback — one bounded line. */
 private fun detailOf(launchError: String, stderr: String): String {
     val text = launchError.ifBlank { stderr }.trim().replace('\n', ' ')
-    return if (text.isEmpty()) "原因未知" else text.take(160)
+    return if (text.isEmpty()) tr("原因未知", "unknown reason") else text.take(160)
 }

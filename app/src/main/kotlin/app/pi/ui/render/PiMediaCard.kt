@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.pi.i18n.tr
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.contrastOn
@@ -82,7 +83,7 @@ internal fun PiMediaCard(url: String, kind: PiMediaKind, modifier: Modifier = Mo
             raw = "",
         ),
         palette = palette,
-        menu = listOf(PiCardMenuItem("在外部打开") { runCatching { uriHandler.openUri(url) } }),
+        menu = listOf(PiCardMenuItem(tr("在外部打开", "Open externally")) { runCatching { uriHandler.openUri(url) } }),
     ) {
         Box(modifier.fillMaxWidth().padding(8.dp)) {
             if (kind == PiMediaKind.Audio) PiAudioBody(url) else PiVideoBody(url)
@@ -158,7 +159,11 @@ private fun PiAudioBody(url: String) {
         PlayButton(playing) { toggle() }
         Box(Modifier.weight(1f)) {
             if (failed) {
-                Text("无法播放（网络或格式不支持），可从菜单外部打开", style = PiTheme.text.monoSmall, color = palette.dim)
+                Text(
+                    tr("无法播放（网络或格式不支持），可从菜单外部打开", "Unable to play (network or format unsupported); open externally from menu"),
+                    style = PiTheme.text.monoSmall,
+                    color = palette.dim,
+                )
             } else {
                 Slider(
                     value = if (dur > 0) pos.toFloat() / dur else 0f,
@@ -171,7 +176,7 @@ private fun PiAudioBody(url: String) {
             }
         }
         Text(
-            if (loading) "加载中…" else "${fmt(pos)} / ${fmt(dur)}",
+            if (loading) tr("加载中…", "Loading…") else "${fmt(pos)} / ${fmt(dur)}",
             style = PiTheme.text.monoSmall, color = palette.dim,
         )
     }
@@ -212,7 +217,12 @@ private fun PiVideoBody(url: String) {
             )
         }
         if (failed) {
-            Text("无法播放（网络或格式不支持），可从菜单外部打开", style = PiTheme.text.monoSmall, color = Color.White.copy(alpha = 0.8f), modifier = Modifier.padding(12.dp))
+            Text(
+                tr("无法播放（网络或格式不支持），可从菜单外部打开", "Unable to play (network or format unsupported); open externally from menu"),
+                style = PiTheme.text.monoSmall,
+                color = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.padding(12.dp),
+            )
         } else {
             // 盖在上面的点击层：点一下播放/暂停；只消费点按，滚动照常穿过。
             Box(

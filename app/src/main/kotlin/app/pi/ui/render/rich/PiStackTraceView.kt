@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.render.PiCardDivider
 import app.pi.ui.render.PiCardHeader
 import app.pi.ui.render.PiRichCardFrame
@@ -86,7 +87,7 @@ fun PiStackTraceView(
         PiRichCardFrame(source, info, PiTheme.palette) {
             PiTreeRawSource(
                 source = source,
-                notice = if (result == null) "解析中…" else stackTraceFailureNotice(result),
+                notice = if (result == null) tr("解析中…", "Parsing…") else stackTraceFailureNotice(result),
             )
         }
     }
@@ -169,7 +170,7 @@ fun PiStackTraceCard(
                         .padding(top = 3.dp)
                         .then(
                             if (messageOverflows || messageExpanded) {
-                                Modifier.clickable(onClickLabel = if (messageExpanded) "收起消息" else "展开消息") {
+                                Modifier.clickable(onClickLabel = if (messageExpanded) tr("收起消息", "Collapse message") else tr("展开消息", "Expand message")) {
                                     messageExpanded = !messageExpanded
                                 }
                             } else {
@@ -179,7 +180,7 @@ fun PiStackTraceCard(
                 )
                 if (messageOverflows || messageExpanded) {
                     Text(
-                        text = if (messageExpanded) "收起 ▴" else "展开全部 ▾",
+                        text = if (messageExpanded) tr("收起 ▴", "Collapse ▴") else tr("展开全部 ▾", "Expand all ▾"),
                         style = PiTheme.text.monoSmall,
                         color = palette.muted,
                         modifier = Modifier.padding(top = 2.dp),
@@ -202,9 +203,15 @@ fun PiStackTraceCard(
             if (beyondCap > 0 || trace.framesTruncated) {
                 Text(
                     text = if (trace.framesTruncated) {
-                        "堆栈超过 ${PiStackTrace.DEFAULT_LIMITS.maxFrames} 帧，只解析了前 ${trace.frames.size} 帧；原文仍可复制"
+                        tr(
+                            "堆栈超过 ${PiStackTrace.DEFAULT_LIMITS.maxFrames} 帧，只解析了前 ${trace.frames.size} 帧；原文仍可复制",
+                            "Stack exceeds ${PiStackTrace.DEFAULT_LIMITS.maxFrames} frames; showing first ${trace.frames.size}. Raw trace can still be copied.",
+                        )
                     } else {
-                        "… 还有 $beyondCap 帧未显示（共 ${trace.frames.size} 帧）；复制可拿到原文"
+                        tr(
+                            "… 还有 $beyondCap 帧未显示（共 ${trace.frames.size} 帧）；复制可拿到原文",
+                            "… $beyondCap more frame(s) hidden (${trace.frames.size} total); copy for raw trace.",
+                        )
                     },
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
@@ -280,9 +287,12 @@ private fun stackTraceTitle(trace: ParsedStackTrace): String = trace.exceptionTy
 private fun stackTraceFailureNotice(result: StackTraceResult): String? = when (result) {
     is StackTraceResult.Parsed -> null
     is StackTraceResult.Failure -> when (result.reason) {
-        StackTraceFailure.NotSettled -> "堆栈还在生成，先显示原文"
+        StackTraceFailure.NotSettled -> tr("堆栈还在生成，先显示原文", "Stack trace still streaming; showing raw text")
         StackTraceFailure.Empty -> null
-        StackTraceFailure.TooLarge -> "堆栈超过 ${PiStackTrace.DEFAULT_LIMITS.maxChars / 1024} KiB，已回退原文"
+        StackTraceFailure.TooLarge -> tr(
+            "堆栈超过 ${PiStackTrace.DEFAULT_LIMITS.maxChars / 1024} KiB，已回退原文",
+            "Stack trace exceeds ${PiStackTrace.DEFAULT_LIMITS.maxChars / 1024} KiB; showing raw text",
+        )
         StackTraceFailure.NotRecognized -> null
     }
 }

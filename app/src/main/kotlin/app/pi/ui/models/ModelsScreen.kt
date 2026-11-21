@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.HostAdvanced
 import app.pi.host.HostAuth
+import app.pi.i18n.tr
 import app.pi.models.ProviderForm
 import app.pi.rpc.PiResponses
 import app.pi.ui.PiTopBar
@@ -104,7 +105,7 @@ fun ModelsScreen(
             return@LaunchedEffect
         }
         val providers = runCatching { h.auth.providers() }
-        providers.exceptionOrNull()?.let { notice = "读取供应商失败：${it.message}" }
+        providers.exceptionOrNull()?.let { notice = tr("读取供应商失败：${it.message}", "Failed to load providers: ${it.message}") }
         data = Data(
             providers = providers.getOrDefault(emptyList()),
             models = runCatching { h.models() }.getOrDefault(emptyList()),
@@ -120,10 +121,10 @@ fun ModelsScreen(
     val modelSettings = remember { PiSettingsCatalog.settingsIn(G_MODELS_SCREEN) }
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "模型与供应商", onBack = onBack)
+        PiTopBar(title = tr("模型与供应商", "Models & Providers"), onBack = onBack)
         val d = data
         if (d == null) {
-            PiInfoNote("引擎没有在运行，这一页读不到模型与供应商。启动后再来。")
+            PiInfoNote(tr("引擎没有在运行，这一页读不到模型与供应商。启动后再来。", "Engine is not running, so models and providers cannot be loaded. Start the engine and try again."))
             return@Column
         }
 
@@ -144,7 +145,7 @@ fun ModelsScreen(
                     ModelsCard(onClick = { notice = null }) {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(n, style = PiTheme.text.prose, color = PiTheme.palette.warning)
-                            Text("点一下关掉", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("点一下关掉", "Tap to dismiss"), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                         }
                     }
                 }
@@ -175,7 +176,7 @@ fun ModelsScreen(
                             }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    if (current != null) "当前会话模型" else "尚未选择模型",
+                                    if (current != null) tr("当前会话模型", "Current Session Model") else tr("尚未选择模型", "No Model Selected"),
                                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                     color = if (current != null) palette.accent else palette.muted,
                                 )
@@ -189,7 +190,7 @@ fun ModelsScreen(
                                     )
                                 } else {
                                     Text(
-                                        "连接供应商后即可选择模型开始对话",
+                                        tr("连接供应商后即可选择模型开始对话", "Connect a provider to select a model and start chatting"),
                                         style = PiTheme.text.meta,
                                         color = palette.dim,
                                     )
@@ -206,7 +207,7 @@ fun ModelsScreen(
                         }
                         if (d.thinkingLevels.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("思考深度", style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.muted)
+                                Text(tr("思考深度", "Thinking Level"), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = palette.muted)
                                 Row(
                                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
@@ -220,7 +221,7 @@ fun ModelsScreen(
                                                 scope.launch {
                                                     runCatching { h.setThinking(level) }
                                                         .onSuccess { reload++ }
-                                                        .onFailure { notice = "切换思考等级失败：${it.message}" }
+                                                        .onFailure { notice = tr("切换思考等级失败：${it.message}", "Failed to switch thinking level: ${it.message}") }
                                                 }
                                             },
                                         )
@@ -231,9 +232,9 @@ fun ModelsScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             PrimaryAction(
                                 text = when {
-                                    d.models.isEmpty() -> "先连接供应商"
-                                    current == null -> "选择模型（${d.models.size} 可用）"
-                                    else -> "更换模型（${d.models.size} 可用）"
+                                    d.models.isEmpty() -> tr("先连接供应商", "Connect a Provider First")
+                                    current == null -> tr("选择模型（${d.models.size} 可用）", "Select Model (${d.models.size} available)")
+                                    else -> tr("更换模型（${d.models.size} 可用）", "Switch Model (${d.models.size} available)")
                                 },
                                 enabled = d.models.isNotEmpty(),
                                 onClick = { picker = true },
@@ -248,7 +249,7 @@ fun ModelsScreen(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                    placeholder = "搜索供应商",
+                    placeholder = tr("搜索供应商", "Search providers"),
                     height = PiSettingsMetrics.searchFieldHeight,
                 )
             }
@@ -259,9 +260,15 @@ fun ModelsScreen(
                 item(key = "l:sub") {
                     ModelsSectionLabel(
                         if (connectedSubCount > 0) {
-                            "订阅账号（$connectedSubCount/${sections.subscriptionProviders.size} 已连接）"
+                            tr(
+                                "订阅账号（$connectedSubCount/${sections.subscriptionProviders.size} 已连接）",
+                                "Subscriptions ($connectedSubCount/${sections.subscriptionProviders.size} connected)",
+                            )
                         } else {
-                            "订阅账号登录（${sections.subscriptionProviders.size}）"
+                            tr(
+                                "订阅账号登录（${sections.subscriptionProviders.size}）",
+                                "Subscription Login (${sections.subscriptionProviders.size})",
+                            )
                         },
                     )
                 }
@@ -270,7 +277,7 @@ fun ModelsScreen(
 
             // ---- 已连接的 API / 网页登录供应商 ----
             if (sections.connectedApi.isNotEmpty()) {
-                item(key = "l:conn") { ModelsSectionLabel("已连接 API（${sections.connectedApi.size}）") }
+                item(key = "l:conn") { ModelsSectionLabel(tr("已连接 API（${sections.connectedApi.size}）", "Connected APIs (${sections.connectedApi.size})")) }
                 item(key = "c:conn") { ProviderCard(sections.connectedApi) { openProvider = it } }
             }
 
@@ -279,9 +286,9 @@ fun ModelsScreen(
                 val open = showOthers || searching
                 item(key = "l:other") {
                     ModelsSectionLabel(
-                        "其他 API 供应商（${sections.otherApi.size}）",
+                        tr("其他 API 供应商（${sections.otherApi.size}）", "Other API Providers (${sections.otherApi.size})"),
                         trailing = if (searching) null else ({
-                            PiSettingsChip(text = if (open) "收起" else "浏览全部", onClick = { showOthers = !showOthers })
+                            PiSettingsChip(text = if (open) tr("收起", "Collapse") else tr("浏览全部", "Browse All"), onClick = { showOthers = !showOthers })
                         }),
                     )
                 }
@@ -292,15 +299,15 @@ fun ModelsScreen(
                 item(key = "none") {
                     ModelsCard {
                         Column(Modifier.padding(ModelsCardPadding)) {
-                            Text("没有匹配的供应商", style = PiTheme.text.prose, color = PiTheme.palette.text)
-                            Text("换个词，或在下面添加自定义供应商。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("没有匹配的供应商", "No matching providers"), style = PiTheme.text.prose, color = PiTheme.palette.text)
+                            Text(tr("换个词，或在下面添加自定义供应商。", "Try a different search, or add a custom provider below."), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                         }
                     }
                 }
             }
 
             // ---- 自定义（models.json） ----
-            item(key = "l:custom") { ModelsSectionLabel("自定义供应商") }
+            item(key = "l:custom") { ModelsSectionLabel(tr("自定义供应商", "Custom Providers")) }
             item(key = "c:custom") {
                 ModelsCard {
                     Column {
@@ -317,14 +324,14 @@ fun ModelsScreen(
                             ModelsDivider()
                         }
                         ActionRow(
-                            title = "添加自定义供应商",
-                            detail = "OpenAI 兼容、Anthropic 兼容等任意端点，也可以只改某个内置供应商的地址",
+                            title = tr("添加自定义供应商", "Add Custom Provider"),
+                            detail = tr("OpenAI 兼容、Anthropic 兼容等任意端点，也可以只改某个内置供应商的地址", "Any OpenAI- or Anthropic-compatible endpoint, or override a built-in provider's URL"),
                             onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
                         )
                         d.custom?.error?.let { e ->
                             ModelsDivider()
                             Column(Modifier.padding(ModelsCardPadding)) {
-                                Text("models.json 有问题", style = PiTheme.text.prose, color = PiTheme.palette.error)
+                                Text(tr("models.json 有问题", "Invalid models.json"), style = PiTheme.text.prose, color = PiTheme.palette.error)
                                 Text(e, style = PiTheme.text.meta, color = PiTheme.palette.muted)
                             }
                         }
@@ -333,7 +340,7 @@ fun ModelsScreen(
             }
 
             // ---- 推理、作用域与缓存（100% 对齐 Pi SDK，不再混用旧版纯文本编辑器或重复行） ----
-            item(key = "l:reasoning") { ModelsSectionLabel("推理、作用域与缓存") }
+            item(key = "l:reasoning") { ModelsSectionLabel(tr("推理、作用域与缓存", "Reasoning, Scoped Models & Caching")) }
             item(key = "c:reasoning") {
                 val settingByKey = remember(modelSettings) { modelSettings.associateBy { it.key } }
                 val defaultThinkingSetting = settingByKey["defaultThinkingLevel"]
@@ -360,13 +367,13 @@ fun ModelsScreen(
                     Column {
                         // 1. 统一「作用域与循环模型」（合并原重复的「当前会话作用域模型」+「循环模型」纯文本项）
                         val scopedSummary = when {
-                            d.scoped.isNotEmpty() -> "当前会话 ${d.scoped.size} 个模型" +
-                                if (persistedEnabledModels.isNotEmpty()) " · 默认规则 ${persistedEnabledModels.size} 项" else ""
-                            persistedEnabledModels.isNotEmpty() -> "默认规则 ${persistedEnabledModels.size} 项（新会话生效）"
-                            else -> "未限制（循环全部可用模型）"
+                            d.scoped.isNotEmpty() -> tr("当前会话 ${d.scoped.size} 个模型", "${d.scoped.size} in current session") +
+                                if (persistedEnabledModels.isNotEmpty()) tr(" · 默认规则 ${persistedEnabledModels.size} 项", " · ${persistedEnabledModels.size} default rules") else ""
+                            persistedEnabledModels.isNotEmpty() -> tr("默认规则 ${persistedEnabledModels.size} 项（新会话生效）", "${persistedEnabledModels.size} default rules (for new sessions)")
+                            else -> tr("未限制（循环全部可用模型）", "Unrestricted (cycles all available models)")
                         }
                         PiSettingsEntryRow(
-                            title = "作用域与循环模型",
+                            title = tr("作用域与循环模型", "Scoped & Cycling Models"),
                             supporting = scopedSummary,
                             onClick = { onLoadAvailableModels(); pickingScoped = true },
                         )
@@ -387,11 +394,11 @@ fun ModelsScreen(
                         // 3. 逐模型思考等级（官方两步选择器：真实模型列表 → 该模型真实支持的思考等级，直走 SDK setter）
                         ModelsDivider()
                         PiSettingsEntryRow(
-                            title = "逐模型思考等级",
+                            title = tr("逐模型思考等级", "Per-Model Thinking Level"),
                             supporting = if (perModelOverrides.isEmpty()) {
-                                "未覆盖 · 按模型真实支持的档位覆盖新会话默认等级"
+                                tr("未覆盖 · 按模型真实支持的档位覆盖新会话默认等级", "No overrides · Set per-model default thinking level for new sessions")
                             } else {
-                                "已单独覆盖 ${perModelOverrides.size} 个模型 · 点击管理"
+                                tr("已单独覆盖 ${perModelOverrides.size} 个模型 · 点击管理", "${perModelOverrides.size} models overridden · Tap to manage")
                             },
                             onClick = { onLoadAvailableModels(); pickingModelThinking = true },
                         )
@@ -413,9 +420,13 @@ fun ModelsScreen(
                         if (d.cache != null) {
                             ModelsDivider()
                             Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("实时缓存预热", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                                Text(tr("实时缓存预热", "Prompt Cache Warming"), style = PiTheme.text.prose, color = PiTheme.palette.text)
                                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                                    for ((mode, label) in listOf("off" to "关", "streaming" to "流式时", "idle" to "空闲时")) {
+                                    for ((mode, label) in listOf(
+                                        "off" to tr("关", "Off"),
+                                        "streaming" to tr("流式时", "Streaming"),
+                                        "idle" to tr("空闲时", "Idle"),
+                                    )) {
                                         PiSettingsChip(
                                             text = label,
                                             active = d.cache.mode == mode,
@@ -428,16 +439,16 @@ fun ModelsScreen(
                                                             onSettingWritten("cacheWarming")
                                                             reload++
                                                         }
-                                                        .onFailure { notice = "设置缓存预热失败：${it.message}" }
+                                                        .onFailure { notice = tr("设置缓存预热失败：${it.message}", "Failed to set cache warming: ${it.message}") }
                                                 }
                                             },
                                         )
                                     }
                                 }
                                 val statusLine = listOfNotNull(
-                                    d.cache.state?.let { "状态：$it" },
+                                    d.cache.state?.let { tr("状态：$it", "State: $it") },
                                     d.cache.reason,
-                                    d.cache.nextWarmAt?.let { "下次预热 $it" },
+                                    d.cache.nextWarmAt?.let { tr("下次预热 $it", "Next warm $it") },
                                 ).joinToString(" · ")
                                 if (statusLine.isNotEmpty()) {
                                     Text(statusLine, style = PiTheme.text.meta, color = PiTheme.palette.dim)
@@ -491,21 +502,21 @@ fun ModelsScreen(
             }
 
             // ---- 目录 ----
-            item(key = "l:ops") { ModelsSectionLabel("目录") }
+            item(key = "l:ops") { ModelsSectionLabel(tr("目录", "Catalog")) }
             item(key = "c:ops") {
                 ModelsCard {
                     Column {
                         ActionRow(
-                            title = if (busy) "正在刷新…" else "刷新模型目录",
-                            detail = "重新向各供应商拉取模型列表（需要网络）",
+                            title = if (busy) tr("正在刷新…", "Refreshing…") else tr("刷新模型目录", "Refresh Model Catalog"),
+                            detail = tr("重新向各供应商拉取模型列表（需要网络）", "Fetch the latest model list from each provider (requires network)"),
                             enabled = !busy,
                             onClick = {
-                                val h = host() ?: run { notice = "引擎没在运行：刷新没有执行。"; return@ActionRow }
+                                val h = host() ?: run { notice = tr("引擎没在运行：刷新没有执行。", "Engine is not running: refresh did not run."); return@ActionRow }
                                 scope.launch {
                                     busy = true
                                     runCatching { h.auth.refreshModels() }
                                         .onSuccess { refresh = refreshSummary(it) }
-                                        .onFailure { notice = "刷新失败：${it.message}" }
+                                        .onFailure { notice = tr("刷新失败：${it.message}", "Refresh failed: ${it.message}") }
                                     busy = false
                                     reload++
                                 }
@@ -632,13 +643,13 @@ fun ModelsScreen(
 }
 
 private fun thinkingLabel(level: String): String = when (level) {
-    "off" -> "关"
-    "minimal" -> "极简"
-    "low" -> "低"
-    "medium" -> "中"
-    "high" -> "高"
-    "xhigh" -> "超高"
-    "max" -> "最高"
+    "off" -> tr("关", "Off")
+    "minimal" -> tr("极简", "Minimal")
+    "low" -> tr("低", "Low")
+    "medium" -> tr("中", "Medium")
+    "high" -> tr("高", "High")
+    "xhigh" -> tr("超高", "Extra High")
+    "max" -> tr("最高", "Max")
     else -> level
 }
 
@@ -712,7 +723,7 @@ private fun CustomRow(id: String, name: String?, detail: String?, overrides: Boo
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(name ?: id, style = PiTheme.text.prose, color = PiTheme.palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(if (overrides) "覆盖内置" else null, detail).joinToString(" · ").ifEmpty { "编辑" },
+                listOfNotNull(if (overrides) tr("覆盖内置", "Overrides built-in") else null, detail).joinToString(" · ").ifEmpty { tr("编辑", "Edit") },
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.dim,
                 maxLines = 1,

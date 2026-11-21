@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.ExportedSession
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -101,8 +102,8 @@ internal fun QueueRow(
 ) {
     val palette = PiTheme.palette
     val pendingItems = buildList {
-        steeringTexts.filter { it.isNotBlank() }.forEach { add(Triple("引导", palette.warning, it)) }
-        followUpTexts.filter { it.isNotBlank() }.forEach { add(Triple("后续", palette.accent, it)) }
+        steeringTexts.filter { it.isNotBlank() }.forEach { add(Triple(tr("引导", "Steer"), palette.warning, it)) }
+        followUpTexts.filter { it.isNotBlank() }.forEach { add(Triple(tr("后续", "Follow-up"), palette.accent, it)) }
     }
     val visibleItems = pendingItems.take(PENDING_MESSAGE_LINES)
     val overflow = (pendingItems.size - visibleItems.size).coerceAtLeast(0)
@@ -131,10 +132,10 @@ internal fun QueueRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (steering > 0) {
-                    QueueCountPill(glyph = "⇢", label = "引导 $steering", tone = palette.warning)
+                    QueueCountPill(glyph = "⇢", label = tr("引导 $steering", "Steer $steering"), tone = palette.warning)
                 }
                 if (followUp > 0) {
-                    QueueCountPill(glyph = "⇣", label = "后续 $followUp", tone = palette.accent)
+                    QueueCountPill(glyph = "⇣", label = tr("后续 $followUp", "Follow-up $followUp"), tone = palette.accent)
                 }
                 Spacer(Modifier.weight(1f))
                 Surface(
@@ -154,7 +155,7 @@ internal fun QueueRow(
                             modifier = Modifier.size(12.dp),
                         )
                         Text(
-                            text = "收回并编辑",
+                            text = tr("收回并编辑", "Restore & edit"),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                             color = palette.accent,
                         )
@@ -198,7 +199,7 @@ internal fun QueueRow(
                     }
                     if (overflow > 0) {
                         Text(
-                            text = "还有 $overflow 条排队中…",
+                            text = tr("还有 $overflow 条排队中…", "$overflow more queued…"),
                             style = PiTheme.text.meta,
                             color = palette.dim,
                             modifier = Modifier.padding(start = 4.dp),
@@ -278,7 +279,7 @@ internal fun ExportDeliveryRow(
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
-                        "会话已导出",
+                        tr("会话已导出", "Session exported"),
                         style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -294,12 +295,12 @@ internal fun ExportDeliveryRow(
                     modifier = Modifier
                         .size(28.dp)
                         .clip(CircleShape)
-                        .clickable(onClickLabel = "关闭", onClick = onDismiss),
+                        .clickable(onClickLabel = tr("关闭", "Dismiss"), onClick = onDismiss),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "关闭",
+                        contentDescription = tr("关闭", "Dismiss"),
                         tint = palette.muted,
                         modifier = Modifier.size(16.dp),
                     )
@@ -315,7 +316,7 @@ internal fun ExportDeliveryRow(
                     color = palette.accent,
                 ) {
                     Text(
-                        "保存到 Download",
+                        tr("保存到 Download", "Save to Downloads"),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                         color = palette.contrastOn(palette.accent),
@@ -327,7 +328,7 @@ internal fun ExportDeliveryRow(
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
                     Text(
-                        "分享文件",
+                        tr("分享文件", "Share file"),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,

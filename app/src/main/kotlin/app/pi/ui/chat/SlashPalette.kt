@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -61,7 +62,7 @@ fun SlashPalette(
     ) {
         if (matches.isEmpty()) {
             Text(
-                text = if (query.isBlank()) "没有可用命令" else "没有匹配「$query」的命令",
+                text = if (query.isBlank()) tr("没有可用命令", "No commands available") else tr("没有匹配「$query」的命令", "No commands matching \"$query\""),
                 modifier = Modifier.padding(PiSpacing.pageHorizontal),
                 style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

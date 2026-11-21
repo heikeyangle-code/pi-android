@@ -1,5 +1,6 @@
 package app.pi.ui.extension
 
+import app.pi.i18n.tr
 import app.pi.rpc.Ansi
 import app.pi.rpc.Notice
 
@@ -38,10 +39,10 @@ enum class ExtensionDialogMethod(val wire: String) {
      */
     val fallbackTitle: String
         get() = when (this) {
-            Select -> "请选择"
-            Confirm -> "请确认"
-            Input -> "请输入"
-            Editor -> "请编辑"
+            Select -> tr("请选择", "Select")
+            Confirm -> tr("请确认", "Confirm")
+            Input -> tr("请输入", "Input")
+            Editor -> tr("请编辑", "Edit")
         }
 
     /**
@@ -51,7 +52,7 @@ enum class ExtensionDialogMethod(val wire: String) {
      * auto-dismiss is never mistaken for a crash.
      */
     val timeoutVerb: String
-        get() = if (this == Confirm) "自动拒绝" else "自动取消"
+        get() = if (this == Confirm) tr("自动拒绝", "auto-decline") else tr("自动取消", "auto-cancel")
 
     companion object {
         fun fromWire(method: String): ExtensionDialogMethod? =

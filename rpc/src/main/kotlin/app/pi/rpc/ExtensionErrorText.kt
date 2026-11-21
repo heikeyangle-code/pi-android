@@ -37,7 +37,7 @@ private const val BUILTIN_PATH_PREFIX = "builtin:"
  */
 fun extensionErrorHeadline(extensionPath: String?): String {
     val name = extensionErrorName(extensionPath)
-    return if (name == null) "扩展出错" else "扩展出错：$name"
+    return if (name == null) RpcLocale.tr("扩展出错", "Extension error") else RpcLocale.tr("扩展出错：$name", "Extension error: $name")
 }
 
 /**

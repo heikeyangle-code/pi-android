@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
@@ -87,8 +88,8 @@ fun PiJsonTreeView(
     val currentFeedback: String? = feedback
     val status = when {
         currentFeedback != null -> currentFeedback
-        tree != null -> "${tree.nodeCount} 个节点"
-        result == null -> "解析中…"
+        tree != null -> tr("${tree.nodeCount} 个节点", "${tree.nodeCount} nodes")
+        result == null -> tr("解析中…", "Parsing…")
         mode == PiTreeMode.Tree && result is JsonTreeResult.Failure ->
             jsonFailureNotice(result.reason, limits)
         else -> null
@@ -107,7 +108,7 @@ fun PiJsonTreeView(
                 root = tree.root,
                 onCopy = { text, label ->
                     clipboard.setText(AnnotatedString(text))
-                    feedback = "已复制$label"
+                    feedback = tr("已复制$label", "Copied $label")
                 },
             )
         } else {
@@ -159,7 +160,7 @@ private fun JsonNodeRow(
                 // 整行都是展开/收起的点击区（含缩进部分）：原来只有那个 9 dp 宽的三角能点。
                 .then(
                     if (node.isContainer) {
-                        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+                        Modifier.clickable(onClickLabel = if (expanded) tr("收起", "Collapse") else tr("展开", "Expand")) { expanded = !expanded }
                     } else {
                         Modifier
                     },
@@ -202,11 +203,11 @@ private fun JsonNodeRow(
 
                 when (node) {
                     is JsonObjectNode -> Text(
-                        text = "{ ${node.entries.size} 个键 }",
+                        text = tr("{ ${node.entries.size} 个键 }", "{ ${node.entries.size} keys }"),
                         style = body.copy(color = palette.muted),
                     )
                     is JsonArrayNode -> Text(
-                        text = "[ ${node.items.size} 项 ]",
+                        text = tr("[ ${node.items.size} 项 ]", "[ ${node.items.size} items ]"),
                         style = body.copy(color = palette.muted),
                     )
                     is JsonScalarNode -> JsonScalarValue(node, body = body)
@@ -284,7 +285,7 @@ private fun JsonScalarValue(node: JsonScalarNode, body: androidx.compose.ui.text
 @Composable
 private fun JsonHiddenChildrenRow(depth: Int, hidden: Int) {
     Text(
-        text = "… 还有 $hidden 项，切换源码或复制完整 JSON 查看",
+        text = tr("… 还有 $hidden 项，切换源码或复制完整 JSON 查看", "… $hidden more item(s); switch to source or copy full JSON"),
         style = PiTheme.text.monoSmall,
         color = PiTheme.palette.muted,
         modifier = Modifier.padding(
@@ -300,9 +301,9 @@ private fun jsonRowActions(
     onCopy: (text: String, label: String) -> Unit,
 ): List<Pair<String, () -> Unit>> {
     val actions = ArrayList<Pair<String, () -> Unit>>(2)
-    actions += "复制路径" to { onCopy(node.path, "路径") }
+    actions += tr("复制路径", "Copy path") to { onCopy(node.path, tr("路径", "path")) }
     if (node is JsonScalarNode) {
-        actions += "复制值" to { onCopy(node.literal, "值") }
+        actions += tr("复制值", "Copy value") to { onCopy(node.literal, tr("值", "value")) }
     }
     return actions
 }
@@ -312,10 +313,10 @@ private fun jsonRowActions(
  * sentence cannot drift from the gate.
  */
 private fun jsonFailureNotice(reason: JsonTreeFailure, limits: JsonTreeLimits): String = when (reason) {
-    JsonTreeFailure.NotSettled -> "JSON 还在生成，先显示源码"
-    JsonTreeFailure.Empty -> "JSON 为空，先显示源码"
-    JsonTreeFailure.TooLarge -> "JSON 超过 ${limits.maxChars / 1024} KiB，已回退源码"
-    JsonTreeFailure.TooDeep -> "JSON 嵌套超过 ${limits.maxDepth} 层，已回退源码"
-    JsonTreeFailure.TooManyNodes -> "JSON 超过 ${limits.maxNodes} 个节点，已回退源码"
-    JsonTreeFailure.Malformed -> "JSON 解析失败，已回退源码"
+    JsonTreeFailure.NotSettled -> tr("JSON 还在生成，先显示源码", "JSON still streaming; showing source")
+    JsonTreeFailure.Empty -> tr("JSON 为空，先显示源码", "JSON is empty; showing source")
+    JsonTreeFailure.TooLarge -> tr("JSON 超过 ${limits.maxChars / 1024} KiB，已回退源码", "JSON exceeds ${limits.maxChars / 1024} KiB; showing source")
+    JsonTreeFailure.TooDeep -> tr("JSON 嵌套超过 ${limits.maxDepth} 层，已回退源码", "JSON nesting exceeds ${limits.maxDepth} levels; showing source")
+    JsonTreeFailure.TooManyNodes -> tr("JSON 超过 ${limits.maxNodes} 个节点，已回退源码", "JSON exceeds ${limits.maxNodes} nodes; showing source")
+    JsonTreeFailure.Malformed -> tr("JSON 解析失败，已回退源码", "Invalid JSON; showing source")
 }

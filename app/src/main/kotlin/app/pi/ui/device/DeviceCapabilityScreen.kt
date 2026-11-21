@@ -58,6 +58,7 @@ import app.pi.bridge.DeviceCapabilityState
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.PiNotificationListener
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiType
 import app.pi.ui.rememberPiScreenVisible
@@ -156,7 +157,7 @@ fun DeviceCapabilityScreen(
     }
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "设备能力", onBack = onBack)
+        PiTopBar(title = tr("设备能力", "Device Capabilities"), onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
@@ -181,7 +182,7 @@ fun DeviceCapabilityScreen(
             // 2. 系统服务与权限 2×2 就绪面板（均为真服务/真权限）
             item(key = "readiness") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    DeviceSectionLabel("系统服务与权限")
+                    DeviceSectionLabel(tr("系统服务与权限", "System Services & Permissions"))
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -194,11 +195,11 @@ fun DeviceCapabilityScreen(
                         ) {
                             ReadinessTile(
                                 icon = Icons.Filled.AccessibilityNew,
-                                title = "无障碍服务",
+                                title = tr("无障碍服务", "Accessibility"),
                                 status = when (accessibility) {
-                                    "connected" -> "已连接"
-                                    "enabled_not_connected" -> "重连中"
-                                    else -> "未开启"
+                                    "connected" -> tr("已连接", "Connected")
+                                    "enabled_not_connected" -> tr("重连中", "Reconnecting")
+                                    else -> tr("未开启", "Off")
                                 },
                                 ready = accessibility == "connected",
                                 accent = palette.accent,
@@ -207,11 +208,11 @@ fun DeviceCapabilityScreen(
                             )
                             ReadinessTile(
                                 icon = Icons.Filled.NotificationsActive,
-                                title = "通知使用权",
+                                title = tr("通知使用权", "Notification Access"),
                                 status = when (notifyListener) {
-                                    "connected" -> "已连接"
-                                    "enabled_not_connected" -> "重连中"
-                                    else -> "未开启"
+                                    "connected" -> tr("已连接", "Connected")
+                                    "enabled_not_connected" -> tr("重连中", "Reconnecting")
+                                    else -> tr("未开启", "Off")
                                 },
                                 ready = notifyListener == "connected",
                                 accent = palette.mdLink,
@@ -227,12 +228,12 @@ fun DeviceCapabilityScreen(
                             val shizukuInstalled = DeviceShizuku.isInstalled(context)
                             ReadinessTile(
                                 icon = Icons.Filled.AdminPanelSettings,
-                                title = "Shizuku 提权",
+                                title = tr("Shizuku 提权", "Shizuku"),
                                 status = when {
-                                    shizukuReady -> "已授权"
-                                    !shizukuInstalled -> "未安装"
-                                    !DeviceShizuku.binderAlive() -> "未启动"
-                                    else -> "待授权"
+                                    shizukuReady -> tr("已授权", "Authorized")
+                                    !shizukuInstalled -> tr("未安装", "Not Installed")
+                                    !DeviceShizuku.binderAlive() -> tr("未启动", "Not Running")
+                                    else -> tr("待授权", "Needs Permission")
                                 },
                                 ready = shizukuReady,
                                 accent = palette.warning,
@@ -241,8 +242,8 @@ fun DeviceCapabilityScreen(
                             )
                             ReadinessTile(
                                 icon = Icons.Filled.Notifications,
-                                title = "发送通知",
-                                status = if (notification) "已开启" else "点击授权",
+                                title = tr("发送通知", "Post Notifications"),
+                                status = if (notification) tr("已开启", "Allowed") else tr("点击授权", "Tap to Allow"),
                                 ready = notification,
                                 accent = palette.success,
                                 onClick = openNotification,
@@ -256,13 +257,13 @@ fun DeviceCapabilityScreen(
             // 3. 三组能力控制卡（按组动态热同步挂载工具）
             item(key = "capabilities") {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    DeviceSectionLabel("能力开关 · 按组动态挂载")
+                    DeviceSectionLabel(tr("能力开关 · 按组动态挂载", "Capabilities · Dynamic Per-Group Mounting"))
                     PiSettingsCard {
                         CapabilityCardRow(
                             icon = Icons.Filled.TouchApp,
                             iconTint = palette.accent,
-                            title = "屏幕自动化",
-                            description = "读屏、增量对比、编号标注截图、锚点点击、输入与滑动",
+                            title = tr("屏幕自动化", "Screen Automation"),
+                            description = tr("读屏、增量对比、编号标注截图、锚点点击、输入与滑动", "Screen reading, diffing, numbered screenshots, anchor taps, typing & swiping"),
                             state = screen,
                             onToggle = {
                                 store.setEnabled(DeviceCapability.Accessibility, it)
@@ -273,19 +274,19 @@ fun DeviceCapabilityScreen(
                                 revision += 1
                             },
                             issueHint = if (screen.enabled && screen.enabledForSession && !screen.usable) {
-                                if (accessibility == "enabled_not_connected") "无障碍服务正在重连" else "需先开启系统无障碍服务"
+                                if (accessibility == "enabled_not_connected") tr("无障碍服务正在重连", "Accessibility service is reconnecting") else tr("需先开启系统无障碍服务", "Enable Android Accessibility Service first")
                             } else {
                                 null
                             },
-                            actionLabel = "前往开启",
+                            actionLabel = tr("前往开启", "Open Settings"),
                             onAction = openAccessibility,
                         )
                         PiSettingsHairline()
                         CapabilityCardRow(
                             icon = Icons.Filled.PhoneAndroid,
                             iconTint = palette.success,
-                            title = "系统交互与硬件",
-                            description = "启动应用、剪贴板、通知收发/回复、分享、语音、电量/手电筒/定位",
+                            title = tr("系统交互与硬件", "System & Hardware"),
+                            description = tr("启动应用、剪贴板、通知收发/回复、分享、语音、电量/手电筒/定位", "App launch, clipboard, notifications/replies, share, TTS, battery/flashlight/location"),
                             state = basic,
                             onToggle = {
                                 store.setEnabled(DeviceCapability.Basic, it)
@@ -302,7 +303,7 @@ fun DeviceCapabilityScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         PiSettingsChip(
-                                            text = if (hasLocation) "定位已授" else "授予定位",
+                                            text = if (hasLocation) tr("定位已授", "Location Granted") else tr("授予定位", "Grant Location"),
                                             active = hasLocation,
                                             onClick = {
                                                 if (!hasLocation) {
@@ -316,7 +317,7 @@ fun DeviceCapabilityScreen(
                                             },
                                         )
                                         PiSettingsChip(
-                                            text = if (hasCamera) "手电筒已授" else "授予相机(手电筒)",
+                                            text = if (hasCamera) tr("手电筒已授", "Flashlight Granted") else tr("授予相机(手电筒)", "Grant Camera (Flashlight)"),
                                             active = hasCamera,
                                             onClick = {
                                                 if (!hasCamera) {
@@ -334,8 +335,8 @@ fun DeviceCapabilityScreen(
                         CapabilityCardRow(
                             icon = Icons.Filled.Terminal,
                             iconTint = palette.error,
-                            title = "设备 Shell",
-                            description = "Shizuku / 本机 Shell（高危 · 危险命令需每次会话审批）",
+                            title = tr("设备 Shell", "Device Shell"),
+                            description = tr("Shizuku / 本机 Shell（高危 · 危险命令需每次会话审批）", "Shizuku / local shell (high risk · dangerous commands require per-session approval)"),
                             state = shell,
                             danger = true,
                             onToggle = {
@@ -347,11 +348,11 @@ fun DeviceCapabilityScreen(
                                 revision += 1
                             },
                             issueHint = if (shell.enabled && shell.enabledForSession && !shizuku.optBoolean("ready")) {
-                                "Shizuku 未就绪，仅以应用沙箱身份运行"
+                                tr("Shizuku 未就绪，仅以应用沙箱身份运行", "Shizuku is not ready; running in app sandbox only")
                             } else {
                                 null
                             },
-                            actionLabel = if (DeviceShizuku.isInstalled(context)) "去授权" else "未安装",
+                            actionLabel = if (DeviceShizuku.isInstalled(context)) tr("去授权", "Authorize") else tr("未安装", "Not Installed"),
                             onAction = requestShizuku,
                         )
                     }
@@ -368,14 +369,14 @@ fun DeviceCapabilityScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "会话审批记录",
+                            tr("会话审批记录", "Session Approval Log"),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                             color = palette.muted,
                             modifier = Modifier.weight(1f),
                         )
                         if (ledgerLines.size > 1) {
                             Text(
-                                "清空",
+                                tr("清空", "Clear"),
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
                                     .clickable {
@@ -430,21 +431,26 @@ fun DeviceCapabilityScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                "免 ADB 与 0 Token 说明",
+                                tr("免 ADB 与 0 Token 说明", "No-ADB & 0-Token Notes"),
                                 style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                if (guideOpen) "收起" else "展开",
+                                if (guideOpen) tr("收起", "Collapse") else tr("展开", "Expand"),
                                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                                 color = palette.accent,
                             )
                         }
                         if (guideOpen) {
                             Text(
-                                "• 屏幕自动化与通知收发仅需开启对应系统服务，全程免电脑免 ADB。\n" +
-                                    "• 设备文件与 `/sdcard` 已可由模型自带工具直接访问，不再需要 SAF 目录代理。\n" +
-                                    "• 全部关闭后下一条消息自动摘除全部 `android_*` 工具与提示，严格 0 Token。",
+                                tr(
+                                    "• 屏幕自动化与通知收发仅需开启对应系统服务，全程免电脑免 ADB。\n" +
+                                        "• 设备文件与 `/sdcard` 已可由模型自带工具直接访问，不再需要 SAF 目录代理。\n" +
+                                        "• 全部关闭后下一条消息自动摘除全部 `android_*` 工具与提示，严格 0 Token。",
+                                    "• Screen automation and notification access only require enabling the corresponding Android services — no PC or ADB needed.\n" +
+                                        "• Device files and `/sdcard` are directly accessible to built-in model tools without SAF directory proxies.\n" +
+                                        "• Turning all groups off removes every `android_*` tool and prompt on the next turn for strictly 0 tokens.",
+                                ),
                                 style = PiTheme.text.meta,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -489,14 +495,14 @@ fun DeviceCapabilityEntryRow(store: DeviceCapabilityStore, onClick: () -> Unit, 
         }
         Column(Modifier.weight(1f)) {
             Text(
-                "设备能力",
+                tr("设备能力", "Device Capabilities"),
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                if (usable == 0) "已停用 · 0 Token 上下文占用" else "$usable/${states.size} 组就绪 · 屏幕、交互与 Shell",
+                if (usable == 0) tr("已停用 · 0 Token 上下文占用", "Disabled · 0 Token context footprint") else tr("$usable/${states.size} 组就绪 · 屏幕、交互与 Shell", "$usable/${states.size} ready · Screen, System & Shell"),
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -509,7 +515,7 @@ fun DeviceCapabilityEntryRow(store: DeviceCapabilityStore, onClick: () -> Unit, 
             color = activeTint.copy(alpha = 0.14f),
         ) {
             Text(
-                if (usable == 0) "0 Token" else "$usable 组开启",
+                if (usable == 0) "0 Token" else tr("$usable 组开启", "$usable Active"),
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                 color = activeTint,
@@ -566,15 +572,15 @@ private fun ContextFootprintBanner(
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = if (zeroToken) "0 Token 上下文占用" else "已激活 $usableCount / $totalCount 组 · 极简提示",
+                    text = if (zeroToken) tr("0 Token 上下文占用", "0 Token Context Footprint") else tr("已激活 $usableCount / $totalCount 组 · 极简提示", "$usableCount / $totalCount Active · Compact Prompt"),
                     style = PiType.rowTitle.copy(fontWeight = FontWeight.SemiBold),
                     color = tone,
                 )
                 Text(
                     text = when {
-                        zeroToken && enabledCount == 0 -> "全部能力已停用，不注入任何设备工具或提示词。"
-                        zeroToken -> "开关已开但系统服务未就绪，当前仍保持 0 Token。"
-                        else -> "仅按组热挂载所需工具，关闭后下一轮自动归零。"
+                        zeroToken && enabledCount == 0 -> tr("全部能力已停用，不注入任何设备工具或提示词。", "All capabilities are off; no device tools or prompts are injected.")
+                        zeroToken -> tr("开关已开但系统服务未就绪，当前仍保持 0 Token。", "Enabled, but required system services are not ready — still 0 tokens.")
+                        else -> tr("仅按组热挂载所需工具，关闭后下一轮自动归零。", "Only tools for enabled groups are hot-mounted; disabling drops them on the next turn.")
                     },
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -582,7 +588,7 @@ private fun ContextFootprintBanner(
             }
             if (enabledCount > 0) {
                 PiSettingsChip(
-                    text = "全部关闭",
+                    text = tr("全部关闭", "Disable All"),
                     onClick = onDisableAll,
                 )
             }
@@ -677,10 +683,10 @@ private fun CapabilityCardRow(
     val palette = PiTheme.palette
     val sessionPaused = state.enabled && !state.enabledForSession
     val statusText = when {
-        !state.enabled -> "已关闭"
-        sessionPaused -> "本会话暂停"
-        state.usable -> "已就绪"
-        else -> "待授权"
+        !state.enabled -> tr("已关闭", "Off")
+        sessionPaused -> tr("本会话暂停", "Paused")
+        state.usable -> tr("已就绪", "Ready")
+        else -> tr("待授权", "Needs Setup")
     }
     val statusTone = when {
         !state.enabled -> palette.muted
@@ -747,7 +753,7 @@ private fun CapabilityCardRow(
                             color = palette.error.copy(alpha = 0.14f),
                         ) {
                             Text(
-                                "高危",
+                                tr("高危", "High Risk"),
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = PiTheme.text.monoSmall,
                                 color = palette.error,
@@ -776,7 +782,7 @@ private fun CapabilityCardRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 PiSettingsChip(
-                    text = if (sessionPaused) "恢复本会话" else "本会话暂停",
+                    text = if (sessionPaused) tr("恢复本会话", "Resume for Session") else tr("本会话暂停", "Pause for Session"),
                     active = sessionPaused,
                     onClick = { onToggleSessionPause(!sessionPaused) },
                 )

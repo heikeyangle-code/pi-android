@@ -9,11 +9,15 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.i18n.LocalPiResources
+import app.pi.i18n.PiLocale
 import app.pi.ui.PiMemoryTrimmer
 import app.pi.ui.PiRoot
 import app.pi.ui.PiSessionViewModel
@@ -120,16 +124,23 @@ class MainActivity : ComponentActivity() {
                 window.setBackgroundDrawable(ColorDrawable(theme.palette.pageBg.toArgb()))
             }
 
-            PiTheme(
-                dark = theme.dark,
-                palette = theme.palette,
-                // `app.appearance.typography` / `.lineHeight` / `.fontSize`, resolved
-                // once in `readPrefs`. It replaced the bare `fontScaleDelta`: the same
-                // offset is inside the profile, together with the preset's sizes, gaps,
-                // headings and radii.
-                typographyProfile = uiState.prefs.typographyProfile,
-            ) {
-                PiRoot()
+            val activeLanguage = PiLocale.language
+            val localizedResources = remember(activeLanguage, PiLocale.isZh) {
+                PiLocale.localizedResources(this@MainActivity, activeLanguage)
+            }
+
+            CompositionLocalProvider(LocalPiResources provides localizedResources) {
+                PiTheme(
+                    dark = theme.dark,
+                    palette = theme.palette,
+                    // `app.appearance.typography` / `.lineHeight` / `.fontSize`, resolved
+                    // once in `readPrefs`. It replaced the bare `fontScaleDelta`: the same
+                    // offset is inside the profile, together with the preset's sizes, gaps,
+                    // headings and radii.
+                    typographyProfile = uiState.prefs.typographyProfile,
+                ) {
+                    PiRoot()
+                }
             }
         }
     }

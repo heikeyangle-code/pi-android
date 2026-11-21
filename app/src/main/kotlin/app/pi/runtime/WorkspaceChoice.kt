@@ -1,5 +1,7 @@
 package app.pi.runtime
 
+import app.pi.i18n.tr
+
 /**
  * 工作区选择里那一半**不需要 Android** 的规则。
  *
@@ -60,12 +62,12 @@ object WorkspaceChoice {
      * 差别）、超长。**不再**要求 `workspace-N` 的形状。
      */
     fun nameProblem(raw: String): String? = when {
-        raw.isEmpty() -> "名字不能为空。"
-        raw.any { it == '/' || it == '\\' || it == '\u0000' || it.isISOControl() } -> "名字里不能有 / \\ 或控制字符。"
-        raw == "." || raw == ".." -> "「$raw」不能当目录名。"
-        raw.startsWith('.') -> "不能以点开头（. 开头的是隐藏目录，pi 的 .pi 就在里面）。"
-        raw != raw.trim() || raw.endsWith('.') -> "名字首尾不能是空格，结尾也不能是点。"
-        raw.length > MAX_NAME_CHARS -> "名字最多 $MAX_NAME_CHARS 个字符。"
+        raw.isEmpty() -> tr("名字不能为空。", "Name cannot be empty.")
+        raw.any { it == '/' || it == '\\' || it == '\u0000' || it.isISOControl() } -> tr("名字里不能有 / \\ 或控制字符。", "Name cannot contain /, \\, or control characters.")
+        raw == "." || raw == ".." -> tr("「$raw」不能当目录名。", "\"$raw\" cannot be used as a directory name.")
+        raw.startsWith('.') -> tr("不能以点开头（. 开头的是隐藏目录，pi 的 .pi 就在里面）。", "Name cannot start with a dot (hidden directories).")
+        raw != raw.trim() || raw.endsWith('.') -> tr("名字首尾不能是空格，结尾也不能是点。", "Name cannot start/end with spaces or end with a dot.")
+        raw.length > MAX_NAME_CHARS -> tr("名字最多 $MAX_NAME_CHARS 个字符。", "Name must be at most $MAX_NAME_CHARS characters.")
         else -> null
     }
 
@@ -148,7 +150,7 @@ object WorkspaceChoice {
         // Only a **missing** cwd gets the sentence. It is not the same as a cwd that is the guest
         // root: pi recorded `/` (a session started at the root of the guest), and answering
         // 「工作目录未记录」 there would be this app inventing a fact about pi's file.
-        if (raw.isEmpty()) return "工作目录未记录"
+        if (raw.isEmpty()) return tr("工作目录未记录", "Working directory not recorded")
         val clean = raw.trimEnd('/')
         if (clean.isEmpty()) return "/"
         val root = workspacesRoot.trimEnd('/')
@@ -212,20 +214,20 @@ object WorkspaceChoice {
      */
     fun pickRefusal(path: String, volumes: List<String>, readable: Boolean): String? {
         val clean = path.trim().trimEnd('/').ifEmpty { "/" }
-        if (!clean.startsWith("/")) return "只能选设备上的绝对路径。"
+        if (!clean.startsWith("/")) return tr("只能选设备上的绝对路径。", "Only absolute device paths are allowed.")
         val forbidden = setOf(
             "/", "/system", "/vendor", "/apex", "/proc", "/sys", "/dev", "/etc", "/data", "/root",
             "/storage", "/mnt", "/sbin", "/bin", "/lib", "/usr", "/boot", "/init",
         )
         if (clean in forbidden) {
-            return "「$clean」不是用户内容（系统目录或根本不是目录），不能当工作区。"
+            return tr("「$clean」不是用户内容（系统目录或根本不是目录），不能当工作区。", "\"$clean\" is not a user directory and cannot be used as a workspace.")
         }
         val inVolume = volumes.any { volume -> clean == volume || clean.startsWith("$volume/") }
         if (!inVolume) {
-            val where = volumes.joinToString("、").ifEmpty { "（这台设备没报告任何存储卷）" }
-            return "只能选存储卡或共享存储里的目录（现在能选的是：$where）。"
+            val where = volumes.joinToString(tr("、", ", ")).ifEmpty { tr("（这台设备没报告任何存储卷）", "(no storage volumes reported)") }
+            return tr("只能选存储卡或共享存储里的目录（现在能选的是：$where）。", "Only directories under shared storage or SD card are allowed ($where).")
         }
-        if (!readable) return "这个目录现在读不到（可能是存储卡被拔出、正在卸载，或者没有权限），先换一个。"
+        if (!readable) return tr("这个目录现在读不到（可能是存储卡被拔出、正在卸载，或者没有权限），先换一个。", "This directory is not readable right now (storage unmounted or missing permission).")
         return null
     }
 

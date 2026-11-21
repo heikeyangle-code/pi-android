@@ -15,6 +15,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.pi.i18n.tr
 import app.pi.rpc.CompactionMarker
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
@@ -49,19 +50,19 @@ fun CompactionBlock(
     val palette = PiTheme.palette
     var expanded by rememberSaveable { mutableStateOf(false) }
     val label = when (item.status) {
-        CompactionMarker.Status.Running -> "正在压缩上下文…"
-        CompactionMarker.Status.Done -> "上下文已压缩"
-        CompactionMarker.Status.Aborted -> "压缩已中止"
-        CompactionMarker.Status.Failed -> "压缩失败"
+        CompactionMarker.Status.Running -> tr("正在压缩上下文…", "Compacting context…")
+        CompactionMarker.Status.Done -> tr("上下文已压缩", "Context compacted")
+        CompactionMarker.Status.Aborted -> tr("压缩已中止", "Compaction aborted")
+        CompactionMarker.Status.Failed -> tr("压缩失败", "Compaction failed")
     }
     val tokensFreed = item.tokensFreed
     val caption = when {
         item.status == CompactionMarker.Status.Failed && !item.errorMessage.isNullOrBlank() ->
             item.errorMessage.orEmpty()
         item.status == CompactionMarker.Status.Running ->
-            "pi 正在总结更早的对话" + (item.reason?.let { " · $it" } ?: "")
-        tokensFreed != null -> "释放 ${formatTokens(tokensFreed)} tokens"
-        else -> item.reason?.let { "原因：$it" } ?: ""
+            tr("pi 正在总结更早的对话", "pi is summarizing earlier conversation") + (item.reason?.let { " · $it" } ?: "")
+        tokensFreed != null -> tr("释放 ${formatTokens(tokensFreed)} tokens", "Freed ${formatTokens(tokensFreed)} tokens")
+        else -> item.reason?.let { tr("原因：$it", "Reason: $it") } ?: ""
     }
 
     // F28: the whole block is the content region that toggles (pi's rule).

@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiProseFamily
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -223,7 +224,7 @@ internal fun BlockActionMenu(
     Box(
         modifier.combinedClickable(
             onClickLabel = null,
-            onLongClickLabel = "更多操作",
+            onLongClickLabel = tr("更多操作", "More actions"),
             onLongClick = {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                 open = true
@@ -398,8 +399,8 @@ internal fun CardChip(text: String, color: Color, modifier: Modifier = Modifier)
 internal fun ExpandLabel(
     expanded: Boolean,
     modifier: Modifier = Modifier,
-    expandText: String = "展开",
-    collapseText: String = "收起",
+    expandText: String = tr("展开", "Expand"),
+    collapseText: String = tr("收起", "Collapse"),
     color: Color? = null,
 ) {
     val tint = color ?: PiTheme.palette.muted
@@ -564,7 +565,7 @@ internal fun Modifier.toggleContent(
     val anchor = LocalTranscriptRowAnchor.current
     return then(
         if (enabled) {
-            Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") {
+            Modifier.clickable(onClickLabel = if (expanded) tr("收起", "Collapse") else tr("展开", "Expand")) {
                 // The row is about to get shorter; ask the list to keep its start where the
                 // reader can see it *before* the height changes (see [TranscriptRowAnchor]).
                 // Expanding needs nothing: growing does not move this row's top.

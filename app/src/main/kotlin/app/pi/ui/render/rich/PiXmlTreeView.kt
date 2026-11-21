@@ -23,6 +23,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
@@ -84,8 +85,8 @@ fun PiXmlTreeView(
     val currentFeedback: String? = feedback
     val status = when {
         currentFeedback != null -> currentFeedback
-        tree != null -> "${tree.nodeCount} 个元素"
-        result == null -> "解析中…"
+        tree != null -> tr("${tree.nodeCount} 个元素", "${tree.nodeCount} elements")
+        result == null -> tr("解析中…", "Parsing…")
         mode == PiTreeMode.Tree && result is XmlTreeResult.Failure ->
             xmlFailureNotice(result.reason, limits)
         else -> null
@@ -104,7 +105,7 @@ fun PiXmlTreeView(
                 root = tree.root,
                 onCopy = { text, label ->
                     clipboard.setText(AnnotatedString(text))
-                    feedback = "已复制$label"
+                    feedback = tr("已复制$label", "Copied $label")
                 },
             )
         } else {
@@ -149,7 +150,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
                 // 整行都是展开/收起的点击区（含缩进部分）：原来只有那个 9 dp 宽的三角能点。
                 .then(
                     if (hasChildren) {
-                        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+                        Modifier.clickable(onClickLabel = if (expanded) tr("收起", "Collapse") else tr("展开", "Expand")) { expanded = !expanded }
                     } else {
                         Modifier
                     },
@@ -221,7 +222,7 @@ private fun XmlNodeRow(node: XmlNode, onCopy: (text: String, label: String) -> U
                 PiTreeMoreRow(node.depth + 1, hidden) { limit += PI_TREE_PAGE }
             } else if (hidden > 0) {
                 Text(
-                    text = "… 还有 $hidden 个子元素，切换源码查看",
+                    text = tr("… 还有 $hidden 个子元素，切换源码查看", "… $hidden more child element(s); switch to source"),
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
                     modifier = Modifier.padding(
@@ -240,9 +241,9 @@ private fun xmlRowActions(
     onCopy: (text: String, label: String) -> Unit,
 ): List<Pair<String, () -> Unit>> {
     val actions = ArrayList<Pair<String, () -> Unit>>(2)
-    actions += "复制路径" to { onCopy(node.path, "路径") }
+    actions += tr("复制路径", "Copy path") to { onCopy(node.path, tr("路径", "path")) }
     node.text?.let { text ->
-        actions += "复制文本" to { onCopy(text, "文本") }
+        actions += tr("复制文本", "Copy text") to { onCopy(text, tr("文本", "text")) }
     }
     return actions
 }
@@ -255,11 +256,11 @@ private const val MAX_VISIBLE_ATTRIBUTES = 24
  * so the sentence cannot drift from the gate.
  */
 private fun xmlFailureNotice(reason: XmlTreeFailure, limits: XmlTreeLimits): String = when (reason) {
-    XmlTreeFailure.NotSettled -> "XML 还在生成，先显示源码"
-    XmlTreeFailure.Empty -> "XML 为空，先显示源码"
-    XmlTreeFailure.TooLarge -> "XML 超过 ${limits.maxChars / 1024} KiB，已回退源码"
-    XmlTreeFailure.TooDeep -> "XML 嵌套超过 ${limits.maxDepth} 层，已回退源码"
-    XmlTreeFailure.TooManyNodes -> "XML 超过 ${limits.maxNodes} 个元素，已回退源码"
-    XmlTreeFailure.Dtd -> "XML 含 DOCTYPE/ENTITY 声明，出于安全考虑只显示源码"
-    XmlTreeFailure.Malformed -> "XML 解析失败，已回退源码"
+    XmlTreeFailure.NotSettled -> tr("XML 还在生成，先显示源码", "XML still streaming; showing source")
+    XmlTreeFailure.Empty -> tr("XML 为空，先显示源码", "XML is empty; showing source")
+    XmlTreeFailure.TooLarge -> tr("XML 超过 ${limits.maxChars / 1024} KiB，已回退源码", "XML exceeds ${limits.maxChars / 1024} KiB; showing source")
+    XmlTreeFailure.TooDeep -> tr("XML 嵌套超过 ${limits.maxDepth} 层，已回退源码", "XML nesting exceeds ${limits.maxDepth} levels; showing source")
+    XmlTreeFailure.TooManyNodes -> tr("XML 超过 ${limits.maxNodes} 个元素，已回退源码", "XML exceeds ${limits.maxNodes} elements; showing source")
+    XmlTreeFailure.Dtd -> tr("XML 含 DOCTYPE/ENTITY 声明，出于安全考虑只显示源码", "XML contains DOCTYPE/ENTITY; showing source for safety")
+    XmlTreeFailure.Malformed -> tr("XML 解析失败，已回退源码", "Invalid XML; showing source")
 }

@@ -18,7 +18,7 @@ import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { loadSdk, sdkVia } from "./sdk.mjs";
 import { ERR, HostError } from "./protocol.mjs";
-import { STATE_EVENTS, createStatePusher } from "./state.mjs";
+import { STATE_EVENTS, createStatePusher, snapshotOf } from "./state.mjs";
 
 /** 去掉 message_update 里每个增量都带着的整条 partial（pi 的 `modes/json-event.js` 同款，体积差一个数量级）。 */
 export function toJsonEvent(event) {
@@ -367,6 +367,7 @@ export class Controller {
     });
 
     const session = this.session;
+    const initialState = snapshotOf(this);
     return {
       protocol: 1,
       sdkVia: sdkVia(),
@@ -379,6 +380,7 @@ export class Controller {
       sessionFile: session.sessionFile ?? null,
       modelFallbackMessage: this.runtime.modelFallbackMessage ?? null,
       diagnostics: startupDiagnostics,
+      state: initialState,
     };
   }
 
@@ -563,12 +565,16 @@ export class Controller {
             this.extensionsBound = true;
             hub.emit("ext.bound", { ok: true, first: wasFirst });
             this.pushState("extensions");
-            // 扩展绑定完成后在后台配置官方 http-dispatcher（undici），不占用 open/bind 关键路径。
-            setImmediate(() => void this.ensureHttpSettings());
+            // 仅当用户配置了代理或自定义空闲超时时，才在启动后异步加载官方 http-dispatcher（undici，proot 下约 1.5~3s）；
+            // 否则留给首次发起网络请求（prompt / auth）时由 `ensureHttpSettings()` 按需加载，避免拖慢冷启动。
+            const sm = this.runtime?.services?.settingsManager;
+            const hasCustomHttp = Boolean(this.appliedHttpProxy) || (sm?.getHttpIdleTimeoutMs?.() !== undefined);
+            if (hasCustomHttp) {
+              setImmediate(() => void this.ensureHttpSettings());
+            }
           })
           .catch((error) => {
             hub.emit("ext.bound", { ok: false, first: wasFirst, error: String(error?.stack ?? error) });
-            setImmediate(() => void this.ensureHttpSettings());
           })
           .finally(() => {
             this.bindPromise = null;

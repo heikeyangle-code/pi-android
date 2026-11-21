@@ -9,6 +9,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
@@ -52,7 +54,7 @@ internal fun ReadBlock(
     val range = remember(item.args) { readRange(item.args) }
     val command = remember(item.args) { toolCommandText(item.args) }
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
-    val notice = remember(item.details, fullOutputPath) {
+    val notice = remember(item.details, fullOutputPath, PiLocale.isZh) {
         truncationNotice(fullOutputPath, truncationOf(item.details))
     }
     // Pi 1.6.0 (#12131)：非视觉模型读取图片时，警告写在 `details.imageUnsupportedByModel`，折叠态也展示。
@@ -61,7 +63,7 @@ internal fun ReadBlock(
     val shown = if (fullOutput) body.lines else body.lines.take(READ_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val hasBody = body.lines.isNotEmpty() || body.footer != null || body.scanCapped || notice != null
-    val footer = remember(item.output, item.outputTruncated, state) {
+    val footer = remember(item.output, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
@@ -82,7 +84,7 @@ internal fun ReadBlock(
                     // `fg("warning", ":1-50")` (`renderers/read.js:19-23`). Two tokens on one
                     // line, so the subject is the two runs pi emits — text and order untouched.
                     subject = buildList {
-                        add(toolPathPart(body.path, fallback = "文件"))
+                        add(toolPathPart(body.path, fallback = tr("文件", "file")))
                         if (range.isNotEmpty()) add(ToolCallPart(range, ToolCallToken.Warning))
                     },
                     right = toolHeaderReading(item, state, count = body.totalLines),
@@ -94,7 +96,7 @@ internal fun ReadBlock(
                         // A settled `read` with no lines is an empty file; while the call is
                         // still running the same state only means "nothing yet".
                         if (!pending) {
-                            Text(text = "文件为空", style = PiTheme.text.meta, color = palette.muted)
+                            Text(text = tr("文件为空", "File is empty"), style = PiTheme.text.meta, color = palette.muted)
                         }
                     } else {
                         SourceLines(
@@ -106,12 +108,12 @@ internal fun ReadBlock(
                         )
                         if (hidden > 0 && !fullOutput) {
                             ExpandAllLabel(
-                                text = "展开全部（还有 $hidden 行）",
+                                text = tr("展开全部（还有 $hidden 行）", "Show all ($hidden more lines)"),
                                 onClick = { fullOutput = true },
                             )
                         } else if (hidden > 0) {
                             Text(
-                                text = "还有 $hidden 行未显示",
+                                text = tr("还有 $hidden 行未显示", "$hidden more lines not shown"),
                                 style = PiTheme.text.meta,
                                 color = palette.muted,
                                 modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -126,7 +128,7 @@ internal fun ReadBlock(
                     // Remembered because the translation runs three regexes, and this row
                     // republishes every 200 ms while anything streams (F31/F8).
                     body.footer?.let { footer ->
-                        val sentence = remember(footer) { readFooterText(footer) }
+                        val sentence = remember(footer, PiLocale.isZh) { readFooterText(footer) }
                         Text(
                             text = sentence,
                             style = PiTheme.text.meta,
@@ -141,7 +143,10 @@ internal fun ReadBlock(
                 }
                 if (imageUnsupportedBy != null) {
                     ToolNotice(
-                        text = "$imageUnsupportedBy 不支持图片输入，模型看到的是占位说明",
+                        text = tr(
+                            "$imageUnsupportedBy 不支持图片输入，模型看到的是占位说明",
+                            "$imageUnsupportedBy does not support image input; the model sees a placeholder note",
+                        ),
                         copyOnTap = null,
                         modifier = Modifier.padding(top = PiSpacing.tiny),
                     )

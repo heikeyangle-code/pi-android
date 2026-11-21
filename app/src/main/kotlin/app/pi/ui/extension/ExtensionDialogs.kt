@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
@@ -188,7 +189,7 @@ private fun SelectBody(
     Spacer(Modifier.height(DialogControlGap))
     if (dialog.options.isEmpty()) {
         Text(
-            "这个扩展没有给出任何选项。",
+            tr("这个扩展没有给出任何选项。", "This extension provided no options."),
             style = MaterialTheme.typography.bodyMedium,
             color = palette.warning,
         )
@@ -243,7 +244,7 @@ private fun SelectSheetBody(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = "筛选选项（共 ${dialog.options.size} 项）",
+                    placeholder = tr("筛选选项（共 ${dialog.options.size} 项）", "Filter options (${dialog.options.size} total)"),
                     height = PiSettingsMetrics.searchFieldHeight,
                 )
             }
@@ -259,7 +260,7 @@ private fun SelectSheetBody(
             ) {
                 if (filtered.isEmpty()) {
                     Text(
-                        "没有匹配「$query」的选项。",
+                        tr("没有匹配「$query」的选项。", "No options matching \"$query\"."),
                         style = PiTheme.text.meta,
                         color = palette.muted,
                         modifier = Modifier.padding(PiSpacing.cardPadding),
@@ -300,7 +301,7 @@ private fun EditorSheetBody(
             ExtField(
                 value = draft,
                 onValueChange = onDraftChange,
-                placeholder = dialog.placeholder ?: "编辑内容",
+                placeholder = dialog.placeholder ?: tr("编辑内容", "Edit text"),
                 singleLine = false,
                 height = null,
                 paddingHorizontal = 12.dp,
@@ -316,13 +317,13 @@ private fun EditorSheetBody(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "$lines 行 · ${draft.length} 字",
+                    tr("$lines 行 · ${draft.length} 字", "$lines lines · ${draft.length} chars"),
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.dim,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "粘贴",
+                        tr("粘贴", "Paste"),
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(PiTheme.palette.accent.copy(alpha = 0.12f))
@@ -336,7 +337,7 @@ private fun EditorSheetBody(
                     )
                     if (draft.isNotEmpty()) {
                         Text(
-                            "清空",
+                            tr("清空", "Clear"),
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -426,7 +427,7 @@ private fun InputBody(
     ExtField(
         value = value,
         onValueChange = onValueChange,
-        placeholder = dialog.placeholder ?: "输入内容",
+        placeholder = dialog.placeholder ?: tr("输入内容", "Enter text"),
         singleLine = true,
         height = FieldHeight,
         paddingHorizontal = 10.dp,
@@ -449,7 +450,7 @@ private fun EditorBody(
     ExtField(
         value = value,
         onValueChange = onValueChange,
-        placeholder = dialog.placeholder ?: "编辑内容",
+        placeholder = dialog.placeholder ?: tr("编辑内容", "Edit text"),
         singleLine = false,
         height = null,
         paddingHorizontal = 12.dp,
@@ -581,19 +582,19 @@ private fun DialogActions(
     PiDialogActions {
         when (dialog.method) {
             ExtensionDialogMethod.Select -> PiDialogAction(
-                label = "取消",
+                label = tr("取消", "Cancel"),
                 primary = false,
                 onClick = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) },
             )
 
             ExtensionDialogMethod.Confirm -> {
                 PiDialogAction(
-                    label = "拒绝",
+                    label = tr("拒绝", "Decline"),
                     primary = false,
                     onClick = { onAnswer(dialog.id, ExtensionAnswer.Confirmed(false)) },
                 )
                 PiDialogAction(
-                    label = "允许",
+                    label = tr("允许", "Allow"),
                     primary = true,
                     onClick = { onAnswer(dialog.id, ExtensionAnswer.Confirmed(true)) },
                 )
@@ -603,12 +604,12 @@ private fun DialogActions(
             ExtensionDialogMethod.Editor,
             -> {
                 PiDialogAction(
-                    label = "取消",
+                    label = tr("取消", "Cancel"),
                     primary = false,
                     onClick = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) },
                 )
                 PiDialogAction(
-                    label = "确定",
+                    label = tr("确定", "OK"),
                     primary = true,
                     onClick = { onAnswer(dialog.id, ExtensionAnswer.Value(draft)) },
                 )
@@ -630,13 +631,22 @@ private fun DialogActions(
 @Composable
 private fun DialogFooter(dialog: ExtensionDialog, backlog: Int) {
     val parts = buildList {
-        if (backlog > 0) add("还有 $backlog 个扩展对话框在排队")
-        if (dialog.timed) add("超时后${dialog.method.timeoutVerb}，晚到的回复会被丢弃。")
+        if (backlog > 0) {
+            add(tr("还有 $backlog 个扩展对话框在排队", "$backlog more extension dialog(s) queued"))
+        }
+        if (dialog.timed) {
+            add(
+                tr(
+                    "超时后${dialog.method.timeoutVerb}，晚到的回复会被丢弃。",
+                    "Will ${dialog.method.timeoutVerb} on timeout; late answers are ignored.",
+                ),
+            )
+        }
     }
     if (parts.isEmpty()) return
     Spacer(Modifier.height(DialogControlGap))
     Text(
-        text = parts.joinToString("。"),
+        text = parts.joinToString(tr("。", " ")),
         style = PiTheme.text.meta,
         color = PiTheme.palette.muted,
     )
@@ -732,16 +742,17 @@ private fun ExtField(
         )
         if (singleLine && value.isNotEmpty()) {
             Spacer(Modifier.width(4.dp))
+            val clearLabel = tr("清空", "Clear")
             Box(
                 modifier = Modifier
                     .size(22.dp)
                     .clip(CircleShape)
-                    .clickable(role = Role.Button, onClickLabel = "清空") { onValueChange("") },
+                    .clickable(role = Role.Button, onClickLabel = clearLabel) { onValueChange("") },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "清空",
+                    contentDescription = clearLabel,
                     tint = palette.dim,
                     modifier = Modifier.size(14.dp),
                 )

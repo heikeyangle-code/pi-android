@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.pi.host.HostAuth
+import app.pi.i18n.tr
 import app.pi.ui.components.PiSheet
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsChip
@@ -68,7 +69,7 @@ internal fun ModelPickerSheet(
 
     PiSheet(onDismiss = onDismiss, fullHeight = true) {
         Text(
-            "选择模型",
+            tr("选择模型", "Select Model"),
             style = app.pi.ui.components.PiType.title,
             color = PiTheme.palette.text,
             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
@@ -77,7 +78,7 @@ internal fun ModelPickerSheet(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small * 2),
-            placeholder = "搜索模型或供应商",
+            placeholder = tr("搜索模型或供应商", "Search models or providers"),
             height = PiSettingsMetrics.searchFieldHeight,
         )
         LazyColumn(Modifier.weight(1f)) {
@@ -97,7 +98,7 @@ internal fun ModelPickerSheet(
             if (groups.isEmpty()) {
                 item(key = "none") {
                     Text(
-                        if (models.isEmpty()) "还没有可用的模型——先连接一个供应商。" else "没有匹配「${query.trim()}」的模型。",
+                        if (models.isEmpty()) tr("还没有可用的模型——先连接一个供应商。", "No models available yet — connect a provider first.") else tr("没有匹配「${query.trim()}」的模型。", "No models matching \"${query.trim()}\"."),
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.dim,
                         modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
@@ -111,15 +112,21 @@ internal fun ModelPickerSheet(
                 working = working,
                 error = error,
                 onUse = { use ->
-                    val h = host() ?: run { error = "引擎没在运行。"; return@UseBar }
+                    val h = host() ?: run { error = tr("引擎没在运行。", "Engine is not running."); return@UseBar }
                     scope.launch {
                         working = true
                         runCatching { h.selectModel(m.provider, m.id, use.persist) }
                             .onSuccess {
-                                onSwitched((if (use.persist) "已设为默认并切换到 " else "已切换到 ") + m.title + "。")
+                                onSwitched(
+                                    if (use.persist) {
+                                        tr("已设为默认并切换到 ${m.title}。", "Set as default and switched to ${m.title}.")
+                                    } else {
+                                        tr("已切换到 ${m.title}。", "Switched to ${m.title}.")
+                                    },
+                                )
                                 onDismiss()
                             }
-                            .onFailure { error = "切换失败：${it.message}"; working = false }
+                            .onFailure { error = tr("切换失败：${it.message}", "Switch failed: ${it.message}"); working = false }
                     }
                 },
                 onCancel = { picked = null; error = null },
@@ -161,7 +168,7 @@ internal fun UseBar(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 PrimaryAction(UseScope.Session.label, enabled = !working, onClick = { onUse(UseScope.Session) })
                 PiSettingsChip(text = UseScope.Default.label, enabled = !working, onClick = { onUse(UseScope.Default) })
-                PiSettingsChip(text = "取消", onClick = onCancel)
+                PiSettingsChip(text = tr("取消", "Cancel"), onClick = onCancel)
             }
         }
     }
@@ -213,6 +220,7 @@ internal fun ProviderSheet(
     var loginJob by remember { mutableStateOf<Job?>(null) }
     var promptText by remember { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
+    var noteWarning by remember { mutableStateOf(false) }
     var modelQuery by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<ModelFacts?>(null) }
     var pickError by remember { mutableStateOf<String?>(null) }
@@ -238,20 +246,21 @@ internal fun ProviderSheet(
     fun openExternalUrl(url: String) {
         val opened = runCatching { uri.openUri(url) }
         if (opened.isFailure) {
-            login = login?.copy(browserWarning = "未能自动打开浏览器，请点击「复制链接」后手动粘贴到浏览器中打开。")
+            login = login?.copy(browserWarning = tr("未能自动打开浏览器，请点击「复制链接」后手动粘贴到浏览器中打开。", "Could not open the browser automatically. Tap \"Copy Link\" and paste it into your browser."))
         } else {
             login = login?.copy(browserWarning = null)
         }
     }
 
     fun startOAuthLogin() {
-        val h = host() ?: run { note = "引擎没在运行，无法登录。"; return }
+        val h = host() ?: run { note = tr("引擎没在运行，无法登录。", "Engine is not running; cannot sign in."); noteWarning = true; return }
         // 若已有残留登录任务先清掉。
         loginJob?.cancel()
         val id = "l" + System.nanoTime().toString(36)
         login = LoginState(loginId = id)
         promptText = ""
         note = null
+        noteWarning = false
 
         loginJob = scope.launch {
             var lastAutoOpenedUrl: String? = null
@@ -296,12 +305,13 @@ internal fun ProviderSheet(
             try {
                 h.auth.login(provider.id, "oauth", id)
                 login = null
-                note = "登录成功。"
+                note = tr("登录成功。", "Signed in.")
+                noteWarning = false
                 onChanged()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                login = (login ?: LoginState(id)).copy(prompt = null, error = e.message ?: "登录失败")
+                login = (login ?: LoginState(id)).copy(prompt = null, error = e.message ?: tr("登录失败", "Sign-in failed"))
             } finally {
                 eventWatcher.cancel()
                 requestWatcher.cancel()
@@ -353,7 +363,7 @@ internal fun ProviderSheet(
                     Text(
                         n,
                         style = PiTheme.text.meta,
-                        color = if (n.contains("失败") || n.contains("未")) PiTheme.palette.warning else PiTheme.palette.success,
+                        color = if (noteWarning) PiTheme.palette.warning else PiTheme.palette.success,
                         modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
                     )
                 }
@@ -363,13 +373,13 @@ internal fun ProviderSheet(
             item(key = "connect") {
                 ModelsCard {
                     Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("连接方式", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                        Text(tr("连接方式", "Connection"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         provider.oauth?.let { oauth ->
                             val l = login
                             if (l == null) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     PrimaryAction(
-                                        oauth.loginLabel ?: (if (oauth.isSubscription) "用订阅账号登录" else "网页登录"),
+                                        oauth.loginLabel ?: (if (oauth.isSubscription) tr("用订阅账号登录", "Sign in with Subscription") else tr("网页登录", "Web Login")),
                                         onClick = { startOAuthLogin() },
                                     )
                                     Text(oauth.name, style = PiTheme.text.meta, color = PiTheme.palette.dim)
@@ -382,11 +392,13 @@ internal fun ProviderSheet(
                                     onOpenUrl = { openExternalUrl(it) },
                                     onCopy = { value ->
                                         clipboard.setText(AnnotatedString(value))
-                                        note = "已复制到剪贴板。"
+                                        note = tr("已复制到剪贴板。", "Copied to clipboard.")
+                                        noteWarning = false
                                     },
                                     onCopyAndOpen = { code, url ->
                                         clipboard.setText(AnnotatedString(code))
-                                        note = "验证码已复制，正在打开验证页面…"
+                                        note = tr("验证码已复制，正在打开验证页面…", "Code copied. Opening verification page…")
+                                        noteWarning = false
                                         openExternalUrl(url)
                                     },
                                     onAnswer = { pr, value ->
@@ -404,47 +416,47 @@ internal fun ProviderSheet(
                             LabeledField(
                                 label = "API Key",
                                 value = key,
-                                placeholder = if (configured) "已保存；输入新 Key 覆盖" else "粘贴 API Key",
+                                placeholder = if (configured) tr("已保存；输入新 Key 覆盖", "Saved; enter a new key to overwrite") else tr("粘贴 API Key", "Paste API Key"),
                                 secret = true,
                                 onChange = { key = it },
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                PiSettingsChip(text = "保存 Key", enabled = key.isNotBlank(), onClick = {
-                                    val h = host() ?: run { note = "引擎没在运行。"; return@PiSettingsChip }
+                                PiSettingsChip(text = tr("保存 Key", "Save Key"), enabled = key.isNotBlank(), onClick = {
+                                    val h = host() ?: run { note = tr("引擎没在运行。", "Engine is not running."); noteWarning = true; return@PiSettingsChip }
                                     scope.launch {
                                         runCatching { h.auth.setApiKey(provider.id, key.trim()) }
-                                            .onSuccess { key = ""; note = "已保存。"; onChanged() }
-                                            .onFailure { note = "保存失败：${it.message}" }
+                                            .onSuccess { key = ""; note = tr("已保存。", "Saved."); noteWarning = false; onChanged() }
+                                            .onFailure { note = tr("保存失败：${it.message}", "Failed to save: ${it.message}"); noteWarning = true }
                                     }
                                 })
                             }
                         } else if (provider.hasAmbientApiKey && provider.oauth == null) {
                             Text(
-                                "这个供应商通过环境变量或本机云凭证工作，不支持直接填写 API Key。",
+                                tr("这个供应商通过环境变量或本机云凭证工作，不支持直接填写 API Key。", "This provider uses environment variables or local cloud credentials and does not accept an API key here."),
                                 style = PiTheme.text.meta,
                                 color = PiTheme.palette.dim,
                             )
                         }
                         if (provider.oauth == null && !provider.supportsApiKey) {
-                            Text("这个供应商没有登录方式；用自定义设置给它写好地址与密钥。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("这个供应商没有登录方式；用自定义设置给它写好地址与密钥。", "This provider has no built-in login; configure its URL and key in custom settings."), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                         }
                         // 环境变量来的凭据不在 auth.json 里，`logout` 删不掉它，不假装能删。
                         if (configured && (provider.statusSource == "stored" || provider.usingOAuth)) {
-                            PiSettingsChip(text = "退出登录 / 删除凭据", onClick = {
+                            PiSettingsChip(text = tr("退出登录 / 删除凭据", "Sign Out / Remove Credentials"), onClick = {
                                 val h = host() ?: return@PiSettingsChip
                                 scope.launch {
                                     runCatching { h.auth.logout(provider.id) }
-                                        .onSuccess { note = "已删除凭据。"; onChanged() }
-                                        .onFailure { note = "失败：${it.message}" }
+                                        .onSuccess { note = tr("已删除凭据。", "Credentials removed."); noteWarning = false; onChanged() }
+                                        .onFailure { note = tr("失败：${it.message}", "Failed: ${it.message}"); noteWarning = true }
                                 }
                             })
                         } else if (configured && provider.statusSource == "environment") {
-                            Text("凭据来自环境变量，要去环境里改。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("凭据来自环境变量，要去环境里改。", "Credentials come from environment variables and must be changed there."), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                         }
                         if (custom != null) {
-                            PiSettingsChip(text = "编辑自定义设置…", onClick = { onEditCustom(custom) })
+                            PiSettingsChip(text = tr("编辑自定义设置…", "Edit Custom Settings…"), onClick = { onEditCustom(custom) })
                         } else {
-                            PiSettingsChip(text = "自定义地址与请求头…", onClick = onOverrideBuiltin)
+                            PiSettingsChip(text = tr("自定义地址与请求头…", "Custom URL & Headers…"), onClick = onOverrideBuiltin)
                         }
                     }
                 }
@@ -453,10 +465,10 @@ internal fun ProviderSheet(
             // ---- 模型 ----
             item(key = "models-head") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModelsSectionLabel("模型（${allModels.size}）")
+                    ModelsSectionLabel(tr("模型（${allModels.size}）", "Models (${allModels.size})"))
                     if (!configured && allModels.isNotEmpty()) {
                         Text(
-                            "先连接这个供应商，才能选用这些模型。",
+                            tr("先连接这个供应商，才能选用这些模型。", "Connect this provider first to use these models."),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.dim,
                             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
@@ -464,7 +476,7 @@ internal fun ProviderSheet(
                     }
                     if (allModels.isEmpty()) {
                         Text(
-                            "目录里没有这个供应商的模型——刷新目录，或用自定义设置添加。",
+                            tr("目录里没有这个供应商的模型——刷新目录，或用自定义设置添加。", "No models for this provider in the catalog — refresh the catalog or add them in custom settings."),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.dim,
                             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
@@ -475,7 +487,7 @@ internal fun ProviderSheet(
                             value = modelQuery,
                             onValueChange = { modelQuery = it },
                             modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                            placeholder = "搜索这家的模型",
+                            placeholder = tr("搜索这家的模型", "Search provider models"),
                             height = PiSettingsMetrics.searchFieldHeight,
                         )
                     }
@@ -494,7 +506,7 @@ internal fun ProviderSheet(
             if (modelQuery.isNotBlank() && filtered.isEmpty()) {
                 item(key = "m:none") {
                     Text(
-                        "没有匹配「${modelQuery.trim()}」的模型。",
+                        tr("没有匹配「${modelQuery.trim()}」的模型。", "No models matching \"${modelQuery.trim()}\"."),
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.dim,
                         modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
@@ -508,16 +520,21 @@ internal fun ProviderSheet(
                 working = working,
                 error = pickError,
                 onUse = { use ->
-                    val h = host() ?: run { pickError = "引擎没在运行。"; return@UseBar }
+                    val h = host() ?: run { pickError = tr("引擎没在运行。", "Engine is not running."); return@UseBar }
                     scope.launch {
                         working = true
                         runCatching { h.selectModel(m.provider.ifBlank { provider.id }, m.id, use.persist) }
                             .onSuccess {
-                                note = (if (use.persist) "已设为默认并切换到 " else "已切换到 ") + m.title + "。"
+                                note = if (use.persist) {
+                                    tr("已设为默认并切换到 ${m.title}。", "Set as default and switched to ${m.title}.")
+                                } else {
+                                    tr("已切换到 ${m.title}。", "Switched to ${m.title}.")
+                                }
+                                noteWarning = false
                                 picked = null
                                 onChanged()
                             }
-                            .onFailure { pickError = "切换失败：${it.message}" }
+                            .onFailure { pickError = tr("切换失败：${it.message}", "Switch failed: ${it.message}") }
                         working = false
                     }
                 },
@@ -540,13 +557,13 @@ private fun LoginProgress(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (l.error == null && l.lines.isEmpty() && l.url == null && l.code == null && l.prompt == null) {
-            Text("正在准备登录…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+            Text(tr("正在准备登录…", "Preparing sign-in…"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
         }
         l.lines.forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.text) }
         if (l.links.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 l.links.forEach { link ->
-                    PiSettingsChip(text = link.label?.takeIf { it.isNotBlank() } ?: "打开说明", onClick = { onOpenUrl(link.url) })
+                    PiSettingsChip(text = link.label?.takeIf { it.isNotBlank() } ?: tr("打开说明", "Open Guide"), onClick = { onOpenUrl(link.url) })
                 }
             }
         }
@@ -559,14 +576,14 @@ private fun LoginProgress(
                 border = BorderStroke(1.dp, PiTheme.palette.borderAccent.copy(alpha = 0.5f)),
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("设备验证码", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                    Text(tr("设备验证码", "Device Verification Code"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                     Text(code, style = PiTheme.text.mono, color = PiTheme.palette.accent)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         val url = l.url
                         if (url != null) {
-                            PrimaryAction("复制验证码并打开浏览器", onClick = { onCopyAndOpen(code, url) })
+                            PrimaryAction(tr("复制验证码并打开浏览器", "Copy Code & Open Browser"), onClick = { onCopyAndOpen(code, url) })
                         }
-                        PiSettingsChip(text = "复制验证码", onClick = { onCopy(code) })
+                        PiSettingsChip(text = tr("复制验证码", "Copy Code"), onClick = { onCopy(code) })
                     }
                 }
             }
@@ -575,11 +592,11 @@ private fun LoginProgress(
         l.url?.let { url ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (l.code == null) {
-                    PrimaryAction("打开浏览器授权", onClick = { onOpenUrl(url) })
+                    PrimaryAction(tr("打开浏览器授权", "Open Browser to Authorize"), onClick = { onOpenUrl(url) })
                 } else {
-                    PiSettingsChip(text = "打开验证页", onClick = { onOpenUrl(url) })
+                    PiSettingsChip(text = tr("打开验证页", "Open Verification Page"), onClick = { onOpenUrl(url) })
                 }
-                PiSettingsChip(text = "复制链接", onClick = { onCopy(url) })
+                PiSettingsChip(text = tr("复制链接", "Copy Link"), onClick = { onCopy(url) })
             }
         }
         l.browserWarning?.let { warn ->
@@ -613,7 +630,7 @@ private fun LoginProgress(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val label = if (pr.isManualCode) {
-                        pr.message.ifBlank { "如果浏览器未自动跳转回来，请粘贴完整回调链接或授权码：" }
+                        pr.message.ifBlank { tr("如果浏览器未自动跳转回来，请粘贴完整回调链接或授权码：", "If the browser didn't redirect back automatically, paste the full callback URL or authorization code:") }
                     } else {
                         pr.message
                     }
@@ -621,18 +638,18 @@ private fun LoginProgress(
                         Text(label, style = PiTheme.text.prose, color = PiTheme.palette.text)
                     }
                     if (pr.isManualCode) {
-                        Text("浏览器自动回跳成功后会自动继续，无需手动粘贴。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                        Text(tr("浏览器自动回跳成功后会自动继续，无需手动粘贴。", "If the browser redirects back automatically, sign-in will continue without pasting."), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                     }
                     PiEditorField(
                         value = promptText,
                         onValueChange = onPromptText,
-                        placeholder = pr.placeholder ?: if (pr.isManualCode) "粘贴回调 URL 或授权码" else null,
+                        placeholder = pr.placeholder ?: if (pr.isManualCode) tr("粘贴回调 URL 或授权码", "Paste callback URL or code") else null,
                         visualTransformation = if (pr.secret) PasswordVisualTransformation() else VisualTransformation.None,
                     )
                     val canSubmit = pr.allowEmpty || promptText.isNotBlank() || (!pr.isManualCode && !pr.secret)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         PrimaryAction(
-                            if (promptText.isBlank() && pr.allowEmpty) "使用默认继续" else "提交",
+                            if (promptText.isBlank() && pr.allowEmpty) tr("使用默认继续", "Continue with Default") else tr("提交", "Submit"),
                             enabled = canSubmit,
                             onClick = { onAnswer(pr, promptText) },
                         )
@@ -641,7 +658,7 @@ private fun LoginProgress(
             }
         }
         l.error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
-        PiSettingsChip(text = if (l.error == null) "取消登录" else "关闭", onClick = onCancel)
+        PiSettingsChip(text = if (l.error == null) tr("取消登录", "Cancel Sign-In") else tr("关闭", "Close"), onClick = onCancel)
     }
 }
 
@@ -716,7 +733,7 @@ internal fun ScopedModelsSheet(
     }
 
     fun applySelection(persist: Boolean) {
-        val h = host() ?: run { error = "引擎没在运行。"; return }
+        val h = host() ?: run { error = tr("引擎没在运行。", "Engine is not running."); return }
         scope.launch {
             working = true
             error = null
@@ -734,15 +751,15 @@ internal fun ScopedModelsSheet(
             }
             result.onSuccess {
                 val msg = when {
-                    refs.isEmpty() && persist -> "已清空作用域与默认循环模型（将循环全部可用模型）。"
-                    refs.isEmpty() -> "已清空当前会话作用域模型。"
-                    persist -> "已应用并设为默认循环模型（${refs.size} 个）。"
-                    else -> "已应用到当前会话作用域模型（${refs.size} 个）。"
+                    refs.isEmpty() && persist -> tr("已清空作用域与默认循环模型（将循环全部可用模型）。", "Cleared scoped and default cycling models (will cycle all available models).")
+                    refs.isEmpty() -> tr("已清空当前会话作用域模型。", "Cleared current session scoped models.")
+                    persist -> tr("已应用并设为默认循环模型（${refs.size} 个）。", "Applied and saved as default cycling models (${refs.size}).")
+                    else -> tr("已应用到当前会话作用域模型（${refs.size} 个）。", "Applied to current session scoped models (${refs.size}).")
                 }
                 onApplied(msg)
                 onDismiss()
             }.onFailure {
-                error = "应用失败：${it.message}"
+                error = tr("应用失败：${it.message}", "Failed to apply: ${it.message}")
                 working = false
             }
         }
@@ -755,15 +772,18 @@ internal fun ScopedModelsSheet(
                 .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text("作用域与循环模型", style = PiTheme.text.prose, color = PiTheme.palette.text)
+            Text(tr("作用域与循环模型", "Scoped & Cycling Models"), style = PiTheme.text.prose, color = PiTheme.palette.text)
             Text(
-                if (selectedKeys.isEmpty()) "未选中任何模型 = 循环切换全部可用模型" else "已选 ${selectedKeys.size} 个模型（按顺序循环）",
+                if (selectedKeys.isEmpty()) tr("未选中任何模型 = 循环切换全部可用模型", "None selected = cycle through all available models") else tr("已选 ${selectedKeys.size} 个模型（按顺序循环）", "${selectedKeys.size} models selected (cycled in order)"),
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.dim,
             )
             if (persistedPatterns.any { it.contains('*') }) {
                 Text(
-                    "当前配置含通配符：${persistedPatterns.joinToString(", ")}；点「应用并设为默认」将按所选模型覆盖。",
+                    tr(
+                        "当前配置含通配符：${persistedPatterns.joinToString(", ")}；点「应用并设为默认」将按所选模型覆盖。",
+                        "Current config contains wildcards: ${persistedPatterns.joinToString(", ")}; \"Apply & Set Default\" will overwrite with the selected models.",
+                    ),
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.warning,
                 )
@@ -773,7 +793,7 @@ internal fun ScopedModelsSheet(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small * 2),
-            placeholder = "搜索模型或供应商",
+            placeholder = tr("搜索模型或供应商", "Search models or providers"),
             height = PiSettingsMetrics.searchFieldHeight,
         )
         Row(
@@ -782,14 +802,14 @@ internal fun ScopedModelsSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PiSettingsChip(
-                text = "全选可见",
+                text = tr("全选可见", "Select Visible"),
                 onClick = {
                     val visibleKeys = filtered.flatMap { g -> g.models.map { "${it.provider}/${it.id}" } }
                     selectedKeys = (selectedKeys + visibleKeys).distinct()
                 },
             )
             PiSettingsChip(
-                text = "清空",
+                text = tr("清空", "Clear"),
                 enabled = selectedKeys.isNotEmpty(),
                 onClick = { selectedKeys = emptyList() },
             )
@@ -797,7 +817,7 @@ internal fun ScopedModelsSheet(
         LazyColumn(Modifier.weight(1f)) {
             if (selectedKeys.isNotEmpty() && query.isBlank()) {
                 item(key = "selected-head") {
-                    ModelsSectionLabel("已选顺序（${selectedKeys.size}）", Modifier.padding(top = 10.dp, bottom = 4.dp))
+                    ModelsSectionLabel(tr("已选顺序（${selectedKeys.size}）", "Selected Order (${selectedKeys.size})"), Modifier.padding(top = 10.dp, bottom = 4.dp))
                 }
                 items(selectedKeys.size, key = { idx -> "sel:${selectedKeys[idx]}" }) { idx ->
                     val key = selectedKeys[idx]
@@ -820,7 +840,7 @@ internal fun ScopedModelsSheet(
                         }
                         PiSettingsChip(text = "↑", enabled = idx > 0, onClick = { moveSelected(idx, -1) })
                         PiSettingsChip(text = "↓", enabled = idx < selectedKeys.lastIndex, onClick = { moveSelected(idx, 1) })
-                        PiSettingsChip(text = "移除", onClick = { toggleKey(key) })
+                        PiSettingsChip(text = tr("移除", "Remove"), onClick = { toggleKey(key) })
                     }
                 }
             }
@@ -834,7 +854,7 @@ internal fun ScopedModelsSheet(
                         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                         trailing = {
                             PiSettingsChip(
-                                text = if (allIn) "取消全选" else "全选该供应商",
+                                text = if (allIn) tr("取消全选", "Deselect All") else tr("全选该供应商", "Select Provider"),
                                 active = allIn,
                                 onClick = { toggleProvider(g.providerId, providerKeys) },
                             )
@@ -855,7 +875,7 @@ internal fun ScopedModelsSheet(
             if (filtered.isEmpty()) {
                 item(key = "empty") {
                     Text(
-                        if (models.isEmpty()) "还没有可用模型——先连接一个供应商。" else "没有匹配「${query.trim()}」的模型。",
+                        if (models.isEmpty()) tr("还没有可用模型——先连接一个供应商。", "No models available yet — connect a provider first.") else tr("没有匹配「${query.trim()}」的模型。", "No models matching \"${query.trim()}\"."),
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.dim,
                         modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small, vertical = 12.dp),
@@ -871,9 +891,9 @@ internal fun ScopedModelsSheet(
         ) {
             error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                PrimaryAction("仅本会话应用", enabled = !working, onClick = { applySelection(persist = false) })
-                PiSettingsChip(text = "应用并设为默认", enabled = !working, onClick = { applySelection(persist = true) })
-                PiSettingsChip(text = "取消", onClick = onDismiss)
+                PrimaryAction(tr("仅本会话应用", "Session Only"), enabled = !working, onClick = { applySelection(persist = false) })
+                PiSettingsChip(text = tr("应用并设为默认", "Apply & Set Default"), enabled = !working, onClick = { applySelection(persist = true) })
+                PiSettingsChip(text = tr("取消", "Cancel"), onClick = onDismiss)
             }
         }
     }
@@ -881,14 +901,15 @@ internal fun ScopedModelsSheet(
 
 // ------------------------------------------------------------------ 官方两步「逐模型思考等级」选择器（对齐 settings-selector.js:392-485）
 
-private val OFFICIAL_THINKING_META = mapOf(
-    "minimal" to ("极简" to "最少推理（约 1k token 预算）"),
-    "low" to ("低" to "轻量推理（约 2k token 预算）"),
-    "medium" to ("中" to "均衡推理（约 8k token 预算）"),
-    "high" to ("高" to "深度推理（约 16k token 预算）"),
-    "xhigh" to ("超高" to "极深推理（约 32k token 预算）"),
-    "max" to ("最高" to "最大推理深度"),
-)
+private fun officialThinkingMeta(level: String): Pair<String, String>? = when (level) {
+    "minimal" -> tr("极简", "Minimal") to tr("最少推理（约 1k token 预算）", "Minimal reasoning (~1k token budget)")
+    "low" -> tr("低", "Low") to tr("轻量推理（约 2k token 预算）", "Light reasoning (~2k token budget)")
+    "medium" -> tr("中", "Medium") to tr("均衡推理（约 8k token 预算）", "Balanced reasoning (~8k token budget)")
+    "high" -> tr("高", "High") to tr("深度推理（约 16k token 预算）", "Deep reasoning (~16k token budget)")
+    "xhigh" -> tr("超高", "Extra High") to tr("极深推理（约 32k token 预算）", "Very deep reasoning (~32k token budget)")
+    "max" -> tr("最高", "Max") to tr("最大推理深度", "Maximum reasoning depth")
+    else -> null
+}
 
 /**
  * 逐模型思考等级设置面板：对照 Pi 官方 `settings-selector.js` 的两步子菜单。
@@ -946,9 +967,12 @@ internal fun ModelThinkingLevelsSheet(
                     .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("逐模型思考等级", style = PiTheme.text.prose, color = PiTheme.palette.text)
+                Text(tr("逐模型思考等级", "Per-Model Thinking Level"), style = PiTheme.text.prose, color = PiTheme.palette.text)
                 Text(
-                    "全局默认：${OFFICIAL_THINKING_META[defaultLevel]?.first ?: defaultLevel} · 已单独覆盖 ${liveOverrides.size} 个模型",
+                    tr(
+                        "全局默认：${officialThinkingMeta(defaultLevel)?.first ?: defaultLevel} · 已单独覆盖 ${liveOverrides.size} 个模型",
+                        "Global default: ${officialThinkingMeta(defaultLevel)?.first ?: defaultLevel} · ${liveOverrides.size} models overridden",
+                    ),
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.dim,
                 )
@@ -957,7 +981,7 @@ internal fun ModelThinkingLevelsSheet(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small * 2),
-                placeholder = "搜索推理模型",
+                placeholder = tr("搜索推理模型", "Search reasoning models"),
                 height = PiSettingsMetrics.searchFieldHeight,
             )
             error?.let {
@@ -971,7 +995,7 @@ internal fun ModelThinkingLevelsSheet(
             LazyColumn(Modifier.weight(1f)) {
                 if (orphanOverrides.isNotEmpty() && query.isBlank()) {
                     item(key = "orphan-head") {
-                        ModelsSectionLabel("其他已配置覆盖（未连接供应商）", Modifier.padding(top = 6.dp, bottom = 4.dp))
+                        ModelsSectionLabel(tr("其他已配置覆盖（未连接供应商）", "Other Configured Overrides (Disconnected Providers)"), Modifier.padding(top = 6.dp, bottom = 4.dp))
                     }
                     orphanOverrides.entries.forEach { (key, lvl) ->
                         item(key = "orphan:$key") {
@@ -985,13 +1009,13 @@ internal fun ModelThinkingLevelsSheet(
                                 Column(Modifier.weight(1f)) {
                                     Text(key, style = PiTheme.text.monoSmall, color = PiTheme.palette.text)
                                     Text(
-                                        "当前覆盖：${OFFICIAL_THINKING_META[lvl]?.first ?: lvl}",
+                                        tr("当前覆盖：${officialThinkingMeta(lvl)?.first ?: lvl}", "Override: ${officialThinkingMeta(lvl)?.first ?: lvl}"),
                                         style = PiTheme.text.meta,
                                         color = PiTheme.palette.accent,
                                     )
                                 }
                                 PiSettingsChip(
-                                    text = "移除",
+                                    text = tr("移除", "Remove"),
                                     enabled = !busy,
                                     onClick = {
                                         val h = host() ?: return@PiSettingsChip
@@ -1002,9 +1026,9 @@ internal fun ModelThinkingLevelsSheet(
                                             runCatching { h.removeModelThinkingLevel(p, id) }
                                                 .onSuccess {
                                                     liveOverrides = liveOverrides - key
-                                                    onChanged("已移除 $key 的思考等级覆盖。")
+                                                    onChanged(tr("已移除 $key 的思考等级覆盖。", "Removed thinking level override for $key."))
                                                 }
-                                                .onFailure { error = "移除失败：${it.message}" }
+                                                .onFailure { error = tr("移除失败：${it.message}", "Failed to remove: ${it.message}") }
                                             busy = false
                                         }
                                     },
@@ -1035,8 +1059,8 @@ internal fun ModelThinkingLevelsSheet(
                                 buildString {
                                     append(pLabel)
                                     if (m.supportedThinkingLevels.isNotEmpty()) {
-                                        append(" · 支持 ")
-                                        append(m.supportedThinkingLevels.joinToString("/") { OFFICIAL_THINKING_META[it]?.first ?: it })
+                                        append(tr(" · 支持 ", " · Supports "))
+                                        append(m.supportedThinkingLevels.joinToString("/") { officialThinkingMeta(it)?.first ?: it })
                                     }
                                 },
                                 style = PiTheme.text.meta,
@@ -1045,7 +1069,7 @@ internal fun ModelThinkingLevelsSheet(
                             )
                         }
                         Text(
-                            currentLvl?.let { OFFICIAL_THINKING_META[it]?.first ?: it } ?: "跟随默认",
+                            currentLvl?.let { officialThinkingMeta(it)?.first ?: it } ?: tr("跟随默认", "Default"),
                             style = PiTheme.text.meta,
                             color = if (currentLvl != null) PiTheme.palette.accent else PiTheme.palette.muted,
                         )
@@ -1055,7 +1079,7 @@ internal fun ModelThinkingLevelsSheet(
                 if (reasoningModels.isEmpty()) {
                     item(key = "no-reasoning") {
                         Text(
-                            if (models.isEmpty()) "还没有可用模型——先连接一个供应商。" else "没有找到支持推理的模型。",
+                            if (models.isEmpty()) tr("还没有可用模型——先连接一个供应商。", "No models available yet — connect a provider first.") else tr("没有找到支持推理的模型。", "No reasoning models found."),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.dim,
                             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small, vertical = 12.dp),
@@ -1067,7 +1091,7 @@ internal fun ModelThinkingLevelsSheet(
                 Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
                 horizontalArrangement = Arrangement.End,
             ) {
-                PiSettingsChip(text = "完成", onClick = onDismiss)
+                PiSettingsChip(text = tr("完成", "Done"), onClick = onDismiss)
             }
         } else {
             // 第 2 步：选该模型真实支持的思考等级
@@ -1083,7 +1107,7 @@ internal fun ModelThinkingLevelsSheet(
             ) {
                 Text(active.name.ifBlank { active.id }, style = PiTheme.text.prose, color = PiTheme.palette.text)
                 Text(
-                    "$key · 选择该模型新会话启动时的默认思考等级",
+                    tr("$key · 选择该模型新会话启动时的默认思考等级", "$key · Choose the default thinking level for new sessions with this model"),
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.dim,
                 )
@@ -1103,17 +1127,18 @@ internal fun ModelThinkingLevelsSheet(
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 4.dp)
                             .clickable(enabled = !busy) {
-                                val h = host() ?: run { error = "引擎没在运行。"; return@clickable }
+                                val h = host() ?: run { error = tr("引擎没在运行。", "Engine is not running."); return@clickable }
                                 scope.launch {
                                     busy = true
                                     error = null
                                     runCatching { h.removeModelThinkingLevel(active.provider.orEmpty(), active.id) }
                                         .onSuccess {
                                             liveOverrides = liveOverrides - key
-                                            onChanged("${active.name.ifBlank { active.id }} 已恢复跟随全局默认。")
+                                            val displayName = active.name.ifBlank { active.id }
+                                            onChanged(tr("$displayName 已恢复跟随全局默认。", "$displayName reset to global default."))
                                             selectedModel = null
                                         }
-                                        .onFailure { error = "保存失败：${it.message}" }
+                                        .onFailure { error = tr("保存失败：${it.message}", "Failed to save: ${it.message}") }
                                     busy = false
                                 }
                             },
@@ -1126,33 +1151,34 @@ internal fun ModelThinkingLevelsSheet(
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                (if (currentLvl == null) "✓ " else "") + "跟随全局默认（${OFFICIAL_THINKING_META[defaultLevel]?.first ?: defaultLevel}）",
+                                (if (currentLvl == null) "✓ " else "") + tr("跟随全局默认（${officialThinkingMeta(defaultLevel)?.first ?: defaultLevel}）", "Follow Global Default (${officialThinkingMeta(defaultLevel)?.first ?: defaultLevel})"),
                                 style = PiTheme.text.prose,
                                 color = if (currentLvl == null) PiTheme.palette.accent else PiTheme.palette.text,
                             )
-                            Text("不为此模型单独覆盖，使用全局默认思考等级。", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                            Text(tr("不为此模型单独覆盖，使用全局默认思考等级。", "Do not override for this model; use the global default thinking level."), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                         }
                     }
                 }
                 items(levels, key = { it }) { lvl ->
-                    val meta = OFFICIAL_THINKING_META[lvl]
+                    val meta = officialThinkingMeta(lvl)
                     val activeLevel = currentLvl == lvl
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 4.dp)
                             .clickable(enabled = !busy) {
-                                val h = host() ?: run { error = "引擎没在运行。"; return@clickable }
+                                val h = host() ?: run { error = tr("引擎没在运行。", "Engine is not running."); return@clickable }
                                 scope.launch {
                                     busy = true
                                     error = null
                                     runCatching { h.setModelThinkingLevel(active.provider.orEmpty(), active.id, lvl) }
                                         .onSuccess {
                                             liveOverrides = liveOverrides + (key to lvl)
-                                            onChanged("${active.name.ifBlank { active.id }} 思考等级已设为 ${meta?.first ?: lvl}。")
+                                            val displayName = active.name.ifBlank { active.id }
+                                            onChanged(tr("$displayName 思考等级已设为 ${meta?.first ?: lvl}。", "$displayName thinking level set to ${meta?.first ?: lvl}."))
                                             selectedModel = null
                                         }
-                                        .onFailure { error = "保存失败：${it.message}" }
+                                        .onFailure { error = tr("保存失败：${it.message}", "Failed to save: ${it.message}") }
                                     busy = false
                                 }
                             },
@@ -1180,7 +1206,7 @@ internal fun ModelThinkingLevelsSheet(
                 Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PiSettingsChip(text = "← 返回模型列表", enabled = !busy, onClick = { selectedModel = null; error = null })
+                PiSettingsChip(text = tr("← 返回模型列表", "← Back to Models"), enabled = !busy, onClick = { selectedModel = null; error = null })
             }
         }
     }

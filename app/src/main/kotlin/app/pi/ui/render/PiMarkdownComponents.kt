@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.times
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.PiJsonTreeView
@@ -633,7 +634,7 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
     val tex = remember(raw) { piMathTex(raw) }
     // 升级前的显示文本（`PiLatex` 的 Unicode 近似），只在渲染失败时出现。
     val fallback = remember(content, node, block) {
-        PiLatex.formulaText(content = content, text = raw, block = block, fallback = "（公式）")
+        PiLatex.formulaText(content = content, text = raw, block = block, fallback = tr("（公式）", "(formula)"))
     }
     PiMathView(
         source = tex,
@@ -816,7 +817,7 @@ private fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     Box(
-        modifier = Modifier.clickable(onClickLabel = "查看图片") {
+        modifier = Modifier.clickable(onClickLabel = tr("查看图片", "View image")) {
             scope.launch {
                 piMarkdownImageViewerImage(context, openLink)?.let(onImageClick)
             }
@@ -1422,7 +1423,7 @@ private fun PiTaskCheckbox(model: MarkdownComponentModel) {
             .height(markerHeight)
             .semantics {
                 role = Role.Checkbox
-                stateDescription = if (checked) "已完成" else "未完成"
+                stateDescription = if (checked) tr("已完成", "Completed") else tr("未完成", "Not completed")
             },
         contentAlignment = Alignment.Center,
     ) {

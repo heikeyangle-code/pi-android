@@ -3,6 +3,7 @@ package app.pi.ui.chat
 import android.content.Context
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.i18n.tr
 import app.pi.ui.ExportedSession
 import java.io.File
 
@@ -87,17 +88,28 @@ object SessionExportDelivery {
                 sourceFile = File(file.path),
             )
         }
-        Result("已保存到 Download：${exported.files.joinToString("、") { it.name }}")
+        Result(
+            tr(
+                "已保存到 Download：${exported.files.joinToString("、") { it.name }}",
+                "Saved to Downloads: ${exported.files.joinToString(", ") { it.name }}",
+            ),
+        )
     } catch (error: DeviceActionException) {
         Result(
-            "保存到 Download 失败：${error.denial.reason}" +
+            tr("保存到 Download 失败：", "Failed to save to Downloads: ") + error.denial.reason +
                 (error.denial.hint?.let { " $it" } ?: ""),
             warning = true,
         )
     } catch (error: Exception) {
         // No class name and no path: the user can act on "read the file again" and
         // on nothing else this could say.
-        Result("保存到 Download 失败：文件读不出来了。请重新导出一份再试。", warning = true)
+        Result(
+            tr(
+                "保存到 Download 失败：文件读不出来了。请重新导出一份再试。",
+                "Failed to save to Downloads: could not read the exported file. Please export again.",
+            ),
+            warning = true,
+        )
     }
 
     /**
@@ -115,12 +127,12 @@ object SessionExportDelivery {
             // read — 400 000 characters can be at most 1.2 MB of UTF-8, which is
             // already too much for one Binder transaction when the intent carries
             // anything else.
-            file.length() > MAX_SHARE_CHARS.toLong() * 3L -> Result(TOO_LARGE, warning = true)
+            file.length() > MAX_SHARE_CHARS.toLong() * 3L -> Result(tooLargeMessage(), warning = true)
 
             else -> {
                 val text = file.readText()
                 if (text.length > MAX_SHARE_CHARS) {
-                    Result(TOO_LARGE, warning = true)
+                    Result(tooLargeMessage(), warning = true)
                 } else {
                     DeviceSystemActions.share(
                         context = context,
@@ -128,17 +140,23 @@ object SessionExportDelivery {
                         subject = html.name,
                         url = null,
                     )
-                    Result("已打开分享")
+                    Result(tr("已打开分享", "Share sheet opened"))
                 }
             }
         }
     } catch (error: DeviceActionException) {
         Result(
-            "分享失败：${error.denial.reason}" + (error.denial.hint?.let { " $it" } ?: ""),
+            tr("分享失败：", "Share failed: ") + error.denial.reason + (error.denial.hint?.let { " $it" } ?: ""),
             warning = true,
         )
     } catch (error: Exception) {
-        Result("分享失败：这份导出读不出来了。请重新导出一份，或改用保存到 Download。", warning = true)
+        Result(
+            tr(
+                "分享失败：这份导出读不出来了。请重新导出一份，或改用保存到 Download。",
+                "Share failed: could not read the exported file. Export again or save to Downloads.",
+            ),
+            warning = true,
+        )
     }
 
     private const val HTML_MIME: String = "text/html"
@@ -148,6 +166,8 @@ object SessionExportDelivery {
      * save it to Download, then share it from there. Named once so the two size
      * checks cannot drift apart.
      */
-    private const val TOO_LARGE: String =
-        "内容较大，系统分享带不动它。请先保存到 Download，再从文件管理器里分享。"
+    private fun tooLargeMessage(): String = tr(
+        "内容较大，系统分享带不动它。请先保存到 Download，再从文件管理器里分享。",
+        "Content is too large for system share. Save to Downloads first and share from your file manager.",
+    )
 }

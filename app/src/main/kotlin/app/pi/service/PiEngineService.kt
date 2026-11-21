@@ -14,6 +14,7 @@ import androidx.core.app.ServiceCompat
 import app.pi.MainActivity
 import app.pi.PiApplication
 import app.pi.R
+import app.pi.i18n.PiStrings
 
 /**
  * Keeps a running turn alive.
@@ -119,12 +120,12 @@ class PiEngineService : Service() {
             // and tints it (that is what a status-bar icon is), but the shape is the
             // icon's own — not a second drawing of it.
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle(getString(R.string.engine_running_title))
-            .setContentText(getString(R.string.engine_running_text, runningTasks))
+            .setContentTitle(PiStrings.get(R.string.engine_running_title))
+            .setContentText(PiStrings.get(R.string.engine_running_text, runningTasks))
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(open)
-            .addAction(0, getString(R.string.action_stop), stop)
+            .addAction(0, PiStrings.get(R.string.action_stop), stop)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }

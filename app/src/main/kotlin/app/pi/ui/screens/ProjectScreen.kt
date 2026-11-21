@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
+import app.pi.i18n.tr
 import app.pi.packages.AgentLayout
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
@@ -288,7 +289,7 @@ fun ProjectScreen(
     val insideWorkspace = crumbs.size >= homeCrumbs.size && crumbs.subList(0, homeCrumbs.size) == homeCrumbs
     val parentRelative = if (insideWorkspace) crumbs.drop(homeCrumbs.size).joinToString("/") else ""
     val whereLabel = if (insideWorkspace) {
-        "工作区" + parentRelative.split('/').filter { it.isNotEmpty() }.joinToString("") { " / $it" }
+        tr("工作区", "Workspace") + parentRelative.split('/').filter { it.isNotEmpty() }.joinToString("") { " / $it" }
     } else {
         currentDir.absolutePath
     }
@@ -325,7 +326,7 @@ fun ProjectScreen(
                 listing = emptyList()
                 listedDir = currentDir.absolutePath
                 listingError = WorkspaceOpen.Failed(
-                    reason = "这个目录读不到了，可能被重命名或删掉；工作区里别的地方不受影响。",
+                    reason = tr("这个目录读不到了，可能被重命名或删掉；工作区里别的地方不受影响。", "Unable to read this directory — it may have been renamed or deleted. The rest of the workspace is unaffected."),
                     detail = "${error::class.java.name}: ${error.message}\n  ${currentDir.absolutePath}",
                 )
             },
@@ -335,18 +336,21 @@ fun ProjectScreen(
     // ------------------------------------------------------------ ⑤ 资源
     // 资源（扩展 / 技能 / 提示 / 主题 / 包 / 项目信任）统一在「设置 → 扩展与资源」，这里只放入口，不再复制一份。
     // 入口行的副标题读宿主的项目信任结论（`project.trustState`，SDK 的信任库说了算）；读不到就退回静态文案。
-    var trustMeta by remember { mutableStateOf<String?>(null) }
+    var trustLoaded by remember { mutableStateOf(false) }
     var trustTrusted by remember { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(refreshTick, state.workspace.revision) {
         val r = session.extensionsAccess()?.resources?.trustState()
         val parsed = (r as? app.pi.packages.PiResourceCatalog.Parsed.Ok)?.value
+        trustLoaded = parsed != null
         trustTrusted = parsed?.let { if (it.trusted) true else if (it.undecided) null else false }
-        trustMeta = parsed?.let { t ->
-            when {
-                t.trusted -> "已信任"
-                t.undecided -> "待表态"
-                else -> "未信任"
-            }
+    }
+    val trustMeta = if (!trustLoaded) {
+        null
+    } else {
+        when (trustTrusted) {
+            true -> tr("已信任", "Trusted")
+            null -> tr("待表态", "Pending")
+            false -> tr("未信任", "Untrusted")
         }
     }
     var overflow by remember { mutableStateOf(false) }
@@ -481,7 +485,7 @@ fun ProjectScreen(
                 },
                 onFailure = { error ->
                     say(
-                        "操作失败：" + (error.message ?: error::class.java.simpleName),
+                        tr("操作失败：", "Operation failed: ") + (error.message ?: error::class.java.simpleName),
                         StateTone.Error,
                     )
                     onDone?.invoke(false)
@@ -501,7 +505,7 @@ fun ProjectScreen(
                     localEdits = emptySet()
                     refreshTick++
                 }
-                is WorkspaceSwitch.AlreadyCurrent -> say("已经在这个工作区里。")
+                is WorkspaceSwitch.AlreadyCurrent -> say(tr("已经在这个工作区里。", "Already in this workspace."))
                 is WorkspaceSwitch.Refused -> Unit
                 is WorkspaceSwitch.Failed -> Unit
             }
@@ -517,7 +521,7 @@ fun ProjectScreen(
             when (val result = withContext(Dispatchers.IO) { session.createWorkspace(dirName.trim().ifEmpty { null }) }) {
                 is WorkspaceStore.Create.Ok -> {
                     val entry = result.entry
-                    say("已新建项目 · ${entry.displayName}")
+                    say(tr("已新建项目 · ${entry.displayName}", "Created project · ${entry.displayName}"))
                     refreshTick++
                     when (
                         WorkspaceChoice.decidePick(
@@ -548,7 +552,7 @@ fun ProjectScreen(
             val result = withContext(Dispatchers.IO) { session.renameWorkspace(name, label) }
             when (result) {
                 is WorkspaceStore.Rename.Ok -> {
-                    say("已重命名工作区 · ${result.entry.displayName}")
+                    say(tr("已重命名工作区 · ${result.entry.displayName}", "Renamed workspace · ${result.entry.displayName}"))
                     refreshTick++
                 }
                 is WorkspaceStore.Rename.Failed -> say(result.message, StateTone.Warning)
@@ -580,7 +584,7 @@ fun ProjectScreen(
             val result = withContext(Dispatchers.IO) { session.deleteWorkspace(preview.confirmation) }
             when (result) {
                 is WorkspaceStore.Delete.Ok -> {
-                    say("已删除工作区 · ${result.name}（${result.files} 个文件）")
+                    say(tr("已删除工作区 · ${result.name}（${result.files} 个文件）", "Deleted workspace · ${result.name} (${result.files} ${if (result.files == 1) "file" else "files"})"))
                     refreshTick++
                 }
                 // `Refused` / `Failed` 的 message 都是给人看的一句话，照原话说。
@@ -612,7 +616,7 @@ fun ProjectScreen(
             when (val result = withContext(Dispatchers.IO) { WorkspaceStore.registerExternal(app, path) }) {
                 is WorkspaceStore.Create.Ok -> {
                     val entry = result.entry
-                    say("已加入工作区 · ${entry.displayName}")
+                    say(tr("已加入工作区 · ${entry.displayName}", "Added workspace · ${entry.displayName}"))
                     refreshTick++
                     when (
                         WorkspaceChoice.decidePick(
@@ -622,7 +626,7 @@ fun ProjectScreen(
                         )
                     ) {
                         WorkspaceChoice.Pick.Unavailable ->
-                            say("「${entry.displayName}」现在读不到，已登记但没有切过去。", StateTone.Warning)
+                            say(tr("「${entry.displayName}」现在读不到，已登记但没有切过去。", "\"${entry.displayName}\" is currently unreadable; registered without switching."), StateTone.Warning)
 
                         WorkspaceChoice.Pick.AlreadyHere -> Unit
                         WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
@@ -639,19 +643,19 @@ fun ProjectScreen(
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
             PiTopBar(
                 onBack = onBack,
-                title = "工作区",
+                title = tr("工作区", "Workspace"),
                 // **这一页不报引擎状态**（用户裁决）：顶栏只有标题与两个动作，引擎状态在
                 // 对话页顶栏已经有了，不必两处都说。
                 actions = {
                     PiTopBarIcon(
                         onClick = { refreshTick++ },
-                        contentDescription = "重新读一遍这个工作区",
+                        contentDescription = tr("重新读一遍这个工作区", "Refresh workspace"),
                         icon = Icons.Filled.Refresh,
                     )
                     Box {
                         PiTopBarIcon(
                             onClick = { overflow = true },
-                            contentDescription = "更多",
+                            contentDescription = tr("更多", "More"),
                             icon = Icons.Filled.MoreVert,
                         )
                         if (overflow) PiMenu(
@@ -660,21 +664,21 @@ fun ProjectScreen(
                             placement = PiMenuPlacement.Below,
                             items = buildList {
                                 add(
-                                    PiMenuItem("从设备目录打开项目") {
+                                    PiMenuItem(tr("从设备目录打开项目", "Open project from device folder")) {
                                         overflow = false
                                         externalPicker = true
                                     },
                                 )
                                 if (!insideWorkspace || crumbs != homeCrumbs) {
                                     add(
-                                        PiMenuItem("回到工作区根目录") {
+                                        PiMenuItem(tr("回到工作区根目录", "Go to workspace root")) {
                                             overflow = false
                                             crumbs = homeCrumbs
                                         },
                                     )
                                 }
                                 add(
-                                    PiMenuItem("项目扩展、资源与信任") {
+                                    PiMenuItem(tr("项目扩展、资源与信任", "Project extensions, resources & trust")) {
                                         overflow = false
                                         session.requestNav(NavRequest.SettingsFocus("hub:resources:project"))
                                     },
@@ -706,8 +710,8 @@ fun ProjectScreen(
                             onNewProject = {
                                 inputDialog = WorkspaceInputDialog(
                                     kind = WorkspaceInputKind.NewWorkspace,
-                                    title = "新建项目",
-                                    where = "项目目录名（留空自动编号）",
+                                    title = tr("新建项目", "New Project"),
+                                    where = tr("项目目录名（留空自动编号）", "Folder name (leave blank to auto-number)"),
                                     relativeParent = null,
                                     absoluteParent = null,
                                     initial = "",
@@ -736,7 +740,7 @@ fun ProjectScreen(
                     if (engineDown) {
                         item {
                             WsNotice(
-                                text = "引擎未运行：文件仍可直接浏览、编辑与新建。",
+                                text = tr("引擎未运行：文件仍可直接浏览、编辑与新建。", "Engine is not running: you can still browse, edit, and create files."),
                                 tone = StateTone.Warning,
                                 glyph = "!",
                             )
@@ -749,8 +753,8 @@ fun ProjectScreen(
                     if (runs.isNotEmpty()) {
                         item {
                             WsSectionHeader(
-                                label = "正在跑",
-                                count = "${runs.size} 条命令",
+                                label = tr("正在跑", "Running"),
+                                count = tr("${runs.size} 条命令", if (runs.size == 1) "1 command" else "${runs.size} commands"),
                                 aside = runningAside(runs),
                             )
                         }
@@ -775,11 +779,11 @@ fun ProjectScreen(
                     if (!engineDown && changed.isNotEmpty()) {
                         item {
                             WsSectionHeader(
-                                label = "本次会话改过",
-                                count = "${changed.size} 个文件",
+                                label = tr("本次会话改过", "Changed This Session"),
+                                count = tr("${changed.size} 个文件", if (changed.size == 1) "1 file" else "${changed.size} files"),
                                 aside = {
                                     Text(
-                                        "最近改动在上",
+                                        tr("最近改动在上", "Most recent first"),
                                         style = PiTheme.text.meta,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -827,13 +831,13 @@ fun ProjectScreen(
                                             if (resolved != null) {
                                                 openRelative(resolved.displayPath, resolved.file)
                                             } else {
-                                                say("找不到这个文件：${file.path}", StateTone.Warning)
+                                                say(tr("找不到这个文件：${file.path}", "File not found: ${file.path}"), StateTone.Warning)
                                             }
                                         },
                                         onMenu = {
                                             val resolved = resolveSession(file.path, guestWorkspace)
                                             if (resolved == null) {
-                                                say("找不到这个文件：${file.path}", StateTone.Warning)
+                                                say(tr("找不到这个文件：${file.path}", "File not found: ${file.path}"), StateTone.Warning)
                                             } else {
                                                 menuFor = menuTargetFor(
                                                     resolved.displayPath,
@@ -851,7 +855,7 @@ fun ProjectScreen(
 
                     item {
                         WsSectionHeader(
-                            label = "全部文件",
+                            label = tr("全部文件", "Files"),
                             count = if (listingError != null) null else "${listing?.size ?: 0}",
                             aside = if (listingError != null) {
                                 null
@@ -874,7 +878,7 @@ fun ProjectScreen(
                                                 )
                                                 Icon(
                                                     Icons.Filled.KeyboardArrowDown,
-                                                    contentDescription = "排序方式",
+                                                    contentDescription = tr("排序方式", "Sort order"),
                                                     modifier = Modifier.size(14.dp),
                                                     tint = PiTheme.palette.muted,
                                                 )
@@ -888,7 +892,7 @@ fun ProjectScreen(
                                                         sortIndex = mode.ordinal
                                                         sortMenu = false
                                                     }
-                                                } + PiMenuItem(if (showIgnored) "收起 .git / node_modules" else "显示 .git / node_modules") {
+                                                } + PiMenuItem(if (showIgnored) tr("收起 .git / node_modules", "Hide .git / node_modules") else tr("显示 .git / node_modules", "Show .git / node_modules")) {
                                                     showIgnored = !showIgnored
                                                     sortMenu = false
                                                 },
@@ -906,7 +910,7 @@ fun ProjectScreen(
                                         ) {
                                             Icon(
                                                 Icons.Filled.Search,
-                                                contentDescription = "筛选文件名",
+                                                contentDescription = tr("筛选文件名", "Filter files"),
                                                 modifier = Modifier.size(20.dp),
                                                 tint = if (filterOpen || filterText.isNotEmpty()) {
                                                     PiTheme.palette.accent
@@ -916,7 +920,7 @@ fun ProjectScreen(
                                             )
                                         }
                                         WsChip(
-                                            text = "新建",
+                                            text = tr("新建", "New"),
                                             glyphIcon = Icons.Filled.Add,
                                             solid = true,
                                             onClick = { newSheet = true },
@@ -931,12 +935,12 @@ fun ProjectScreen(
                     if (error != null) {
                         item {
                             WsErrBlock(
-                                title = "读不到这个目录",
+                                title = tr("读不到这个目录", "Unable to Read Directory"),
                                 message = error.reason,
                                 detail = error.detail,
                                 actions = {
-                                    WsErrAction("重试") { refreshTick++ }
-                                    WsErrAction("回到工作区") { crumbs = homeCrumbs }
+                                    WsErrAction(tr("重试", "Retry")) { refreshTick++ }
+                                    WsErrAction(tr("回到工作区", "Back to Workspace")) { crumbs = homeCrumbs }
                                 },
                             )
                         }
@@ -944,7 +948,7 @@ fun ProjectScreen(
                         item {
                             WsCardSlice(index = 0, lastIndex = 0) {
                                 WsRow(
-                                    title = "正在读这个目录…",
+                                    title = tr("正在读这个目录…", "Reading directory…"),
                                     lead = { FolderGlyph() },
                                 )
                             }
@@ -970,20 +974,20 @@ fun ProjectScreen(
                                         tint = PiTheme.palette.muted.copy(alpha = 0.45f),
                                     )
                                     Text(
-                                        "这个目录是空的",
+                                        tr("这个目录是空的", "This folder is empty"),
                                         modifier = Modifier.padding(top = 8.dp),
                                         style = PiTheme.text.meta,
                                         color = PiTheme.palette.muted,
                                     )
                                     Spacer(Modifier.height(WS_EMPTY_DIR_BUTTON_GAP))
                                     WsChip(
-                                        text = "新建文件",
+                                        text = tr("新建文件", "New File"),
                                         glyphIcon = Icons.Filled.Add,
                                         solid = true,
                                         onClick = {
                                             inputDialog = WorkspaceInputDialog(
                                                 kind = WorkspaceInputKind.NewFile,
-                                                title = "新建文件",
+                                                title = tr("新建文件", "New File"),
                                                 where = whereLabel,
                                                 relativeParent = parentRelative,
                                                 absoluteParent = currentDir,
@@ -992,7 +996,7 @@ fun ProjectScreen(
                                         },
                                     )
                                     Text(
-                                        "也可以从段头的「新建」里建一个文件夹。",
+                                        tr("也可以从段头的「新建」里建一个文件夹。", "You can also create a folder from \"New\" in the section header."),
                                         modifier = Modifier.padding(top = WS_EMPTY_DIR_HINT_GAP),
                                         style = PiTheme.text.meta,
                                         color = PiTheme.palette.muted,
@@ -1015,7 +1019,7 @@ fun ProjectScreen(
                         if (shown.isEmpty()) {
                             item(key = "entry-filter-empty") {
                                 Text(
-                                    "没有名字里带「${filterText.trim()}」的项。",
+                                    tr("没有名字里带「${filterText.trim()}」的项。", "No items matching \"${filterText.trim()}\"."),
                                     modifier = Modifier.padding(
                                         horizontal = PiSettingsMetrics.pageHorizontal,
                                         vertical = 16.dp,
@@ -1086,8 +1090,8 @@ fun ProjectScreen(
                             item(key = "folded-ignored") {
                                 WsCardSlice(index = 0, lastIndex = 0) {
                                     WsRow(
-                                        title = "已收起 $foldedAway 项（.git / node_modules，pi 的文件发现也不列）",
-                                        trail = { Text("显示", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                        title = tr("已收起 $foldedAway 项（.git / node_modules，pi 的文件发现也不列）", "$foldedAway hidden (.git / node_modules, also excluded by pi file discovery)"),
+                                        trail = { Text(tr("显示", "Show"), style = PiTheme.text.meta, color = PiTheme.palette.accent) },
                                         onClick = { showIgnored = true },
                                     )
                                 }
@@ -1095,12 +1099,12 @@ fun ProjectScreen(
                         }
                     }
                     item(key = "resources-footer") {
-                        WsSectionHeader(label = "项目资源与信任")
+                        WsSectionHeader(label = tr("项目资源与信任", "Resources & Trust"))
                         WsCardSlice(index = 0, lastIndex = 0) {
                             WsRow(
-                                title = "扩展、技能、提示词与项目信任",
-                                meta = trustMeta ?: "管理本项目的 .pi 资源与信任状态",
-                                trail = { Text("管理", style = PiTheme.text.meta, color = PiTheme.palette.accent) },
+                                title = tr("扩展、技能、提示词与项目信任", "Extensions, skills, prompts & project trust"),
+                                meta = trustMeta ?: tr("管理本项目的 .pi 资源与信任状态", "Manage .pi resources and trust for this project"),
+                                trail = { Text(tr("管理", "Manage"), style = PiTheme.text.meta, color = PiTheme.palette.accent) },
                                 onClick = { session.requestNav(NavRequest.SettingsFocus("hub:resources:project")) },
                             )
                         }
@@ -1152,9 +1156,9 @@ fun ProjectScreen(
                     // 「已经在这个工作区里」变成一句假话 —— 启动时的回退规则早就把引擎挪回默认
                     // 工作区了。
                     WorkspaceChoice.Pick.Unavailable ->
-                        say("「${entry.displayName}」现在读不到（可能是卡被拔出、正在卸载，或者权限被撤销了），没有切换。", StateTone.Warning)
+                        say(tr("「${entry.displayName}」现在读不到（可能是卡被拔出、正在卸载，或者权限被撤销了），没有切换。", "\"${entry.displayName}\" is currently unreadable (storage unmounted or permission revoked); did not switch."), StateTone.Warning)
 
-                    WorkspaceChoice.Pick.AlreadyHere -> say("已经在这个工作区里。")
+                    WorkspaceChoice.Pick.AlreadyHere -> say(tr("已经在这个工作区里。", "Already in this workspace."))
                     // 会中断一轮正在跑的回合：先问一次再切（`workspaceInterrupt` 那一格）。
                     WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
                     WorkspaceChoice.Pick.Switch -> switchWorkspaceTo(entry)
@@ -1164,8 +1168,8 @@ fun ProjectScreen(
                 rootSheet = false
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewWorkspace,
-                    title = "新建项目",
-                    where = "项目目录名（留空自动编号）",
+                    title = tr("新建项目", "New Project"),
+                    where = tr("项目目录名（留空自动编号）", "Folder name (leave blank to auto-number)"),
                     relativeParent = null,
                     absoluteParent = null,
                     initial = "",
@@ -1202,7 +1206,7 @@ fun ProjectScreen(
                 workspaceMenuFor = null
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.RenameWorkspace,
-                    title = "重命名工作区",
+                    title = tr("重命名工作区", "Rename Workspace"),
                     where = entry.relative,
                     relativeParent = null,
                     absoluteParent = null,
@@ -1222,7 +1226,7 @@ fun ProjectScreen(
         val target = preview.target
         PiDialog(onDismissRequest = { workspaceDelete = null }) {
             PiDialogTitle(
-                title = "删除工作区",
+                title = tr("删除工作区", "Delete Workspace"),
                 glyph = "!",
                 glyphTone = PiTheme.palette.error,
             )
@@ -1232,23 +1236,31 @@ fun ProjectScreen(
                 // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
                 // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
                 PiDialogBody(
-                    "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
-                        "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
-                        "删除后永久消失，不进回收站，也恢复不了。",
+                    tr(
+                        "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
+                            "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
+                            "删除后永久消失，不进回收站，也恢复不了。",
+                        "This workspace contains ${target.files} ${if (target.files == 1) "file" else "files"} and ${target.dirs} ${if (target.dirs == 1) "folder" else "folders"} " +
+                            "(${WorkspaceFiles.formatSize(target.bytes)} total). Deleting it is permanent and cannot be undone.",
+                    ),
                 )
             } else {
                 // 外部工作区：**一个字都不许让用户以为文件会消失**。这不是「删除」，是取消登记
                 // （`WorkspaceStore.delete` 的外部那一条只改设置，从不碰磁盘）。
                 PiDialogBody(
-                    "这是设备上的目录，不是 App 建的：这一个动作只是把它从工作区列表里去掉，" +
-                        "**目录和里面的文件一个都不会动**。想切回来，重新「从设备目录选择」同一个目录就行。",
+                    tr(
+                        "这是设备上的目录，不是 App 建的：这一个动作只是把它从工作区列表里去掉，" +
+                            "**目录和里面的文件一个都不会动**。想切回来，重新「从设备目录选择」同一个目录就行。",
+                        "This is a device folder not created by the app. This only removes it from the workspace list — " +
+                            "the folder and its files will not be touched. You can add it again later via \"Device folder\".",
+                    ),
                 )
             }
             PiDialogActions {
-                PiDialogAction(label = "取消", primary = false, onClick = { workspaceDelete = null })
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { workspaceDelete = null })
                 PiDialogAction(
                     // 按钮上的字必须与后果一致：外部工作区不删文件，就不该写着「永久删除」。
-                    label = if (target.removesFiles) "永久删除" else "取消登记",
+                    label = if (target.removesFiles) tr("永久删除", "Delete Permanently") else tr("取消登记", "Unregister"),
                     primary = true,
                     tone = if (target.removesFiles) PiTheme.palette.error else null,
                     onClick = {
@@ -1264,18 +1276,18 @@ fun ProjectScreen(
     workspaceInterrupt?.let { entry ->
         PiDialog(onDismissRequest = { workspaceInterrupt = null }) {
             PiDialogTitle(
-                title = "切换会中断正在运行的回合",
+                title = tr("切换会中断正在运行的回合", "Switch Will Abort Running Turn"),
                 glyph = "!",
                 glyphTone = PiTheme.palette.warning,
             )
-            PiDialogBody("即将切到「${entry.displayName}」。")
+            PiDialogBody(tr("即将切到「${entry.displayName}」。", "Switching to \"${entry.displayName}\"."))
             PiDialogBody(
-                "切换会中断正在运行的回合（模型调用与工具都会被停掉），新工作区从空白会话开始。",
+                tr("切换会中断正在运行的回合（模型调用与工具都会被停掉），新工作区从空白会话开始。", "Switching will abort the running turn (stopping model calls and tools) and start a fresh session in the new workspace."),
             )
             PiDialogActions {
-                PiDialogAction(label = "取消", primary = false, onClick = { workspaceInterrupt = null })
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { workspaceInterrupt = null })
                 PiDialogAction(
-                    label = "仍然切换",
+                    label = tr("仍然切换", "Switch Anyway"),
                     primary = true,
                     onClick = {
                         workspaceInterrupt = null
@@ -1334,7 +1346,7 @@ fun ProjectScreen(
                 menuFor = null
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.Rename,
-                    title = "重命名",
+                    title = tr("重命名", "Rename"),
                     where = target.path,
                     relativeParent = null,
                     absoluteParent = target.file.parentFile,
@@ -1350,7 +1362,7 @@ fun ProjectScreen(
                 menuFor = null
                 val copied = copyToClipboard(context, target.path)
                 say(
-                    if (copied) "已复制 · ${target.path}" else "剪贴板不可用，路径：${target.path}",
+                    if (copied) tr("已复制 · ${target.path}", "Copied · ${target.path}") else tr("剪贴板不可用，路径：${target.path}", "Clipboard unavailable, path: ${target.path}"),
                     if (copied) StateTone.Muted else StateTone.Warning,
                 )
             },
@@ -1378,7 +1390,7 @@ fun ProjectScreen(
                 newSheet = false
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewFile,
-                    title = "新建文件",
+                    title = tr("新建文件", "New File"),
                     where = whereLabel,
                     relativeParent = parentRelative,
                     absoluteParent = currentDir,
@@ -1389,7 +1401,7 @@ fun ProjectScreen(
                 newSheet = false
                 inputDialog = WorkspaceInputDialog(
                     kind = WorkspaceInputKind.NewDir,
-                    title = "新建文件夹",
+                    title = tr("新建文件夹", "New Folder"),
                     where = whereLabel,
                     relativeParent = parentRelative,
                     absoluteParent = currentDir,
@@ -1423,7 +1435,7 @@ fun ProjectScreen(
                             val created = File(parent, typed)
                             val display = workspaceDisplayPath(workspace, created)
                             runFileOp(
-                                what = "已新建文件 · $typed",
+                                what = tr("已新建文件 · $typed", "Created file · $typed"),
                                 onDone = { ok ->
                                     // 稿子：「建完直接进编辑态，写什么由你。」
                                     if (ok) {
@@ -1435,7 +1447,7 @@ fun ProjectScreen(
                             }
                         }
 
-                        WorkspaceInputKind.NewDir -> runFileOp("已新建文件夹 · $typed") {
+                        WorkspaceInputKind.NewDir -> runFileOp(tr("已新建文件夹 · $typed", "Created folder · $typed")) {
                             WorkspaceFiles.createDir(
                                 dialog.absoluteParent ?: File(workspace, dialog.relativeParent.orEmpty()),
                                 typed,
@@ -1444,7 +1456,7 @@ fun ProjectScreen(
 
                         WorkspaceInputKind.Rename -> {
                             val target = File(dialog.absoluteParent ?: workspace, dialog.initial)
-                            runFileOp("已重命名 · $typed") { WorkspaceFiles.rename(target, typed) }
+                            runFileOp(tr("已重命名 · $typed", "Renamed · $typed")) { WorkspaceFiles.rename(target, typed) }
                         }
 
                         WorkspaceInputKind.RenameWorkspace -> dialog.workspaceName?.let { target ->
@@ -1464,30 +1476,32 @@ fun ProjectScreen(
     deleteFor?.let { target ->
         PiDialog(onDismissRequest = { deleteFor = null }) {
             PiDialogTitle(
-                title = if (target.isDirectory) "删除文件夹" else "删除文件",
+                title = if (target.isDirectory) tr("删除文件夹", "Delete Folder") else tr("删除文件", "Delete File"),
                 glyph = "!",
                 glyphTone = PiTheme.palette.error,
             )
             // 被删的那个路径：等宽（规则 #7）。
             PiDialogBody(target.path, mono = true)
             PiDialogBody(
-                "删除「${target.file.name}」？文件会从工作区里永久删除，不进回收站，也恢复不了。" +
-                    if (target.fromSession) {
-                        " pi 在本次会话里对它做过的改动不会保留。"
-                    } else {
-                        ""
-                    },
+                tr(
+                    "删除「${target.file.name}」？文件会从工作区里永久删除，不进回收站，也恢复不了。",
+                    "Delete \"${target.file.name}\"? It will be permanently removed from the workspace and cannot be recovered.",
+                ) + if (target.fromSession) {
+                    tr(" pi 在本次会话里对它做过的改动不会保留。", " Changes made by pi in this session will not be kept.")
+                } else {
+                    ""
+                },
             )
             PiDialogActions {
-                PiDialogAction(label = "取消", primary = false, onClick = { deleteFor = null })
+                PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = { deleteFor = null })
                 PiDialogAction(
-                    label = "永久删除",
+                    label = tr("永久删除", "Delete Permanently"),
                     primary = true,
                     tone = PiTheme.palette.error,
                     onClick = {
                         val victim = target
                         deleteFor = null
-                        runFileOp("已删除 · ${victim.file.name}") {
+                        runFileOp(tr("已删除 · ${victim.file.name}", "Deleted · ${victim.file.name}")) {
                             WorkspaceFiles.delete(victim.file)
                         }
                     },
@@ -1603,7 +1617,7 @@ private fun runningAside(runs: List<RunningCommand>): (@Composable () -> Unit)? 
     runs.all { it.inContext } -> {
         {
             Text(
-                "进入上下文",
+                tr("进入上下文", "In context"),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1613,7 +1627,7 @@ private fun runningAside(runs: List<RunningCommand>): (@Composable () -> Unit)? 
     runs.none { it.inContext } -> {
         {
             Text(
-                "不进上下文",
+                tr("不进上下文", "Excluded from context"),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1707,23 +1721,23 @@ private fun RunningCommandRow(
                     )
                 },
                 badge = {
-                    StateChip(label = "运行中", tone = StateTone.Warning, glyph = "…")
+                    StateChip(label = tr("运行中", "Running"), tone = StateTone.Warning, glyph = "…")
                 },
                 // 稿子的副行只有这三个读数（`workspace-final.html:1471`）：`运行中 · 已运行
                 // 12.3 秒 · 18 行`。「进入上下文/不进上下文」不在这里 —— 它由段头的 aside 说一次
                 // （见 [runningAside]）。
                 meta = buildString {
-                    append("运行中")
-                    elapsed?.let { append(" · 已运行 ").append(secondsText(it)) }
-                    if (run.lines > 0) append(" · ").append(run.lines).append(" 行")
+                    append(tr("运行中", "Running"))
+                    elapsed?.let { append(tr(" · 已运行 ", " · ")).append(secondsText(it)) }
+                    if (run.lines > 0) append(" · ").append(run.lines).append(tr(" 行", if (run.lines == 1) " line" else " lines"))
                 },
                 metaMono = true,
                 trail = {
                     app.pi.ui.theme.DurationMeter(
                         ms = elapsed,
                         color = PiTheme.palette.warning,
-                        contentDescription = "这条命令已运行 " +
-                            (elapsed?.let { secondsText(it) } ?: "未知"),
+                        contentDescription = tr("这条命令已运行 ", "Command running for ") +
+                            (elapsed?.let { secondsText(it) } ?: tr("未知", "unknown")),
                     )
                 },
             )
@@ -1782,7 +1796,7 @@ private fun progressSegments(elapsedMs: Long): Int =
 
 /** v2 的页脚写 `已运行 12.3 秒`：一位小数 + 「秒」。 */
 private fun secondsText(ms: Long): String =
-    String.format(Locale.US, "%.1f 秒", ms / 1000.0)
+    String.format(Locale.US, tr("%.1f 秒", "%.1fs"), ms / 1000.0)
 
 // ================================================================ ③ 本次会话改过
 
@@ -1830,7 +1844,7 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
                     app.pi.ui.theme.DurationMeter(
                         ms = MID_WRITE_TICK_MS,
                         color = palette.warning,
-                        contentDescription = "pi 正在写入这个文件",
+                        contentDescription = tr("pi 正在写入这个文件", "pi is writing this file"),
                     )
                 }
             },
@@ -1848,11 +1862,12 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
             Text("…", style = PiTheme.text.monoSmall, color = palette.warning, maxLines = 1)
             Text(
                 buildString {
-                    append("pi 正在")
-                    append(if (pending.action == ProjectFileAction.Edited) "编辑" else "写入")
-                    append("这个文件")
+                    append(
+                        if (pending.action == ProjectFileAction.Edited) tr("pi 正在编辑这个文件", "pi is editing this file")
+                        else tr("pi 正在写入这个文件", "pi is writing this file"),
+                    )
                     if (pending.receivedLines > 0) {
-                        append(" · 已收到 ").append(pending.receivedLines).append(" 行")
+                        append(tr(" · 已收到 ", " · ")).append(pending.receivedLines).append(tr(" 行", if (pending.receivedLines == 1) " line received" else " lines received"))
                     }
                 },
                 modifier = Modifier.weight(1f),
@@ -1862,7 +1877,7 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
         }
         if (expanded) {
             Text(
-                "pi 还在写这个文件；落盘之后这块 diff 才会出现。",
+                tr("pi 还在写这个文件；落盘之后这块 diff 才会出现。", "pi is still writing this file; the diff will appear once saved."),
                 modifier = Modifier.padding(
                     start = PiSettingsMetrics.rowPaddingHorizontal,
                     bottom = PiSettingsMetrics.rowPaddingVertical,
@@ -2013,7 +2028,7 @@ private val CRUMB_MAX_WIDTH = 170.dp
  * 工作区只是它下面 `workspace/pi/workspaces/<name>` 那一层 —— 所以它不叫「工作区」，
  * 那会把根和根下面的一层混成一个词。
  */
-private const val ROOTFS_CRUMB_LABEL = "根"
+private val ROOTFS_CRUMB_LABEL: String get() = tr("根", "Root")
 
 /**
  * 目录树里的一行：目录在前、文件夹行点进去、文件行点开查看。
@@ -2063,14 +2078,14 @@ private fun WorkspaceEntryRow(
             leadBackground = if (entry.isDirectory) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
             badge = if (sessionChanged != null) {
                 {
-                    WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
+                    WsBadge(text = tr("本次会话", "This session"), tone = StateTone.Accent, glyph = "●")
                 }
             } else {
                 null
             },
             // 相对时间（「3分钟前」）比绝对钟点好扫；大小挪到行尾。
             meta = if (entry.isDirectory) {
-                "${entry.childCount}项 · ${relativeTime(entry.modifiedAt)}"
+                tr("${entry.childCount}项 · ${relativeTime(entry.modifiedAt)}", "${entry.childCount} ${if (entry.childCount == 1) "item" else "items"} · ${relativeTime(entry.modifiedAt)}")
             } else {
                 relativeTime(entry.modifiedAt)
             },
@@ -2122,12 +2137,12 @@ private fun WorkspaceEntryRow(
 /** pi 的文件发现（`@` 补全、`find`）默认排除的目录；其余点开头的项 pi 照列。 */
 private val PI_IGNORED_DIRS: Set<String> = setOf(".git", "node_modules")
 
-private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparator<WorkspaceEntry>) {
-    Name("名称", { compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
+private enum class WorkspaceSort(comparatorOf: () -> Comparator<WorkspaceEntry>) {
+    Name({ compareBy<WorkspaceEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }) }),
     // 最近修改：目录和文件混排，真正最近动过的在最上面（默认）。
-    Newest("最近修改", { compareByDescending<WorkspaceEntry> { it.modifiedAt }.thenBy { it.name.lowercase(java.util.Locale.ROOT) } }),
-    Largest("大小", { compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.sizeBytes } }),
-    Type("类型", {
+    Newest({ compareByDescending<WorkspaceEntry> { it.modifiedAt }.thenBy { it.name.lowercase(java.util.Locale.ROOT) } }),
+    Largest({ compareBy<WorkspaceEntry> { !it.isDirectory }.thenByDescending { it.sizeBytes } }),
+    Type({
         compareBy<WorkspaceEntry>(
             { !it.isDirectory },
             { it.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) },
@@ -2135,6 +2150,14 @@ private enum class WorkspaceSort(val label: String, comparatorOf: () -> Comparat
         )
     }),
     ;
+
+    val label: String
+        get() = when (this) {
+            Name -> tr("名称", "Name")
+            Newest -> tr("最近修改", "Modified")
+            Largest -> tr("大小", "Size")
+            Type -> tr("类型", "Type")
+        }
 
     val comparator: Comparator<WorkspaceEntry> by lazy(comparatorOf)
 }
@@ -2172,7 +2195,7 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (value.isEmpty()) {
-                        Text("筛选这一层的文件名", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+                        Text(tr("筛选这一层的文件名", "Filter files in this folder"), style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
                     }
                     inner()
                 }
@@ -2187,7 +2210,7 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
             ) {
                 Icon(
                     Icons.Filled.Close,
-                    contentDescription = "清除筛选",
+                    contentDescription = tr("清除筛选", "Clear filter"),
                     modifier = Modifier.size(16.dp),
                     tint = PiTheme.palette.muted,
                 )
@@ -2265,7 +2288,7 @@ private fun WorkspaceHeroCard(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     WsBadge(
-                        text = if (isExternal) "设备目录" else "应用私有",
+                        text = if (isExternal) tr("设备目录", "Device folder") else tr("应用私有", "App private"),
                         tone = StateTone.Muted,
                         dot = false,
                     )
@@ -2292,10 +2315,10 @@ private fun WorkspaceHeroCard(
         if (changedCount > 0 || runningCount > 0) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (runningCount > 0) {
-                    WsBadge(text = "$runningCount 条命令运行中", tone = StateTone.Warning)
+                    WsBadge(text = tr("$runningCount 条命令运行中", if (runningCount == 1) "1 command running" else "$runningCount commands running"), tone = StateTone.Warning)
                 }
                 if (changedCount > 0) {
-                    WsBadge(text = "本次改动 $changedCount 项", tone = StateTone.Accent)
+                    WsBadge(text = tr("本次改动 $changedCount 项", if (changedCount == 1) "1 change" else "$changedCount changes"), tone = StateTone.Accent)
                 }
             }
         }
@@ -2305,21 +2328,21 @@ private fun WorkspaceHeroCard(
         ) {
             HeroActionPill(
                 icon = Icons.Filled.SwapHoriz,
-                label = "切换项目",
+                label = tr("切换项目", "Switch"),
                 primary = true,
                 modifier = Modifier.weight(1f),
                 onClick = onSwitchProject,
             )
             HeroActionPill(
                 icon = Icons.Filled.Add,
-                label = "新建项目",
+                label = tr("新建项目", "New"),
                 primary = false,
                 modifier = Modifier.weight(1f),
                 onClick = onNewProject,
             )
             HeroActionPill(
                 icon = Icons.Filled.Folder,
-                label = "设备目录",
+                label = tr("设备目录", "Device"),
                 primary = false,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenExternal,
@@ -2439,7 +2462,7 @@ private fun WorkspacePathBar(
             ) {
                 Icon(
                     Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "切换工作区",
+                    contentDescription = tr("切换工作区", "Switch workspace"),
                     modifier = Modifier.size(PiSpacing.controlGlyph),
                     tint = PiTheme.palette.muted,
                 )
@@ -2463,14 +2486,14 @@ private fun WorkspacePathBar(
             // 够得着最顶层，也不用一层层连点。
             var upMenu by remember { mutableStateOf(false) }
             Box {
-                PathBarIconButton(Icons.Filled.ArrowUpward, "上层目录", { upMenu = true })
+                PathBarIconButton(Icons.Filled.ArrowUpward, tr("上层目录", "Parent directories"), { upMenu = true })
                 if (upMenu) PiMenu(
                     expanded = true,
                     onDismiss = { upMenu = false },
                     placement = PiMenuPlacement.Below,
                     items = (crumbs.size - 1 downTo 0).map { keep ->
                         val label = if (keep == 0) rootLabel else crumbs[keep - 1]
-                        PiMenuItem(if (keep == crumbs.size - 1) "$label（上一级）" else label) {
+                        PiMenuItem(if (keep == crumbs.size - 1) tr("$label（上一级）", "$label (Up)") else label) {
                             upMenu = false
                             onGo(keep)
                         }
@@ -2480,7 +2503,7 @@ private fun WorkspacePathBar(
         }
         // 不在工作区根上（进了子目录，或浏览到工作区之外）才出现：一键回到工作区根。
         if (!(inside && crumbs.size == homeSize)) {
-            PathBarIconButton(Icons.Filled.Home, "回到工作区根", onHome)
+            PathBarIconButton(Icons.Filled.Home, tr("回到工作区根", "Back to workspace root"), onHome)
         }
         if (inside) {
             crumbs.drop(homeSize).forEachIndexed { i, segment ->
@@ -2506,8 +2529,8 @@ private fun WorkspacePathBar(
             }
         }
         val parts = buildList {
-            if (changed != null && changed > 0) add("改动 $changed")
-            if (running > 0) add("$running 条命令在跑")
+            if (changed != null && changed > 0) add(tr("改动 $changed", "$changed changed"))
+            if (running > 0) add(tr("$running 条命令在跑", "$running running"))
         }
         if (parts.isNotEmpty()) {
             Text(
@@ -2622,10 +2645,10 @@ private fun WorkspaceRootSheet(
     onMenu: (WorkspaceStore.Entry) -> Unit,
 ) {
     WsSheet(
-        title = "切换项目",
+        title = tr("切换项目", "Switch Project"),
         onClose = onClose,
-        subtitle = "项目就是一个目录：App 私有目录和设备目录里的都可以。",
-        footer = "换项目会新建一个 pi 会话，当前会话不会被删除。项目信任按目录记在 pi 的信任库里。",
+        subtitle = tr("项目就是一个目录：App 私有目录和设备目录里的都可以。", "A project is just a directory — either app-private or on your device."),
+        footer = tr("换项目会新建一个 pi 会话，当前会话不会被删除。项目信任按目录记在 pi 的信任库里。", "Switching starts a new pi session without deleting the current one. Project trust is tracked per directory in pi's trust store."),
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
         var projectQuery by remember { mutableStateOf("") }
@@ -2641,7 +2664,7 @@ private fun WorkspaceRootSheet(
         // 两个入口放在最上面：新建并自动切入 / 选择设备文件夹。
         WsCard {
             WsRow(
-                title = "新建项目",
+                title = tr("新建项目", "New Project"),
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = {
@@ -2652,16 +2675,16 @@ private fun WorkspaceRootSheet(
                         tint = PiTheme.palette.accent,
                     )
                 },
-                meta = "创建新项目目录并立即切入；留空自动编号。",
+                meta = tr("创建新项目目录并立即切入；留空自动编号。", "Create a new project folder and switch to it; leave blank to auto-number."),
                 onClick = onNew,
             )
             WsHairline(startInset = WsIconHairlineStart)
             WsRow(
-                title = "选设备目录",
+                title = tr("选设备目录", "Choose Device Folder"),
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = { FolderGlyph() },
-                meta = "直接把手机已有文件夹设为项目，不复制文件。",
+                meta = tr("直接把手机已有文件夹设为项目，不复制文件。", "Use an existing folder on your device directly without copying files."),
                 onClick = onPickExternal,
             )
         }
@@ -2694,22 +2717,22 @@ private fun WorkspaceRootSheet(
                             }
                             // 外部工作区标出来：它的文件在设备上，删除只是取消登记。
                             if (item.external) {
-                                WsBadge(text = "设备", tone = StateTone.Muted)
+                                WsBadge(text = tr("设备", "Device"), tone = StateTone.Muted)
                             }
                             if (!item.available) {
-                                WsBadge(text = "读不到", tone = StateTone.Warning)
+                                WsBadge(text = tr("读不到", "Unreadable"), tone = StateTone.Warning)
                             }
                             // 信任挂在目录路径上（pi 的 trust.json 按 cwd 记）；只标「不是默认好」的两种，
                             // 已信任是常态，不画（一屏都是同一个徽标等于没有）。
                             if (item.guestPath in trust) {
                                 when (trust[item.guestPath]) {
-                                    false -> WsBadge(text = "未信任", tone = StateTone.Warning)
-                                    null -> WsBadge(text = "待表态", tone = StateTone.Warning)
+                                    false -> WsBadge(text = tr("未信任", "Untrusted"), tone = StateTone.Warning)
+                                    null -> WsBadge(text = tr("待表态", "Pending"), tone = StateTone.Warning)
                                     true -> Unit
                                 }
                             }
                             if (item.isCurrent) {
-                                WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
+                                WsBadge(text = tr("当前", "Current"), tone = StateTone.Accent, glyph = "●")
                             }
                         }
                     }
@@ -2726,11 +2749,11 @@ private fun WorkspaceRootSheet(
         val current = remember(filteredEntries) { filteredEntries.firstOrNull { it.isCurrent } }
         val others = remember(filteredEntries) { filteredEntries.filter { !it.isCurrent } }
         if (current != null) {
-            WsSectionHeader(label = "当前")
+            WsSectionHeader(label = tr("当前", "Current"))
             WsCard { entryRow(current) }
         }
         if (others.isNotEmpty()) {
-            WsSectionHeader(label = "其它项目", count = "${others.size}")
+            WsSectionHeader(label = tr("其它项目", "Other Projects"), count = "${others.size}")
             WsCard {
                 others.forEachIndexed { index, item ->
                     if (index > 0) WsHairline(startInset = WsIconHairlineStart)
@@ -2740,7 +2763,7 @@ private fun WorkspaceRootSheet(
         }
         if (current == null && others.isEmpty() && projectQuery.isNotBlank()) {
             Text(
-                "没有匹配「${projectQuery.trim()}」的项目。",
+                tr("没有匹配「${projectQuery.trim()}」的项目。", "No projects matching \"${projectQuery.trim()}\"."),
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.pageHorizontal,
                     vertical = PiSettingsMetrics.groupGap,
@@ -2750,7 +2773,7 @@ private fun WorkspaceRootSheet(
             )
         }
         Text(
-            "设备目录不会被复制或移动；取消登记只是不再列在这里，文件留在设备上。设备目录需要「所有文件访问」授权。",
+            tr("设备目录不会被复制或移动；取消登记只是不再列在这里，文件留在设备上。设备目录需要「所有文件访问」授权。", "Device folders are never copied or moved; unregistering only removes them from this list while keeping files on your device. Device folders require \"All files access\"."),
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
@@ -2789,8 +2812,8 @@ private fun WorkspaceRowMenuSheet(
         subtitle = entry.relative,
         subtitleMono = true,
     ) {
-        MenuAction("重命名", onRename)
-        MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+        MenuAction(tr("重命名", "Rename"), onRename)
+        MenuAction(tr("删除", "Delete"), onDelete, tone = PiTheme.palette.error)
     }
 }
 
@@ -2871,24 +2894,24 @@ private fun WorkspaceMenuSheet(
         subtitleMono = true,
     ) {
         if (target.isDirectory) {
-            MenuAction("进入", onEnter)
-            MenuAction("重命名", onRename)
-            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-            MenuAction("在对话里引用（@）", onMention)
-            MenuAction("复制路径", onCopyPath)
+            MenuAction(tr("进入", "Open"), onEnter)
+            MenuAction(tr("重命名", "Rename"), onRename)
+            MenuAction(tr("删除", "Delete"), onDelete, tone = PiTheme.palette.error)
+            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention)
+            MenuAction(tr("复制路径", "Copy path"), onCopyPath)
         } else {
-            MenuAction("打开", onOpen)
+            MenuAction(tr("打开", "Open"), onOpen)
             // 「编辑」只对文本存在（判据一处：`WorkspaceFiles.editableAsText`）。给图片/二进制
             // 一个编辑键，点开是空的编辑态，保存下去就是把那些字节覆盖成 UTF-8 文本。
             if (WorkspaceFiles.editableAsText(target.kind)) {
-                MenuAction("编辑", onEdit)
+                MenuAction(tr("编辑", "Edit"), onEdit)
             }
-            MenuAction("用其他应用打开", onOpenWithApp)
-            MenuAction("导出到 Download", onExport)
-            MenuAction("重命名", onRename)
-            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-            MenuAction("在对话里引用（@）", onMention)
-            MenuAction("复制路径", onCopyPath)
+            MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp)
+            MenuAction(tr("导出到 Download", "Export to Downloads"), onExport)
+            MenuAction(tr("重命名", "Rename"), onRename)
+            MenuAction(tr("删除", "Delete"), onDelete, tone = PiTheme.palette.error)
+            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention)
+            MenuAction(tr("复制路径", "Copy path"), onCopyPath)
         }
     }
 }
@@ -2942,20 +2965,20 @@ private fun WorkspaceNewSheet(
     onNewDir: () -> Unit,
 ) {
     WsSheet(
-        title = "新建",
+        title = tr("新建", "New"),
         onClose = onClose,
-        subtitle = "建在「$where」里",
+        subtitle = tr("建在「$where」里", "Create in \"$where\""),
     ) {
         NewChoice(
-            title = "新建文件",
-            supporting = "建完直接进编辑态，写什么由你。",
+            title = tr("新建文件", "New File"),
+            supporting = tr("建完直接进编辑态，写什么由你。", "Opens directly in the editor after creation."),
             glyph = { EntryGlyph(WorkspaceEntryKind.Text) },
             onClick = onNewFile,
         )
         WsHairline()
         NewChoice(
-            title = "新建文件夹",
-            supporting = "放在当前目录下。",
+            title = tr("新建文件夹", "New Folder"),
+            supporting = tr("放在当前目录下。", "Created in the current directory."),
             glyph = { EntryGlyph(WorkspaceEntryKind.Directory) },
             onClick = onNewDir,
         )
@@ -3051,12 +3074,12 @@ private fun WorkspaceNameDialog(
         val trimmed = name.trim()
         val problem = when (dialog.kind) {
             // 工作区显示名可以是带空格的一句话；其余三类都必须是合法文件名。
-            WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) "名字不能为空。" else null
+            WorkspaceInputKind.RenameWorkspace -> if (trimmed.isEmpty()) tr("名字不能为空。", "Name cannot be empty.") else null
             // 新建项目：名字就是目录名，可以不填（用 workspace-N）；填了就当场按目录名规则检查。
             WorkspaceInputKind.NewWorkspace ->
                 if (trimmed.isEmpty()) null
                 else WorkspaceChoice.nameProblem(name)
-                    ?: if (java.io.File(WorkspaceStore.root(LocalContext.current), trimmed).exists()) "已经有叫「$trimmed」的项目了。" else null
+                    ?: if (java.io.File(WorkspaceStore.root(LocalContext.current), trimmed).exists()) tr("已经有叫「$trimmed」的项目了。", "A project named \"$trimmed\" already exists.") else null
             else -> WorkspaceFiles.nameProblem(name) ?: run {
                 // 同名在输入时就说，而不是提交后才报「已存在」。重命名成自己原来的名字不算冲突
                 // （按「确定」会因没有变化而什么也不做）。
@@ -3065,7 +3088,7 @@ private fun WorkspaceNameDialog(
                     !(dialog.kind == WorkspaceInputKind.Rename && trimmed == dialog.initial) &&
                     java.io.File(parent, trimmed).exists()
                 ) {
-                    "这里已经有叫「$trimmed」的文件或文件夹了。"
+                    tr("这里已经有叫「$trimmed」的文件或文件夹了。", "A file or folder named \"$trimmed\" already exists here.")
                 } else {
                     null
                 }
@@ -3115,11 +3138,11 @@ private fun WorkspaceNameDialog(
                         if (name.isEmpty()) {
                             Text(
                                 when (dialog.kind) {
-                                    WorkspaceInputKind.NewFile -> "文件名，例如 notes.md"
-                                    WorkspaceInputKind.NewDir -> "文件夹名"
-                                    WorkspaceInputKind.Rename -> "新名字"
-                                    WorkspaceInputKind.RenameWorkspace -> "显示名"
-                                    WorkspaceInputKind.NewWorkspace -> "给它起个名字（可不填）"
+                                    WorkspaceInputKind.NewFile -> tr("文件名，例如 notes.md", "File name, e.g. notes.md")
+                                    WorkspaceInputKind.NewDir -> tr("文件夹名", "Folder name")
+                                    WorkspaceInputKind.Rename -> tr("新名字", "New name")
+                                    WorkspaceInputKind.RenameWorkspace -> tr("显示名", "Display name")
+                                    WorkspaceInputKind.NewWorkspace -> tr("给它起个名字（可不填）", "Project name (optional)")
                                 },
                                 style = PiTheme.text.mono.copy(fontSize = 17.sp),
                                 color = PiTheme.palette.muted,
@@ -3136,13 +3159,13 @@ private fun WorkspaceNameDialog(
                 problem.orEmpty()
             } else {
                 when (dialog.kind) {
-                    WorkspaceInputKind.Rename -> "只改文件名，内容不动。"
+                    WorkspaceInputKind.Rename -> tr("只改文件名，内容不动。", "Renames the file only; contents remain unchanged.")
                     // 显示名（label）与目录名是两回事：改它不移动目录，所以 pi 的会话记录与
                     // 项目信任（都挂在目录路径上）一条都不会丢 —— 这是 `WorkspaceStore.rename`
                     // 特意选的做法，输入框旁边得把这件事说出来。
-                    WorkspaceInputKind.NewWorkspace -> "建在 App 私有目录里，不需要授权；建好后可以在列表里一点切过去。"
-                    WorkspaceInputKind.RenameWorkspace -> "只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。"
-                    else -> "建在当前目录下。"
+                    WorkspaceInputKind.NewWorkspace -> tr("建在 App 私有目录里，不需要授权；建好后可以在列表里一点切过去。", "Created in app-private storage with no permissions needed; switch to it anytime from the list.")
+                    WorkspaceInputKind.RenameWorkspace -> tr("只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。", "Changes the display name only; folder path, pi sessions, and project trust stay intact.")
+                    else -> tr("建在当前目录下。", "Created in the current directory.")
                 }
             },
             modifier = Modifier.padding(top = PiSpacing.inline),
@@ -3150,9 +3173,9 @@ private fun WorkspaceNameDialog(
             color = if (showProblem) PiTheme.palette.error else PiTheme.palette.muted,
         )
         PiDialogActions {
-            PiDialogAction(label = "取消", primary = false, onClick = onClose)
+            PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = onClose)
             PiDialogAction(
-                label = "确定",
+                label = tr("确定", "OK"),
                 primary = true,
                 enabled = canSubmit,
                 onClick = { onSubmit(trimmed) },
@@ -3281,14 +3304,14 @@ private val SNACK_ACTION_PADDING_VERTICAL = 4.dp
  */
 private fun relativeTime(epochMillis: Long): String {
     val delta = System.currentTimeMillis() - epochMillis
-    if (delta < 0) return "刚刚"
+    if (delta < 0) return tr("刚刚", "Just now")
     val minutes = TimeUnit.MILLISECONDS.toMinutes(delta)
     return when {
-        minutes < 1 -> "刚刚"
-        minutes < 60 -> "${minutes}分钟前"
-        minutes < 60 * 24 -> "${minutes / 60}小时前"
-        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}天前"
-        else -> "${minutes / (60 * 24 * 7)}周前"
+        minutes < 1 -> tr("刚刚", "Just now")
+        minutes < 60 -> tr("${minutes}分钟前", "${minutes}m ago")
+        minutes < 60 * 24 -> tr("${minutes / 60}小时前", "${minutes / 60}h ago")
+        minutes < 60 * 24 * 7 -> tr("${minutes / (60 * 24)}天前", "${minutes / (60 * 24)}d ago")
+        else -> tr("${minutes / (60 * 24 * 7)}周前", "${minutes / (60 * 24 * 7)}w ago")
     }
 }
 

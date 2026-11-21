@@ -46,6 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.R
+import app.pi.i18n.piStr
+import app.pi.i18n.tr
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.ProjectScreen
@@ -73,8 +76,8 @@ import app.pi.ui.theme.stateToneColor
  *
  * The start destination stays [Chat]: cold start is a new conversation.
  */
-enum class PiDestination(val label: String) {
-    Chat("对话"),
+enum class PiDestination {
+    Chat,
 
     /**
      * The project on screen: what this session is doing in its working directory —
@@ -84,9 +87,16 @@ enum class PiDestination(val label: String) {
      * (`06-v2-construction-reference.md` §5) and which now has one plain row on the
      * settings home.
      */
-    Workbench("工作区"),
+    Workbench,
 
-    Settings("设置");
+    Settings;
+
+    val label: String
+        get() = when (this) {
+            Chat -> tr("对话", "Chat")
+            Workbench -> tr("工作区", "Workspace")
+            Settings -> tr("设置", "Settings")
+        }
 }
 
 
@@ -210,16 +220,17 @@ fun PiTopBar(
             horizontalArrangement = Arrangement.spacedBy(TOP_BAR_GAP),
         ) {
             if (onBack != null) {
+                val backLabel = piStr(R.string.nav_back)
                 Box(
                     modifier = Modifier
                         .size(TOP_BAR_BACK_BOX)
                         .clip(TOP_BAR_ICON_SHAPE)
-                        .clickable(onClickLabel = "返回", onClick = onBack),
+                        .clickable(onClickLabel = backLabel, onClick = onBack),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
+                        contentDescription = backLabel,
                         modifier = Modifier.size(TOP_BAR_BACK_GLYPH),
                         tint = MaterialTheme.colorScheme.onSurface,
                     )
@@ -230,6 +241,7 @@ fun PiTopBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (statusLabel != null) {
+                    val engineDesc = tr("引擎：$statusLabel", "Engine: $statusLabel")
                     Box(
                         modifier = Modifier
                             .size(7.dp)
@@ -237,7 +249,7 @@ fun PiTopBar(
                             .background(
                                 stateToneColor(engineStateTone(statusLabel), PiTheme.palette),
                             )
-                            .semantics { contentDescription = "引擎：$statusLabel" },
+                            .semantics { contentDescription = engineDesc },
                     )
                     Spacer(Modifier.width(8.dp))
                 }
@@ -724,7 +736,10 @@ fun PiRoot() {
                             // The text names no internal cause on purpose: a user
                             // cannot act on "this row has no handler".
                             else -> session.notifyUser(
-                                "「${setting.title}」当前不可用，请把这一步报告给我们。",
+                                tr(
+                                    "「${setting.title}」当前不可用，请把这一步报告给我们。",
+                                    "\"${setting.title}\" is currently unavailable. Please report this step.",
+                                ),
                                 warning = true,
                             )
                         }

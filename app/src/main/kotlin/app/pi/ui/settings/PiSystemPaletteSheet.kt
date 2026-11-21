@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import app.pi.i18n.tr
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiSystemPalettes
@@ -81,10 +82,13 @@ internal fun PiSystemPaletteSheet(
                     top = PiSettingsMetrics.sheetHeadTop,
                 ),
         ) {
-            Text("系统主题", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+            Text(tr("系统主题", "System Theme"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             Text(
-                "底色决定其余颜色；滑杆只改这一页，按「应用」才写盘。",
+                tr(
+                    "底色决定其余颜色；滑杆只改这一页，按「应用」才写盘。",
+                    "Background derives all other colors. Sliders preview locally until you tap Apply.",
+                ),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -96,7 +100,7 @@ internal fun PiSystemPaletteSheet(
             ) {
                 // 顺序按“先选、再微调、再确认”排：常用底色 → 三条滑杆 → 强度 →
                 // HEX → 应用。预览色带按用户要求删掉了，滑杆本身和预设色块就是预览。
-                Text("常用底色", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("常用底色", "Preset Backgrounds"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
                     PiSystemPalettes.presets.forEach { preset ->
@@ -121,21 +125,21 @@ internal fun PiSystemPaletteSheet(
                 Spacer(Modifier.height(PiSpacing.unit))
 
                 ColourSlider(
-                    label = "色相",
+                    label = tr("色相", "Hue"),
                     reading = "${hsv.first.roundToInt()}°",
                     colors = (0..6).map { hueColor(it * 60f) },
                     fraction = hsv.first / 360f,
                     onChange = { f -> setHsv(Triple(f * 360f, hsv.second, hsv.third)) },
                 )
                 ColourSlider(
-                    label = "饱和度",
+                    label = tr("饱和度", "Saturation"),
                     reading = "${(hsv.second * 100f).roundToInt()}%",
                     colors = listOf(greyOf(hsvToRgb(hsv)), hueColor(hsv.first)),
                     fraction = hsv.second,
                     onChange = { f -> setHsv(Triple(hsv.first, f, hsv.third)) },
                 )
                 ColourSlider(
-                    label = "明度",
+                    label = tr("明度", "Brightness"),
                     reading = "${(hsv.third * 100f).roundToInt()}%",
                     colors = listOf(Color.Black, hueColor(hsv.first), Color.White),
                     fraction = hsv.third,
@@ -144,7 +148,7 @@ internal fun PiSystemPaletteSheet(
 
                 Spacer(Modifier.height(PiSpacing.unit))
 
-                Text("色彩强度", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("色彩强度", "Color Intensity"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap)) {
                     PiSystemPalettes.saturations.forEach { (wire, _) ->
@@ -158,7 +162,7 @@ internal fun PiSystemPaletteSheet(
 
                 Spacer(Modifier.height(PiSpacing.unit))
 
-                Text("底色 HEX", style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("底色 HEX", "Background HEX"), style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 PiEditorField(
                     value = hexText,
@@ -178,7 +182,7 @@ internal fun PiSystemPaletteSheet(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("应用")
+                    Text(tr("应用", "Apply"))
                 }
                 Spacer(Modifier.height(PiSpacing.unit))
 

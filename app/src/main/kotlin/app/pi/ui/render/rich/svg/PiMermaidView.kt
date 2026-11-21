@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import app.pi.i18n.tr
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
@@ -190,12 +191,12 @@ fun PiMermaidView(
                 return@LaunchedEffect
             }
             if (source.isBlank()) {
-                draw = PiMermaidDraw.Unavailable("Mermaid 源码为空")
+                draw = PiMermaidDraw.Unavailable(tr("Mermaid 源码为空", "Mermaid source is empty"))
                 return@LaunchedEffect
             }
             if (source.length > PI_MERMAID_MAX_SOURCE_CHARS) {
                 draw = PiMermaidDraw.Unavailable(
-                    "源码超过 ${PI_MERMAID_MAX_SOURCE_CHARS / 1024} KiB，未渲染",
+                    tr("源码超过 ${PI_MERMAID_MAX_SOURCE_CHARS / 1024} KiB，未渲染", "Source exceeds ${PI_MERMAID_MAX_SOURCE_CHARS / 1024} KiB; not rendered"),
                 )
                 return@LaunchedEffect
             }
@@ -233,7 +234,7 @@ fun PiMermaidView(
         val image = ready?.takeIf { !showSource }
 
         val status: String? = when (draw) {
-            PiMermaidDraw.Streaming -> "生成中…"
+            PiMermaidDraw.Streaming -> tr("生成中…", "Streaming…")
             else -> null
         }
 
@@ -245,7 +246,7 @@ fun PiMermaidView(
             menu = buildList {
                 if (image != null) {
                     add(
-                        PiCardMenuItem("适应屏幕") {
+                        PiCardMenuItem(tr("适应屏幕", "Fit to screen")) {
                             scale = PI_MERMAID_FIT_ZOOM
                             offset = Offset.Zero
                         },
@@ -253,7 +254,7 @@ fun PiMermaidView(
                 }
                 if (ready != null) {
                     add(
-                        PiCardMenuItem(if (showSource) "查看图" else "查看 Mermaid 源码") {
+                        PiCardMenuItem(if (showSource) tr("查看图", "View diagram") else tr("查看 Mermaid 源码", "View Mermaid source")) {
                             pinMode = if (showSource) 2 else 1
                         },
                     )
@@ -263,6 +264,7 @@ fun PiMermaidView(
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_MERMAID_FALLBACK_ASPECT
+                val diagramDesc = tr("Mermaid 渲染图：$source", "Mermaid diagram: $source")
                 // 画布高度在这里一次算死：宽 ÷ 宽高比，夹进 [最小, 最大]。以前是
                 // `heightIn + fillMaxWidth + aspectRatio` 三个约束互相较劲，高度被夹住时
                 // 画布比图矮，图的位置和卡片边线就对不上。
@@ -296,7 +298,7 @@ fun PiMermaidView(
                                 offset = nextOffset
                             }
                         }
-                        .semantics { contentDescription = "Mermaid 渲染图：$source" },
+                        .semantics { contentDescription = diagramDesc },
                 ) {
                     val fit = piMermaidFitScale(
                         viewWidth = size.width,
@@ -334,7 +336,7 @@ fun PiMermaidView(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "渲染中…",
+                        text = tr("渲染中…", "Rendering…"),
                         style = PiTheme.text.monoSmall,
                         color = palette.dim,
                     )
@@ -427,12 +429,12 @@ private sealed interface PiMermaidDraw {
  */
 private fun piMermaidDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiMermaidDraw {
     if (result.svg.length > PI_MERMAID_MAX_SVG_CHARS) {
-        return PiMermaidDraw.Unavailable("SVG 超过 ${PI_MERMAID_MAX_SVG_CHARS / (1024 * 1024)} MiB，未渲染")
+        return PiMermaidDraw.Unavailable(tr("SVG 超过 ${PI_MERMAID_MAX_SVG_CHARS / (1024 * 1024)} MiB，未渲染", "SVG exceeds ${PI_MERMAID_MAX_SVG_CHARS / (1024 * 1024)} MiB; not rendered"))
     }
     val svg = try {
         SVG.getFromString(PiSvgFit.compat(result.svg))
     } catch (error: Exception) {
-        return PiMermaidDraw.Unavailable("SVG 解析失败：${error.message ?: error::class.java.simpleName}")
+        return PiMermaidDraw.Unavailable(tr("SVG 解析失败：${error.message ?: error::class.java.simpleName}", "SVG parse failed: ${error.message ?: error::class.java.simpleName}"))
     }
     // 留白随图大小走：量字宽的字体（WebView）和最终画字的字体（AndroidSVG）不同，大图的
     // 偏差绝对值更大，固定 16 单位在大图上不够，右/下边缘的节点会被视口直接裁掉。
@@ -460,7 +462,7 @@ private fun piMermaidDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiM
     val picture = try {
         svg.renderToPicture(baseWidth, baseHeight)
     } catch (error: Exception) {
-        return PiMermaidDraw.Unavailable("SVG 绘制失败：${error.message ?: error::class.java.simpleName}")
+        return PiMermaidDraw.Unavailable(tr("SVG 绘制失败：${error.message ?: error::class.java.simpleName}", "SVG render failed: ${error.message ?: error::class.java.simpleName}"))
     }
     return PiMermaidDraw.Ready(picture, baseWidth, baseHeight, aspect)
 }
@@ -687,7 +689,7 @@ private fun PiMermaidSourceBlock(source: String, notice: String?) {
         )
         if (hidden > 0) {
             Text(
-                text = "… 还有 $hidden 行，复制源码查看完整内容",
+                text = tr("… 还有 $hidden 行，复制源码查看完整内容", "… $hidden more line(s); copy source for full content"),
                 style = PiTheme.text.monoSmall,
                 color = palette.muted,
                 modifier = Modifier.padding(top = 4.dp),

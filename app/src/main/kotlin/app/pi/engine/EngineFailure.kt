@@ -1,5 +1,7 @@
 package app.pi.engine
 
+import app.pi.i18n.tr
+
 /**
  * 失败页上要说什么 —— **按真实原因分种类**，而不是所有失败共用一句「引擎没有在运行」。
  *
@@ -93,10 +95,13 @@ object EngineFailureClassify {
     /** 运行环境安装/解包失败。`PiEngineHost.Boot.Failed` 的那一条。 */
     fun provisioning(message: String, detail: String?): EngineFailure = EngineFailure(
         kind = EngineFailureKind.Provisioning,
-        title = message.ifBlank { "运行环境没有装好" },
-        explanation = "运行环境没有准备好，引擎还没能启动。点「重试」会先做一次**不删数据**的修复：" +
-            "把运行时重新解包一遍（guest 里装的 apt/pip/npm 包都还在）。修复也失败时才需要" +
-            "「重建运行时」—— 它会清空易失树，只保留工作区、会话、设置和凭证。",
+        title = message.ifBlank { tr("运行环境没有装好", "Runtime Environment Not Ready") },
+        explanation = tr(
+            "运行环境没有准备好，引擎还没能启动。点「重试」会先做一次**不删数据**的修复：" +
+                "把运行时重新解包一遍（guest 里装的 apt/pip/npm 包都还在）。修复也失败时才需要" +
+                "「重建运行时」—— 它会清空易失树，只保留工作区、会话、设置和凭证。",
+            "The runtime environment is not ready and the engine could not start. Tapping \"Retry\" first performs a non-destructive repair by re-extracting the runtime (keeping your installed apt/pip/npm packages). Only use \"Rebuild Runtime\" if repair fails — it resets the volatile tree while preserving workspaces, sessions, settings, and credentials.",
+        ),
         detail = detail,
         rebuildOffered = true,
     )
@@ -109,9 +114,12 @@ object EngineFailureClassify {
      */
     fun workspaceSwitch(message: String, detail: String?): EngineFailure = EngineFailure(
         kind = EngineFailureKind.WorkspaceSwitch,
-        title = message.ifBlank { "切换工作区失败" },
-        explanation = "新工作区没能启动，回到原来的工作区也没能启动。工作区设置没有被改掉。" +
-            "先重试一次；如果一直失败，把下面的文字发给我。",
+        title = message.ifBlank { tr("切换工作区失败", "Workspace Switch Failed") },
+        explanation = tr(
+            "新工作区没能启动，回到原来的工作区也没能启动。工作区设置没有被改掉。" +
+                "先重试一次；如果一直失败，把下面的文字发给我。",
+            "Neither the target workspace nor the previous workspace could start. Your workspace setting was not changed. Try again, or share the details below if it keeps failing.",
+        ),
         detail = detail,
         rebuildOffered = false,
     )
@@ -128,9 +136,12 @@ object EngineFailureClassify {
         if (isConfigurationFailure(text)) {
             return EngineFailure(
                 kind = EngineFailureKind.Configuration,
-                title = "启动参数或扩展出错",
-                explanation = "引擎在读启动参数或加载扩展时退出了。这种情况重试不会变好 —— " +
-                    "按下面的原因改掉它（扩展启动参数、扩展目录、模型名），再点重试。",
+                title = tr("启动参数或扩展出错", "Startup Flag or Extension Error"),
+                explanation = tr(
+                    "引擎在读启动参数或加载扩展时退出了。这种情况重试不会变好 —— " +
+                        "按下面的原因改掉它（扩展启动参数、扩展目录、模型名），再点重试。",
+                    "The engine exited while reading startup flags or loading an extension. Fix the cause below (extension flags, extension directory, or model name) and retry.",
+                ),
                 detail = detail,
                 rebuildOffered = false,
             )
@@ -138,10 +149,13 @@ object EngineFailureClassify {
         if (isOutOfMemory(exitCode, text)) {
             return EngineFailure(
                 kind = EngineFailureKind.OutOfMemory,
-                title = "引擎内存耗尽",
-                explanation = "引擎的 JavaScript 堆用完了（退出码 134 / V8 的 FATAL ERROR）。" +
-                    "一次让它在 guest 里同时跑多个构建、开发服务器或依赖安装最容易这样。" +
-                    "少开几个并行任务再重试；已经开始的会话不会丢。",
+                title = tr("引擎内存耗尽", "Engine Out of Memory"),
+                explanation = tr(
+                    "引擎的 JavaScript 堆用完了（退出码 134 / V8 的 FATAL ERROR）。" +
+                        "一次让它在 guest 里同时跑多个构建、开发服务器或依赖安装最容易这样。" +
+                        "少开几个并行任务再重试；已经开始的会话不会丢。",
+                    "The engine ran out of JavaScript heap memory (exit 134 / V8 FATAL ERROR). Avoid running multiple heavy builds or dev servers simultaneously, then retry; your session is preserved.",
+                ),
                 detail = detail,
                 rebuildOffered = false,
             )
@@ -149,19 +163,25 @@ object EngineFailureClassify {
         if (killedBySystem(exitCode)) {
             return EngineFailure(
                 kind = EngineFailureKind.KilledBySystem,
-                title = "引擎被系统结束了",
-                explanation = "不是崩溃，也没有报错：进程是被 Android 直接收走的（没有退出码，" +
-                    "或者是 137/143）。手机上最常见的原因是内存紧张时系统回收后台进程树 —— " +
-                    "在 guest 里跑 npm/vite 这类构建时尤其容易。App 已经在跑前台服务，" +
-                    "但系统仍然可能这么做。",
+                title = tr("引擎被系统结束了", "Engine Terminated by System"),
+                explanation = tr(
+                    "不是崩溃，也没有报错：进程是被 Android 直接收走的（没有退出码，" +
+                        "或者是 137/143）。手机上最常见的原因是内存紧张时系统回收后台进程树 —— " +
+                        "在 guest 里跑 npm/vite 这类构建时尤其容易。App 已经在跑前台服务，" +
+                        "但系统仍然可能这么做。",
+                    "Android terminated the engine process (no exit code or 137/143), usually due to low memory while running heavy builds like npm/vite. Tap retry to restart.",
+                ),
                 detail = detail,
                 rebuildOffered = false,
             )
         }
         return EngineFailure(
             kind = EngineFailureKind.Crashed,
-            title = "引擎异常退出",
-            explanation = "引擎在运行中退出了。可以重新启动后继续 —— 会话、队列和已写出的内容都还在。",
+            title = tr("引擎异常退出", "Engine Exited Unexpectedly"),
+            explanation = tr(
+                "引擎在运行中退出了。可以重新启动后继续 —— 会话、队列和已写出的内容都还在。",
+                "The engine exited while running. Restart to continue — your sessions, queues, and written files are intact.",
+            ),
             detail = detail,
             rebuildOffered = false,
         )

@@ -20,6 +20,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -46,7 +48,7 @@ fun SettingsHome(
 ) {
     var query by remember { mutableStateOf("") }
     val q = query.trim()
-    val hits = remember(q) {
+    val hits = remember(q, PiLocale.isZh) {
         if (q.isEmpty()) emptyList() else PiSettingsCatalog.settings.filter {
             it.title.contains(q, ignoreCase = true) ||
                 it.description.contains(q, ignoreCase = true) ||
@@ -55,7 +57,7 @@ fun SettingsHome(
     }
     val palette = PiTheme.palette
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "设置", onBack = onBack)
+        PiTopBar(title = tr("设置", "Settings"), onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
@@ -71,14 +73,19 @@ fun SettingsHome(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                    placeholder = "搜索设置：名称、说明或键名",
+                    placeholder = tr("搜索设置：名称、说明或键名", "Search settings: name, description, or key"),
                     height = PiSettingsMetrics.searchFieldHeight,
                 )
             }
             if (q.isNotEmpty()) {
                 if (hits.isEmpty()) {
                     item(key = "no-hits") {
-                        PiSettingsCard { PiSettingsEntryRow(title = "没有匹配的设置", supporting = "换个词，或清空搜索看分组。") }
+                        PiSettingsCard {
+                            PiSettingsEntryRow(
+                                title = tr("没有匹配的设置", "No matching settings"),
+                                supporting = tr("换个词，或清空搜索看分组。", "Try another term, or clear search to browse groups."),
+                            )
+                        }
                     }
                 } else {
                     item(key = "hits") {
@@ -104,6 +111,7 @@ fun SettingsHome(
             }
 
             fun groupCards(
+                sectionKey: String,
                 label: String,
                 ids: List<String>,
                 lead: List<HomeEntry> = emptyList(),
@@ -111,8 +119,8 @@ fun SettingsHome(
             ) {
                 val groups = ids.mapNotNull { id -> PiSettingsCatalog.groups.firstOrNull { it.id == id } }
                 if (groups.isEmpty() && lead.isEmpty()) return
-                item(key = "label:$label") { HomeSectionLabel(label) }
-                item(key = "card:$label") {
+                item(key = "label:$sectionKey") { HomeSectionLabel(label) }
+                item(key = "card:$sectionKey") {
                     PiSettingsCard {
                         var first = true
                         lead.forEach { entry ->
@@ -136,18 +144,35 @@ fun SettingsHome(
             }
 
             groupCards(
-                "模型与连接",
-                emptyList(),
+                sectionKey = "models-conn",
+                label = tr("模型与连接", "Models & Connections"),
+                ids = emptyList(),
                 lead = listOfNotNull(
-                    onOpenModels?.let { HomeEntry("模型与供应商", "订阅登录、API Key、自定义模型、思考等级与缓存", Icons.Filled.Timeline, palette.accent, it) },
-                    onOpenMcp?.let { HomeEntry("MCP 服务器", "接入外部工具服务器：连接检测、OAuth 登录、暴露方式", Icons.Filled.Extension, palette.border, it) },
+                    onOpenModels?.let {
+                        HomeEntry(
+                            tr("模型与供应商", "Models & Providers"),
+                            tr("订阅登录、API Key、自定义模型、思考等级与缓存", "Subscriptions, API keys, custom models, thinking level, and caching"),
+                            Icons.Filled.Timeline,
+                            palette.accent,
+                            it,
+                        )
+                    },
+                    onOpenMcp?.let {
+                        HomeEntry(
+                            tr("MCP 服务器", "MCP Servers"),
+                            tr("接入外部工具服务器：连接检测、OAuth 登录、暴露方式", "External tool servers: health checks, OAuth login, tool exposure"),
+                            Icons.Filled.Extension,
+                            palette.border,
+                            it,
+                        )
+                    },
                 ),
             )
-            groupCards("扩展与工具", listOf("resources", "tools"), tint = palette.success)
-            groupCards("对话与提示词", listOf("prompts", "messages", "compaction", "retry"), tint = palette.mdLink)
-            groupCards("外观", listOf("appearance"), tint = palette.warning)
-            item(key = "label:系统") { HomeSectionLabel("系统") }
-            item(key = "card:系统") {
+            groupCards("ext-tools", tr("扩展与工具", "Extensions & Tools"), listOf("resources", "tools"), tint = palette.success)
+            groupCards("chat-prompts", tr("对话与提示词", "Chat & Prompts"), listOf("prompts", "messages", "compaction", "retry"), tint = palette.mdLink)
+            groupCards("appearance", tr("外观", "Appearance"), listOf("appearance"), tint = palette.warning)
+            item(key = "label:system") { HomeSectionLabel(tr("系统", "System")) }
+            item(key = "card:system") {
                 PiSettingsCard {
                     PiSettingsEntryRow(
                         title = PiSettingsCatalog.groupTitle("runtime"),
@@ -159,8 +184,8 @@ fun SettingsHome(
                     if (onOpenOther != null) {
                         PiSettingsHairline()
                         PiSettingsEntryRow(
-                            title = "其他",
-                            supporting = "终端、设备能力、安全与隐私、开源许可",
+                            title = tr("其他", "More"),
+                            supporting = tr("终端、设备能力、安全与隐私、开源许可", "Terminal, device capabilities, security & privacy, licenses"),
                             onClick = onOpenOther,
                             leadingIcon = Icons.Filled.MoreVert,
                             leadingTint = palette.muted,
@@ -201,7 +226,7 @@ private fun GroupEntry(
     tint: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
 ) {
-    val summary = remember(store, group.id, freshness) { group.summary(store) }
+    val summary = remember(store, group.id, freshness, PiLocale.isZh) { group.summary(store) }
     PiSettingsEntryRow(
         title = group.title,
         supporting = summary,

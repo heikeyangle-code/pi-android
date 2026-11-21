@@ -1,5 +1,7 @@
 package app.pi.ui.settings
 
+import app.pi.i18n.tr
+
 /**
  * 「运行时加速（实验性）」开关写完之后，**接下来该做什么**——这条判定本身。
  *
@@ -88,7 +90,8 @@ object RuntimeSwitchAction {
     enum class Target { Proot, Proroot, Tawcroot }
 
     /** 往 tawcroot 重启时状态行的值。 */
-    const val RESTART_TO_TAWCROOT_STATUS = "正在把引擎重启到 tawcroot…"
+    val RESTART_TO_TAWCROOT_STATUS: String
+        get() = tr("正在把引擎重启到 tawcroot…", "Restarting engine onto tawcroot…")
 
     /** 选了 [target] 之后第一步：proot 无需测量，直接重启；另两个先测门禁。 */
     fun onWrite(target: Target): Step =
@@ -128,7 +131,7 @@ object RuntimeSwitchAction {
     fun probingStatus(target: Target): String = when (target) {
         Target.Proot -> PROBING_STATUS
         Target.Proroot -> PROBING_STATUS
-        Target.Tawcroot -> "正在测 tawcroot 探针（最长约 60 秒）…"
+        Target.Tawcroot -> tr("正在测 tawcroot 探针（最长约 60 秒）…", "Probing tawcroot (up to ~60s)…")
     }
 
     /** [statusLine] 的按目标版本；Probing 说的是被测的那个运行时。 */
@@ -154,13 +157,16 @@ object RuntimeSwitchAction {
     }
 
     /** 探针在跑时状态行的值。数字与 `ProrootProbe` 的上界同源，写成一句话给用户。 */
-    const val PROBING_STATUS = "正在测 proroot 探针（最长约 60 秒）…"
+    val PROBING_STATUS: String
+        get() = tr("正在测 proroot 探针（最长约 60 秒）…", "Probing proroot (up to ~60s)…")
 
     /** 往 proot 重启时状态行的值。 */
-    const val RESTART_TO_PROOT_STATUS = "正在把引擎重启到 proot…"
+    val RESTART_TO_PROOT_STATUS: String
+        get() = tr("正在把引擎重启到 proot…", "Restarting engine onto proot…")
 
     /** 往 proroot 重启时状态行的值。 */
-    const val RESTART_TO_PROROOT_STATUS = "正在把引擎重启到 proroot…"
+    val RESTART_TO_PROROOT_STATUS: String
+        get() = tr("正在把引擎重启到 proroot…", "Restarting engine onto proroot…")
 
     /**
      * 开关刚写完（值是 [nowEnabled]），第一步做什么。

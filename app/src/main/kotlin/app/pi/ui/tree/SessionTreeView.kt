@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.SessionTreeNode
 import app.pi.session.tree.TreeFilter
 import app.pi.session.tree.TreeItem
@@ -151,7 +152,11 @@ fun SessionTreeView(
         )
         if (busy != null) SummaryBanner(busy, onAbortSummary)
         Text(
-            if (view.rows.size == view.totalEntries) "${view.totalEntries} 条 · ${filter.hint}" else "显示 ${view.rows.size} / ${view.totalEntries} · ${filter.hint}",
+            if (view.rows.size == view.totalEntries) {
+                tr("${view.totalEntries} 条 · ${filter.hint}", "${view.totalEntries} entries · ${filter.hint}")
+            } else {
+                tr("显示 ${view.rows.size} / ${view.totalEntries} · ${filter.hint}", "Showing ${view.rows.size} / ${view.totalEntries} · ${filter.hint}")
+            },
             modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = ROW_GAP),
             style = PiTheme.text.meta,
             color = PiTheme.palette.muted,
@@ -160,11 +165,15 @@ fun SessionTreeView(
             PiEmptyState(
                 icon = Icons.Filled.Search,
                 title = when {
-                    query.isNotBlank() -> "没有匹配的条目"
-                    filter == TreeFilter.Labeled -> "还没有书签"
-                    else -> "这个过滤下没有条目"
+                    query.isNotBlank() -> tr("没有匹配的条目", "No matching entries")
+                    filter == TreeFilter.Labeled -> tr("还没有书签", "No labeled entries yet")
+                    else -> tr("这个过滤下没有条目", "No entries in this filter")
                 },
-                body = if (filter == TreeFilter.Labeled && query.isBlank()) "点开任意一条，给它起个标签，之后在这里一键回到那里。" else "换个过滤或关键词试试。",
+                body = if (filter == TreeFilter.Labeled && query.isBlank()) {
+                    tr("点开任意一条，给它起个标签，之后在这里一键回到那里。", "Tap any entry to add a label, then jump back to it from here.")
+                } else {
+                    tr("换个过滤或关键词试试。", "Try a different filter or search query.")
+                },
             )
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
@@ -235,7 +244,7 @@ private fun FilterBar(
                 )
             }
             if (bookmarkCount > 0) {
-                PiSettingsChip(text = "标签时间", glyph = if (showStamps) "✓" else "○", active = showStamps, onClick = onToggleStamps)
+                PiSettingsChip(text = tr("标签时间", "Timestamps"), glyph = if (showStamps) "✓" else "○", active = showStamps, onClick = onToggleStamps)
             }
         }
         Spacer(Modifier.height(ROW_GAP))
@@ -251,7 +260,7 @@ private fun FilterBar(
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(ICON), tint = PiTheme.palette.muted)
                 Box(Modifier.weight(1f)) {
-                    if (query.isEmpty()) Text("搜索这棵树（空格分词，全部命中）", style = PiTheme.text.meta, color = PiTheme.palette.dim)
+                    if (query.isEmpty()) Text(tr("搜索这棵树（空格分词，全部命中）", "Search tree (space-separated, match all)"), style = PiTheme.text.meta, color = PiTheme.palette.dim)
                     BasicTextField(
                         value = query,
                         onValueChange = onQuery,
@@ -262,7 +271,7 @@ private fun FilterBar(
                     )
                 }
                 if (query.isNotEmpty()) {
-                    Text("清除", modifier = Modifier.clickable { onQuery("") }.padding(ROW_GAP), style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                    Text(tr("清除", "Clear"), modifier = Modifier.clickable { onQuery("") }.padding(ROW_GAP), style = PiTheme.text.meta, color = PiTheme.palette.accent)
                 }
             }
         }
@@ -276,7 +285,7 @@ private fun SummaryBanner(label: String, onAbort: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, modifier = Modifier.weight(1f), style = PiTheme.text.meta, color = PiTheme.palette.warning)
-        Text("停止摘要", modifier = Modifier.clickable(onClick = onAbort).padding(ROW_GAP), style = PiTheme.text.meta, color = PiTheme.palette.accent)
+        Text(tr("停止摘要", "Abort summary"), modifier = Modifier.clickable(onClick = onAbort).padding(ROW_GAP), style = PiTheme.text.meta, color = PiTheme.palette.accent)
     }
 }
 
@@ -371,7 +380,7 @@ private fun TreeRowView(row: TreeRow, showStamps: Boolean, onClick: () -> Unit, 
             modifier = Modifier.weight(1f).padding(vertical = ROW_PAD),
         )
         if (item.hiddenFromContext) {
-            Text("不发给模型", modifier = Modifier.padding(start = ROW_GAP), style = PiTheme.text.meta, color = p.dim, maxLines = 1)
+            Text(tr("不发给模型", "Hidden"), modifier = Modifier.padding(start = ROW_GAP), style = PiTheme.text.meta, color = p.dim, maxLines = 1)
         }
     }
 }
@@ -419,7 +428,7 @@ private fun EntrySheet(
                 )
                 if (item.isLeaf) {
                     Text(
-                        "当前位置",
+                        tr("当前位置", "Current"),
                         modifier = Modifier
                             .clip(androidx.compose.foundation.shape.CircleShape)
                             .background(p.accent.copy(alpha = 0.16f))
@@ -455,13 +464,13 @@ private fun EntrySheet(
                         if (!item.isLeaf) {
                             val hint = buildString {
                                 append(
-                                    if (item.rewinds) "回到此消息之前并放回输入框改写重发"
-                                    else "切换当前会话分支位置到这里继续对话",
+                                    if (item.rewinds) tr("回到此消息之前并放回输入框改写重发", "Rewind before this message and restore it to the editor")
+                                    else tr("切换当前会话分支位置到这里继续对话", "Switch the active session branch to this point"),
                                 )
-                                if (streaming) append("（将先停止本轮）")
+                                if (streaming) append(tr("（将先停止本轮）", " (will abort current turn)"))
                             }
                             ActionRow(
-                                title = "跳转到这里",
+                                title = tr("跳转到这里", "Navigate here"),
                                 hint = hint,
                                 icon = Icons.Filled.PlayArrow,
                                 tint = p.accent,
@@ -471,37 +480,37 @@ private fun EntrySheet(
                         }
                         if (item.forkable) {
                             ActionRow(
-                                title = "从这里分叉",
-                                hint = "新建独立会话文件，原会话不变",
+                                title = tr("从这里分叉", "Fork from here"),
+                                hint = tr("新建独立会话文件，原会话不变", "Create a new session file; original stays intact"),
                                 icon = Icons.Filled.AccountTree,
                                 tint = p.success,
                                 onClick = onFork,
                             )
                         }
                         ActionRow(
-                            title = if (item.label == null) "加标签（书签）" else "改标签",
-                            hint = item.label?.let { "当前：「$it」" } ?: "方便在「书签」里一键定位",
+                            title = if (item.label == null) tr("加标签（书签）", "Add label") else tr("改标签", "Edit label"),
+                            hint = item.label?.let { tr("当前：「$it」", "Current: \"$it\"") } ?: tr("方便在「书签」里一键定位", "Quickly locate under Labeled only"),
                             icon = Icons.Filled.BookmarkBorder,
                             tint = p.warning,
                         ) { step = Step.Label }
                         if (item.contextEditable && !item.hiddenFromContext) {
                             ActionRow(
-                                title = "不再发给模型",
-                                hint = "对话记录保留，后续上下文不再携带",
+                                title = tr("不再发给模型", "Exclude from context"),
+                                hint = tr("对话记录保留，后续上下文不再携带", "Keep in transcript, omit from future model context"),
                                 icon = Icons.Filled.VisibilityOff,
                                 tint = p.muted,
                                 onClick = onHide,
                             )
                             ActionRow(
-                                title = "改写模型看到的内容",
-                                hint = "仅改上下文版本，原文不变",
+                                title = tr("改写模型看到的内容", "Edit in context"),
+                                hint = tr("仅改上下文版本，原文不变", "Modify context version only; original stays intact"),
                                 icon = Icons.Filled.Edit,
                                 tint = p.mdLink,
                             ) { step = Step.Replace }
                         }
                         if (item.copyText != null) {
                             ActionRow(
-                                title = "复制文本",
+                                title = tr("复制文本", "Copy text"),
                                 hint = null,
                                 icon = Icons.Filled.ContentCopy,
                                 tint = p.muted,
@@ -510,51 +519,51 @@ private fun EntrySheet(
                     }
                 }
                 Step.SummaryChoice -> {
-                    Text("要摘要被放弃的那一段吗？", style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold), color = p.text)
-                    Text("摘要会调用一次模型，可随时中止；关闭面板回到树。", style = PiTheme.text.meta, color = p.muted)
+                    Text(tr("要摘要被放弃的那一段吗？", "Summarize abandoned branch?"), style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold), color = p.text)
+                    Text(tr("摘要会调用一次模型，可随时中止；关闭面板回到树。", "Summarizing calls the model and can be aborted; dismiss to return to tree."), style = PiTheme.text.meta, color = p.muted)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
                             .background(MaterialTheme.colorScheme.surfaceContainerLow),
                     ) {
-                        ActionRow("不摘要", "直接切换，不消耗 token") { onNavigate(BranchSummaryChoice.NoSummary, null) }
-                        ActionRow("自动摘要", "使用默认摘要提示词") { onNavigate(BranchSummaryChoice.Summarize, null) }
-                        ActionRow("用自定义指令摘要…", "指定需要保留的关键信息") { step = Step.SummaryInstructions }
+                        ActionRow(tr("不摘要", "No summary"), tr("直接切换，不消耗 token", "Switch immediately without using tokens")) { onNavigate(BranchSummaryChoice.NoSummary, null) }
+                        ActionRow(tr("自动摘要", "Summarize"), tr("使用默认摘要提示词", "Use default summary prompt")) { onNavigate(BranchSummaryChoice.Summarize, null) }
+                        ActionRow(tr("用自定义指令摘要…", "Summarize with custom prompt…"), tr("指定需要保留的关键信息", "Specify key details to preserve")) { step = Step.SummaryInstructions }
                     }
                 }
                 Step.SummaryInstructions -> {
-                    TextBox(instructions, { instructions = it }, "摘要指令：要留住什么")
+                    TextBox(instructions, { instructions = it }, tr("摘要指令：要留住什么", "Summary instructions: what to preserve"))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     ) {
-                        TreePillButton("返回", primary = false) { step = Step.SummaryChoice }
-                        TreePillButton("开始摘要", primary = true) { onNavigate(BranchSummaryChoice.SummarizeWithPrompt, instructions.trim().ifEmpty { null }) }
+                        TreePillButton(tr("返回", "Back"), primary = false) { step = Step.SummaryChoice }
+                        TreePillButton(tr("开始摘要", "Summarize"), primary = true) { onNavigate(BranchSummaryChoice.SummarizeWithPrompt, instructions.trim().ifEmpty { null }) }
                     }
                 }
                 Step.Label -> {
-                    TextBox(labelText, { labelText = it }, "标签，例如「方案 A 之前」", singleLine = true)
+                    TextBox(labelText, { labelText = it }, tr("标签，例如「方案 A 之前」", "Label, e.g. \"Before plan A\""), singleLine = true)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     ) {
                         if (item.label != null) {
-                            TreePillButton("清除标签", primary = false) { onLabel(null) }
+                            TreePillButton(tr("清除标签", "Clear label"), primary = false) { onLabel(null) }
                         }
-                        TreePillButton("返回", primary = false) { step = Step.Actions }
-                        TreePillButton("保存", primary = true) { onLabel(labelText.trim().ifEmpty { null }) }
+                        TreePillButton(tr("返回", "Back"), primary = false) { step = Step.Actions }
+                        TreePillButton(tr("保存", "Save"), primary = true) { onLabel(labelText.trim().ifEmpty { null }) }
                     }
                 }
                 Step.Replace -> {
-                    TextBox(replacement, { replacement = it }, "模型将看到的内容")
-                    Text("只影响之后发给模型的上下文，不改原始记录。", style = PiTheme.text.meta, color = p.muted)
+                    TextBox(replacement, { replacement = it }, tr("模型将看到的内容", "Content sent to model"))
+                    Text(tr("只影响之后发给模型的上下文，不改原始记录。", "Only affects future model context; original transcript is unchanged."), style = PiTheme.text.meta, color = p.muted)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     ) {
-                        TreePillButton("返回", primary = false) { step = Step.Actions }
-                        TreePillButton("保存改写", primary = true) { onReplace(replacement) }
+                        TreePillButton(tr("返回", "Back"), primary = false) { step = Step.Actions }
+                        TreePillButton(tr("保存改写", "Save edit"), primary = true) { onReplace(replacement) }
                     }
                 }
             }

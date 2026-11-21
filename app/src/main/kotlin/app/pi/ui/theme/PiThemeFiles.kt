@@ -1,6 +1,7 @@
 package app.pi.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import app.pi.i18n.tr
 import app.pi.rpc.PiJson
 import app.pi.runtime.PiProjectConfig
 import java.io.File
@@ -55,18 +56,26 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 
 /** Where a theme the app can paint itself with came from. */
-enum class PiThemeScope(val label: String) {
+enum class PiThemeScope {
     /** pi's built-in `dark` / `light` and the generated `system` (`theme.ts:480-483`). */
-    Builtin("内置"),
+    Builtin,
 
     /** `~/.pi/agent/themes`, pi's `getCustomThemesDir()`. */
-    AgentDir("~/.pi/agent/themes"),
+    AgentDir,
 
     /** `<cwd>/.pi/themes` — pi's project themes directory. */
-    Project("${PiProjectConfig.DIRECTORY}/themes"),
+    Project,
 
     /** A path or directory named by the `themes` setting. */
-    Configured("themes 设置"),
+    Configured;
+
+    val label: String
+        get() = when (this) {
+            Builtin -> tr("内置", "Built-in")
+            AgentDir -> "~/.pi/agent/themes"
+            Project -> "${PiProjectConfig.DIRECTORY}/themes"
+            Configured -> tr("themes 设置", "themes setting")
+        }
 }
 
 /** One selectable theme: its name plus the file backing it (null for built-ins). */
@@ -282,9 +291,12 @@ object PiThemeLoader {
                 dark = derived.dark,
                 source = PiThemeEntry(name, null, PiThemeScope.Builtin),
                 notes = listOf(
-                    "「system」主题由 pi 从终端调色板推导；App 没有终端，改用「外观 → 配色方案」" +
-                        "选定的调色板（ANSI 16 色 + 底色）推导。深浅由那个底色决定，" +
-                        "不跟随系统的深浅色设置；换调色板后颜色与深浅都会跟着变。",
+                    tr(
+                        "「system」主题由 pi 从终端调色板推导；App 没有终端，改用「外观 → 配色方案」" +
+                            "选定的调色板（ANSI 16 色 + 底色）推导。深浅由那个底色决定，" +
+                            "不跟随系统的深浅色设置；换调色板后颜色与深浅都会跟着变。",
+                        "The \"system\" theme is derived from a terminal palette. Since this app has no terminal, it uses the palette selected under Appearance → System Theme (ANSI 16 + background). Light/dark polarity follows that background rather than system dark mode.",
+                    ),
                 ),
             )
         }
@@ -307,10 +319,12 @@ object PiThemeLoader {
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
                 error = if (entry != null) {
-                    "主题「$name」的文件不存在。"
+                    tr("主题「$name」的文件不存在。", "Theme file for \"$name\" does not exist.")
                 } else {
-                    "找不到主题「$name」。" +
-                        "可以在设置里检查主题名，或直接填写主题文件的路径。"
+                    tr(
+                        "找不到主题「$name」。可以在设置里检查主题名，或直接填写主题文件的路径。",
+                        "Theme \"$name\" not found. Check the theme name in settings or enter a theme file path directly.",
+                    )
                 },
             )
         }
@@ -326,7 +340,10 @@ object PiThemeLoader {
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
                 error = (error as? ThemeParseException)?.message
-                    ?: "主题「$name」读取失败。可以换一个主题，或检查该主题文件的内容。",
+                    ?: tr(
+                        "主题「$name」读取失败。可以换一个主题，或检查该主题文件的内容。",
+                        "Failed to read theme \"$name\". Choose another theme or check the theme file contents.",
+                    ),
             )
         }
         return PiResolvedTheme(
@@ -349,13 +366,23 @@ object PiThemeLoader {
 
     private fun parseTheme(file: File, systemDark: Boolean): ParsedTheme {
         val json = readJson(file)
-            ?: throw ThemeParseException("这个主题文件不是合法的 JSON 对象。可以检查文件内容，或换一个主题。")
+            ?: throw ThemeParseException(
+                tr(
+                    "这个主题文件不是合法的 JSON 对象。可以检查文件内容，或换一个主题。",
+                    "This theme file is not a valid JSON object. Check the file or choose another theme.",
+                ),
+            )
         return parseThemeJson(json, systemDark)
     }
 
     private fun parseThemeJson(json: JsonObject, systemDark: Boolean): ParsedTheme {
         val colors = json["colors"] as? JsonObject
-            ?: throw ThemeParseException("这个主题文件里没有 colors 一栏。可以检查文件内容，或换一个主题。")
+            ?: throw ThemeParseException(
+                tr(
+                    "这个主题文件里没有 colors 一栏。可以检查文件内容，或换一个主题。",
+                    "This theme file is missing a \"colors\" section. Check the file or choose another theme.",
+                ),
+            )
         val vars = json["vars"] as? JsonObject ?: JsonObject(emptyMap())
 
         // Which built-in palette supplies the values the file cannot express.
@@ -384,8 +411,11 @@ object PiThemeLoader {
         val isLight = declaredDark?.let { !it } ?: probedDark?.let { !it } ?: !systemDark
         val base = if (isLight) PiPalette.Light else PiPalette.Dark
         val polarityNote = if (declaredDark == null && probedDark == null) {
-            "这个主题既没有 appearance 字段，也无法从 userMessageBg 判断深浅；" +
-                "已按系统的深浅色设置选择内置的回退配色。"
+            tr(
+                "这个主题既没有 appearance 字段，也无法从 userMessageBg 判断深浅；" +
+                    "已按系统的深浅色设置选择内置的回退配色。",
+                "This theme has no appearance field and polarity could not be detected from userMessageBg; falling back to the built-in palette matching system appearance.",
+            )
         } else {
             null
         }
@@ -456,18 +486,28 @@ object PiThemeLoader {
         }
 
         if (missingTokens.isNotEmpty()) {
-            notes += "缺少这些颜色定义：${missingTokens.joinToString("、")}；这些颜色用内置主题的值代替。"
+            notes += tr(
+                "缺少这些颜色定义：${missingTokens.joinToString("、")}；这些颜色用内置主题的值代替。",
+                "Missing color tokens: ${missingTokens.joinToString(", ")}; using built-in theme values.",
+            )
         }
         if (brokenTokens.isNotEmpty()) {
-            notes += "无法解析的颜色：${brokenTokens.joinToString("、")}；已用内置主题的值代替。"
+            notes += tr(
+                "无法解析的颜色：${brokenTokens.joinToString("、")}；已用内置主题的值代替。",
+                "Unparseable colors: ${brokenTokens.joinToString(", ")}; using built-in theme values.",
+            )
         }
         if (emptyTokens.isNotEmpty()) {
-            notes += "这些颜色留空：${emptyTokens.joinToString("、")}；" +
-                "已用内置主题的颜色代替。"
+            notes += tr(
+                "这些颜色留空：${emptyTokens.joinToString("、")}；已用内置主题的颜色代替。",
+                "Empty color values: ${emptyTokens.joinToString(", ")}; using built-in theme values.",
+            )
         }
         if (indexedTokens.isNotEmpty()) {
-            notes += "256 色索引颜色：${indexedTokens.joinToString("、")}；" +
-                "已换算成最接近的真彩色。"
+            notes += tr(
+                "256 色索引颜色：${indexedTokens.joinToString("、")}；已换算成最接近的真彩色。",
+                "256-color indexed tokens: ${indexedTokens.joinToString(", ")}; mapped to nearest true-color RGB.",
+            )
         }
 
         // pi 1.2.0 起，用户主题在**所有模式**下都会被严格校验，包括 App 启动引擎用的
@@ -488,24 +528,36 @@ object PiThemeLoader {
         val allowedTopLevel = setOf("\$schema", "name", "appearance", "vars", "colors", "export")
         val unknownTopLevel = json.keys.filterNot { it in allowedTopLevel }
         if (unknownTopLevel.isNotEmpty()) {
-            notes += "pi 不认这些顶层字段：${unknownTopLevel.joinToString("、")}；" +
-                "它会把整份主题判为无效并改用内置主题，所以这里的颜色在 pi 那一侧不会生效。" +
-                "要保留可复用的颜色，请放进 vars。"
+            notes += tr(
+                "pi 不认这些顶层字段：${unknownTopLevel.joinToString("、")}；" +
+                    "它会把整份主题判为无效并改用内置主题，所以这里的颜色在 pi 那一侧不会生效。" +
+                    "要保留可复用的颜色，请放进 vars。",
+                "pi does not recognize top-level fields: ${unknownTopLevel.joinToString(", ")}; " +
+                    "pi will reject the theme and fall back to built-in colors. Move reusable colors into \"vars\".",
+            )
         }
         val knownColorTokens = REQUIRED_TOKENS.toSet() + OPTIONAL_FALLBACKS.keys
         val unknownColorTokens = colors.keys.filterNot { it in knownColorTokens }
         if (unknownColorTokens.isNotEmpty()) {
-            notes += "pi 不认 colors 里这些颜色名：${unknownColorTokens.joinToString("、")}；" +
-                "同样会让整份主题被判为无效，这些颜色在 pi 那一侧不会生效。" +
-                "要保留可复用的颜色，请放进 vars。"
+            notes += tr(
+                "pi 不认 colors 里这些颜色名：${unknownColorTokens.joinToString("、")}；" +
+                    "同样会让整份主题被判为无效，这些颜色在 pi 那一侧不会生效。" +
+                    "要保留可复用的颜色，请放进 vars。",
+                "pi does not recognize color tokens in \"colors\": ${unknownColorTokens.joinToString(", ")}; " +
+                    "pi will reject the theme. Move reusable colors into \"vars\".",
+            )
         }
         // `export` 的三个键从 `deriveExportSurfaces` 取，不另抄一份名单——抄一份就是又一处会漂的拷贝。
         val unknownExportKeys = export?.keys?.filterNot {
             it in deriveExportSurfaces(resolved.getValue("userMessageBg")).keys
         } ?: emptyList()
         if (unknownExportKeys.isNotEmpty()) {
-            notes += "pi 不认 export 里这些字段：${unknownExportKeys.joinToString("、")}；" +
-                "同样会让整份主题被判为无效。HTML 导出只认 pageBg / cardBg / infoBg。"
+            notes += tr(
+                "pi 不认 export 里这些字段：${unknownExportKeys.joinToString("、")}；" +
+                    "同样会让整份主题被判为无效。HTML 导出只认 pageBg / cardBg / infoBg。",
+                "pi does not recognize fields in \"export\": ${unknownExportKeys.joinToString(", ")}; " +
+                    "pi will reject the theme. HTML export only allows pageBg / cardBg / infoBg.",
+            )
         }
 
         return ParsedTheme(palette = base.withTokens(resolved), dark = !isLight, notes = notes)

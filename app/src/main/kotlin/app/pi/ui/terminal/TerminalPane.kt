@@ -1,5 +1,7 @@
 package app.pi.ui.terminal
 
+import app.pi.i18n.tr
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -122,7 +124,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
                 // The library decodes OSC 52 and posts this to the main looper, so
                 // touching the Android clipboard here is safe.
                 androidClipboard.setPrimaryClip(ClipData.newPlainText("pi terminal", text))
-                statusText = "已复制到剪贴板（OSC 52）"
+                statusText = tr("已复制到剪贴板（OSC 52）", "Copied to clipboard (OSC 52)")
             },
         )
     }
@@ -205,7 +207,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
             // happens on another thread) recomposes this line: without it a failed
             // start would set `lastError` and nothing would ever show it.
             statusText = statusText
-                ?: bridge.lastError?.takeIf { startAttempt > 0 }?.let { "终端未能启动：$it" },
+                ?: bridge.lastError?.takeIf { startAttempt > 0 }?.let { tr("终端未能启动：$it", "Terminal failed to start: $it") },
             rows = preferences.keyBar,
             onKey = { key ->
                 val sticky = key.sticky

@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.render.LocalPiImageTransformer
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
@@ -430,11 +431,11 @@ private fun safeScheme(url: String): String? {
 }
 
 private fun inlineImageLabel(node: PiHtmlNode.Image): String {
-    val alt = node.alt.ifBlank { "图片" }
+    val alt = node.alt.ifBlank { tr("图片", "Image") }
     return if (node.src.isBlank()) {
-        "［$alt］"
+        "[$alt]"
     } else {
-        "［$alt：${node.src}］"
+        "[$alt: ${node.src}]"
     }
 }
 
@@ -462,7 +463,7 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
                 .clickable(
-                    onClickLabel = if (expanded) "收起详情" else "展开详情",
+                    onClickLabel = if (expanded) tr("收起详情", "Collapse details") else tr("展开详情", "Expand details"),
                 ) { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -474,7 +475,7 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
             )
             if (node.summary.isEmpty()) {
                 Text(
-                    text = "详情",
+                    text = tr("详情", "Details"),
                     style = style.copy(
                         color = palette.mdHeading,
                         fontWeight = FontWeight.SemiBold,

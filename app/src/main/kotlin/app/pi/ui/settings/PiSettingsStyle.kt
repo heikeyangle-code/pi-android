@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
@@ -421,11 +422,11 @@ internal fun PiSettingsEffectiveBadge(
 ) {
     val (label, tone) = when (kind) {
         EffectiveKind.Immediate -> return
-        EffectiveKind.Reload -> "需重载" to MaterialTheme.colorScheme.tertiary
-        EffectiveKind.NewSession -> "新会话" to MaterialTheme.colorScheme.onSurfaceVariant
-        EffectiveKind.RestartEngine -> "需重启引擎" to MaterialTheme.colorScheme.error
-        EffectiveKind.AutoRestartEngine -> "自动重启引擎" to MaterialTheme.colorScheme.tertiary
-        EffectiveKind.RestartApp -> "需重启" to MaterialTheme.colorScheme.error
+        EffectiveKind.Reload -> tr("需重载", "Reload") to MaterialTheme.colorScheme.tertiary
+        EffectiveKind.NewSession -> tr("新会话", "New session") to MaterialTheme.colorScheme.onSurfaceVariant
+        EffectiveKind.RestartEngine -> tr("需重启引擎", "Restart engine") to MaterialTheme.colorScheme.error
+        EffectiveKind.AutoRestartEngine -> tr("自动重启引擎", "Auto-restarts engine") to MaterialTheme.colorScheme.tertiary
+        EffectiveKind.RestartApp -> tr("需重启", "Restart app") to MaterialTheme.colorScheme.error
     }
     PiSettingsBadge(label = label, tone = tone, modifier = modifier)
 }

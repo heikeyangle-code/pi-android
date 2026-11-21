@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
@@ -91,8 +92,8 @@ fun PiYamlTreeView(
     val currentFeedback: String? = feedback
     val status = when {
         currentFeedback != null -> currentFeedback
-        tree != null -> "${tree.nodeCount} 个节点"
-        result == null -> "解析中…"
+        tree != null -> tr("${tree.nodeCount} 个节点", "${tree.nodeCount} nodes")
+        result == null -> tr("解析中…", "Parsing…")
         mode == PiTreeMode.Tree && result is YamlTreeResult.Failure ->
             yamlFailureNotice(result.reason, limits)
         else -> null
@@ -111,7 +112,7 @@ fun PiYamlTreeView(
                 root = tree.root,
                 onCopy = { text, label ->
                     clipboard.setText(AnnotatedString(text))
-                    feedback = "已复制$label"
+                    feedback = tr("已复制$label", "Copied $label")
                 },
             )
         } else {
@@ -163,7 +164,7 @@ private fun YamlNodeRow(
                 // 整行都是展开/收起的点击区（含缩进部分），与 JSON / XML 树同款。
                 .then(
                     if (node.isContainer) {
-                        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+                        Modifier.clickable(onClickLabel = if (expanded) tr("收起", "Collapse") else tr("展开", "Expand")) { expanded = !expanded }
                     } else {
                         Modifier
                     },
@@ -206,11 +207,11 @@ private fun YamlNodeRow(
 
                 when (node) {
                     is YamlMapNode -> Text(
-                        text = "{ ${node.entries.size} 个键 }",
+                        text = tr("{ ${node.entries.size} 个键 }", "{ ${node.entries.size} keys }"),
                         style = body.copy(color = palette.muted),
                     )
                     is YamlListNode -> Text(
-                        text = "[ ${node.items.size} 项 ]",
+                        text = tr("[ ${node.items.size} 项 ]", "[ ${node.items.size} items ]"),
                         style = body.copy(color = palette.muted),
                     )
                     is YamlScalarNode -> YamlScalarValue(node, body = body)
@@ -288,7 +289,7 @@ private fun YamlScalarValue(node: YamlScalarNode, body: androidx.compose.ui.text
 @Composable
 private fun YamlHiddenChildrenRow(depth: Int, hidden: Int) {
     Text(
-        text = "… 还有 $hidden 项，切换源码或复制完整 YAML 查看",
+        text = tr("… 还有 $hidden 项，切换源码或复制完整 YAML 查看", "… $hidden more item(s); switch to source or copy full YAML"),
         style = PiTheme.text.monoSmall,
         color = PiTheme.palette.muted,
         modifier = Modifier.padding(
@@ -304,9 +305,9 @@ private fun yamlRowActions(
     onCopy: (text: String, label: String) -> Unit,
 ): List<Pair<String, () -> Unit>> {
     val actions = ArrayList<Pair<String, () -> Unit>>(2)
-    actions += "复制路径" to { onCopy(node.path, "路径") }
+    actions += tr("复制路径", "Copy path") to { onCopy(node.path, tr("路径", "path")) }
     if (node is YamlScalarNode) {
-        actions += "复制值" to { onCopy(node.text, "值") }
+        actions += tr("复制值", "Copy value") to { onCopy(node.text, tr("值", "value")) }
     }
     return actions
 }
@@ -316,11 +317,11 @@ private fun yamlRowActions(
  * sentence cannot drift from the gate.
  */
 private fun yamlFailureNotice(reason: YamlTreeFailure, limits: YamlTreeLimits): String = when (reason) {
-    YamlTreeFailure.NotSettled -> "YAML 还在生成，先显示源码"
-    YamlTreeFailure.Empty -> "YAML 为空，先显示源码"
-    YamlTreeFailure.TooLarge -> "YAML 超过 ${limits.maxChars / 1024} KiB，已回退源码"
-    YamlTreeFailure.TooDeep -> "YAML 嵌套超过 ${limits.maxDepth} 层，已回退源码"
-    YamlTreeFailure.TooManyNodes -> "YAML 超过 ${limits.maxNodes} 个节点，已回退源码"
-    YamlTreeFailure.Unsupported -> "YAML 含树视图不支持的写法，已回退源码"
-    YamlTreeFailure.Malformed -> "YAML 解析失败，已回退源码"
+    YamlTreeFailure.NotSettled -> tr("YAML 还在生成，先显示源码", "YAML still streaming; showing source")
+    YamlTreeFailure.Empty -> tr("YAML 为空，先显示源码", "YAML is empty; showing source")
+    YamlTreeFailure.TooLarge -> tr("YAML 超过 ${limits.maxChars / 1024} KiB，已回退源码", "YAML exceeds ${limits.maxChars / 1024} KiB; showing source")
+    YamlTreeFailure.TooDeep -> tr("YAML 嵌套超过 ${limits.maxDepth} 层，已回退源码", "YAML nesting exceeds ${limits.maxDepth} levels; showing source")
+    YamlTreeFailure.TooManyNodes -> tr("YAML 超过 ${limits.maxNodes} 个节点，已回退源码", "YAML exceeds ${limits.maxNodes} nodes; showing source")
+    YamlTreeFailure.Unsupported -> tr("YAML 含树视图不支持的写法，已回退源码", "YAML uses unsupported syntax; showing source")
+    YamlTreeFailure.Malformed -> tr("YAML 解析失败，已回退源码", "Invalid YAML; showing source")
 }

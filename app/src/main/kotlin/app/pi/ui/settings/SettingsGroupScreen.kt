@@ -17,6 +17,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiTheme
@@ -114,7 +116,7 @@ fun SettingsGroupScreen(
     onLoadAvailableModels: () -> Unit = {},
 ) {
     val group = PiSettingsCatalog.group(groupId)
-    val sections = remember(groupId, freshness) { buildGroupSections(groupId) }
+    val sections = remember(groupId, freshness, PiLocale.isZh) { buildGroupSections(groupId) }
     val listState = rememberLazyListState()
 
     var editing by remember { mutableStateOf<PiSetting?>(null) }
@@ -166,7 +168,7 @@ fun SettingsGroupScreen(
     // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
-            title = group?.title ?: "设置",
+            title = group?.title ?: tr("设置", "Settings"),
             onBack = onBack,
         )
         LazyColumn(
@@ -258,20 +260,20 @@ fun SettingsGroupScreen(
             // only production caller — always passes a dispatcher, so this
             // branch is a preview/test path.
             body = if (run == null) {
-                openConfirmation.description + "\n\n这个入口当前不可用。"
+                openConfirmation.description + tr("\n\n这个入口当前不可用。", "\n\nThis action is currently unavailable.")
             } else {
                 openConfirmation.description
             },
             confirmationLabel = when {
-                run == null -> "知道了"
-                openConfirmation.dangerous -> "确认执行"
-                else -> "执行"
+                run == null -> tr("知道了", "OK")
+                openConfirmation.dangerous -> tr("确认执行", "Confirm")
+                else -> tr("执行", "Run")
             },
             onConfirm = {
                 run?.invoke(openConfirmation)
                 confirming = null
             },
-            dismissalLabel = if (run == null) null else "取消",
+            dismissalLabel = if (run == null) null else tr("取消", "Cancel"),
             onDismissButton = { confirming = null },
         )
     }

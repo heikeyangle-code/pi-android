@@ -43,6 +43,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
@@ -136,10 +137,10 @@ internal fun PiRichCodeBlock(
                     clipboard.setText(AnnotatedString(code))
                     copied = true
                 },
-                status = if (lineCount > 1) "$lineCount 行" else null,
+                status = if (lineCount > 1) tr("$lineCount 行", "$lineCount lines") else null,
                 trailingPill = {
                     Text(
-                        text = if (wrap) "换行" else "滚动",
+                        text = if (wrap) tr("换行", "Wrap") else tr("滚动", "Scroll"),
                         style = PiTheme.text.monoSmall,
                         color = if (wrap) palette.accent else palette.muted,
                         maxLines = 1,
@@ -150,7 +151,10 @@ internal fun PiRichCodeBlock(
                                 else MaterialTheme.colorScheme.surfaceContainerHigh,
                                 RoundedCornerShape(6.dp),
                             )
-                            .clickable(role = Role.Button, onClickLabel = if (wrap) "切回横向滚动" else "开启自动换行") {
+                            .clickable(
+                                role = Role.Button,
+                                onClickLabel = if (wrap) tr("切回横向滚动", "Switch to horizontal scroll") else tr("开启自动换行", "Enable word wrap"),
+                            ) {
                                 wrap = !wrap
                                 if (wrap) showLineNumbers = false
                             }
@@ -164,12 +168,12 @@ internal fun PiRichCodeBlock(
                             addAll(extraMenu)
                             add(
                                 PiCardMenuItem(
-                                    label = if (showLineNumbers) "隐藏行号" else "显示行号",
+                                    label = if (showLineNumbers) tr("隐藏行号", "Hide line numbers") else tr("显示行号", "Show line numbers"),
                                     enabled = !wrap,
                                 ) { showLineNumbers = !showLineNumbers },
                             )
                             add(
-                                PiCardMenuItem(label = if (wrap) "横向滚动" else "自动换行") {
+                                PiCardMenuItem(label = if (wrap) tr("横向滚动", "Horizontal scroll") else tr("自动换行", "Word wrap")) {
                                     wrap = !wrap
                                     if (wrap) showLineNumbers = false
                                 },
@@ -177,7 +181,7 @@ internal fun PiRichCodeBlock(
                             if (lineCount > MAX_COLLAPSED_LINES) {
                                 add(
                                     PiCardMenuItem(
-                                        label = if (expanded) "收起" else "展开全部（$lineCount 行）",
+                                        label = if (expanded) tr("收起", "Collapse") else tr("展开全部（$lineCount 行）", "Expand all ($lineCount lines)"),
                                     ) { expanded = !expanded },
                                 )
                             }
@@ -222,7 +226,7 @@ internal fun PiRichCodeBlock(
             if (lineCount > MAX_COLLAPSED_LINES) {
                 PiCardDivider(palette)
                 Text(
-                    text = if (expanded) "收起代码 ▴" else "展开全部 $lineCount 行 ▾",
+                    text = if (expanded) tr("收起代码 ▴", "Collapse code ▴") else tr("展开全部 $lineCount 行 ▾", "Expand all $lineCount lines ▾"),
                     style = MaterialTheme.typography.labelMedium,
                     color = palette.accent,
                     textAlign = TextAlign.Center,
@@ -394,11 +398,12 @@ internal fun PiCardHeader(
  */
 @Composable
 internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit) {
+    val copyDesc = if (copied) tr("已复制", "Copied") else tr("复制", "Copy")
     Box(
         modifier = Modifier
             .size(40.dp)
-            .clickable(role = Role.Button, onClickLabel = "复制源码", onClick = onCopy)
-            .semantics { contentDescription = if (copied) "已复制" else "复制" },
+            .clickable(role = Role.Button, onClickLabel = tr("复制源码", "Copy source"), onClick = onCopy)
+            .semantics { contentDescription = copyDesc },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -445,11 +450,12 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
     if (items.isEmpty()) return
     var open by remember { mutableStateOf(false) }
     Box {
+        val moreLabel = tr("更多选项", "More options")
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clickable(role = Role.Button, onClickLabel = "更多选项") { open = true }
-                .semantics { contentDescription = "更多选项" },
+                .clickable(role = Role.Button, onClickLabel = moreLabel) { open = true }
+                .semantics { contentDescription = moreLabel },
             contentAlignment = Alignment.Center,
         ) {
             Icon(

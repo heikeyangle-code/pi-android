@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -133,30 +134,30 @@ internal fun PiSetting.elementFromEntries(entries: List<String>): JsonElement = 
 internal fun PiSetting.display(element: JsonElement?): String {
     val present = element != null && element !is JsonNull
     return when (kind) {
-        PiRowKind.Switch -> if (element.boolValue(defaultValue?.boolValue(false) ?: false)) "开" else "关"
+        PiRowKind.Switch -> if (element.boolValue(defaultValue?.boolValue(false) ?: false)) tr("开", "On") else tr("关", "Off")
 
         PiRowKind.Value -> {
             if (!present) {
-                "未设置"
+                tr("未设置", "Not set")
             } else {
                 val raw = element.primitiveText() ?: element.toString()
                 val option = options.firstOrNull { it.wire == raw }
-                option?.label ?: raw.ifEmpty { "未设置" }
+                option?.label ?: raw.ifEmpty { tr("未设置", "Not set") }
             }
         }
 
         PiRowKind.Number -> {
             val number = element.intValueOrNull()
-            if (number == null) "未设置" else number.toString() + (unit?.let { " $it" } ?: "")
+            if (number == null) tr("未设置", "Not set") else number.toString() + (unit?.let { " $it" } ?: "")
         }
 
         PiRowKind.Text -> {
             val text = element.primitiveText()
             when {
-                text.isNullOrEmpty() -> "未设置"
+                text.isNullOrEmpty() -> tr("未设置", "Not set")
                 // 多行文本（系统提示词那两行）不能把整段塞进行尾：几万字的粘贴会把
                 // 标题挤成 0 宽（用户报的「粘贴完返回，设置名都没了」）。行上只报字数。
-                multiline -> "已填写 · ${text.length} 字"
+                multiline -> tr("已填写 · ${text.length} 字", "Set · ${text.length} chars")
                 else -> text
             }
         }
@@ -166,7 +167,11 @@ internal fun PiSetting.display(element: JsonElement?): String {
                 PiValueContainer.Array -> (element as? JsonArray)?.size ?: 0
                 PiValueContainer.Object -> (element as? JsonObject)?.size ?: 0
             }
-            if (count == 0) emptyListLabel else "$count 项"
+            if (count == 0) {
+                emptyListLabel.ifEmpty { tr("空", "Empty") }
+            } else {
+                tr("$count 项", if (count == 1) "1 item" else "$count items")
+            }
         }
 
         PiRowKind.Action -> ""
@@ -246,11 +251,17 @@ internal fun PiSetting.validateEntries(entries: List<String>): String? {
         if (text.isEmpty()) return@forEachIndexed
         val separator = text.indexOf('=')
         if (separator <= 0) {
-            return "第 ${index + 1} 行没有 `=`，保存下去它会被丢掉。写成 `名字 = 值`。"
+            return tr(
+                "第 ${index + 1} 行没有 `=`，保存下去它会被丢掉。写成 `名字 = 值`。",
+                "Line ${index + 1} is missing `=` and would be dropped on save. Use `name = value`.",
+            )
         }
         val name = text.substring(0, separator).trim()
         if (name.isEmpty()) {
-            return "第 ${index + 1} 行 `=` 前面没有名字，保存下去它会被丢掉。"
+            return tr(
+                "第 ${index + 1} 行 `=` 前面没有名字，保存下去它会被丢掉。",
+                "Line ${index + 1} has no name before `=` and would be dropped on save.",
+            )
         }
         val value = valueElementOf(text.substring(separator + 1).trim())
         when (val verdict = verdictForLine(name, value)) {

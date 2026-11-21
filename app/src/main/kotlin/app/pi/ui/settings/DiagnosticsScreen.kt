@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.runtime.PiPaths
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
@@ -98,7 +99,7 @@ fun DiagnosticsScreen(
 
     // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "诊断报告", onBack = onBack)
+        PiTopBar(title = tr("诊断报告", "Diagnostics Report"), onBack = onBack)
         Column(
             Modifier
                 .fillMaxSize()
@@ -108,7 +109,10 @@ fun DiagnosticsScreen(
         ) {
             val clipboard = LocalClipboardManager.current
             Text(
-                "报告不会进入对话上下文；敏感值已自动脱敏。",
+                tr(
+                    "报告不会进入对话上下文；敏感值已自动脱敏。",
+                    "This report is never sent to the model; sensitive values are automatically redacted.",
+                ),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -120,7 +124,7 @@ fun DiagnosticsScreen(
             ) {
                 val text = report
                 PiSettingsChip(
-                    text = "保存到 Download",
+                    text = tr("保存到 Download", "Save to Downloads"),
                     active = text != null && !working,
                     onClick = {
                         val current = report ?: return@PiSettingsChip
@@ -134,7 +138,7 @@ fun DiagnosticsScreen(
                     },
                 )
                 PiSettingsChip(
-                    text = "分享",
+                    text = tr("分享", "Share"),
                     onClick = {
                         val current = report ?: return@PiSettingsChip
                         if (working) return@PiSettingsChip
@@ -147,12 +151,12 @@ fun DiagnosticsScreen(
                     },
                 )
                 PiSettingsChip(
-                    text = "复制全文",
+                    text = tr("复制全文", "Copy all"),
                     onClick = {
                         val current = report ?: return@PiSettingsChip
                         if (working) return@PiSettingsChip
                         clipboard.setText(AnnotatedString(current))
-                        status = "已复制诊断报告到剪贴板"
+                        status = tr("已复制诊断报告到剪贴板", "Diagnostics report copied to clipboard")
                     },
                 )
             }
@@ -177,7 +181,11 @@ fun DiagnosticsScreen(
 
             Spacer(Modifier.height(PiSpacing.unit))
             Text(
-                if (working) "正在收集…" else "报告预览（与导出的文件内容一致）",
+                if (working) {
+                    tr("正在收集…", "Collecting…")
+                } else {
+                    tr("报告预览（与导出的文件内容一致）", "Report preview (matches exported file)")
+                },
                 style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium),
             )
             Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))

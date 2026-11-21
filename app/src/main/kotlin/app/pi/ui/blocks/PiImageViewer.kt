@@ -57,6 +57,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -367,7 +368,10 @@ internal fun PiImageViewerSurface(
                 contentAlignment = Alignment.Center,
             ) {
                 androidx.compose.material3.Text(
-                    text = "这张图片无法解码（${image.mimeType.ifEmpty { "image" }}）。",
+                    text = tr(
+                        "这张图片无法解码（${image.mimeType.ifEmpty { "image" }}）。",
+                        "Unable to decode this image (${image.mimeType.ifEmpty { "image" }}).",
+                    ),
                     style = PiTheme.text.meta,
                     color = palette.muted,
                 )
@@ -607,14 +611,14 @@ internal fun PiImageViewerSurface(
                         // 动图：画会动的 painter（首帧位图仍负责尺寸与缩放范围）。
                         Image(
                             painter = animatedPainter,
-                            contentDescription = "放大的图片",
+                            contentDescription = tr("放大的图片", "Zoomed image"),
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
                         Image(
                             bitmap = decoded.asImageBitmap(),
-                            contentDescription = "放大的图片",
+                            contentDescription = tr("放大的图片", "Zoomed image"),
                             // The node is exactly the bitmap's aspect, so `Fit` fills it.
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize(),
@@ -675,7 +679,7 @@ internal fun PiImageViewerSurface(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Filled.Download,
-                        contentDescription = "保存到下载目录",
+                        contentDescription = tr("保存到下载目录", "Save to Downloads"),
                         tint = palette.text,
                         modifier = Modifier.size(20.dp),
                     )
@@ -691,7 +695,7 @@ internal fun PiImageViewerSurface(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "关闭",
+                        contentDescription = tr("关闭", "Close"),
                         tint = palette.text,
                         modifier = Modifier.size(20.dp),
                     )
@@ -835,7 +839,7 @@ private fun saveImage(context: Context, image: PiImageViewerSource): String = tr
                 base64 = image.base64,
                 mimeType = image.mimeType,
             )
-            "已保存到 Download/$name"
+            tr("已保存到 Download/$name", "Saved to Download/$name")
         }
 
         is PiImageViewerSource.HostFile -> {
@@ -847,13 +851,13 @@ private fun saveImage(context: Context, image: PiImageViewerSource): String = tr
                 mimeType = image.mimeType,
                 sourceFile = image.file,
             )
-            "已保存到 Download/${image.file.name}"
+            tr("已保存到 Download/${image.file.name}", "Saved to Download/${image.file.name}")
         }
     }
 } catch (error: DeviceActionException) {
-    "保存失败：${error.denial.reason}" + (error.denial.hint?.let { " $it" } ?: "")
+    tr("保存失败：${error.denial.reason}", "Save failed: ${error.denial.reason}") + (error.denial.hint?.let { " $it" } ?: "")
 } catch (error: Exception) {
-    "保存失败：${error::class.java.simpleName}: ${error.message}"
+    tr("保存失败：${error::class.java.simpleName}: ${error.message}", "Save failed: ${error::class.java.simpleName}: ${error.message}")
 }
 
 /**

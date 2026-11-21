@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.host.ExtPanel
 import app.pi.host.ExtStatus
 import app.pi.host.ExtWorking
+import app.pi.i18n.tr
 import app.pi.ui.blocks.BlockCard
 import app.pi.ui.blocks.BlockCardRowPadding
 import app.pi.ui.blocks.ExpandLabel
@@ -157,7 +158,13 @@ fun ExtensionDockSummaryBar(
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, palette.borderMuted.copy(alpha = 0.55f), shape)
             .clickable(
-                onClickLabel = if (imeVisible) "查看全部扩展面板" else if (collapsedByUser) "展开扩展面板" else "收起扩展面板",
+                onClickLabel = if (imeVisible) {
+                    tr("查看全部扩展面板", "View all extension panels")
+                } else if (collapsedByUser) {
+                    tr("展开扩展面板", "Expand extension panels")
+                } else {
+                    tr("收起扩展面板", "Collapse extension panels")
+                },
                 onClick = if (imeVisible) onOpenInspector else onToggleCollapse,
             )
             .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -182,11 +189,11 @@ fun ExtensionDockSummaryBar(
             )
         } else {
             val summary = buildString {
-                append("扩展面板")
+                append(tr("扩展面板", "Extensions"))
                 val parts = buildList {
-                    if (widgetCount > 0) add("$widgetCount 组件")
-                    if (statusCount > 0) add("$statusCount 状态")
-                    if (hasChrome) add("顶/底栏")
+                    if (widgetCount > 0) add(tr("$widgetCount 组件", "$widgetCount widget(s)"))
+                    if (statusCount > 0) add(tr("$statusCount 状态", "$statusCount status"))
+                    if (hasChrome) add(tr("顶/底栏", "header/footer"))
                 }
                 if (parts.isNotEmpty()) append(" · ").append(parts.joinToString(" · "))
             }
@@ -204,14 +211,14 @@ fun ExtensionDockSummaryBar(
         }
         if (imeVisible) {
             Text(
-                text = "查看",
+                text = tr("查看", "View"),
                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                 color = palette.accent,
             )
         } else {
             Icon(
                 imageVector = if (collapsedByUser) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (collapsedByUser) "展开" else "收起",
+                contentDescription = if (collapsedByUser) tr("展开", "Expand") else tr("收起", "Collapse"),
                 modifier = Modifier.size(16.dp),
                 tint = palette.muted,
             )
@@ -246,21 +253,22 @@ fun ExtensionWidgetsSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "扩展面板",
+                    text = tr("扩展面板", "Extension Panels"),
                     modifier = Modifier.weight(1f),
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+                val closeLabel = tr("关闭", "Close")
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .clickable(onClickLabel = "关闭", onClick = onDismiss),
+                        .clickable(onClickLabel = closeLabel, onClick = onDismiss),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "关闭",
+                        contentDescription = closeLabel,
                         modifier = Modifier.size(18.dp),
                         tint = palette.muted,
                     )
@@ -278,7 +286,7 @@ fun ExtensionWidgetsSheet(
                 }
                 header?.let { h ->
                     ExtensionPanelCard(
-                        caption = "顶栏 · ${widgetCaption(h.key) ?: h.key}",
+                        caption = tr("顶栏", "Header") + " · ${widgetCaption(h.key) ?: h.key}",
                         lines = h.lines,
                         collapsedRows = 6,
                         onInteract = if (h.interactive && h.surfaceId != null) {
@@ -304,7 +312,7 @@ fun ExtensionWidgetsSheet(
                 }
                 footer?.let { f ->
                     ExtensionPanelCard(
-                        caption = "底栏 · ${widgetCaption(f.key) ?: f.key}",
+                        caption = tr("底栏", "Footer") + " · ${widgetCaption(f.key) ?: f.key}",
                         lines = f.lines,
                         collapsedRows = 6,
                         onInteract = if (f.interactive && f.surfaceId != null) {
@@ -437,7 +445,9 @@ fun ExtensionStatusStrip(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 rows.forEach { pill(it.key, it.text, false) }
-                if (editorTakeover) pill("", "扩展编辑器已由原生输入框接管", true)
+                if (editorTakeover) {
+                    pill("", tr("扩展编辑器已由原生输入框接管", "Extension editor handled by native composer"), true)
+                }
             }
         } else {
             Row(
@@ -445,7 +455,9 @@ fun ExtensionStatusStrip(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 rows.forEach { pill(it.key, it.text, false) }
-                if (editorTakeover) pill("", "扩展编辑器已由原生输入框接管", true)
+                if (editorTakeover) {
+                    pill("", tr("扩展编辑器已由原生输入框接管", "Extension editor handled by native composer"), true)
+                }
             }
         }
     }
@@ -501,7 +513,11 @@ internal fun ExtensionChromeBanner(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     if (canExpand) {
-                        ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
+                        ExpandLabel(
+                            expanded = expanded,
+                            expandText = tr("展开 ${rows.size} 行", "Show ${rows.size} lines"),
+                            collapseText = tr("收起", "Collapse"),
+                        )
                     }
                     if (onInteract != null) {
                         InteractPill(onClick = onInteract)
@@ -566,7 +582,13 @@ internal fun ExtensionPanelCard(
                     if (onInteract != null) {
                         InteractPill(onClick = onInteract)
                     }
-                    if (canExpand) ExpandLabel(expanded = expanded, expandText = "展开 ${rows.size} 行", collapseText = "收起")
+                    if (canExpand) {
+                        ExpandLabel(
+                            expanded = expanded,
+                            expandText = tr("展开 ${rows.size} 行", "Show ${rows.size} lines"),
+                            collapseText = tr("收起", "Collapse"),
+                        )
+                    }
                 }
             }
             val body = Modifier
@@ -632,7 +654,7 @@ private fun InteractPill(onClick: () -> Unit) {
             .padding(horizontal = 9.dp, vertical = 3.dp),
     ) {
         Text(
-            text = "操控",
+            text = tr("操控", "Interact"),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
             color = palette.accent,
             maxLines = 1,

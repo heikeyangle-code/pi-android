@@ -564,7 +564,7 @@ class PiEngineHost(private val appContext: Context) {
             //     this file is present**, so the write has to happen before the spawn and
             //     its failure must be visible rather than silent: a missing module is not a
             //     degraded proroot, it is the same broken proroot as before.
-            lastScandirFix = installScandirFix()
+            lastScandirFix = installScandirFix(revision)
 
             // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。与 APK 版本 + 运行时 revision 对账，
             //     版本未变且入口存在时跳过全目录 60+ 次 AssetManager / 磁盘比对。
@@ -979,23 +979,35 @@ class PiEngineHost(private val appContext: Context) {
      * it. But the failure must be readable, because "the fix silently did not get installed"
      * and "the fix did not work" are the same screen to the user.
      */
-    private fun installScandirFix(): String? {
+    private fun installScandirFix(revision: String): String? {
         val target = paths.scandirFix()
+        val stampFile = File(paths.runtime, ".scandir-fix.stamp")
+        val expectedStamp = "${apkStamp()}\n$revision"
+        if (target.isFile && stampFile.isFile && runCatching { stampFile.readText().trim() == expectedStamp }.getOrDefault(false)) {
+            return null
+        }
         return runCatching {
             val bytes = appContext.assets
                 .open(SCANDIR_FIX_ASSET, android.content.res.AssetManager.ACCESS_BUFFER)
                 .use { it.readBytes() }
-            if (target.isFile && target.length() == bytes.size.toLong() && target.readBytes().contentEquals(bytes)) {
-                return@runCatching null
+            if (!(target.isFile && target.length() == bytes.size.toLong() && target.readBytes().contentEquals(bytes))) {
+                target.parentFile?.mkdirs()
+                // Write-then-rename: a half-written module passed to `--import` is a Node startup
+                // failure, and a boot that dies during provisioning would otherwise leave one.
+                val staging = File(target.parentFile, "${target.name}.partial")
+                staging.writeBytes(bytes)
+                if (!staging.renameTo(target)) {
+                    target.writeBytes(bytes)
+                    staging.delete()
+                }
             }
-            target.parentFile?.mkdirs()
-            // Write-then-rename: a half-written module passed to `--import` is a Node startup
-            // failure, and a boot that dies during provisioning would otherwise leave one.
-            val staging = File(target.parentFile, "${target.name}.partial")
-            staging.writeBytes(bytes)
-            if (!staging.renameTo(target)) {
-                target.writeBytes(bytes)
-                staging.delete()
+            runCatching {
+                val tmp = File(stampFile.parentFile, "${stampFile.name}.partial")
+                tmp.writeText(expectedStamp + "\n")
+                if (!tmp.renameTo(stampFile)) {
+                    stampFile.writeText(expectedStamp + "\n")
+                    tmp.delete()
+                }
             }
             null
         }.getOrElse { error ->

@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.Ansi
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
@@ -107,7 +109,7 @@ internal fun ShellBlock(
     }
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
     val truncation = remember(item.details) { truncationOf(item.details) }
-    val notice = remember(fullOutputPath, truncation) { truncationNotice(fullOutputPath, truncation) }
+    val notice = remember(fullOutputPath, truncation, PiLocale.isZh) { truncationNotice(fullOutputPath, truncation) }
     // pi strips the footer sentence only when it is about to print the same thing as its
     // warning line, and never while the result is still partial (`renderers/bash.ts:59-64`,
     // `:142`).
@@ -183,7 +185,7 @@ internal fun ShellBlock(
     }
     // The row's conditional footer — the same one every other tool card uses, so the
     // 无输出 guard below lives in one place instead of in a private copy here.
-    val footer = remember(item.output, item.outputTruncated, state) {
+    val footer = remember(item.output, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command.ifEmpty { null }, item.output, fullOutputPath) {
@@ -370,7 +372,7 @@ private fun ShellPreviewBody(
             // it sits *below* it. Keeping the sentence we already ship (rather than pi's
             // 「N earlier lines」) is what pins the order.
             Text(
-                text = "上方还有 $hidden 行未显示",
+                text = tr("上方还有 $hidden 行未显示", "$hidden earlier lines not shown"),
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.muted,
                 modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -408,7 +410,7 @@ private fun ShellPreviewBody(
             val hidden = remember(window, totalLines) { hiddenLineCount(totalLines, window) }
             if (hidden > 0) {
                 ExpandAllLabel(
-                    text = "展开全部（上方还有 $hidden 行）",
+                    text = tr("展开全部（上方还有 $hidden 行）", "Show all ($hidden earlier lines)"),
                     onClick = onExpandAll,
                 )
             }

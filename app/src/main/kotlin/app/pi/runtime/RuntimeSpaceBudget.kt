@@ -1,5 +1,7 @@
 package app.pi.runtime
 
+import app.pi.i18n.tr
+
 /**
  * How much free space the *extraction* needs, and the one sentence to show when there
  * is not enough.
@@ -84,9 +86,14 @@ object RuntimeSpaceBudget {
     fun message(availableBytes: Long, payloadBytes: Long): String {
         val required = requiredBytes(payloadBytes)
         val missing = (required - availableBytes).coerceAtLeast(0L)
-        return "存储空间不足：解包运行时至少需要 ${megabytes(required)} MB 可用空间，" +
-            "当前只有 ${megabytes(availableBytes)} MB。" +
-            "请清理出至少 ${megabytes(missing)} MB 后重试（删掉不再需要的会话、清理其它 App 的缓存都可以）。"
+        return tr(
+            "存储空间不足：解包运行时至少需要 ${megabytes(required)} MB 可用空间，" +
+                "当前只有 ${megabytes(availableBytes)} MB。" +
+                "请清理出至少 ${megabytes(missing)} MB 后重试（删掉不再需要的会话、清理其它 App 的缓存都可以）。",
+            "Not enough storage space: unpacking the runtime requires at least ${megabytes(required)} MB free, " +
+                "but only ${megabytes(availableBytes)} MB is available. " +
+                "Free up at least ${megabytes(missing)} MB and retry.",
+        )
     }
 
     /** Whole megabytes, rounded up, so "0 MB" never appears for a positive number. */

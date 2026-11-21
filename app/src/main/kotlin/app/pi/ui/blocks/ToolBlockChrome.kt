@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
@@ -89,10 +90,10 @@ internal enum class ToolState { Running, Success, Failed, Rejected }
 
 /** Status is a word, never only a colour (docs/pi-android-ui-spec.md §9). */
 internal fun toolStateLabel(state: ToolState): String = when (state) {
-    ToolState.Running -> "运行中"
-    ToolState.Success -> "成功"
-    ToolState.Failed -> "失败"
-    ToolState.Rejected -> "被拒"
+    ToolState.Running -> tr("运行中", "Running")
+    ToolState.Success -> tr("成功", "Done")
+    ToolState.Failed -> tr("失败", "Failed")
+    ToolState.Rejected -> tr("被拒", "Blocked")
 }
 
 /** The glyph at the head of a tool card's header row (`06 §4`'s first channel). */
@@ -469,7 +470,7 @@ internal fun toolHeaderReading(
     elapsedMs: Long? = item.elapsedMs,
     exitCode: Int? = item.exitCode,
     count: Int = 0,
-    unit: String = "行",
+    unit: String = tr("行", if (count == 1) "line" else "lines"),
     extra: String? = null,
 ): String? {
     if (state == ToolState.Rejected) return TOOL_REJECTED_READING
@@ -484,14 +485,14 @@ internal fun toolHeaderReading(
     // 退出码只有**调用结束后**才存在；而 `shellExitCode` 是从当前输出尾巴里正则刮出来的，
     // 所以还在跑的命令只要屏幕上恰好出现那句话（`cat old.log`、嵌套调用…）就会提前显示。
     // HEAD 的 `shellFooter` 本来就有这道守卫。
-    if (state != ToolState.Running) exitCode?.let { parts += "退出码 $it" }
+    if (state != ToolState.Running) exitCode?.let { parts += tr("退出码 $it", "exit $it") }
     if (count > 0) parts += "$count $unit"
     extra?.let { parts += it }
     return if (parts.isEmpty()) null else parts.joinToString(" · ")
 }
 
 /** What a 被拒 call's reading says (`06 §3` 构件 5), in place of a duration it never had. */
-internal const val TOOL_REJECTED_READING = "没有执行"
+internal val TOOL_REJECTED_READING: String get() = tr("没有执行", "Not executed")
 
 /**
  * The card's conditional footer row: **only** what the header's reading cannot carry —
@@ -556,7 +557,7 @@ internal fun ExpandAllLabel(
     Text(
         text = text,
         modifier = modifier
-            .clickable(onClickLabel = "展开全部输出", onClick = onClick)
+            .clickable(onClickLabel = tr("展开全部输出", "Show full output"), onClick = onClick)
             .padding(vertical = PiSpacing.tiny),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.primary,
@@ -583,7 +584,7 @@ internal fun ToolNotice(
     val tap = if (target == null) {
         Modifier
     } else {
-        Modifier.clickable(onClickLabel = "复制完整输出路径") {
+        Modifier.clickable(onClickLabel = tr("复制完整输出路径", "Copy full output path")) {
             clipboard.setText(AnnotatedString(target))
         }
     }
@@ -680,13 +681,13 @@ internal fun ToolActionMenu(
     BlockActionMenu(
         actions = buildList {
             if (command != null) {
-                add(BlockAction("复制命令") { clipboard.setText(AnnotatedString(command)) })
+                add(BlockAction(tr("复制命令", "Copy command")) { clipboard.setText(AnnotatedString(command)) })
             }
             if (output.isNotEmpty()) {
-                add(BlockAction("复制输出") { clipboard.setText(AnnotatedString(output)) })
+                add(BlockAction(tr("复制输出", "Copy output")) { clipboard.setText(AnnotatedString(output)) })
             }
             if (fullOutputPath != null) {
-                add(BlockAction("复制完整输出路径") { clipboard.setText(AnnotatedString(fullOutputPath)) })
+                add(BlockAction(tr("复制完整输出路径", "Copy full output path")) { clipboard.setText(AnnotatedString(fullOutputPath)) })
             }
         },
         content = content,
@@ -730,8 +731,8 @@ internal fun toolCommandText(args: JsonObject?): String? =
 internal fun toolFooterText(item: ToolCall, state: ToolState): String? {
     if (state == ToolState.Rejected) return null
     val parts = mutableListOf<String>()
-    if (item.outputTruncated) parts += "已截断"
-    if (state != ToolState.Running && item.output.isEmpty()) parts += "无输出"
+    if (item.outputTruncated) parts += tr("已截断", "Truncated")
+    if (state != ToolState.Running && item.output.isEmpty()) parts += tr("无输出", "No output")
     return if (parts.isEmpty()) null else parts.joinToString(" · ")
 }
 
@@ -787,7 +788,7 @@ internal fun ToolImages(
  * (`core/tools/renderers/write.ts:108-109`), said in this app's words: a settled `write`
  * whose arguments carried no content.
  */
-internal const val TOOL_INVALID_CONTENT = "参数里没有文件内容。"
+internal val TOOL_INVALID_CONTENT: String get() = tr("参数里没有文件内容。", "Missing file content in arguments.")
 
 /** A result whose text was cut by our own scan budget, so a block can say so. */
-internal const val TOOL_SCAN_CAPPED_HINT = "输出过长，只解析了前面一部分。"
+internal val TOOL_SCAN_CAPPED_HINT: String get() = tr("输出过长，只解析了前面一部分。", "Output too long; only the beginning was parsed.")

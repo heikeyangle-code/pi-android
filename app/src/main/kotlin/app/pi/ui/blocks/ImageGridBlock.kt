@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
@@ -278,7 +279,7 @@ private fun ImageCell(
                         Modifier
                     } else {
                         Modifier.clickable(
-                            onClickLabel = "查看大图",
+                            onClickLabel = tr("查看大图", "View full image"),
                             onClick = { onClick(image) },
                         )
                     },
@@ -291,7 +292,7 @@ private fun ImageCell(
                 if (decoded != null) {
                     Image(
                         bitmap = decoded.asImageBitmap(),
-                        contentDescription = "第 ${index + 1} 张图片，点击查看大图",
+                        contentDescription = tr("第 ${index + 1} 张图片，点击查看大图", "Image ${index + 1}, tap to view full size"),
                         // `Fit`, never `Crop`: a thumbnail that hides part of the picture
                         // is the defect this replaces. The box's own `cardBg` is the
                         // letterbox.
@@ -309,7 +310,7 @@ private fun ImageCell(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = "图片 ${index + 1}",
+                            text = tr("图片 ${index + 1}", "Image ${index + 1}"),
                             style = PiTheme.text.monoSmall,
                             // The whole placeholder is pi's image **fallback** — the text a terminal
                             // that cannot show a picture prints in its place — and pi paints that

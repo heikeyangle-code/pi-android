@@ -5,6 +5,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiPalette
 
 /**
@@ -153,5 +154,9 @@ private fun piMermaidStyle(kind: PiMermaidClass, palette: PiPalette): SpanStyle 
 internal fun piMermaidWarning(art: PiMermaidArt): String? {
     val first = art.warnings.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
     val more = art.warnings.size - 1
-    return if (more > 0) "Mermaid 图未完整渲染：$first（另有 $more 处）" else "Mermaid 图未完整渲染：$first"
+    return if (more > 0) {
+        tr("Mermaid 图未完整渲染：$first（另有 $more 处）", "Mermaid diagram partially rendered: $first (+$more more)")
+    } else {
+        tr("Mermaid 图未完整渲染：$first", "Mermaid diagram partially rendered: $first")
+    }
 }

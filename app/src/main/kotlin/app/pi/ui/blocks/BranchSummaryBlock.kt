@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.BranchSummary
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
@@ -61,14 +62,14 @@ fun BranchSummaryBlock(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClickLabel = if (onClick != null) "跳转分支" else "展开摘要") {
+                    .clickable(onClickLabel = if (onClick != null) tr("跳转分支", "Jump to branch") else tr("展开摘要", "Expand summary")) {
                         if (onClick != null) onClick(item) else expanded = !expanded
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
                     // 身份药丸取代细竖条（见 [CardChip]）；药丸占一行，下面是那句解释。
-                    CardChip(text = "分支摘要", color = palette.customMessageLabel)
+                    CardChip(text = tr("分支摘要", "Branch Summary"), color = palette.customMessageLabel)
                     // 一句话说清这张卡是什么 —— 用户的原话是「不知道那是干啥的」，而且把它和
                     // 「分叉」记混了（「那分叉分支啊，有时候都搞不清」）。两句都是真话，且都有 pi
                     // 的依据：这张卡由 `branchWithSummary` 在**离开一条分支**时写下
@@ -83,7 +84,7 @@ fun BranchSummaryBlock(
                     // "Branch summary (ctrl+o to expand)"）—— 那句说的是怎么展开，这句说的是它
                     // 是什么。
                     Text(
-                        text = "跳转离开一条分支时留下的摘要，不是分叉。",
+                        text = tr("跳转离开一条分支时留下的摘要，不是分叉。", "Summary left when navigating away from a branch, not a fork."),
                         style = PiTheme.text.meta,
                         color = palette.muted,
                     )
@@ -125,7 +126,7 @@ fun BranchSummaryBlock(
                 // (`components/branch-summary-message.js:34-36`). This card and its three
                 // siblings share one background, so they share one foreground too.
                 PiMarkdownText(
-                    markdown = item.summary.ifEmpty { "（无摘要）" },
+                    markdown = item.summary.ifEmpty { tr("（无摘要）", "(No summary)") },
                     modifier = Modifier.fillMaxWidth(),
                     textColor = palette.customMessageText,
                 )
@@ -135,7 +136,7 @@ fun BranchSummaryBlock(
                 // (`branch-summary-message.ts:46-56`), and a markdown renderer
                 // has no `maxLines` to carry the preview with.
                 ProseText(
-                    text = item.summary.ifEmpty { "（无摘要）" },
+                    text = item.summary.ifEmpty { tr("（无摘要）", "(No summary)") },
                     modifier = Modifier.fillMaxWidth(),
                     color = palette.customMessageText,
                     maxLines = COLLAPSED_SUMMARY_LINES,

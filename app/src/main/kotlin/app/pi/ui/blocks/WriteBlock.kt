@@ -9,6 +9,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
@@ -51,7 +53,7 @@ internal fun WriteBlock(
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val failed = state == ToolState.Failed
     val hasBody = body.lines.isNotEmpty() || failed
-    val footer = remember(item.output, item.outputTruncated, state) {
+    val footer = remember(item.output, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, null) {
@@ -69,7 +71,7 @@ internal fun WriteBlock(
                     //   `${fg("toolTitle", bold("write"))} ${pathDisplay}`
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`).
-                    subject = listOf(toolPathPart(body.path, fallback = "文件")),
+                    subject = listOf(toolPathPart(body.path, fallback = tr("文件", "file"))),
                     right = toolHeaderReading(item, state, count = body.totalLines),
                     expanded = expanded,
                     expandable = hasBody,
@@ -103,12 +105,15 @@ internal fun WriteBlock(
                         )
                         if (hidden > 0 && !fullOutput) {
                             ExpandAllLabel(
-                                text = "展开全部（还有 $hidden 行，共 ${body.totalLines} 行）",
+                                text = tr(
+                                    "展开全部（还有 $hidden 行，共 ${body.totalLines} 行）",
+                                    "Show all ($hidden more lines, ${body.totalLines} total)",
+                                ),
                                 onClick = { fullOutput = true },
                             )
                         } else if (hidden > 0) {
                             Text(
-                                text = "还有 $hidden 行未显示",
+                                text = tr("还有 $hidden 行未显示", "$hidden more lines not shown"),
                                 style = PiTheme.text.meta,
                                 color = palette.muted,
                                 modifier = Modifier.padding(top = PiSpacing.tiny),

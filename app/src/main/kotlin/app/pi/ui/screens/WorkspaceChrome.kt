@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import app.pi.i18n.tr
 import app.pi.ui.components.PiSheetChromeFrame
 import app.pi.ui.components.PiSheetChromeMetrics
 import app.pi.ui.components.PiSheetHandle
@@ -489,7 +490,7 @@ internal fun WsErrBlock(
             }
             if (detail != null) {
                 Text(
-                    if (open) "收起" else "详情",
+                    if (open) tr("收起", "Hide") else tr("详情", "Details"),
                     modifier = Modifier
                         .padding(top = PiSettingsMetrics.notePaddingVertical)
                         .clickable { open = !open },
@@ -1077,7 +1078,7 @@ internal fun WsSheet(
                                 ) {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = "关闭",
+                                        contentDescription = tr("关闭", "Close"),
                                         modifier = Modifier.size(WsSheetCloseIconSize),
                                         tint = palette.muted,
                                     )

@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import app.pi.i18n.tr
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
@@ -184,12 +185,12 @@ fun PiMathView(
                 return@LaunchedEffect
             }
             if (source.isBlank()) {
-                draw = PiMathDraw.Unavailable("公式源码为空")
+                draw = PiMathDraw.Unavailable(tr("公式源码为空", "Formula source is empty"))
                 return@LaunchedEffect
             }
             if (source.length > PI_MATH_MAX_SOURCE_CHARS) {
                 draw = PiMathDraw.Unavailable(
-                    "源码超过 ${PI_MATH_MAX_SOURCE_CHARS / 1024} KiB，未渲染",
+                    tr("源码超过 ${PI_MATH_MAX_SOURCE_CHARS / 1024} KiB，未渲染", "Source exceeds ${PI_MATH_MAX_SOURCE_CHARS / 1024} KiB; not rendered"),
                 )
                 return@LaunchedEffect
             }
@@ -229,7 +230,7 @@ fun PiMathView(
                     // 调用方把它传进来，于是引擎不可用时行内公式**逐字**还是旧样子，
                     // 而不是退成一段 `x^2` 的 TeX。没有它才退回源码。
                     text = fallbackText?.takeIf { it.isNotBlank() }
-                        ?: source.ifBlank { PI_MATH_INLINE_FALLBACK },
+                        ?: source.ifBlank { tr("（公式）", "(formula)") },
                     style = PiTheme.typography.styles.code,
                     color = palette.mdCode,
                     // 行内兜底只占一行：一段话中间不能因为一条坏公式长出第二行。
@@ -247,7 +248,7 @@ fun PiMathView(
                         .width(formulaWidth)
                         // 行高固定：公式在行高里居中，宽公式按宽度缩、高公式按行高缩。
                         .height(PI_MATH_INLINE_HEIGHT)
-                        .semantics { contentDescription = "行内公式" },
+                        .semantics { contentDescription = tr("行内公式", "Inline formula") },
                 ) {
                     val fit = piMathFitScale(
                         viewWidth = size.width,
@@ -273,7 +274,7 @@ fun PiMathView(
             val image = ready?.takeIf { !showSource }
 
             val status: String? = when (draw) {
-                PiMathDraw.Streaming -> "生成中…"
+                PiMathDraw.Streaming -> tr("生成中…", "Streaming…")
                 else -> null
             }
 
@@ -285,7 +286,7 @@ fun PiMathView(
                 menu = buildList {
                     if (image != null) {
                         add(
-                            PiCardMenuItem("适应宽度") {
+                            PiCardMenuItem(tr("适应宽度", "Fit width")) {
                                 scale = PI_MATH_MIN_ZOOM
                                 offset = Offset.Zero
                             },
@@ -293,7 +294,7 @@ fun PiMathView(
                     }
                     if (ready != null) {
                         add(
-                            PiCardMenuItem(if (showSource) "查看公式" else "查看 TeX 源码") {
+                            PiCardMenuItem(if (showSource) tr("查看公式", "View formula") else tr("查看 TeX 源码", "View TeX source")) {
                                 pinMode = if (showSource) 2 else 1
                             },
                         )
@@ -304,6 +305,7 @@ fun PiMathView(
                     val aspect = piMathAspectOrFallback(image)
                     // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 而不是先量宽度再算
                     // 高度，这样不需要 `BoxWithConstraints`。
+                    val mathDesc = tr("数学公式：$source", "Math formula: $source")
                     Canvas(
                         modifier = Modifier
                             .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -321,7 +323,7 @@ fun PiMathView(
                                     offset = nextOffset
                                 }
                             }
-                            .semantics { contentDescription = "数学公式：$source" },
+                            .semantics { contentDescription = mathDesc },
                     ) {
                         val fit = piMathFitScale(
                             viewWidth = size.width,
@@ -356,7 +358,7 @@ fun PiMathView(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "渲染中…",
+                            text = tr("渲染中…", "Rendering…"),
                             style = PiTheme.text.monoSmall,
                             color = palette.dim,
                         )
@@ -438,12 +440,12 @@ private sealed interface PiMathDraw {
  */
 private fun piMathDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiMathDraw {
     if (result.svg.length > PI_MATH_MAX_SVG_CHARS) {
-        return PiMathDraw.Unavailable("公式 SVG 超过 ${PI_MATH_MAX_SVG_CHARS / (1024 * 1024)} MiB，未渲染")
+        return PiMathDraw.Unavailable(tr("公式 SVG 超过 ${PI_MATH_MAX_SVG_CHARS / (1024 * 1024)} MiB，未渲染", "Formula SVG exceeds ${PI_MATH_MAX_SVG_CHARS / (1024 * 1024)} MiB; not rendered"))
     }
     val svg = try {
         SVG.getFromString(PiSvgFit.compat(result.svg))
     } catch (error: Exception) {
-        return PiMathDraw.Unavailable("公式 SVG 解析失败：${error.message ?: error::class.java.simpleName}")
+        return PiMathDraw.Unavailable(tr("公式 SVG 解析失败：${error.message ?: error::class.java.simpleName}", "Formula SVG parse failed: ${error.message ?: error::class.java.simpleName}"))
     }
     PiSvgFit.fill(svg, result.widthPx, result.heightPx)
 
@@ -462,7 +464,7 @@ private fun piMathDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiMath
     val picture = try {
         svg.renderToPicture(baseWidth, baseHeight)
     } catch (error: Exception) {
-        return PiMathDraw.Unavailable("公式 SVG 绘制失败：${error.message ?: error::class.java.simpleName}")
+        return PiMathDraw.Unavailable(tr("公式 SVG 绘制失败：${error.message ?: error::class.java.simpleName}", "Formula SVG render failed: ${error.message ?: error::class.java.simpleName}"))
     }
     return PiMathDraw.Ready(picture, baseWidth, baseHeight, aspect)
 }
@@ -685,7 +687,7 @@ private fun PiMathSourceBlock(source: String, notice: String?) {
         )
         if (hidden > 0) {
             Text(
-                text = "… 还有 $hidden 行，复制源码查看完整内容",
+                text = tr("… 还有 $hidden 行，复制源码查看完整内容", "… $hidden more line(s); copy source for full content"),
                 style = PiTheme.text.monoSmall,
                 color = palette.muted,
                 modifier = Modifier.padding(top = 4.dp),
@@ -750,7 +752,7 @@ private const val PI_MATH_FONT_FAMILY = "sans-serif"
 private const val PI_MATH_FEEDBACK_MS = 1500L
 
 /** 行内公式在没准备好时显示的占位（与 `PiLatex` 的回退同一措辞）。 */
-private const val PI_MATH_INLINE_FALLBACK = "（公式）"
+private val PI_MATH_INLINE_FALLBACK: String get() = tr("（公式）", "(formula)")
 
 /** 失败的源码最多显示这么多行；复制不受影响。 */
 private const val PI_MATH_MAX_VISIBLE_SOURCE_LINES = 80

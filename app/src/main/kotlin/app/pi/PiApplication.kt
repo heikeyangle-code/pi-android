@@ -4,7 +4,10 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.res.Configuration
 import android.os.Build
+import app.pi.i18n.PiLocale
+import app.pi.i18n.PiStrings
 
 /**
  * Process-wide entry point.
@@ -19,7 +22,13 @@ class PiApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        PiLocale.init(this) { createNotificationChannels() }
         createNotificationChannels()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        PiLocale.onSystemConfigurationChanged(this, newConfig)
     }
 
     private fun createNotificationChannels() {
@@ -27,10 +36,10 @@ class PiApplication : Application() {
         val manager = getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ENGINE,
-            getString(R.string.notif_channel_engine),
+            PiStrings.get(R.string.notif_channel_engine),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = getString(R.string.notif_channel_engine_desc)
+            description = PiStrings.get(R.string.notif_channel_engine_desc)
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)

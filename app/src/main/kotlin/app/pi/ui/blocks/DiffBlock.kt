@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.DiffHunk
 import app.pi.rpc.DiffLine
 import app.pi.rpc.DiffLineKind
@@ -145,7 +146,7 @@ fun DiffBlock(
                         )
                         Spacer(Modifier.width(PiSpacing.inline))
                         Text(
-                            text = item.path.ifEmpty { "未命名文件" },
+                            text = item.path.ifEmpty { tr("未命名文件", "Untitled file") },
                             modifier = Modifier.weight(1f),
                             style = PiTheme.text.monoSmall,
                             color = palette.accent,
@@ -202,14 +203,14 @@ fun DiffBlock(
                             val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
                             val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
                             MonoText(
-                                text = painted.ifEmpty { "（无差异内容）" },
+                                text = painted.ifEmpty { tr("（无差异内容）", "(No diff content)") },
                                 // F13: `toolOutput` is 3.37:1 on the success card; the
                                 // derived variant clears §9's 4.5:1 body floor.
                                 color = palette.bodyOnTool,
                             )
                             if (hidden > 0) {
                                 Text(
-                                    text = "上方还有 $hidden 行未显示",
+                                    text = tr("上方还有 $hidden 行未显示", "$hidden earlier lines not shown"),
                                     style = PiTheme.text.meta,
                                     color = palette.muted,
                                     modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -227,7 +228,7 @@ fun DiffBlock(
                                     )
 
                                     is DiffRow.Fold -> Text(
-                                        text = "… ${row.count} 行未变",
+                                        text = tr("… ${row.count} 行未变", "… ${row.count} unchanged lines"),
                                         // `06 §2` diff 卡: the fold line lines up with the code
                                         // column, i.e. past the symbol column (16) and the
                                         // number column (30) — v2 draws it behind a 46 px
@@ -254,7 +255,7 @@ fun DiffBlock(
                             }
                             if (omitted) {
                                 Text(
-                                    text = "差异过长，仅显示前 $MAX_DIFF_ROWS 行",
+                                    text = tr("差异过长，仅显示前 $MAX_DIFF_ROWS 行", "Diff too long, showing first $MAX_DIFF_ROWS lines"),
                                     style = PiTheme.text.meta,
                                     color = palette.muted,
                                 )

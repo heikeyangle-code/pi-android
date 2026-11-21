@@ -24,6 +24,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
@@ -100,9 +101,9 @@ fun PiLinkCardView(
             .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
             .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape)
             .combinedClickable(
-                onClickLabel = "打开链接",
+                onClickLabel = tr("打开链接", "Open link"),
                 onClick = { onOpen(info.url) },
-                onLongClickLabel = "复制链接",
+                onLongClickLabel = tr("复制链接", "Copy link"),
                 onLongClick = {
                     clipboard.setText(AnnotatedString(info.url))
                     copied = true
@@ -141,7 +142,7 @@ fun PiLinkCardView(
             )
         }
         Text(
-            text = if (copied) "已复制" else "↗",
+            text = if (copied) tr("已复制", "Copied") else "↗",
             style = PiTheme.text.monoSmall,
             color = if (copied) palette.accent else palette.muted,
             maxLines = 1,

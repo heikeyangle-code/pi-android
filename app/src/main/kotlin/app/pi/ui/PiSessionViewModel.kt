@@ -18,6 +18,9 @@ import app.pi.host.HostEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
 import app.pi.host.HostCommandException
+import app.pi.i18n.AppLanguage
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.asOutcome
 import app.pi.rpc.Notice
@@ -864,7 +867,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     startedAt = now,
                     lastActivityAt = now,
                     name = st.meta.sessionName,
-                    firstMessage = first.ifEmpty { "新对话" },
+                    firstMessage = first.ifEmpty { tr("新对话", "New Chat") },
                     messageCount = st.meta.messageCount,
                     parentSession = null,
                     isCurrent = true,
@@ -1187,6 +1190,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 删掉它就等于把用户已经设过的排版偏好悄悄清零）。新键在场时永远优先，所以迁移
         // 不会覆盖之后的编辑；新键不在场时每次读都按旧值解析，两份文档因此不会各说各话。
         // 两个映射表与理由在 `PiTypographyProfile.migratedTypography` / `migratedFontSize`。
+        // Mirror app.appearance.language from app-prefs.json into PiLocale on startup/refresh.
+        val langWire = raw(PiLocale.SETTING_KEY)
+        if (langWire != null) {
+            val targetLang = AppLanguage.fromWire(langWire)
+            if (targetLang != PiLocale.language) {
+                PiLocale.setLanguage(getApplication(), targetLang)
+            }
+        }
+
         val typography = raw("app.appearance.typography")
             ?: PiTypographyProfile.migratedTypography(raw("app.appearance.messageDensity"))
         val fontSize = raw("app.appearance.fontSize")
@@ -1234,6 +1246,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * `RuntimeSwitchAction` (the pure decision, executed by a bare-JVM harness).
      */
     fun onSettingWritten(key: String) {
+        if (key == PiLocale.SETTING_KEY) {
+            val lang = AppLanguage.fromWire(settingsStore.readString(key))
+            PiLocale.setLanguage(getApplication(), lang)
+            refreshCommands()
+            return
+        }
         if (key == "theme") {
             refreshTheme()
             syncEngineSetting(key)
@@ -1390,10 +1408,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         runtimeSwitchJob = viewModelScope.launch {
             _runtimeSwitch.value = RuntimeSwitchAction.onWrite(target)
             if (target == RuntimeSwitchAction.Target.Proot) {
-                notifyUser("已选择 proot：正在重启引擎，把运行时换回 proot。")
+                notifyUser(tr("已选择 proot：正在重启引擎，把运行时换回 proot。", "Selected proot: restarting engine to switch runtime back to proot."))
                 restartForRuntimeSwitch(generation, selection, prefs, target)
             } else {
-                notifyUser("已选择 ${target.name.lowercase()}：正在这台设备上测探针（最长约 60 秒），通过后会立刻重启引擎。")
+                notifyUser(tr("已选择 ${target.name.lowercase()}：正在这台设备上测探针（最长约 60 秒），通过后会立刻重启引擎。", "Selected ${target.name.lowercase()}: probing device compatibility (up to ~60s); engine will restart automatically if passed."))
                 probeThenSwitch(generation, selection, prefs, target)
             }
         }
@@ -1426,7 +1444,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (generation != runtimeSwitchGeneration) return
         if (plan == null) {
             _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
-            notifyUser("$name 探针没能跑完：仍然走 proot。稍后再选一次这个运行时可以重测。", warning = true)
+            notifyUser(tr("$name 探针没能跑完：仍然走 proot。稍后再选一次这个运行时可以重测。", "$name probe did not finish; staying on proot. Select this runtime again later to retry."), warning = true)
             return
         }
         val selectedNow = RuntimeSwitchAction.Target.valueOf(prefs.selectedEngine.name)
@@ -1437,8 +1455,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { selection.status() }.getOrNull()?.summary
             }
             notifyUser(
-                "没有切换到 $name。实际生效：${rowSentence ?: plan.summary}——" +
-                    "逐阶段记录在「运行时（实际生效）」那一行下面。",
+                tr(
+                    "没有切换到 $name。实际生效：${rowSentence ?: plan.summary}——逐阶段记录在「运行时（实际生效）」那一行下面。",
+                    "Did not switch to $name. Active runtime: ${rowSentence ?: plan.summary}. See per-stage details under Active Engine.",
+                ),
                 warning = true,
             )
             return
@@ -1462,7 +1482,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val name = target.name.lowercase()
         _runtimeSwitch.value = RuntimeSwitchAction.restartingTo(target)
         val outcome = restartEngine(
-            reason = "在设置里把运行时选成了 $name",
+            reason = tr("在设置里把运行时选成了 $name", "Selected runtime $name in Settings"),
             allowInterrupt = RuntimeSwitchAction.allowInterrupt(target),
         )
         if (generation != runtimeSwitchGeneration) return
@@ -1482,17 +1502,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
         val message = when (outcome) {
-            is EngineRestartCoordinator.Outcome.Ok -> "引擎已在 $name 上重启。"
+            is EngineRestartCoordinator.Outcome.Ok -> tr("引擎已在 $name 上重启。", "Engine restarted on $name.")
             is EngineRestartCoordinator.Outcome.Refused -> outcome.message + if (target != RuntimeSwitchAction.Target.Proot) {
-                "已退回 proot：等这一段跑完再选 $name。"
+                tr("已退回 proot：等这一段跑完再选 $name。", " Reverted to proot: wait for this turn to finish before selecting $name.")
             } else {
-                "已选 proot 并会保持；引擎这一次没有重启成功，仍在原来的运行时上跑，下次重启引擎就会走 proot。"
+                tr("已选 proot 并会保持；引擎这一次没有重启成功，仍在原来的运行时上跑，下次重启引擎就会走 proot。", " proot selected and kept; engine did not restart yet and will use proot next time.")
             }
 
             is EngineRestartCoordinator.Outcome.Failed -> outcome.message + if (target != RuntimeSwitchAction.Target.Proot) {
-                "探针已经通过，下次启动引擎时会用 $name。"
+                tr("探针已经通过，下次启动引擎时会用 $name。", " Probe passed; $name will be used on next engine start.")
             } else {
-                "已选 proot；下次启动引擎时会走 proot。"
+                tr("已选 proot；下次启动引擎时会走 proot。", " proot selected; it will be used on next engine start.")
             }
         }
         notifyUser(message, warning = outcome !is EngineRestartCoordinator.Outcome.Ok)
@@ -1823,10 +1843,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (name == previous) return WorkspaceSwitch.AlreadyCurrent(name)
 
         val target = WorkspaceStore.existing(app, name)
-            ?: return WorkspaceSwitch.Refused("工作区「$name」不存在或不是本应用创建的，没有切换。")
+            ?: return WorkspaceSwitch.Refused(tr("工作区「$name」不存在或不是本应用创建的，没有切换。", "Workspace \"$name\" does not exist or is not managed by this app; switch cancelled."))
         if (!target.host.isDirectory || !target.host.canWrite()) {
             return WorkspaceSwitch.Refused(
-                "工作区「${target.displayName}」的目录不可写（${target.host.absolutePath}），没有切换。",
+                tr("工作区「${target.displayName}」的目录不可写（${target.host.absolutePath}），没有切换。", "Workspace \"${target.displayName}\" directory is not writable (${target.host.absolutePath}); switch cancelled."),
             )
         }
         // **热切换（pi 的原语义）。** SDK 里 cwd 是会话的属性：`session.new{cwd}` 在新项目里开一段
@@ -1838,7 +1858,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (liveApi != null && reachable && !engineDownNow()) {
             val wasBusyLive = host.turnRunning
             if (wasBusyLive && !allowInterrupt) {
-                val detail = "正在生成回答，没有切换工作区。"
+                val detail = tr("正在生成回答，没有切换工作区。", "Cannot switch workspace while generating a response.")
                 pushNotice(detail, Notice.Tone.Warning)
                 return WorkspaceSwitch.Refused(detail)
             }
@@ -1846,7 +1866,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val created = liveApi.newSession(cwd = target.guestPath)
                 if (created.cancelled) {
-                    val detail = "扩展取消了这次切换，仍在「${WorkspaceChoice.displayName(previous, null)}」。"
+                    val detail = tr("扩展取消了这次切换，仍在「${WorkspaceChoice.displayName(previous, null)}」。", "An extension cancelled the workspace switch; staying in \"${WorkspaceChoice.displayName(previous, null)}\".")
                     pushNotice(detail, Notice.Tone.Warning)
                     return WorkspaceSwitch.Refused(detail)
                 }
@@ -1855,16 +1875,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 afterSessionReplaced(brandNew = true)
                 requestNav(NavRequest.Chat)
                 if (wasBusyLive) {
-                    pushNotice("切换工作区中断了正在运行的回合：上一轮未完成的模型调用与工具都被停掉了。", Notice.Tone.Warning)
+                    pushNotice(tr("切换工作区中断了正在运行的回合：上一轮未完成的模型调用与工具都被停掉了。", "Switching workspace interrupted the active turn; unfinished model and tool calls were stopped."), Notice.Tone.Warning)
                 }
                 if (!stored) {
-                    pushNotice("工作区已切换，但这次选择没有保存成功（设置文件不可写）；重启应用后会回到「$previous」。", Notice.Tone.Warning)
+                    pushNotice(tr("工作区已切换，但这次选择没有保存成功（设置文件不可写）；重启应用后会回到「$previous」。", "Workspace switched, but could not be saved (settings file not writable); app restart will revert to \"$previous\"."), Notice.Tone.Warning)
                 }
                 return WorkspaceSwitch.Ok(name, interruptedTurn = wasBusyLive)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                val detail = error.message?.takeIf { it.isNotBlank() } ?: "切换工作区失败"
+                val detail = error.message?.takeIf { it.isNotBlank() } ?: tr("切换工作区失败", "Failed to switch workspace")
                 pushNotice(detail, Notice.Tone.Warning)
                 return WorkspaceSwitch.Refused(detail)
             } finally {
@@ -1880,7 +1900,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         engineTransition = true
         val result = try {
             host.restart(
-                reason = "切换工作区到「${target.displayName}」",
+                reason = tr("切换工作区到「${target.displayName}」", "Switch workspace to \"${target.displayName}\""),
                 // The target itself, not `::defaultWorkspace`: the stored choice is
                 // written *after* this succeeds (step 3 above), so the provider
                 // cannot be the thing that decides where the new engine starts.
@@ -1911,15 +1931,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // 说完"被停掉了"就够了，不再附带"对话在哪"之类的解释。
                 if (wasBusy) {
                     pushNotice(
-                        "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里，" +
-                            "上一轮未完成的模型调用与工具都被停掉了。",
+                        tr(
+                            "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里，上一轮未完成的模型调用与工具都被停掉了。",
+                            "Switching workspace interrupted the active turn: the new engine is in \"${target.displayName}\", and unfinished model calls and tools were stopped.",
+                        ),
                         Notice.Tone.Warning,
                     )
                 }
                 if (!stored) {
                     pushNotice(
-                        "工作区已切换，但这次选择没有保存成功（设置文件不可写）；" +
-                            "重启应用后会回到「$previous」。",
+                        tr(
+                            "工作区已切换，但这次选择没有保存成功（设置文件不可写）；重启应用后会回到「$previous」。",
+                            "Workspace switched, but the selection could not be saved (settings file not writable); restarting will return to \"$previous\".",
+                        ),
                         Notice.Tone.Warning,
                     )
                 }
@@ -2033,28 +2057,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             engineTransition = false
         }
-        val headline = "切换到「${target.displayName}」失败：${failure.message}"
+        val headline = tr("切换到「${target.displayName}」失败：${failure.message}", "Failed to switch to \"${target.displayName}\": ${failure.message}")
         return when (back) {
             is PiEngineHost.Boot.Ready -> {
                 // No cache rebuild here: the workspace never moved — `setCurrent`
                 // was not reached, so the stored choice and `GuestWorkspacePath` both
                 // still name [previous], and every cwd-bound cache is still correct.
                 attach(back.session)
-                val message = "$headline，已回到「$previous」并重新启动引擎。"
+                val message = tr("$headline，已回到「$previous」并重新启动引擎。", "$headline; reverted to \"$previous\" and restarted engine.")
                 pushNotice(message, Notice.Tone.Warning)
                 WorkspaceSwitch.Failed(message, failure.detail, rolledBackTo = previous)
             }
 
             else -> {
                 val detail = (back as? PiEngineHost.Boot.Failed)?.detail ?: failure.detail
-                val why = (back as? PiEngineHost.Boot.Failed)?.message ?: "引擎未能重新启动"
+                val why = (back as? PiEngineHost.Boot.Failed)?.message ?: tr("引擎未能重新启动", "Engine failed to restart")
                 _state.value = _state.value.copy(
                     boot = Boot.Failed(EngineFailureClassify.workspaceSwitch(headline, detail)),
                 )
                 syncEngineService(engineAttached = false, bootInProgress = false)
                 reportWakeLockNeed()
-                val message = "$headline；在「$previous」重新启动也失败了（$why）。" +
-                    "引擎现在是停止的，工作区设置仍然是「$previous」。"
+                val message = tr(
+                    "$headline；在「$previous」重新启动也失败了（$why）。引擎现在是停止的，工作区设置仍然是「$previous」。",
+                    "$headline; restarting in \"$previous\" also failed ($why). The engine is now stopped and workspace remains \"$previous\".",
+                )
                 pushNotice(message, Notice.Tone.Error)
                 WorkspaceSwitch.Failed(message, detail, rolledBackTo = null)
             }
@@ -2542,13 +2568,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-        // 事件可能在界面订阅之前就发过了：引擎就绪后主动问一次信任状态。
-        // 会话列表不在这里与 replayHistory / bindExtensions 抢单线程 Node；见下方 attach 就绪流在
-        // replayHistory 之后再触发后台预热（若用户已提前点开会话列表页，ensureSessionList 会立即启动）。
+        // 事件可能在界面订阅之前就发过了：引擎就绪后延迟问一次信任状态，避免与 replayHistory 争抢单线程 Node。
         viewModelScope.launch {
             engine.state.first { it == PiEngineSession.EngineState.Ready || it == PiEngineSession.EngineState.Busy }
             if (session === engine) {
-                refreshTrustPrompt()
                 if (_overlay.value?.slot == OverlaySlot.SessionList) refreshSessions()
             }
         }
@@ -2667,7 +2690,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // 频率：`getSessionStats` 要遍历整份会话算累计（`agent-session.ts:3359-3408`），
                 // 所以「每次引擎启动一次 + 每轮一次」是它能承受的上限，也是它一直以来的口径。
                 if (engineState == PiEngineSession.EngineState.Ready &&
-                    wasEngineState != PiEngineSession.EngineState.Busy
+                    wasEngineState != PiEngineSession.EngineState.Busy &&
+                    _state.value.stats == null
                 ) {
                     refreshStats()
                 }
@@ -2774,7 +2798,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     if (autoRestarting) {
                         autoEngineRestarts += 1
                         pushNotice(
-                            "引擎已退出，正在自动重启（第 $autoEngineRestarts 次）…",
+                            tr("引擎已退出，正在自动重启（第 $autoEngineRestarts 次）…", "Engine exited; auto-restarting (attempt $autoEngineRestarts)…"),
                             Notice.Tone.Warning,
                         )
                         viewModelScope.launch {
@@ -2877,7 +2901,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             api?.let { refreshStateNow(it) }
             // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是
             // **这一次 replay 的**，所以只有它还握着这行时才允许清掉。
-            val replayToken = claimBusy("正在加载会话")
+            val replayToken = claimBusy(tr("正在加载会话", "Loading session"))
             try {
                 replayHistory(engine)
             } finally {
@@ -2889,9 +2913,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // while the app was closed is discovered here as well.
             refreshPrefs()
             refreshTheme()
-            // 主对话就绪后再后台预热会话列表（上次缓存已在 primeSessionList 画好，宿主端增量索引毫秒级返回）。
-            if (session === engine && !sessionListLoadedOnce && !_sessionList.value.loading) {
-                refreshSessions()
+            // 主对话已就绪：稍作错峰再问信任状态与预热会话列表，避免与后台 bindExtensions 争抢单线程 Node；
+            // 若用户提前点开会话列表，ensureSessionList 会立即拉取（且冷启动已有磁盘缓存瞬时展示）。
+            viewModelScope.launch {
+                delay(400)
+                if (session === engine) refreshTrustPrompt()
+                delay(800)
+                if (session === engine && !sessionListLoadedOnce && !_sessionList.value.loading) {
+                    refreshSessions()
+                }
             }
             // **没有"接回"这一步了。** 会话由 argv 钉住（[launchOptions] 的
             // `continueSessionId` / `continueMostRecent`）：进程内重启带 `--session-id` 起来，
@@ -3029,7 +3059,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             item.copy(
                 status = ToolStatus.Error,
                 isError = true,
-                output = item.output.ifEmpty { "回合已结束，未收到工具结果（被停止或出错）" },
+                output = item.output.ifEmpty { tr("回合已结束，未收到工具结果（被停止或出错）", "Turn ended without a tool result (aborted or failed)") },
             )
         } else {
             item
@@ -3096,7 +3126,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(lastError = event.message)
                 pushNotice(
                     message = extensionErrorHeadline(event.extensionPath) + "：" +
-                        (event.message?.takeIf { it.isNotBlank() } ?: "pi 没有给出详情"),
+                        (event.message?.takeIf { it.isNotBlank() } ?: tr("pi 没有给出详情", "No details provided by pi")),
                     tone = Notice.Tone.Error,
                 )
             }
@@ -3234,8 +3264,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // pi's hang behind a button that cannot work. Say so instead.
         if (request.uiId.isEmpty()) {
             pushNotice(
-                message = "扩展发来一个没有编号的「${request.method}」对话框，无法回复；" +
-                    "这个扩展的弹窗在当前引擎上无法使用。",
+                message = tr("扩展发来一个没有编号的「${request.method}」对话框，无法回复；这个扩展的弹窗在当前引擎上无法使用。", "Extension sent a \"${request.method}\" dialog without a request ID and cannot be answered."),
                 tone = Notice.Tone.Warning,
             )
             return
@@ -3580,10 +3609,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun compactReasonInChinese(reason: String): String = when {
         reason.contains("Nothing to compact", ignoreCase = true) ->
-            "这个会话还太小，没有可压缩的内容（pi：$reason）"
+            tr("这个会话还太小，没有可压缩的内容（pi：$reason）", "Session is too small to compact (pi: $reason)")
 
         reason.contains("Already compacted", ignoreCase = true) ->
-            "这个会话已经压缩过了，没有新的内容可压（pi：$reason）"
+            tr("这个会话已经压缩过了，没有新的内容可压（pi：$reason）", "Session is already compacted with nothing new to compact (pi: $reason)")
 
         else -> reason
     }
@@ -3682,7 +3711,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val api = this.api
         if (api == null) {
             if (noEngine == NoEngine.Notify) {
-                val message = "引擎未就绪：pi 现在不在运行，$label 没有执行。"
+                val message = tr("引擎未就绪：pi 现在不在运行，$label 没有执行。", "Engine not ready: pi is not running; $label skipped.")
                 if (_state.value.notices.lastOrNull()?.message != message) fail(message)
             }
             return
@@ -3700,7 +3729,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 fail(
                     errorText?.invoke(error)
                         ?: error.message?.takeIf { it.isNotBlank() }
-                        ?: "$label 失败",
+                        ?: tr("$label 失败", "$label failed"),
                 )
             } finally {
                 releaseBusy(token)
@@ -3909,10 +3938,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             engine.api.getEntriesRaw()
         } catch (e: HostCommandException) {
             // `reason` 是宿主/pi 自己的原话（例如超大记录的那句），原样带给用户。
-            fail("读取会话内容失败：${e.reason}。")
+            fail(tr("读取会话内容失败：${e.reason}。", "Failed to read session: ${e.reason}."))
             return
         } catch (e: Exception) {
-            fail("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。")
+            fail(tr("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。", "Engine did not return session contents. Reopen the session and try again."))
             return
         }
         // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
@@ -4126,10 +4155,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun readEvictedRange(file: File): ReadBack {
         if (evictedFrom >= loadedUntil) return ReadBack(emptyList(), 0L)
         val range = SessionFileReader.readBetween(file, evictedFrom, loadedUntil)
-            ?: throw IOException("被淘汰的那一段读不回来")
-        if (!range.complete) throw IOException("被淘汰的那一段里有一条太长，读不出来")
+            ?: throw IOException(tr("被淘汰的那一段读不回来", "Could not read back evicted history"))
+        if (!range.complete) throw IOException(tr("被淘汰的那一段里有一条太长，读不出来", "An evicted entry is too large to read back"))
         if (range.entries.size != evictedEntries) {
-            throw IOException("被淘汰的那一段读回来对不上（${range.entries.size} ≠ $evictedEntries）")
+            throw IOException(tr("被淘汰的那一段读回来对不上（${range.entries.size} ≠ $evictedEntries）", "Evicted entry count mismatch (${range.entries.size} != $evictedEntries)"))
         }
         return ReadBack(range.entries, retainedChars(range.entries))
     }
@@ -4173,9 +4202,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun readFailureDetail(file: File, error: Throwable): String {
         val kind = when {
-            !file.isFile -> "文件不在了"
-            runCatching { SessionFileReader.isSessionFile(file) }.getOrDefault(false) -> "文件读取出错"
-            else -> "它已不是一个会话文件"
+            !file.isFile -> tr("文件不在了", "File no longer exists")
+            runCatching { SessionFileReader.isSessionFile(file) }.getOrDefault(false) -> tr("文件读取出错", "File read error")
+            else -> tr("它已不是一个会话文件", "No longer a valid session file")
         }
         val message = error.message?.trim()?.take(120)?.takeIf { it.isNotEmpty() }
         return if (message == null) kind else "$kind（$message）"
@@ -4226,7 +4255,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * on attach and after every `agent_settled` (audit §6.8).
      */
     fun refreshState() {
-        call("读取会话状态", NoEngine.Quiet) { api -> loadState(api) }
+        call(tr("读取会话状态", "Load session state"), NoEngine.Quiet) { api -> loadState(api) }
     }
 
     /**
@@ -4284,7 +4313,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * after every model change as well as on attach.
      */
     fun refreshThinkingLevels() {
-        call("读取思考等级") { api ->
+        call(tr("读取思考等级", "Load thinking levels")) { api ->
             val levels = api.getAvailableThinkingLevels()
             _state.value = _state.value.copy(
                 meta = _state.value.meta.copy(thinkingLevels = levels),
@@ -4294,7 +4323,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `get_available_models`, for the model picker. */
     fun refreshModels() {
-        call("读取模型列表") { api ->
+        call(tr("读取模型列表", "Load models")) { api ->
             _state.value = _state.value.copy(models = api.getAvailableModels())
         }
     }
@@ -4311,7 +4340,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * to be rebuilt for the switch to be anything but decorative.
      */
     fun refreshCommands() {
-        call("读取命令列表") { api ->
+        call(tr("读取命令列表", "Load commands")) { api ->
             // pi's own default is true (`settings-manager.ts:1165`).
             val skillCommands = settingsStore.readBoolean("enableSkillCommands") ?: true
             _state.value = _state.value.copy(
@@ -4330,7 +4359,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `get_session_stats`, for the stats sheet and the context-usage line. */
     fun refreshStats() {
-        call("读取会话统计") { api ->
+        call(tr("读取会话统计", "Load session stats")) { api ->
             _state.value = _state.value.copy(stats = api.getSessionStats())
         }
     }
@@ -4366,8 +4395,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 只追加一条 `label` 条目，不改写已有记录。树随后重读，标签就出现在那一行上。
      */
     fun setEntryLabel(entryId: String, label: String?) {
-        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，标签没有保存。")
-        call("保存标签") { _ ->
+        val engine = session ?: return fail(tr("引擎未就绪：pi 现在不在运行，标签没有保存。", "Engine not ready: label not saved."))
+        call(tr("保存标签", "Save label")) { _ ->
             engine.commands.setLabel(entryId, label)
             refreshTree()
         }
@@ -4378,8 +4407,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 只是之后发给模型的上下文里不再有它。宿主在流式生成中会拒绝，原话经 [call] 的失败通道告诉用户。
      */
     fun hideEntryFromContext(entryId: String) {
-        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")
-        call("从上下文隐藏") { _ ->
+        val engine = session ?: return fail(tr("引擎未就绪：pi 现在不在运行，没有执行。", "Engine not ready: action not executed."))
+        call(tr("从上下文隐藏", "Hide from context")) { _ ->
             engine.commands.hideFromContext(entryId)
             refreshTree()
             refreshStats()
@@ -4393,14 +4422,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 宿主的 `session.bugReport` 要等一轮模型调用，所以先说一声在生成；失败如实说。
      */
     fun generateBugReport(hint: String?, deliver: (String) -> Unit) {
-        val adv = advanced() ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有生成问题报告。", Notice.Tone.Warning)
-        pushNotice("正在生成问题报告，要等模型回一轮…", Notice.Tone.Info)
+        val adv = advanced() ?: return pushNotice(tr("引擎未就绪：pi 现在不在运行，没有生成问题报告。", "Engine not ready: bug report not generated."), Notice.Tone.Warning)
+        pushNotice(tr("正在生成问题报告，要等模型回一轮…", "Generating bug report…"), Notice.Tone.Info)
         viewModelScope.launch {
             runCatching { adv.bugReport(hint) }
                 .onSuccess { text ->
-                    if (text.isBlank()) pushNotice("模型没有给出报告内容。", Notice.Tone.Warning) else deliver(text)
+                    if (text.isBlank()) pushNotice(tr("模型没有给出报告内容。", "Model returned an empty report."), Notice.Tone.Warning) else deliver(text)
                 }
-                .onFailure { pushNotice("生成问题报告失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+                .onFailure { pushNotice(tr("生成问题报告失败：${it.message ?: it::class.simpleName}", "Bug report failed: ${it.message ?: it::class.simpleName}"), Notice.Tone.Warning) }
         }
     }
 
@@ -4413,14 +4442,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun reloadResources() {
         if (parkUntilAttached { reloadResources() }) {
-            pushNotice("引擎还在启动：重新加载已排队，启动完成后会自动执行。", Notice.Tone.Info)
+            pushNotice(tr("引擎还在启动：重新加载已排队，启动完成后会自动执行。", "Engine is starting: reload queued and will run once ready."), Notice.Tone.Info)
             return
         }
         if (reloadingResources) return
-        val ext = extensionsAccess()?.ext ?: return pushNotice("引擎未就绪：pi 现在不在运行，没有重新加载。", Notice.Tone.Warning)
+        val ext = extensionsAccess()?.ext ?: return pushNotice(tr("引擎未就绪：pi 现在不在运行，没有重新加载。", "Engine not ready: reload skipped."), Notice.Tone.Warning)
         reloadingResources = true
         viewModelScope.launch {
-            val token = claimBusy("正在重新加载扩展与资源")
+            val token = claimBusy(tr("正在重新加载扩展与资源", "Reloading extensions & resources"))
             try {
                 runCatching { ext.reload() }
                     .onSuccess {
@@ -4428,9 +4457,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         refreshState()
                         refreshPrefs()
                         refreshTheme()
-                        pushNotice("已重新加载扩展、技能、提示词和主题。", Notice.Tone.Info)
+                        pushNotice(tr("已重新加载扩展、技能、提示词和主题。", "Reloaded extensions, skills, prompts, and themes."), Notice.Tone.Info)
                     }
-                    .onFailure { pushNotice("重新加载失败：${it.message ?: it::class.simpleName}", Notice.Tone.Warning) }
+                    .onFailure { pushNotice(tr("重新加载失败：${it.message ?: it::class.simpleName}", "Reload failed: ${it.message ?: it::class.simpleName}"), Notice.Tone.Warning) }
             } finally {
                 reloadingResources = false
                 releaseBusy(token)
@@ -4448,7 +4477,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun retryLastPrompt() {
         val last = _state.value.transcript.lastOrNull { it is UserMessage } as? UserMessage
-            ?: return pushNotice("没有可以重发的上一条消息。", Notice.Tone.Warning)
+            ?: return pushNotice(tr("没有可以重发的上一条消息。", "No previous message to resend."), Notice.Tone.Warning)
         send(last.text, last.images)
     }
 
@@ -4464,7 +4493,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 所以刚发出的第一轮里这里可能还找不到——话术里写明原因，而不是报一个泛泛的「失败」。
      */
     private fun resolveEntryThen(item: TranscriptItem, what: String, then: (String) -> Unit) {
-        val api = this.api ?: return fail("引擎未就绪：pi 现在不在运行，$what 没有执行。")
+        val api = this.api ?: return fail(tr("引擎未就绪：pi 现在不在运行，$what 没有执行。", "Engine not ready: $what skipped."))
         val (role, text) = when (item) {
             is UserMessage -> MessageRole.User.wire to item.text
             is AssistantText -> MessageRole.Assistant.wire to item.text
@@ -4476,7 +4505,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 MessageEntryResolver.resolve(raw.mapNotNull(::entryText), item.key, role, text)
             }.getOrNull()
             if (id == null) {
-                pushNotice("这条消息还没写进 pi 的会话文件（pi 在第一轮回答结束后才落盘），$what 暂时做不了。", Notice.Tone.Warning)
+                pushNotice(tr("这条消息还没写进 pi 的会话文件（pi 在第一轮回答结束后才落盘），$what 暂时做不了。", "This message is not persisted to the session file yet; $what is unavailable until the first turn finishes."), Notice.Tone.Warning)
             } else {
                 then(id)
             }
@@ -4504,13 +4533,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 「从这里继续」：把叶子移到这条消息，不做摘要（要摘要走会话树页）。 */
     fun continueFromMessage(item: TranscriptItem) =
-        resolveEntryThen(item, "从这里继续") { navigateTo(it, BranchSummaryChoice.NoSummary) }
+        resolveEntryThen(item, tr("从这里继续", "Continue from here")) { navigateTo(it, BranchSummaryChoice.NoSummary) }
 
     fun labelMessage(item: TranscriptItem, label: String?) =
-        resolveEntryThen(item, "加标签") { setEntryLabel(it, label) }
+        resolveEntryThen(item, tr("加标签", "Add label")) { setEntryLabel(it, label) }
 
     fun hideMessageFromContext(item: TranscriptItem) =
-        resolveEntryThen(item, "从上下文隐藏") { hideEntryFromContext(it) }
+        resolveEntryThen(item, tr("从上下文隐藏", "Hide from context")) { hideEntryFromContext(it) }
 
     /** 宿主的高级命令入口；引擎没跑时 null。 */
     fun advanced(): app.pi.host.HostAdvanced? = session?.advanced
@@ -4561,7 +4590,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 用户在弹窗里选了一项。失败时返回宿主原话（弹窗保留，用户可重试）。 */
     suspend fun answerTrust(option: app.pi.packages.PiProjectTrust.Option): String? {
-        val c = session?.commands ?: return "引擎没在运行。"
+        val c = session?.commands ?: return tr("引擎没在运行。", "Engine is not running.")
         return try {
             c.setTrust(option.trusted, option.remember.key)
             _trustPrompt.value = null
@@ -4712,7 +4741,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 触屏触发扩展通过 `pi.registerShortcut(shortcut, ...)` 注册的快捷键。 */
     fun triggerExtensionShortcut(shortcut: String) {
-        call("执行快捷键") { api -> api.triggerShortcut(shortcut) }
+        call(tr("执行快捷键", "Trigger shortcut")) { api -> api.triggerShortcut(shortcut) }
     }
 
     /** 将终端按键序列送过扩展 `ctx.ui.onTerminalInput` 监听器链。 */
@@ -4799,8 +4828,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 只改「发给模型的版本」（SDK `appendContextEdit` 带替换内容），原文保留。 */
     fun replaceEntryInContext(entryId: String, text: String) {
-        val engine = session ?: return fail("引擎未就绪：pi 现在不在运行，没有执行。")
-        call("改写上下文") { _ ->
+        val engine = session ?: return fail(tr("引擎未就绪：pi 现在不在运行，没有执行。", "Engine not ready: action not executed."))
+        call(tr("改写上下文", "Edit context")) { _ ->
             engine.commands.replaceInContext(entryId, text)
             refreshTree()
             refreshStats()
@@ -4827,7 +4856,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (api == null) {
             // 引擎没跑：照旧走 call() 自己的「引擎未就绪」提示；block 不会执行，
             // 所以这条路不落守卫（否则 flag 永远清不掉）。
-            call("读取会话树") { live -> _state.value = _state.value.copy(tree = live.getTree()) }
+            call(tr("读取会话树", "Load session tree")) { live -> _state.value = _state.value.copy(tree = live.getTree()) }
             return
         }
         treeRefreshInFlight = true
@@ -4836,7 +4865,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 读，由 block 自己的 `finally` 释放；没进，只能在这里释放，否则标志永远不落。
         var started = false
         try {
-            call("读取会话树") { live ->
+            call(tr("读取会话树", "Load session tree")) { live ->
                 started = true
                 try {
                     _state.value = _state.value.copy(tree = live.getTree())
@@ -4890,7 +4919,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             refreshEntriesOverRpc()
             return
         }
-        call("读取会话条目", NoEngine.Quiet) {
+        call(tr("读取会话条目", "Load session entries"), NoEngine.Quiet) {
             val parsed = withContext(Dispatchers.IO) {
                 val out = ArrayList<SessionEntry>()
                 val complete = SessionFileReader.readEntries(file) { raw ->
@@ -4913,14 +4942,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `get_entries` for the entry log — see [refreshEntries] for when this is used. */
     private fun refreshEntriesOverRpc() {
-        call("读取会话条目", NoEngine.Quiet) { api ->
+        call(tr("读取会话条目", "Load session entries"), NoEngine.Quiet) { api ->
             _state.value = _state.value.copy(entries = api.getEntries().entries)
         }
     }
 
     /** `get_fork_messages` — the user messages pi will let a fork start from. */
     fun refreshForkMessages() {
-        call("读取可分叉消息") { api ->
+        call(tr("读取可分叉消息", "Load forkable messages")) { api ->
             _state.value = _state.value.copy(forkMessages = api.getForkMessages())
         }
     }
@@ -4976,7 +5005,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // `queueCompactionMessage`). The pending row will show the text too once
             // pi's `queue_update` lands (`core/agent-session.js:1767`); the notice is
             // what says *why* it is waiting, which the row does not.
-            pushNotice("已排队，压缩结束后投递", Notice.Tone.Info)
+            pushNotice(tr("已排队，压缩结束后投递", "Queued; will deliver after compaction"), Notice.Tone.Info)
             return
         }
         // Otherwise: one entry point, two delivery choices — pi's own shape. Its TUI
@@ -5113,7 +5142,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             syncTranscript(engine, engine.publication.value)
             // Same status line as [send]'s compaction branch, and pi's own wording
             // for it (`interactive-mode.js:3916`).
-            pushNotice("已排队，压缩结束后投递", Notice.Tone.Info)
+            pushNotice(tr("已排队，压缩结束后投递", "Queued; will deliver after compaction"), Notice.Tone.Info)
             return
         }
         // pi's `alt+enter` is the *same* submit with the other delivery choice:
@@ -5177,9 +5206,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val restored = runCatching { engine.drainQueue() }.getOrDefault(emptyList())
             syncTranscript(engine, engine.publication.value)
             if (restored.isEmpty()) {
-                pushNotice("队列里没有待收回的消息", Notice.Tone.Warning)
+                pushNotice(tr("队列里没有待收回的消息", "No queued messages to restore"), Notice.Tone.Warning)
             } else {
-                pushNotice("已收回 ${restored.size} 条排队消息到输入框", Notice.Tone.Info)
+                pushNotice(tr("已收回 ${restored.size} 条排队消息到输入框", "Restored ${restored.size} queued message(s) to composer"), Notice.Tone.Info)
             }
             onRestored(restored)
         }
@@ -5195,7 +5224,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * use would otherwise be displayed as if it had taken effect.
      */
     fun setThinkingLevel(level: String, persist: Boolean = false) {
-        call("切换思考等级") { api ->
+        call(tr("切换思考等级", "Change thinking level")) { api ->
             api.setThinkingLevel(level, persist)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevel = level))
             refreshState()
@@ -5204,10 +5233,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `cycle_thinking_level`. `null` is pi's documented answer. */
     fun cycleThinkingLevel() {
-        call("切换思考等级") { api ->
+        call(tr("切换思考等级", "Change thinking level")) { api ->
             val result = api.cycleThinkingLevel()
             if (result == null) {
-                pushNotice("当前模型不支持思考等级", Notice.Tone.Warning)
+                pushNotice(tr("当前模型不支持思考等级", "Current model does not support thinking levels"), Notice.Tone.Warning)
                 return@call
             }
             val level = result.level
@@ -5224,11 +5253,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 只有一个可选模型时宿主答 null，给一句提示而不是静默。
      */
     fun cycleModel() {
-        call("切换模型") { api ->
+        call(tr("切换模型", "Switch model")) { api ->
             val result = api.cycleModel()
             val model = result?.model
             if (model == null) {
-                pushNotice("没有其他可切换的模型", Notice.Tone.Warning)
+                pushNotice(tr("没有其他可切换的模型", "No other models available to cycle"), Notice.Tone.Warning)
                 return@call
             }
             _state.value = _state.value.copy(meta = _state.value.meta.copy(model = model))
@@ -5250,7 +5279,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 否则打开选择器并预填 [term]。[openPicker] 在没有精确匹配时回到界面去开弹层。
      */
     fun runModelCommand(term: String, openPicker: () -> Unit) {
-        call("切换模型") { api ->
+        call(tr("切换模型", "Switch model")) { api ->
             val ref = api.resolveModel(term)
             if (ref == null) {
                 _modelPickerSeed.value = term
@@ -5268,10 +5297,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun setModel(model: PiResponses.ModelInfo, persist: Boolean = false) {
         val provider = model.provider
         if (provider.isNullOrBlank()) {
-            fail("该模型没有 provider，pi 无法按 provider/id 定位它")
+            fail(tr("该模型没有 provider，pi 无法按 provider/id 定位它", "Model has no provider and cannot be resolved by provider/id"))
             return
         }
-        call("切换模型") { api ->
+        call(tr("切换模型", "Switch model")) { api ->
             val applied = api.setModel(provider, model.id, persist = persist)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
             // Thinking levels are a property of the model, and pi applies a
@@ -5292,14 +5321,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * this app just sent, and the next `get_state` corrects it if pi disagreed.
      */
     fun setSteeringMode(mode: QueueMode) {
-        call("设置引导模式") { api ->
+        call(tr("设置引导模式", "Set steering mode")) { api ->
             api.setSteeringMode(mode)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(steeringMode = mode))
         }
     }
 
     fun setFollowUpMode(mode: QueueMode) {
-        call("设置后续模式") { api ->
+        call(tr("设置后续模式", "Set follow-up mode")) { api ->
             api.setFollowUpMode(mode)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(followUpMode = mode))
         }
@@ -5311,7 +5340,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * a progress label the user can see.
      */
     fun compact(customInstructions: String? = null) {
-        call("压缩上下文") { api ->
+        call(tr("压缩上下文", "Compact context")) { api ->
             val result = try {
                 api.compact(customInstructions?.takeIf { it.isNotBlank() })
             } catch (error: HostCommandException) {
@@ -5324,19 +5353,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val before = result.tokensBefore
             val after = result.estimatedTokensAfter
             val detail = if (before != null && after != null) "（$before → $after tokens）" else ""
-            pushNotice("上下文已压缩$detail", Notice.Tone.Info)
+            pushNotice(tr("上下文已压缩$detail", "Context compacted$detail"), Notice.Tone.Info)
         }
     }
 
     fun setAutoCompaction(enabled: Boolean) {
-        call("设置自动压缩") { api ->
+        call(tr("设置自动压缩", "Set auto-compaction")) { api ->
             api.setAutoCompaction(enabled)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(autoCompaction = enabled))
         }
     }
 
     fun setAutoRetry(enabled: Boolean) {
-        call("设置自动重试") { api ->
+        call(tr("设置自动重试", "Set auto-retry")) { api ->
             api.setAutoRetry(enabled)
             _state.value = _state.value.copy(meta = _state.value.meta.copy(autoRetry = enabled))
         }
@@ -5344,7 +5373,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `abort_retry` — cancel the pending retry delay and stop retrying. */
     fun abortRetry() {
-        call("取消重试") { it.abortRetry() }
+        call(tr("取消重试", "Cancel retry")) { it.abortRetry() }
     }
 
     // ---------------------------------------------------------------- mentions
@@ -5477,7 +5506,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val trimmed = command.trim()
         if (trimmed.isEmpty()) return
         if (_state.value.bash?.running == true) {
-            pushNotice("已有 bash 命令在运行，先停止再执行新的命令", Notice.Tone.Warning)
+            pushNotice(tr("已有 bash 命令在运行，先停止再执行新的命令", "A bash command is already running; stop it before running another"), Notice.Tone.Warning)
             return
         }
         bashStream.setLength(0)
@@ -5486,7 +5515,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(
             bash = BashRun(command = trimmed, excludeFromContext = excludeFromContext),
         )
-        call("执行命令") { api ->
+        call(tr("执行命令", "Run command")) { api ->
             val result = api.bash(trimmed, excludeFromContext = excludeFromContext.takeIf { it })
             _state.value = _state.value.copy(
                 bash = BashRun(
@@ -5506,7 +5535,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun abortBash() {
-        call("停止命令") { it.abortBash() }
+        call(tr("停止命令", "Stop command")) { it.abortBash() }
     }
 
     fun dismissBash() {
@@ -5541,14 +5570,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (parkUntilAttached { newSession() }) {
             // **排队也要看得见。** 会话列表那枚「＋ 新建会话」点完就关掉覆盖层（`onOpenChat`），
             // 用户落在对话页上；没有这句话，他看到的还是「点了没反应」—— 那正是这次要消灭的形状。
-            pushNotice("引擎还在启动：新建会话已经排队，启动完成后会立刻执行。", Notice.Tone.Info)
+            pushNotice(tr("引擎还在启动：新建会话已经排队，启动完成后会立刻执行。", "Engine is starting: new session queued and will open once ready."), Notice.Tone.Info)
             requestNav(NavRequest.Chat)
             return
         }
-        call("新建会话") { api ->
+        call(tr("新建会话", "New session")) { api ->
             val result = api.newSession()
             if (result.cancelled) {
-                pushNotice("扩展取消了新建会话", Notice.Tone.Warning)
+                pushNotice(tr("扩展取消了新建会话", "An extension cancelled creating a new session"), Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced(brandNew = true)
@@ -5574,7 +5603,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             if (outcome.ok) {
                 // 官方两句提示：Session moved to trash / Session deleted（trash 命令可用与否决定）。
                 pushNotice(
-                    (if (outcome.method == "trash") "已移到回收站：" else "已删除：") + summary.displayName,
+                    (if (outcome.method == "trash") tr("已移到回收站：", "Moved to trash: ") else tr("已删除：", "Deleted: ")) + summary.displayName,
                     Notice.Tone.Info,
                 )
                 // 先把这一行从手上的列表拿掉（官方 `onDeleteSession` 同样先过滤再重读），再让宿主重读。
@@ -5584,7 +5613,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 refreshSessions()
             } else {
-                pushNotice("删除失败：${outcome.error ?: summary.file.name}", Notice.Tone.Warning)
+                pushNotice(tr("删除失败：${outcome.error ?: summary.file.name}", "Delete failed: ${outcome.error ?: summary.file.name}"), Notice.Tone.Warning)
             }
         }
     }
@@ -5602,11 +5631,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun switchSession(summary: SessionSummary) {
         val path = guestSessionPath(summary.file)
         if (path == null) {
-            fail("找不到会话文件：${summary.file.name}")
+            fail(tr("找不到会话文件：${summary.file.name}", "Session file not found: ${summary.file.name}"))
             return
         }
         val generation = ++sessionOpenGeneration
-        call("切换会话") { api ->
+        call(tr("切换会话", "Switch session")) { api ->
             SessionHints.file = summary.file
             val result = try {
                 api.switchSession(path)
@@ -5626,7 +5655,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (result.cancelled) {
                 SessionHints.file = null
-                pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
+                pushNotice(tr("扩展取消了切换会话", "An extension cancelled switching sessions"), Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced()
@@ -5639,19 +5668,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun forkSessionToCurrentWorkspace(summary: SessionSummary) {
         val path = guestSessionPath(summary.file)
         if (path == null) {
-            fail("找不到会话文件：${summary.file.name}")
+            fail(tr("找不到会话文件：${summary.file.name}", "Session file not found: ${summary.file.name}"))
             return
         }
-        call("分支会话") { api ->
+        call(tr("分支会话", "Branch session")) { api ->
             val result = api.forkFrom(path, guestWorkspace())
             if (result.cancelled) {
-                pushNotice("扩展取消了分支会话", Notice.Tone.Warning)
+                pushNotice(tr("扩展取消了分支会话", "An extension cancelled branching the session"), Notice.Tone.Warning)
                 return@call
             }
             SessionHints.file = hostSessionFile(result.sessionFile)
             afterSessionReplaced()
             requestNav(NavRequest.Chat)
-            pushNotice("已分支到当前工作区", Notice.Tone.Info)
+            pushNotice(tr("已分支到当前工作区", "Branched into current workspace"), Notice.Tone.Info)
         }
     }
 
@@ -5661,12 +5690,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         when (val action = prompt.action) {
             is CwdMissingAction.Switch -> {
                 val generation = ++sessionOpenGeneration
-                call("继续会话") { api ->
+                call(tr("继续会话", "Resume session")) { api ->
                     SessionHints.file = action.summary.file
                     val result = api.switchSession(action.guestPath, cwd = guestWorkspace())
                     if (result.cancelled) {
                         SessionHints.file = null
-                        pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
+                        pushNotice(tr("扩展取消了切换会话", "An extension cancelled switching sessions"), Notice.Tone.Warning)
                         return@call
                     }
                     afterSessionReplaced()
@@ -5677,19 +5706,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             is CwdMissingAction.Import -> {
                 val api = this.api ?: run {
                     runCatching { action.stagedFile.delete() }
-                    fail("引擎还没有就绪，请重试导入。")
+                    fail(tr("引擎还没有就绪，请重试导入。", "Engine is not ready yet; retry import."))
                     return
                 }
                 viewModelScope.launch {
-                    val token = claimBusy("导入会话")
+                    val token = claimBusy(tr("导入会话", "Importing session"))
                     try {
                         val result = api.importSessionFile(action.guestPath, cwd = guestWorkspace())
                         if (result.cancelled) {
-                            pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
+                            pushNotice(tr("扩展取消了导入会话", "An extension cancelled importing the session"), Notice.Tone.Warning)
                         } else {
                             afterSessionReplaced()
                             requestNav(NavRequest.Chat)
-                            pushNotice("已导入会话：${action.displayName}", Notice.Tone.Info)
+                            pushNotice(tr("已导入会话：${action.displayName}", "Imported session: ${action.displayName}"), Notice.Tone.Info)
                         }
                     } catch (error: CancellationException) {
                         throw error
@@ -5712,25 +5741,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             is CwdMissingAction.Import -> {
                 val api = this.api ?: run {
                     runCatching { action.stagedFile.delete() }
-                    fail("引擎还没有就绪，请重试导入。")
+                    fail(tr("引擎还没有就绪，请重试导入。", "Engine is not ready yet; retry import."))
                     return
                 }
                 viewModelScope.launch {
-                    val token = claimBusy("分支会话")
+                    val token = claimBusy(tr("分支会话", "Branching session"))
                     try {
                         val result = api.forkFrom(action.guestPath, guestWorkspace())
                         if (result.cancelled) {
-                            pushNotice("扩展取消了分支会话", Notice.Tone.Warning)
+                            pushNotice(tr("扩展取消了分支会话", "An extension cancelled branching the session"), Notice.Tone.Warning)
                         } else {
                             SessionHints.file = hostSessionFile(result.sessionFile)
                             afterSessionReplaced()
                             requestNav(NavRequest.Chat)
-                            pushNotice("已从导入文件分支到当前工作区", Notice.Tone.Info)
+                            pushNotice(tr("已从导入文件分支到当前工作区", "Branched from imported file into current workspace"), Notice.Tone.Info)
                         }
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Throwable) {
-                        fail(error.message ?: "分支会话失败")
+                        fail(error.message ?: tr("分支会话失败", "Failed to branch session"))
                     } finally {
                         runCatching { action.stagedFile.delete() }
                         releaseBusy(token)
@@ -5802,8 +5831,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         refreshTheme()
         if (!saved) {
             pushNotice(
-                "这段对话属于工作区「${entry.displayName}」，但这次切换没有保存成功（设置文件不可写）；" +
-                    "重启应用后会回到原来的工作区。",
+                tr(
+                    "这段对话属于工作区「${entry.displayName}」，但这次切换没有保存成功（设置文件不可写）；重启应用后会回到原来的工作区。",
+                    "This conversation belongs to workspace \"${entry.displayName}\", but the switch could not be saved (settings file not writable); restarting will return to the previous workspace.",
+                ),
                 Notice.Tone.Warning,
             )
         }
@@ -5841,11 +5872,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun importSession(source: Uri) {
         val api = this.api ?: run {
-            fail("引擎还没有就绪，等它启动完成后再导入。")
+            fail(tr("引擎还没有就绪，等它启动完成后再导入。", "Engine is not ready yet; wait for startup to finish before importing."))
             return
         }
         viewModelScope.launch {
-            val importToken = claimBusy("导入会话")
+            val importToken = claimBusy(tr("导入会话", "Importing session"))
             var stagedFile: File? = null
             var deferCleanup = false
             try {
@@ -5875,11 +5906,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                             throw error
                         }
                         if (result.cancelled) {
-                            pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
+                            pushNotice(tr("扩展取消了导入会话", "An extension cancelled importing the session"), Notice.Tone.Warning)
                         } else {
                             afterSessionReplaced()
                             requestNav(NavRequest.Chat)
-                            pushNotice("已导入会话：${prepared.displayName}", Notice.Tone.Info)
+                            pushNotice(tr("已导入会话：${prepared.displayName}", "Imported session: ${prepared.displayName}"), Notice.Tone.Info)
                         }
                     }
                 }
@@ -6057,7 +6088,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * fill channel `set_editor_text` uses.
      */
     private fun forkAt(entryId: String, row: ForkRow?) {
-        call("创建分叉", errorText = ::forkFailureText) { api ->
+        call(tr("创建分叉", "Fork session"), errorText = ::forkFailureText) { api ->
             val target = if (row == null) {
                 entryId
             } else {
@@ -6069,7 +6100,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             val result = api.fork(target)
             if (result.cancelled) {
-                pushNotice("扩展取消了分叉", Notice.Tone.Warning)
+                pushNotice(tr("扩展取消了分叉", "An extension cancelled forking"), Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced(brandNew = true)
@@ -6079,7 +6110,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 早就有对应的 `Cloned to new session`（`:5487`、这里 `:5264` 的「已复制为新会话」）。
             // 少了它，用户看到的是整段对话被换掉、没有任何一句解释 —— 那正是用户说的
             // 「一点也没有安全感」。这条提示与「已复制为新会话」同一个出口、同一档语气。
-            pushNotice("已分叉为新会话", Notice.Tone.Info)
+            pushNotice(tr("已分叉为新会话", "Forked into a new session"), Notice.Tone.Info)
             requestNav(NavRequest.Chat)
         }
     }
@@ -6114,12 +6145,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Nothing to fork from at all is a different answer from "not this row". */
     private fun forkPointNotFoundText(noForkableMessages: Boolean): String = if (noForkableMessages) {
-        "这个会话还没有可分叉的用户消息（pi：No messages to fork from）。" +
-            "先发一条消息，等 pi 把它写进会话文件后再分叉。"
+        tr(
+            "这个会话还没有可分叉的用户消息（pi：No messages to fork from）。先发一条消息，等 pi 把它写进会话文件后再分叉。",
+            "No forkable user messages yet (pi: No messages to fork from). Send a message and wait for pi to persist it first.",
+        )
     } else {
-        "这条消息不在 pi 的可分叉点里。pi 只允许从已经写进会话文件的用户消息分叉" +
-            "（getUserMessagesForForking），刚发出去还没落盘的一条就是这种情况：" +
-            "等这一轮结束，或从 ⋮ 菜单的「从历史消息分叉」里选一条。"
+        tr(
+            "这条消息不在 pi 的可分叉点里。pi 只允许从已经写进会话文件的用户消息分叉（getUserMessagesForForking），刚发出去还没落盘的一条就是这种情况：等这一轮结束，或从 ⋮ 菜单的「从历史消息分叉」里选一条。",
+            "This message is not a valid pi fork point yet (getUserMessagesForForking). Wait for the turn to finish or pick one from \"Fork from message\" in the menu.",
+        )
     }
 
     /**
@@ -6131,23 +6165,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * out is what made the old failure read as a bare "engine said no".
      */
     private fun forkFailureText(error: Throwable): String {
-        val reason = error.message?.takeIf { it.isNotBlank() } ?: "原因未知"
+        val reason = error.message?.takeIf { it.isNotBlank() } ?: tr("原因未知", "Unknown reason")
         val next = when {
             reason.contains("Invalid entry ID for forking") ->
-                "请从 ⋮ 菜单的「从历史消息分叉」里选一条消息；那条列表就是 pi 认可的全部分叉点。"
+                tr("请从 ⋮ 菜单的「从历史消息分叉」里选一条消息；那条列表就是 pi 认可的全部分叉点。", "Pick a message from \"Fork from message\" in the menu.")
 
             reason.contains("has not been saved yet") ->
-                "pi 还没有把这个会话写到磁盘上的会话文件。先发一条消息、等模型回复一句，再分叉。"
+                tr("pi 还没有把这个会话写到磁盘上的会话文件。先发一条消息、等模型回复一句，再分叉。", "Session has not been persisted to disk yet. Send a message and wait for a reply first.")
 
             reason.contains("Persisted session is missing a session file") ->
-                "pi 认为这个会话是持久化的，却没有会话文件路径。新开一个会话再试。"
+                tr("pi 认为这个会话是持久化的，却没有会话文件路径。新开一个会话再试。", "Session has no file path. Start a new session and try again.")
 
             reason.contains("Failed to create forked session") ->
-                "pi 没能写出分叉后的会话文件。检查 pi 工作目录是否可写（空间、权限），再试一次。"
+                tr("pi 没能写出分叉后的会话文件。检查 pi 工作目录是否可写（空间、权限），再试一次。", "Could not write the forked session file. Check storage space and permissions.")
 
-            else -> "可以重新打开这个会话再试一次。"
+            else -> tr("可以重新打开这个会话再试一次。", "Reopen this session and try again.")
         }
-        return "创建分叉失败：$reason。$next"
+        return tr("创建分叉失败：$reason。$next", "Fork failed: $reason. $next")
     }
 
     /**
@@ -6161,15 +6195,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `clone` — duplicate the active branch at the current position. */
     fun cloneSession() {
-        call("复制会话") { api ->
+        call(tr("复制会话", "Clone session")) { api ->
             val result = api.cloneSession()
             if (result.cancelled) {
-                pushNotice("扩展取消了复制", Notice.Tone.Warning)
+                pushNotice(tr("扩展取消了复制", "An extension cancelled cloning"), Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced(brandNew = true)
             requestNav(NavRequest.Chat)
-            pushNotice("已复制为新会话", Notice.Tone.Info)
+            pushNotice(tr("已复制为新会话", "Cloned into a new session"), Notice.Tone.Info)
         }
     }
 
@@ -6197,14 +6231,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val engine = session
         if (engine == null) {
-            fail("引擎未就绪：pi 现在不在运行，跳转没有执行。")
+            fail(tr("引擎未就绪：pi 现在不在运行，跳转没有执行。", "Engine not ready: navigation skipped."))
             return
         }
         if (entryId.isBlank()) return
         call(NAVIGATE_BUSY_LABEL, errorText = ::navigateFailureText) { api ->
             val before = api.getTree().leafId
             if (before == entryId) {
-                pushNotice("已经在这个位置", Notice.Tone.Info)
+                pushNotice(tr("已经在这个位置", "Already at this point"), Notice.Tone.Info)
                 return@call
             }
             if (engine.transcript.streaming) {
@@ -6225,12 +6259,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             )
             fun flag(key: String) = (result.data[key] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
             if (flag("aborted")) {
-                pushNotice("已取消分支摘要", Notice.Tone.Info)
+                pushNotice(tr("已取消分支摘要", "Branch summary cancelled"), Notice.Tone.Info)
                 onAborted()
                 return@call
             }
             val cancelled = flag("cancelled")
-            if (cancelled) pushNotice("跳转已取消", Notice.Tone.Warning)
+            if (cancelled) pushNotice(tr("跳转已取消", "Navigation cancelled"), Notice.Tone.Warning)
 
             // 唯一权威的「动没动」：`get_tree` / `get_entries` 报的是内存里的叶子。
             when (navigateOutcome(before, api.getTree().leafId, refused = cancelled)) {
@@ -6248,7 +6282,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                             composerFill = ComposerFill(composerFillSeq, editorText, onlyIfEmpty = true),
                         )
                     }
-                    pushNotice("已跳转到所选位置", Notice.Tone.Info)
+                    pushNotice(tr("已跳转到所选位置", "Navigated to selected point"), Notice.Tone.Info)
                 }
                 NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit
             }
@@ -6279,10 +6313,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 同 [replayHistoryOverRpc]：分支过滤要吃 `id` / `parentId`，那是原始条目才有的字段。
             engine.api.getEntriesRaw()
         } catch (e: HostCommandException) {
-            fail("跳转成功，但读回会话内容失败：${e.reason}。重新打开会话即可看到新的位置。")
+            fail(tr("跳转成功，但读回会话内容失败：${e.reason}。重新打开会话即可看到新的位置。", "Navigated, but failed to reload transcript: ${e.reason}. Reopen session to view."))
             return
         } catch (e: Exception) {
-            fail("跳转成功，但没能读回这个会话的内容；重新打开会话即可看到新的位置。")
+            fail(tr("跳转成功，但没能读回这个会话的内容；重新打开会话即可看到新的位置。", "Navigated, but failed to reload transcript. Reopen session to view."))
             return
         }
         val branch = activeBranch(page.entries, page.leafId)
@@ -6328,26 +6362,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * (`core/agent-session.ts:3140-3147`、`:3157-3159`) plus the two the RPC layer can add.
      */
     private fun navigateFailureText(error: Throwable): String {
-        val reason = error.message?.takeIf { it.isNotBlank() } ?: "原因未知"
+        val reason = error.message?.takeIf { it.isNotBlank() } ?: tr("原因未知", "Unknown reason")
         val next = when {
             reason.contains("Wait for the current response") ->
-                "这一轮还在回复。等它结束（或按停止）之后再跳。"
+                tr("这一轮还在回复。等它结束（或按停止）之后再跳。", "Wait for the current response to finish (or stop it) before navigating.")
 
             reason.contains("compaction or tree navigation") ->
-                "pi 正在压缩上下文或处理上一次跳转。等它结束再试。"
+                tr("pi 正在压缩上下文或处理上一次跳转。等它结束再试。", "Pi is compacting or handling a previous navigation. Try again once finished.")
 
             reason.contains("No model available for summarization") ->
-                "要摘要就得有一个可用的模型。先在「模型」里选一个，或改成「不摘要」再跳。"
+                tr("要摘要就得有一个可用的模型。先在「模型」里选一个，或改成「不摘要」再跳。", "Summarizing requires an active model. Pick a model or navigate without summarizing.")
 
             reason.contains("not found") ->
-                "这个会话点已经不在 pi 的会话文件里了。点「刷新」重读会话树再选。"
+                tr("这个会话点已经不在 pi 的会话文件里了。点「刷新」重读会话树再选。", "Entry no longer exists in the session file. Refresh the session tree and try again.")
 
             reason.contains("timed out") ->
-                "这次跳转（含摘要）超过了等待时间。摘要可能仍在 pi 里进行，稍后用「刷新」看结果。"
+                tr("这次跳转（含摘要）超过了等待时间。摘要可能仍在 pi 里进行，稍后用「刷新」看结果。", "Navigation timed out while summarizing. Refresh shortly to check the result.")
 
-            else -> "可以重新打开这个会话再试一次。"
+            else -> tr("可以重新打开这个会话再试一次。", "Reopen this session and try again.")
         }
-        return "跳转失败：$reason。$next"
+        return tr("跳转失败：$reason。$next", "Navigation failed: $reason. $next")
     }
 
     /**
@@ -6356,7 +6390,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * error, so no empty-name check is duplicated here.
      */
     fun renameSession(name: String) {
-        call("重命名会话") { api ->
+        call(tr("重命名会话", "Rename session")) { api ->
             api.setSessionName(name)
             _state.value = _state.value.copy(
                 meta = _state.value.meta.copy(sessionName = name.trim()),
@@ -6379,7 +6413,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             if (ok) {
                 refreshSessions()
             } else {
-                pushNotice("重命名失败：${summary.file.name}", Notice.Tone.Warning)
+                pushNotice(tr("重命名失败：${summary.file.name}", "Rename failed: ${summary.file.name}"), Notice.Tone.Warning)
             }
         }
     }
@@ -6412,7 +6446,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `/export <path>` 的 HTML 分支（pi 的分派）。 */
     private fun exportHtmlOnly(htmlName: String) {
-        call("导出会话") { api ->
+        call(tr("导出会话", "Export session")) { api ->
             api.exportHtml("${guestWorkspace()}/$htmlName")
             publish(listOfNotNull(exportedHtml(htmlName)))
         }
@@ -6420,7 +6454,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `/export <名字>.jsonl`：只给会话文件那一份（内容仍是磁盘上那份，逐字节；名字用你给的）。 */
     private fun exportJsonlOnly(jsonlName: String) {
-        call("导出会话") { _ ->
+        call(tr("导出会话", "Export session")) { _ ->
             publish(listOfNotNull(exportedSessionFile(jsonlName)))
         }
     }
@@ -6428,7 +6462,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 普通导出：HTML（默认名）与会话文件（原名）各一份。 */
     private fun exportBoth() {
         val htmlName = SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
-        call("导出会话") { api ->
+        call(tr("导出会话", "Export session")) { api ->
             api.exportHtml("${guestWorkspace()}/$htmlName")
             publish(listOfNotNull(exportedHtml(htmlName), exportedSessionFile()))
         }
@@ -6443,13 +6477,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 登记这一次导出，并说清哪一份能导回来。 */
     private fun publish(files: List<ExportedFile>) {
         if (files.isEmpty()) {
-            pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
+            pushNotice(tr("导出没有写出文件，请重试。", "Export wrote no file; please try again."), Notice.Tone.Warning)
             return
         }
         _state.value = _state.value.copy(exported = ExportedSession(files))
         val withSessionFile = files.any { it.name.endsWith(SessionExportNaming.JSONL_SUFFIX, ignoreCase = true) }
         pushNotice(
-            if (withSessionFile) "会话已导出：`.jsonl` 那份是会话文件本身，可以导回来。" else "会话已导出。",
+            if (withSessionFile) tr("会话已导出：`.jsonl` 那份是会话文件本身，可以导回来。", "Session exported: the .jsonl file can be re-imported later.") else tr("会话已导出。", "Session exported."),
             Notice.Tone.Info,
         )
     }
@@ -6491,10 +6525,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * as "nothing to copy" rather than as an error.
      */
     fun copyLastAssistantText(onText: (String) -> Unit) {
-        call("读取最后一条回复") { api ->
+        call(tr("读取最后一条回复", "Copy last response")) { api ->
             val text = api.getLastAssistantText()
             if (text.isNullOrBlank()) {
-                pushNotice("还没有模型回复可以复制", Notice.Tone.Warning)
+                pushNotice(tr("还没有模型回复可以复制", "No assistant response to copy yet"), Notice.Tone.Warning)
             } else {
                 onText(text)
             }
@@ -6692,8 +6726,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** Unknown `/name`: audit §6.4 — never let it reach the model as prose. */
     fun notifyUnknownCommand(name: String) {
         pushNotice(
-            message = "「/$name」不是已安装的扩展命令、模板或技能；" +
-                "如果要把它作为消息发给模型，请去掉开头的 /",
+            message = tr("「/$name」不是已安装的扩展命令、模板或技能；如果要把它作为消息发给模型，请去掉开头的 /", "\"/$name\" is not an installed command, template, or skill. Remove the leading / to send as text."),
             tone = Notice.Tone.Warning,
         )
     }
@@ -6713,13 +6746,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         current.busy != null -> current.busy
         // 扩展用 ctx.ui.setWorkingMessage 给的一句话（"索引中 3/12"）取代泛泛的「工作中」；只取第一行、去掉颜色码。
         current.streaming -> current.ext.working.message?.takeIf { current.ext.working.visible }?.let { chromeText(it).lineSequence().firstOrNull()?.trim() }
-            ?.takeIf { it.isNotEmpty() } ?: "工作中"
-        current.boot !is Boot.Ready -> "启动中"
-        current.engine == PiEngineSession.EngineState.Failed -> "引擎已退出"
-        current.engine == PiEngineSession.EngineState.Stopped -> "引擎已停止"
-        current.engine == PiEngineSession.EngineState.Starting -> "启动中"
-        current.queueSteering > 0 || current.queueFollowUp > 0 -> "排队中"
-        else -> "就绪"
+            ?.takeIf { it.isNotEmpty() } ?: tr("工作中", "Working")
+        current.boot !is Boot.Ready -> tr("启动中", "Starting")
+        current.engine == PiEngineSession.EngineState.Failed -> tr("引擎已退出", "Engine exited")
+        current.engine == PiEngineSession.EngineState.Stopped -> tr("引擎已停止", "Engine stopped")
+        current.engine == PiEngineSession.EngineState.Starting -> tr("启动中", "Starting")
+        current.queueSteering > 0 || current.queueFollowUp > 0 -> tr("排队中", "Queued")
+        else -> tr("就绪", "Ready")
     }
 
     /**
@@ -7017,7 +7050,7 @@ enum class OverlayView { List, Tree }
 data class OverlayState(val slot: OverlaySlot, val view: OverlayView)
 
 /** 跳转进行中的忙碌文案；会话树据此显示「停止摘要」。 */
-const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
+val NAVIGATE_BUSY_LABEL: String get() = tr("跳转到会话位置…", "Navigating session…")
 
 private const val PANEL_RESIZE_DEBOUNCE_MS = 100L
 private const val SURFACE_ESC_GRACE_MS = 250L

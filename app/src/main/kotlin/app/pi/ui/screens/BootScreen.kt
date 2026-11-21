@@ -43,6 +43,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.ui.Boot
 import app.pi.ui.components.PiType
@@ -90,15 +91,20 @@ fun BootScreen(
 
         when (boot) {
             Boot.Idle -> {
-                BootHeading("准备启动本地引擎")
+                BootHeading(tr("准备启动本地引擎", "Ready to start local engine"))
                 Spacer(Modifier.height(10.dp))
-                BootParagraph("首次启动需要解压并配置本地 Linux 运行环境，全程在设备离线完成，无需 root。")
+                BootParagraph(
+                    tr(
+                        "首次启动需要解压并配置本地 Linux 运行环境，全程在设备离线完成，无需 root。",
+                        "First launch unpacks and configures the local Linux runtime offline on your device. No root required.",
+                    ),
+                )
                 Spacer(Modifier.height(24.dp))
-                BootButton(label = "开始准备", onClick = onRetry)
+                BootButton(label = tr("开始准备", "Get started"), onClick = onRetry)
             }
 
             is Boot.Working -> {
-                BootHeading("正在初始化运行环境")
+                BootHeading(tr("正在初始化运行环境", "Initializing runtime"))
                 Spacer(Modifier.height(16.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -137,7 +143,12 @@ fun BootScreen(
                     }
                 }
                 Spacer(Modifier.height(14.dp))
-                BootParagraph("仅首次安装需要数分钟，完成后日常冷启动为秒级。")
+                BootParagraph(
+                    tr(
+                        "仅首次安装需要数分钟，完成后日常冷启动为秒级。",
+                        "First-time setup takes a few minutes; subsequent launches take seconds.",
+                    ),
+                )
             }
 
             is Boot.Failed -> {
@@ -151,13 +162,13 @@ fun BootScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BootButton(
-                        label = "重试启动",
+                        label = tr("重试启动", "Retry"),
                         onClick = onRetry,
                         modifier = Modifier.weight(1f),
                     )
                     if (boot.failure.rebuildOffered) {
                         BootButton(
-                            label = "重建运行时",
+                            label = tr("重建运行时", "Rebuild runtime"),
                             onClick = onRebuild,
                             destructive = true,
                             modifier = Modifier.weight(1f),
@@ -167,9 +178,15 @@ fun BootScreen(
                 Spacer(Modifier.height(14.dp))
                 BootParagraph(
                     if (boot.failure.rebuildOffered) {
-                        "重建仅清理易失的 guest 运行时（apt/pip/npm 全局包）；你的工作区、会话、设置和登录凭证均不受影响。"
+                        tr(
+                            "重建仅清理易失的 guest 运行时（apt/pip/npm 全局包）；你的工作区、会话、设置和登录凭证均不受影响。",
+                            "Rebuilding only resets the ephemeral guest runtime (global apt/pip/npm packages). Your workspaces, sessions, settings, and credentials are preserved.",
+                        )
                     } else {
-                        "运行环境本身完好，本次为进程运行中退出（系统回收内存或扩展异常）。直接点击「重试启动」即可恢复。"
+                        tr(
+                            "运行环境本身完好，本次为进程运行中退出（系统回收内存或扩展异常）。直接点击「重试启动」即可恢复。",
+                            "The runtime environment is intact; the process exited while running (system memory reclaim or extension error). Tap Retry to recover.",
+                        )
                     },
                 )
             }
@@ -237,7 +254,7 @@ private fun BootErrorCard(message: String, detail: String?) {
                     )
                 }
                 Text(
-                    text = "诊断信息",
+                    text = tr("诊断信息", "Diagnostics"),
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                     color = palette.error,
@@ -268,7 +285,7 @@ private fun BootErrorCard(message: String, detail: String?) {
                         tint = palette.error,
                     )
                     Text(
-                        text = if (copied) "已复制" else "复制详情",
+                        text = if (copied) tr("已复制", "Copied") else tr("复制详情", "Copy details"),
                         style = PiTheme.text.meta,
                         color = palette.error,
                     )

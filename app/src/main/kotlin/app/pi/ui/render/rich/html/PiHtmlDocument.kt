@@ -1,5 +1,6 @@
 package app.pi.ui.render.rich.html
 
+import app.pi.i18n.tr
 import org.jsoup.Jsoup
 import org.jsoup.nodes.DataNode
 import org.jsoup.nodes.Element
@@ -92,7 +93,7 @@ object PiHtmlDocument {
         } catch (t: Exception) {
             // 策略自身失败（含 jsoup 清理异常）也按拒绝处理：回退原文是唯一安全选项。
             return PiHtmlParseResult.Failure(
-                PiHtmlFailure.Rejected(t.message?.takeIf { it.isNotBlank() } ?: "安全清理失败"),
+                PiHtmlFailure.Rejected(t.message?.takeIf { it.isNotBlank() } ?: tr("安全清理失败", "Sanitization failed")),
             )
         }
 

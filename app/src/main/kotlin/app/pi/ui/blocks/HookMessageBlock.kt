@@ -13,6 +13,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.pi.i18n.tr
 import app.pi.rpc.HookMessage
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiSpacing
@@ -91,7 +92,7 @@ fun HookMessageBlock(
                 // `textColor ?: palette.text`), which is the one thing that made it a different
                 // card from `SkillInvocationBlock`.
                 PiMarkdownText(
-                    markdown = item.markdown.ifEmpty { "（空消息）" },
+                    markdown = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
                     modifier = Modifier.fillMaxWidth(),
                     textColor = palette.customMessageText,
                 )
@@ -101,7 +102,7 @@ fun HookMessageBlock(
                 // the markdown body either way — so the line count comes from
                 // this block's own affordance, not from pi.
                     ProseText(
-                        text = item.markdown.ifEmpty { "（空消息）" },
+                        text = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
                         modifier = Modifier.fillMaxWidth(),
                         color = palette.customMessageText,
                         maxLines = COLLAPSED_MESSAGE_LINES,

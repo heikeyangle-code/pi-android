@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.BashRun
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
@@ -49,7 +50,7 @@ fun BashPanel(
 ) {
     val palette = PiTheme.palette
     val accent = if (run.excludeFromContext) palette.dim else palette.bashMode
-    val scopeLabel = if (run.excludeFromContext) "仅本地" else "进上下文"
+    val scopeLabel = if (run.excludeFromContext) tr("仅本地", "Local only") else tr("进上下文", "In context")
     val status = statusText(run)
 
     Surface(
@@ -103,33 +104,35 @@ fun BashPanel(
                     )
                 }
                 if (run.running) {
+                    val stopLabel = tr("停止命令", "Stop command")
                     Box(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
                             .background(palette.error.copy(alpha = 0.16f))
-                            .clickable(onClickLabel = "停止命令", onClick = onAbort),
+                            .clickable(onClickLabel = stopLabel, onClick = onAbort),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Filled.Stop,
-                            contentDescription = "停止命令",
+                            contentDescription = stopLabel,
                             tint = palette.error,
                             modifier = Modifier.size(16.dp),
                         )
                     }
                 } else {
+                    val closeLabel = tr("关闭输出", "Close output")
                     Box(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                            .clickable(onClickLabel = "关闭输出", onClick = onDismiss),
+                            .clickable(onClickLabel = closeLabel, onClick = onDismiss),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Filled.Close,
-                            contentDescription = "关闭输出",
+                            contentDescription = closeLabel,
                             tint = palette.muted,
                             modifier = Modifier.size(15.dp),
                         )
@@ -183,16 +186,23 @@ fun BashPanel(
 }
 
 private fun statusText(run: BashRun): String? {
-    val scope = if (run.excludeFromContext) "不进上下文" else "将随下条消息进入上下文"
-    if (run.running) return "命令执行中 · $scope"
+    val scope = if (run.excludeFromContext) {
+        tr("不进上下文", "Excluded from context")
+    } else {
+        tr("将随下条消息进入上下文", "Included in next message context")
+    }
+    if (run.running) return tr("命令执行中 · $scope", "Running · $scope")
     val parts = buildList {
         if (run.cancelled) {
-            add("已取消")
+            add(tr("已取消", "Cancelled"))
         } else {
-            run.exitCode?.takeIf { it != 0 }?.let { add("退出码 $it") }
+            run.exitCode?.takeIf { it != 0 }?.let { add(tr("退出码 $it", "Exit code $it")) }
         }
         if (run.truncated) {
-            add(run.fullOutputPath?.let { "输出被截断，完整输出：$it" } ?: "输出被截断")
+            add(
+                run.fullOutputPath?.let { tr("输出被截断，完整输出：$it", "Output truncated, full output: $it") }
+                    ?: tr("输出被截断", "Output truncated"),
+            )
         }
     }
     if (parts.isEmpty()) return null

@@ -74,10 +74,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Reject nested Kotlin block comments
         run: python3 tools/check-nested-comments.py
       - name: Reject Java 11+ APIs Android runtime does not have
         run: bash tools/check-android-apis.sh
+      - name: Verify i18n XML parity & format specifiers
+        run: node tools/check-i18n.mjs
 
   tawcroot:
     runs-on: ubuntu-latest

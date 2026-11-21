@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import app.pi.i18n.tr
 import app.pi.packages.PiConfigFiles
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.rpc.ToolCall
@@ -173,7 +174,7 @@ internal object WorkspaceFiles {
     /** A directory's newest mtime would need a walk; the board shows the directory's own. */
     fun list(dir: File): Result<List<WorkspaceEntry>> = runCatching {
         val children = dir.listFiles()
-            ?: throw java.io.FileNotFoundException("无法读取目录：${dir.absolutePath}")
+            ?: throw java.io.FileNotFoundException(tr("无法读取目录：${dir.absolutePath}", "Unable to read directory: ${dir.absolutePath}"))
         val base = dir.absolutePath
         children
             .map { child -> entryOf(child, child.absolutePath.removePrefix(base).trimStart('/')) }
@@ -232,7 +233,7 @@ internal object WorkspaceFiles {
      */
     fun binaryLabel(file: File): String {
         val suffix = file.name.substringAfterLast('.', "").uppercase(Locale.US)
-        return if (suffix.isEmpty()) "无后缀" else "$suffix 文件"
+        return if (suffix.isEmpty()) tr("无后缀", "No extension") else tr("$suffix 文件", "$suffix file")
     }
 
     /**
@@ -254,7 +255,7 @@ internal object WorkspaceFiles {
     fun open(file: File, kind: WorkspaceEntryKind): WorkspaceOpen {
         if (!file.isFile) {
             return WorkspaceOpen.Failed(
-                reason = "这个文件已经不在了，可能被重命名或删掉。",
+                reason = tr("这个文件已经不在了，可能被重命名或删掉。", "This file no longer exists. It may have been renamed or deleted."),
                 detail = "java.io.FileNotFoundException: ${file.absolutePath}\n  (No such file or directory)",
             )
         }
@@ -290,7 +291,7 @@ internal object WorkspaceFiles {
             }
         }.getOrElse { error ->
             WorkspaceOpen.Failed(
-                reason = "读不到这个文件：" + (error.message ?: error::class.java.simpleName),
+                reason = tr("读不到这个文件：", "Unable to read this file: ") + (error.message ?: error::class.java.simpleName),
                 detail = error.stackTraceToString(),
             )
         }
@@ -351,17 +352,17 @@ internal object WorkspaceFiles {
         if (WorkspacePiWrite.isPiJsonTarget(target)) {
             throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
         }
-        if (target.exists()) throw java.io.IOException("这个目录里已经有「$name」了。")
+        if (target.exists()) throw java.io.IOException(tr("这个目录里已经有「$name」了。", "\"$name\" already exists in this directory."))
         target.parentFile?.mkdirs()
-        if (!target.createNewFile()) throw java.io.IOException("无法在这个目录里新建文件。")
+        if (!target.createNewFile()) throw java.io.IOException(tr("无法在这个目录里新建文件。", "Unable to create file in this directory."))
         target
     }
 
     /** 新建一个目录；已存在就是失败（不合并）。 */
     fun createDir(parent: File, name: String): Result<File> = runCatching {
         val target = File(parent, name)
-        if (target.exists()) throw java.io.IOException("这个目录里已经有「$name」了。")
-        if (!target.mkdirs()) throw java.io.IOException("无法在这个目录里新建文件夹。")
+        if (target.exists()) throw java.io.IOException(tr("这个目录里已经有「$name」了。", "\"$name\" already exists in this directory."))
+        if (!target.mkdirs()) throw java.io.IOException(tr("无法在这个目录里新建文件夹。", "Unable to create folder in this directory."))
         target
     }
 
@@ -375,8 +376,8 @@ internal object WorkspaceFiles {
         if (WorkspacePiWrite.isPiJsonImport(file, target)) {
             throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
         }
-        if (target.exists()) throw java.io.IOException("这个目录里已经有「$newName」了。")
-        if (!file.renameTo(target)) throw java.io.IOException("重命名失败：${file.name} → $newName")
+        if (target.exists()) throw java.io.IOException(tr("这个目录里已经有「$newName」了。", "\"$newName\" already exists in this directory."))
+        if (!file.renameTo(target)) throw java.io.IOException(tr("重命名失败：${file.name} → $newName", "Rename failed: ${file.name} → $newName"))
         target
     }
 
@@ -413,7 +414,7 @@ internal object WorkspaceFiles {
             )
         }
         if (java.nio.file.Files.exists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            throw java.io.IOException("删除失败：${file.absolutePath}")
+            throw java.io.IOException(tr("删除失败：${file.absolutePath}", "Delete failed: ${file.absolutePath}"))
         }
     }
 
@@ -464,7 +465,7 @@ internal object WorkspaceFiles {
             PiConfigFiles.write(file, body, mode600 = WorkspacePiWrite.restrictToOwner(relativePath, file))
         }
         if (!written) {
-            throw java.io.IOException("写盘失败：${file.name}（原子替换没有成功，磁盘上的内容没有被改）")
+            throw java.io.IOException(tr("写盘失败：${file.name}（原子替换没有成功，磁盘上的内容没有被改）", "Write failed: ${file.name} (atomic replace failed; file on disk was not modified)"))
         }
     }
 
@@ -517,12 +518,16 @@ internal object WorkspaceFiles {
      *  - 返回读取**之前**的文件指纹，保存时用它检测「期间被改过」。
      */
     fun readForEdit(file: File): Result<EditableText> = runCatching {
-        if (!file.isFile) throw java.io.IOException("这个文件已经不在了。")
+        if (!file.isFile) throw java.io.IOException(tr("这个文件已经不在了。", "This file no longer exists."))
         val size = file.length()
         if (size > EDIT_MAX_BYTES) {
             throw java.io.IOException(
-                "这个文件有 ${formatSize(size)}，超过 ${formatSize(EDIT_MAX_BYTES)}，只能查看（编辑会很卡）。" +
-                    "需要改的话用「用其他应用打开」。",
+                tr(
+                    "这个文件有 ${formatSize(size)}，超过 ${formatSize(EDIT_MAX_BYTES)}，只能查看（编辑会很卡）。" +
+                        "需要改的话用「用其他应用打开」。",
+                    "This file is ${formatSize(size)}, over the ${formatSize(EDIT_MAX_BYTES)} editing limit (view-only to avoid lag). " +
+                        "Use \"Open with another app\" to edit it.",
+                ),
             )
         }
         val stamp = stampOf(file)
@@ -534,7 +539,7 @@ internal object WorkspaceFiles {
                 .decode(java.nio.ByteBuffer.wrap(bytes))
                 .toString()
         } catch (ignored: java.nio.charset.CharacterCodingException) {
-            throw java.io.IOException("这个文件不是 UTF-8 编码，只能查看（保存会把其中的字节写坏）。")
+            throw java.io.IOException(tr("这个文件不是 UTF-8 编码，只能查看（保存会把其中的字节写坏）。", "This file is not UTF-8 encoded and is view-only (saving would corrupt its bytes)."))
         }
         var crlfCount = 0
         var lfCount = 0
@@ -557,11 +562,11 @@ internal object WorkspaceFiles {
      * 建东西」这一类事，而不是替用户决定命名风格。
      */
     fun nameProblem(name: String): String? = when {
-        name.isBlank() -> "名字不能为空。"
-        name == "." || name == ".." -> "这个名字不能用。"
-        name.contains('/') || name.contains('\\') -> "名字里不能有路径分隔符。"
-        name.any { it.code < 0x20 } -> "名字里不能有控制字符。"
-        name != name.trim() -> "名字首尾不能有空格。"
+        name.isBlank() -> tr("名字不能为空。", "Name cannot be empty.")
+        name == "." || name == ".." -> tr("这个名字不能用。", "This name is not allowed.")
+        name.contains('/') || name.contains('\\') -> tr("名字里不能有路径分隔符。", "Name cannot contain path separators.")
+        name.any { it.code < 0x20 } -> tr("名字里不能有控制字符。", "Name cannot contain control characters.")
+        name != name.trim() -> tr("名字首尾不能有空格。", "Name cannot start or end with spaces.")
         else -> null
     }
 
@@ -586,7 +591,7 @@ internal object WorkspaceFiles {
      * 的日期直接从「昨天」跳到「9月3日」，两天前与三周前读起来一样模糊。
      */
     fun formatTime(millis: Long, now: Long = System.currentTimeMillis()): String {
-        if (millis <= 0L) return "时间未知"
+        if (millis <= 0L) return tr("时间未知", "Unknown time")
         val stamp = SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
         val then = Calendar.getInstance().apply { timeInMillis = millis }
         val today = Calendar.getInstance().apply { timeInMillis = now }
@@ -600,12 +605,18 @@ internal object WorkspaceFiles {
         }
         val sameYear = then.get(Calendar.YEAR) == today.get(Calendar.YEAR)
         return when {
-            sameDay(then, today) -> "今天 $stamp"
-            sameDay(then, yesterday) -> "昨天 $stamp"
-            sameDay(then, dayBefore) -> "前天 $stamp"
-            sameYear -> "${then.get(Calendar.MONTH) + 1}月${then.get(Calendar.DAY_OF_MONTH)}日 $stamp"
-            else -> "${then.get(Calendar.YEAR)}年${then.get(Calendar.MONTH) + 1}月" +
-                "${then.get(Calendar.DAY_OF_MONTH)}日"
+            sameDay(then, today) -> tr("今天 $stamp", "Today $stamp")
+            sameDay(then, yesterday) -> tr("昨天 $stamp", "Yesterday $stamp")
+            sameDay(then, dayBefore) -> tr("前天 $stamp", "2 days ago $stamp")
+            sameYear -> tr(
+                "${then.get(Calendar.MONTH) + 1}月${then.get(Calendar.DAY_OF_MONTH)}日 $stamp",
+                SimpleDateFormat("MMM d", Locale.US).format(Date(millis)) + " $stamp",
+            )
+            else -> tr(
+                "${then.get(Calendar.YEAR)}年${then.get(Calendar.MONTH) + 1}月" +
+                    "${then.get(Calendar.DAY_OF_MONTH)}日",
+                SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(millis)),
+            )
         }
     }
 

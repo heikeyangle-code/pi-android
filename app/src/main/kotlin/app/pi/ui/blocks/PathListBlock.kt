@@ -11,6 +11,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
@@ -42,7 +44,7 @@ internal fun FindBlock(
     item = item,
     title = "find",
     subject = findSubject(item.args),
-    emptyText = "没有找到匹配的文件",
+    emptyText = tr("没有找到匹配的文件", "No files found matching pattern"),
     preview = FIND_PREVIEW_ENTRIES,
     parse = { ToolOutputParse.findBody(it) },
     modifier = modifier,
@@ -75,7 +77,7 @@ internal fun LsBlock(
     item = item,
     title = "ls",
     subject = lsSubject(item.args),
-    emptyText = "空目录",
+    emptyText = tr("空目录", "(empty directory)"),
     preview = LS_PREVIEW_ENTRIES,
     parse = { ToolOutputParse.lsBody(it) },
     modifier = modifier,
@@ -118,7 +120,7 @@ private fun PathListBlock(
     val state = toolStateOf(item)
     var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by rememberSaveable { mutableStateOf(false) }
-    val body = remember(item.output) { parse(item.output) }
+    val body = remember(item.output, PiLocale.isZh) { parse(item.output) }
     if (body == null) {
         // 解析不出结果就回退通用卡：这正是 pi 没有专属渲染器的那种形状（`06 §3`）。
         // 这一行原先是 `ToolCallBlock(...)` —— 删 `firstOfRun`/`lastOfRun` 参数时被整行带走，
@@ -134,7 +136,7 @@ private fun PathListBlock(
     // the shared truncation report — `details.resultLimitReached` (`core/tools/find.js:103`)
     // and `details.entryLimitReached` (`core/tools/ls.js:69`) — and neither had a reader here,
     // so a listing pi had cut looked complete.
-    val notice = remember(item.details, fullOutputPath, body.kind) {
+    val notice = remember(item.details, fullOutputPath, body.kind, PiLocale.isZh) {
         pathListNotice(fullOutputPath, item.details, entries = body.kind == PathBodyKind.Ls)
     }
     val plan = remember(body, expanded, fullOutput) {
@@ -149,7 +151,7 @@ private fun PathListBlock(
     val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
     // One exit point for this row ([toolFooterText]): the card's own count, pi's exit code
     // and the duration are in the header's reading now, so only `已截断` / `无输出` are left.
-    val footer = remember(item.output, item.outputTruncated, state) {
+    val footer = remember(item.output, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
@@ -168,7 +170,7 @@ private fun PathListBlock(
                     // the tool's own `limit` answer is what those two cards say first — and
                     // the reading puts the duration in front of it. `body.entryCount` is the
                     // number the parse above already produced, handed on rather than re-read.
-                    right = toolHeaderReading(item, state, count = body.entryCount, unit = "项"),
+                    right = toolHeaderReading(item, state, count = body.entryCount, unit = tr("项", if (body.entryCount == 1) "item" else "items")),
                     expanded = expanded,
                     expandable = hasBody,
                 )
@@ -211,12 +213,12 @@ private fun PathListBlock(
                     }
                     if (omitted > 0 && !fullOutput) {
                         ExpandAllLabel(
-                            text = "展开全部（还有 $omitted 项）",
+                            text = tr("展开全部（还有 $omitted 项）", "Show all ($omitted more)"),
                             onClick = { fullOutput = true },
                         )
                     } else if (omitted > 0) {
                         Text(
-                            text = "还有 $omitted 项未显示",
+                            text = tr("还有 $omitted 项未显示", "$omitted more not shown"),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -258,7 +260,7 @@ private fun PathGroupHeading(group: PathGroup) {
             modifier = Modifier.weight(1f),
             maxLines = 1,
         )
-        Text(text = "${group.entries.size} 项", style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
+        Text(text = tr("${group.entries.size} 项", if (group.entries.size == 1) "1 item" else "${group.entries.size} items"), style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
     }
 }
 

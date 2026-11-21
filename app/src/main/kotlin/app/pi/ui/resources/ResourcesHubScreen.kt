@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtensionsAccess
 import app.pi.host.HostAdvanced
+import app.pi.i18n.tr
 import app.pi.packages.PiProjectTrust
 import app.pi.packages.PiResourceCatalog.Type
 import app.pi.ui.PiTopBar
@@ -117,8 +118,8 @@ internal fun ResourcesHubScreen(
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         if (host == null || model == null) {
-            PiTopBar(title = "扩展与资源", onBack = onBack)
-            PiInfoNote("引擎还没起来。资源由引擎里的 pi 加载与管理，起来之后这里才有内容。")
+            PiTopBar(title = tr("扩展与资源", "Extensions & Resources"), onBack = onBack)
+            PiInfoNote(tr("引擎还没起来。资源由引擎里的 pi 加载与管理，起来之后这里才有内容。", "Engine is not running yet. Resources are loaded and managed by pi once the engine starts."))
             return@Column
         }
         when (page) {
@@ -183,9 +184,9 @@ private fun Hub(
     onOpenTrustPolicy: () -> Unit,
 ) {
     PiTopBar(
-        title = "扩展与资源",
+        title = tr("扩展与资源", "Extensions & Resources"),
         onBack = onBack,
-        actions = { PiTopBarIcon(onClick = { model.refresh() }, contentDescription = "刷新", icon = Icons.Filled.Refresh) },
+        actions = { PiTopBarIcon(onClick = { model.refresh() }, contentDescription = tr("刷新", "Refresh"), icon = Icons.Filled.Refresh) },
     )
     val ov = overview(model.loaded, model.snapshot, model.effectiveLayer)
     LazyColumn(
@@ -204,10 +205,10 @@ private fun Hub(
                         horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("改动还没生效", style = PiTheme.text.prose, color = PiTheme.palette.text)
-                            Text("开关已写入设置；重新加载后，正在运行的会话才会读到。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            Text(tr("改动还没生效", "Changes Pending Reload"), style = PiTheme.text.prose, color = PiTheme.palette.text)
+                            Text(tr("开关已写入设置；重新加载后，正在运行的会话才会读到。", "Settings saved; reload for the running session to pick them up."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         }
-                        PrimaryAction(if (model.reloading) "加载中…" else "重新加载", enabled = !model.reloading, onClick = { model.reload() })
+                        PrimaryAction(if (model.reloading) tr("加载中…", "Reloading…") else tr("重新加载", "Reload"), enabled = !model.reloading, onClick = { model.reload() })
                     }
                 }
             }
@@ -218,14 +219,14 @@ private fun Hub(
         item {
             val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                ModelsSectionLabel(if (model.hasLoaded) "pi 已加载" else "读取中…")
+                ModelsSectionLabel(if (model.hasLoaded) tr("pi 已加载", "Loaded by Pi") else tr("读取中…", "Loading…"))
                 ModelsCard {
                     Column {
                         listOf(
-                            Triple("扩展", "ext", Type.Extensions),
-                            Triple("技能", "skills", Type.Skills),
-                            Triple("提示模板", "prompts", Type.Prompts),
-                            Triple("主题", "themes", Type.Themes),
+                            Triple(tr("扩展", "Extensions"), "ext", Type.Extensions),
+                            Triple(tr("技能", "Skills"), "skills", Type.Skills),
+                            Triple(tr("提示模板", "Prompt Templates"), "prompts", Type.Prompts),
+                            Triple(tr("主题", "Themes"), "themes", Type.Themes),
                         ).forEachIndexed { i, (label, page, type) ->
                             if (i > 0) ModelsDivider()
                             val (icon, tint) = when (type) {
@@ -240,7 +241,7 @@ private fun Hub(
                                 title = label,
                                 summary = if (model.hasLoaded) typeSummary(type, ov) else "",
                                 badge = if (model.hasLoaded) {
-                                    app.pi.ui.resources.diagnosticsFor(type, model.loaded).size.takeIf { it > 0 }?.let { "$it 个问题" }
+                                    app.pi.ui.resources.diagnosticsFor(type, model.loaded).size.takeIf { it > 0 }?.let { tr("$it 个问题", "$it issues") }
                                 } else {
                                     null
                                 },
@@ -251,7 +252,7 @@ private fun Hub(
                         HubRow(
                             icon = Icons.Filled.Article,
                             iconTint = palette.muted,
-                            title = "上下文与系统提示",
+                            title = tr("上下文与系统提示", "Context & System Prompt"),
                             summary = if (model.hasLoaded) contextSummary(model) else "",
                             badge = null,
                             onClick = { onOpen("context") },
@@ -264,23 +265,23 @@ private fun Hub(
         item {
             val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                ModelsSectionLabel("来源与连接")
+                ModelsSectionLabel(tr("来源与连接", "Sources & Connections"))
                 ModelsCard {
                     Column {
                         HubRow(
                             icon = Icons.Filled.Inventory2,
                             iconTint = palette.accent,
-                            title = "扩展包",
+                            title = tr("扩展包", "Packages"),
                             summary = packagesSummary(model),
-                            badge = ov.installFailures.takeIf { it > 0 }?.let { "$it 个没装上" },
+                            badge = ov.installFailures.takeIf { it > 0 }?.let { tr("$it 个没装上", "$it failed") },
                             onClick = { onOpen("packages") },
                         )
                         ModelsDivider()
                         HubRow(
                             icon = Icons.Filled.Hub,
                             iconTint = palette.success,
-                            title = "MCP 服务器",
-                            summary = "给 pi 接外部工具",
+                            title = tr("MCP 服务器", "MCP Servers"),
+                            summary = tr("给 pi 接外部工具", "Connect external tools to pi"),
                             badge = null,
                             onClick = onOpenMcp,
                         )
@@ -292,14 +293,14 @@ private fun Hub(
         item {
             val palette = PiTheme.palette
             Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                ModelsSectionLabel("相关")
+                ModelsSectionLabel(tr("相关", "Related"))
                 ModelsCard {
                     Column {
                         HubRow(
                             icon = Icons.Filled.Tune,
                             iconTint = palette.warning,
-                            title = "技能命令与扩展启动参数",
-                            summary = "/skill:name 开关、--flag 传参",
+                            title = tr("技能命令与扩展启动参数", "Skill Commands & Extension Flags"),
+                            summary = tr("/skill:name 开关、--flag 传参", "/skill:name toggles, --flag startup arguments"),
                             badge = null,
                             onClick = onOpenCommandSettings,
                         )
@@ -307,8 +308,8 @@ private fun Hub(
                         HubRow(
                             icon = Icons.Filled.Flag,
                             iconTint = palette.borderAccent,
-                            title = "扩展运行时参数（flag）",
-                            summary = "查看扩展注册的 --flag 并即时修改当前值",
+                            title = tr("扩展运行时参数（flag）", "Extension Runtime Flags"),
+                            summary = tr("查看扩展注册的 --flag 并即时修改当前值", "Inspect --flag options registered by extensions and update them live"),
                             badge = null,
                             onClick = onOpenFlags,
                         )
@@ -318,16 +319,16 @@ private fun Hub(
         }
 
         val problems = model.loaded.diagnostics.map(::describeDiagnostic) +
-            model.loaded.extensionErrors.map { it.message + "（" + shortPath(it.path) + "）" } +
-            model.loaded.extensionWarnings.map { it.message + "（" + shortPath(it.path) + "）" }
+            model.loaded.extensionErrors.map { tr("${it.message}（${shortPath(it.path)}）", "${it.message} (${shortPath(it.path)})") } +
+            model.loaded.extensionWarnings.map { tr("${it.message}（${shortPath(it.path)}）", "${it.message} (${shortPath(it.path)})") }
         if (problems.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    ModelsSectionLabel("pi 报告的问题 · ${problems.size}")
+                    ModelsSectionLabel(tr("pi 报告的问题 · ${problems.size}", "Issues Reported by Pi · ${problems.size}"))
                     ModelsCard {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                             problems.take(8).forEach { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
-                            if (problems.size > 8) Text("还有 ${problems.size - 8} 条，在各类资源页里看。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            if (problems.size > 8) Text(tr("还有 ${problems.size - 8} 条，在各类资源页里看。", "${problems.size - 8} more; view details in each resource screen."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         }
                     }
                 }
@@ -342,11 +343,11 @@ private fun contextSummary(model: ResourcesModel): String {
     val replaced = model.loaded.systemPrompt != null
     val appended = model.loaded.appendSystemPrompt.size
     return when {
-        rows.isEmpty() -> "没有 AGENTS.md / SYSTEM.md"
+        rows.isEmpty() -> tr("没有 AGENTS.md / SYSTEM.md", "No AGENTS.md / SYSTEM.md")
         else -> listOfNotNull(
-            if (files > 0) "$files 个上下文文件" else null,
-            if (replaced) "替换了系统提示" else null,
-            if (appended > 0) "追加 $appended 段" else null,
+            if (files > 0) tr("$files 个上下文文件", "$files context files") else null,
+            if (replaced) tr("替换了系统提示", "Overrides system prompt") else null,
+            if (appended > 0) tr("追加 $appended 段", "$appended appended") else null,
         ).joinToString(" · ")
     }
 }
@@ -354,7 +355,7 @@ private fun contextSummary(model: ResourcesModel): String {
 private fun packagesSummary(model: ResourcesModel): String {
     val groups = model.snapshot?.global.orEmpty() + model.snapshot?.project.orEmpty()
     val n = groups.count { it.kind == app.pi.packages.PiResourceCatalog.SourceKind.Package }
-    return if (n == 0) "安装、更新、移除" else "$n 个已配置 · 安装、更新、移除"
+    return if (n == 0) tr("安装、更新、移除", "Install, update, remove") else tr("$n 个已配置 · 安装、更新、移除", "$n configured · Install, update, remove")
 }
 
 @Composable
@@ -429,11 +430,11 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-        ModelsSectionLabel("项目信任")
+        ModelsSectionLabel(tr("项目信任", "Project Trust"))
         ModelsCard(accent = st != null && !st.trusted) {
             Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                 if (st == null) {
-                    Text("读取中…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                    Text(tr("读取中…", "Loading…"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                     return@Column
                 }
                 val tone = if (st.trusted) PiTheme.palette.success else PiTheme.palette.warning
@@ -461,7 +462,7 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
                         color = tone,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (st.needsTrust) TagPill("含 .pi 资源", tone = PiTheme.palette.accent)
+                    if (st.needsTrust) TagPill(tr("含 .pi 资源", "Has .pi resources"), tone = PiTheme.palette.accent)
                 }
                 Text(PiProjectTrust.explanation(st), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                 PiProjectTrust.recordNote(st)?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.dim) }
@@ -483,8 +484,8 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(text = if (expanded) "收起" else "更改", onClick = { expanded = !expanded })
-                    PiSettingsChip(text = "默认策略：${policyLabel(st.defaultProjectTrust)}", onClick = onOpenTrustPolicy)
+                    PiSettingsChip(text = if (expanded) tr("收起", "Collapse") else tr("更改", "Change"), onClick = { expanded = !expanded })
+                    PiSettingsChip(text = tr("默认策略：${policyLabel(st.defaultProjectTrust)}", "Default Policy: ${policyLabel(st.defaultProjectTrust)}"), onClick = onOpenTrustPolicy)
                 }
             }
         }
@@ -492,9 +493,9 @@ private fun TrustCard(model: ResourcesModel, onOpenTrustPolicy: () -> Unit) {
 }
 
 private fun policyLabel(raw: String): String = when (raw) {
-    "always" -> "总是信任"
-    "never" -> "从不信任"
-    else -> "每次询问"
+    "always" -> tr("总是信任", "Always Trust")
+    "never" -> tr("从不信任", "Never Trust")
+    else -> tr("每次询问", "Ask")
 }
 
 /** 扩展注册的运行时 `--flag` 编辑器（原 `EngineScreen` 的 flag 段，现归位到「扩展与资源」）。 */
@@ -512,11 +513,11 @@ private fun ExtensionFlagsSheet(
         val api = advanced()
         if (api == null) {
             flags = emptyList()
-            error = "引擎未运行，读不到扩展 flag。"
+            error = tr("引擎未运行，读不到扩展 flag。", "Engine is not running; cannot read extension flags.")
         } else {
             runCatching { api.flags() }
                 .onSuccess { flags = it; error = null }
-                .onFailure { error = it.message ?: "读取失败" }
+                .onFailure { error = it.message ?: tr("读取失败", "Failed to load") }
         }
     }
 
@@ -525,13 +526,13 @@ private fun ExtensionFlagsSheet(
             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.small),
         ) {
-            Text("扩展运行时参数（flag）", style = PiTheme.text.prose, color = PiTheme.palette.text)
+            Text(tr("扩展运行时参数（flag）", "Extension Runtime Flags"), style = PiTheme.text.prose, color = PiTheme.palette.text)
             error?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             val list = flags
             if (list == null) {
-                Text("读取中…", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                Text(tr("读取中…", "Loading…"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
             } else if (list.isEmpty()) {
-                Text("当前已加载的扩展没有声明任何 --flag 参数。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                Text(tr("当前已加载的扩展没有声明任何 --flag 参数。", "No loaded extensions declare any --flag options."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                     items(list.size) { i ->
@@ -546,7 +547,7 @@ private fun ExtensionFlagsSheet(
                                     scope.launch {
                                         runCatching { api.setFlag(f.name, on) }
                                             .onSuccess { reload++ }
-                                            .onFailure { error = it.message ?: "修改失败" }
+                                            .onFailure { error = it.message ?: tr("修改失败", "Update failed") }
                                     }
                                 },
                             )
@@ -556,13 +557,13 @@ private fun ExtensionFlagsSheet(
                                 Text("--${f.name}", style = PiTheme.text.prose, color = PiTheme.palette.text)
                                 f.description?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.muted) }
                                 Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                                    PiEditorField(value = text, onValueChange = { text = it }, modifier = Modifier.weight(1f), placeholder = "值")
-                                    PiSettingsChip(text = "保存", onClick = {
+                                    PiEditorField(value = text, onValueChange = { text = it }, modifier = Modifier.weight(1f), placeholder = tr("值", "Value"))
+                                    PiSettingsChip(text = tr("保存", "Save"), onClick = {
                                         val api = advanced() ?: return@PiSettingsChip
                                         scope.launch {
                                             runCatching { api.setFlag(f.name, text) }
                                                 .onSuccess { reload++ }
-                                                .onFailure { error = it.message ?: "保存失败" }
+                                                .onFailure { error = it.message ?: tr("保存失败", "Failed to save") }
                                         }
                                     })
                                 }

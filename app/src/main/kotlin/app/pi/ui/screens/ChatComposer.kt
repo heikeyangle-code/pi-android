@@ -73,6 +73,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.i18n.tr
 import app.pi.rpc.PiResponses
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.components.PiContextRing
@@ -220,7 +221,11 @@ internal fun Composer(
                     color = palette.bashMode,
                 )
                 Text(
-                    text = if (isBashExcluded) "终端命令 · 仅本地执行（不进上下文）" else "终端命令 · 输出将加入上下文",
+                    text = if (isBashExcluded) {
+                        tr("终端命令 · 仅本地执行（不进上下文）", "Bash · local only (excluded from context)")
+                    } else {
+                        tr("终端命令 · 输出将加入上下文", "Bash · output added to context")
+                    },
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                     color = palette.bashMode,
@@ -228,7 +233,7 @@ internal fun Composer(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (isBashExcluded) "改进上下文" else "改仅本地",
+                    text = if (isBashExcluded) tr("改进上下文", "Add to context") else tr("改仅本地", "Local only"),
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
                         .background(palette.bashMode.copy(alpha = 0.18f))
@@ -300,7 +305,7 @@ internal fun Composer(
                     Box {
                         if (draft.isEmpty()) {
                             Text(
-                                text = "发消息给 pi，/ 命令 · @ 文件 · ! 终端",
+                                text = tr("发消息给 pi，/ 命令 · @ 文件 · ! 终端", "Message pi · / commands · @ files · ! bash"),
                                 style = composerTextStyle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                                 maxLines = 1,
@@ -318,12 +323,12 @@ internal fun Composer(
                         .size(26.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f))
-                        .clickable(onClickLabel = "清空草稿", onClick = onClear),
+                        .clickable(onClickLabel = tr("清空草稿", "Clear draft"), onClick = onClear),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "清空",
+                        contentDescription = tr("清空", "Clear"),
                         modifier = Modifier.size(14.dp),
                         tint = palette.muted,
                     )
@@ -341,21 +346,21 @@ internal fun Composer(
         ) {
             ComposerQuickKey(
                 label = "/",
-                contentDescription = "命令面板",
+                contentDescription = tr("命令面板", "Command palette"),
                 active = draft.trimStart().startsWith("/"),
                 activeColor = palette.accent,
                 onClick = onOpenPalette,
             )
             ComposerQuickKey(
                 label = "@",
-                contentDescription = "提及工作区文件",
+                contentDescription = tr("提及工作区文件", "Mention workspace file"),
                 active = draft.contains("@"),
                 activeColor = palette.accent,
                 onClick = onOpenMention,
             )
             ComposerQuickKey(
                 label = "!",
-                contentDescription = "终端命令（长按不进上下文）",
+                contentDescription = tr("终端命令（长按不进上下文）", "Bash command (long-press for local only)"),
                 active = isBash,
                 activeColor = palette.bashMode,
                 onClick = onOpenBash,
@@ -365,12 +370,12 @@ internal fun Composer(
                 modifier = Modifier
                     .size(34.dp)
                     .clip(CircleShape)
-                    .clickable(onClickLabel = "添加图片或文件", onClick = onPickAttachment),
+                    .clickable(onClickLabel = tr("添加图片或文件", "Attach image or file"), onClick = onPickAttachment),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.AttachFile,
-                    contentDescription = "附件",
+                    contentDescription = tr("附件", "Attach"),
                     modifier = Modifier.size(19.dp),
                     tint = palette.muted,
                 )
@@ -382,14 +387,14 @@ internal fun Composer(
                 if (canSteer || canFollowUp) {
                     DeliveryActionPill(
                         glyph = "⇢",
-                        label = "引导",
+                        label = tr("引导", "Steer"),
                         tint = palette.warning,
                         enabled = canSteer,
                         onClick = onSteer,
                     )
                     DeliveryActionPill(
                         glyph = "⇣",
-                        label = "后续",
+                        label = tr("后续", "Follow-up"),
                         tint = palette.accent,
                         enabled = canFollowUp,
                         onClick = onFollowUp,
@@ -402,7 +407,7 @@ internal fun Composer(
                         .height(36.dp)
                         .clip(CircleShape)
                         .background(palette.error)
-                        .clickable(role = Role.Button, onClickLabel = "停止生成", onClick = onStop)
+                        .clickable(role = Role.Button, onClickLabel = tr("停止生成", "Stop generating"), onClick = onStop)
                         .padding(horizontal = if (showStopLabel) 13.dp else 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -410,13 +415,13 @@ internal fun Composer(
                     val stopFg = palette.contrastOn(palette.error)
                     Icon(
                         imageVector = Icons.Filled.Stop,
-                        contentDescription = "停止",
+                        contentDescription = tr("停止", "Stop"),
                         modifier = Modifier.size(16.dp),
                         tint = stopFg,
                     )
                     if (showStopLabel) {
                         Text(
-                            text = "停止",
+                            text = tr("停止", "Stop"),
                             style = PiType.chipLabel.copy(fontWeight = FontWeight.SemiBold),
                             color = stopFg,
                             maxLines = 1,
@@ -443,14 +448,14 @@ internal fun Composer(
                         .clickable(
                             enabled = hasPayload,
                             role = Role.Button,
-                            onClickLabel = if (isBash) "运行命令" else "发送",
+                            onClickLabel = if (isBash) tr("运行命令", "Run command") else tr("发送", "Send"),
                             onClick = onSend,
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = if (isBash) Icons.Filled.PlayArrow else Icons.Filled.Send,
-                        contentDescription = if (isBash) "运行" else "发送",
+                        contentDescription = if (isBash) tr("运行", "Run") else tr("发送", "Send"),
                         modifier = Modifier.size(if (isBash) 20.dp else 17.dp),
                         tint = sendFg,
                     )
@@ -478,9 +483,9 @@ private fun ComposerModelPill(
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(color = MaterialTheme.colorScheme.onSurface),
-                onClickLabel = "选择模型",
+                onClickLabel = tr("选择模型", "Select model"),
                 onClick = onClick,
-                onLongClickLabel = "切换到下一个模型",
+                onLongClickLabel = tr("切换到下一个模型", "Cycle to next model"),
                 onLongClick = onLongClick,
             )
             .padding(start = 9.dp, end = 6.dp),
@@ -488,7 +493,7 @@ private fun ComposerModelPill(
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
-            text = label ?: "选择模型",
+            text = label ?: tr("选择模型", "Select model"),
             modifier = Modifier.weight(1f, fill = false),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = if (label != null) palette.text else palette.accent,
@@ -524,9 +529,9 @@ private fun ThinkingLevelPill(
                 else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f),
             )
             .combinedClickable(
-                onClickLabel = "切换思考等级：${thinkingLabelOf(level)}",
+                onClickLabel = tr("切换思考等级：${thinkingLabelOf(level)}", "Cycle thinking level: ${thinkingLabelOf(level)}"),
                 onClick = onClick,
-                onLongClickLabel = "选择思考等级",
+                onLongClickLabel = tr("选择思考等级", "Select thinking level"),
                 onLongClick = onLongClick,
             )
             .padding(horizontal = 8.dp),
@@ -562,7 +567,7 @@ private fun ContextUsagePill(
             .height(26.dp)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
-            .clickable(onClickLabel = "查看上下文与用量", onClick = onClick)
+            .clickable(onClickLabel = tr("查看上下文与用量", "View context and usage"), onClick = onClick)
             .padding(horizontal = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),

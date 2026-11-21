@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtPanel
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.chat.ArgumentContext
@@ -82,8 +83,8 @@ internal fun ChatDockStatusAndWidgets(
     Column(modifier = Modifier.fillMaxWidth()) {
         if (state.meta.compacting) {
             StatusActionRow(
-                text = "正在压缩上下文…",
-                actionLabel = "中止",
+                text = tr("正在压缩上下文…", "Compacting context…"),
+                actionLabel = tr("中止", "Abort"),
                 onAction = { session.abortCompaction() },
             )
         }

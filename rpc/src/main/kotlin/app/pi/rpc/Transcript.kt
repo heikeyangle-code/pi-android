@@ -731,10 +731,16 @@ fun dayLabel(ts: Long, now: Long): String {
     val day = Instant.ofEpochMilli(ts).atZone(zone).toLocalDate()
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     return when {
-        day == today -> "今天"
-        day == today.minusDays(1) -> "昨天"
-        day.year == today.year -> "${day.monthValue} 月 ${day.dayOfMonth} 日"
-        else -> "${day.year} 年 ${day.monthValue} 月 ${day.dayOfMonth} 日"
+        day == today -> RpcLocale.tr("今天", "Today")
+        day == today.minusDays(1) -> RpcLocale.tr("昨天", "Yesterday")
+        day.year == today.year -> RpcLocale.tr(
+            "${day.monthValue} 月 ${day.dayOfMonth} 日",
+            "${day.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)} ${day.dayOfMonth}",
+        )
+        else -> RpcLocale.tr(
+            "${day.year} 年 ${day.monthValue} 月 ${day.dayOfMonth} 日",
+            "${day.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)} ${day.dayOfMonth}, ${day.year}",
+        )
     }
 }
 
@@ -1240,10 +1246,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             Notice(
                 key = nextKey("retry"),
                 ts = now(),
-                text = "正在重试${event.attempt?.let { " $it" } ?: ""}" +
+                text = RpcLocale.tr("正在重试", "Retrying") +
+                    (event.attempt?.let { " $it" } ?: "") +
                     (event.maxAttempts?.let { "/$it" } ?: "") +
-                    (event.delayMs?.let { "，${it / 1000}s 后" } ?: "") +
-                    (event.errorMessage?.let { "：$it" } ?: ""),
+                    (event.delayMs?.let { RpcLocale.tr("，${it / 1000}s 后", " in ${it / 1000}s") } ?: "") +
+                    (event.errorMessage?.let { RpcLocale.tr("：$it", ": $it") } ?: ""),
                 tone = Notice.Tone.Warning,
             ),
         )
@@ -1253,7 +1260,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ErrorText(
                     key = nextKey("retry-failed"),
                     ts = now(),
-                    message = "重试失败，已停止",
+                    message = RpcLocale.tr("重试失败，已停止", "Retry failed, stopped"),
                     detail = null,
                 ),
             )
@@ -1286,11 +1293,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // they must be folded here or the retry loop is invisible and a stalling
         // context looks like a hang.
         is PiEvent.SummarizationRetryScheduled -> {
-            val text = "摘要重试" +
+            val text = RpcLocale.tr("摘要重试", "Retrying summary") +
                 (event.attempt?.let { " $it" } ?: "") +
                 (event.maxAttempts?.let { "/$it" } ?: "") +
-                (event.delayMs?.let { "，${it / 1000}s 后" } ?: "") +
-                (event.errorMessage?.let { "：$it" } ?: "")
+                (event.delayMs?.let { RpcLocale.tr("，${it / 1000}s 后", " in ${it / 1000}s") } ?: "") +
+                (event.errorMessage?.let { RpcLocale.tr("：$it", ": $it") } ?: "")
             val open = summarizationNoticeIndex?.takeIf { items.getOrNull(it) is Notice }
             if (open == null) {
                 val change = append(
@@ -1313,9 +1320,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
         is PiEvent.SummarizationRetryAttemptStart -> {
             val label = when (event.source) {
-                "compaction" -> "压缩摘要"
-                "branchSummary" -> "分支摘要"
-                else -> "摘要"
+                "compaction" -> RpcLocale.tr("压缩摘要", "compaction summary")
+                "branchSummary" -> RpcLocale.tr("分支摘要", "branch summary")
+                else -> RpcLocale.tr("摘要", "summary")
             }
             val open = summarizationNoticeIndex?.takeIf { items.getOrNull(it) is Notice }
             if (open == null) {
@@ -1325,7 +1332,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     Notice(
                         key = nextKey("summary-retry"),
                         ts = now(),
-                        text = "正在重试生成$label",
+                        text = RpcLocale.tr("正在重试生成$label", "Retrying $label"),
                         tone = Notice.Tone.Warning,
                     ),
                 )
@@ -1336,7 +1343,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 if (current.text.contains(label)) {
                     TranscriptChange.None
                 } else {
-                    items[open] = current.copy(text = "${current.text}（$label）")
+                    items[open] = current.copy(text = RpcLocale.tr("${current.text}（$label）", "${current.text} ($label)"))
                     TranscriptChange.Updated(open)
                 }
             }
@@ -1352,7 +1359,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 // `compaction_end.errorMessage` (or the branch-summary failure),
                 // so the row only stops looking like a pending retry.
                 val current = items[index] as Notice
-                items[index] = current.copy(text = "${current.text}，重试结束", tone = Notice.Tone.Info)
+                items[index] = current.copy(
+                    text = RpcLocale.tr("${current.text}，重试结束", "${current.text}, retry finished"),
+                    tone = Notice.Tone.Info,
+                )
                 TranscriptChange.Updated(index)
             }
         }
@@ -1396,7 +1406,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 // at most one such row per transcript, however many unknown kinds
                 // arrive (that is the anti-noise behaviour we want, and it is why this
                 // key's prefix only decides where the row sits in the stream).
-                val text = "收到一条当前版本不认识的消息；升级 App 后可能可见。"
+                val text = RpcLocale.tr(
+                    "收到一条当前版本不认识的消息；升级 App 后可能可见。",
+                    "Received a message type unrecognized by this app version; updating the app may display it.",
+                )
                 if (items.any { it is Notice && it.text == text }) {
                     TranscriptChange.None
                 } else {
@@ -1560,7 +1573,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ErrorText(
                     key = nextKey("provider-error"),
                     ts = now(),
-                    message = "模型调用失败",
+                    message = RpcLocale.tr("模型调用失败", "Model request failed"),
                     detail = delta.reason,
                 ),
             )
@@ -1577,7 +1590,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // across both sites, i.e. at most one such row per transcript however
             // many unknown kinds arrive, which is the anti-noise behaviour we want.
             is AssistantDelta.Unknown -> {
-                val text = "收到一条当前版本不认识的消息；升级 App 后可能可见。"
+                val text = RpcLocale.tr(
+                    "收到一条当前版本不认识的消息；升级 App 后可能可见。",
+                    "Received a message type unrecognized by this app version; updating the app may display it.",
+                )
                 if (items.any { it is Notice && it.text == text }) {
                     TranscriptChange.None
                 } else {
@@ -1990,10 +2006,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // aborted"` in favour of a fixed line, and the app's generic Chinese
         // sentence is the equivalent of that fixed line.
         val message = when {
-            truncated -> "回复被令牌上限截断"
+            truncated -> RpcLocale.tr("回复被令牌上限截断", "Response truncated at token limit")
             reason == "aborted" -> errorMessage
                 ?.takeIf { it.isNotBlank() && it != "Request was aborted" }
-                ?: "回合已中止"
+                ?: RpcLocale.tr("回合已中止", "Turn aborted")
             else -> errorMessage?.takeIf { it.isNotBlank() } ?: "Unknown error"
         }
 

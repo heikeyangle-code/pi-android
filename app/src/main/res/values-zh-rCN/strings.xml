@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      两个名字，别混：这个 App 叫 PI（用户的产品名，启动器与 Android 设置里显示
+      的就是它）；它里面跑的 agent / CLI 叫 pi（上游项目自己的写法，小写）。
+    -->
+    <string name="app_name">PI</string>
+
+    <string name="notif_channel_engine">本地引擎</string>
+    <string name="notif_channel_engine_desc">PI 运行时显示的任务通知</string>
+
+    <string name="engine_running_title">PI 正在运行</string>
+    <string name="engine_running_text">%1$d 个任务进行中</string>
+    <string name="engine_idle_text">空闲</string>
+    <string name="action_stop">停止</string>
+    <string name="action_open">打开</string>
+
+    <string name="accessibility_service_label">PI 设备桥</string>
+    <string name="accessibility_service_description">让 PI 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。</string>
+
+    <!-- Navigation & destinations -->
+    <string name="nav_chat">对话</string>
+    <string name="nav_workspace">工作区</string>
+    <string name="nav_settings">设置</string>
+    <string name="nav_back">返回</string>
+
+    <!-- Language options -->
+    <string name="lang_setting_title">界面语言</string>
+    <string name="lang_setting_desc">应用显示语言，切换后立即生效，无需重启。</string>
+    <string name="lang_system">跟随系统</string>
+    <string name="lang_zh">简体中文</string>
+    <string name="lang_en">English</string>
+
+    <!-- Common UI actions -->
+    <string name="common_ok">确定</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_close">关闭</string>
+    <string name="common_save">保存</string>
+    <string name="common_delete">删除</string>
+    <string name="common_retry">重试</string>
+    <string name="common_copy">复制</string>
+    <string name="common_copied">已复制</string>
+    <string name="common_search">搜索</string>
+    <string name="common_refresh">刷新</string>
+    <string name="common_expand">展开</string>
+    <string name="common_collapse">收起</string>
+    <string name="common_reset">重置</string>
+    <string name="common_more">更多</string>
+    <string name="common_done">完成</string>
+    <string name="common_edit">编辑</string>
+    <string name="common_send">发送</string>
+    <string name="common_got_it">知道了</string>
+</resources>

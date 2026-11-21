@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtCustom
 import app.pi.host.ExtPanel
+import app.pi.i18n.tr
 import app.pi.ui.components.PiSheet
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -114,7 +115,7 @@ fun ExtensionSurfaceHost(
     if (custom == null) return
     val id = custom.surfaceId
     val inferred = remember(custom.lines) { inferSurfaceTitle(custom.lines) }
-    val title = inferred ?: "扩展交互面板"
+    val title = inferred ?: tr("扩展交互面板", "Extension Panel")
     if (minimized) {
         // 最小化态：贴边低调半透明小胶囊，不挡对话与输入；点一下秒回原界面，点 ✕ 才真正关闭。
         Box(
@@ -130,7 +131,7 @@ fun ExtensionSurfaceHost(
                     .clip(shape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
                     .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.7f), shape)
-                    .clickable(role = Role.Button, onClickLabel = "恢复扩展面板", onClick = onRestore)
+                    .clickable(role = Role.Button, onClickLabel = tr("恢复扩展面板", "Restore extension panel"), onClick = onRestore)
                     .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -156,12 +157,12 @@ fun ExtensionSurfaceHost(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "关闭扩展面板") { onClose(id) },
+                        .clickable(role = Role.Button, onClickLabel = tr("关闭扩展面板", "Close extension panel")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "关闭",
+                        contentDescription = tr("关闭", "Close"),
                         tint = palette.dim,
                         modifier = Modifier.size(13.dp),
                     )
@@ -208,7 +209,7 @@ fun ExtensionFloatingOverlayCard(
     val palette = PiTheme.palette
     val id = custom.surfaceId
     val rows = remember(custom.lines) { trimEmptyEdgeLines(panelRows(custom.lines)) }
-    val title = remember(custom.lines) { inferSurfaceTitle(custom.lines) } ?: "悬浮信息"
+    val title = remember(custom.lines) { inferSurfaceTitle(custom.lines) } ?: tr("悬浮信息", "Floating Overlay")
     val previewRows = if (rows.size > 6) rows.take(6) else rows
     val shape = RoundedCornerShape(14.dp)
 
@@ -226,7 +227,7 @@ fun ExtensionFloatingOverlayCard(
                 .border(PiSpacing.hairline, palette.borderAccent.copy(alpha = 0.45f), shape)
                 .then(
                     if (onExpand != null) {
-                        Modifier.clickable(role = Role.Button, onClickLabel = "展开悬浮面板", onClick = onExpand)
+                        Modifier.clickable(role = Role.Button, onClickLabel = tr("展开悬浮面板", "Expand floating overlay"), onClick = onExpand)
                     } else {
                         Modifier
                     },
@@ -255,7 +256,7 @@ fun ExtensionFloatingOverlayCard(
                 )
                 if (onExpand != null && custom.interactive) {
                     Text(
-                        text = "操控",
+                        text = tr("操控", "Interact"),
                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                         color = palette.accent,
                         maxLines = 1,
@@ -265,12 +266,12 @@ fun ExtensionFloatingOverlayCard(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "关闭悬浮面板") { onClose(id) },
+                        .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮面板", "Close floating overlay")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = "关闭",
+                        contentDescription = tr("关闭", "Close"),
                         tint = palette.dim,
                         modifier = Modifier.size(13.dp),
                     )
@@ -289,7 +290,7 @@ fun ExtensionFloatingOverlayCard(
                     }
                     if (rows.size > previewRows.size) {
                         Text(
-                            text = "…还有 ${rows.size - previewRows.size} 行",
+                            text = tr("…还有 ${rows.size - previewRows.size} 行", "…${rows.size - previewRows.size} more line(s)"),
                             style = PiTheme.text.meta,
                             color = palette.dim,
                             maxLines = 1,
@@ -314,9 +315,9 @@ fun ExtensionWidgetSurfaceSheet(
 ) {
     val id = panel.surfaceId ?: return
     val title = when (panel.key) {
-        "header" -> "扩展顶栏"
-        "footer" -> "扩展底栏"
-        else -> widgetCaption(panel.key) ?: "扩展组件"
+        "header" -> tr("扩展顶栏", "Extension Header")
+        "footer" -> tr("扩展底栏", "Extension Footer")
+        else -> widgetCaption(panel.key) ?: tr("扩展组件", "Extension Widget")
     }
     val useFullHeight = panel.interactive || panel.lines.size > FULL_HEIGHT_LINE_THRESHOLD
     PiSheet(onDismiss = onDismiss, fullHeight = useFullHeight) {
@@ -450,16 +451,22 @@ private fun SurfaceSheetBody(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     if (stackCount > 1) {
-                        SurfaceMetaBadge(text = "${stackCount}层", tint = palette.accent)
+                        SurfaceMetaBadge(text = tr("${stackCount}层", "${stackCount} layers"), tint = palette.accent)
                     }
                 }
                 Text(
                     text = buildString {
                         append("${measuredCols}×${measuredRows}")
                         if (interactive) {
-                            append(if (swipeToArrowsEnabled) " · 可滑动/点按/手柄" else " · 点击或用下方操控区")
+                            append(
+                                if (swipeToArrowsEnabled) {
+                                    tr(" · 可滑动/点按/手柄", " · Swipe / Tap / Pad")
+                                } else {
+                                    tr(" · 点击或用下方操控区", " · Tap or use controls below")
+                                },
+                            )
                         } else {
-                            append(" · 只读视图")
+                            append(tr(" · 只读视图", " · Read-only"))
                         }
                     },
                     style = PiTheme.text.meta,
@@ -470,7 +477,7 @@ private fun SurfaceSheetBody(
             }
             if (interactive) {
                 SurfaceToolbarPill(
-                    label = if (controlMode == SurfaceControlMode.Gamepad) "键盘" else "手柄",
+                    label = if (controlMode == SurfaceControlMode.Gamepad) tr("键盘", "Keys") else tr("手柄", "Pad"),
                     active = controlMode == SurfaceControlMode.Keyboard,
                     onClick = {
                         controlMode = if (controlMode == SurfaceControlMode.Gamepad) {
@@ -482,12 +489,12 @@ private fun SurfaceSheetBody(
                 )
             }
             SurfaceToolbarPill(
-                label = if (fitWidth) "原字号" else "适配屏",
+                label = if (fitWidth) tr("原字号", "1:1") else tr("适配屏", "Fit"),
                 active = !fitWidth,
                 onClick = { fitWidth = !fitWidth },
             )
             SurfaceToolbarPill(
-                label = if (soundMuted) "静音" else "音效",
+                label = if (soundMuted) tr("静音", "Muted") else tr("音效", "Sound"),
                 active = !soundMuted,
                 onClick = onToggleSound,
             )
@@ -498,7 +505,7 @@ private fun SurfaceSheetBody(
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .border(PiSpacing.hairline, palette.borderMuted, CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "最小化", onClick = onMinimize),
+                        .clickable(role = Role.Button, onClickLabel = tr("最小化", "Minimize"), onClick = onMinimize),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -509,18 +516,19 @@ private fun SurfaceSheetBody(
                     )
                 }
             }
+            val closeLabel = tr("关闭", "Close")
             Box(
                 modifier = Modifier
                     .size(30.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .border(PiSpacing.hairline, palette.borderMuted, CircleShape)
-                    .clickable(role = Role.Button, onClickLabel = "关闭", onClick = onClose),
+                    .clickable(role = Role.Button, onClickLabel = closeLabel, onClick = onClose),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "关闭",
+                    contentDescription = closeLabel,
                     tint = palette.muted,
                     modifier = Modifier.size(15.dp),
                 )
@@ -619,7 +627,7 @@ private fun SurfaceSheetBody(
             if (rows.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = "等待扩展输出…",
+                        text = tr("等待扩展输出…", "Waiting for extension output…"),
                         style = PiTheme.text.meta,
                         color = palette.dim,
                     )
@@ -757,13 +765,13 @@ private fun SurfaceControlDock(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         GamepadActionButton(
-                            label = "确认 ⏎",
+                            label = tr("确认 ⏎", "Enter ⏎"),
                             primary = true,
                             modifier = Modifier.weight(1.25f),
                             onClick = { onKey(SurfaceKeys.ENTER) },
                         )
                         GamepadActionButton(
-                            label = "空格",
+                            label = tr("空格", "Space"),
                             repeatable = true,
                             modifier = Modifier.weight(1f),
                             onClick = { onKey(SurfaceKeys.SPACE) },
@@ -784,7 +792,7 @@ private fun SurfaceControlDock(
                             onClick = { onKey(SurfaceKeys.TAB) },
                         )
                         GamepadActionButton(
-                            label = if (showMoreKeys) "收起" else "更多",
+                            label = if (showMoreKeys) tr("收起", "Less") else tr("更多", "More"),
                             active = showMoreKeys,
                             modifier = Modifier.weight(1f),
                             onClick = { showMoreKeys = !showMoreKeys },
@@ -806,13 +814,13 @@ private fun SurfaceControlDock(
                         .border(PiSpacing.hairline, palette.borderMuted, RoundedCornerShape(10.dp)),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CompactRepeatKey("↑", "上") { onKey(SurfaceKeys.UP) }
+                    CompactRepeatKey("↑", tr("上", "Up")) { onKey(SurfaceKeys.UP) }
                     DPadDivider()
-                    CompactRepeatKey("↓", "下") { onKey(SurfaceKeys.DOWN) }
+                    CompactRepeatKey("↓", tr("下", "Down")) { onKey(SurfaceKeys.DOWN) }
                     DPadDivider()
-                    CompactRepeatKey("←", "左") { onKey(SurfaceKeys.LEFT) }
+                    CompactRepeatKey("←", tr("左", "Left")) { onKey(SurfaceKeys.LEFT) }
                     DPadDivider()
-                    CompactRepeatKey("→", "右") { onKey(SurfaceKeys.RIGHT) }
+                    CompactRepeatKey("→", tr("右", "Right")) { onKey(SurfaceKeys.RIGHT) }
                 }
 
                 Spacer(Modifier.weight(1f))
@@ -821,7 +829,7 @@ private fun SurfaceControlDock(
                 DockActionButton(label = "Esc", onClick = { onKey(SurfaceKeys.ESC) })
                 DockActionButton(label = "⏎", primary = true, onClick = { onKey(SurfaceKeys.ENTER) })
                 DockActionButton(
-                    label = if (showMoreKeys) "收起" else "更多",
+                    label = if (showMoreKeys) tr("收起", "Less") else tr("更多", "More"),
                     active = showMoreKeys,
                     onClick = { showMoreKeys = !showMoreKeys },
                 )
@@ -865,7 +873,7 @@ private fun SurfaceControlDock(
                         ) {
                             if (text.isEmpty()) {
                                 Text(
-                                    text = "输入文字发给组件…",
+                                    text = tr("输入文字发给组件…", "Send text to component…"),
                                     style = PiTheme.text.meta,
                                     color = palette.dim,
                                     maxLines = 1,
@@ -878,7 +886,7 @@ private fun SurfaceControlDock(
                 )
                 MiniInputButton(label = "⌫", enabled = true, onClick = { onKey(SurfaceKeys.BACKSPACE) })
                 MiniInputButton(
-                    label = "发送",
+                    label = tr("发送", "Send"),
                     enabled = text.isNotEmpty(),
                     onClick = {
                         onKey(text)
@@ -886,7 +894,7 @@ private fun SurfaceControlDock(
                     },
                 )
                 MiniInputButton(
-                    label = "发+⏎",
+                    label = tr("发+⏎", "Send+⏎"),
                     enabled = text.isNotEmpty(),
                     primary = true,
                     onClick = {
@@ -916,14 +924,14 @@ private fun SurfaceControlDock(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SecondaryKeyChip("⇧Tab") { onKey(SurfaceKeys.SHIFT_TAB) }
-                SecondaryKeyChip("退格 ⌫") { onKey(SurfaceKeys.BACKSPACE) }
+                SecondaryKeyChip(tr("退格 ⌫", "Bksp ⌫")) { onKey(SurfaceKeys.BACKSPACE) }
                 SecondaryKeyChip("Home") { onKey(SurfaceKeys.HOME) }
                 SecondaryKeyChip("End") { onKey(SurfaceKeys.END) }
                 SecondaryKeyChip("PgUp") { onKey(SurfaceKeys.PAGE_UP) }
                 SecondaryKeyChip("PgDn") { onKey(SurfaceKeys.PAGE_DOWN) }
-                SecondaryKeyChip("p 暂停") { onKey("p") }
-                SecondaryKeyChip("r 重开") { onKey("r") }
-                SecondaryKeyChip("q 退出") { onKey("q") }
+                SecondaryKeyChip(tr("p 暂停", "p Pause")) { onKey("p") }
+                SecondaryKeyChip(tr("r 重开", "r Restart")) { onKey("r") }
+                SecondaryKeyChip(tr("q 退出", "q Quit")) { onKey("q") }
                 SecondaryKeyChip("y") { onKey("y") }
                 SecondaryKeyChip("n") { onKey("n") }
                 SecondaryKeyChip("Ctrl+C", danger = true) { onKey(SurfaceKeys.CTRL_C) }

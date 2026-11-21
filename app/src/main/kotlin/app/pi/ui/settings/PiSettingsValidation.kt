@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -111,8 +112,11 @@ internal fun isTimeoutSettingKey(key: String): Boolean =
  */
 internal fun piTimeoutVerdict(value: JsonElement): PiValueVerdict = when (value) {
     is JsonNull -> PiValueVerdict.Rejected(
-        "pi 对 null 会直接抛错（parseHttpIdleTimeoutMs(null) 判不出值，而 null 不是 undefined），" +
-            "引擎可能起不来。请删除这个键，而不是把它设为空。",
+        tr(
+            "pi 对 null 会直接抛错（parseHttpIdleTimeoutMs(null) 判不出值，而 null 不是 undefined），" +
+                "引擎可能起不来。请删除这个键，而不是把它设为空。",
+            "pi throws on null (null is not undefined) and the engine may fail to start. Remove this key instead of setting it to null.",
+        ),
     )
 
     is JsonPrimitive -> when {
@@ -120,11 +124,18 @@ internal fun piTimeoutVerdict(value: JsonElement): PiValueVerdict = when (value)
             val text = value.content.trim()
             when {
                 text.equals("disabled", ignoreCase = true) -> PiValueVerdict.Ok
-                text.isEmpty() -> PiValueVerdict.Rejected("空字符串在 pi 里也会抛错（它不是 undefined）。")
+                text.isEmpty() -> PiValueVerdict.Rejected(
+                    tr("空字符串在 pi 里也会抛错（它不是 undefined）。", "An empty string also throws in pi (it is not undefined)."),
+                )
                 else -> {
                     val number = text.toDoubleOrNull()
                     if (number == null || !number.isFinite() || number < 0) {
-                        PiValueVerdict.Rejected("「$text」不是 pi 认的超时值：要毫秒数（0 表示不超时）或 disabled。")
+                        PiValueVerdict.Rejected(
+                            tr(
+                                "「$text」不是 pi 认的超时值：要毫秒数（0 表示不超时）或 disabled。",
+                                "\"$text\" is not a valid timeout: use milliseconds (0 to disable) or \"disabled\".",
+                            ),
+                        )
                     } else {
                         PiValueVerdict.Ok
                     }
@@ -136,14 +147,19 @@ internal fun piTimeoutVerdict(value: JsonElement): PiValueVerdict = when (value)
             // 布尔、以及 JSON 里写不出来的非有限数（1e999 解析成 Infinity）都在这里被拒。
             val number = value.content.toDoubleOrNull()
             if (value.content == "true" || value.content == "false" || number == null || !number.isFinite() || number < 0) {
-                PiValueVerdict.Rejected("「${value.content}」不是 pi 认的超时值：要非负的毫秒数或 disabled。")
+                PiValueVerdict.Rejected(
+                    tr(
+                        "「${value.content}」不是 pi 认的超时值：要非负的毫秒数或 disabled。",
+                        "\"${value.content}\" is not a valid timeout: use non-negative milliseconds or \"disabled\".",
+                    ),
+                )
             } else {
                 PiValueVerdict.Ok
             }
         }
     }
 
-    else -> PiValueVerdict.Rejected("超时值只能是数字或 disabled。")
+    else -> PiValueVerdict.Rejected(tr("超时值只能是数字或 disabled。", "Timeout must be a number or \"disabled\"."))
 }
 
 /**
@@ -153,20 +169,29 @@ internal fun piTimeoutVerdict(value: JsonElement): PiValueVerdict = when (value)
  */
 internal fun piTokenCountVerdict(value: JsonElement, fieldName: String): PiValueVerdict {
     if (value is JsonNull) {
-        return PiValueVerdict.Rejected("pi 对 $fieldName 的 null 会抛错（typeof null 不是 number）。请删除这个键。")
+        return PiValueVerdict.Rejected(
+            tr(
+                "pi 对 $fieldName 的 null 会抛错（typeof null 不是 number）。请删除这个键。",
+                "pi throws on null for $fieldName (typeof null is not number). Remove this key instead.",
+            ),
+        )
     }
     val primitive = value as? JsonPrimitive
-        ?: return PiValueVerdict.Rejected("$fieldName 必须是整数。")
+        ?: return PiValueVerdict.Rejected(tr("$fieldName 必须是整数。", "$fieldName must be an integer."))
     // pi 的第一道检查就是 `typeof ordinary !== "number"`，所以 `"16384"`（字符串）和
     // `true`（布尔）都在这里被拒——内容能转成数字不算数，JSON 类型不算数才是判据。
     if (primitive.isString) {
-        return PiValueVerdict.Rejected("$fieldName 必须是 JSON 数字，字符串不算（pi 检查的是 typeof）。")
+        return PiValueVerdict.Rejected(
+            tr("$fieldName 必须是 JSON 数字，字符串不算（pi 检查的是 typeof）。", "$fieldName must be a JSON number, not a string."),
+        )
     }
     val text = primitive.content
     val number = text.toDoubleOrNull()
-        ?: return PiValueVerdict.Rejected("$fieldName 必须是整数，「$text」不是。")
+        ?: return PiValueVerdict.Rejected(tr("$fieldName 必须是整数，「$text」不是。", "$fieldName must be an integer; \"$text\" is not."))
     if (!number.isFinite() || number < 0 || number != Math.floor(number) || number > MAX_SAFE_INTEGER) {
-        return PiValueVerdict.Rejected("$fieldName 必须是非负整数（pi 的校验就是这一条）。")
+        return PiValueVerdict.Rejected(
+            tr("$fieldName 必须是非负整数（pi 的校验就是这一条）。", "$fieldName must be a non-negative safe integer."),
+        )
     }
     return PiValueVerdict.Ok
 }
@@ -175,14 +200,20 @@ internal fun piTokenCountVerdict(value: JsonElement, fieldName: String): PiValue
 internal fun piCompactionOverrideEntryVerdict(name: String, value: JsonElement): PiValueVerdict {
     if (value !is JsonObject) {
         return PiValueVerdict.Rejected(
-            "「$name」的值必须是对象（例如 {\"reserveTokens\": 12000}）；" +
-                "pi 对非对象条目会直接抛错。",
+            tr(
+                "「$name」的值必须是对象（例如 {\"reserveTokens\": 12000}）；" +
+                    "pi 对非对象条目会直接抛错。",
+                "Value for \"$name\" must be a JSON object (e.g. {\"reserveTokens\": 12000}); pi throws on non-object entries.",
+            ),
         )
     }
     for ((field, entryValue) in value) {
         if (field !in PI_COMPACTION_OVERRIDE_FIELDS) {
             return PiValueVerdict.Suspicious(
-                "「$name」里的 $field pi 不读（它只读 reserveTokens / keepRecentTokens），会一直留在文件里。",
+                tr(
+                    "「$name」里的 $field pi 不读（它只读 reserveTokens / keepRecentTokens），会一直留在文件里。",
+                    "pi ignores \"$field\" in \"$name\" (only reserveTokens and keepRecentTokens are read).",
+                ),
             )
         }
         when (val verdict = piTokenCountVerdict(entryValue, "$name.$field")) {
@@ -197,14 +228,19 @@ internal fun piCompactionOverrideEntryVerdict(name: String, value: JsonElement):
 internal fun piCompactionOverridesVerdict(value: JsonElement): PiValueVerdict {
     if (value is JsonNull) return PiValueVerdict.Ok // 键存在但为 null：pi 只会读到 undefined 层级，不抛。
     val object_ = value as? JsonObject
-        ?: return PiValueVerdict.Suspicious("modelOverrides 应当是 { \"厂商/模型\": {…} } 形式。")
+        ?: return PiValueVerdict.Suspicious(
+            tr("modelOverrides 应当是 { \"厂商/模型\": {…} } 形式。", "modelOverrides should be an object like { \"provider/modelId\": {…} }."),
+        )
     for ((name, entry) in object_) {
         // pi 按精确的 `${provider}/${modelId}` 查表，键里没有 `/` 的条目永远不会被匹配到。
         val keyed = piCompactionOverrideEntryVerdict(name, entry)
         if (keyed !is PiValueVerdict.Ok) return keyed
         if (!name.contains('/')) {
             return PiValueVerdict.Suspicious(
-                "「$name」里没有斜杠：pi 用 \"厂商/模型 ID\" 精确匹配，这一条永远不会生效。",
+                tr(
+                    "「$name」里没有斜杠：pi 用 \"厂商/模型 ID\" 精确匹配，这一条永远不会生效。",
+                    "\"$name\" has no slash: pi matches exact \"provider/modelId\" keys, so this entry will never apply.",
+                ),
             )
         }
     }
@@ -215,18 +251,26 @@ internal fun piCompactionOverridesVerdict(value: JsonElement): PiValueVerdict {
 internal fun piThinkingBudgetsVerdict(value: JsonElement): PiValueVerdict {
     if (value is JsonNull) return PiValueVerdict.Ok
     val object_ = value as? JsonObject
-        ?: return PiValueVerdict.Suspicious("思考预算应当是 { \"等级\": 数字 } 形式。")
+        ?: return PiValueVerdict.Suspicious(
+            tr("思考预算应当是 { \"等级\": 数字 } 形式。", "thinkingBudgets should be an object like { \"level\": number }."),
+        )
     for ((name, budget) in object_) {
         if (name !in PI_THINKING_BUDGET_FIELDS) {
             return PiValueVerdict.Suspicious(
-                "「$name」不是 pi 的等级（只有 minimal / low / medium / high），会被忽略但留在文件里。",
+                tr(
+                    "「$name」不是 pi 的等级（只有 minimal / low / medium / high），会被忽略但留在文件里。",
+                    "\"$name\" is not a valid thinking budget key (use minimal, low, medium, or high).",
+                ),
             )
         }
         val primitive = budget as? JsonPrimitive
         val number = (primitive?.takeIf { !it.isString }?.content)?.toDoubleOrNull()
         if (number == null || !number.isFinite() || number < 0 || number != Math.floor(number)) {
             return PiValueVerdict.Suspicious(
-                "「$name」的预算必须是整数 token 数；pi 不会拦它，但厂商会收到非法值。",
+                tr(
+                    "「$name」的预算必须是整数 token 数；pi 不会拦它，但厂商会收到非法值。",
+                    "Budget for \"$name\" must be a non-negative integer token count.",
+                ),
             )
         }
     }
@@ -237,16 +281,26 @@ internal fun piThinkingBudgetsVerdict(value: JsonElement): PiValueVerdict {
 internal fun piModelThinkingLevelsVerdict(value: JsonElement): PiValueVerdict {
     if (value is JsonNull) return PiValueVerdict.Ok
     val object_ = value as? JsonObject
-        ?: return PiValueVerdict.Suspicious("逐模型思考等级应当是 { \"厂商/模型\": 等级 } 形式。")
+        ?: return PiValueVerdict.Suspicious(
+            tr("逐模型思考等级应当是 { \"厂商/模型\": 等级 } 形式。", "modelThinkingLevels should be an object like { \"provider/modelId\": \"level\" }."),
+        )
     for ((name, level) in object_) {
         val wire = (level as? JsonPrimitive)?.content
         if (wire == null || wire !in PI_MODEL_THINKING_LEVELS) {
             return PiValueVerdict.Suspicious(
-                "「$name」的等级要是 ${PI_MODEL_THINKING_LEVELS.joinToString(" / ")} 之一。",
+                tr(
+                    "「$name」的等级要是 ${PI_MODEL_THINKING_LEVELS.joinToString(" / ")} 之一。",
+                    "Level for \"$name\" must be one of ${PI_MODEL_THINKING_LEVELS.joinToString(" / ")}.",
+                ),
             )
         }
         if (!name.contains('/')) {
-            return PiValueVerdict.Suspicious("「$name」里没有斜杠：pi 用 \"厂商/模型 ID\" 精确匹配。")
+            return PiValueVerdict.Suspicious(
+                tr(
+                    "「$name」里没有斜杠：pi 用 \"厂商/模型 ID\" 精确匹配。",
+                    "\"$name\" has no slash: pi matches exact \"provider/modelId\" keys.",
+                ),
+            )
         }
     }
     return PiValueVerdict.Ok
@@ -282,7 +336,10 @@ internal fun piOutputPadVerdict(value: JsonElement): PiValueVerdict {
         return PiValueVerdict.Ok
     }
     return PiValueVerdict.Suspicious(
-        "pi 只认数字 0 和 1；其它值（包括字符串 \"0\"、false、null）一律会被当成 1。",
+        tr(
+            "pi 只认数字 0 和 1；其它值（包括字符串 \"0\"、false、null）一律会被当成 1。",
+            "pi only recognizes numeric 0 or 1; all other values (including \"0\", false, null) are treated as 1.",
+        ),
     )
 }
 

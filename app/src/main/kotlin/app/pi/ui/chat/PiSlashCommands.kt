@@ -1,5 +1,6 @@
 package app.pi.ui.chat
 
+import app.pi.i18n.tr
 import app.pi.rpc.PiResponses
 import app.pi.rpc.PiSourceInfo
 
@@ -54,6 +55,9 @@ enum class ChatAction {
     /** 菜单用：「会话与队列」面板。 */
     ToolsSheet,
 
+    /** 菜单用：查看当前生效的系统提示词（由对话顶栏 ⋯ 命令中心直达）。 */
+    ViewSystemPrompt,
+
     /** 扩展通过 `pi.registerShortcut(shortcut, { description, handler })` 注册的快捷键动作。 */
     TriggerShortcut,
 
@@ -62,21 +66,30 @@ enum class ChatAction {
 }
 
 /** Palette grouping. Mirrors the `source` field of `RpcSlashCommand`. */
-enum class PiCommandSource(val label: String) {
+enum class PiCommandSource {
     /** `BUILTIN_SLASH_COMMANDS` in pi (`core/slash-commands.ts:19-43`). */
-    Builtin("内置"),
+    Builtin,
 
     /** `source: "extension"` — `registerCommand`. */
-    Extension("扩展"),
+    Extension,
 
     /** `source: "prompt"` — a `.md` prompt template. */
-    Prompt("模板"),
+    Prompt,
 
     /** `source: "skill"` — a `SKILL.md`, invoked as `/skill:<name>`. */
-    Skill("技能"),
+    Skill,
 
     /** `pi.registerShortcut(...)` — extension keyboard shortcuts surfaced as 1-tap touch actions. */
-    Shortcut("快捷"),
+    Shortcut;
+
+    val label: String
+        get() = when (this) {
+            Builtin -> tr("内置", "Built-in")
+            Extension -> tr("扩展", "Extensions")
+            Prompt -> tr("模板", "Prompts")
+            Skill -> tr("技能", "Skills")
+            Shortcut -> tr("快捷", "Shortcuts")
+        }
 }
 
 /**
@@ -133,74 +146,124 @@ data class PiSlashCommand(
 class ClientBuiltin(
     val action: ChatAction,
     val zh: String,
+    val en: String,
     val argumentHint: String? = null,
-    val note: String? = null,
-)
+    val noteZh: String? = null,
+    val noteEn: String? = null,
+) {
+    val description: String get() = tr(zh, en)
+    val note: String? get() = if (noteZh == null && noteEn == null) null else tr(noteZh.orEmpty(), noteEn.orEmpty())
+}
 
 /**
  * pi 的内建命令 → 本客户端的实现。**键就是 pi 的命令名**，表里的顺序也是 pi 的
  * `BUILTIN_SLASH_COMMANDS` 顺序（宿主没送来内建表时，面板按这个顺序兜底）。
- *
- * 这张表只回答「怎么做」；有哪些命令、说明是什么，以 pi（宿主送来的内建表）为准。
- * pi 以后新增的命令不在这里，会作为「不支持」行出现在面板里（说明用 pi 自己的英文），
- * 不会像手抄表那样悄悄缺一个。
+ * 英文描述严格对齐 Pi 1.6.0 `core/slash-commands.js`。
  */
 val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
-    "settings" to ClientBuiltin(ChatAction.OpenSettings, "打开设置"),
-    "model" to ClientBuiltin(ChatAction.PickModel, "选择模型"),
-    "tree" to ClientBuiltin(ChatAction.OpenTree, "浏览会话树（切换分支）"),
-    "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级"),
+    "settings" to ClientBuiltin(ChatAction.OpenSettings, "打开设置", "Open settings menu"),
+    "model" to ClientBuiltin(ChatAction.PickModel, "选择模型", "Select model (opens selector UI)"),
+    "tree" to ClientBuiltin(ChatAction.OpenTree, "浏览会话树（切换分支）", "Navigate session tree (switch branches)"),
+    "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级", "Set thinking level"),
     "scoped-models" to ClientBuiltin(
-        ChatAction.OpenSettings, "选择参与循环切换的模型",
-        note = "「循环模型」在 设置 → 模型与供应商 → 推理、作用域与缓存。",
+        ChatAction.OpenSettings,
+        "选择参与循环切换的模型",
+        "Enable/disable models for model cycling",
+        noteZh = "「循环模型」在 设置 → 模型与供应商 → 推理、作用域与缓存。",
+        noteEn = "Scoped models can be configured in Settings → Models & Providers → Reasoning, Scope & Cache.",
     ),
     "export" to ClientBuiltin(
         ChatAction.ExportSession,
         "导出会话：不带参数＝HTML 与可导入的会话文件各一份；给名字＝按后缀只写一份",
+        "Export session (HTML + JSONL by default, or specify .html/.jsonl filename)",
     ),
-    "import" to ClientBuiltin(ChatAction.ImportSession, "从 JSONL 文件导入并恢复会话"),
-    "bug" to ClientBuiltin(ChatAction.BugReport, "生成问题报告并复制（可附一句说明）"),
-    "copy" to ClientBuiltin(ChatAction.CopyLastAssistant, "复制最后一条回复到剪贴板"),
-    "name" to ClientBuiltin(ChatAction.RenameSession, "设置会话显示名称"),
-    "session" to ClientBuiltin(ChatAction.SessionStats, "查看会话信息与用量"),
-    "fork" to ClientBuiltin(ChatAction.PickFork, "从某条历史消息分叉出新会话"),
-    "clone" to ClientBuiltin(ChatAction.CloneSession, "在当前节点复制整个会话"),
+    "import" to ClientBuiltin(
+        ChatAction.ImportSession,
+        "从 JSONL 文件导入并恢复会话",
+        "Import a JSONL session, preserving its ID and working directory",
+    ),
+    "bug" to ClientBuiltin(
+        ChatAction.BugReport,
+        "生成问题报告并复制（可附一句说明）",
+        "Report a bug to the Pi developers",
+    ),
+    "copy" to ClientBuiltin(
+        ChatAction.CopyLastAssistant,
+        "复制最后一条回复到剪贴板",
+        "Copy last agent message to clipboard",
+    ),
+    "name" to ClientBuiltin(ChatAction.RenameSession, "设置会话显示名称", "Set session display name"),
+    "session" to ClientBuiltin(ChatAction.SessionStats, "查看会话信息与用量", "Show session info and stats"),
+    "fork" to ClientBuiltin(
+        ChatAction.PickFork,
+        "从某条历史消息分叉出新会话",
+        "Create a new fork from a previous user message",
+    ),
+    "clone" to ClientBuiltin(
+        ChatAction.CloneSession,
+        "在当前节点复制整个会话",
+        "Duplicate the current session at the current position",
+    ),
     "trust" to ClientBuiltin(
-        ChatAction.OpenSettings, "保存项目信任决定",
-        note = "项目信任在 设置 → 安全与信任，或工作区里该项目的资源页。",
+        ChatAction.OpenSettings,
+        "保存项目信任决定",
+        "Save project trust decision for future sessions",
+        noteZh = "项目信任在 设置 → 安全与隐私，或工作区里该项目的资源页。",
+        noteEn = "Project trust is in Settings → Security & Privacy, or the project's Resources tab.",
     ),
     "login" to ClientBuiltin(
-        ChatAction.OpenSettings, "配置模型服务商登录",
-        note = "登录在 设置 → 模型与供应商（点开供应商）。",
+        ChatAction.OpenSettings,
+        "配置模型服务商登录",
+        "Configure provider authentication",
+        noteZh = "登录在 设置 → 模型与供应商（点开供应商）。",
+        noteEn = "Sign in under Settings → Models & Providers.",
     ),
     "logout" to ClientBuiltin(
-        ChatAction.OpenSettings, "移除模型服务商登录",
-        note = "退出登录在 设置 → 模型与供应商（点开供应商）。",
+        ChatAction.OpenSettings,
+        "移除模型服务商登录",
+        "Remove provider authentication",
+        noteZh = "退出登录在 设置 → 模型与供应商（点开供应商）。",
+        noteEn = "Sign out under Settings → Models & Providers.",
     ),
-    "new" to ClientBuiltin(ChatAction.NewSession, "开始新会话"),
-    "compact" to ClientBuiltin(ChatAction.Compact, "手动压缩会话上下文"),
-    "resume" to ClientBuiltin(ChatAction.OpenSessions, "恢复另一个会话"),
-    "reload" to ClientBuiltin(ChatAction.ReloadResources, "重新加载扩展、技能、提示词、主题和上下文文件"),
+    "new" to ClientBuiltin(ChatAction.NewSession, "开始新会话", "Start a new session"),
+    "compact" to ClientBuiltin(ChatAction.Compact, "手动压缩会话上下文", "Manually compact the session context"),
+    "resume" to ClientBuiltin(ChatAction.OpenSessions, "恢复另一个会话", "Resume another session"),
+    "reload" to ClientBuiltin(
+        ChatAction.ReloadResources,
+        "重新加载扩展、技能、提示词、主题和上下文文件",
+        "Reload keybindings, extensions, skills, prompts, themes, and context files",
+    ),
 )
 
 /**
- * pi 有、这个客户端做不了的内建命令，各自的实话。不在这里也不在 [CLIENT_BUILTINS] 里的名字
- * （pi 新加的）用 [GENERIC_UNSUPPORTED]。
+ * pi 有、这个客户端做不了的内建命令，各自的实话。
  */
-val UNSUPPORTED_BUILTIN_REASONS: Map<String, String> = mapOf(
-    "share" to "分享需要把会话上传到 Radius 或用 gh 建 gist，本应用没有这条路；要把会话交出去请用 /export。",
-    "changelog" to "更新日志是终端里的文本面板；本应用的版本变化看应用自己的更新说明。",
-    "hotkeys" to "快捷键列表对触屏没有意义。",
-    "quit" to "引擎由应用的前台服务管理，没有要退出的终端进程。",
+val UNSUPPORTED_BUILTIN_REASONS: Map<String, Pair<String, String>> = mapOf(
+    "share" to (
+        "分享需要把会话上传到 Radius 或用 gh 建 gist，本应用没有这条路；要把会话交出去请用 /export。" to
+            "Sharing requires Radius or gh gist, which is not available on Android. Use /export instead."
+        ),
+    "changelog" to (
+        "更新日志是终端里的文本面板；本应用的版本变化看应用自己的更新说明。" to
+            "Changelog is a terminal-only view; check the app's release notes for changes."
+        ),
+    "hotkeys" to (
+        "快捷键列表对触屏没有意义。" to
+            "Desktop keyboard shortcuts do not apply on touchscreens."
+        ),
+    "quit" to (
+        "引擎由应用的前台服务管理，没有要退出的终端进程。" to
+            "The engine is managed by the app's foreground service; there is no terminal process to quit."
+        ),
 )
 
-const val GENERIC_UNSUPPORTED = "pi 有这个命令，这个版本的应用还没有对应的做法。"
+fun genericUnsupportedReason(): String = tr(
+    "pi 有这个命令，这个版本的应用还没有对应的做法。",
+    "Pi supports this command, but this version of the app does not implement it yet.",
+)
 
 /**
  * 面板里的内建命令行：**pi 的表在前、我们的映射在后**。
- *
- * [wire] 是宿主送来的 pi 内建表（空 = 宿主没读到，退回 [CLIENT_BUILTINS] 的顺序加上
- * [UNSUPPORTED_BUILTIN_REASONS] 的几项）。每个 pi 命令一行：映射里有 → 可执行行；没有 → 不支持行。
  */
 fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
     val source = wire.ifEmpty {
@@ -211,12 +274,10 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
         if (client != null) {
             PiSlashCommand(
                 name = builtin.name,
-                description = client.zh,
+                description = client.description,
                 source = PiCommandSource.Builtin,
                 sourceTag = null,
                 action = client.action,
-                // 只用我们自己的提示：pi 的提示（如 /model 的 `<provider/model>`）描述的是 pi 终端里
-                // 带参数的用法；这里点一下就该直接执行（有提示的行点击只会把名字填进输入框等参数）。
                 argumentHint = client.argumentHint,
             )
         } else {
@@ -226,7 +287,6 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
                 source = PiCommandSource.Builtin,
                 sourceTag = null,
                 action = ChatAction.Unsupported,
-                // 已知做不了的不占列表行；pi 新增而我们还没映射的照常列出（不悄悄缺一个）。
                 listed = builtin.name !in UNSUPPORTED_BUILTIN_REASONS,
             )
         }
@@ -234,8 +294,10 @@ fun builtinRows(wire: List<PiResponses.BuiltinCommand>): List<PiSlashCommand> {
 }
 
 /** 点了「不支持」行（或手敲了它）时的那句实话。 */
-fun unsupportedReason(name: String): String =
-    UNSUPPORTED_BUILTIN_REASONS[name.trim().removePrefix("/").lowercase()] ?: GENERIC_UNSUPPORTED
+fun unsupportedReason(name: String): String {
+    val pair = UNSUPPORTED_BUILTIN_REASONS[name.trim().removePrefix("/").lowercase()]
+    return if (pair != null) tr(pair.first, pair.second) else genericUnsupportedReason()
+}
 
 /**
  * 面板的数据：宿主 `catalog.commands`（扩展 / 模板 / 技能，`commands/catalog.mjs`）加 pi 自己的内建表（`catalog.builtins`）。
@@ -353,7 +415,7 @@ fun piCommandPalette(
         if (key.isEmpty()) return@mapNotNull null
         PiSlashCommand(
             name = key,
-            description = sc.description?.takeIf { it.isNotBlank() } ?: "触发扩展快捷键",
+            description = sc.description?.takeIf { it.isNotBlank() } ?: tr("触发扩展快捷键", "Trigger extension shortcut"),
             source = PiCommandSource.Shortcut,
             sourceTag = null,
             action = ChatAction.TriggerShortcut,
@@ -432,9 +494,9 @@ fun sourceTagOf(info: PiSourceInfo?): String? {
  */
 fun sourceTagLabelOf(tag: String): String {
     val scope = when (tag.substringBefore(':')) {
-        "u" -> "用户"
-        "p" -> "项目"
-        "t" -> "临时"
+        "u" -> tr("用户", "User")
+        "p" -> tr("项目", "Project")
+        "t" -> tr("临时", "Temp")
         else -> return tag
     }
     val rest = tag.substringAfter(':', "")

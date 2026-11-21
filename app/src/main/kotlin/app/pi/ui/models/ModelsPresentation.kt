@@ -1,5 +1,6 @@
 package app.pi.ui.models
 
+import app.pi.i18n.tr
 import java.math.BigDecimal
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -22,15 +23,26 @@ import kotlinx.serialization.json.contentOrNull
 // ------------------------------------------------------------------ 供应商
 
 /** 一个供应商在页面上的连接状态。只由 SDK 的认证读数决定。 */
-enum class Connection(val label: String) {
-    Subscription("订阅账号"),
-    WebLogin("网页登录"),
-    Saved("已保存"),
-    Environment("环境变量"),
-    Temporary("临时 Key"),
-    Configured("已连接"),
-    None("未连接"),
+enum class Connection {
+    Subscription,
+    WebLogin,
+    Saved,
+    Environment,
+    Temporary,
+    Configured,
+    None,
     ;
+
+    val label: String
+        get() = when (this) {
+            Subscription -> tr("订阅账号", "Subscription")
+            WebLogin -> tr("网页登录", "Web Login")
+            Saved -> tr("已保存", "Saved")
+            Environment -> tr("环境变量", "Environment")
+            Temporary -> tr("临时 Key", "Temporary Key")
+            Configured -> tr("已连接", "Connected")
+            None -> tr("未连接", "Not Connected")
+        }
 
     val connected: Boolean get() = this != None
 }
@@ -161,9 +173,9 @@ internal fun trimmed(d: Double): String =
 
 /** 模型行上的能力小标签，顺序固定：推理、看图、上下文。 */
 fun capabilityTags(m: ModelFacts): List<String> = listOfNotNull(
-    if (m.reasoning) "推理" else null,
-    if (m.images) "看图" else null,
-    contextLabel(m.contextWindow)?.let { "$it 上下文" },
+    if (m.reasoning) tr("推理", "Reasoning") else null,
+    if (m.images) tr("看图", "Vision") else null,
+    contextLabel(m.contextWindow)?.let { tr("$it 上下文", "$it ctx") },
 )
 
 fun searchModels(models: List<ModelFacts>, providerNames: Map<String, String>, query: String): List<ModelFacts> =
@@ -191,9 +203,16 @@ fun groupModels(
 }
 
 /** 选中一个模型之后的两条路。SDK 的 `setModel` 默认只改本会话，`persist` 才写进全局默认。 */
-enum class UseScope(val persist: Boolean, val label: String) {
-    Session(false, "本次会话使用"),
-    Default(true, "设为默认并使用"),
+enum class UseScope(val persist: Boolean) {
+    Session(false),
+    Default(true),
+    ;
+
+    val label: String
+        get() = when (this) {
+            Session -> tr("本次会话使用", "Use for this session")
+            Default -> tr("设为默认并使用", "Set as default & use")
+        }
 }
 
 // ------------------------------------------------------------------ 刷新结果
@@ -213,19 +232,22 @@ fun refreshSummary(result: JsonElement?): RefreshSummary {
 
 /** 一句话说清刷新结果：全成功 / 被中断 / 哪几家失败（点名，最多三家，其余折成「等 N 家」）。 */
 fun RefreshSummary.sentence(providerNames: Map<String, String>): String {
-    if (aborted) return "刷新被中断，目录可能只更新了一部分。"
-    if (errors.isEmpty()) return "已刷新。"
+    if (aborted) return tr("刷新被中断，目录可能只更新了一部分。", "Refresh interrupted; the catalog may only be partially updated.")
+    if (errors.isEmpty()) return tr("已刷新。", "Refreshed.")
     val names = errors.keys.sorted().map { providerNames[it]?.takeIf { n -> n.isNotBlank() } ?: it }
-    val shown = names.take(3).joinToString("、")
-    val rest = if (names.size > 3) " 等 ${names.size} 家" else ""
-    return "刷新完成，但 $shown$rest 没有拉成功（已有的模型仍可用）。"
+    val shown = names.take(3).joinToString(tr("、", ", "))
+    val rest = if (names.size > 3) tr(" 等 ${names.size} 家", " and ${names.size - 3} more") else ""
+    return tr(
+        "刷新完成，但 $shown$rest 没有拉成功（已有的模型仍可用）。",
+        "Refresh complete, but failed for $shown$rest (existing models remain available).",
+    )
 }
 
 /** 每家失败的原因，一行一家，给「展开看详情」用。 */
 fun RefreshSummary.detail(providerNames: Map<String, String>): List<String> =
     errors.entries.sortedBy { it.key }.map { (id, msg) ->
         val name = providerNames[id]?.takeIf { it.isNotBlank() } ?: id
-        if (msg.isEmpty()) name else "$name：$msg"
+        if (msg.isEmpty()) name else tr("$name：$msg", "$name: $msg")
     }
 
 // ------------------------------------------------------------------ 自定义供应商
@@ -252,9 +274,10 @@ fun checkNewProviderId(id: String, customIds: Set<String>, knownIds: Set<String>
 /** 常用的协议（`api`），其余 KnownApi 走自由输入。 */
 data class ApiChoice(val api: String, val label: String)
 
-val COMMON_APIS: List<ApiChoice> = listOf(
-    ApiChoice("openai-completions", "OpenAI 兼容"),
-    ApiChoice("openai-responses", "OpenAI Responses"),
-    ApiChoice("anthropic-messages", "Anthropic"),
-    ApiChoice("google-generative-ai", "Gemini"),
-)
+val COMMON_APIS: List<ApiChoice>
+    get() = listOf(
+        ApiChoice("openai-completions", tr("OpenAI 兼容", "OpenAI Compatible")),
+        ApiChoice("openai-responses", "OpenAI Responses"),
+        ApiChoice("anthropic-messages", "Anthropic"),
+        ApiChoice("google-generative-ai", "Gemini"),
+    )

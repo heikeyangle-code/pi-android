@@ -1,5 +1,6 @@
 package app.pi.packages
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -86,36 +87,54 @@ object PiProjectTrust {
 
     /** 一句话结论（卡片标题）。 */
     fun headline(s: State): String = when (s.source) {
-        Source.Session -> if (s.trusted) "本次会话信任" else "本次会话不信任"
+        Source.Session -> if (s.trusted) tr("本次会话信任", "Trusted for This Session") else tr("本次会话不信任", "Untrusted for This Session")
         Source.Store -> when {
-            s.trusted && s.entry?.inherited == true -> "已信任（继承自上层目录）"
-            s.trusted -> "已信任"
-            s.entry?.inherited == true -> "不信任（继承自上层目录）"
-            else -> "不信任"
+            s.trusted && s.entry?.inherited == true -> tr("已信任（继承自上层目录）", "Trusted (Inherited from Parent)")
+            s.trusted -> tr("已信任", "Trusted")
+            s.entry?.inherited == true -> tr("不信任（继承自上层目录）", "Untrusted (Inherited from Parent)")
+            else -> tr("不信任", "Untrusted")
         }
-        Source.NothingToTrust -> "没有需要信任的内容"
-        Source.Default -> if (s.trusted) "已信任（默认策略：总是信任）" else "不信任（默认策略：从不信任）"
-        Source.Ask -> "还没表态"
-        Source.Unknown -> if (s.trusted) "已信任" else "未信任"
+        Source.NothingToTrust -> tr("没有需要信任的内容", "No Trust Required")
+        Source.Default -> if (s.trusted) tr("已信任（默认策略：总是信任）", "Trusted (Default: Always Trust)") else tr("不信任（默认策略：从不信任）", "Untrusted (Default: Never Trust)")
+        Source.Ask -> tr("还没表态", "Decision Needed")
+        Source.Unknown -> if (s.trusted) tr("已信任", "Trusted") else tr("未信任", "Untrusted")
     }
 
     /** 这个结论的**后果**：信任 / 不信任各意味着 pi 做什么。官方弹窗的原意。 */
     fun explanation(s: State): String = when (s.source) {
-        Source.Ask -> "项目里有 .pi 的设置或资源。信任后 pi 才会加载它们、补装项目声明的包、执行项目里的扩展代码；现在先按不信任处理，项目里的这些都没有加载。"
-        Source.NothingToTrust -> "项目里没有 .pi 设置、扩展、技能、提示、主题，也没有 .agents/skills，信任与否目前没有影响。想预先表态也可以。"
-        Source.Session -> "只对这一次会话有效，没有写进信任库；重启引擎后回到信任库或默认策略的结论。"
-        Source.Default -> "没有为这个项目单独表态，按设置里的「默认项目信任」走。要改，去「安全与隐私」。"
+        Source.Ask -> tr(
+            "项目里有 .pi 的设置或资源。信任后 pi 才会加载它们、补装项目声明的包、执行项目里的扩展代码；现在先按不信任处理，项目里的这些都没有加载。",
+            "This project contains .pi settings or resources. Trusting allows pi to load them, install declared project packages, and execute project extension code. Currently treated as untrusted.",
+        )
+        Source.NothingToTrust -> tr(
+            "项目里没有 .pi 设置、扩展、技能、提示、主题，也没有 .agents/skills，信任与否目前没有影响。想预先表态也可以。",
+            "No .pi settings, extensions, skills, prompts, themes, or .agents/skills were found in this project, so trust currently has no effect. You may still pre-configure trust.",
+        )
+        Source.Session -> tr(
+            "只对这一次会话有效，没有写进信任库；重启引擎后回到信任库或默认策略的结论。",
+            "Applies to this session only and is not saved to the trust store. Reverts after engine restart.",
+        )
+        Source.Default -> tr(
+            "没有为这个项目单独表态，按设置里的「默认项目信任」走。要改，去「安全与隐私」。",
+            "No project-specific decision saved; following the default project trust policy under Security & Privacy.",
+        )
         else -> if (s.trusted) {
-            "pi 会加载项目里的 .pi 设置与资源、补装项目声明的包，并执行项目里的扩展代码。"
+            tr(
+                "pi 会加载项目里的 .pi 设置与资源、补装项目声明的包，并执行项目里的扩展代码。",
+                "Pi will load project .pi settings and resources, install declared packages, and execute project extensions.",
+            )
         } else {
-            "项目里的 .pi 设置、扩展、技能、提示、主题、MCP 配置都不会加载，也不会补装项目的包。"
+            tr(
+                "项目里的 .pi 设置、扩展、技能、提示、主题、MCP 配置都不会加载，也不会补装项目的包。",
+                "Project .pi settings, extensions, skills, prompts, themes, MCP configs, and packages will not be loaded.",
+            )
         }
     }
 
     /** 记录在哪儿的一行说明（卡片副标题）；没有记录就是 null。 */
     fun recordNote(s: State): String? {
         val e = s.entry ?: return null
-        return if (e.inherited) "记录在上层目录 ${e.path}" else "记录在本项目"
+        return if (e.inherited) tr("记录在上层目录 ${e.path}", "Recorded on parent directory ${e.path}") else tr("记录在本项目", "Recorded on this project")
     }
 
     /**
@@ -123,11 +142,11 @@ object PiProjectTrust {
      * 顺序与官方一致；根目录没有「信任父目录」。
      */
     fun promptOptions(s: State): List<Option> = buildList {
-        add(Option(Remember.Folder, true, "信任", "记在本项目"))
-        s.parent?.let { add(Option(Remember.Parent, true, "信任上层目录", "记在 $it，它下面的项目都信任")) }
-        add(Option(Remember.Session, true, "仅本次信任", "不写信任库"))
-        add(Option(Remember.Folder, false, "不信任", "记在本项目"))
-        add(Option(Remember.Session, false, "仅本次不信任", "不写信任库"))
+        add(Option(Remember.Folder, true, tr("信任", "Trust"), tr("记在本项目", "Remember for this project")))
+        s.parent?.let { add(Option(Remember.Parent, true, tr("信任上层目录", "Trust Parent Directory"), tr("记在 $it，它下面的项目都信任", "Remember on $it; trusts all projects underneath"))) }
+        add(Option(Remember.Session, true, tr("仅本次信任", "Trust for Session"), tr("不写信任库", "Do not save to trust store")))
+        add(Option(Remember.Folder, false, tr("不信任", "Don't Trust"), tr("记在本项目", "Remember for this project")))
+        add(Option(Remember.Session, false, tr("仅本次不信任", "Don't Trust for Session"), tr("不写信任库", "Do not save to trust store")))
     }
 
     /**
@@ -151,8 +170,13 @@ object PiProjectTrust {
         val entry = s.entry
         val clear = when {
             entry == null -> null
-            entry.inherited -> Option(Remember.ResetInherited, false, "清除上层目录的记录", "清除 ${entry.path} 的记录，它下面所有没单独表态的项目都会受影响")
-            else -> Option(Remember.Reset, false, "清除本项目的记录", "回到没表态")
+            entry.inherited -> Option(
+                Remember.ResetInherited,
+                false,
+                tr("清除上层目录的记录", "Clear Parent Directory Decision"),
+                tr("清除 ${entry.path} 的记录，它下面所有没单独表态的项目都会受影响", "Clears ${entry.path}; affects all projects underneath without their own decision"),
+            )
+            else -> Option(Remember.Reset, false, tr("清除本项目的记录", "Clear Project Decision"), tr("回到没表态", "Reset to undecided"))
         }
         return base + listOfNotNull(clear)
     }

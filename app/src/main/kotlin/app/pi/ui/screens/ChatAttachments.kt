@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.components.PiSheet
@@ -358,7 +359,7 @@ internal fun AttachmentThumb(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .size(ATTACHMENT_THUMB_SIZE)
-                .clickable(onClickLabel = "移除第 ${index + 1} 张图片", onClick = onRemove),
+                .clickable(onClickLabel = tr("移除第 ${index + 1} 张图片", "Remove image ${index + 1}"), onClick = onRemove),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -368,13 +369,13 @@ internal fun AttachmentThumb(
                 if (decoded != null) {
                     Image(
                         bitmap = decoded.asImageBitmap(),
-                        contentDescription = "待发送的第 ${index + 1} 张图片，点击移除",
+                        contentDescription = tr("待发送的第 ${index + 1} 张图片，点击移除", "Pending image ${index + 1}, tap to remove"),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
                     Text(
-                        image.mimeType.substringAfter('/').ifEmpty { "图片" },
+                        image.mimeType.substringAfter('/').ifEmpty { tr("图片", "Image") },
                         style = PiTheme.text.meta,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -758,8 +759,12 @@ private fun encodeForAttachment(bitmap: Bitmap, encoding: AttachmentBudget.Encod
  * user asked for, so the composer's own contents cannot explain it.
  */
 internal fun inlineDowngradeText(relativePath: String, why: String): String =
-    "已放进工作区 $relativePath —— $why，所以没有随消息内联；" +
-        "模型可以用工具读取这个文件。"
+    tr(
+        "已放进工作区 $relativePath —— $why，所以没有随消息内联；" +
+            "模型可以用工具读取这个文件。",
+        "Saved to workspace at $relativePath — $why, so it was not inlined with the message. " +
+            "The model can still read this file using tools.",
+    )
 
 
 /**
@@ -770,10 +775,16 @@ internal fun inlineDowngradeText(relativePath: String, why: String): String =
  * size. Saying "needs X" without the qualifier would be a claim this code cannot check.
  */
 internal fun workspaceOutOfSpaceText(out: WorkspaceCopy.OutOfSpace): String =
-    "磁盘空间不足：这个文件至少需要 ${mibLabel(out.neededBytes)} MB，" +
-        "工作区所在磁盘可用 ${mibLabel(out.availableBytes)} MB" +
-        "（要留 ${mibLabel(out.marginBytes)} MB 余量）。" +
-        "它没有被复制进工作区，也没有加进这条消息；腾出空间后可以再选一次。"
+    tr(
+        "磁盘空间不足：这个文件至少需要 ${mibLabel(out.neededBytes)} MB，" +
+            "工作区所在磁盘可用 ${mibLabel(out.availableBytes)} MB" +
+            "（要留 ${mibLabel(out.marginBytes)} MB 余量）。" +
+            "它没有被复制进工作区，也没有加进这条消息；腾出空间后可以再选一次。",
+        "Not enough disk space: this file requires at least ${mibLabel(out.neededBytes)} MB, " +
+            "with ${mibLabel(out.availableBytes)} MB available on the workspace disk " +
+            "(${mibLabel(out.marginBytes)} MB reserve required). " +
+            "The file was not copied to the workspace or added to this message. Free up space and try again.",
+    )
 
 
 /**
@@ -823,16 +834,16 @@ internal fun AttachmentPickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "添加附件",
+                    text = tr("添加附件", "Add Attachment"),
                     modifier = Modifier.weight(1f),
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 val limitNote = buildString {
-                    if (stagedCount > 0) append("已暂存 $stagedCount 张")
+                    if (stagedCount > 0) append(tr("已暂存 $stagedCount 张", "$stagedCount staged"))
                     if (maxPerMessage != null) {
                         if (isNotEmpty()) append(" · ")
-                        append("单条上限 $maxPerMessage 张")
+                        append(tr("单条上限 $maxPerMessage 张", "Max $maxPerMessage per message"))
                     }
                 }
                 if (limitNote.isNotEmpty()) {
@@ -848,9 +859,9 @@ internal fun AttachmentPickerSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 AttachmentSourceTile(
-                    title = "相册图片",
-                    subtitle = "支持多选与智能压缩",
-                    glyph = "图",
+                    title = tr("相册图片", "Photos"),
+                    subtitle = tr("支持多选与智能压缩", "Multi-select with smart resize"),
+                    glyph = tr("图", "IMG"),
                     tint = palette.accent,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -859,9 +870,9 @@ internal fun AttachmentPickerSheet(
                     },
                 )
                 AttachmentSourceTile(
-                    title = "本地文件",
-                    subtitle = "多选并拷入工作区",
-                    glyph = "文",
+                    title = tr("本地文件", "Local Files"),
+                    subtitle = tr("多选并拷入工作区", "Copy into workspace"),
+                    glyph = tr("文", "DOC"),
                     tint = palette.success,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -875,8 +886,8 @@ internal fun AttachmentPickerSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 AttachmentSourceTile(
-                    title = "工作区文件",
-                    subtitle = "输入 @ 模糊引用",
+                    title = tr("工作区文件", "Workspace Files"),
+                    subtitle = tr("输入 @ 模糊引用", "Reference with @ mention"),
                     glyph = "@",
                     tint = palette.mdLink,
                     modifier = Modifier.weight(1f),
@@ -886,9 +897,9 @@ internal fun AttachmentPickerSheet(
                     },
                 )
                 AttachmentSourceTile(
-                    title = "剪贴板图片",
-                    subtitle = if (hasClipboardImage) "检测到剪贴板图片" else "读取剪贴板中的图片",
-                    glyph = "贴",
+                    title = tr("剪贴板图片", "Clipboard Image"),
+                    subtitle = if (hasClipboardImage) tr("检测到剪贴板图片", "Image detected in clipboard") else tr("读取剪贴板中的图片", "Paste image from clipboard"),
+                    glyph = tr("贴", "PST"),
                     tint = if (hasClipboardImage) palette.warning else palette.muted,
                     modifier = Modifier.weight(1f),
                     onClick = {

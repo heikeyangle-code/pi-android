@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.terminal.TerminalPane
 
@@ -25,7 +26,7 @@ fun TerminalScreen(
             .statusBarsPadding()
             .padding(bottom = contentPadding.calculateBottomPadding()),
     ) {
-        PiTopBar(title = "终端", onBack = onBack)
+        PiTopBar(title = tr("终端", "Terminal"), onBack = onBack)
         TerminalPane(modifier = Modifier.weight(1f))
     }
 }

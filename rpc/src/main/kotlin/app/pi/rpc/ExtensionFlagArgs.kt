@@ -124,8 +124,12 @@ data class ExtensionFlagArgs(
                     // error in RPC mode (`main.ts:506-509`).
                     token == "--" -> return refused(
                         Refusal.EndOfOptions,
-                        "「--」是命令行里「后面都当作输入文件/消息」的分隔符，不是扩展参数；" +
-                            "在 RPC 模式下它后面的内容会被 pi 当成启动消息，所以这里不接受它。",
+                        RpcLocale.tr(
+                            "「--」是命令行里「后面都当作输入文件/消息」的分隔符，不是扩展参数；" +
+                                "在 RPC 模式下它后面的内容会被 pi 当成启动消息，所以这里不接受它。",
+                            "\"--\" separates CLI flags from positional inputs/messages and is not an extension flag; " +
+                                "in RPC mode anything after it would be treated as a startup prompt.",
+                        ),
                     )
 
                     token.startsWith("--") -> {
@@ -156,24 +160,34 @@ data class ExtensionFlagArgs(
                     // exits on an error diagnostic — so pi would refuse this run.
                     token.startsWith("-") -> return refused(
                         Refusal.SingleDashOption,
-                        "「$token」不是 pi 认识的单横线参数。pi 的规则是：扩展参数必须是双横线" +
-                            "（例如 --plan）；单横线的未知参数会让 pi 直接报错退出。",
+                        RpcLocale.tr(
+                            "「$token」不是 pi 认识的单横线参数。pi 的规则是：扩展参数必须是双横线" +
+                                "（例如 --plan）；单横线的未知参数会让 pi 直接报错退出。",
+                            "\"$token\" is not a recognized single-dash flag. Extension flags must use double dashes " +
+                                "(e.g. --plan); unknown single-dash flags cause pi to exit with an error.",
+                        ),
                     )
 
                     // `cli/args.ts:215-216` pushes a file argument, and RPC mode refuses
                     // file arguments (`main.ts:506-509`).
                     token.startsWith("@") -> return refused(
                         Refusal.AtFileArgument,
-                        "「$token」是 pi 的输入文件写法（@ 开头）。RPC 模式不支持输入文件" +
-                            "（pi 会报 “@file arguments are not supported in RPC mode” 并退出）。",
+                        RpcLocale.tr(
+                            "「$token」是 pi 的输入文件写法（@ 开头）。RPC 模式不支持输入文件" +
+                                "（pi 会报 “@file arguments are not supported in RPC mode” 并退出）。",
+                            "\"$token\" uses pi's @file syntax, which is not supported in RPC mode.",
+                        ),
                     )
 
                     // `cli/args.ts:237-238`: a bare word becomes a positional message,
                     // which is not an extension flag either.
                     else -> return refused(
                         Refusal.Positional,
-                        "「$token」不是一个参数。扩展参数要写成 --名字（值可以直接跟在后面，" +
-                            "或写成 --名字=值）。",
+                        RpcLocale.tr(
+                            "「$token」不是一个参数。扩展参数要写成 --名字（值可以直接跟在后面，" +
+                                "或写成 --名字=值）。",
+                            "\"$token\" is not a flag. Extension flags must be written as --name (or --name=value).",
+                        ),
                     )
                 }
                 index++
@@ -252,11 +266,14 @@ data class ExtensionFlagArgs(
         }
 
         private fun refused(reason: Refusal, message: String) =
-            ExtensionFlagArgs(emptyList(), reason, "扩展启动参数没有生效：$message")
+            ExtensionFlagArgs(emptyList(), reason, RpcLocale.tr("扩展启动参数没有生效：$message", "Extension flags ignored: $message"))
 
         private fun refusedEmptyName(token: String) = refused(
             Refusal.EmptyName,
-            "「$token」缺少参数名。扩展参数要写成 --名字（值可以直接跟在后面，或写成 --名字=值）。",
+            RpcLocale.tr(
+                "「$token」缺少参数名。扩展参数要写成 --名字（值可以直接跟在后面，或写成 --名字=值）。",
+                "\"$token\" is missing a flag name. Write extension flags as --name or --name=value.",
+            ),
         )
     }
 }

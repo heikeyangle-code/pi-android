@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.settings.PiEditorField
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiSpacing
@@ -212,8 +213,8 @@ internal fun ProviderRow(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 ConnectionPill(c)
                 val extra = listOfNotNull(
-                    if (facts.modelCount > 0) "${facts.modelCount} 个模型" else null,
-                    if (facts.custom) "自定义" else null,
+                    if (facts.modelCount > 0) tr("${facts.modelCount} 个模型", "${facts.modelCount} models") else null,
+                    if (facts.custom) tr("自定义", "Custom") else null,
                 ).joinToString(" · ")
                 if (extra.isNotEmpty()) {
                     Text(extra, style = PiTheme.text.meta, color = PiTheme.palette.dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -257,7 +258,7 @@ internal fun ModelRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            if (current) TagPill("当前", tone = PiTheme.palette.accent)
+            if (current) TagPill(tr("当前", "Active"), tone = PiTheme.palette.accent)
         }
         val tags = capabilityTags(model) + listOfNotNull(priceLabel(model.inputCost, model.outputCost)?.let { "$it /M" })
         if (tags.isNotEmpty() || showProvider != null) {

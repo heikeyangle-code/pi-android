@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.i18n.tr
 import app.pi.rpc.Notice
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.theme.PiTheme
@@ -86,7 +87,7 @@ fun ExtensionUiHost(
         shownTone = current.tone
         hostState.showSnackbar(
             message = current.message,
-            actionLabel = if (current.tone == Notice.Tone.Error) "知道了" else null,
+            actionLabel = if (current.tone == Notice.Tone.Error) tr("知道了", "Got it") else null,
             duration = if (current.tone == Notice.Tone.Error) {
                 SnackbarDuration.Long
             } else {
@@ -198,7 +199,7 @@ private fun ExtensionSnack(
             .clip(shape)
             .background(container)
             .border(1.dp, accent.copy(alpha = 0.32f), shape)
-            .clickable(onClickLabel = "关闭提示", onClick = onDismiss)
+            .clickable(onClickLabel = tr("关闭提示", "Dismiss notice"), onClick = onDismiss)
             .padding(horizontal = ToastPaddingHorizontal, vertical = ToastPaddingVertical),
         horizontalArrangement = Arrangement.spacedBy(ToastGap),
         verticalAlignment = Alignment.CenterVertically,

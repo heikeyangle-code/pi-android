@@ -1,5 +1,7 @@
 package app.pi.ui.terminal
 
+import app.pi.i18n.tr
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -233,7 +235,7 @@ fun TerminalKeyBar(
                 }
                 if (index == rows.lastIndex) {
                     onPaste?.let { ActionChip(label = "PASTE", palette = palette, onClick = it) }
-                    onRestart?.let { ActionChip(label = "重开", palette = palette, onClick = it) }
+                    onRestart?.let { ActionChip(label = tr("重开", "Restart"), palette = palette, onClick = it) }
                 }
             }
         }

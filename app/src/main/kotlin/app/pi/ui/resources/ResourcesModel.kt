@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.pi.host.ExtensionsAccess
+import app.pi.i18n.tr
 import app.pi.packages.PiLoadedResources
 import app.pi.packages.PiProjectTrust
 import app.pi.packages.PiResourceCatalog
@@ -136,7 +137,7 @@ internal class ResourcesModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                error = e.message ?: "重新加载失败"
+                error = e.message ?: tr("重新加载失败", "Reload failed")
             }
             reloading = false
         }

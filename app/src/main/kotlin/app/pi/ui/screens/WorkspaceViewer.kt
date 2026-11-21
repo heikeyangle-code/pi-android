@@ -69,6 +69,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.i18n.tr
 import app.pi.ui.blocks.PiImageViewerSource
 import app.pi.ui.blocks.PiImageViewerSurface
 import app.pi.ui.components.PiDialog
@@ -245,12 +246,12 @@ internal fun WorkspaceViewer(
                     saveError = null
                     mode = ViewerMode.Edit
                     when {
-                        dirty -> onMessage("已恢复上次没保存的改动")
+                        dirty -> onMessage(tr("已恢复上次没保存的改动", "Restored unsaved changes"))
                         restore is WorkspaceDrafts.Restore.Stale ->
-                            onMessage("文件在上次编辑之后被改过，那份没保存的草稿已丢弃")
+                            onMessage(tr("文件在上次编辑之后被改过，那份没保存的草稿已丢弃", "File changed since your last edit; unsaved draft was discarded"))
                     }
                 },
-                onFailure = { error -> onMessage(error.message ?: "这个文件现在不能编辑") },
+                onFailure = { error -> onMessage(error.message ?: tr("这个文件现在不能编辑", "This file cannot be edited right now")) },
             )
             editLoading = false
         }
@@ -298,13 +299,13 @@ internal fun WorkspaceViewer(
                     WorkspaceDrafts.clear(context, target.file)
                     mode = ViewerMode.View
                     onSaved(target.relativePath)
-                    onMessage("已保存 · ${target.file.name}")
+                    onMessage(tr("已保存 · ${target.file.name}", "Saved · ${target.file.name}"))
                     htmlReload++
                     if (closeAfter) onClose() else reloadTick++
                 },
                 onFailure = { error ->
                     saveError = WorkspaceOpen.Failed(
-                        reason = "写盘失败：" + (error.message ?: error::class.java.simpleName),
+                        reason = tr("写盘失败：", "Write failed: ") + (error.message ?: error::class.java.simpleName),
                         detail = error.stackTraceToString(),
                     )
                 },
@@ -350,9 +351,9 @@ internal fun WorkspaceViewer(
                             verticalArrangement = Arrangement.Center,
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Text("这个 HTML 文件是空的", style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
+                            Text(tr("这个 HTML 文件是空的", "This HTML file is empty"), style = PiTheme.text.prose, color = MaterialTheme.colorScheme.onSurface)
                             Text(
-                                "点右上角「编辑」写点内容，保存后这里会渲染出来。",
+                                tr("点右上角「编辑」写点内容，保存后这里会渲染出来。", "Tap \"Edit\" in the top right to add content; it will render here after saving."),
                                 modifier = Modifier.padding(top = PiSpacing.inline),
                                 style = PiTheme.text.meta,
                                 color = PiTheme.palette.muted,
@@ -368,21 +369,21 @@ internal fun WorkspaceViewer(
                         mode == ViewerMode.Edit -> Column(Modifier.fillMaxSize()) {
                             if (saveError != null) {
                                 WsErrBlock(
-                                    title = "保存失败",
+                                    title = tr("保存失败", "Save Failed"),
                                     message = saveError?.reason,
                                     detail = saveError?.detail,
                                     actions = {
-                                        WsErrAction("重试") { save() }
+                                        WsErrAction(tr("重试", "Retry")) { save() }
                                         if (saveError?.reason?.contains(WorkspacePiWrite.staleStampSentence()) == true) {
                                             // 文件在打开之后被改过：默认不覆盖；用户明确要覆盖才以当前指纹重存。
-                                            WsErrAction("覆盖保存", tone = PiTheme.palette.error) {
+                                            WsErrAction(tr("覆盖保存", "Overwrite"), tone = PiTheme.palette.error) {
                                                 openedStamp = WorkspaceFiles.stampOf(target.file)
                                                 save()
                                             }
                                         }
-                                        WsErrAction("复制错误") {
+                                        WsErrAction(tr("复制错误", "Copy Error")) {
                                             copyToClipboard(context, saveError?.detail.orEmpty())
-                                            onMessage("已复制错误")
+                                            onMessage(tr("已复制错误", "Error copied"))
                                         }
                                     },
                                 )
@@ -423,7 +424,7 @@ internal fun WorkspaceViewer(
                             },
                             onCopyError = {
                                 copyToClipboard(context, saveError?.detail.orEmpty())
-                                onMessage("已复制错误")
+                                onMessage(tr("已复制错误", "Error copied"))
                             },
                             // 图片那一支的 ✕ / 点空白处：与顶栏返回走同一条路（`leave()`），
                             // 图片没有草稿，它只会关掉这一层。
@@ -438,18 +439,18 @@ internal fun WorkspaceViewer(
 
     if (askUnsaved) {
         PiDialog(onDismissRequest = { askUnsaved = false }) {
-            PiDialogTitle(title = "还没保存", glyph = "!", glyphTone = PiTheme.palette.warning)
+            PiDialogTitle(title = tr("还没保存", "Unsaved Changes"), glyph = "!", glyphTone = PiTheme.palette.warning)
             PiDialogBody(
-                "「${target.file.name}」有改动还没保存。返回之后这些改动就没了。",
+                tr("「${target.file.name}」有改动还没保存。返回之后这些改动就没了。", "\"${target.file.name}\" has unsaved changes. Leaving now will discard them."),
             )
             PiDialogActions {
                 PiDialogAction(
-                    label = "继续编辑",
+                    label = tr("继续编辑", "Keep Editing"),
                     primary = false,
                     onClick = { askUnsaved = false },
                 )
                 PiDialogAction(
-                    label = "不保存",
+                    label = tr("不保存", "Discard"),
                     primary = false,
                     tone = PiTheme.palette.error,
                     onClick = {
@@ -460,7 +461,7 @@ internal fun WorkspaceViewer(
                     },
                 )
                 PiDialogAction(
-                    label = "保存并返回",
+                    label = tr("保存并返回", "Save & Close"),
                     primary = true,
                     onClick = {
                         askUnsaved = false
@@ -521,7 +522,7 @@ private fun ViewerTopBar(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
+                    contentDescription = tr("返回", "Back"),
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
@@ -552,7 +553,7 @@ private fun ViewerTopBar(
                 val tail = buildString {
                     append(" · ").append(WorkspaceFiles.formatSize(sizeBytes))
                     append(" · ").append(WorkspaceFiles.formatTime(modifiedAt))
-                    if (saving) append(" · 正在写盘")
+                    if (saving) append(tr(" · 正在写盘", " · Writing"))
                 }
                 Text(
                     buildAnnotatedString {
@@ -569,11 +570,11 @@ private fun ViewerTopBar(
             if (dirty) {
                 // 稿子把「● 未保存」画在副行里、用 warning 色。副行是纯文本，承载不了第二个
                 // 字色，所以这里挂成徽标 —— 三重编码（字 + 符号 + 颜色）一个不少。
-                StateChip(label = "未保存", tone = StateTone.Warning, glyph = "●")
+                StateChip(label = tr("未保存", "Unsaved"), tone = StateTone.Warning, glyph = "●")
             }
             when {
                 saving -> Text(
-                    "… 保存中",
+                    tr("… 保存中", "… Saving"),
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.warning,
                     maxLines = 1,
@@ -588,7 +589,7 @@ private fun ViewerTopBar(
                         color = if (dirty) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
                     ) {
                         Text(
-                            "保存",
+                            tr("保存", "Save"),
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                             color = if (dirty) palette.contrastOn(palette.accent) else palette.muted,
@@ -605,7 +606,7 @@ private fun ViewerTopBar(
                             color = PiTheme.palette.accent.copy(alpha = 0.14f),
                         ) {
                             Text(
-                                "编辑",
+                                tr("编辑", "Edit"),
                                 modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
                                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                 color = PiTheme.palette.accent,
@@ -655,12 +656,12 @@ private fun ViewerBody(
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))
             WsErrBlock(
-                title = "保存失败",
-                message = "改过的地方还在编辑器里，磁盘上还是旧的。",
+                title = tr("保存失败", "Save Failed"),
+                message = tr("改过的地方还在编辑器里，磁盘上还是旧的。", "Your edits are still in the editor; the file on disk is unchanged."),
                 detail = saveError.detail,
                 actions = {
-                    WsErrAction("重试") { onRetrySave() }
-                    WsErrAction("复制错误") { onCopyError() }
+                    WsErrAction(tr("重试", "Retry")) { onRetrySave() }
+                    WsErrAction(tr("复制错误", "Copy Error")) { onCopyError() }
                 },
             )
         }
@@ -680,10 +681,10 @@ private fun ViewerBody(
         is WorkspaceOpen.Failed -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))
             WsErrBlock(
-                title = "读不到这个文件",
+                title = tr("读不到这个文件", "Unable to Read File"),
                 message = opened.reason,
                 detail = opened.detail,
-                actions = { WsErrAction("重试") { onRetry() } },
+                actions = { WsErrAction(tr("重试", "Retry")) { onRetry() } },
             )
         }
     }
@@ -694,7 +695,7 @@ private fun ViewerBody(
 private fun LoadingBody() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
-            "正在读取…",
+            tr("正在读取…", "Loading…"),
             style = PiTheme.text.prose,
             color = PiTheme.palette.muted,
         )
@@ -707,13 +708,16 @@ private fun EmptyFileBody(fileName: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "这个文件是空的",
+                tr("这个文件是空的", "This file is empty"),
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "「$fileName」里还没有任何内容。点右上「编辑」可以写第一行；" +
-                    "写什么由你，这一屏不会替你填。",
+                tr(
+                    "「$fileName」里还没有任何内容。点右上「编辑」可以写第一行；" +
+                        "写什么由你，这一屏不会替你填。",
+                    "\"$fileName\" has no content yet. Tap \"Edit\" in the top right to start writing.",
+                ),
                 modifier = Modifier.padding(top = PiSpacing.inline),
                 style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -818,7 +822,10 @@ private fun CodeBody(lines: List<String>, totalLines: Int?, truncated: Boolean, 
                         textAlign = TextAlign.End,
                     )
                     Text(
-                        "… 其余 ${(totalLines ?: 0) - lines.size} 行未显示",
+                        tr(
+                            "… 其余 ${(totalLines ?: 0) - lines.size} 行未显示",
+                            "… ${(totalLines ?: 0) - lines.size} more lines not shown",
+                        ),
                         style = PiTheme.text.meta,
                         color = PiTheme.palette.bodyOnTool,
                     )
@@ -836,9 +843,14 @@ private val ViewerLineNumberWidth = 34.dp
 private fun TooLargeBody(opened: WorkspaceOpen.TooLarge, path: String) {
     Column(Modifier.fillMaxSize()) {
         WsNotice(
-            text = "文件 ${WorkspaceFiles.formatSize(opened.sizeBytes)}。" +
-                "查看器不整份载入，只给前 ${WorkspaceFiles.PREVIEW_LINES} 行；" +
-                "要看全部就到「对话」里让 pi 读它。",
+            text = tr(
+                "文件 ${WorkspaceFiles.formatSize(opened.sizeBytes)}。" +
+                    "查看器不整份载入，只给前 ${WorkspaceFiles.PREVIEW_LINES} 行；" +
+                    "要看全部就到「对话」里让 pi 读它。",
+                "File is ${WorkspaceFiles.formatSize(opened.sizeBytes)}. " +
+                    "Only the first ${WorkspaceFiles.PREVIEW_LINES} lines are previewed; " +
+                    "ask pi in Chat to read the rest.",
+            ),
             tone = StateTone.Warning,
             glyph = "!",
         )
@@ -906,15 +918,20 @@ private fun BinaryBody(
                 tint = PiTheme.palette.muted,
             )
             Text(
-                "这是二进制文件",
+                tr("这是二进制文件", "Binary File"),
                 modifier = Modifier.padding(top = PiSettingsMetrics.rowGap),
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "查看器不展开它：它没有字符编码可以按，展开出来只是乱码。" +
-                    "「$fileName」是${opened.typeLabel}，${WorkspaceFiles.formatSize(opened.sizeBytes)}，" +
-                    "可以交给系统里的应用打开。",
+                tr(
+                    "查看器不展开它：它没有字符编码可以按，展开出来只是乱码。" +
+                        "「$fileName」是${opened.typeLabel}，${WorkspaceFiles.formatSize(opened.sizeBytes)}，" +
+                        "可以交给系统里的应用打开。",
+                    "Cannot preview binary content as text. " +
+                        "\"$fileName\" is a ${opened.typeLabel} (${WorkspaceFiles.formatSize(opened.sizeBytes)}). " +
+                        "You can open it with another app on your device.",
+                ),
                 modifier = Modifier.padding(top = PiSpacing.inline),
                 style = PiTheme.text.prose,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -923,14 +940,14 @@ private fun BinaryBody(
                 modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose),
                 horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.pageHorizontal),
             ) {
-                WsErrAction("用其他应用打开", tone = PiTheme.palette.accent, onClick = onOpenWithApp)
+                WsErrAction(tr("用其他应用打开", "Open with Another App"), tone = PiTheme.palette.accent, onClick = onOpenWithApp)
             }
             Row(
                 modifier = Modifier.padding(top = PiSettingsMetrics.cardPadding),
                 horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.pageHorizontal),
             ) {
-                WsErrAction("导出到 Download", tone = PiTheme.palette.muted, onClick = onExport)
-                WsErrAction("分享", tone = PiTheme.palette.muted, onClick = onShare)
+                WsErrAction(tr("导出到 Download", "Export to Downloads"), tone = PiTheme.palette.muted, onClick = onExport)
+                WsErrAction(tr("分享", "Share"), tone = PiTheme.palette.muted, onClick = onShare)
             }
         }
     }
@@ -1132,7 +1149,7 @@ private fun EditorBody(
                 }
             }
             Text(
-                if (saving) "正在把整份文件写回工作区。" else "返回时如果还没保存，会先问你一次。",
+                if (saving) tr("正在把整份文件写回工作区。", "Writing file back to workspace.") else tr("返回时如果还没保存，会先问你一次。", "You'll be prompted before leaving with unsaved changes."),
                 modifier = Modifier.padding(top = PiSpacing.inline),
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.muted,
@@ -1166,14 +1183,14 @@ private fun EditorBody(
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
                             if (query.isEmpty()) {
-                                Text("查找", style = PiTheme.text.mono, color = PiTheme.palette.muted)
+                                Text(tr("查找", "Find"), style = PiTheme.text.mono, color = PiTheme.palette.muted)
                             }
                             inner()
                         }
                     },
                 )
                 Text(
-                    if (query.isEmpty()) "" else if (matches == 0) "无结果" else "$matches 处",
+                    if (query.isEmpty()) "" else if (matches == 0) tr("无结果", "No matches") else tr("$matches 处", if (matches == 1) "1 match" else "$matches matches"),
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.muted,
                     maxLines = 1,
@@ -1193,11 +1210,11 @@ private fun EditorBody(
         ) {
             val canUndo = history.canUndo
             val canRedo = history.canRedo
-            EditorKey("查找", enabled = true, active = findOpen) { findOpen = !findOpen }
-            EditorKey("行号", enabled = true, active = showLines) { showLines = !showLines }
-            EditorKey("换行", enabled = true, active = wrap) { wrap = !wrap }
-            EditorKey("撤销", enabled = canUndo && !saving) { applyHistory(history.undo(value)) }
-            EditorKey("重做", enabled = canRedo && !saving) { applyHistory(history.redo(value)) }
+            EditorKey(tr("查找", "Find"), enabled = true, active = findOpen) { findOpen = !findOpen }
+            EditorKey(tr("行号", "Lines"), enabled = true, active = showLines) { showLines = !showLines }
+            EditorKey(tr("换行", "Wrap"), enabled = true, active = wrap) { wrap = !wrap }
+            EditorKey(tr("撤销", "Undo"), enabled = canUndo && !saving) { applyHistory(history.undo(value)) }
+            EditorKey(tr("重做", "Redo"), enabled = canRedo && !saving) { applyHistory(history.redo(value)) }
             EditorKey("Tab", enabled = !saving) { insert("  ") }
             for ((o, c) in EDITOR_PAIRS) {
                 EditorKey(o + c, enabled = !saving) { insert(o, c) }
@@ -1335,15 +1352,15 @@ private fun HtmlPreview(
     Column(Modifier.fillMaxSize()) {
         when (val current = state) {
             is HtmlState.Loading -> WsNotice(
-                text = "正在用设备上的 WebView 渲染这个页面…",
+                text = tr("正在用设备上的 WebView 渲染这个页面…", "Rendering page with system WebView…"),
                 tone = StateTone.Muted,
             )
 
             is HtmlState.Done -> Unit
             is HtmlState.Failed -> WsErrBlock(
-                title = "WebView 没能渲染这个页面",
+                title = tr("WebView 没能渲染这个页面", "WebView Failed to Render Page"),
                 message = current.reason,
-                actions = { WsErrAction("重试") { onRetry() } },
+                actions = { WsErrAction(tr("重试", "Retry")) { onRetry() } },
             )
         }
         AndroidView(
@@ -1397,7 +1414,7 @@ private fun HtmlPreview(
                             // 把整页判成失败。
                             if (!request.isForMainFrame) return
                             state = HtmlState.Failed(
-                                "WebView 报错 ${error.errorCode}：${error.description}",
+                                tr("WebView 报错 ${error.errorCode}：${error.description}", "WebView error ${error.errorCode}: ${error.description}"),
                             )
                         }
                     }
@@ -1472,19 +1489,19 @@ internal fun exportWorkspaceFile(context: Context, file: File): FileActionResult
     val directory = result.optString("location").ifEmpty { "Download" }
     val stored = result.optString("displayName").ifEmpty { file.name }
     FileActionResult(
-        sentence = "已导出到 $directory/$stored",
+        sentence = tr("已导出到 $directory/$stored", "Exported to $directory/$stored"),
         ok = true,
         handoffUri = result.optString("uri").takeIf { it.startsWith("content://") },
     )
 } catch (error: DeviceActionException) {
     FileActionResult(
-        sentence = "导出失败：" + error.denial.reason +
+        sentence = tr("导出失败：", "Export failed: ") + error.denial.reason +
             (error.denial.hint?.let { " $it" } ?: ""),
         ok = false,
     )
 } catch (error: Exception) {
     FileActionResult(
-        sentence = "导出失败：${error::class.java.simpleName}: ${error.message}",
+        sentence = tr("导出失败：${error::class.java.simpleName}: ${error.message}", "Export failed: ${error::class.java.simpleName}: ${error.message}"),
         ok = false,
     )
 }
@@ -1562,13 +1579,17 @@ private suspend fun openExportedCopy(context: Context, file: File, mime: String)
     val handoff = exported.handoffUri
         ?: return FileActionResult(
             sentence = exported.sentence +
-                "；这个文件不在应用的私有目录里，本应用给不出它的读权限，" +
-                "请从文件管理器打开刚刚导出的那一份。",
+                tr(
+                    "；这个文件不在应用的私有目录里，本应用给不出它的读权限，" +
+                        "请从文件管理器打开刚刚导出的那一份。",
+                    "; this file is outside app-private storage so read access cannot be granted directly. " +
+                        "Open the exported copy from your file manager.",
+                ),
             ok = false,
         )
     val opened = startViewIntent(context, handoff, mime, file.name, alreadyExported = true)
     return FileActionResult(
-        sentence = exported.sentence + "；" + opened.sentence,
+        sentence = exported.sentence + tr("；", "; ") + opened.sentence,
         ok = opened.ok,
     )
 }
@@ -1595,20 +1616,28 @@ private fun startViewIntent(
     }
     return try {
         context.startActivity(intent)
-        FileActionResult("已交给其他应用打开 · $name", ok = true)
+        FileActionResult(tr("已交给其他应用打开 · $name", "Opened with another app · $name"), ok = true)
     } catch (error: ActivityNotFoundException) {
         FileActionResult(
             sentence = if (alreadyExported) {
-                "这台设备上没有能打开这种文件的应用（$mime）。" +
-                    "文件已经在 Download 里，可以从文件管理器打开它。"
+                tr(
+                    "这台设备上没有能打开这种文件的应用（$mime）。" +
+                        "文件已经在 Download 里，可以从文件管理器打开它。",
+                    "No app on this device can open this file type ($mime). " +
+                        "The file is already in Downloads and can be opened from your file manager.",
+                )
             } else {
-                "这台设备上没有能打开这种文件的应用（$mime）。" +
-                    "可以先「导出到 Download」，再从那里打开或分享。"
+                tr(
+                    "这台设备上没有能打开这种文件的应用（$mime）。" +
+                        "可以先「导出到 Download」，再从那里打开或分享。",
+                    "No app on this device can open this file type ($mime). " +
+                        "Try \"Export to Downloads\" first, then open or share it from there.",
+                )
             },
             ok = false,
         )
     } catch (error: Exception) {
-        FileActionResult("打开失败：${error::class.java.simpleName}: ${error.message}", ok = false)
+        FileActionResult(tr("打开失败：${error::class.java.simpleName}: ${error.message}", "Open failed: ${error::class.java.simpleName}: ${error.message}"), ok = false)
     }
 }
 
@@ -1616,15 +1645,15 @@ private fun startViewIntent(
 private fun sharePath(context: Context, target: WorkspaceViewerTarget): String = try {
     DeviceSystemActions.share(
         context = context,
-        text = "工作区文件：${target.relativePath}\n${target.file.absolutePath}",
+        text = tr("工作区文件：${target.relativePath}\n${target.file.absolutePath}", "Workspace file: ${target.relativePath}\n${target.file.absolutePath}"),
         subject = target.file.name,
         url = null,
     )
-    "已打开分享"
+    tr("已打开分享", "Share sheet opened")
 } catch (error: DeviceActionException) {
-    "分享失败：" + error.message
+    tr("分享失败：", "Share failed: ") + error.message
 } catch (error: Exception) {
-    "分享失败：${error::class.java.simpleName}: ${error.message}"
+    tr("分享失败：${error::class.java.simpleName}: ${error.message}", "Share failed: ${error::class.java.simpleName}: ${error.message}")
 }
 
 /** 复制一段文本（错误详情、`/名字`）；失败不抛，回一句人话。 */

@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.i18n.tr
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.TokenUsage
@@ -123,7 +126,7 @@ fun ModelPickerSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "选择模型",
+                    tr("选择模型", "Select Model"),
                     modifier = Modifier.weight(1f),
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -167,7 +170,7 @@ fun ModelPickerSheet(
                         Box {
                             if (filter.isEmpty()) {
                                 Text(
-                                    "按供应商或模型名筛选…",
+                                    tr("按供应商或模型名筛选…", "Filter by provider or model…"),
                                     style = PiTheme.text.prose,
                                     color = palette.muted,
                                     maxLines = 1,
@@ -189,7 +192,7 @@ fun ModelPickerSheet(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "清空",
+                            contentDescription = tr("清空", "Clear"),
                             tint = palette.muted,
                             modifier = Modifier.size(13.dp),
                         )
@@ -210,11 +213,14 @@ fun ModelPickerSheet(
                     ) {
                         Text(
                             if (busy) {
-                                "正在读取模型列表…"
+                                tr("正在读取模型列表…", "Loading models…")
                             } else if (query.isNotEmpty()) {
-                                "没有匹配「$filter」的可用模型。"
+                                tr("没有匹配「$filter」的可用模型。", "No models matching \"$filter\".")
                             } else {
-                                "还没有可用模型。先登录订阅账号或配置 API Key，连接后立即生效，无需重启引擎。"
+                                tr(
+                                    "还没有可用模型。先登录订阅账号或配置 API Key，连接后立即生效，无需重启引擎。",
+                                    "No available models yet. Sign in to a subscription or configure an API key — changes take effect immediately.",
+                                )
                             },
                             style = PiTheme.text.prose,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -222,7 +228,7 @@ fun ModelPickerSheet(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (onManageProviders != null) {
                                 SheetActionPill(
-                                    text = "连接供应商与订阅",
+                                    text = tr("连接供应商与订阅", "Connect Providers"),
                                     primary = true,
                                     onClick = {
                                         onDismiss()
@@ -230,7 +236,7 @@ fun ModelPickerSheet(
                                     },
                                 )
                             }
-                            SheetActionPill(text = "刷新列表", primary = false, onClick = onRefresh)
+                            SheetActionPill(text = tr("刷新列表", "Refresh"), primary = false, onClick = onRefresh)
                         }
                     }
                 }
@@ -253,7 +259,7 @@ fun ModelPickerSheet(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
                                     Text(
-                                        provider.ifEmpty { "其他" },
+                                        provider.ifEmpty { tr("其他", "Other") },
                                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                         color = palette.muted,
                                     )
@@ -288,14 +294,18 @@ fun ModelPickerSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    if (persistAsDefault) "选中后同步设为新会话默认模型" else "仅切换当前会话；可点右上角设为默认",
+                    if (persistAsDefault) {
+                        tr("选中后同步设为新会话默认模型", "Will also be saved as the default for new sessions")
+                    } else {
+                        tr("仅切换当前会话；可点右上角设为默认", "Current session only; tap top-right to save as default")
+                    },
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta,
                     color = palette.muted,
                 )
                 if (onManageProviders != null && shown.isNotEmpty()) {
                     SheetActionPill(
-                        text = "管理供应商",
+                        text = tr("管理供应商", "Providers"),
                         primary = false,
                         onClick = {
                             onDismiss()
@@ -342,7 +352,7 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (selected) {
-                        MiniBadge(text = "当前", tone = palette.accent)
+                        MiniBadge(text = tr("当前", "Active"), tone = palette.accent)
                     }
                 }
                 Text(
@@ -360,8 +370,8 @@ private fun ModelRow(model: PiResponses.ModelInfo, selected: Boolean, onClick: (
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     model.contextWindow?.let { MiniBadge(text = formatTokens(it), tone = palette.muted) }
-                    if (model.reasoning) MiniBadge(text = "推理", tone = palette.accent)
-                    if (model.acceptsImages) MiniBadge(text = "视觉", tone = palette.success)
+                    if (model.reasoning) MiniBadge(text = tr("推理", "Reasoning"), tone = palette.accent)
+                    if (model.acceptsImages) MiniBadge(text = tr("视觉", "Vision"), tone = palette.success)
                     model.inputCost?.let { cost ->
                         val price = "$${trimCost(cost)}" + (model.outputCost?.let { "/$${trimCost(it)}" } ?: "")
                         MiniBadge(text = "$price/M", tone = palette.muted)
@@ -411,9 +421,9 @@ fun ThinkingPickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("思考深度", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+                    Text(tr("思考深度", "Thinking Level"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        "可选档位由当前模型决定",
+                        tr("可选档位由当前模型决定", "Available levels depend on the active model"),
                         style = PiTheme.text.meta,
                         color = palette.muted,
                     )
@@ -432,7 +442,7 @@ fun ThinkingPickerSheet(
             ) {
                 if (levels.isEmpty()) {
                     Text(
-                        "当前模型不支持切换思考等级。",
+                        tr("当前模型不支持切换思考等级。", "The current model does not support thinking levels."),
                         style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -441,13 +451,13 @@ fun ThinkingPickerSheet(
                     val selected = level == current
                     val levelColor = palette.thinking(level)
                     val desc = when (level.lowercase()) {
-                        "off" -> "关闭推理，最快响应"
-                        "minimal" -> "极简思考，超低延迟"
-                        "low" -> "轻量推理，适合简单任务"
-                        "medium" -> "均衡思考，日常编码推荐"
-                        "high" -> "深度推理，适合复杂架构与排错"
-                        "xhigh" -> "超深推理，攻克高难度问题"
-                        "max" -> "最大思考预算，全面深度分析"
+                        "off" -> tr("关闭推理，最快响应", "No reasoning, fastest response")
+                        "minimal" -> tr("极简思考，超低延迟", "Minimal thinking, lowest latency")
+                        "low" -> tr("轻量推理，适合简单任务", "Light reasoning for straightforward tasks")
+                        "medium" -> tr("均衡思考，日常编码推荐", "Balanced reasoning for everyday coding")
+                        "high" -> tr("深度推理，适合复杂架构与排错", "Deep reasoning for architecture & debugging")
+                        "xhigh" -> tr("超深推理，攻克高难度问题", "Extra-high reasoning for hard problems")
+                        "max" -> tr("最大思考预算，全面深度分析", "Maximum thinking budget for thorough analysis")
                         else -> null
                     }
                     Surface(
@@ -546,24 +556,24 @@ fun SessionToolsSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "会话控制中心",
+                tr("会话控制中心", "Session Controls"),
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
 
             // 1. 队列投递策略卡
-            SheetCardSection(title = "消息队列策略") {
+            SheetCardSection(title = tr("消息队列策略", "Message Queue")) {
                 QueueModeRow(
-                    title = "引导消息（Steering）",
-                    supporting = "本回合工具跑完后、下次回答前插队投递",
+                    title = tr("引导消息（Steering）", "Steering Messages"),
+                    supporting = tr("本回合工具跑完后、下次回答前插队投递", "Delivered after current tools finish, before the next reply"),
                     current = state.meta.steeringMode,
                     tone = palette.warning,
                     onPick = onSteeringMode,
                 )
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                 QueueModeRow(
-                    title = "后续消息（Follow-up）",
-                    supporting = "整轮回复结束后顺序投递",
+                    title = tr("后续消息（Follow-up）", "Follow-up Messages"),
+                    supporting = tr("整轮回复结束后顺序投递", "Delivered in order after the current turn completes"),
                     current = state.meta.followUpMode,
                     tone = palette.accent,
                     onPick = onFollowUpMode,
@@ -571,17 +581,17 @@ fun SessionToolsSheet(
             }
 
             // 2. 自动压缩与重试卡
-            SheetCardSection(title = "上下文与容错") {
+            SheetCardSection(title = tr("上下文与容错", "Context & Reliability")) {
                 PiSwitchRow(
-                    title = "自动压缩上下文",
-                    supporting = "接近窗口上限时自动生成摘要",
+                    title = tr("自动压缩上下文", "Auto-Compaction"),
+                    supporting = tr("接近窗口上限时自动生成摘要", "Automatically summarize when nearing context limit"),
                     checked = state.meta.autoCompaction,
                     onCheckedChange = onAutoCompaction,
                 )
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                 PiSwitchRow(
-                    title = "自动退避重试",
-                    supporting = "遇到限流或网络抖动时自动重试",
+                    title = tr("自动退避重试", "Auto-Retry"),
+                    supporting = tr("遇到限流或网络抖动时自动重试", "Retry automatically on rate limits or transient errors"),
                     checked = state.meta.autoRetry,
                     onCheckedChange = onAutoRetry,
                 )
@@ -593,13 +603,13 @@ fun SessionToolsSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     SheetActionPill(
-                        text = "立即压缩上下文",
+                        text = tr("立即压缩上下文", "Compact Now"),
                         primary = true,
                         onClick = onCompact,
                         modifier = Modifier.weight(1f),
                     )
                     SheetActionPill(
-                        text = "取消等待重试",
+                        text = tr("取消等待重试", "Abort Retry"),
                         primary = false,
                         onClick = onAbortRetry,
                         modifier = Modifier.weight(1f),
@@ -610,7 +620,7 @@ fun SessionToolsSheet(
             // 3. 会话快捷操作 2 列网格
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "会话操作",
+                    tr("会话操作", "Session Actions"),
                     style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                     color = palette.muted,
                     modifier = Modifier.padding(start = 4.dp),
@@ -619,16 +629,16 @@ fun SessionToolsSheet(
                     SessionGridTile(
                         icon = Icons.Filled.AccountTree,
                         tint = palette.accent,
-                        title = "会话树",
-                        subtitle = "查看分支结构",
+                        title = tr("会话树", "Session Tree"),
+                        subtitle = tr("查看分支结构", "Navigate branches"),
                         onClick = onTree,
                         modifier = Modifier.weight(1f),
                     )
                     SessionGridTile(
                         icon = Icons.Filled.CallSplit,
                         tint = palette.warning,
-                        title = "历史分叉",
-                        subtitle = "从指定消息分支",
+                        title = tr("历史分叉", "Fork"),
+                        subtitle = tr("从指定消息分支", "Branch from message"),
                         onClick = onFork,
                         modifier = Modifier.weight(1f),
                     )
@@ -637,16 +647,16 @@ fun SessionToolsSheet(
                     SessionGridTile(
                         icon = Icons.Filled.FileCopy,
                         tint = palette.success,
-                        title = "复制会话",
-                        subtitle = "克隆独立副本",
+                        title = tr("复制会话", "Clone"),
+                        subtitle = tr("克隆独立副本", "Duplicate session"),
                         onClick = onClone,
                         modifier = Modifier.weight(1f),
                     )
                     SessionGridTile(
                         icon = Icons.Filled.DriveFileRenameOutline,
                         tint = palette.borderAccent,
-                        title = "重命名",
-                        subtitle = state.meta.sessionName ?: "未命名",
+                        title = tr("重命名", "Rename"),
+                        subtitle = state.meta.sessionName ?: tr("未命名", "Untitled"),
                         onClick = onRename,
                         modifier = Modifier.weight(1f),
                     )
@@ -655,16 +665,16 @@ fun SessionToolsSheet(
                     SessionGridTile(
                         icon = Icons.Filled.IosShare,
                         tint = palette.accent,
-                        title = "导出会话",
-                        subtitle = "生成完整 HTML",
+                        title = tr("导出会话", "Export"),
+                        subtitle = tr("生成完整 HTML", "Save HTML & JSONL"),
                         onClick = onExport,
                         modifier = Modifier.weight(1f),
                     )
                     SessionGridTile(
                         icon = Icons.Filled.ContentCopy,
                         tint = palette.muted,
-                        title = "复制末条回复",
-                        subtitle = "直接进剪贴板",
+                        title = tr("复制末条回复", "Copy Last Reply"),
+                        subtitle = tr("直接进剪贴板", "Copy to clipboard"),
                         onClick = onCopyLast,
                         modifier = Modifier.weight(1f),
                     )
@@ -672,8 +682,8 @@ fun SessionToolsSheet(
                 SessionGridTile(
                     icon = Icons.Filled.Info,
                     tint = palette.muted,
-                    title = "会话元数据信息",
-                    subtitle = "ID、文件路径、消息与工具计数",
+                    title = tr("会话元数据信息", "Session Info & Stats"),
+                    subtitle = tr("ID、文件路径、消息与工具计数", "ID, file path, message & tool counts"),
                     onClick = onStats,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -716,7 +726,10 @@ private fun QueueModeRow(
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            val options = listOf(QueueMode.OneAtATime to "逐条投递", QueueMode.All to "合并全部")
+            val options = listOf(
+                QueueMode.OneAtATime to tr("逐条投递", "One at a time"),
+                QueueMode.All to tr("合并全部", "All at once"),
+            )
             options.forEach { (mode, label) ->
                 val active = current == mode
                 Box(
@@ -815,7 +828,7 @@ fun ContextSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "上下文与用量",
+                    tr("上下文与用量", "Context & Usage"),
                     modifier = Modifier.weight(1f),
                     style = PiType.title,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -841,7 +854,7 @@ fun ContextSheet(
                                 modifier = Modifier.size(14.dp),
                             )
                             Text(
-                                text = "压缩上下文",
+                                text = tr("压缩上下文", "Compact"),
                                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                 color = palette.contrastOn(palette.accent),
                             )
@@ -859,7 +872,7 @@ fun ContextSheet(
             ) {
                 if (stats == null) {
                     Text(
-                        "正在读取会话统计…",
+                        tr("正在读取会话统计…", "Loading session stats…"),
                         style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -908,13 +921,13 @@ fun SessionStatsSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                "会话元数据",
+                tr("会话元数据", "Session Info"),
                 style = PiType.title,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             if (stats == null) {
                 Text(
-                    "正在读取…",
+                    tr("正在读取…", "Loading…"),
                     style = PiTheme.text.prose,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -926,15 +939,27 @@ fun SessionStatsSheet(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                        StatLine("会话名称", state.meta.sessionName ?: "未命名")
+                        StatLine(tr("会话名称", "Name"), state.meta.sessionName ?: tr("未命名", "Untitled"))
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine("会话 ID", stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
+                        StatLine(tr("会话 ID", "Session ID"), stats.sessionId ?: state.meta.sessionId ?: "—", mono = true)
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine("会话文件", stats.sessionFile ?: state.meta.sessionFile ?: "（尚未落盘）", mono = true)
+                        StatLine(tr("会话文件", "Session File"), stats.sessionFile ?: state.meta.sessionFile ?: tr("（尚未落盘）", "(not saved yet)"), mono = true)
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine("消息统计", "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计")
+                        StatLine(
+                            tr("消息统计", "Messages"),
+                            tr(
+                                "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计",
+                                "${stats.userMessages} user · ${stats.assistantMessages} assistant · ${stats.totalMessages} total",
+                            ),
+                        )
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        StatLine("工具调用", "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果")
+                        StatLine(
+                            tr("工具调用", "Tool Calls"),
+                            tr(
+                                "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果",
+                                "${stats.toolCalls} calls · ${stats.toolResults} results",
+                            ),
+                        )
                     }
                 }
             }
@@ -984,7 +1009,7 @@ private fun ContextBlock(
                         color = ringColor,
                     )
                     MiniBadge(
-                        text = if (autoCompaction) "自动压缩开" else "自动压缩关",
+                        text = if (autoCompaction) tr("自动压缩开", "Auto-compact ON") else tr("自动压缩关", "Auto-compact OFF"),
                         tone = if (autoCompaction) palette.success else palette.muted,
                     )
                 }
@@ -1005,7 +1030,8 @@ private fun contextWindowLine(
     val used = usage?.tokens?.let { piFormatTokens(it) } ?: "—"
     val window = usage?.contextWindow?.takeIf { it > 0L }
         ?: modelContextWindow?.takeIf { it > 0L }
-    return "已用 $used / 窗口 ${window?.let { piFormatTokens(it) } ?: "—"}"
+    val windowText = window?.let { piFormatTokens(it) } ?: "—"
+    return tr("已用 $used / 窗口 $windowText", "Used $used / Window $windowText")
 }
 
 @Composable
@@ -1013,7 +1039,7 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
     val palette = PiTheme.palette
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-            "Token 与费用对比",
+            tr("Token 与费用对比", "Tokens & Cost"),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
             color = palette.muted,
             modifier = Modifier.padding(start = 4.dp),
@@ -1030,7 +1056,7 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
                     .height(IntrinsicSize.Min)
                     .padding(12.dp),
             ) {
-                UsageColumn("本轮", turn, Modifier.weight(1f), cumulative = false)
+                UsageColumn(tr("本轮", "This Turn"), turn, Modifier.weight(1f), cumulative = false)
                 Spacer(Modifier.width(10.dp))
                 Box(
                     Modifier
@@ -1039,7 +1065,7 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
                         .background(MaterialTheme.colorScheme.outlineVariant),
                 )
                 Spacer(Modifier.width(10.dp))
-                UsageColumn("本会话累计", session, Modifier.weight(1f), cumulative = true)
+                UsageColumn(tr("本会话累计", "Session Total"), session, Modifier.weight(1f), cumulative = true)
             }
         }
         Surface(
@@ -1054,9 +1080,9 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                HitRateRow("缓存命中率（最后一条回复）", lastMessageHitRate(lastMessage))
+                HitRateRow(tr("缓存命中率（最后一条回复）", "Cache Hit Rate (Last Reply)"), lastMessageHitRate(lastMessage))
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                HitRateRow("缓存命中率（本会话累计）", cumulativeHitRate(session))
+                HitRateRow(tr("缓存命中率（本会话累计）", "Cache Hit Rate (Session Total)"), cumulativeHitRate(session))
             }
         }
     }
@@ -1068,18 +1094,18 @@ private sealed interface HitRate {
 }
 
 private fun lastMessageHitRate(usage: TokenUsage?): HitRate {
-    if (usage == null) return HitRate.None("本条还没有服务商回报的用量")
+    if (usage == null) return HitRate.None(tr("本条还没有服务商回报的用量", "No provider usage reported for this reply"))
     val read = usage.cacheRead ?: 0L
     val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
-    if (denominator <= 0L) return HitRate.None("本条三项计数都是 0")
+    if (denominator <= 0L) return HitRate.None(tr("本条三项计数都是 0", "Input and cache counters are 0"))
     return HitRate.Value(String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%")
 }
 
 private fun cumulativeHitRate(usage: TokenUsage?): HitRate {
-    if (usage == null) return HitRate.None("累计计数还没读到")
+    if (usage == null) return HitRate.None(tr("累计计数还没读到", "Session totals not loaded yet"))
     val read = usage.cacheRead ?: 0L
     val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
-    if (denominator <= 0L) return HitRate.None("本会话还没有累计计数")
+    if (denominator <= 0L) return HitRate.None(tr("本会话还没有累计计数", "No cumulative token counts yet"))
     return HitRate.Value(String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%")
 }
 
@@ -1134,11 +1160,11 @@ private fun UsageColumn(title: String, usage: TokenUsage?, modifier: Modifier = 
             Text("—", style = PiTheme.text.mono, color = PiTheme.palette.dim)
             return@Column
         }
-        KvRow("输入", usage.input?.let { exactCount(it) } ?: "—")
-        KvRow("输出", usage.output?.let { exactCount(it) } ?: "—")
-        KvRow("缓存读", usage.cacheRead?.let { exactCount(it) } ?: "—")
-        KvRow("缓存写", usage.cacheWrite?.let { exactCount(it) } ?: "—")
-        KvRow("费用", usage.cost?.let { "$" + String.format(Locale.US, "%.3f", it) } ?: "—")
+        KvRow(tr("输入", "Input"), usage.input?.let { exactCount(it) } ?: "—")
+        KvRow(tr("输出", "Output"), usage.output?.let { exactCount(it) } ?: "—")
+        KvRow(tr("缓存读", "Cache R"), usage.cacheRead?.let { exactCount(it) } ?: "—")
+        KvRow(tr("缓存写", "Cache W"), usage.cacheWrite?.let { exactCount(it) } ?: "—")
+        KvRow(tr("费用", "Cost"), usage.cost?.let { "$" + String.format(Locale.US, "%.3f", it) } ?: "—")
     }
 }
 
@@ -1204,9 +1230,12 @@ fun ForkPickerSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("从历史消息分叉", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+                Text(tr("从历史消息分叉", "Fork from Message"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                 Text(
-                    "将在所选消息之前分出新会话，并把该消息放回输入框便于修改重发，原会话保持不变。",
+                    tr(
+                        "将在所选消息之前分出新会话，并把该消息放回输入框便于修改重发，原会话保持不变。",
+                        "Creates a new session before the selected message and restores it to the composer. The original session is untouched.",
+                    ),
                     style = PiTheme.text.meta,
                     color = palette.muted,
                 )
@@ -1219,7 +1248,10 @@ fun ForkPickerSheet(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Text(
-                        "当前会话还没有可分叉的用户消息。先发送一条消息落盘后再试。",
+                        tr(
+                            "当前会话还没有可分叉的用户消息。先发送一条消息落盘后再试。",
+                            "No forkable user messages yet. Send a message first.",
+                        ),
                         modifier = Modifier.padding(14.dp),
                         style = PiTheme.text.prose,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1265,7 +1297,7 @@ fun ForkPickerSheet(
                                 }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(
-                                        message.text.ifBlank { "（空消息）" },
+                                        message.text.ifBlank { tr("（空消息）", "(empty message)") },
                                         style = PiTheme.text.prose,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 3,
@@ -1299,8 +1331,8 @@ fun RenameSessionDialog(
     val palette = PiTheme.palette
     var name by remember { mutableStateOf(initial.orEmpty()) }
     PiDialog(onDismissRequest = onDismiss) {
-        PiDialogTitle("重命名会话")
-        PiDialogBody("修改后将立即同步到会话列表。")
+        PiDialogTitle(tr("重命名会话", "Rename Session"))
+        PiDialogBody(tr("修改后将立即同步到会话列表。", "Changes sync to the session list immediately."))
         Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier
@@ -1322,7 +1354,7 @@ fun RenameSessionDialog(
                 decorationBox = { inner ->
                     Box {
                         if (name.isEmpty()) {
-                            Text("输入新名称…", style = PiTheme.text.prose, color = palette.muted)
+                            Text(tr("输入新名称…", "Enter a new name…"), style = PiTheme.text.prose, color = palette.muted)
                         }
                         inner()
                     }
@@ -1331,7 +1363,7 @@ fun RenameSessionDialog(
             if (name.isNotEmpty()) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "清空",
+                    contentDescription = tr("清空", "Clear"),
                     tint = palette.muted,
                     modifier = Modifier
                         .size(18.dp)
@@ -1340,9 +1372,9 @@ fun RenameSessionDialog(
             }
         }
         PiDialogActions {
-            PiDialogAction(label = "取消", primary = false, onClick = onDismiss)
+            PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = onDismiss)
             PiDialogAction(
-                label = "保存",
+                label = tr("保存", "Save"),
                 primary = true,
                 enabled = name.isNotBlank(),
                 onClick = { onConfirm(name) },
@@ -1366,7 +1398,7 @@ private fun PersistTogglePill(persistAsDefault: Boolean, onToggle: () -> Unit) {
         ),
     ) {
         Text(
-            if (persistAsDefault) "✓ 设为默认" else "仅本次会话",
+            if (persistAsDefault) tr("✓ 设为默认", "✓ Set Default") else tr("仅本次会话", "This Session"),
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
             color = if (persistAsDefault) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1451,4 +1483,234 @@ private fun formatTokens(tokens: Long): String = when {
 private fun trimCost(value: Double): String {
     val rounded = kotlin.math.round(value * 100) / 100
     return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString() else rounded.toString()
+}
+
+// ------------------------------------------------------------------ 当前生效的系统提示词
+
+private data class PromptSectionSlice(
+    val id: String,
+    val label: String,
+    val content: String,
+)
+
+private fun parseSystemPromptSections(raw: String): List<PromptSectionSlice> {
+    if (raw.isBlank()) return emptyList()
+    val tagRegex = Regex("<([a-z][a-z0-9_-]*)>\\n([\\s\\S]*?)\\n</\\1>")
+    val matches = tagRegex.findAll(raw).toList()
+    if (matches.isEmpty()) return emptyList()
+    val sections = ArrayList<PromptSectionSlice>()
+    val preamble = raw.substring(0, matches.first().range.first).trim()
+    if (preamble.isNotEmpty()) {
+        sections += PromptSectionSlice("preamble", tr("前言", "Preamble"), preamble)
+    }
+    for (m in matches) {
+        val tag = m.groupValues[1]
+        val body = m.groupValues[2].trim()
+        val label = when (tag) {
+            "tools" -> tr("工具清单", "Tools")
+            "rules" -> tr("规则", "Rules")
+            "docs" -> tr("文档", "Docs")
+            "addendum" -> tr("追加指令", "Addendum")
+            "project_context" -> tr("项目上下文", "Context")
+            "skills" -> tr("技能", "Skills")
+            "cwd" -> "CWD"
+            else -> tag
+        }
+        sections += PromptSectionSlice(tag, label, body)
+    }
+    return sections
+}
+
+/**
+ * 对话页右上角命令中心直达的「当前生效系统提示词」查阅弹层：
+ * 与 `ChatCommandCenterSheet` 共用同一套现代卡片视觉，自动解析 Pi 1.6.0 `<tools>/<rules>/<project_context>/<skills>/<addendum>` 分段，
+ * 支持分段快速筛选、一键复制、一键跳转编辑提示词与上下文文件。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ActiveSystemPromptSheet(
+    session: PiSessionViewModel,
+    onEditPrompt: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var loading by remember { mutableStateOf(true) }
+    var promptText by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var selectedSection by remember { mutableStateOf("all") }
+    var copied by remember { mutableStateOf(false) }
+
+    LaunchedEffect(session) {
+        loading = true
+        error = null
+        val api = session.advanced()
+        if (api == null) {
+            error = tr(
+                "引擎未运行：启动后即可读取此刻发给模型的完整系统提示词。",
+                "Engine is not running. Start it to inspect the active full system prompt.",
+            )
+        } else {
+            runCatching { api.systemPrompt() }
+                .onSuccess { promptText = it }
+                .onFailure { error = it.message ?: tr("读取系统提示词失败", "Failed to read system prompt") }
+        }
+        loading = false
+    }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            kotlinx.coroutines.delay(1600)
+            copied = false
+        }
+    }
+
+    val raw = promptText.orEmpty()
+    val sections = remember(raw) { parseSystemPromptSections(raw) }
+    val visibleText = remember(raw, sections, selectedSection) {
+        if (selectedSection == "all") {
+            raw
+        } else {
+            sections.firstOrNull { it.id == selectedSection }?.content ?: raw
+        }
+    }
+    val estTokens = remember(visibleText) { (visibleText.length + 3) / 4 }
+
+    PiSheet(onDismiss = onDismiss, fullHeight = true) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .padding(bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 顶部标题 + 指标胶囊
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = tr("当前生效系统提示词", "Active System Prompt"),
+                        style = PiType.title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!loading && error == null && raw.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            MiniBadge(tr("${visibleText.length} 字符", "${visibleText.length} chars"), palette.accent)
+                            MiniBadge(tr("约 $estTokens token", "~$estTokens tok"), palette.muted)
+                            if (sections.isNotEmpty()) {
+                                MiniBadge(tr("${sections.size} 分段", "${sections.size} sections"), palette.success)
+                            }
+                        }
+                    }
+                }
+                SheetActionPill(
+                    text = if (copied) tr("已复制", "Copied") else tr("复制", "Copy"),
+                    primary = false,
+                    onClick = {
+                        if (visibleText.isNotEmpty()) {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(visibleText))
+                            copied = true
+                        }
+                    },
+                )
+                SheetActionPill(
+                    text = tr("编辑", "Edit"),
+                    primary = true,
+                    onClick = {
+                        onDismiss()
+                        onEditPrompt()
+                    },
+                )
+            }
+
+            // 分段快速筛选条
+            if (!loading && error == null && sections.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val chips = listOf("all" to tr("全部", "All")) + sections.map { it.id to it.label }
+                    chips.forEach { (id, label) ->
+                        val active = selectedSection == id
+                        Surface(
+                            onClick = { selectedSection = id },
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (active) palette.accent else MaterialTheme.colorScheme.surfaceContainer,
+                            border = if (active) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Text(
+                                text = label,
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                                style = PiTheme.text.meta.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal),
+                                color = if (active) palette.contrastOn(palette.accent) else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 正文卡片
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                when {
+                    loading -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = tr("正在向引擎读取当前系统提示词…", "Reading active system prompt from engine…"),
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                        )
+                    }
+                    error != null -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    ) {
+                        Text(
+                            text = error.orEmpty(),
+                            style = PiTheme.text.meta,
+                            color = palette.warning,
+                        )
+                    }
+                    visibleText.isBlank() -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = tr("（当前系统提示词为空）", "(System prompt is empty)"),
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                        )
+                    }
+                    else -> Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(14.dp),
+                    ) {
+                        Text(
+                            text = visibleText,
+                            style = PiTheme.text.monoSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

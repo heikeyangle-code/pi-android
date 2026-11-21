@@ -78,13 +78,19 @@ object SessionEntrySummary {
      * replacement", so both read as omit.
      */
     fun contextEditLine(raw: JsonObject): String {
-        val target = raw.str("targetId").orEmpty().ifEmpty { "(未给出 targetId)" }
+        val target = raw.str("targetId").orEmpty().ifEmpty { RpcLocale.tr("(未给出 targetId)", "(missing targetId)") }
         val replacement = raw["replacement"]
         val omitted = replacement == null || replacement is JsonNull
         return if (omitted) {
-            "context omit: $target（收回了该条目对模型上下文的贡献）"
+            RpcLocale.tr(
+                "context omit: $target（收回了该条目对模型上下文的贡献）",
+                "context omit: $target (omitted from model context)",
+            )
         } else {
-            "context replace: $target（改写了该条目的上下文内容）"
+            RpcLocale.tr(
+                "context replace: $target（改写了该条目的上下文内容）",
+                "context replace: $target (replaced in model context)",
+            )
         }
     }
 
@@ -101,7 +107,7 @@ object SessionEntrySummary {
         val fields = raw.entries.filterNot { it.key in METADATA_KEYS }
         if (fields.isEmpty()) {
             val type = raw.str("type").orEmpty()
-            return "（$type 条目没有其它字段）"
+            return RpcLocale.tr("（$type 条目没有其它字段）", "($type entry has no additional fields)")
         }
         return fields.joinToString("\n") { (key, value) -> "$key=${scalar(value)}" }
     }

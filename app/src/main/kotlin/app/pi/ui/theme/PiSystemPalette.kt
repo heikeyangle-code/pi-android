@@ -1,5 +1,8 @@
 package app.pi.ui.theme
 
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
+
 /**
  * The `system` theme's input, and the one place that turns it into a [PiPalette].
  *
@@ -205,54 +208,82 @@ object PiSystemPalettes {
         0x555753, 0xEF2929, 0x8AE234, 0xFCE94F, 0x729FCF, 0xAD7FA8, 0x34E2E2, 0xEEEEEC,
     )
 
+    private val presetsZh: List<PiSystemPalettePreset> by lazy { buildPresets(zh = true) }
+    private val presetsEn: List<PiSystemPalettePreset> by lazy { buildPresets(zh = false) }
+
+    fun presetsFor(zh: Boolean): List<PiSystemPalettePreset> = if (zh) presetsZh else presetsEn
+
     /** 档位顺序就是界面顺序，第一档是默认。 */
-    val presets: List<PiSystemPalettePreset> = listOf(
-        PiSystemPalettePreset(
-            id = DEFAULT_ID,
-            label = "pi 默认（深）",
-            description = "pi 自己的 ANSI 16 色与 #1E1E1E 底，与 pi 的默认一致。",
-            background = DEFAULT_BACKGROUND,
-        ),
-        PiSystemPalettePreset(
-            id = "light",
-            label = "浅色底",
-            description = "同一组 ANSI 16 色，底色换成 #F5F5F5，system 因此是浅色主题。",
-            background = 0xF5F5F5,
-            // 浅色终端报的是深色前景（`SystemThemeInput.foreground`，
-            // `system-theme.ts:332-346`）。给成 pi 的默认色：它让 `terminalAppearance`
-            // 有真实的输入可判（前景比底色暗 → 浅色），也让正文色沿用“终端自己说的”
-            // 那一个，而不是推导出的近似。不给也能判成浅色（退回白/黑对比度比较），
-            // 但那样就少了一个真实输入。
-            foreground = DEFAULT_BACKGROUND,
-        ),
-        PiSystemPalettePreset(
-            id = "dark-121212",
-            label = "深色底（#121212）",
-            description = "同一组 ANSI 16 色，底色压到 #121212，比 pi 默认更接近纯黑。",
-            background = 0x121212,
-        ),
-        PiSystemPalettePreset(
-            id = "high-contrast",
-            label = "高对比（#000000）",
-            description = "同一组 ANSI 16 色，底色纯黑；对比度最高，推导会尽量拉开层次。",
-            background = 0x000000,
-        ),
-        // pi 官方两套主题的页面底色（`dark.json` 的 `pageBg` / `light.json` 的 `pageBg`）。
-        // 这不是“复制官方主题”：选的只是底色，56 个 token 仍由同一条推导算出来，
-        // 但结果是“官方那种深蓝灰/浅灰”，比纯中性灰更接近用户已经看惯的观感。
-        PiSystemPalettePreset(
-            id = "pi-dark",
-            label = "pi 深（#21252C）",
-            description = "pi 官方 dark 的页面底色，推导结果与官方观感最接近。",
-            background = 0x21252C,
-        ),
-        PiSystemPalettePreset(
-            id = "pi-light",
-            label = "pi 浅（#EFEEEE）",
-            description = "pi 官方 light 的页面底色。",
-            background = 0xEFEEEE,
-        ),
-    )
+    val presets: List<PiSystemPalettePreset> get() = presetsFor(PiLocale.isZh)
+
+    private fun buildPresets(zh: Boolean): List<PiSystemPalettePreset> {
+        fun t(z: String, e: String): String = if (zh) z else e
+        return listOf(
+            PiSystemPalettePreset(
+                id = DEFAULT_ID,
+                label = t("pi 默认（深）", "pi default (dark)"),
+                description = t(
+                    "pi 自己的 ANSI 16 色与 #1E1E1E 底，与 pi 的默认一致。",
+                    "pi's ANSI 16 palette on #1E1E1E background, matching pi's default.",
+                ),
+                background = DEFAULT_BACKGROUND,
+            ),
+            PiSystemPalettePreset(
+                id = "light",
+                label = t("浅色底", "Light background"),
+                description = t(
+                    "同一组 ANSI 16 色，底色换成 #F5F5F5，system 因此是浅色主题。",
+                    "Same ANSI 16 palette on #F5F5F5 background, deriving a light system theme.",
+                ),
+                background = 0xF5F5F5,
+                // 浅色终端报的是深色前景（`SystemThemeInput.foreground`，
+                // `system-theme.ts:332-346`）。给成 pi 的默认色：它让 `terminalAppearance`
+                // 有真实的输入可判（前景比底色暗 → 浅色），也让正文色沿用“终端自己说的”
+                // 那一个，而不是推导出的近似。不给也能判成浅色（退回白/黑对比度比较），
+                // 但那样就少了一个真实输入。
+                foreground = DEFAULT_BACKGROUND,
+            ),
+            PiSystemPalettePreset(
+                id = "dark-121212",
+                label = t("深色底（#121212）", "Dark (#121212)"),
+                description = t(
+                    "同一组 ANSI 16 色，底色压到 #121212，比 pi 默认更接近纯黑。",
+                    "Same ANSI 16 palette on a deeper #121212 background, closer to true black.",
+                ),
+                background = 0x121212,
+            ),
+            PiSystemPalettePreset(
+                id = "high-contrast",
+                label = t("高对比（#000000）", "High contrast (#000000)"),
+                description = t(
+                    "同一组 ANSI 16 色，底色纯黑；对比度最高，推导会尽量拉开层次。",
+                    "Same ANSI 16 palette on pure black for maximum contrast and separation.",
+                ),
+                background = 0x000000,
+            ),
+            // pi 官方两套主题的页面底色（`dark.json` 的 `pageBg` / `light.json` 的 `pageBg`）。
+            // 这不是“复制官方主题”：选的只是底色，56 个 token 仍由同一条推导算出来，
+            // 但结果是“官方那种深蓝灰/浅灰”，比纯中性灰更接近用户已经看惯的观感。
+            PiSystemPalettePreset(
+                id = "pi-dark",
+                label = t("pi 深（#21252C）", "pi dark (#21252C)"),
+                description = t(
+                    "pi 官方 dark 的页面底色，推导结果与官方观感最接近。",
+                    "Page background from pi's built-in dark theme for the closest match.",
+                ),
+                background = 0x21252C,
+            ),
+            PiSystemPalettePreset(
+                id = "pi-light",
+                label = t("pi 浅（#EFEEEE）", "pi light (#EFEEEE)"),
+                description = t(
+                    "pi 官方 light 的页面底色。",
+                    "Page background from pi's built-in light theme.",
+                ),
+                background = 0xEFEEEE,
+            ),
+        )
+    }
 
     /**
      * 设置值 → 一档。
@@ -289,11 +320,11 @@ object PiSystemPalettes {
     fun saturationWire(value: Double): String =
         (saturations.firstOrNull { it.second == value } ?: saturations[1]).first
 
-    /** 饱和度档的中文名。 */
+    /** 饱和度档的显示名。 */
     fun saturationLabel(wire: String?): String = when (wire) {
-        "soft" -> "素"
-        "vivid" -> "鲜艳"
-        else -> "标准"
+        "soft" -> tr("素", "Soft")
+        "vivid" -> tr("鲜艳", "Vivid")
+        else -> tr("标准", "Normal")
     }
 
     /** `#RRGGBB` / `RRGGBB` → `0xRRGGBB`；不合法返回 null。 */

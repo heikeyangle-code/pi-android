@@ -40,6 +40,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.ThinkingBlock
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
@@ -70,9 +71,9 @@ fun ThinkingBlockBlock(
     val custom = LocalThinkingLabel.current
     val duration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
     val headline = custom ?: when {
-        item.streaming -> "思考中…"
-        duration != null -> "已思考 $duration"
-        else -> "已思考"
+        item.streaming -> tr("思考中…", "Thinking…")
+        duration != null -> tr("已思考 $duration", "Thought for $duration")
+        else -> tr("已思考", "Thought")
     }
 
     val pulse: State<Float>? = if (item.streaming) {
@@ -121,7 +122,7 @@ fun ThinkingBlockBlock(
                     }
                     Icon(
                         imageVector = Icons.Filled.KeyboardArrowRight,
-                        contentDescription = if (expanded) "收起思考" else "展开思考",
+                        contentDescription = if (expanded) tr("收起思考", "Collapse thinking") else tr("展开思考", "Expand thinking"),
                         modifier = Modifier
                             .size(14.dp)
                             .graphicsLayer { rotationZ = turn },
@@ -135,7 +136,7 @@ fun ThinkingBlockBlock(
                 ) {
                     SelectableContent {
                         Text(
-                            text = item.text.ifEmpty { "（无思考内容）" },
+                            text = item.text.ifEmpty { tr("（无思考内容）", "(No thinking content)") },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp, bottom = 2.dp)

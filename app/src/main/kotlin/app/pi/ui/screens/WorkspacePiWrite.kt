@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import app.pi.i18n.tr
 import app.pi.settings.checkPiFileWrite
 import java.io.File
 
@@ -188,11 +189,16 @@ internal object WorkspacePiWrite {
      * existing documents are edited there under the same check, and a document may be edited in
      * the tree (its save is validated).
      */
-    fun creationRefusalSentence(): String =
+    fun creationRefusalSentence(): String = tr(
         "不能在 .pi（pi 的项目目录）里新建或改名为 JSON 文档：" +
             "新建出来的是空文件、改名搬的是未经校验的内容，而 pi 会用严格 JSON 解析这些文件 —— " +
             "写坏一个它就读不了（settings.json 尤其）。" +
-            "已存在的这类文件可以在这里打开改（保存时会校验），也可以在「Pi 文件」屏改（同一份写前校验）。"
+            "已存在的这类文件可以在这里打开改（保存时会校验），也可以在「Pi 文件」屏改（同一份写前校验）。",
+        "Cannot create or rename to a JSON file inside .pi (pi's project directory): " +
+            "new files start empty and renamed files bypass validation, while pi parses these files as strict JSON — " +
+            "a malformed file prevents pi from reading it (especially settings.json). " +
+            "Existing files can be edited here (validated on save) or in the Pi Files screen (using the same pre-write check).",
+    )
 
     /**
      * The reason to refuse this save, or null when it may proceed.
@@ -228,9 +234,12 @@ internal object WorkspacePiWrite {
      * written, and the reason names the way out — because the alternative (overwriting) is
      * exactly the lost-key outcome this check exists to prevent.
      */
-    fun staleStampSentence(): String =
+    fun staleStampSentence(): String = tr(
         "这个文件在打开之后被改过（pi 正在写它，或在别处改过）。" +
-            "为避免覆盖掉那次改动，本次没有保存：请重新打开这个文件，把你的改动并回去。"
+            "为避免覆盖掉那次改动，本次没有保存：请重新打开这个文件，把你的改动并回去。",
+        "This file was modified after you opened it (by pi or elsewhere). " +
+            "To avoid overwriting those changes, it was not saved. Reopen the file and reapply your edits.",
+    )
 
     /**
      * Whether the write has to end up owner-only (`PiConfigFiles.write`'s `mode600`).

@@ -1,5 +1,6 @@
 package app.pi.ui.blocks
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -402,8 +403,8 @@ internal object ToolOutputParse {
         }
         val groups = when (kind) {
             PathBodyKind.Ls -> buildList {
-                if (directories.isNotEmpty()) add(PathGroup(LS_DIRS, directories))
-                if (files.isNotEmpty()) add(PathGroup(LS_FILES, files))
+                if (directories.isNotEmpty()) add(PathGroup(lsDirs, directories))
+                if (files.isNotEmpty()) add(PathGroup(lsFiles, files))
             }
 
             PathBodyKind.Find -> byDirectory.map { (directory, entries) -> PathGroup(directory, entries) }
@@ -536,8 +537,8 @@ private val EXIT_CODE = Regex("""Command exited with code (-?\d+)""")
 private const val NO_MATCHES = "No matches found"
 private const val NO_FILES = "No files found matching pattern"
 private const val EMPTY_DIRECTORY = "(empty directory)"
-private const val LS_DIRS = "目录"
-private const val LS_FILES = "文件"
+private val lsDirs: String get() = tr("目录", "Directories")
+private val lsFiles: String get() = tr("文件", "Files")
 
 // --------------------------------------------------- moved out of ToolCallBlock
 
@@ -654,7 +655,7 @@ internal fun truncationNotice(path: String?, truncation: ToolTruncation?): Strin
 internal fun truncationText(truncation: ToolTruncation?): String? {
     if (truncation == null) return null
     val detail = truncationDetail(truncation)
-    return if (detail == null) "已截断" else "已截断：$detail"
+    return if (detail == null) tr("已截断", "Truncated") else tr("已截断：$detail", "Truncated: $detail")
 }
 
 /**
@@ -669,10 +670,14 @@ private fun truncationDetail(truncation: ToolTruncation): String? {
     val shown = truncation.outputLines
     val total = truncation.totalLines
     return when {
-        truncation.truncatedBy == "lines" && shown != null && total != null -> "显示 $shown / $total 行"
-        truncation.truncatedBy == "lines" && shown != null -> "显示 $shown 行"
-        shown != null && truncation.maxBytes != null -> "显示 $shown 行（上限 ${formatBytes(truncation.maxBytes)}）"
-        shown != null -> "显示 $shown 行"
+        truncation.truncatedBy == "lines" && shown != null && total != null ->
+            tr("显示 $shown / $total 行", "showing $shown of $total lines")
+        truncation.truncatedBy == "lines" && shown != null ->
+            tr("显示 $shown 行", "showing $shown lines")
+        shown != null && truncation.maxBytes != null ->
+            tr("显示 $shown 行（上限 ${formatBytes(truncation.maxBytes)}）", "$shown lines shown (${formatBytes(truncation.maxBytes)} limit)")
+        shown != null ->
+            tr("显示 $shown 行", "$shown lines shown")
         else -> null
     }
 }
@@ -683,9 +688,9 @@ private fun truncationDetail(truncation: ToolTruncation): String? {
  */
 private fun joinNotice(path: String?, detail: String?): String? {
     val parts = mutableListOf<String>()
-    if (path != null) parts += "完整输出：$path"
+    if (path != null) parts += tr("完整输出：$path", "Full output: $path")
     detail?.let { parts += it }
-    return parts.takeIf { it.isNotEmpty() }?.joinToString("；")
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(tr("；", ". "))
 }
 
 /**
@@ -705,10 +710,10 @@ private fun joinNotice(path: String?, detail: String?): String? {
 internal fun grepNoticeText(details: JsonElement?): String? {
     val obj = details as? JsonObject
     val parts = mutableListOf<String>()
-    obj?.let { jsonInt(it, "matchLimitReached") }?.let { parts += "$it 处上限" }
+    obj?.let { jsonInt(it, "matchLimitReached") }?.let { parts += tr("$it 处上限", "$it matches limit") }
     val truncation = truncationOf(details)
-    if (truncation != null) parts += (truncationDetail(truncation) ?: "输出被截断")
-    if (obj != null && jsonBool(obj, "linesTruncated")) parts += "部分行被截断"
+    if (truncation != null) parts += (truncationDetail(truncation) ?: tr("输出被截断", "output truncated"))
+    if (obj != null && jsonBool(obj, "linesTruncated")) parts += tr("部分行被截断", "some lines truncated")
     return noticeLine(parts)
 }
 
@@ -728,9 +733,11 @@ internal fun pathListNoticeText(details: JsonElement?, entries: Boolean): String
     val obj = details as? JsonObject
     val parts = mutableListOf<String>()
     val limit = obj?.let { if (entries) jsonInt(it, "entryLimitReached") else jsonInt(it, "resultLimitReached") }
-    limit?.let { parts += if (entries) "$it 项上限" else "$it 条上限" }
+    limit?.let {
+        parts += if (entries) tr("$it 项上限", "$it entries limit") else tr("$it 条上限", "$it results limit")
+    }
     val truncation = truncationOf(details)
-    if (truncation != null) parts += (truncationDetail(truncation) ?: "输出被截断")
+    if (truncation != null) parts += (truncationDetail(truncation) ?: tr("输出被截断", "output truncated"))
     return noticeLine(parts)
 }
 
@@ -739,7 +746,7 @@ internal fun pathListNotice(path: String?, details: JsonElement?, entries: Boole
     joinNotice(path, pathListNoticeText(details, entries))
 
 private fun noticeLine(parts: List<String>): String? =
-    if (parts.isEmpty()) null else "已截断：${parts.joinToString("、")}"
+    if (parts.isEmpty()) null else tr("已截断：${parts.joinToString("、")}", "Truncated: ${parts.joinToString(", ")}")
 
 private fun jsonInt(obj: JsonObject, key: String): Int? =
     (obj[key] as? JsonPrimitive)?.content?.toIntOrNull()
@@ -997,19 +1004,31 @@ internal fun readFooterText(raw: String): String {
     // exactly its own group count — no leading component for the whole match.
     READ_FOOTER_RANGE.matchEntire(raw)?.let { match ->
         val (start, end, total, offset) = match.destructured
-        return "显示第 $start–$end 行，共 $total 行；用 offset=$offset 继续。"
+        return tr(
+            "显示第 $start–$end 行，共 $total 行；用 offset=$offset 继续。",
+            "Showing lines $start–$end of $total. Use offset=$offset to continue.",
+        )
     }
     READ_FOOTER_RANGE_LIMIT.matchEntire(raw)?.let { match ->
         val (start, end, total, size, offset) = match.destructured
-        return "显示第 $start–$end 行，共 $total 行（上限 $size）；用 offset=$offset 继续。"
+        return tr(
+            "显示第 $start–$end 行，共 $total 行（上限 $size）；用 offset=$offset 继续。",
+            "Showing lines $start–$end of $total ($size limit). Use offset=$offset to continue.",
+        )
     }
     READ_FOOTER_MORE.matchEntire(raw)?.let { match ->
         val (count, offset) = match.destructured
-        return "文件里还有 $count 行；用 offset=$offset 继续。"
+        return tr(
+            "文件里还有 $count 行；用 offset=$offset 继续。",
+            "$count more lines in file. Use offset=$offset to continue.",
+        )
     }
     READ_FOOTER_FIRST_LINE.matchEntire(raw)?.let { match ->
         val (line, size, limit, remedy) = match.destructured
-        return "第 $line 行本身就有 $size，超过 $limit 上限。可用 bash：$remedy"
+        return tr(
+            "第 $line 行本身就有 $size，超过 $limit 上限。可用 bash：$remedy",
+            "Line $line is $size, exceeds $limit limit. Use bash: $remedy",
+        )
     }
     return raw
 }

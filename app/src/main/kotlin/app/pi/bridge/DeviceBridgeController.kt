@@ -289,6 +289,21 @@ object DeviceBridgeController {
             roots.add(File(paths.rootfs, "root/.pi/agent/extensions"))
         }
         return try {
+            // 快路径：同一 APK 安装（lastUpdateTime + versionCode 未变）且所有目标目录已存在校验戳时，
+            // 直接跳过 20+ 次 AssetManager 递归列举与 SHA-256 哈希，显著加快冷启动。
+            val apkStamp = runCatching {
+                val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                "${info.lastUpdateTime}-${info.versionCode}"
+            }.getOrNull()
+            if (apkStamp != null && roots.all { root ->
+                    val apkMarker = File(root, ".pi-android-apk-stamp")
+                    val contentMarker = File(root, ".pi-android-assets")
+                    contentMarker.isFile && apkMarker.isFile &&
+                        runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
+                }
+            ) {
+                return "已是最新（${roots.size} 个位置，APK 缓存命中）"
+            }
             val fingerprint = assetFingerprint(context)
             val marker = fingerprint ?: "v$ASSET_VERSION"
             var copied = 0
@@ -297,12 +312,15 @@ object DeviceBridgeController {
             for (root in roots) {
                 root.mkdirs()
                 val stamp = File(root, ".pi-android-assets")
+                val apkMarker = File(root, ".pi-android-apk-stamp")
                 if (stamp.isFile && stamp.readText().trim() == marker) {
+                    if (apkStamp != null) runCatching { apkMarker.writeText(apkStamp) }
                     skipped++
                     continue
                 }
                 bytes += copyAssetTree(context, ASSET_ROOT, root)
                 stamp.writeText(marker)
+                if (apkStamp != null) runCatching { apkMarker.writeText(apkStamp) }
                 copied++
             }
             val how = if (fingerprint == null) {

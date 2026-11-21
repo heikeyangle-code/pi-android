@@ -29,6 +29,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
@@ -68,7 +69,7 @@ internal fun PiImageFailureCard(
             .border(BorderStroke(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f)), shape)
             .then(
                 if (full != null) {
-                    Modifier.clickable(onClickLabel = "复制图片地址") {
+                    Modifier.clickable(onClickLabel = tr("复制图片地址", "Copy image URL")) {
                         clipboard.setText(AnnotatedString(full))
                         copied = true
                     }
@@ -88,7 +89,7 @@ internal fun PiImageFailureCard(
         )
         Column(Modifier.weight(1f)) {
             Text(
-                text = alt?.takeIf { it.isNotBlank() } ?: "图片未能加载",
+                text = alt?.takeIf { it.isNotBlank() } ?: tr("图片未能加载", "Image failed to load"),
                 style = altStyle,
                 color = palette.text,
                 maxLines = 2,
@@ -96,8 +97,8 @@ internal fun PiImageFailureCard(
             )
             Text(
                 text = when {
-                    copied -> "已复制地址"
-                    full == null -> "图片地址缺失"
+                    copied -> tr("已复制地址", "URL copied")
+                    full == null -> tr("图片地址缺失", "Missing image URL")
                     else -> shortImageSource(full)
                 },
                 style = PiTheme.text.monoSmall,
@@ -113,7 +114,7 @@ internal fun PiImageFailureCard(
 /** 缩短来源：http(s) 只留「主机 + 路径」，`data:` 说明是内嵌数据，其它原样（单行省略由调用方做）。 */
 internal fun shortImageSource(link: String): String {
     val text = link.trim()
-    if (text.startsWith("data:", ignoreCase = true)) return "内嵌图片数据"
+    if (text.startsWith("data:", ignoreCase = true)) return tr("内嵌图片数据", "Inline image data")
     val withoutScheme = text.substringAfter("://", text)
     return withoutScheme.removePrefix("www.").substringBefore('#').ifEmpty { text }
 }

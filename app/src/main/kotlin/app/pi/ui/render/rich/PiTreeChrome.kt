@@ -1,5 +1,6 @@
 package app.pi.ui.render.rich
 
+import app.pi.i18n.tr
 import app.pi.ui.render.LocalPiCardMenuSlot
 import app.pi.ui.render.PiCardMenuItem
 import androidx.compose.foundation.background
@@ -124,20 +125,22 @@ internal fun PiTreeToolbar(
     status: String?,
     onSelect: (PiTreeMode) -> Unit,
     modifier: Modifier = Modifier,
-    treeLabel: String = "树",
+    treeLabel: String = tr("树", "Tree"),
 ) {
     val palette = PiTheme.palette
     val slot = LocalPiCardMenuSlot.current
     if (slot != null) {
         // 在卡片里：切换动作与状态文字交给卡片头（⋮ 菜单 + 状态位），这里不画工具栏。
         val select = androidx.compose.runtime.rememberUpdatedState(onSelect)
+        val viewTreeLabel = tr("查看$treeLabel", "View $treeLabel")
+        val viewSourceLabel = tr("查看源码", "View source")
         androidx.compose.runtime.SideEffect {
             val toTree = mode == PiTreeMode.Code
             slot.publish(
-                sig = Triple(mode, treeAvailable, status),
+                sig = Triple(mode, treeAvailable, status to viewTreeLabel),
                 items = listOf(
                     PiCardMenuItem(
-                        label = if (toTree) "查看$treeLabel" else "查看源码",
+                        label = if (toTree) viewTreeLabel else viewSourceLabel,
                         enabled = !toTree || treeAvailable,
                     ) { select.value(if (toTree) PiTreeMode.Tree else PiTreeMode.Code) },
                 ),
@@ -158,17 +161,17 @@ internal fun PiTreeToolbar(
                 .padding(2.dp),
         ) {
             PiTreeModeLabel(
-                label = "源码",
+                label = tr("源码", "Source"),
                 selected = mode == PiTreeMode.Code,
                 enabled = true,
-                onClickLabel = "查看原始源码",
+                onClickLabel = tr("查看原始源码", "View raw source"),
                 onClick = { onSelect(PiTreeMode.Code) },
             )
             PiTreeModeLabel(
                 label = treeLabel,
                 selected = mode == PiTreeMode.Tree,
                 enabled = treeAvailable,
-                onClickLabel = "查看树状视图",
+                onClickLabel = tr("查看树状视图", "View tree"),
                 onClick = { onSelect(PiTreeMode.Tree) },
             )
         }
@@ -228,12 +231,12 @@ internal fun Modifier.piTreeGuides(depth: Int, color: Color): Modifier =
 @Composable
 internal fun PiTreeMoreRow(depth: Int, remaining: Int, onMore: () -> Unit) {
     Text(
-        text = "显示更多（还有 $remaining 项）",
+        text = tr("显示更多（还有 $remaining 项）", "Show more ($remaining remaining)"),
         style = PiTheme.text.monoSmall,
         color = PiTheme.palette.accent,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClickLabel = "显示更多", onClick = onMore)
+            .clickable(onClickLabel = tr("显示更多", "Show more"), onClick = onMore)
             .padding(start = (piTreeIndentDp(depth) + 15).dp, top = 6.dp, bottom = 6.dp),
     )
 }
@@ -291,7 +294,7 @@ internal fun PiTreeRowMenu(actions: List<Pair<String, () -> Unit>>) {
             style = PiTheme.text.monoSmall,
             color = PiTheme.palette.dim.copy(alpha = 0.7f),
             modifier = Modifier
-                .clickable(onClickLabel = "更多操作") { open = true }
+                .clickable(onClickLabel = tr("更多操作", "More actions")) { open = true }
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

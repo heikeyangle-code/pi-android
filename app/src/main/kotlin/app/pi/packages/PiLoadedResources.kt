@@ -1,5 +1,6 @@
 package app.pi.packages
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -19,12 +20,14 @@ import kotlinx.serialization.json.longOrNull
 object PiLoadedResources {
 
     /** SDK `SourceScope`：`user` / `project` / `temporary`。 */
-    enum class Scope(val key: String, val label: String) {
-        User("user", "全局"),
-        Project("project", "本项目"),
-        Temporary("temporary", "本次启动"),
-        Unknown("", ""),
+    enum class Scope(val key: String, private val zhLabel: String, private val enLabel: String) {
+        User("user", "全局", "Global"),
+        Project("project", "本项目", "Project"),
+        Temporary("temporary", "本次启动", "This Session"),
+        Unknown("", "", ""),
         ;
+
+        val label: String get() = tr(zhLabel, enLabel)
 
         companion object {
             fun of(raw: String?): Scope = entries.firstOrNull { it.key == raw && raw.isNotEmpty() } ?: Unknown

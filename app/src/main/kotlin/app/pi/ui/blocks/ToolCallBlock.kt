@@ -18,6 +18,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.render.rememberPiHighlightedCode
@@ -97,7 +99,7 @@ fun ToolCallBlock(
     // verbatim through `contentText` and `rpc/Transcript.kt:1223` keeps `details`
     // whole — so the only place the path could be lost is this file.
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
-    val notice = remember(fullOutputPath, truncation) { truncationNotice(fullOutputPath, truncation) }
+    val notice = remember(fullOutputPath, truncation, PiLocale.isZh) { truncationNotice(fullOutputPath, truncation) }
     // F17 + spec §4.2: 默认渲染前 200 行 + 「展开全部」; 单块 >200 KB 时不画正文
     // （正文仍可由长按菜单的「复制输出」整份取出），改给 pi 记录的完整输出路径
     // —— spec §4.2 原文的「前往工作区」是 App 自己发明的动作，pi 没有它。
@@ -134,7 +136,7 @@ fun ToolCallBlock(
     // used to be rebuilt on every composition, and its `lineCount` scanned the
     // whole output each time. It depends only on the row's scalar fields, so it is
     // built once per output change.
-    val footer = remember(item.output, item.outputTruncated, state) {
+    val footer = remember(item.output, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     // §4.8: 工具卡长按 → 复制命令 / 复制输出. The command is the tool's own argument
@@ -169,7 +171,7 @@ fun ToolCallBlock(
     // **every** argument (`toolParamSummary`), which is exactly the kind of O(call) work the
     // F31/F8 rule at the top of this file keeps off the 200 ms publication path. Keyed on the
     // value each one reads, so a tool row that republishes while streaming pays nothing.
-    val title = remember(item.toolName) { mcpLabel(item.toolName) ?: item.toolName.ifEmpty { "工具" } }
+    val title = remember(item.toolName, PiLocale.isZh) { mcpLabel(item.toolName) ?: item.toolName.ifEmpty { tr("工具", "tool") } }
     val paramSummary = remember(item.args) { toolParamSummary(item.args) }
     // SDK 工具自带的 renderCall / renderResult（扩展、MCP 工具）。内置工具有原生卡，不问宿主；
     // 没有渲染器时 `rendered` 恒为 null，下面的通用样式原样生效。
@@ -302,7 +304,7 @@ fun ToolCallBlock(
                         // script longer than the body budget says what it left out rather than
                         // growing without a ceiling. pi's row has no such cap.
                         Text(
-                            text = "还有 $hiddenScript 行未显示",
+                            text = tr("还有 $hiddenScript 行未显示", "$hiddenScript more lines not shown"),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -358,7 +360,7 @@ fun ToolCallBlock(
                     }
                     if (hiddenParams > 0) {
                         Text(
-                            text = "还有 $hiddenParams 行未显示",
+                            text = tr("还有 $hiddenParams 行未显示", "$hiddenParams more lines not shown"),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
@@ -380,7 +382,10 @@ fun ToolCallBlock(
                     Column(modifier = Modifier.padding(top = PiSpacing.tiny)) {
                         if (shownCalls.size < nestedCalls.size) {
                             Text(
-                                text = "还有 ${nestedCalls.size - shownCalls.size} 条更早的调用未显示",
+                                text = tr(
+                                    "还有 ${nestedCalls.size - shownCalls.size} 条更早的调用未显示",
+                                    "${nestedCalls.size - shownCalls.size} earlier calls not shown",
+                                ),
                                 style = PiTheme.text.meta,
                                 color = palette.muted,
                             )
@@ -436,7 +441,7 @@ fun ToolCallBlock(
                         // for it: the body itself is still reachable through
                         // 「复制输出」 above.
                         Text(
-                            text = "输出超过 200 KB，正文未展开。",
+                            text = tr("输出超过 200 KB，正文未展开。", "Output exceeds 200 KB; body not expanded."),
                             style = PiTheme.text.meta,
                             color = palette.muted,
                         )
@@ -451,7 +456,7 @@ fun ToolCallBlock(
                         )
                         if (!fullOutput && outputLineCount > COLLAPSED_OUTPUT_LINES) {
                             ExpandAllLabel(
-                                text = "展开全部（共 $outputLineCount 行）",
+                                text = tr("展开全部（共 $outputLineCount 行）", "Show all ($outputLineCount lines)"),
                                 onClick = { fullOutput = true },
                             )
                         }

@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.packages.PiProjectTrust
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.settings.PiSettingsDialog
@@ -47,7 +48,7 @@ internal fun ProjectTrustHost(session: PiSessionViewModel) {
 
     PiSettingsDialog(
         onDismissRequest = { if (!busy) session.dismissTrustPrompt() },
-        title = "信任这个项目吗？",
+        title = tr("信任这个项目吗？", "Trust this project?"),
         sub = state.cwd,
         body = PiProjectTrust.explanation(state),
         content = {
@@ -72,7 +73,7 @@ internal fun ProjectTrustHost(session: PiSessionViewModel) {
                 }
             }
         },
-        dismissalLabel = "先不决定",
+        dismissalLabel = tr("先不决定", "Not Now"),
         onDismissButton = { if (!busy) session.dismissTrustPrompt() },
     )
 }

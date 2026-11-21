@@ -52,6 +52,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.TranscriptItem
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
@@ -89,7 +90,7 @@ fun MessageActionTarget(
     Box(
         modifier.combinedClickable(
             onClickLabel = null,
-            onLongClickLabel = "消息操作",
+            onLongClickLabel = tr("消息操作", "Message actions"),
             onLongClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 open = true
@@ -110,9 +111,15 @@ fun MessageActionTarget(
     }
 }
 
-enum class MessageRole(val wire: String, val title: String) {
-    User("user", "你的消息"),
-    Assistant("assistant", "pi 的回复"),
+enum class MessageRole(val wire: String) {
+    User("user"),
+    Assistant("assistant");
+
+    val title: String
+        get() = when (this) {
+            User -> tr("你的消息", "Your message")
+            Assistant -> tr("pi 的回复", "pi reply")
+        }
 }
 
 private enum class Mode { Menu, Select, Label }
@@ -163,7 +170,7 @@ private fun MessageActionSheet(
                     ) {
                         MessageQuickTile(
                             icon = Icons.Filled.ContentCopy,
-                            label = "复制全部",
+                            label = tr("复制全部", "Copy all"),
                             tint = palette.accent,
                             modifier = Modifier.weight(1f),
                         ) {
@@ -172,14 +179,14 @@ private fun MessageActionSheet(
                         }
                         MessageQuickTile(
                             icon = Icons.Filled.SelectAll,
-                            label = "选择文字",
+                            label = tr("选择文字", "Select text"),
                             tint = palette.border,
                             modifier = Modifier.weight(1f),
                         ) { mode = Mode.Select }
                         if (actions != null) {
                             MessageQuickTile(
                                 icon = Icons.Filled.FormatQuote,
-                                label = "引用回复",
+                                label = tr("引用回复", "Quote"),
                                 tint = palette.success,
                                 modifier = Modifier.weight(1f),
                             ) {
@@ -201,8 +208,8 @@ private fun MessageActionSheet(
                             if (onEditAndFork != null) {
                                 MessageSheetRow(
                                     icon = Icons.Filled.Edit,
-                                    label = "编辑并从此分叉",
-                                    subtitle = "回到此处重新编辑，保留原分支",
+                                    label = tr("编辑并从此分叉", "Edit & fork from here"),
+                                    subtitle = tr("回到此处重新编辑，保留原分支", "Re-edit from this point while keeping the original branch"),
                                 ) {
                                     onEditAndFork()
                                     onDismiss()
@@ -211,8 +218,8 @@ private fun MessageActionSheet(
                             }
                             MessageSheetRow(
                                 icon = Icons.Filled.AccountTree,
-                                label = "从这里继续（开新分支）",
-                                subtitle = "在会话树中以此消息为起点继续对话",
+                                label = tr("从这里继续（开新分支）", "Continue from here (new branch)"),
+                                subtitle = tr("在会话树中以此消息为起点继续对话", "Branch the session tree from this message"),
                             ) {
                                 actions.continueFrom(item)
                                 onDismiss()
@@ -220,14 +227,14 @@ private fun MessageActionSheet(
                             MessageSheetDivider()
                             MessageSheetRow(
                                 icon = Icons.Filled.BookmarkBorder,
-                                label = "添加 / 修改标签",
-                                subtitle = "在会话树中快速定位此节点",
+                                label = tr("添加 / 修改标签", "Add / edit label"),
+                                subtitle = tr("在会话树中快速定位此节点", "Bookmark this node in the session tree"),
                             ) { mode = Mode.Label }
                             MessageSheetDivider()
                             MessageSheetRow(
                                 icon = Icons.Filled.VisibilityOff,
-                                label = "从模型上下文隐藏",
-                                subtitle = "保留显示，但后续请求不再发给模型",
+                                label = tr("从模型上下文隐藏", "Hide from model context"),
+                                subtitle = tr("保留显示，但后续请求不再发给模型", "Keep visible in chat, omit from future model requests"),
                                 tint = palette.warning,
                             ) {
                                 actions.hideFromContext(item)
@@ -238,7 +245,7 @@ private fun MessageActionSheet(
                 }
 
                 Mode.Select -> {
-                    Text("自由选择文字", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+                    Text(tr("自由选择文字", "Select text"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                     SelectionContainer {
                         Text(
                             text,
@@ -254,15 +261,18 @@ private fun MessageActionSheet(
                         )
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { mode = Mode.Menu }) { Text("返回") }
+                        TextButton(onClick = { mode = Mode.Menu }) { Text(tr("返回", "Back")) }
                     }
                 }
 
                 Mode.Label -> {
                     var label by remember { mutableStateOf("") }
-                    Text("给这条消息加标签", style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
+                    Text(tr("给这条消息加标签", "Label this message"), style = PiType.title, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        "标签写进会话树，在「树」里能一眼找到这里；留空保存即清除已有标签。",
+                        tr(
+                            "标签写进会话树，在「树」里能一眼找到这里；留空保存即清除已有标签。",
+                            "Labels appear as bookmarks in the session tree. Save blank to clear an existing label.",
+                        ),
                         style = PiTheme.text.meta,
                         color = palette.muted,
                     )
@@ -271,18 +281,18 @@ private fun MessageActionSheet(
                         onValueChange = { label = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("输入标签名称") },
+                        placeholder = { Text(tr("输入标签名称", "Enter label name")) },
                         shape = PiShapes.input,
                     )
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { mode = Mode.Menu }) { Text("返回") }
+                        TextButton(onClick = { mode = Mode.Menu }) { Text(tr("返回", "Back")) }
                         Spacer(Modifier.weight(1f))
                         TextButton(
                             onClick = {
                                 actions?.label?.invoke(item, label.trim().takeIf { it.isNotEmpty() })
                                 onDismiss()
                             },
-                        ) { Text("保存") }
+                        ) { Text(tr("保存", "Save")) }
                     }
                 }
             }

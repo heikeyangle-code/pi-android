@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.ErrorText
 import app.pi.ui.chat.LocalMessageActions
 import app.pi.ui.theme.PiSpacing
@@ -77,7 +78,7 @@ fun ErrorBlock(
                             )
                         }
                         Text(
-                            text = "执行出错",
+                            text = tr("执行出错", "Execution Error"),
                             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                             color = palette.error,
                             maxLines = 1,
@@ -103,7 +104,7 @@ fun ErrorBlock(
                                 .padding(top = 2.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(palette.accent.copy(alpha = 0.16f))
-                                .clickable(onClickLabel = "重发上一条消息", onClick = actions.retry)
+                                .clickable(onClickLabel = tr("重发上一条消息", "Resend last message"), onClick = actions.retry)
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -115,7 +116,7 @@ fun ErrorBlock(
                                 tint = palette.accent,
                             )
                             Text(
-                                text = "重试上一条消息",
+                                text = tr("重试上一条消息", "Retry last message"),
                                 style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                                 color = palette.accent,
                             )

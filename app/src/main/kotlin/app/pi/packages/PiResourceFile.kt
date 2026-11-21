@@ -1,5 +1,6 @@
 package app.pi.packages
 
+import app.pi.i18n.tr
 import app.pi.settings.PiFilesCheck
 import app.pi.settings.checkPiFileWrite
 import kotlinx.serialization.json.JsonElement
@@ -18,16 +19,18 @@ import kotlinx.serialization.json.longOrNull
  */
 object PiResourceFile {
 
-    enum class Kind(val key: String, val label: String) {
-        Skill("skill", "技能"),
-        Prompt("prompt", "提示模板"),
-        Theme("theme", "主题"),
-        Extension("extension", "扩展"),
-        Context("context", "上下文文件"),
-        System("system", "系统提示（替换）"),
-        AppendSystem("append-system", "系统提示（追加）"),
-        Unknown("", "文件"),
+    enum class Kind(val key: String, private val zhLabel: String, private val enLabel: String) {
+        Skill("skill", "技能", "Skill"),
+        Prompt("prompt", "提示模板", "Prompt Template"),
+        Theme("theme", "主题", "Theme"),
+        Extension("extension", "扩展", "Extension"),
+        Context("context", "上下文文件", "Context File"),
+        System("system", "系统提示（替换）", "System Prompt (Override)"),
+        AppendSystem("append-system", "系统提示（追加）", "System Prompt (Append)"),
+        Unknown("", "文件", "File"),
         ;
+
+        val label: String get() = tr(zhLabel, enLabel)
 
         companion object {
             fun of(raw: String?): Kind = entries.firstOrNull { it.key == raw && raw.isNotEmpty() } ?: Unknown
@@ -70,39 +73,52 @@ object PiResourceFile {
     // ------------------------------------------------------------------ 新建
 
     /** 能新建的东西。主题不在里面：必需色一二十个，从零写没有意义——改现有的。 */
-    enum class Creatable(val kind: Kind, val label: String, val nameHint: String, val needsName: Boolean) {
-        Skill(Kind.Skill, "技能", "小写字母、数字、连字符，如 my-skill", true),
-        Prompt(Kind.Prompt, "提示模板", "文件名即命令，如 review", true),
-        Extension(Kind.Extension, "扩展", "文件名，如 my-ext（写成 .ts）", true),
+    enum class Creatable(
+        val kind: Kind,
+        private val zhLabel: String,
+        private val enLabel: String,
+        private val zhHint: String,
+        private val enHint: String,
+        val needsName: Boolean,
+    ) {
+        Skill(Kind.Skill, "技能", "Skill", "小写字母、数字、连字符，如 my-skill", "Lowercase letters, digits, hyphens (e.g. my-skill)", true),
+        Prompt(Kind.Prompt, "提示模板", "Prompt Template", "文件名即命令，如 review", "Filename becomes /command (e.g. review)", true),
+        Extension(Kind.Extension, "扩展", "Extension", "文件名，如 my-ext（写成 .ts）", "Filename (e.g. my-ext, saved as .ts)", true),
+        ;
+
+        val label: String get() = tr(zhLabel, enLabel)
+        val nameHint: String get() = tr(zhHint, enHint)
     }
 
     /** 与 SDK `validateName`（skills.js）一字不差：≤64、`[a-z0-9-]+`、不以连字符开头结尾、无连续连字符。 */
     fun skillNameError(name: String): String? = when {
-        name.isEmpty() -> "给它起个名字。"
-        name.length > 64 -> "技能名最长 64 个字符。"
-        !name.all { it in 'a'..'z' || it in '0'..'9' || it == '-' } -> "技能名只能用小写字母、数字和连字符。"
-        name.startsWith("-") || name.endsWith("-") -> "技能名不能以连字符开头或结尾。"
-        name.contains("--") -> "技能名不能有连续的连字符。"
+        name.isEmpty() -> tr("给它起个名字。", "Enter a name.")
+        name.length > 64 -> tr("技能名最长 64 个字符。", "Skill name must be at most 64 characters.")
+        !name.all { it in 'a'..'z' || it in '0'..'9' || it == '-' } -> tr("技能名只能用小写字母、数字和连字符。", "Skill name may only contain lowercase letters, digits, and hyphens.")
+        name.startsWith("-") || name.endsWith("-") -> tr("技能名不能以连字符开头或结尾。", "Skill name cannot start or end with a hyphen.")
+        name.contains("--") -> tr("技能名不能有连续的连字符。", "Skill name cannot contain consecutive hyphens.")
         else -> null
     }
 
     /** 提示模板 / 扩展的文件名（提示的文件名就是 `/命令名`，不能有空格与路径分隔符）。 */
     fun plainNameError(name: String): String? = when {
-        name.isEmpty() -> "给它起个名字。"
-        name.length > 64 -> "名字最长 64 个字符。"
+        name.isEmpty() -> tr("给它起个名字。", "Enter a name.")
+        name.length > 64 -> tr("名字最长 64 个字符。", "Name must be at most 64 characters.")
         !Regex("^[A-Za-z0-9][A-Za-z0-9_.-]*$").matches(name) || name.endsWith(".") ->
-            "名字只能用字母、数字、下划线、点和连字符，且以字母或数字开头。"
+            tr("名字只能用字母、数字、下划线、点和连字符，且以字母或数字开头。", "Name may only contain letters, digits, underscores, dots, and hyphens, starting with a letter or digit.")
         else -> null
     }
 
     fun nameError(c: Creatable, name: String): String? = if (c == Creatable.Skill) skillNameError(name) else plainNameError(name)
 
     /** 能新建的上下文 / 系统提示文件。项目里的 `AGENTS.md` 在项目根，`SYSTEM.md` 在 `.pi` 里（宿主定位置）。 */
-    val CONTEXT_FILES: List<Pair<String, String>> = listOf(
-        "AGENTS.md" to "上下文文件：项目说明、约定、构建与测试命令，每次对话都带给模型",
-        "SYSTEM.md" to "替换 pi 的默认系统提示（慎用）",
-        "APPEND_SYSTEM.md" to "在默认系统提示末尾追加几句",
-    )
+    val CONTEXT_FILES: List<Pair<String, String>>
+        get() = listOf(
+            "AGENTS.md" to tr("上下文文件：项目说明、约定、构建与测试命令，每次对话都带给模型", "Context file: project overview, conventions, build/test commands sent on every turn"),
+            "CLAUDE.md" to tr("兼容 Claude Code 的项目说明文件，与 AGENTS.md 同级加载", "Claude Code compatible context file, loaded alongside AGENTS.md"),
+            "APPEND_SYSTEM.md" to tr("推荐：在默认系统提示末尾安全追加指令，不破坏工具说明", "Recommended: safely append instructions after pi's default system prompt"),
+            "SYSTEM.md" to tr("高级：整份替换 pi 的默认系统提示（会覆盖工具清单与默认规则）", "Advanced: replaces pi's entire default system prompt (overrides tool list & rules)"),
+        )
 
     // ------------------------------------------------------------------ 预检
 
@@ -125,12 +141,18 @@ object PiResourceFile {
         val notices = mutableListOf<String>()
         val description = fm["description"]
         if (description.isNullOrBlank()) {
-            notices += "缺少 description：pi 不会加载没有 description 的技能（模型靠这句话决定要不要读它）。"
+            notices += tr(
+                "缺少 description：pi 不会加载没有 description 的技能（模型靠这句话决定要不要读它）。",
+                "Missing description: pi will not load a skill without a description (the model uses it to decide when to read it).",
+            )
         } else if (description.length > 1024) {
-            notices += "description 有 ${description.length} 字，超过 1024，pi 会给警告。"
+            notices += tr(
+                "description 有 ${description.length} 字，超过 1024，pi 会给警告。",
+                "description is ${description.length} chars (over 1024); pi will emit a warning.",
+            )
         }
         val name = fm["name"] ?: rel.substringBeforeLast('/', "").substringAfterLast('/')
-        if (name.isNotEmpty()) skillNameError(name)?.let { notices += "name「$name」：$it" }
+        if (name.isNotEmpty()) skillNameError(name)?.let { notices += tr("name「$name」：$it", "name \"$name\": $it") }
         return PiFilesCheck(notices = notices)
     }
 

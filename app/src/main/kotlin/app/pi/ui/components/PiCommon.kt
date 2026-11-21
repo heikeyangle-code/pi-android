@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.sp
+import app.pi.i18n.tr
 import app.pi.rpc.TokenUsage
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
@@ -293,7 +294,7 @@ private fun PiMenuRow(item: PiMenuItem, onDismiss: () -> Unit) {
     // visible there must be Chinese beside it, and whatever is announced must *be*
     // that Chinese — so the label and the note are joined, and a row whose spoken
     // name is not just those two (「清空」 → 「清空草稿」) overrides it.
-    val spoken = item.a11yLabel ?: item.note?.let { "${item.label}，$it" } ?: item.label
+    val spoken = item.a11yLabel ?: item.note?.let { tr("${item.label}，$it", "${item.label}, $it") } ?: item.label
     Row(
         modifier = Modifier
             .fillMaxWidth()

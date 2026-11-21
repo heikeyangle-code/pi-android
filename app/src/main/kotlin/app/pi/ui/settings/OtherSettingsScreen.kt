@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiTheme
 
@@ -28,7 +29,7 @@ internal fun OtherSettingsScreen(
 ) {
     val palette = PiTheme.palette
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "其他", onBack = onBack)
+        PiTopBar(title = tr("其他", "More"), onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
@@ -38,14 +39,40 @@ internal fun OtherSettingsScreen(
         ) {
             val rows = buildList {
                 if (onOpenTerminal != null) add(
-                    OtherEntry(Icons.Filled.Terminal, palette.accent, "终端", "打开内置全屏终端环境", onOpenTerminal),
+                    OtherEntry(
+                        Icons.Filled.Terminal,
+                        palette.accent,
+                        tr("终端", "Terminal"),
+                        tr("打开内置全屏终端环境", "Open the built-in full-screen terminal"),
+                        onOpenTerminal,
+                    ),
                 )
                 if (onOpenDeviceCapabilities != null) add(
-                    OtherEntry(Icons.Filled.PhoneAndroid, palette.success, "设备能力", "管理通知、无障碍、文件与系统桥接授权", onOpenDeviceCapabilities),
+                    OtherEntry(
+                        Icons.Filled.PhoneAndroid,
+                        palette.success,
+                        tr("设备能力", "Device Capabilities"),
+                        tr("管理通知、无障碍、文件与系统桥接授权", "Manage notifications, accessibility, files, and device bridge permissions"),
+                        onOpenDeviceCapabilities,
+                    ),
                 )
-                add(OtherEntry(Icons.Filled.Lock, palette.warning, "安全与隐私", "项目默认信任策略与安装遥测", onOpenSecurity))
+                add(
+                    OtherEntry(
+                        Icons.Filled.Lock,
+                        palette.warning,
+                        tr("安全与隐私", "Security & Privacy"),
+                        tr("项目默认信任策略与安装遥测", "Default project trust policy and install telemetry"),
+                        onOpenSecurity,
+                    ),
+                )
                 if (onOpenLicenses != null) add(
-                    OtherEntry(Icons.Filled.Info, palette.muted, "开源许可", "查看第三方依赖与开源协议声明", onOpenLicenses),
+                    OtherEntry(
+                        Icons.Filled.Info,
+                        palette.muted,
+                        tr("开源许可", "Open Source Licenses"),
+                        tr("查看第三方依赖与开源协议声明", "View third-party dependencies and license notices"),
+                        onOpenLicenses,
+                    ),
                 )
             }
             item(key = "other-card") {

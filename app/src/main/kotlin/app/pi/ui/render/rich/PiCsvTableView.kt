@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 
@@ -114,8 +115,8 @@ fun PiCsvTableView(
         null
     }
     val status = currentFeedback
-        ?: if (table != null) "${table.rowCount} 行 × ${table.columnCount} 列"
-        else if (result == null) "解析中…"
+        ?: if (table != null) tr("${table.rowCount} 行 × ${table.columnCount} 列", "${table.rowCount} rows × ${table.columnCount} cols")
+        else if (result == null) tr("解析中…", "Parsing…")
         else failureNotice
 
     Column(modifier.fillMaxWidth()) {
@@ -124,7 +125,7 @@ fun PiCsvTableView(
             treeAvailable = table != null,
             status = status,
             onSelect = { mode = it },
-            treeLabel = "表",
+            treeLabel = tr("表", "Table"),
         )
         PiCardHairline()
         if (mode == PiTreeMode.Tree && table != null) {
@@ -132,7 +133,7 @@ fun PiCsvTableView(
                 table = table,
                 onCopyCell = { cell ->
                     clipboard.setText(AnnotatedString(cell))
-                    feedback = "已复制单元格"
+                    feedback = tr("已复制单元格", "Cell copied")
                 },
             )
         } else {
@@ -210,7 +211,7 @@ fun PiCsvTableBody(
                 PiTreeMoreRow(depth = 0, remaining = hiddenRows) { shown += PI_CSV_PAGE_ROWS }
             } else {
                 Text(
-                    text = "… 还有 $hiddenRows 行未显示（切换源码查看全部）",
+                    text = tr("… 还有 $hiddenRows 行未显示（切换源码查看全部）", "… $hiddenRows more row(s) hidden (switch to source to view all)"),
                     style = PiTheme.text.monoSmall,
                     color = palette.muted,
                     modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 8.dp),
@@ -247,7 +248,7 @@ private fun CsvRow(
                         if (cell.isEmpty()) {
                             Modifier
                         } else {
-                            Modifier.clickable(onClickLabel = "复制单元格") { onCopyCell(cell) }
+                            Modifier.clickable(onClickLabel = tr("复制单元格", "Copy cell")) { onCopyCell(cell) }
                         },
                     )
                     .padding(
@@ -350,12 +351,12 @@ private fun visibleRowCount(table: CsvParseResult.Table): Int {
 
 /** One line's reason, built from the same numbers [PiCsvTable.parse] enforces. */
 private fun csvFailureNotice(reason: CsvFailure, limits: CsvLimits): String = when (reason) {
-    CsvFailure.NotSettled -> "CSV/TSV 还在生成，先显示源码"
-    CsvFailure.Empty -> "CSV/TSV 为空，先显示源码"
-    CsvFailure.TooLarge -> "CSV/TSV 超过 ${limits.maxChars / 1024} KiB，已回退源码"
-    CsvFailure.TooManyRows -> "CSV/TSV 超过 ${limits.maxRows} 行，已回退源码"
-    CsvFailure.TooManyColumns -> "CSV/TSV 超过 ${limits.maxColumns} 列，已回退源码"
-    CsvFailure.Malformed -> "CSV/TSV 的引号规则无法解析（RFC 4180），已回退源码"
+    CsvFailure.NotSettled -> tr("CSV/TSV 还在生成，先显示源码", "CSV/TSV still streaming; showing source")
+    CsvFailure.Empty -> tr("CSV/TSV 为空，先显示源码", "CSV/TSV is empty; showing source")
+    CsvFailure.TooLarge -> tr("CSV/TSV 超过 ${limits.maxChars / 1024} KiB，已回退源码", "CSV/TSV exceeds ${limits.maxChars / 1024} KiB; showing source")
+    CsvFailure.TooManyRows -> tr("CSV/TSV 超过 ${limits.maxRows} 行，已回退源码", "CSV/TSV exceeds ${limits.maxRows} rows; showing source")
+    CsvFailure.TooManyColumns -> tr("CSV/TSV 超过 ${limits.maxColumns} 列，已回退源码", "CSV/TSV exceeds ${limits.maxColumns} columns; showing source")
+    CsvFailure.Malformed -> tr("CSV/TSV 的引号规则无法解析（RFC 4180），已回退源码", "Invalid CSV/TSV quoting (RFC 4180); showing source")
 }
 
 /** Per-cell wrap cap; the full value is still copied by tapping the cell. */

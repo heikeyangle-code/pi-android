@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
@@ -68,8 +69,11 @@ fun PiLicensesEntryRow(
     // 设置首页的一行，与统一行同一个构件：图标 + 标题 + 一行说明 + chevron，
     // 没有「打开」这类文字尾巴。说明只有一行（说明行超出省略）。
     PiSettingsEntryRow(
-        title = "开源许可",
-        supporting = "App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式",
+        title = tr("开源许可", "Open Source Licenses"),
+        supporting = tr(
+            "App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式",
+            "Third-party components bundled in this app, license texts, and GPL / LGPL source offers",
+        ),
         onClick = onClick,
         modifier = modifier,
         leadingIcon = Icons.Filled.Info,
@@ -106,10 +110,10 @@ fun LicensesScreen(
     }
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = "开源许可", onBack = onBack)
+        PiTopBar(title = tr("开源许可", "Open Source Licenses"), onBack = onBack)
         if (notices.isEmpty()) {
             Text(
-                "正在读取…",
+                tr("正在读取…", "Loading…"),
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.pageHorizontal,
                     vertical = PiSettingsMetrics.groupGap,
@@ -162,7 +166,7 @@ private fun LicenceTextScreen(
         val text = body
         if (text == null) {
             Text(
-                "正在读取…",
+                tr("正在读取…", "Loading…"),
                 modifier = Modifier.padding(
                     horizontal = PiSettingsMetrics.pageHorizontal,
                     vertical = PiSettingsMetrics.groupGap,

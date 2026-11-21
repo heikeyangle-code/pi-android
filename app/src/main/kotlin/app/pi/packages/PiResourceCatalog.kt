@@ -1,5 +1,6 @@
 package app.pi.packages
 
+import app.pi.i18n.tr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -20,12 +21,14 @@ import kotlinx.serialization.json.jsonObject
  */
 object PiResourceCatalog {
 
-    enum class Type(val key: String, val label: String) {
-        Extensions("extensions", "扩展"),
-        Skills("skills", "技能"),
-        Prompts("prompts", "提示模板"),
-        Themes("themes", "主题"),
+    enum class Type(val key: String, private val zhLabel: String, private val enLabel: String) {
+        Extensions("extensions", "扩展", "Extensions"),
+        Skills("skills", "技能", "Skills"),
+        Prompts("prompts", "提示模板", "Prompt Templates"),
+        Themes("themes", "主题", "Themes"),
         ;
+
+        val label: String get() = tr(zhLabel, enLabel)
 
         companion object {
             fun of(key: String): Type? = entries.firstOrNull { it.key == key }
@@ -110,7 +113,7 @@ object PiResourceCatalog {
     private fun JsonObject.errorOrNull(): String? = str("error")
 
     fun parseSnapshot(text: String): Parsed<Snapshot> {
-        val root = payload(text) ?: return Parsed.Error("pi 没有返回可读的资源清单。")
+        val root = payload(text) ?: return Parsed.Error(tr("pi 没有返回可读的资源清单。", "Pi did not return a readable resource list."))
         root.errorOrNull()?.let { return Parsed.Error(it) }
         fun groups(key: String): List<Group> = (root[key] as? JsonArray).orEmpty().mapNotNull { parseGroup(it) }
         return Parsed.Ok(
@@ -165,9 +168,9 @@ object PiResourceCatalog {
     }
 
     fun parseToggle(text: String): Parsed<Toggled> {
-        val root = payload(text) ?: return Parsed.Error("pi 没有返回开关结果。")
+        val root = payload(text) ?: return Parsed.Error(tr("pi 没有返回开关结果。", "Pi did not return a toggle result."))
         root.errorOrNull()?.let { return Parsed.Error(it) }
-        if ((root["ok"] as? JsonPrimitive)?.booleanOrNull != true) return Parsed.Error("pi 没有确认这次修改。")
+        if ((root["ok"] as? JsonPrimitive)?.booleanOrNull != true) return Parsed.Error(tr("pi 没有确认这次修改。", "Pi did not confirm this change."))
         return Parsed.Ok(
             Toggled(
                 enabled = (root["enabled"] as? JsonPrimitive)?.booleanOrNull,
@@ -178,9 +181,9 @@ object PiResourceCatalog {
     }
 
     fun parseUpdates(text: String): Parsed<List<Update>> {
-        val root = payload(text) ?: return Parsed.Error("pi 没有返回更新检查的结果。")
+        val root = payload(text) ?: return Parsed.Error(tr("pi 没有返回更新检查的结果。", "Pi did not return update check results."))
         root.errorOrNull()?.let { return Parsed.Error(it) }
-        val list = (root["updates"] as? JsonArray) ?: return Parsed.Error("pi 没有返回更新检查的结果。")
+        val list = (root["updates"] as? JsonArray) ?: return Parsed.Error(tr("pi 没有返回更新检查的结果。", "Pi did not return update check results."))
         return Parsed.Ok(
             list.mapNotNull { element ->
                 val o = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null

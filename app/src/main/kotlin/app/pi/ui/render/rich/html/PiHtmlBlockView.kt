@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.render.rich.FenceInfo
@@ -57,7 +58,7 @@ fun PiHtmlBlockView(
     }
 
     when (result) {
-        null -> HtmlSourceFallback(source = source, notice = "解析中…", modifier = modifier)
+        null -> HtmlSourceFallback(source = source, notice = null, modifier = modifier)
 
         is PiHtmlParseResult.Success -> PiHtmlRenderer(
             nodes = result.nodes,
@@ -74,29 +75,21 @@ fun PiHtmlBlockView(
 
 /**
  * 回退视图：一行原因 + 原始源码。
- *
- * 源码使用等宽字体但**不**横向滚动：HTML 往往一行很长，横滑会让读者看不到后面的
- * 内容；自动换行至少保证每个字符都在屏幕上。复制仍然由外层 transcript 的复制动作
- * 负责，它复制的是原始消息，不是这个视图。
  */
 @Composable
 private fun HtmlSourceFallback(
     source: String,
-    notice: String,
+    notice: String?,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    // 回退也套同一张卡（`html` 胶囊 + 复制）：裸的一行原因加一坨源码在页面上不像一个"块"。
     val info = remember { FenceInfo.parse("html") }
-    // 回退就是一个**带语法高亮的 html 代码块**：原因放进卡片头的状态位（一行、省略），
-    // 正文只有高亮后的源码。以前正文是一行原因 + 一坨没高亮的灰字，和同页别的 html 代码块
-    // 长得不一样。
     val highlighted = rememberPiHighlightedCode(source, "html")
     PiRichCardFrame(
         code = source,
         info = info,
         palette = palette,
-        status = notice.takeIf { it != "解析中…" },
+        status = notice,
     ) {
         if (source.isNotBlank()) {
             Text(
@@ -112,26 +105,22 @@ private fun HtmlSourceFallback(
     }
 }
 
-/**
- * 把失败原因变成**一行**中文提示。策略给的 reason 可能带换行或很长，先压成一行
- * 再截断，避免一条失败提示把整屏撑开。
- */
 private fun htmlFailureNotice(reason: PiHtmlFailure): String {
     val limits = PiHtmlDocument.DEFAULT_LIMITS
     val text = when (reason) {
-        PiHtmlFailure.NotSettled -> "HTML 还在生成，先显示源码"
-        PiHtmlFailure.Empty -> "HTML 为空，显示原始内容"
-        PiHtmlFailure.TooLarge -> "HTML 超过 ${limits.maxChars / 1024} KiB，已回退源码"
-        PiHtmlFailure.TooDeep -> "HTML 嵌套超过 ${limits.maxDepth} 层，已回退源码"
-        PiHtmlFailure.TooManyNodes -> "HTML 节点超过 ${limits.maxNodes} 个，已回退源码"
-        PiHtmlFailure.EmptyAfterPolicy -> "HTML 安全清理后为空，已回退源码"
-        PiHtmlFailure.Malformed -> "HTML 解析失败，已回退源码"
+        PiHtmlFailure.NotSettled -> tr("HTML 还在生成，先显示源码", "HTML still streaming; showing source")
+        PiHtmlFailure.Empty -> tr("HTML 为空，显示原始内容", "HTML is empty; showing raw content")
+        PiHtmlFailure.TooLarge -> tr("HTML 超过 ${limits.maxChars / 1024} KiB，已回退源码", "HTML exceeds ${limits.maxChars / 1024} KiB; showing source")
+        PiHtmlFailure.TooDeep -> tr("HTML 嵌套超过 ${limits.maxDepth} 层，已回退源码", "HTML nesting exceeds ${limits.maxDepth} levels; showing source")
+        PiHtmlFailure.TooManyNodes -> tr("HTML 节点超过 ${limits.maxNodes} 个，已回退源码", "HTML exceeds ${limits.maxNodes} nodes; showing source")
+        PiHtmlFailure.EmptyAfterPolicy -> tr("HTML 安全清理后为空，已回退源码", "HTML empty after sanitization; showing source")
+        PiHtmlFailure.Malformed -> tr("HTML 解析失败，已回退源码", "Invalid HTML; showing source")
         is PiHtmlFailure.Rejected -> {
             val detail = oneLine(reason.reason, maxChars = 120)
             if (detail.isEmpty()) {
-                "HTML 未通过安全策略，已回退源码"
+                tr("HTML 未通过安全策略，已回退源码", "HTML blocked by safety policy; showing source")
             } else {
-                "HTML 未通过安全策略：$detail"
+                tr("HTML 未通过安全策略：$detail", "HTML blocked by safety policy: $detail")
             }
         }
     }

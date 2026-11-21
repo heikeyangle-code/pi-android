@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.host.ExtensionsAccess
 import app.pi.host.HostException
 import app.pi.host.HostExtensions
+import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
 import app.pi.ui.models.ModelsCard
 import app.pi.ui.models.ModelsCardPadding
@@ -116,19 +117,27 @@ internal fun PackagesScreen(
     }
 
     /** 跑一次装 / 卸 / 更新：串行、带进度、做完热重载。 */
-    fun run(label: String, op: suspend (opId: String) -> Unit) {
+    fun run(opKey: String, op: suspend (opId: String) -> Unit) {
         if (busy != null) return
         val id = "pkg-" + System.nanoTime()
         currentOp = id
         log.clear()
-        busy = label
+        busy = opKey
         failure = null
         result = null
         scope.launch {
+            val opName = actionLabel(opKey) ?: opKey
             try {
                 op(id)
                 val reloaded = runCatching { access.ext.reload() }
-                result = if (reloaded.isSuccess) "$label 完成，已重新加载。" else "$label 完成，但重新加载失败：${reloaded.exceptionOrNull()?.message}。到枢纽页点「重新加载」重试。"
+                result = if (reloaded.isSuccess) {
+                    tr("$opName 完成，已重新加载。", "$opName complete and reloaded.")
+                } else {
+                    tr(
+                        "$opName 完成，但重新加载失败：${reloaded.exceptionOrNull()?.message}。到枢纽页点「重新加载」重试。",
+                        "$opName complete, but reload failed: ${reloaded.exceptionOrNull()?.message}. Tap \"Reload\" on the hub to retry.",
+                    )
+                }
                 updates = null
                 reloadList()
                 model.refresh()
@@ -137,33 +146,38 @@ internal fun PackagesScreen(
             } catch (e: HostException) {
                 failure = e.message ?: e.code
             } catch (e: Exception) {
-                failure = e.message ?: "$label 失败"
+                failure = e.message ?: tr("$opName 失败", "$opName failed")
             }
             busy = null
         }
     }
 
     Column(Modifier.fillMaxSize()) {
-        PiTopBar(title = "扩展包", onBack = onBack)
+        PiTopBar(title = tr("扩展包", "Packages"), onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.inline + PiSpacing.small),
         ) {
             item {
-                PiInfoNote("pi 包把扩展、技能、提示模板、主题打成一个来源，从 npm 或 git 装。装进来的资源在「扩展 / 技能 / 提示模板 / 主题」里按包分组显示。")
+                PiInfoNote(
+                    tr(
+                        "pi 包把扩展、技能、提示模板、主题打成一个来源，从 npm 或 git 装。装进来的资源在「扩展 / 技能 / 提示模板 / 主题」里按包分组显示。",
+                        "Pi packages bundle extensions, skills, prompt templates, and themes into one source installed from npm or git. Installed resources appear grouped by package under Extensions, Skills, Prompt Templates, and Themes.",
+                    ),
+                )
             }
 
             // ---- 安装 ----
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    ModelsSectionLabel("安装")
+                    ModelsSectionLabel(tr("安装", "Install"))
                     ModelsCard {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                             PiEditorField(
                                 value = source,
                                 onValueChange = { source = it },
-                                placeholder = "npm:@scope/name   git:github.com/user/repo   或本地路径",
+                                placeholder = tr("npm:@scope/name   git:github.com/user/repo   或本地路径", "npm:@scope/name   git:github.com/user/repo   or local path"),
                                 enabled = busy == null,
                             )
                             val v = inspected?.let { sourceView(source, it.kind, it.name, it.version, it.pinned) }
@@ -173,24 +187,24 @@ internal fun PackagesScreen(
                                 v.warning?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                                PiSettingsChip(text = "全局", active = !useProject, onClick = { project = false })
-                                PiSettingsChip(text = "本项目", active = useProject, enabled = projectUsable, onClick = { project = true })
+                                PiSettingsChip(text = tr("全局", "Global"), active = !useProject, onClick = { project = false })
+                                PiSettingsChip(text = tr("本项目", "Project"), active = useProject, enabled = projectUsable, onClick = { project = true })
                             }
                             Text(
                                 when {
-                                    !projectUsable -> "项目还没被信任，pi 不允许往项目里装包。先到枢纽页的「项目信任」表态。"
-                                    useProject -> "写进本项目的 .pi/settings.json，换项目就没有了。"
-                                    else -> "写进全局设置，所有项目都能用。"
+                                    !projectUsable -> tr("项目还没被信任，pi 不允许往项目里装包。先到枢纽页的「项目信任」表态。", "Project is not trusted yet; pi does not allow installing project packages. Review Project Trust on the hub first.")
+                                    useProject -> tr("写进本项目的 .pi/settings.json，换项目就没有了。", "Saved to this project's .pi/settings.json and applies only to this project.")
+                                    else -> tr("写进全局设置，所有项目都能用。", "Saved to global settings and available in all projects.")
                                 },
                                 style = PiTheme.text.meta,
                                 color = PiTheme.palette.muted,
                             )
                             PrimaryAction(
-                                if (busy == "安装") "安装中…" else "安装",
+                                if (busy == "install") tr("安装中…", "Installing…") else tr("安装", "Install"),
                                 enabled = busy == null && source.isNotBlank(),
                                 onClick = {
                                     val s = source.trim()
-                                    run("安装") { id -> access.ext.install(s, useProject, id); source = "" }
+                                    run("install") { id -> access.ext.install(s, useProject, id); source = "" }
                                 },
                             )
                         }
@@ -202,7 +216,10 @@ internal fun PackagesScreen(
                 item {
                     ModelsCard(accent = failure != null) {
                         Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                            busy?.let { Text("$it 进行中…（同一时刻只能做一件）", style = PiTheme.text.meta, color = PiTheme.palette.muted) }
+                            busy?.let {
+                                val opName = actionLabel(it) ?: it
+                                Text(tr("$opName 进行中…（同一时刻只能做一件）", "$opName in progress… (one operation at a time)"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            }
                             log.takeLast(8).forEach { Text(it, style = PiTheme.text.monoSmall, color = PiTheme.palette.dim, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             result?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.success) }
                             failure?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
@@ -215,29 +232,29 @@ internal fun PackagesScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                     val list = packages
-                    ModelsSectionLabel(if (list == null) "读取中…" else "已配置 · ${list.size}")
+                    ModelsSectionLabel(if (list == null) tr("读取中…", "Loading…") else tr("已配置 · ${list.size}", "Configured · ${list.size}"))
                     Row(
                         Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                         horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
                     ) {
                         PiSettingsChip(
-                            text = if (checking) "检查中…" else "检查更新",
+                            text = if (checking) tr("检查中…", "Checking…") else tr("检查更新", "Check Updates"),
                             enabled = !checking && busy == null && !list.isNullOrEmpty(),
                             onClick = {
                                 checking = true
                                 scope.launch {
-                                    updates = runCatching { access.ext.updates() }.getOrElse { failure = it.message ?: "检查更新失败（要联网）"; null }
+                                    updates = runCatching { access.ext.updates() }.getOrElse { failure = it.message ?: tr("检查更新失败（要联网）", "Failed to check updates (network required)"); null }
                                     checking = false
                                 }
                             },
                         )
                         if (!updates.isNullOrEmpty()) {
-                            PiSettingsChip(text = "全部更新（${updates!!.size}）", enabled = busy == null, onClick = { run("更新") { id -> access.ext.update(null, id) } })
+                            PiSettingsChip(text = tr("全部更新（${updates!!.size}）", "Update All (${updates!!.size})"), enabled = busy == null, onClick = { run("update") { id -> access.ext.update(null, id) } })
                         }
                     }
                     updates?.let {
                         Text(
-                            if (it.isEmpty()) "都是最新的。固定了版本的包不参与检查。" else "有 ${it.size} 个包可以更新。固定了版本的包不会动。",
+                            if (it.isEmpty()) tr("都是最新的。固定了版本的包不参与检查。", "Everything is up to date. Pinned packages are skipped.") else tr("有 ${it.size} 个包可以更新。固定了版本的包不会动。", "${it.size} packages can be updated. Pinned packages are skipped."),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.muted,
                             modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
@@ -247,7 +264,7 @@ internal fun PackagesScreen(
             }
             val list = packages.orEmpty()
             if (packages != null && list.isEmpty()) {
-                item { PiInfoNote("还没装任何包。在上面填一个来源装一个。") }
+                item { PiInfoNote(tr("还没装任何包。在上面填一个来源装一个。", "No packages installed yet. Enter a source above to install one.")) }
             }
             items(list, key = { it.scope + ":" + it.source }) { p ->
                 val info = p.info
@@ -282,20 +299,20 @@ internal fun PackagesScreen(
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        TagRow(packageTags(p.scope, p.filtered, p.installedPath != null, view) + listOfNotNull(if (update != null) "有更新" else null))
+                        TagRow(packageTags(p.scope, p.filtered, p.installedPath != null, view) + listOfNotNull(if (update != null) tr("有更新", "Update available") else null))
                         p.installedPath?.let { Text(shortPath(it), style = PiTheme.text.monoSmall, color = PiTheme.palette.dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         view.warning?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.warning) }
                         Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
                             if (p.installedPath == null) {
-                                PiSettingsChip(text = "重新安装", enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { run("安装") { id -> access.ext.install(p.source, p.isProject, id) } })
+                                PiSettingsChip(text = tr("重新安装", "Reinstall"), enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { run("install") { id -> access.ext.install(p.source, p.isProject, id) } })
                             }
                             if (update != null) {
-                                PiSettingsChip(text = "更新", enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { run("更新") { id -> access.ext.update(p.source, id) } })
+                                PiSettingsChip(text = tr("更新", "Update"), enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { run("update") { id -> access.ext.update(p.source, id) } })
                             }
-                            PiSettingsChip(text = "移除", enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { confirmRemove = p })
+                            PiSettingsChip(text = tr("移除", "Remove"), enabled = busy == null && (p.scope != "project" || projectUsable), onClick = { confirmRemove = p })
                         }
                         if (p.scope == "project" && !projectUsable) {
-                            Text("项目没被信任，不能改项目里的包。", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            Text(tr("项目没被信任，不能改项目里的包。", "Project is not trusted; project packages cannot be modified."), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         }
                     }
                 }
@@ -306,23 +323,27 @@ internal fun PackagesScreen(
     confirmRemove?.let { p ->
         PiSettingsDialog(
             onDismissRequest = { confirmRemove = null },
-            title = "移除这个包？",
+            title = tr("移除这个包？", "Remove this package?"),
             sub = p.source,
-            body = "会从${if (p.isProject) "本项目" else "全局"}设置里去掉它，并删掉装下来的文件。它带来的扩展、技能、提示模板、主题随即消失。",
-            confirmationLabel = "移除",
-            onConfirm = { confirmRemove = null; run("移除") { id -> access.ext.remove(p.source, p.isProject, id) } },
+            body = if (p.isProject) {
+                tr("会从本项目设置里去掉它，并删掉装下来的文件。它带来的扩展、技能、提示模板、主题随即消失。", "This removes it from this project's settings and deletes its installed files. All extensions, skills, prompt templates, and themes it provides will be removed.")
+            } else {
+                tr("会从全局设置里去掉它，并删掉装下来的文件。它带来的扩展、技能、提示模板、主题随即消失。", "This removes it from global settings and deletes its installed files. All extensions, skills, prompt templates, and themes it provides will be removed.")
+            },
+            confirmationLabel = tr("移除", "Remove"),
+            onConfirm = { confirmRemove = null; run("remove") { id -> access.ext.remove(p.source, p.isProject, id) } },
             confirmationTone = PiTheme.palette.error,
-            dismissalLabel = "取消",
+            dismissalLabel = tr("取消", "Cancel"),
             onDismissButton = { confirmRemove = null },
         )
     }
 }
 
 private fun actionLabel(action: String): String? = when (action) {
-    "install" -> "安装"
-    "remove" -> "移除"
-    "update" -> "更新"
-    "clone" -> "克隆"
-    "pull" -> "拉取"
+    "install" -> tr("安装", "Install")
+    "remove" -> tr("移除", "Remove")
+    "update" -> tr("更新", "Update")
+    "clone" -> tr("克隆", "Clone")
+    "pull" -> tr("拉取", "Pull")
     else -> action.ifEmpty { null }
 }

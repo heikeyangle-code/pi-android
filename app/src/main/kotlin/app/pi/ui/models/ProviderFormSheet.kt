@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.models.ProviderForm
 import app.pi.ui.components.PiSheet
 import app.pi.ui.settings.PiSettingsChip
@@ -68,10 +69,10 @@ internal fun ProviderFormSheet(
         ) {
             Text(
                 when {
-                    isNew && overriding -> "覆盖内置供应商"
-                    isNew -> "添加自定义供应商"
-                    overriding -> "编辑覆盖：${initial.id}"
-                    else -> "编辑 ${initial.id}"
+                    isNew && overriding -> tr("覆盖内置供应商", "Override Built-in Provider")
+                    isNew -> tr("添加自定义供应商", "Add Custom Provider")
+                    overriding -> tr("编辑覆盖：${initial.id}", "Edit Override: ${initial.id}")
+                    else -> tr("编辑 ${initial.id}", "Edit ${initial.id}")
                 },
                 style = PiTheme.text.prose,
                 color = PiTheme.palette.text,
@@ -82,20 +83,38 @@ internal fun ProviderFormSheet(
             ModelsCard {
                 Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (isNew) {
-                        LabeledField("供应商 ID", f.id, "例如 my-proxy；与内置同名即覆盖它") { f = f.copy(id = it) }
+                        LabeledField(
+                            tr("供应商 ID", "Provider ID"),
+                            f.id,
+                            tr("例如 my-proxy；与内置同名即覆盖它", "e.g. my-proxy; matches a built-in ID to override it"),
+                        ) { f = f.copy(id = it) }
                         when (idCheck) {
-                            IdCheck.AlreadyCustom -> Text("models.json 里已经有「${f.id.trim()}」了，请直接编辑它。", style = PiTheme.text.meta, color = PiTheme.palette.error)
-                            IdCheck.OverridesBuiltin -> Text("「${f.id.trim()}」是内置供应商：保存后只覆盖你填写的地址、请求头等，它自带的模型照常可用。", style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                            IdCheck.AlreadyCustom -> Text(
+                                tr(
+                                    "models.json 里已经有「${f.id.trim()}」了，请直接编辑它。",
+                                    "models.json already defines \"${f.id.trim()}\". Please edit it directly.",
+                                ),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.error,
+                            )
+                            IdCheck.OverridesBuiltin -> Text(
+                                tr(
+                                    "「${f.id.trim()}」是内置供应商：保存后只覆盖你填写的地址、请求头等，它自带的模型照常可用。",
+                                    "\"${f.id.trim()}\" is a built-in provider: saving overrides only the URL, headers, etc. you enter while keeping its built-in models.",
+                                ),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.accent,
+                            )
                             else -> Unit
                         }
                     }
-                    LabeledField("显示名（可空）", f.name, "出现在列表里的名字") { f = f.copy(name = it) }
+                    LabeledField(tr("显示名（可空）", "Display Name (optional)"), f.name, tr("出现在列表里的名字", "Name shown in the list")) { f = f.copy(name = it) }
                     LabeledField("Base URL", f.baseUrl, "https://example.com/v1") { f = f.copy(baseUrl = it) }
-                    Text("协议（api）", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                    Text(tr("协议（api）", "Protocol (api)"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (c in COMMON_APIS) PiSettingsChip(text = c.label, active = f.api == c.api, onClick = { f = f.copy(api = c.api) })
                     }
-                    LabeledField("其他协议或留空", f.api, "openai-completions") { f = f.copy(api = it) }
+                    LabeledField(tr("其他协议或留空", "Other Protocol or Blank"), f.api, "openai-completions") { f = f.copy(api = it) }
                 }
             }
 
@@ -103,13 +122,13 @@ internal fun ProviderFormSheet(
             ModelsCard {
                 Column {
                     Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LabeledField("API Key", f.apiKey, "密钥、环境变量名，或 !命令", secret = true) { f = f.copy(apiKey = it) }
-                        LabeledField("额外请求头（每行 名称: 值）", f.headersText, "X-Org: abc", singleLine = false) { f = f.copy(headersText = it) }
+                        LabeledField("API Key", f.apiKey, tr("密钥、环境变量名，或 !命令", "Key, env var name, or !command"), secret = true) { f = f.copy(apiKey = it) }
+                        LabeledField(tr("额外请求头（每行 名称: 值）", "Extra Headers (Name: Value per line)"), f.headersText, "X-Org: abc", singleLine = false) { f = f.copy(headersText = it) }
                     }
                     ModelsDivider()
                     PiSettingsToggleRow(
-                        title = "用 Authorization 头发密钥",
-                        supporting = "对应 authHeader：Bearer 方式；不开则按协议默认的头",
+                        title = tr("用 Authorization 头发密钥", "Send Key via Authorization Header"),
+                        supporting = tr("对应 authHeader：Bearer 方式；不开则按协议默认的头", "Maps to authHeader (Bearer token); off uses the protocol default header"),
                         checked = f.authHeader,
                         onCheckedChange = { f = f.copy(authHeader = it) },
                     )
@@ -118,7 +137,7 @@ internal fun ProviderFormSheet(
 
             // ---- 模型 ----
             ModelsSectionLabel(
-                if (overriding && f.models.isEmpty()) "模型（可不填：沿用内置的）" else "模型（${f.models.size}）",
+                if (overriding && f.models.isEmpty()) tr("模型（可不填：沿用内置的）", "Models (optional: inherits built-in)") else tr("模型（${f.models.size}）", "Models (${f.models.size})"),
             )
             f.models.forEachIndexed { i, m ->
                 ModelsCard {
@@ -131,39 +150,39 @@ internal fun ProviderFormSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                m.name.ifBlank { m.id }.ifBlank { "新模型" },
+                                m.name.ifBlank { m.id }.ifBlank { tr("新模型", "New Model") },
                                 style = PiTheme.text.prose,
                                 color = PiTheme.palette.text,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
-                            Text(if (open == i) "收起" else "编辑", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                            Text(if (open == i) tr("收起", "Collapse") else tr("编辑", "Edit"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                         }
                         if (open == i) {
                             ModelsDivider()
                             Column(Modifier.padding(ModelsCardPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                LabeledField("模型 ID", m.id, "gpt-x") { v -> updateModel(i) { it.copy(id = v) } }
-                                LabeledField("显示名（可空）", m.name, "") { v -> updateModel(i) { it.copy(name = v) } }
-                                LabeledField("上下文窗口（token，可空）", m.contextWindow, "128000") { v -> updateModel(i) { it.copy(contextWindow = v) } }
-                                LabeledField("最大输出（token，可空）", m.maxTokens, "8192") { v -> updateModel(i) { it.copy(maxTokens = v) } }
-                                Text("价格（美元 / 百万 token，全可空）", style = PiTheme.text.meta, color = PiTheme.palette.muted)
+                                LabeledField(tr("模型 ID", "Model ID"), m.id, "gpt-x") { v -> updateModel(i) { it.copy(id = v) } }
+                                LabeledField(tr("显示名（可空）", "Display Name (optional)"), m.name, "") { v -> updateModel(i) { it.copy(name = v) } }
+                                LabeledField(tr("上下文窗口（token，可空）", "Context Window (tokens, optional)"), m.contextWindow, "128000") { v -> updateModel(i) { it.copy(contextWindow = v) } }
+                                LabeledField(tr("最大输出（token，可空）", "Max Output (tokens, optional)"), m.maxTokens, "8192") { v -> updateModel(i) { it.copy(maxTokens = v) } }
+                                Text(tr("价格（美元 / 百万 token，全可空）", "Pricing (USD / 1M tokens, optional)"), style = PiTheme.text.meta, color = PiTheme.palette.muted)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    LabeledField("输入", m.costInput, "3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costInput = v) } }
-                                    LabeledField("输出", m.costOutput, "15", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costOutput = v) } }
+                                    LabeledField(tr("输入", "Input"), m.costInput, "3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costInput = v) } }
+                                    LabeledField(tr("输出", "Output"), m.costOutput, "15", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costOutput = v) } }
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    LabeledField("缓存读", m.costCacheRead, "0.3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheRead = v) } }
-                                    LabeledField("缓存写", m.costCacheWrite, "3.75", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheWrite = v) } }
+                                    LabeledField(tr("缓存读", "Cache Read"), m.costCacheRead, "0.3", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheRead = v) } }
+                                    LabeledField(tr("缓存写", "Cache Write"), m.costCacheWrite, "3.75", Modifier.weight(1f)) { v -> updateModel(i) { it.copy(costCacheWrite = v) } }
                                 }
                             }
                             ModelsDivider()
-                            PiSettingsToggleRow("推理模型", null, m.reasoning, { v -> updateModel(i) { it.copy(reasoning = v) } })
+                            PiSettingsToggleRow(tr("推理模型", "Reasoning Model"), null, m.reasoning, { v -> updateModel(i) { it.copy(reasoning = v) } })
                             ModelsDivider()
-                            PiSettingsToggleRow("接受图片", null, m.acceptsImages, { v -> updateModel(i) { it.copy(acceptsImages = v) } })
+                            PiSettingsToggleRow(tr("接受图片", "Accepts Images"), null, m.acceptsImages, { v -> updateModel(i) { it.copy(acceptsImages = v) } })
                             ModelsDivider()
                             Row(Modifier.padding(ModelsCardPadding)) {
-                                PiSettingsChip(text = "删除这个模型", onClick = {
+                                PiSettingsChip(text = tr("删除这个模型", "Remove Model"), onClick = {
                                     f = f.copy(models = f.models.filterIndexed { j, _ -> j != i })
                                     open = null
                                 })
@@ -173,7 +192,7 @@ internal fun ProviderFormSheet(
                 }
             }
             Row(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
-                PiSettingsChip(text = "添加模型", onClick = {
+                PiSettingsChip(text = tr("添加模型", "Add Model"), onClick = {
                     f = f.copy(models = f.models + ProviderForm.ModelForm())
                     open = f.models.lastIndex
                 })
@@ -190,13 +209,13 @@ internal fun ProviderFormSheet(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            PrimaryAction(if (saving) "保存中…" else "保存", enabled = !saving, onClick = {
+            PrimaryAction(if (saving) tr("保存中…", "Saving…") else tr("保存", "Save"), enabled = !saving, onClick = {
                 val id = (if (isNew) f.id else initial.id).trim()
                 when {
-                    id.isEmpty() -> { error = "供应商 ID 不能为空。"; return@PrimaryAction }
-                    isNew && idCheck == IdCheck.AlreadyCustom -> { error = "models.json 里已经有「$id」了，请直接编辑它。"; return@PrimaryAction }
+                    id.isEmpty() -> { error = tr("供应商 ID 不能为空。", "Provider ID cannot be empty."); return@PrimaryAction }
+                    isNew && idCheck == IdCheck.AlreadyCustom -> { error = tr("models.json 里已经有「$id」了，请直接编辑它。", "models.json already defines \"$id\". Please edit it directly."); return@PrimaryAction }
                 }
-                val h = host() ?: run { error = "引擎没在运行。"; return@PrimaryAction }
+                val h = host() ?: run { error = tr("引擎没在运行。", "Engine is not running."); return@PrimaryAction }
                 when (val r = f.toJson()) {
                     is ProviderForm.Result.Invalid -> error = r.message
                     is ProviderForm.Result.Ok -> {
@@ -211,7 +230,7 @@ internal fun ProviderFormSheet(
                 }
             })
             if (!isNew) {
-                PiSettingsChip(text = if (overriding) "移除覆盖" else "删除供应商", enabled = !saving, onClick = {
+                PiSettingsChip(text = if (overriding) tr("移除覆盖", "Remove Override") else tr("删除供应商", "Delete Provider"), enabled = !saving, onClick = {
                     val h = host() ?: return@PiSettingsChip
                     scope.launch {
                         runCatching { h.advanced.removeProvider(initial.id) }
@@ -220,7 +239,7 @@ internal fun ProviderFormSheet(
                     }
                 })
             }
-            PiSettingsChip(text = "取消", onClick = onDismiss)
+            PiSettingsChip(text = tr("取消", "Cancel"), onClick = onDismiss)
         }
     }
 }

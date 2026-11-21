@@ -8,6 +8,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.i18n.PiLocale
+import app.pi.i18n.tr
 import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiTheme
@@ -55,7 +57,7 @@ internal fun EditBlock(
     // `lineCount` is exact about emptiness — 0 if and only if the result is empty — and that
     // is the only thing [toolFooterText] reads out of the output, so an Int key gives the same
     // value with fewer invalidations. `item.output` is still what feeds it, through `lines`.
-    val footer = remember(lines, item.outputTruncated, state) {
+    val footer = remember(lines, item.outputTruncated, state, PiLocale.isZh) {
         toolFooterText(item, state)
     }
     ToolActionMenu(command, item.output, null) {
@@ -73,7 +75,7 @@ internal fun EditBlock(
                     //   `${fg("toolTitle", bold("edit"))} ${pathDisplay}`
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`). `write` and `read` are the same shape.
-                    subject = listOf(toolPathPart(path, fallback = "文件")),
+                    subject = listOf(toolPathPart(path, fallback = tr("文件", "file"))),
                     right = toolHeaderReading(item, state, count = lines),
                     expanded = expanded,
                     expandable = failed,

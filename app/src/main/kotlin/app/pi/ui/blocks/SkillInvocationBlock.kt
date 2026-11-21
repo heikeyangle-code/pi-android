@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.i18n.tr
 import app.pi.rpc.SkillInvocation
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
@@ -70,9 +71,9 @@ fun SkillInvocationBlock(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(PiSpacing.inline),
                 ) {
-                    CardChip(text = "技能", color = palette.customMessageLabel)
+                    CardChip(text = tr("技能", "Skill"), color = palette.customMessageLabel)
                     Text(
-                        text = "/skill:" + item.skillName.ifEmpty { "未知技能" },
+                        text = "/skill:" + item.skillName.ifEmpty { tr("未知技能", "unknown") },
                         modifier = Modifier.weight(1f),
                         style = PiTheme.text.mono,
                         // pi paints this name with `customMessageText`:
@@ -112,7 +113,7 @@ fun SkillInvocationBlock(
                 // row carries `/skill:name` in *both* states (spec §7.4), so
                 // prepending it here would print the name twice.
                     PiMarkdownText(
-                        markdown = item.body.ifEmpty { "（技能没有正文）" },
+                        markdown = item.body.ifEmpty { tr("（技能没有正文）", "(Empty skill body)") },
                         modifier = Modifier.fillMaxWidth(),
                         textColor = palette.customMessageText,
                     )

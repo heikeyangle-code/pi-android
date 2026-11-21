@@ -3,6 +3,7 @@ package app.pi.ui.settings
 import android.system.Os
 import android.system.OsConstants
 import app.pi.engine.PiEngineSession
+import app.pi.i18n.tr
 import app.pi.runtime.PiPaths
 import app.pi.runtime.ProrootProbeNarrative
 import app.pi.runtime.RuntimeSelection
@@ -123,10 +124,18 @@ class RuntimeFacts(
         if (!root.isDirectory) return null
         val usage = RuntimeUsage.measure(root, ::allocatedStat)
         val caveats = buildList {
-            if (usage.unmeasured > 0) add("${usage.unmeasured} 项取不到分配块，未计入")
-            if (usage.unreadableDirectories > 0) add("${usage.unreadableDirectories} 个目录读不出")
+            if (usage.unmeasured > 0) {
+                add(tr("${usage.unmeasured} 项取不到分配块，未计入", "${usage.unmeasured} entries could not be measured"))
+            }
+            if (usage.unreadableDirectories > 0) {
+                add(tr("${usage.unreadableDirectories} 个目录读不出", "${usage.unreadableDirectories} unreadable directories"))
+            }
         }
-        val suffix = if (caveats.isEmpty()) "" else "（${caveats.joinToString("；")}）"
+        val suffix = if (caveats.isEmpty()) {
+            ""
+        } else {
+            tr("（${caveats.joinToString("；")}）", " (${caveats.joinToString("; ")})")
+        }
         formatBytes(usage.bytes) + suffix
     }.getOrNull()
 
@@ -190,12 +199,12 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
             "app.runtime.piVersion",
             "app.runtime.nodeVersion",
             "app.runtime.rootfsUsage",
-        ).associateWith { "未读取" }
+        ).associateWith { tr("未读取", "Not loaded") }
     }
     val unreadable = if (snapshot.runtimeUnpacked) {
-        "取不到：运行时里没有这个文件"
+        tr("取不到：运行时里没有这个文件", "Unavailable: file missing in runtime")
     } else {
-        "取不到：运行时尚未解包"
+        tr("取不到：运行时尚未解包", "Unavailable: runtime not unpacked yet")
     }
     return mapOf(
         "app.runtime.piVersion" to (snapshot.piVersion ?: unreadable),
@@ -252,23 +261,30 @@ internal fun runtimeDetailOverrides(status: RuntimeSelection.Status?): Map<Strin
  * `Status`（`statusFor(candidate)`），不碰文件也不起进程。
  */
 internal fun engineTag(engine: app.pi.runtime.GuestEngine, status: RuntimeSelection.Status): String = when {
-    engine == app.pi.runtime.GuestEngine.Proot -> "可用（内置）"
-    status.missingComponents.isNotEmpty() -> "缺组件"
-    status.probePassed == false -> "探针未过"
-    status.failures > 0 -> "失败 ${status.failures} 次"
-    status.probePassed == true -> "探针通过"
-    else -> "未测"
+    engine == app.pi.runtime.GuestEngine.Proot -> tr("可用（内置）", "Available (built-in)")
+    status.missingComponents.isNotEmpty() -> tr("缺组件", "Missing components")
+    status.probePassed == false -> tr("探针未过", "Probe failed")
+    status.failures > 0 -> tr("失败 ${status.failures} 次", "${status.failures} failures")
+    status.probePassed == true -> tr("探针通过", "Probe passed")
+    else -> tr("未测", "Untested")
 }
 
 /** 「各运行时状态」的一行摘要与行下的逐个明细，同出自同一份 [statuses]。 */
 internal fun engineMatrixOverrides(
     statuses: Map<app.pi.runtime.GuestEngine, RuntimeSelection.Status>?,
 ): Pair<String, String> {
-    if (statuses == null) return "未读取" to ""
+    if (statuses == null) return tr("未读取", "Not loaded") to ""
     val summary = statuses.entries.joinToString(" · ") { (e, st) -> "${e.name.lowercase()} ${engineTag(e, st)}" }
     val detail = statuses.entries.joinToString("\n") { (e, st) ->
-        val missing = if (st.missingComponents.isNotEmpty()) "（缺：${st.missingComponents.joinToString("、")}）" else ""
-        "${e.name.lowercase()}：${engineTag(e, st)}$missing"
+        val missing = if (st.missingComponents.isNotEmpty()) {
+            tr(
+                "（缺：${st.missingComponents.joinToString("、")}）",
+                " (missing: ${st.missingComponents.joinToString(", ")})",
+            )
+        } else {
+            ""
+        }
+        tr("${e.name.lowercase()}：${engineTag(e, st)}$missing", "${e.name.lowercase()}: ${engineTag(e, st)}$missing")
     }
     return summary to detail
 }

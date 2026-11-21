@@ -140,16 +140,16 @@ fun stateToneColor(tone: StateTone, palette: PiPalette): Color = when (tone) {
  * on two screens"), and this is the same six rows that KDoc lists.
  */
 internal fun engineStateGlyph(label: String): String = when (label) {
-    "就绪" -> "✓"
-    "启动中" -> "◌"
-    "排队中" -> "≡"
-    "引擎已退出" -> "✗"
-    "引擎已停止" -> "■"
+    "就绪", "Ready" -> "✓"
+    "启动中", "Starting" -> "◌"
+    "排队中", "Queued" -> "≡"
+    "引擎已退出", "Engine exited" -> "✗"
+    "引擎已停止", "Engine stopped" -> "■"
     // Value-identical to `else` on purpose: `06 §4` gives 工作中 its own row (`…`) and
     // `PiTopBarEngineMeta`'s KDoc spells that row out, so the arm stays as the statement of
     // intent. A single `else` would hide the fact that two arms spell the same glyph — if
     // either is ever given a different one, both have to change together.
-    "工作中" -> "…"
+    "工作中", "Working" -> "…"
     else -> "…"
 }
 
@@ -159,8 +159,8 @@ internal fun engineStateGlyph(label: String): String = when (label) {
  * (including 启动中 / 排队中) is warning.
  */
 internal fun engineStateTone(label: String): StateTone = when (label) {
-    "就绪" -> StateTone.Success
-    "引擎已退出", "引擎已停止" -> StateTone.Error
+    "就绪", "Ready" -> StateTone.Success
+    "引擎已退出", "引擎已停止", "Engine exited", "Engine stopped" -> StateTone.Error
     else -> StateTone.Warning
 }
 
