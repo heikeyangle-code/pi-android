@@ -64,6 +64,8 @@ data class ProviderFacts(
     val offersWebLogin: Boolean = false,
 ) {
     val title: String get() = name.ifBlank { id }
+    /** 是否支持任何一种 OAuth 账号登录（订阅账号或网页授权登录），统一排在顶部段。 */
+    val offersOAuth: Boolean get() = offersSubscription || offersWebLogin
 }
 
 fun connectionOf(f: ProviderFacts): Connection = when {
@@ -80,12 +82,13 @@ fun connectionOf(f: ProviderFacts): Connection = when {
 
 /**
  * 供应商列表的三段，按使用优先级自上而下排列，且互斥不重复：
- *  1. [subscriptionProviders]：全部支持订阅登录的供应商（已连接的排前面，未连接的排后面，各自按名字排）；
- *  2. [connectedApi]：已连接的非订阅供应商（API Key / 网页登录 / 环境变量 / 自定义）；
+ *  1. [accountProviders]：全部支持账号登录（订阅账号 + OAuth 网页登录，含 OpenRouter 等）的供应商
+ *     （已连接在前，其次订阅账号，其次网页登录，各自按名字排；登录前后不跳段、不重复）；
+ *  2. [connectedApi]：已连接的纯 API Key / 环境变量 / 自定义供应商；
  *  3. [otherApi]：其余未连接的 API 供应商（默认折叠，搜索时展开）。
  */
 data class ProviderSections(
-    val subscriptionProviders: List<ProviderFacts>,
+    val accountProviders: List<ProviderFacts>,
     val connectedApi: List<ProviderFacts>,
     val otherApi: List<ProviderFacts>,
 )
@@ -95,14 +98,16 @@ private val NAME_ORDER = Comparator<ProviderFacts> { a, b ->
     if (byName != 0) byName else a.id.compareTo(b.id)
 }
 
-private val SUBSCRIPTION_ORDER = compareByDescending<ProviderFacts> { it.configured }.then(NAME_ORDER)
+private val ACCOUNT_ORDER = compareByDescending<ProviderFacts> { it.configured }
+    .thenByDescending { it.offersSubscription }
+    .then(NAME_ORDER)
 
 fun sectionProviders(all: List<ProviderFacts>, query: String): ProviderSections {
     val hit = all.filter { matches(query, it.title, it.id) }
     return ProviderSections(
-        subscriptionProviders = hit.filter { it.offersSubscription }.sortedWith(SUBSCRIPTION_ORDER),
-        connectedApi = hit.filter { !it.offersSubscription && it.configured }.sortedWith(NAME_ORDER),
-        otherApi = hit.filter { !it.offersSubscription && !it.configured }.sortedWith(NAME_ORDER),
+        accountProviders = hit.filter { it.offersOAuth }.sortedWith(ACCOUNT_ORDER),
+        connectedApi = hit.filter { !it.offersOAuth && it.configured }.sortedWith(NAME_ORDER),
+        otherApi = hit.filter { !it.offersOAuth && !it.configured }.sortedWith(NAME_ORDER),
     )
 }
 

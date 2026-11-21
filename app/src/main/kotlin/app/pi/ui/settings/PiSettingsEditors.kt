@@ -1393,6 +1393,7 @@ internal fun PiEditorField(
     idleBorder: Color = MaterialTheme.colorScheme.outline,
     textStyle: TextStyle = PiTheme.text.mono,
     contentPadding: PaddingValues = PiFieldPaddingSingleLine,
+    leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     /** 密钥类输入传 `PasswordVisualTransformation()`：屏幕上不留明文（值本身不变）。 */
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation =
@@ -1442,6 +1443,7 @@ internal fun PiEditorField(
             verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
         ) {
+            if (leading != null) leading()
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,

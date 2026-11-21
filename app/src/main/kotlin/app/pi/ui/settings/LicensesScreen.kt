@@ -92,8 +92,12 @@ fun LicensesScreen(
         }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = tr("开源许可", "Open Source Licenses"), onBack = onBack)
+        PiTopBar(title = tr("开源许可", "Open Source Licenses"), onBack = onBack, scrolled = scrolled)
         if (notices.isEmpty()) {
             Text(
                 tr("正在读取…", "Loading…"),
@@ -107,6 +111,7 @@ fun LicensesScreen(
             return@Column
         }
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = app.pi.ui.theme.PiSpacing.inline,
@@ -114,15 +119,24 @@ fun LicensesScreen(
             ),
         ) {
             item(key = "license-search") {
-                PiEditorField(
+                app.pi.ui.models.ModelsSearchBar(
                     value = query,
                     onValueChange = { query = it },
                     placeholder = tr("搜索组件或协议名称", "Search package or license"),
-                    modifier = Modifier.padding(
-                        horizontal = PiSettingsMetrics.pageHorizontal,
-                    ),
-                    height = PiSettingsMetrics.searchFieldHeight,
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
+            }
+            if (filtered.isEmpty() && q.isNotEmpty()) {
+                item(key = "license-empty") {
+                    Column(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
+                        PiSettingsCard {
+                            PiSettingsEntryRow(
+                                title = tr("没有匹配的许可条目", "No matching licenses"),
+                                supporting = tr("试试换一个组件名或协议关键字。", "Try a different package name or license keyword."),
+                            )
+                        }
+                    }
+                }
             }
             filtered.groupBy { it.section }.forEach { (section, entries) ->
                 item(key = "section-$section") {
@@ -168,8 +182,9 @@ private fun LicenceTextScreen(
     val body by produceState<String?>(null, notice.file) {
         value = withContext(Dispatchers.IO) { readAsset(context, notice.file) }
     }
+    val bodyScroll = rememberScrollState()
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = notice.title, onBack = onBack)
+        PiTopBar(title = notice.title, onBack = onBack, scrolled = bodyScroll.canScrollBackward)
         val text = body
         if (text == null) {
             Text(
@@ -186,7 +201,7 @@ private fun LicenceTextScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(bodyScroll)
                 .padding(
                     top = PiSettingsMetrics.notePaddingVertical,
                     bottom = contentPadding.calculateBottomPadding() + PiSettingsMetrics.groupGap,

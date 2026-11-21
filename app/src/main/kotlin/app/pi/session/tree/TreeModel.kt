@@ -171,7 +171,7 @@ object TreeModel {
         for (f in filtered) visibleIds.add(f.id)
         fun visibleAncestor(id: String): String? {
             var cur = byId[id]?.parentId
-            val visited = HashSet<String>()
+            val visited = HashSet<String>().apply { add(id) }
             while (cur != null && visited.add(cur)) {
                 if (cur in visibleIds) return cur
                 cur = byId[cur]?.parentId
@@ -201,12 +201,14 @@ object TreeModel {
         )
 
         val stack = ArrayDeque<Pending>()
+        val laidOut = HashSet<String>(filtered.size * 2)
         for (i in rootIds.indices.reversed()) {
             val isLast = i == rootIds.size - 1
             stack.addLast(Pending(rootIds[i], if (multipleRoots) 1 else 0, multipleRoots, multipleRoots, isLast, emptyList(), multipleRoots))
         }
         while (stack.isNotEmpty()) {
             val p = stack.removeLast()
+            if (!laidOut.add(p.id)) continue
             layout[p.id] = Layout(p.indent, p.showConnector, p.isLast, p.gutters, p.virtualRoot)
             val kids = visibleChildren[p.id] ?: emptyList<String>()
             val multipleChildren = kids.size > 1

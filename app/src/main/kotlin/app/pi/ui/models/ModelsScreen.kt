@@ -16,8 +16,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -256,37 +258,41 @@ fun ModelsScreen(
             }
 
             item(key = "search") {
-                PiEditorField(
+                ModelsSearchBar(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                    placeholder = tr("搜索供应商", "Search providers"),
-                    height = PiSettingsMetrics.searchFieldHeight,
+                    placeholder = tr("搜索供应商（如 OpenRouter、Anthropic、DeepSeek…）", "Search providers (e.g. OpenRouter, Anthropic, DeepSeek…)"),
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }
 
-            // ---- 订阅账号登录：所有支持订阅的供应商统一置顶（已连接在前、未连接在后） ----
-            if (sections.subscriptionProviders.isNotEmpty()) {
-                val connectedSubCount = sections.subscriptionProviders.count { it.configured }
+            // ---- 账号与订阅登录：全部支持 OAuth（订阅账号 + 网页授权，含 OpenRouter）统一置顶 ----
+            if (sections.accountProviders.isNotEmpty()) {
+                val connectedAccountCount = sections.accountProviders.count { it.configured }
                 item(key = "l:sub") {
                     ModelsSectionLabel(
-                        if (connectedSubCount > 0) {
+                        text = if (connectedAccountCount > 0) {
                             tr(
-                                "订阅账号（$connectedSubCount/${sections.subscriptionProviders.size} 已连接）",
-                                "Subscriptions ($connectedSubCount/${sections.subscriptionProviders.size} connected)",
+                                "账号与订阅登录（$connectedAccountCount/${sections.accountProviders.size} 已连接）",
+                                "Account & Subscription Login ($connectedAccountCount/${sections.accountProviders.size} connected)",
                             )
                         } else {
                             tr(
-                                "订阅账号登录（${sections.subscriptionProviders.size}）",
-                                "Subscription Login (${sections.subscriptionProviders.size})",
+                                "账号与订阅登录（${sections.accountProviders.size}）",
+                                "Account & Subscription Login (${sections.accountProviders.size})",
                             )
+                        },
+                        subtitle = if (connectedAccountCount == 0 && !searching) {
+                            tr("支持订阅账号或浏览器 OAuth 一键登录（含 OpenRouter 等），也可填写 API Key", "Sign in with subscription or browser OAuth (including OpenRouter), or paste an API key")
+                        } else {
+                            null
                         },
                     )
                 }
-                item(key = "c:sub") { ProviderCard(sections.subscriptionProviders) { openProvider = it } }
+                item(key = "c:sub") { ProviderCard(sections.accountProviders) { openProvider = it } }
             }
 
-            // ---- 已连接的 API / 网页登录供应商 ----
+            // ---- 已连接的 API 供应商 ----
             if (sections.connectedApi.isNotEmpty()) {
                 item(key = "l:conn") { ModelsSectionLabel(tr("已连接 API（${sections.connectedApi.size}）", "Connected APIs (${sections.connectedApi.size})")) }
                 item(key = "c:conn") { ProviderCard(sections.connectedApi) { openProvider = it } }
@@ -306,7 +312,7 @@ fun ModelsScreen(
                 if (open) item(key = "c:other") { ProviderCard(sections.otherApi) { openProvider = it } }
             }
 
-            if (sections.subscriptionProviders.isEmpty() && sections.connectedApi.isEmpty() && sections.otherApi.isEmpty()) {
+            if (sections.accountProviders.isEmpty() && sections.connectedApi.isEmpty() && sections.otherApi.isEmpty()) {
                 item(key = "none") {
                     ModelsCard {
                         Column(Modifier.padding(ModelsCardPadding)) {
@@ -337,6 +343,7 @@ fun ModelsScreen(
                         ActionRow(
                             title = tr("添加自定义供应商", "Add Custom Provider"),
                             detail = tr("OpenAI 兼容、Anthropic 兼容等任意端点，也可以只改某个内置供应商的地址", "Any OpenAI- or Anthropic-compatible endpoint, or override a built-in provider's URL"),
+                            icon = Icons.Filled.Add,
                             onClick = { form = FormRequest(ProviderForm(api = "openai-completions"), isNew = true) },
                         )
                         d.custom?.error?.let { e ->
@@ -517,6 +524,7 @@ fun ModelsScreen(
                         ActionRow(
                             title = if (busy) tr("正在刷新…", "Refreshing…") else tr("刷新模型目录", "Refresh Model Catalog"),
                             detail = tr("重新向各供应商拉取模型列表（需要网络）", "Fetch the latest model list from each provider (requires network)"),
+                            icon = Icons.Filled.Refresh,
                             enabled = !busy,
                             onClick = {
                                 val h = host() ?: run { notice = tr("引擎没在运行：刷新没有执行。", "Engine is not running: refresh did not run."); return@ActionRow }
@@ -557,7 +565,7 @@ fun ModelsScreen(
                 available = d.models.filter { it.provider == p.id },
                 current = d.current,
                 custom = d.custom?.providers?.get(p.id),
-                onChanged = { reload++ },
+                onChanged = { reload++; onLoadAvailableModels() },
                 onDismiss = { openProvider = null; reload++ },
                 onEditCustom = { json -> openProvider = null; form = FormRequest(ProviderForm.from(p.id, json), isNew = false) },
                 onOverrideBuiltin = {
@@ -586,7 +594,7 @@ fun ModelsScreen(
                 knownIds = d.providers.map { it.id }.toSet(),
                 host = host,
                 onDismiss = { form = null },
-                onDone = { form = null; reload++ },
+                onDone = { form = null; reload++; onLoadAvailableModels() },
             )
         }
 
@@ -739,15 +747,47 @@ private fun CustomRow(id: String, name: String?, detail: String?, overrides: Boo
 }
 
 @Composable
-private fun ActionRow(title: String, detail: String, onClick: () -> Unit, enabled: Boolean = true) {
-    Column(
+private fun ActionRow(
+    title: String,
+    detail: String,
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    enabled: Boolean = true,
+) {
+    val tint = if (enabled) PiTheme.palette.accent else PiTheme.palette.muted
+    Row(
         Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = ModelsCardPadding, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(title, style = PiTheme.text.prose, color = if (enabled) PiTheme.palette.accent else PiTheme.palette.muted)
-        Text(detail, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+        if (icon != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(tint.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = PiTheme.text.prose.copy(fontWeight = FontWeight.Medium), color = tint)
+            Text(detail, style = PiTheme.text.meta, color = PiTheme.palette.dim)
+        }
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = PiTheme.palette.dim,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }

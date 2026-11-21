@@ -71,12 +71,26 @@ internal object PiInlineMath {
                 val blockMatch = matchStandaloneBlockMath(markdown, i)
                 if (blockMatch != null) {
                     hasBlockMath = true
-                    // 统一写成 `$$\n<body>\n$$`（前后保持独立块，避免和紧邻段落粘连）
-                    if (out.isNotEmpty() && out[out.length - 1] != '\n') out.append('\n')
+                    // 统一写成 `$$\n<body>\n$$`，并在前后确保空行（`\n\n`），防止与紧邻段落粘连成一个 PARAGRAPH
+                    if (out.isNotEmpty()) {
+                        val trailingNewlines = countTrailingNewlines(out)
+                        repeat((2 - trailingNewlines).coerceAtLeast(0)) { out.append('\n') }
+                    }
                     out.append("$$\n")
                     out.append(blockMatch.body)
                     out.append("\n$$")
                     i = blockMatch.end
+                    if (i < n) {
+                        var peek = i
+                        var leadingNewlines = 0
+                        while (peek < n && markdown[peek] == '\n') {
+                            leadingNewlines++
+                            peek++
+                        }
+                        if (peek < n && leadingNewlines < 2) {
+                            repeat(2 - leadingNewlines) { out.append('\n') }
+                        }
+                    }
                     continue
                 }
             }
@@ -206,6 +220,16 @@ internal object PiInlineMath {
                 }
             }
         }
+    }
+
+    private fun countTrailingNewlines(sb: StringBuilder): Int {
+        var count = 0
+        var idx = sb.length - 1
+        while (idx >= 0 && sb[idx] == '\n') {
+            count++
+            idx--
+        }
+        return count
     }
 
     private fun addEntry(entries: MutableList<Entry>, tex: String, raw: String): Int {

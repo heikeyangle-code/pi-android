@@ -89,13 +89,13 @@ fun DeviceCapabilityScreen(
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val context = LocalContext.current
-    var accessibility by remember { mutableStateOf(DeviceAccessibilityService.stateName(context)) }
-    var notifyListener by remember { mutableStateOf(PiNotificationListener.stateName(context)) }
-    var shizuku by remember { mutableStateOf(DeviceShizuku.status(context)) }
-    var notification by remember { mutableStateOf(store.hasNotificationPermission()) }
-    var hasLocation by remember { mutableStateOf(store.hasLocationPermission()) }
-    var hasCamera by remember { mutableStateOf(store.hasCameraPermission()) }
-    var ledgerLines by remember { mutableStateOf(DeviceApprovalLedger.summaryLines()) }
+    var accessibility by remember { mutableStateOf("checking") }
+    var notifyListener by remember { mutableStateOf("checking") }
+    var shizuku by remember { mutableStateOf(org.json.JSONObject()) }
+    var notification by remember { mutableStateOf(false) }
+    var hasLocation by remember { mutableStateOf(false) }
+    var hasCamera by remember { mutableStateOf(false) }
+    var ledgerLines by remember { mutableStateOf<List<String>>(emptyList()) }
     var revision by remember { mutableIntStateOf(0) }
 
     val permissionRequester = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -109,15 +109,25 @@ fun DeviceCapabilityScreen(
     LaunchedEffect(visible) {
         if (!visible) return@LaunchedEffect
         while (true) {
-            withContext(Dispatchers.IO) {
-                accessibility = DeviceAccessibilityService.stateName(context)
-                notifyListener = PiNotificationListener.stateName(context)
-                shizuku = DeviceShizuku.status(context)
-                notification = store.hasNotificationPermission()
-                hasLocation = store.hasLocationPermission()
-                hasCamera = store.hasCameraPermission()
-                ledgerLines = DeviceApprovalLedger.summaryLines()
+            // Binder IPC 与磁盘读在 IO 线程计算不可变快照，再回到主线程安全写入 Compose 状态。
+            val snap = withContext(Dispatchers.IO) {
+                DeviceCapPollSnapshot(
+                    accessibility = DeviceAccessibilityService.stateName(context),
+                    notifyListener = PiNotificationListener.stateName(context),
+                    shizuku = DeviceShizuku.status(context),
+                    notification = store.hasNotificationPermission(),
+                    hasLocation = store.hasLocationPermission(),
+                    hasCamera = store.hasCameraPermission(),
+                    ledgerLines = DeviceApprovalLedger.summaryLines(),
+                )
             }
+            accessibility = snap.accessibility
+            notifyListener = snap.notifyListener
+            shizuku = snap.shizuku
+            notification = snap.notification
+            hasLocation = snap.hasLocation
+            hasCamera = snap.hasCamera
+            ledgerLines = snap.ledgerLines
             delay(1500L)
         }
     }
@@ -759,6 +769,16 @@ private fun DeviceSectionLabel(text: String) {
         color = PiTheme.palette.muted,
     )
 }
+
+private data class DeviceCapPollSnapshot(
+    val accessibility: String,
+    val notifyListener: String,
+    val shizuku: org.json.JSONObject,
+    val notification: Boolean,
+    val hasLocation: Boolean,
+    val hasCamera: Boolean,
+    val ledgerLines: List<String>,
+)
 
 private fun openShizukuManager(context: android.content.Context) {
     val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")

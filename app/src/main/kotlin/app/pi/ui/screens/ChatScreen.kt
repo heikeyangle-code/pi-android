@@ -1777,10 +1777,18 @@ internal fun ChatBody(
                     // by that much. Read without subscribing: the list state moves every frame.
                     val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
                         .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
+                    val itemCharCount = when (item) {
+                        is AssistantText -> item.markdown.length
+                        is UserMessage -> item.text.length
+                        is ThinkingBlock -> item.text.length
+                        else -> 0
+                    }
+                    // 超长消息（>8000 字）绝不豁免 4ms 帧预算，避免快速上滑长会话时主线程同步解析卡死 ANR。
+                    val allowSyncFromAbove = enteringFromAbove && itemCharCount <= 8_000
                     val immediateMarkdown = !streamingRow &&
                         RowHeightCache.shared.of(item.key) == null &&
-                        (item.key in freshRowKeys || restoring || enteringFromAbove) &&
-                        (enteringFromAbove || piMarkdownParseBudget.allow(System.nanoTime()))
+                        (item.key in freshRowKeys || restoring || allowSyncFromAbove) &&
+                        (allowSyncFromAbove || piMarkdownParseBudget.allow(System.nanoTime()))
                     // The row's own place in the list, for a card that is about to change
                     // its height (see `TranscriptRowAnchor`). `following` is handed over as
                     // a lambda: an armed follow re-pins to the end on every height change

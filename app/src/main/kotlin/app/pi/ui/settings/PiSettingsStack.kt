@@ -258,8 +258,8 @@ fun PiSettingsStack(
     // keep reading the old workspace for the rest of the process's life
     // (`PiSessionViewModel.switchWorkspace`). The path is computed once per
     // composition — it is a settings read, not a directory scan.
-    val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
-    val workspace = remember(context, workspacePath) { PtyLauncher.workspaceHost(context) }
+    // 仅在设置/工作区 epoch 变化时解析一次，不在每次重组上触发磁盘 stat/mkdirs。
+    val workspace = remember(context, rowsEpoch) { PtyLauncher.workspaceHost(context) }
     PiDirectoryWatch(
         directories = remember(paths, workspace) { listOf(paths.agentDir, PiProjectConfig.root(workspace)) },
         names = remember { SETTINGS_WATCHED },

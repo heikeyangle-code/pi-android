@@ -163,12 +163,14 @@ internal fun ResourceFileEditor(
         }
     }
 
+    val editorScroll = rememberScrollState()
     // PiRoot 已经在非对话目的地挂载了 imePadding()，这里不重复加，避免软键盘弹起时双倍抬升。
     Column(Modifier.fillMaxSize()) {
         PiTopBar(
             title = d?.rel?.substringAfterLast('/') ?: tr("编辑文件", "Edit File"),
             subtitle = d?.let { listOfNotNull(it.scope.label.ifEmpty { null }, it.kind.label).joinToString(" · ") },
             onBack = { leave() },
+            scrolled = editorScroll.canScrollBackward,
             actions = {
                 if (d?.writable == true) {
                     PrimaryAction(
@@ -186,7 +188,6 @@ internal fun ResourceFileEditor(
                 if (d.writable && isNewFile) {
                     PiAutoFocus(editorFocus)
                 }
-                val editorScroll = rememberScrollState()
                 val editorShape = RoundedCornerShape(12.dp)
                 val lineCount = remember(draft) { if (draft.isEmpty()) 0 else draft.count { it == '\n' } + 1 }
 
@@ -408,49 +409,6 @@ internal fun NewResourceDialog(
                     is Parsed.Ok -> onCreated(r.value)
                     is Parsed.Error -> { failure = r.message; busy = false }
                 }
-            }
-        },
-        dismissalLabel = tr("取消", "Cancel"),
-        onDismissButton = { if (!busy) onDismiss() },
-    )
-}
-
-/** 新建上下文 / 系统提示文件：四个固定名字，层级二选一。 */
-@Composable
-internal fun NewContextDialog(model: ResourcesModel, onDismiss: () -> Unit, onCreated: (String) -> Unit) {
-    val scope = rememberCoroutineScope()
-    var failure by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var project by remember { mutableStateOf(false) }
-    PiSettingsDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = tr("新建上下文文件", "New Context File"),
-        content = {
-            Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    PiSettingsChip(text = tr("全局", "Global"), active = !project, onClick = { project = false })
-                    PiSettingsChip(text = tr("本项目", "Project"), active = project, enabled = model.projectUsable, onClick = { project = true })
-                }
-                PiResourceFile.CONTEXT_FILES.forEach { (file, hint) ->
-                    val where = if (project) tr("项目", "Project") else tr("全局", "Global")
-                    Column(Modifier.fillMaxWidth().padding(vertical = PiSpacing.small)) {
-                        PiSettingsChip(
-                            text = "$where $file",
-                            enabled = !busy,
-                            onClick = {
-                                busy = true
-                                scope.launch {
-                                    when (val r = model.createFile(PiResourceFile.Kind.Context, project, file)) {
-                                        is Parsed.Ok -> onCreated(r.value)
-                                        is Parsed.Error -> { failure = r.message; busy = false }
-                                    }
-                                }
-                            },
-                        )
-                        Text(hint, style = PiTheme.text.meta, color = PiTheme.palette.muted)
-                    }
-                }
-                failure?.let { Text(it, style = PiTheme.text.meta, color = PiTheme.palette.error) }
             }
         },
         dismissalLabel = tr("取消", "Cancel"),

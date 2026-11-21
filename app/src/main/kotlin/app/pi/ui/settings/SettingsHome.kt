@@ -82,14 +82,11 @@ fun SettingsHome(
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
             item(key = "search") {
-                PiEditorField(
+                app.pi.ui.models.ModelsSearchBar(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                     placeholder = tr("搜索设置、功能、MCP 或键名", "Search settings, features, MCP, or key"),
-                    height = PiSettingsMetrics.searchFieldHeight,
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }
             if (q.isNotEmpty()) {

@@ -52,6 +52,8 @@ class PiEngineService : Service() {
      */
     @Volatile
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile
+    private var foregroundStarted: Boolean = false
     private val wakeLockLock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -79,7 +81,14 @@ class PiEngineService : Service() {
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (PiEngineLifecyclePolicy.startCommand(intent?.action, systemRestart = intent == null)) {
-            PiEngineLifecyclePolicy.StartCommand.StopEngine -> stopEngineAndSelf()
+            PiEngineLifecyclePolicy.StartCommand.StopEngine -> {
+                // 若通过 startForegroundService 启动，Android 强制要求在 stopSelf 前完成一次 startForeground，
+                // 否则会抛出 ForegroundServiceDidNotStartInTimeException 引发系统 ANR。
+                if (!foregroundStarted) {
+                    runCatching { startForegroundWithNotification() }
+                }
+                stopEngineAndSelf()
+            }
             PiEngineLifecyclePolicy.StartCommand.StartEngine -> startForegroundWithNotification()
         }
         return START_NOT_STICKY
@@ -99,6 +108,7 @@ class PiEngineService : Service() {
             buildNotification(runningTasks = if (active) 1 else 0),
             type,
         )
+        foregroundStarted = true
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -171,14 +181,17 @@ class PiEngineService : Service() {
     /** Stop the foreground service and release WakeLock WITHOUT stopping the engine process. */
     private fun stopServiceOnlyInternal() {
         releaseWakeLock()
-        if (Looper.myLooper() == Looper.getMainLooper()) {
+        val stopBlock = {
+            if (!foregroundStarted) {
+                runCatching { startForegroundWithNotification() }
+            }
             runCatching { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) }
             stopSelf()
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            stopBlock()
         } else {
-            mainHandler.post {
-                runCatching { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) }
-                stopSelf()
-            }
+            mainHandler.post(stopBlock)
         }
     }
 

@@ -2759,20 +2759,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *     tapped, and [importSession] the file it just copied), so the common case —
      *     opening a conversation from the list — needs no round trip at all.
      */
-    private fun resolveSessionFile(): File? {
+    private suspend fun resolveSessionFile(): File? {
         val meta = _state.value.meta
         val hinted = SessionHints.file
-        if (hinted != null && hinted.isFile) {
-            return hinted
+        return withContext(Dispatchers.IO) {
+            if (hinted != null && hinted.isFile) {
+                return@withContext hinted
+            }
+            val file = hostSessionFile(meta.sessionFile) ?: return@withContext null
+            val sessionId = meta.sessionId
+            if (sessionId != null) {
+                val header = SessionFileReader.readHeader(file) ?: return@withContext null
+                val headerId = (header["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                if (headerId != null && headerId != sessionId) return@withContext null
+            }
+            file
         }
-        val file = hostSessionFile(meta.sessionFile) ?: return null
-        val sessionId = meta.sessionId
-        if (sessionId != null) {
-            val header = SessionFileReader.readHeader(file) ?: return null
-            val headerId = (header["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            if (headerId != null && headerId != sessionId) return null
-        }
-        return file
     }
 
     /** The one file a session command already knows, until the meta catches up. */
@@ -2885,9 +2887,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (cursor.reachedStart || cursor.loading) return
         if (engine.transcript.streaming) return
         if (_state.value.engine != PiEngineSession.EngineState.Ready) return
-        val file = resolveSessionFile() ?: return
         _state.value = _state.value.copy(history = cursor.copy(loading = true, stop = null))
         viewModelScope.launch {
+            val file = resolveSessionFile()
+            if (file == null) {
+                _state.value = _state.value.copy(history = _state.value.history?.copy(loading = false))
+                return@launch
+            }
             // One IO hop, and **nothing in it touches `_state`**: the window above, the
             // evicted range read back, and the measures. The old budget branch wrote the
             // cursor from inside this hop, which is how it beat the caller's own update
@@ -3769,12 +3775,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * unreadable one look identical and only one of them is the truth.
      */
     fun refreshEntries() {
-        val file = resolveSessionFile()
-        if (file == null) {
-            refreshEntriesOverRpc()
-            return
-        }
         call(tr("读取会话条目", "Load session entries"), NoEngine.Quiet) {
+            val file = resolveSessionFile()
+            if (file == null) {
+                refreshEntriesOverRpc()
+                return@call
+            }
             val parsed = withContext(Dispatchers.IO) {
                 val out = ArrayList<SessionEntry>()
                 val complete = SessionFileReader.readEntries(file) { raw ->
@@ -3783,11 +3789,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 if (complete) out else null
             }
             if (parsed == null) {
-                // The scan hit [SessionFileReader.DEFAULT_MAX_SCAN_LINE_CHARS], so
-                // this list is missing an entry — which for this screen is worse than
-                // a slower read, because it presents a partial log as the whole one.
-                // pi's own whole-session answer is the only other source; that path is
-                // why `JsonlFramer`'s cap exists.
                 refreshEntriesOverRpc()
                 return@call
             }

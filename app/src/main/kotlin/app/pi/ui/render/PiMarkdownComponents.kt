@@ -332,14 +332,11 @@ private fun PiBlockQuote(model: MarkdownComponentModel) {
                 .semantics { contentDescription = quoteDesc },
         ) {
             var renderedAny = false
-            model.node.children.forEach { child ->
-                key(child.startOffset) {
+            model.node.children.forEachIndexed { index, child ->
+                key(index, child.startOffset) {
                     when (child.type) {
-                        MarkdownTokenTypes.BLOCK_QUOTE -> Unit
-                        MarkdownTokenTypes.EOL -> {
-                            // 仅在相邻子块之间留柔和段距；首尾空行忽略
-                            if (renderedAny) Spacer(Modifier.height(6.dp))
-                        }
+                        MarkdownTokenTypes.BLOCK_QUOTE,
+                        MarkdownTokenTypes.EOL -> Unit
                         MarkdownElementTypes.BLOCK_QUOTE -> {
                             if (renderedAny) Spacer(Modifier.height(6.dp))
                             PiBlockQuote(
@@ -1068,7 +1065,6 @@ private fun PiImageFallback(
 @Composable
 private fun PiTable(model: MarkdownComponentModel) {
     val palette = PiTheme.palette
-    val dimens = LocalMarkdownDimens.current
     val density = LocalDensity.current
     val content = model.content
     val node = model.node
@@ -1104,8 +1100,11 @@ private fun PiTable(model: MarkdownComponentModel) {
         maxChars.toList()
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val available = maxWidth
+    // 避免在 LazyColumn 内嵌 BoxWithConstraints (SubcomposeLayout) 引发主线程二次测量卡顿。
+    val available = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp - 32.dp)
+        .coerceAtLeast(220.dp)
+    val useIntrinsicRowHeight = rowNodes.size <= 24
+    Box(modifier = Modifier.fillMaxWidth()) {
         val colWidthsDp = remember(columnDisplayChars, available) {
             computePiTableColumnWidthsDp(
                 columnDisplayChars = columnDisplayChars,
@@ -1226,7 +1225,7 @@ private fun PiTable(model: MarkdownComponentModel) {
                             verticalAlignment = Alignment.Top,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(IntrinsicSize.Max)
+                                .then(if (useIntrinsicRowHeight) Modifier.height(IntrinsicSize.Max) else Modifier)
                                 .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
                         ) {
                             for (col in 0 until columns) {
@@ -1235,7 +1234,7 @@ private fun PiTable(model: MarkdownComponentModel) {
                                 Box(
                                     modifier = Modifier
                                         .width(colW)
-                                        .fillMaxHeight()
+                                        .then(if (useIntrinsicRowHeight) Modifier.fillMaxHeight() else Modifier)
                                         .then(
                                             if (col > 0) {
                                                 Modifier.drawBehind {
@@ -1289,105 +1288,6 @@ private fun PiTable(model: MarkdownComponentModel) {
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-/**
- * 表头行，**按列**设 `TextAlign` —— 只替换库 `MarkdownTableHeader` 里那次
- * `MarkdownTableBasicText` 调用的样式，其余（`Row` 的 `widthIn(tableWidth)` +
- * `height(IntrinsicSize.Max)`、`CenterVertically`、`padding(tableCellPadding).weight(1f)`、
- * `heading()` 与 `collectionItemInfo` 语义）逐项照抄库，几何不变。
- *
- * ## 为什么必须自己排这一行
- *
- * 库的 `MarkdownTableHeader(content, header, tableWidth, style, …)` 只收**一个** `style`，
- * 整个表头共用；`MarkdownTableBasicText` 也没有 `modifier`/`textAlign` 参数。Compose 的
- * `TextAlign` 是 `TextStyle` 上的属性，所以"第 2 列居中、第 3 列靠右"只能落在
- * **每格自己的那次 `MarkdownTableBasicText` 调用**上 —— 而库没有把这个调用点开成槽。
- * 槽只有 `headerBlock` / `rowBlock`，那就得在这一层还原库的行布局。
- *
- * **没有复制的那部分**（也是这条改写不碰的东西）：`MarkdownTable` 的列数统计、`tableWidth`、
- * 背景与圆角、`horizontalScroll(requiredWidth)`、`TABLE_SEPARATOR` → 分隔线、整张表的
- * `collectionInfo`、行序号（`LocalTableRowIndex`）以及格子里的 annotator/图片管线
- * （`MarkdownTableBasicText` 照旧调用）。改的只有"这一格用哪个 `TextStyle`"。
- *
- * 这个函数只在**表里真的写了冒号**时才被走到；全 `---` 的表仍走库的组件。
- */
-@Composable
-private fun PiTableHeaderCells(
-    content: String,
-    header: ASTNode,
-    tableWidth: Dp,
-    style: TextStyle,
-    alignments: List<PiTableAlign>,
-) {
-    val cellPadding = LocalMarkdownDimens.current.tableCellPadding
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.widthIn(tableWidth).height(IntrinsicSize.Max),
-    ) {
-        header.children.filter { it.type == GFMTokenTypes.CELL }.forEachIndexed { column, cell ->
-            Column(
-                modifier = Modifier
-                    .padding(cellPadding)
-                    .weight(1f)
-                    .semantics {
-                        heading()
-                        collectionItemInfo = CollectionItemInfo(
-                            rowIndex = 0, rowSpan = 1,
-                            columnIndex = column, columnSpan = 1,
-                        )
-                    },
-            ) {
-                PiTableCellText(
-                    content = content,
-                    cell = cell,
-                    // 与库同一句：表头 = 表格样式 + Bold。
-                    style = style.copy(fontWeight = FontWeight.Bold),
-                    align = alignments.alignAt(column),
-                )
-            }
-        }
-    }
-}
-
-/** 数据行，同 [PiTableHeaderCells]：只有每格的 `TextAlign` 与库不同，行语义/几何照库。 */
-@Composable
-private fun PiTableBodyCells(
-    content: String,
-    row: ASTNode,
-    tableWidth: Dp,
-    style: TextStyle,
-    alignments: List<PiTableAlign>,
-) {
-    val cellPadding = LocalMarkdownDimens.current.tableCellPadding
-    // 行序号由库的 `MarkdownTable` 用 `LocalTableRowIndex` 提供（表头算第 0 行，数据行从 1 起），
-    // 库自己的 `MarkdownTableRow` 默认参数也是读它 —— 读同一个值，语义不变。
-    val rowIndex = LocalTableRowIndex.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.widthIn(tableWidth),
-    ) {
-        row.children.filter { it.type == GFMTokenTypes.CELL }.forEachIndexed { column, cell ->
-            Column(
-                modifier = Modifier
-                    .padding(cellPadding)
-                    .weight(1f)
-                    .semantics {
-                        collectionItemInfo = CollectionItemInfo(
-                            rowIndex = rowIndex, rowSpan = 1,
-                            columnIndex = column, columnSpan = 1,
-                        )
-                    },
-            ) {
-                PiTableCellText(
-                    content = content,
-                    cell = cell,
-                    style = style,
-                    align = alignments.alignAt(column),
-                )
             }
         }
     }
@@ -1483,16 +1383,6 @@ private val PiTableAlign.boxAlignment: Alignment
         PiTableAlign.Center -> Alignment.TopCenter
         PiTableAlign.Right -> Alignment.TopEnd
     }
-
-/**
- * 拟合列宽的下限：低于它就横滑，而不是把每格压成一条细缝。
- * 120dp 在正文 14sp 下约 7 个汉字/行；三列在 393dp 屏上正好放得下。
- */
-private val MIN_TABLE_CELL_WIDTH = 120.dp
-/** 表头行里的 CELL 个数；与库 `MarkdownTable.kt:86` 是同一个算法。 */
-private fun piTableColumnCount(node: ASTNode): Int =
-    node.findChildOfType(GFMElementTypes.HEADER)?.children?.count { it.type == GFMTokenTypes.CELL }
-        ?: 0
 
 /**
  * 一张表的每列对齐方式；没有分隔行（理论上不会发生）时返回空列表 —— 调用方据此退回库的默认行。

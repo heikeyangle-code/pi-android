@@ -643,6 +643,7 @@ private fun PromptSlotRow(
                     color = palette.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 if (roleBadge != null) {
                     TagPill(roleBadge, tone = roleBadgeTone)
@@ -672,13 +673,14 @@ private fun PromptSlotRow(
                 )
             }
         }
+        val sizeLabel = formatBytesCompact(fileBytes)
         when {
             isActive -> TagPill(
-                text = if (fileBytes > 0) tr("已生效 · ${fileBytes}B", "Active · ${fileBytes}B") else tr("已生效", "Active"),
+                text = if (sizeLabel != null) tr("已生效 · $sizeLabel", "Active · $sizeLabel") else tr("已生效", "Active"),
                 tone = palette.success,
             )
             exists -> TagPill(
-                text = if (fileBytes > 0) tr("已存 · ${fileBytes}B", "Saved · ${fileBytes}B") else tr("空文件", "Empty"),
+                text = if (sizeLabel != null) tr("已存 · $sizeLabel", "Saved · $sizeLabel") else tr("空文件", "Empty"),
                 tone = palette.warning,
             )
             else -> TagPill(tr("点击编写", "Tap to write"), tone = palette.muted)
@@ -690,4 +692,11 @@ private fun PromptSlotRow(
             modifier = Modifier.size(18.dp),
         )
     }
+}
+
+private fun formatBytesCompact(bytes: Long): String? = when {
+    bytes <= 0L -> null
+    bytes < 1024L -> "${bytes}B"
+    bytes < 10 * 1024L -> String.format(java.util.Locale.US, "%.1fKB", bytes / 1024.0)
+    else -> "${bytes / 1024L}KB"
 }

@@ -569,38 +569,12 @@ object PiMcpConfig {
     fun dropNulls(root: JsonObject): JsonObject =
         JsonObject(root.filterValues { it !is JsonNull })
 
-    // ------------------------------------------------------------------ 常用模板
+    // ------------------------------------------------------------------ 标准配置入口（对齐 Pi SDK，不内置第三方预设）
 
-    /**
-     * 一键添加用的模板。只放 pi 自己的 `docs/mcp.md` 里写明的远程服务器：不依赖 Node 包下载，
-     * 也不重复 pi 已经有的能力（读写文件、分步思考 pi 自带，所以不再给「文件系统」「逐步思考」这类模板）。
-     */
+    /** 空白配置模板（对齐官方 `pi mcp add` 的两种传输方式，无第三方硬编码预设）。 */
     data class Template(val title: String, val note: String, val draft: Draft)
 
-    val TEMPLATES: List<Template> = listOf(
-        Template(
-            "Sentry",
-            "查错误与性能问题；添加后在列表里点「登录」，在浏览器授权（pi 文档示例）",
-            Draft(name = "sentry", http = true, url = "https://mcp.sentry.dev/mcp", description = "Sentry 错误与性能数据"),
-        ),
-        Template(
-            "GitHub",
-            "查仓库、Issue、PR；需要一个 GitHub 令牌，填访问令牌那一栏，例如 \${GITHUB_TOKEN}（pi 文档示例）",
-            Draft(
-                name = "github",
-                http = true,
-                url = "https://api.githubcopilot.com/mcp/",
-                bearer = "\${GITHUB_TOKEN}",
-                exposure = "deferred",
-                description = "GitHub 仓库、Issue 与 PR",
-            ),
-        ),
-        Template(
-            "网址服务器",
-            "已经有现成的 MCP 网址（https://…/mcp）：填进去，需要账号的再点登录",
-            Draft(name = "", http = true, url = "https://"),
-        ),
-    )
+    val TEMPLATES: List<Template> = emptyList()
 }
 
 /**

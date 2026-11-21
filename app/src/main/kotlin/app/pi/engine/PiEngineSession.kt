@@ -1302,19 +1302,26 @@ class PiEngineSession(
             _state.value == EngineState.Failed
 
     fun close() {
-        // First, so the reader's own error path can tell "we are tearing this down"
-        // from "the read failed": destroying the process makes `input.read` throw on
-        // every normal close, and reporting that as a failure would put a spurious
-        // sentence in the diagnostic report of every healthy session.
         closing = true
         startHostJob?.cancel()
-        runCatching {
-            writeQueue.execute { runCatching { writer.close() } }
-            writeQueue.shutdown()
-            writeQueue.awaitTermination(WRITER_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        val drainAndDestroy = {
+            runCatching {
+                writeQueue.execute { runCatching { writer.close() } }
+                writeQueue.shutdown()
+                writeQueue.awaitTermination(WRITER_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            }
+            runCatching { process.destroy() }
+            runCatching { writeQueue.shutdownNow() }
         }
-        runCatching { process.destroy() }
-        runCatching { writeQueue.shutdownNow() }
+        // 绝不在主线程阻塞等待 1s 管道排空；若调用方在主线程则移交独立守护线程异步收尾。
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            Thread(drainAndDestroy, "pi-session-close").apply {
+                isDaemon = true
+                start()
+            }
+        } else {
+            drainAndDestroy()
+        }
         client.close("会话已关闭")
         readerJob?.cancel()
         signalJob?.cancel()

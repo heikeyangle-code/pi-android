@@ -314,25 +314,25 @@ class PiSettingsFileStore(
          * cache within a quarter second of the next read; the file watcher, which clears the
          * cache outright, makes it immediate while the settings page is on screen anyway.
          */
+        /**
+         * 读路径绝不争抢写锁 `lock`（避免后台写盘 `Thread.sleep` + `fd.sync` 造成主线程锁护航 ANR）：
+         * 写入使用临时文件 + 原子 rename，读者始终看到完整的旧文件或新文件，并向 `@Volatile cached`
+         * 发布不可变 `JsonObject` 快照。
+         */
         fun load(): JsonObject {
             val now = System.currentTimeMillis()
             val current = cached
             if (current != null && now - checkedAtMs < STAMP_CHECK_INTERVAL_MS) return current
-            synchronized(lock) {
-                val inside = cached
-                val insideNow = System.currentTimeMillis()
-                if (inside != null && insideNow - checkedAtMs < STAMP_CHECK_INTERVAL_MS) return inside
-                val fresh = stampOf(file)
-                if (inside != null && fresh == stamp) {
-                    checkedAtMs = insideNow
-                    return inside
-                }
-                val loaded = if (file.isFile) readDocumentStatic(file) else JsonObject(emptyMap())
-                cached = loaded
-                stamp = fresh
-                checkedAtMs = insideNow
-                return loaded
+            val fresh = stampOf(file)
+            if (current != null && fresh == stamp) {
+                checkedAtMs = now
+                return current
             }
+            val loaded = if (file.isFile) readDocumentStatic(file) else JsonObject(emptyMap())
+            cached = loaded
+            stamp = fresh
+            checkedAtMs = now
+            return loaded
         }
     }
 

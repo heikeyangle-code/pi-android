@@ -405,40 +405,17 @@ class PiEngineHost(private val appContext: Context) {
      *        default reproduces the previous hard-wired launch byte for byte.
      */
     suspend fun boot(
-        // Derived from the packaged payloads, not hand-written: see
-        // `RuntimeProvisioner.packagedRevision`. A default that read the constant
-        // instead is exactly how a changed payload would keep every device on the
-        // tree it already unpacked, silently.
-        revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
+        revision: String? = null,
         workspaceProvider: () -> File = { WorkspaceStore.currentHost(appContext) },
         launch: PiLaunchOptions = PiLaunchOptions(),
-        /**
-         * The explicit repair decision: delete the volatile runtime tree and extract
-         * every payload again. Forwarded to `RuntimeProvisioner.ensureReady`, which is
-         * the only thing in this app that may delete the guest environment, and which
-         * never reaches that code path from a digest comparison — see its KDoc.
-         *
-         * Pass true only when the tree is known to be broken or incomplete (a failed
-         * boot-time self-check, a missing rootfs, a user asking for a repair). The cost
-         * is everything the user installed inside the guest; the workspace, sessions,
-         * settings and credentials are outside the deleted tree and survive.
-         */
         rebuild: Boolean = false,
-        /**
-         * 不删数据的修复（`RuntimeProvisioner.ensureReady(repair = true)`）。
-         *
-         * 启动失败之后的那一次重试走它：重新解包全部 payload，但不清空易失树，所以 guest
-         * 里装的东西都还在。`rebuild` 是最后手段，`repair` 是中间那条。
-         */
         repair: Boolean = false,
-        // `onStep` must stay LAST: callers pass it as a trailing lambda
-        // (`boot { step -> ... }`), and a trailing lambda always binds to the
-        // final parameter. Adding `launch` after it silently rebound every such
-        // call to `launch` and broke the build — if you add another parameter,
-        // put it before this one.
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
-    ): Boot = lifecycleLock.withLock {
-        bootLocked(revision, workspaceProvider, onStep, launch, rebuild, repair)
+    ): Boot = withContext(Dispatchers.IO) {
+        lifecycleLock.withLock {
+            val resolvedRevision = revision ?: RuntimeProvisioner.packagedRevision(appContext.assets)
+            bootLocked(resolvedRevision, workspaceProvider, onStep, launch, rebuild, repair)
+        }
     }
 
     /**
@@ -818,92 +795,68 @@ class PiEngineHost(private val appContext: Context) {
         reason: String,
         workspaceProvider: () -> File = { WorkspaceStore.currentHost(appContext) },
         allowInterrupt: Boolean = false,
-        // Same derived value as `boot`, for the same reason — and it matters more
-        // here: `restart` compares it before deciding, so a stale constant would
-        // refuse a restart that is in fact needed.
-        revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
-        // Before `onStep`, deliberately: callers pass `onStep` as a trailing lambda
-        // and that only binds to the last *parameter*.
+        revision: String? = null,
         launch: PiLaunchOptions? = null,
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
-    ): Restart = lifecycleLock.withLock {
-        val current = _session.value
+    ): Restart = withContext(Dispatchers.IO) {
+        lifecycleLock.withLock {
+            val resolvedRevision = revision ?: RuntimeProvisioner.packagedRevision(appContext.assets)
+            val current = _session.value
 
-        // Refuse before touching anything. `turnRunning` is pi's own Busy state; a
-        // turn that is mid-tool-call can be minutes long, and killing it loses the
-        // model call, the tool result and the bash process, not just a spinner.
-        if (current != null && current.state.value == PiEngineSession.EngineState.Busy && !allowInterrupt) {
-            return@withLock Restart.RefusedTurnRunning(
-                "有回合正在运行（$reason）。重启会中断模型调用与正在执行的工具，" +
-                    "所以本次没有重启，引擎仍在运行并可以继续使用。",
-            )
-        }
+            if (current != null && current.state.value == PiEngineSession.EngineState.Busy && !allowInterrupt) {
+                return@withLock Restart.RefusedTurnRunning(
+                    "有回合正在运行（$reason）。重启会中断模型调用与正在执行的工具，" +
+                        "所以本次没有重启，引擎仍在运行并可以继续使用。",
+                )
+            }
 
-        // Refuse a restart that would silently become a re-provision. `ensureReady` is
-        // cheap only while the stamp matches; when it does not, this boot would first
-        // read and compare every payload's state and then extract the payloads whose
-        // bytes changed — minutes on a big payload, in the middle of an action the user
-        // read as "reload my extensions". The refusal is about *surprise*, not about
-        // data loss: since provisioning became per payload, a re-provision extracts over
-        // the tree and deletes nothing the user installed (only the explicit repair path
-        // does, and that is a different button). The sentence says both, because the old
-        // one claimed the agent dir would be emptied and that is no longer true.
-        if (!stampMatches(revision)) {
-            return@withLock Restart.RefusedNeedsProvisioning(
-                "运行时需要按载荷更新（stamp 与 $revision 不一致），这不是一次重启：" +
-                    "更新会重解变化的载荷，可能要几分钟。请先走首次启动的 boot() 流程。" +
-                    "更新只覆盖内置载荷，不删除工作区、会话、设置或 guest 里你自己装的东西。",
-            )
-        }
+            if (!stampMatches(resolvedRevision)) {
+                return@withLock Restart.RefusedNeedsProvisioning(
+                    "运行时需要按载荷更新（stamp 与 $resolvedRevision 不一致），这不是一次重启：" +
+                        "更新会重解变化的载荷，可能要几分钟。请先走首次启动的 boot() 流程。" +
+                        "更新只覆盖内置载荷，不删除工作区、会话、设置或 guest 里你自己装的东西。",
+                )
+            }
 
-        if (current != null) {
-            // Cancel auto-exit watcher BEFORE closing so restart() and watcher cannot double-reap.
-            exitWatcherJob?.cancel()
-            exitWatcherJob = null
-            val previousLaunch = engineLaunch
-            val previousTree = captureEngineTree(previousLaunch)
-            runCatching { current.closeAfterSettling() }
-            reapEngineTree(previousTree, previousLaunch, "引擎重启（$reason）")
-            engineLaunch = null
-            _session.value = null
-        }
+            if (current != null) {
+                exitWatcherJob?.cancel()
+                exitWatcherJob = null
+                val previousLaunch = engineLaunch
+                val previousTree = captureEngineTree(previousLaunch)
+                runCatching { current.closeAfterSettling() }
+                reapEngineTree(previousTree, previousLaunch, "引擎重启（$reason）")
+                engineLaunch = null
+                _session.value = null
+            }
 
-        // Replay the options the running engine was started with: pi reads its
-        // process configuration only at startup, so a restart that dropped them
-        // would change the engine behind the user's back.
-        return@withLock when (val boot = bootLocked(revision, workspaceProvider, onStep, launch ?: launchOptions)) {
-            is Boot.Ready -> Restart.Ok(boot.session, replaced = current != null)
-            is Boot.Failed -> Restart.Failed(
-                message = "重启失败：${boot.message}",
-                detail = boot.detail,
-            )
-            is Boot.NeedProvisioning -> Restart.Failed(
-                message = "重启失败：运行时尚未就绪",
-                detail = boot.progress.label,
-            )
+            return@withLock when (val boot = bootLocked(resolvedRevision, workspaceProvider, onStep, launch ?: launchOptions)) {
+                is Boot.Ready -> Restart.Ok(boot.session, replaced = current != null)
+                is Boot.Failed -> Restart.Failed(
+                    message = "重启失败：${boot.message}",
+                    detail = boot.detail,
+                )
+                is Boot.NeedProvisioning -> Restart.Failed(
+                    message = "重启失败：运行时尚未就绪",
+                    detail = boot.progress.label,
+                )
+            }
         }
     }
 
-    /**
-     * Stop the engine and publish null. Idempotent; returns true when something was
-     * actually stopped.
-     *
-     * Settles the running turn first, exactly like [restart]: this is a *stop*, not
-     * a kill, and the conversation the user just had is the thing they expect to
-     * find again (see `PiEngineSession.closeAfterSettling`).
-     */
-    suspend fun shutdown(): Boolean = lifecycleLock.withLock {
-        val current = _session.value ?: return@withLock false
-        exitWatcherJob?.cancel()
-        exitWatcherJob = null
-        val launch = engineLaunch
-        val tree = captureEngineTree(launch)
-        runCatching { current.closeAfterSettling() }
-        reapEngineTree(tree, launch, "引擎停止")
-        engineLaunch = null
-        activeEngine = null
-        _session.value = null
-        true
+    suspend fun shutdown(): Boolean = withContext(Dispatchers.IO) {
+        lifecycleLock.withLock {
+            val current = _session.value ?: return@withLock false
+            exitWatcherJob?.cancel()
+            exitWatcherJob = null
+            val launch = engineLaunch
+            val tree = captureEngineTree(launch)
+            runCatching { current.closeAfterSettling() }
+            reapEngineTree(tree, launch, "引擎停止")
+            engineLaunch = null
+            activeEngine = null
+            _session.value = null
+            true
+        }
     }
 
     fun paths(): PiPaths = paths

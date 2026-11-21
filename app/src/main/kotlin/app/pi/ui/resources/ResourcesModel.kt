@@ -18,6 +18,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 「扩展与资源」与「系统提示词与上下文」共用的统一状态源。
@@ -57,6 +59,7 @@ internal class ResourcesModel(
         private set
 
     private var refreshQueued = false
+    private val reloadMutex = Mutex()
 
     /** 项目没被信任时，项目层的东西 pi 根本不读：界面只给全局层。 */
     val projectUsable: Boolean get() = trust?.trusted != false
@@ -144,13 +147,12 @@ internal class ResourcesModel(
     }
 
     /**
-     * 同步挂起版热重载：等待 `session.reload` + 重读全部生效状态完成后才返回。
-     * 成功返回 null，失败返回可读错误文案。
+     * 同步挂起版热重载：串行等待上一次重载完成，再执行 `session.reload` + 重读全部生效状态。
+     * 避免并发保存时跳过重载却误报「已生效」。成功返回 null，失败返回可读错误文案。
      */
-    suspend fun reloadAndRefresh(): String? {
-        if (reloading) return null
+    suspend fun reloadAndRefresh(): String? = reloadMutex.withLock {
         reloading = true
-        return try {
+        try {
             access.ext.reload()
             pendingReload = false
             error = null

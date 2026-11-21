@@ -104,8 +104,10 @@ fun ProjectScreen(
     // `ModelsScreen.kt` 开头是同一手法（原来分属 PiModelsScreen / PiCredentialScreen
     // 两屏，现已合并成一屏）。
     // 路径是一次设置读取，不是一次目录扫描。
-    val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
-    val workspace = remember(context, workspacePath) { PtyLauncher.workspaceHost(context) }
+    // 仅在工作区修订号或名称变化时解析一次，不在每次重组上触发磁盘 stat/mkdirs。
+    val workspace = remember(context, state.workspace.revision, state.workspace.name) {
+        PtyLauncher.workspaceHost(context)
+    }
     val layout = remember(context, workspace) {
         AgentLayout(context.applicationContext, workspace)
     }

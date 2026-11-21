@@ -43,8 +43,20 @@ class PiRichRenderTest {
 
         assertTrue(extracted.hasBlockMath)
         assertEquals(0, extracted.entries.size)
-        assertTrue(extracted.markdown.contains("$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$"))
+        assertTrue(extracted.markdown.contains("\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n\n"))
         assertTrue(extracted.markdown.contains("`${'$'}a + b${'$'}`"))
+    }
+
+    @Test
+    fun `isolates adjacent block math with blank lines so markdown parser never merges it into prose`() {
+        val md = "We have:\n$$\nE = mc^2\n$$\nwhere \$m\$ is mass."
+        val extracted = PiInlineMath.extract(md)
+
+        assertTrue(extracted.hasBlockMath)
+        assertTrue(extracted.hasInlineMath)
+        assertTrue(extracted.markdown.contains("We have:\n\n$$\nE = mc^2\n$$\n\nwhere "))
+        assertEquals(1, extracted.entries.size)
+        assertEquals("m", extracted.entries[0].tex)
     }
 
     @Test

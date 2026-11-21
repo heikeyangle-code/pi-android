@@ -105,21 +105,26 @@ internal fun PiInlineMathParagraph(
             .distinct()
     }
 
-    // 每次后台有一批新公式渲染完成并写入共享 LRU，递增版本号以重算 inlineContent map。
+    // 合并高频行内公式完成通知（每 ~90ms 最多刷新一次 + 末尾补一次），避免单段 K 个公式触发 O(K²) 次重建。
     var renderEpoch by remember(paragraphRaw, theme) { mutableIntStateOf(0) }
     LaunchedEffect(neededIndices, widthPx, theme, entries) {
-        var anyNew = false
+        var lastBumpMs = 0L
+        var dirty = false
         for (idx in neededIndices) {
             val entry = entries.getOrNull(idx) ?: continue
             if (piMathInlineCached(entry.tex, widthPx, theme) != null) continue
             val rendered = piMathRenderInline(entry.tex, widthPx, theme)
             if (rendered != null) {
-                anyNew = true
-                // 每完成一条即可平滑升级，不必等整段最后一条才更新
-                renderEpoch++
+                dirty = true
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastBumpMs >= 90L) {
+                    renderEpoch++
+                    lastBumpMs = now
+                    dirty = false
+                }
             }
         }
-        if (anyNew) renderEpoch++
+        if (dirty) renderEpoch++
     }
 
     val readyByIndex = remember(neededIndices, widthPx, theme, entries, renderEpoch) {
@@ -366,6 +371,21 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
                 appendInlineLink(dest, textNode, content, entries, readyIndices, typography, colors, referenceLinks, htmlStack)
             }
 
+            MarkdownElementTypes.IMAGE -> {
+                val linkNode = child.children.firstOrNull {
+                    it.type == MarkdownElementTypes.INLINE_LINK ||
+                        it.type == MarkdownElementTypes.FULL_REFERENCE_LINK ||
+                        it.type == MarkdownElementTypes.SHORT_REFERENCE_LINK
+                }
+                val altText = linkNode?.children
+                    ?.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
+                    ?.let { safeSlice(content, it).removePrefix("[").removeSuffix("]").trim() }
+                    .orEmpty()
+                if (altText.isNotEmpty()) {
+                    append(PiInlineMath.resolveToUnicode(altText, entries))
+                }
+            }
+
             MarkdownElementTypes.AUTOLINK,
             GFMTokenTypes.GFM_AUTOLINK -> {
                 val raw = safeSlice(content, child).trim().removePrefix("<").removeSuffix(">")
@@ -382,10 +402,13 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
 
             MarkdownTokenTypes.HTML_TAG -> {
                 val raw = PiHtml.inlineTextAt(content, child.startOffset.coerceIn(0, content.length), child.endOffset.coerceIn(0, content.length))
-                val tag = raw.removePrefix("<").removePrefix("/").trimStart()
+                val trimmedRaw = raw.trim()
+                val selfClosing = trimmedRaw.endsWith("/>")
+                val tag = trimmedRaw.removePrefix("<").removePrefix("/").trimStart()
                     .takeWhile { it.isLetterOrDigit() }.lowercase()
                 when {
                     tag == "br" -> append('\n')
+                    selfClosing -> Unit
                     tag.isEmpty() -> append(raw)
                     else -> {
                         val span = when (tag) {
@@ -401,10 +424,10 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
                         }
                         if (span == null) {
                             append(raw)
-                        } else if (raw.startsWith("</")) {
+                        } else if (trimmedRaw.startsWith("</")) {
                             if (htmlStack.isNotEmpty()) {
                                 htmlStack.removeAt(htmlStack.lastIndex)
-                                pop()
+                                runCatching { pop() }
                             }
                         } else {
                             pushStyle(span)
