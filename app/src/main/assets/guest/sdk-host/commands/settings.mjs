@@ -44,8 +44,8 @@ export function register(reg, { controller, hub }) {
     await sm.flush();
     const errors = sm.drainErrors();
     if (errors.length) throw new HostError(ERR.REJECTED, errors.map((e) => String(e?.error?.message ?? e?.message ?? e)).join("; "));
-    if (method === "setHttpProxy" || method === "setHttpIdleTimeoutMs") await controller.applyHttpSettings?.();
-    // 与 Pi 官方 `settings-selector.js` 一致：同步运行中会话的实时状态。
+    if (method === "setHttpIdleTimeoutMs") await controller.applyHttpSettings?.();
+    // 与 Pi 官方 `interactive-mode.js` / `settings-selector.js` 一致：同步运行中会话与 Agent 的实时状态。
     const session = controller.session;
     if (session) {
       try {
@@ -54,6 +54,18 @@ export function register(reg, { controller, hub }) {
         else if (method === "setCompactionEnabled" && typeof params[0] === "boolean") session.setAutoCompactionEnabled?.(params[0]);
         else if (method === "setRetryEnabled" && typeof params[0] === "boolean") session.setAutoRetryEnabled?.(params[0]);
         else if (method === "setCacheWarmingMode" && typeof params[0] === "string") session.setCacheWarmingMode?.(params[0]);
+        else if (method === "setTransport" && typeof params[0] === "string" && session.agent) {
+          session.agent.transport = params[0];
+        } else if ((method === "setModelThinkingLevel" || method === "removeModelThinkingLevel") && typeof params[0] === "string") {
+          const cur = session.model;
+          const fullKey = cur ? `${cur.provider}/${cur.id}` : null;
+          if (cur && (params[0] === fullKey || params[0] === cur.id)) {
+            const nextLevel = method === "setModelThinkingLevel" && typeof params[1] === "string"
+              ? params[1]
+              : (sm.getDefaultThinkingLevel?.() ?? "medium");
+            session.setThinkingLevel?.(nextLevel);
+          }
+        }
       } catch {
         // 会话尚未就绪或不支持该运行时方法时不阻塞设置落盘
       }
@@ -62,18 +74,35 @@ export function register(reg, { controller, hub }) {
     return view(sm);
   });
 
-  // 外部改了 settings.json（App 的旧路径 / 用户手改）之后让会话重读。
+  // 外部改了 settings.json（App 的旧路径 / 用户手改）之后让会话重读，并同步 Agent 运行时字段。
   reg.add("settings.reload", async () => {
     const sm = manager();
     const prevWarming = sm.getCacheWarmingMode?.();
     await sm.reload();
     await controller.applyHttpSettings?.();
-    const nextWarming = sm.getCacheWarmingMode?.();
-    if (nextWarming && nextWarming !== prevWarming) {
-      try {
-        controller.session?.setCacheWarmingMode?.(nextWarming);
-      } catch {
-        // ignore if session not ready
+    const session = controller.session;
+    if (session) {
+      const nextWarming = sm.getCacheWarmingMode?.();
+      if (nextWarming && nextWarming !== prevWarming) {
+        try {
+          session.setCacheWarmingMode?.(nextWarming);
+        } catch {
+          // ignore if session not ready
+        }
+      }
+      if (session.agent) {
+        try {
+          const transport = sm.getTransport?.();
+          if (transport) session.agent.transport = transport;
+          const budgets = sm.getThinkingBudgets?.();
+          if (budgets !== undefined) session.agent.thinkingBudgets = budgets;
+          const pr = sm.getProviderRetrySettings?.();
+          if (pr && typeof pr.maxRetryDelayMs === "number") {
+            session.agent.maxRetryDelayMs = pr.maxRetryDelayMs;
+          }
+        } catch {
+          // ignore if agent shape differs
+        }
       }
     }
     hub.emit("settings.changed", { method: "reload" });

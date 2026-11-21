@@ -15,6 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -77,7 +80,18 @@ internal fun ResourceTypeScreen(
             title = type.label,
             onBack = onBack,
             actions = {
-                creatableOf(type)?.let { PiSettingsChip(text = tr("新建", "New"), onClick = { creating = true }) }
+                app.pi.ui.PiTopBarIcon(
+                    onClick = { model.refresh() },
+                    contentDescription = tr("刷新", "Refresh"),
+                    icon = Icons.Filled.Refresh,
+                )
+                creatableOf(type)?.let {
+                    app.pi.ui.PiTopBarIcon(
+                        onClick = { creating = true },
+                        contentDescription = tr("新建", "New"),
+                        icon = Icons.Filled.Add,
+                    )
+                }
             },
         )
         val sections = if (snapshot == null) emptyList() else sections(type, snapshot, layer, model.loaded, query)
@@ -91,6 +105,7 @@ internal fun ResourceTypeScreen(
                 PiSeg(
                     options = listOf(tr("全局", "Global"), tr("本项目", "Project")),
                     selectedIndex = if (layer == Layer.Global) 0 else 1,
+                    disabledIndices = if (model.projectUsable) emptySet() else setOf(1),
                     onSelect = { if (model.projectUsable) model.layer = if (it == 0) Layer.Global else Layer.Project },
                     modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )

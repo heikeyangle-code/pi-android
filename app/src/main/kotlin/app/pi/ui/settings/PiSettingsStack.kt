@@ -1,6 +1,14 @@
 package app.pi.ui.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -295,32 +303,33 @@ fun PiSettingsStack(
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
-        if (key == "hub:resources" || key == "hub:resources:project") {
-            // 项目页的「扩展与资源」入口：不是某一条设置，是枢纽页本身；`:project` 直接落在项目层。
-            resourcesProject = key.endsWith(":project")
-            resources = true
-        } else if (key == "hub:models") {
-            modelFlow = true
-        } else if (key == "hub:runtime") {
-            runtimeScreen = true
-        } else if (key == "hub:prompts") {
-            groupId = "prompts"
-            highlightKey = null
-        } else if (key == "hub:tools") {
-            groupId = "tools"
-            highlightKey = null
-        } else if (setting != null && setting.group == G_MODELS_SCREEN) {
-            modelFlow = true
-        } else if (setting != null) {
-            groupId = setting.group
-            highlightKey = key
+        when {
+            key == "hub:resources" || key == "hub:resources:project" -> {
+                resourcesProject = key.endsWith(":project")
+                resources = true
+            }
+            key == "hub:models" -> modelFlow = true
+            key == "hub:mcp" -> mcp = true
+            key == "hub:runtime" -> runtimeScreen = true
+            key == "hub:device" -> deviceCapabilities = true
+            key == "hub:licenses" -> licenses = true
+            key == "hub:terminal" -> onOpenTerminal?.invoke()
+            key == "hub:prompts" -> {
+                groupId = "prompts"
+                highlightKey = null
+            }
+            key == "hub:tools" -> {
+                groupId = "tools"
+                highlightKey = null
+            }
+            setting != null && setting.group == G_MODELS_SCREEN -> modelFlow = true
+            setting != null -> {
+                groupId = setting.group
+                highlightKey = key
+            }
         }
     }
 
-    // A requested key arrives from PiRoot as state, not as a callback, because
-    // the command that asks for it ends in a coroutine (see `NavRequest`). It is
-    // opened once and acknowledged immediately; the stack keeps the position
-    // afterwards, which is what "jump to settings and highlight" means.
     LaunchedEffect(focusKey) {
         val key = focusKey ?: return@LaunchedEffect
         openSetting(key)
@@ -328,9 +337,7 @@ fun PiSettingsStack(
     }
 
     val openModelFlow: () -> Unit = { modelFlow = true }
-    val hostActions: Map<String, () -> Unit> = mapOf(
-        "app.runtime.restartEngine" to { restartPrompt = true },
-    )
+    val hostActions: Map<String, () -> Unit> = emptyMap()
 
     BackHandler(enabled = true) {
         if (mcp) {
@@ -356,162 +363,197 @@ fun PiSettingsStack(
     }
 
     val currentGroup = groupId
+    val routeKey: Pair<String, Int> = when {
+        mcp -> "mcp" to (if (resources) 2 else 1)
+        licenses -> "licenses" to 2
+        runtimeScreen -> "runtime" to 1
+        modelFlow -> "models" to 1
+        deviceCapabilities -> "device" to 2
+        other -> "other" to 1
+        currentGroup == "tools" -> "tools" to 1
+        currentGroup == "prompts" -> "prompts" to 1
+        currentGroup != null -> "group:$currentGroup" to (if (resources || other) 2 else 1)
+        resources -> "resources" to 1
+        else -> "home" to 0
+    }
     Box(Modifier.fillMaxSize()) {
-        when {
-            mcp -> McpServersScreen(
-                contentPadding = contentPadding,
-                onBack = { mcp = false },
-                userFile = File(paths.agentDir, "mcp.json"),
-                projectFile = File(PiProjectConfig.root(workspace), "mcp.json"),
-                access = extensionsAccess,
-                onFilesWritten = onExternalSettingsWrite,
-            )
+        AnimatedContent(
+            targetState = routeKey,
+            transitionSpec = {
+                val forward = targetState.second >= initialState.second
+                val ease = FastOutSlowInEasing
+                if (forward) {
+                    (slideInHorizontally(tween(200, easing = ease)) { it / 5 } + fadeIn(tween(170)))
+                        .togetherWith(slideOutHorizontally(tween(170, easing = ease)) { -it / 12 } + fadeOut(tween(130)))
+                } else {
+                    (slideInHorizontally(tween(200, easing = ease)) { -it / 12 } + fadeIn(tween(170)))
+                        .togetherWith(slideOutHorizontally(tween(170, easing = ease)) { it / 5 } + fadeOut(tween(130)))
+                }
+            },
+            label = "settings-stack",
+        ) { (route, _) ->
+            when {
+                route == "mcp" -> McpServersScreen(
+                    contentPadding = contentPadding,
+                    onBack = { mcp = false },
+                    userFile = File(paths.agentDir, "mcp.json"),
+                    projectFile = File(PiProjectConfig.root(workspace), "mcp.json"),
+                    access = extensionsAccess,
+                    onFilesWritten = onExternalSettingsWrite,
+                )
 
-            licenses -> LicensesScreen(
-                contentPadding = contentPadding,
-                onBack = { licenses = false },
-            )
+                route == "licenses" -> LicensesScreen(
+                    contentPadding = contentPadding,
+                    onBack = { licenses = false },
+                )
 
-            runtimeScreen -> RuntimeEngineScreen(
-                contentPadding = contentPadding,
-                onBack = { runtimeScreen = false },
-                store = activeStore,
-                onSettingWritten = handleSettingWritten,
-                activeEngine = activeRuntimeEngine,
-                engineState = liveEngineState,
-                engineDiagnostics = engineDiagnostics,
-                recentFailures = recentFailures,
-                engineEntry = engineEntry,
-                runtimeSwitch = runtimeSwitch,
-                onSelectEngine = onSelectRuntimeEngine,
-                restartEngine = restartEngine,
-                isTurnRunning = isTurnRunning,
-                onStartEngine = onStartEngine,
-                onRepairRuntime = onRepairRuntime,
-                onRebuildRuntime = onRebuildRuntime,
-            )
+                route == "runtime" -> RuntimeEngineScreen(
+                    contentPadding = contentPadding,
+                    onBack = { runtimeScreen = false },
+                    store = activeStore,
+                    onSettingWritten = handleSettingWritten,
+                    activeEngine = activeRuntimeEngine,
+                    engineState = liveEngineState,
+                    engineDiagnostics = engineDiagnostics,
+                    recentFailures = recentFailures,
+                    engineEntry = engineEntry,
+                    runtimeSwitch = runtimeSwitch,
+                    onSelectEngine = onSelectRuntimeEngine,
+                    restartEngine = restartEngine,
+                    isTurnRunning = isTurnRunning,
+                    onStartEngine = onStartEngine,
+                    onRepairRuntime = onRepairRuntime,
+                    onRebuildRuntime = onRebuildRuntime,
+                )
 
-            modelFlow -> app.pi.ui.models.ModelsScreen(
-                contentPadding = contentPadding,
-                onBack = { modelFlow = false },
-                host = modelsHost,
-                store = activeStore,
-                freshness = rowsEpoch,
-                onSettingWritten = handleSettingWritten,
-                availableModels = availableModels,
-                onLoadAvailableModels = onLoadAvailableModels,
-            )
+                route == "models" -> app.pi.ui.models.ModelsScreen(
+                    contentPadding = contentPadding,
+                    onBack = { modelFlow = false },
+                    host = modelsHost,
+                    store = activeStore,
+                    freshness = rowsEpoch,
+                    onSettingWritten = handleSettingWritten,
+                    onExternalSettingsWrite = onExternalSettingsWrite,
+                    availableModels = availableModels,
+                    onLoadAvailableModels = onLoadAvailableModels,
+                )
 
-            deviceCapabilities -> DeviceCapabilityScreen(
-                store = DeviceCapabilityStore.get(LocalContext.current),
-                onBack = { deviceCapabilities = false },
-                contentPadding = contentPadding,
-            )
+                route == "device" -> DeviceCapabilityScreen(
+                    store = DeviceCapabilityStore.get(LocalContext.current),
+                    onBack = { deviceCapabilities = false },
+                    contentPadding = contentPadding,
+                )
 
-            other -> OtherSettingsScreen(
-                contentPadding = contentPadding,
-                onBack = { other = false },
-                onOpenTerminal = onOpenTerminal?.let { open ->
-                    {
+                route == "other" -> OtherSettingsScreen(
+                    contentPadding = contentPadding,
+                    onBack = { other = false },
+                    onOpenTerminal = onOpenTerminal?.let { open ->
+                        {
+                            other = false
+                            open()
+                        }
+                    },
+                    onOpenDeviceCapabilities = {
                         other = false
-                        open()
-                    }
-                },
-                onOpenDeviceCapabilities = {
-                    other = false
-                    deviceCapabilities = true
-                },
-                onOpenSecurity = {
-                    other = false
-                    groupId = "security"
-                    highlightKey = null
-                },
-                onOpenLicenses = {
-                    other = false
-                    licenses = true
-                },
-            )
-
-            currentGroup == "tools" -> ToolsScreen(
-                store = activeStore,
-                freshness = rowsEpoch,
-                contentPadding = contentPadding,
-                advanced = advanced,
-                onSettingWritten = handleSettingWritten,
-                onBack = {
-                    groupId = null
-                    highlightKey = null
-                },
-            )
-
-            currentGroup == "prompts" -> app.pi.ui.resources.SystemPromptHostScreen(
-                contentPadding = contentPadding,
-                access = extensionsAccess,
-                store = activeStore,
-                onSettingWritten = handleSettingWritten,
-                onBack = {
-                    groupId = null
-                    highlightKey = null
-                },
-            )
-
-            currentGroup != null -> SettingsGroupScreen(
-                groupId = currentGroup,
-                store = activeStore,
-                freshness = rowsEpoch,
-                contentPadding = contentPadding,
-                onBack = {
-                    groupId = null
-                    highlightKey = null
-                },
-                highlightKey = highlightKey,
-                knownThemes = knownThemes,
-                themeNotes = themeNotes,
-                themeError = themeError,
-                onSettingWritten = handleSettingWritten,
-                onRunAction = onRunAction,
-                hostActions = hostActions,
-                onRestartEngine = { restartPrompt = true },
-                availableModels = availableModels,
-                onLoadAvailableModels = onLoadAvailableModels,
-            )
-
-            resources -> app.pi.ui.resources.ResourcesHubScreen(
-                contentPadding = contentPadding,
-                startOnProject = resourcesProject,
-                onBack = { resources = false },
-                access = extensionsAccess,
-                advanced = advanced,
-                onOpenMcp = { mcp = true },
-                onOpenCommandSettings = {
-                    groupId = "resources"
-                    highlightKey = null
-                },
-                onOpenTrustPolicy = {
-                    groupId = "security"
-                    highlightKey = "defaultProjectTrust"
-                },
-            )
-
-            else -> SettingsHome(
-                store = activeStore,
-                contentPadding = contentPadding,
-                onBack = onBack,
-                freshness = rowsEpoch,
-                onOpenGroup = { id ->
-                    if (id == "resources") {
-                        resources = true
-                    } else {
-                        groupId = id
+                        deviceCapabilities = true
+                    },
+                    onOpenSecurity = {
+                        other = false
+                        groupId = "security"
                         highlightKey = null
-                    }
-                },
-                onOpenModels = openModelFlow,
-                onOpenRuntime = { runtimeScreen = true },
-                runtimeSummary = runtimeHomeSummary,
-                onOpenOther = { other = true },
-                onOpenMcp = { mcp = true },
-            )
+                    },
+                    onOpenLicenses = {
+                        other = false
+                        licenses = true
+                    },
+                )
+
+                route == "tools" -> ToolsScreen(
+                    store = activeStore,
+                    freshness = rowsEpoch,
+                    contentPadding = contentPadding,
+                    advanced = advanced,
+                    extensionsAccess = extensionsAccess,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                )
+
+                route == "prompts" -> app.pi.ui.resources.SystemPromptHostScreen(
+                    contentPadding = contentPadding,
+                    access = extensionsAccess,
+                    store = activeStore,
+                    onSettingWritten = handleSettingWritten,
+                    onBack = {
+                        groupId = null
+                        highlightKey = null
+                    },
+                )
+
+                route.startsWith("group:") -> {
+                    val gid = route.removePrefix("group:")
+                    SettingsGroupScreen(
+                        groupId = gid,
+                        store = activeStore,
+                        freshness = rowsEpoch,
+                        contentPadding = contentPadding,
+                        onBack = {
+                            groupId = null
+                            highlightKey = null
+                        },
+                        highlightKey = highlightKey,
+                        knownThemes = knownThemes,
+                        themeNotes = themeNotes,
+                        themeError = themeError,
+                        onSettingWritten = handleSettingWritten,
+                        onRunAction = onRunAction,
+                        hostActions = hostActions,
+                        onRestartEngine = { restartPrompt = true },
+                        availableModels = availableModels,
+                        onLoadAvailableModels = onLoadAvailableModels,
+                    )
+                }
+
+                route == "resources" -> app.pi.ui.resources.ResourcesHubScreen(
+                    contentPadding = contentPadding,
+                    startOnProject = resourcesProject,
+                    onBack = { resources = false },
+                    access = extensionsAccess,
+                    advanced = advanced,
+                    onOpenMcp = { mcp = true },
+                    onOpenCommandSettings = {
+                        groupId = "resources"
+                        highlightKey = null
+                    },
+                    onOpenTrustPolicy = {
+                        groupId = "security"
+                        highlightKey = "defaultProjectTrust"
+                    },
+                )
+
+                else -> SettingsHome(
+                    store = activeStore,
+                    contentPadding = contentPadding,
+                    onBack = onBack,
+                    freshness = rowsEpoch,
+                    onOpenGroup = { id ->
+                        if (id == "resources") {
+                            resources = true
+                        } else {
+                            groupId = id
+                            highlightKey = null
+                        }
+                    },
+                    onOpenKey = openSetting,
+                    onOpenModels = openModelFlow,
+                    onOpenRuntime = { runtimeScreen = true },
+                    runtimeSummary = runtimeHomeSummary,
+                    onOpenOther = { other = true },
+                    onOpenMcp = { mcp = true },
+                )
+            }
         }
     }
 

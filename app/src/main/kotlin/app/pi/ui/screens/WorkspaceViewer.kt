@@ -511,28 +511,28 @@ private fun ViewerTopBar(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceDim)
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(PiSpacing.topBarHeight)
-                .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                .padding(start = 6.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(
                 Modifier
-                    .size(PiSpacing.topBarHeight)
-                    .clip(RoundedCornerShape(WsShape.medium))
+                    .size(PiSpacing.chatTopBarAction)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = tr("返回", "Back"),
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(PiSpacing.chatTopBarGlyph),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             }

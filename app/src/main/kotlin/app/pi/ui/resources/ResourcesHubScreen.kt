@@ -222,6 +222,7 @@ private fun Hub(
             PiSeg(
                 options = listOf(tr("全局视图", "Global View"), tr("本项目视图", "Project View")),
                 selectedIndex = if (model.effectiveLayer == Layer.Global) 0 else 1,
+                disabledIndices = if (model.projectUsable) emptySet() else setOf(1),
                 onSelect = { idx ->
                     if (idx == 0 || model.projectUsable) {
                         model.layer = if (idx == 0) Layer.Global else Layer.Project

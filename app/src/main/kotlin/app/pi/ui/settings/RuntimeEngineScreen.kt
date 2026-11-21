@@ -597,7 +597,7 @@ fun RuntimeEngineScreen(
                                     color = palette.muted,
                                 )
                             }
-                            Switch(
+                            PiSettingsSwitch(
                                 checked = keepAlive,
                                 onCheckedChange = { next ->
                                     keepAlive = next

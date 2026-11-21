@@ -166,22 +166,35 @@ fun SettingsGroupScreen(
     }
 
     // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
+    val scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+    val showSectionHeaders = sections.size > 1
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = group?.title ?: tr("设置", "Settings"),
             onBack = onBack,
+            scrolled = scrolled,
         )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
             contentPadding = PaddingValues(
                 top = PiSettingsMetrics.groupGap,
-                bottom = contentPadding.calculateBottomPadding(),
+                bottom = contentPadding.calculateBottomPadding() + app.pi.ui.theme.PiSpacing.scrollBottom,
             ),
         ) {
             items(sections) { section ->
-                // 一张接一张的卡，**没有节标题、没有「N 项」、卡内不分组**：
-                // 与「设备能力」页同一套（用户裁定的统一口径）。卡间留 `groupGap`。
+                if (showSectionHeaders && section.title.isNotBlank()) {
+                    Text(
+                        text = section.title,
+                        modifier = Modifier.padding(
+                            start = PiSettingsMetrics.pageHorizontal + app.pi.ui.theme.PiSpacing.small,
+                            end = PiSettingsMetrics.pageHorizontal,
+                            bottom = PiSettingsMetrics.groupHeaderGap,
+                        ),
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.muted,
+                    )
+                }
                 PiSettingsCard(modifier = Modifier.padding(bottom = PiSettingsMetrics.groupGap)) {
                     section.settings.forEachIndexed { index, setting ->
                         if (index > 0) PiSettingsHairline()

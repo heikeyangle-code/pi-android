@@ -41,6 +41,7 @@ fun SettingsHome(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     onOpenGroup: (String) -> Unit,
+    onOpenKey: ((String) -> Unit)? = null,
     onOpenModels: (() -> Unit)? = null,
     freshness: Int = 0,
     onOpenRuntime: (() -> Unit)? = null,
@@ -50,7 +51,14 @@ fun SettingsHome(
 ) {
     var query by remember { mutableStateOf("") }
     val q = query.trim()
-    val hits = remember(q, PiLocale.isZh) {
+    val customHits = remember(q, PiLocale.isZh) {
+        if (q.isEmpty()) emptyList() else buildCustomSearchEntries().filter { entry ->
+            entry.title.contains(q, ignoreCase = true) ||
+                entry.subtitle.contains(q, ignoreCase = true) ||
+                entry.keywords.contains(q, ignoreCase = true)
+        }
+    }
+    val settingHits = remember(q, PiLocale.isZh) {
         if (q.isEmpty()) emptyList() else PiSettingsCatalog.settings.filter {
             it.title.contains(q, ignoreCase = true) ||
                 it.description.contains(q, ignoreCase = true) ||
@@ -64,7 +72,7 @@ fun SettingsHome(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = 8.dp,
-                bottom = contentPadding.calculateBottomPadding(),
+                bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom,
             ),
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
@@ -75,12 +83,12 @@ fun SettingsHome(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                    placeholder = tr("搜索设置：名称、说明或键名", "Search settings: name, description, or key"),
+                    placeholder = tr("搜索设置、功能、MCP 或键名", "Search settings, features, MCP, or key"),
                     height = PiSettingsMetrics.searchFieldHeight,
                 )
             }
             if (q.isNotEmpty()) {
-                if (hits.isEmpty()) {
+                if (customHits.isEmpty() && settingHits.isEmpty()) {
                     item(key = "no-hits") {
                         PiSettingsCard {
                             PiSettingsEntryRow(
@@ -92,13 +100,26 @@ fun SettingsHome(
                 } else {
                     item(key = "hits") {
                         PiSettingsCard {
-                            hits.forEachIndexed { index, hit ->
-                                if (index > 0) PiSettingsHairline()
+                            var rendered = 0
+                            customHits.forEach { hit ->
+                                if (rendered > 0) PiSettingsHairline()
+                                rendered++
+                                PiSettingsEntryRow(
+                                    title = hit.title,
+                                    supporting = hit.subtitle,
+                                    onClick = { onOpenKey?.invoke(hit.routeKey) },
+                                )
+                            }
+                            settingHits.forEach { hit ->
+                                if (rendered > 0) PiSettingsHairline()
+                                rendered++
                                 PiSettingsEntryRow(
                                     title = hit.title,
                                     supporting = PiSettingsCatalog.groupTitle(hit.group) + " · " + hit.description,
                                     onClick = {
-                                        if (hit.group == G_MODELS_SCREEN && onOpenModels != null) {
+                                        if (onOpenKey != null) {
+                                            onOpenKey(hit.key)
+                                        } else if (hit.group == G_MODELS_SCREEN && onOpenModels != null) {
                                             onOpenModels()
                                         } else {
                                             onOpenGroup(hit.group)
@@ -164,15 +185,14 @@ fun SettingsHome(
                             tr("MCP 服务器", "MCP Servers"),
                             tr("接入外部工具服务器：连接检测、OAuth 登录、暴露方式", "External tool servers: health checks, OAuth login, tool exposure"),
                             Icons.Filled.Extension,
-                            palette.border,
+                            palette.mdLink,
                             it,
                         )
                     },
                 ),
             )
             groupCards("ext-tools", tr("扩展与工具", "Extensions & Tools"), listOf("resources", "tools"), tint = palette.success)
-            groupCards("chat-prompts", tr("对话与提示词", "Chat & Prompts"), listOf("prompts", "messages", "compaction", "retry"), tint = palette.mdLink)
-            groupCards("appearance", tr("外观", "Appearance"), listOf("appearance"), tint = palette.warning)
+            groupCards("chat-prompts", tr("对话与外观", "Chat & Appearance"), listOf("prompts", "messages", "compaction", "retry", "appearance"), tint = palette.mdLink)
             item(key = "label:system") { HomeSectionLabel(tr("系统", "System")) }
             item(key = "card:system") {
                 PiSettingsCard {
@@ -203,6 +223,64 @@ fun SettingsHome(
         }
     }
 }
+
+private class CustomSearchEntry(
+    val routeKey: String,
+    val title: String,
+    val subtitle: String,
+    val keywords: String,
+)
+
+private fun buildCustomSearchEntries(): List<CustomSearchEntry> = listOf(
+    CustomSearchEntry(
+        routeKey = "hub:models",
+        title = tr("模型与供应商", "Models & Providers"),
+        subtitle = tr("订阅登录（OAuth）、API Key、自定义供应商、缓存", "OAuth subscriptions, API keys, custom providers, caching"),
+        keywords = "model provider oauth api key login defaultModel defaultProvider custom models.json auth",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:mcp",
+        title = tr("MCP 服务器", "MCP Servers"),
+        subtitle = tr("配置外部 MCP 工具服务器与 OAuth 登录", "Configure external MCP servers and OAuth login"),
+        keywords = "mcp server json oauth tool stdio http sse",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:resources",
+        title = tr("扩展与资源", "Extensions & Resources"),
+        subtitle = tr("管理扩展、技能、提示模板、主题与 npm 包", "Manage extensions, skills, prompt templates, themes, and packages"),
+        keywords = "extension skill prompt theme package npm trust project resources",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:tools",
+        title = tr("默认工具与工具开关", "Tools & Default Tools"),
+        subtitle = tr("实时启停内置/扩展工具，写入 defaultTools", "Toggle active tools live and save defaultTools"),
+        keywords = "defaultTools bash read edit write grep find ls codemode shell",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:runtime",
+        title = tr("引擎与运行环境", "Engine & Runtime"),
+        subtitle = tr("proot / proroot / tawcroot、后台保活、自检与诊断报告", "proot / proroot / tawcroot, keep-alive, self-check & diagnostics"),
+        keywords = "proot proroot tawcroot runtime engine keepAlive app.runtime.keepAlive diagnostics report",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:device",
+        title = tr("设备能力", "Device Capabilities"),
+        subtitle = tr("无障碍屏幕自动化、通知监听、Shizuku 设备 Shell", "Accessibility automation, notification access, Shizuku device shell"),
+        keywords = "device capability accessibility shizuku notification bridge permission",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:terminal",
+        title = tr("内置终端", "Built-in Terminal"),
+        subtitle = tr("打开容器全屏 Shell 终端", "Open the full-screen guest shell terminal"),
+        keywords = "terminal shell pty bash console",
+    ),
+    CustomSearchEntry(
+        routeKey = "hub:licenses",
+        title = tr("开源许可", "Open Source Licenses"),
+        subtitle = tr("查看第三方组件与协议声明", "View third-party dependency license notices"),
+        keywords = "license apache mit gpl notice third party",
+    ),
+)
 
 private class HomeEntry(
     val title: String,

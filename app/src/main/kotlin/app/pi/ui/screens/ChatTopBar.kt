@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -55,29 +56,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
+import app.pi.ui.PiEngineStatusDot
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.chat.ChatAction
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 
 /**
- * 全新现代对话顶栏 + 分类命令中心底部面板：
- *  - 左侧：动态呼吸引擎状态点 + 会话标题 + 工作区微标签 + 下拉箭头（一键打开会话列表/会话树）；
- *  - 右侧：+ 新建会话（一键直达！）、搜索、工作区、⋯ 更多（打开现代网格+分组底部命令面板，彻底取代旧版 19 行细长弹窗）。
+ * 统一官方 Pi 移动端对话顶栏 + 分类命令中心底部面板：
+ *  - 左侧：标准 44dp 会话侧栏图标（与会话页返回键同位对齐）+ 引擎呼吸状态点 + 会话标题 + 项目副标；
+ *  - 右侧：+ 新建会话、搜索、项目与文件、⋯ 更多（44dp/22dp，与全 App [PiTopBarIcon] 统一规格）。
  */
 @Composable
 internal fun ChatTopBar(
@@ -96,21 +95,6 @@ internal fun ChatTopBar(
 ) {
     var commandCenterOpen by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
-    val tone = engineStateTone(engineLabel)
-    val engineDotColor = stateToneColor(tone, palette)
-    val isActiveWork = tone == StateTone.Warning
-    // State 本身往下传，只在 graphicsLayer 里读：以前在组合里读 `.value`，引擎工作期间整条顶栏
-    // 每帧重组一次（60 次/秒），现在只重绘那一个点。
-    val dotAlpha: androidx.compose.runtime.State<Float>? = if (isActiveWork) {
-        rememberInfiniteTransition(label = "engine-dot").animateFloat(
-            initialValue = 0.35f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
-            label = "engine-dot-alpha",
-        )
-    } else {
-        null
-    }
     val widePhone = LocalConfiguration.current.screenWidthDp >= 360
 
     Column(
@@ -123,46 +107,35 @@ internal fun ChatTopBar(
             Modifier
                 .fillMaxWidth()
                 .height(PiSpacing.chatTopBarHeight)
-                .padding(start = 12.dp, end = 6.dp),
+                .padding(start = 6.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            // 左侧：会话入口胶囊（状态点 + 会话名 + 工作区副标 + ▾）
+            PiTopBarIcon(
+                onClick = onOpenSessions,
+                contentDescription = tr("打开会话列表", "Open sessions"),
+                icon = Icons.Filled.Menu,
+            )
+
+            // 标题区：呼吸状态点 + 会话名 + 项目名（点击同样平滑滑入会话抽屉，不再误导为下拉菜单）
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable(onClickLabel = tr("打开会话列表", "Open sessions"), onClick = onOpenSessions)
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .graphicsLayer { alpha = dotAlpha?.value ?: 1f }
-                        .clip(CircleShape)
-                        .background(engineDotColor)
-                        .semantics { contentDescription = tr("引擎：$engineLabel", "Engine: $engineLabel") },
-                )
-                Spacer(Modifier.width(9.dp))
+                PiEngineStatusDot(statusLabel = engineLabel)
+                Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f, fill = false)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = sessionTitle ?: tr("新对话", "New Chat"),
-                            modifier = Modifier.weight(1f, fill = false),
-                            style = PiType.topBarTitle,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Icon(
-                            Icons.Filled.KeyboardArrowDown,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = palette.muted,
-                        )
-                    }
+                    Text(
+                        text = sessionTitle ?: tr("新对话", "New Chat"),
+                        style = PiType.topBarTitle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (!workspaceName.isNullOrBlank()) {
                         Text(
                             text = workspaceName,
@@ -175,27 +148,30 @@ internal fun ChatTopBar(
                 }
             }
 
-            // 右侧高频直达图标：新建对话 + 搜索 + 工作区 + 更多
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ChatTopBarAction(
+            // 右侧高频直达图标：新建对话 + 搜索 + 项目与文件 + 更多
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                PiTopBarIcon(
                     onClick = { onAction(ChatAction.NewSession) },
                     contentDescription = tr("新建会话", "New session"),
                     icon = Icons.Filled.Add,
                 )
                 if (widePhone) {
-                    ChatTopBarAction(
+                    PiTopBarIcon(
                         onClick = { onToggleSearch(false) },
                         contentDescription = if (searchOpen) tr("关闭对话内查找", "Close search") else tr("在对话里查找", "Search in chat"),
                         icon = Icons.Filled.Search,
                         highlighted = searchOpen,
                     )
                 }
-                ChatTopBarAction(
+                PiTopBarIcon(
                     onClick = onOpenWorkspace,
                     contentDescription = tr("项目与文件", "Project & Files"),
                     icon = Icons.Filled.FolderOpen,
                 )
-                ChatTopBarAction(
+                PiTopBarIcon(
                     onClick = { commandCenterOpen = true },
                     contentDescription = tr("更多操作", "More actions"),
                     icon = Icons.Filled.MoreHoriz,
@@ -531,29 +507,4 @@ private fun SheetHairline() {
         thickness = PiSpacing.hairlineThin,
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
     )
-}
-
-@Composable
-private fun ChatTopBarAction(
-    onClick: () -> Unit,
-    contentDescription: String,
-    icon: ImageVector,
-    highlighted: Boolean = false,
-) {
-    val accent = PiTheme.palette.accent
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(if (highlighted) accent.copy(alpha = 0.14f) else Color.Transparent)
-            .clickable(onClickLabel = contentDescription, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(21.dp),
-            tint = if (highlighted) accent else MaterialTheme.colorScheme.onSurface,
-        )
-    }
 }

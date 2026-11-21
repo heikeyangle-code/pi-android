@@ -70,8 +70,8 @@ object PiSpacing {
     /** `06 §2`: the transcript's block rhythm (`块间距 8`). */
     val blockGap = 8.dp
 
-    /** `06 §2`「顶栏：高 48」. */
-    val topBarHeight = 48.dp
+    /** 统一顶栏高度：56dp（所有屏含对话、文件查看器、设置、会话共用同一高度）。 */
+    val topBarHeight = 56.dp
 
     // ------------------------------------------------------ 悬浮输入框 (composer)
     //
@@ -110,8 +110,8 @@ object PiSpacing {
     // 页面底色渐隐。模型 chip 已移到输入框工具行，顶栏不再有它。
 
     val chatTopBarHeight = 56.dp
-    val chatTopBarAction = 48.dp
-    val chatTopBarGlyph = 24.dp
+    val chatTopBarAction = 44.dp
+    val chatTopBarGlyph = 22.dp
     val chatTopBarStatusDot = 7.dp
     val chatTopBarFade = 12.dp
 

@@ -358,6 +358,7 @@ internal fun ContextScreen(
                 PiSeg(
                     options = listOf(globalLabel, projectLabel),
                     selectedIndex = if (isProject) 1 else 0,
+                    disabledIndices = if (model.projectUsable) emptySet() else setOf(1),
                     onSelect = { idx ->
                         if (idx == 0 || model.projectUsable) {
                             model.layer = if (idx == 0) Layer.Global else Layer.Project

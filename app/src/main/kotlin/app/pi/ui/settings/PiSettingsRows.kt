@@ -389,7 +389,7 @@ private fun RowScope.RowBody(
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = if (supportingMono) PiTheme.text.mono else PiTheme.text.meta,
                 color = supportingTone ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }

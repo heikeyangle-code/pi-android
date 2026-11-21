@@ -1,5 +1,7 @@
 package app.pi.ui.chat
 
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1330,7 +1332,9 @@ fun RenameSessionDialog(
 ) {
     val palette = PiTheme.palette
     var name by remember { mutableStateOf(initial.orEmpty()) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     PiDialog(onDismissRequest = onDismiss) {
+        app.pi.ui.components.PiAutoFocus(focus)
         PiDialogTitle(tr("重命名会话", "Rename Session"))
         PiDialogBody(tr("修改后将立即同步到会话列表。", "Changes sync to the session list immediately."))
         Spacer(Modifier.height(10.dp))
@@ -1341,13 +1345,13 @@ fun RenameSessionDialog(
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .border(1.dp, palette.borderAccent.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp),
+                .padding(start = 12.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicTextField(
                 value = name,
                 onValueChange = { name = it },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).focusRequester(focus),
                 singleLine = true,
                 textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(palette.accent),
@@ -1361,14 +1365,20 @@ fun RenameSessionDialog(
                 },
             )
             if (name.isNotEmpty()) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = tr("清空", "Clear"),
-                    tint = palette.muted,
+                Box(
                     modifier = Modifier
-                        .size(18.dp)
-                        .clickable { name = "" },
-                )
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable(onClickLabel = tr("清空", "Clear")) { name = "" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = tr("清空", "Clear"),
+                        tint = palette.muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
         PiDialogActions {
@@ -1397,12 +1407,25 @@ private fun PersistTogglePill(persistAsDefault: Boolean, onToggle: () -> Unit) {
             color = if (persistAsDefault) palette.accent.copy(alpha = 0.55f) else Color.Transparent,
         ),
     ) {
-        Text(
-            if (persistAsDefault) tr("✓ 设为默认", "✓ Set Default") else tr("仅本次会话", "This Session"),
+        Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = if (persistAsDefault) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (persistAsDefault) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = palette.accent,
+                )
+            }
+            Text(
+                if (persistAsDefault) tr("设为默认", "Set Default") else tr("仅本次会话", "This Session"),
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                color = if (persistAsDefault) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

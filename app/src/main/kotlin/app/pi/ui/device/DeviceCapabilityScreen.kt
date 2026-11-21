@@ -215,7 +215,7 @@ fun DeviceCapabilityScreen(
                                     else -> tr("未开启", "Off")
                                 },
                                 ready = notifyListener == "connected",
-                                accent = palette.mdLink,
+                                accent = palette.accent,
                                 onClick = openNotificationListener,
                                 modifier = Modifier.weight(1f),
                             )
@@ -742,7 +742,7 @@ private fun CapabilityCardRow(
                         Text(
                             statusText,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                            style = PiTheme.text.monoSmall,
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                             color = statusTone,
                             maxLines = 1,
                         )
@@ -755,7 +755,7 @@ private fun CapabilityCardRow(
                             Text(
                                 tr("高危", "High Risk"),
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = PiTheme.text.monoSmall,
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                                 color = palette.error,
                                 maxLines = 1,
                             )

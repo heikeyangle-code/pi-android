@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -247,10 +248,11 @@ private fun BootErrorCard(message: String, detail: String?) {
                         .background(palette.error.copy(alpha = 0.2f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = "✗",
-                        style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                        color = palette.error,
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = palette.error,
                     )
                 }
                 Text(
@@ -304,7 +306,7 @@ private fun BootErrorCard(message: String, detail: String?) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .background(Color.Black.copy(alpha = 0.14f))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .padding(10.dp),
                 )
             }
@@ -369,38 +371,19 @@ private fun StepBar(step: RuntimeProvisioner.Step) {
         animationSpec = tween(260),
         label = "bootProgress",
     )
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(palette.borderMuted.copy(alpha = 0.4f)),
+    ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxWidth(animatedFraction.coerceIn(0.04f, 1f))
                 .height(6.dp)
                 .clip(RoundedCornerShape(999.dp))
-                .background(palette.borderMuted.copy(alpha = 0.4f)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(animatedFraction.coerceIn(0.04f, 1f))
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(palette.accent),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            repeat(total) { index ->
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(
-                            if (index < reached) palette.accent.copy(alpha = 0.75f)
-                            else palette.borderMuted.copy(alpha = 0.3f),
-                        ),
-                )
-            }
-        }
+                .background(palette.accent),
+        )
     }
 }

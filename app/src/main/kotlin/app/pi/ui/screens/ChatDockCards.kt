@@ -81,14 +81,22 @@ internal fun ChatDockStatusAndWidgets(
     val compactExtMode = imeVisible || widgetsCollapsedByUser
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        if (state.meta.compacting) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = state.meta.compacting,
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(170)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+        ) {
             StatusActionRow(
                 text = tr("正在压缩上下文…", "Compacting context…"),
                 actionLabel = tr("中止", "Abort"),
                 onAction = { session.abortCompaction() },
             )
         }
-        if (state.queueSteering > 0 || state.queueFollowUp > 0) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = state.queueSteering > 0 || state.queueFollowUp > 0,
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(170)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+        ) {
             QueueRow(
                 steering = state.queueSteering,
                 followUp = state.queueFollowUp,
@@ -101,27 +109,33 @@ internal fun ChatDockStatusAndWidgets(
         }
 
         val exported = state.exported
-        if (exported != null) {
-            ExportDeliveryRow(
-                exported = exported,
-                onSave = {
-                    exportScope.launch {
-                        val result = withContext(Dispatchers.IO) {
-                            SessionExportDelivery.saveToDownloads(context, exported)
+        androidx.compose.animation.AnimatedVisibility(
+            visible = exported != null,
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(170)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+        ) {
+            exported?.let { exp ->
+                ExportDeliveryRow(
+                    exported = exp,
+                    onSave = {
+                        exportScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                SessionExportDelivery.saveToDownloads(context, exp)
+                            }
+                            session.notifyUser(result.sentence, warning = result.warning)
                         }
-                        session.notifyUser(result.sentence, warning = result.warning)
-                    }
-                },
-                onShare = {
-                    exportScope.launch {
-                        val result = withContext(Dispatchers.IO) {
-                            SessionExportDelivery.share(context, exported)
+                    },
+                    onShare = {
+                        exportScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                SessionExportDelivery.share(context, exp)
+                            }
+                            session.notifyUser(result.sentence, warning = result.warning)
                         }
-                        session.notifyUser(result.sentence, warning = result.warning)
-                    }
-                },
-                onDismiss = { session.dismissExport() },
-            )
+                    },
+                    onDismiss = { session.dismissExport() },
+                )
+            }
         }
 
         if (hasAnyExtDockContent) {
@@ -177,16 +191,26 @@ internal fun ChatDockStatusAndWidgets(
             )
         }
 
-        state.bash?.let { bashRun ->
-            BashPanel(
-                run = bashRun,
-                onAbort = { session.abortBash() },
-                onDismiss = { session.dismissBash() },
-                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
-            )
+        androidx.compose.animation.AnimatedVisibility(
+            visible = state.bash != null,
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(170)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+        ) {
+            state.bash?.let { bashRun ->
+                BashPanel(
+                    run = bashRun,
+                    onAbort = { session.abortBash() },
+                    onDismiss = { session.dismissBash() },
+                    modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
+                )
+            }
         }
 
-        if (attachments.isNotEmpty()) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = attachments.isNotEmpty(),
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(160)) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(130)) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(110)),
+        ) {
             Row(
                 Modifier
                     .fillMaxWidth()

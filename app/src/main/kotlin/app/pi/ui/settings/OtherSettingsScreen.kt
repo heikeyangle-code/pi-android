@@ -28,13 +28,22 @@ internal fun OtherSettingsScreen(
     onOpenLicenses: (() -> Unit)?,
 ) {
     val palette = PiTheme.palette
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val capStore = androidx.compose.runtime.remember(context) { app.pi.bridge.DeviceCapabilityStore.get(context) }
+    val capStates = capStore.states()
+    val capUsable = capStates.count { it.usable }
+    val capSupporting = if (capUsable == 0) {
+        tr("未启用（0 Token 占用）· 屏幕自动化、通知与设备 Shell", "Disabled (0 Token) · Screen automation, notifications & device shell")
+    } else {
+        tr("$capUsable/${capStates.size} 组就绪 · 屏幕自动化、通知与设备 Shell", "$capUsable/${capStates.size} active · Screen automation, notifications & device shell")
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = tr("其他", "More"), onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = PiSettingsMetrics.groupGap,
-                bottom = contentPadding.calculateBottomPadding(),
+                bottom = contentPadding.calculateBottomPadding() + app.pi.ui.theme.PiSpacing.scrollBottom,
             ),
         ) {
             val rows = buildList {
@@ -52,7 +61,7 @@ internal fun OtherSettingsScreen(
                         Icons.Filled.PhoneAndroid,
                         palette.success,
                         tr("设备能力", "Device Capabilities"),
-                        tr("管理通知、无障碍、文件与系统桥接授权", "Manage notifications, accessibility, files, and device bridge permissions"),
+                        capSupporting,
                         onOpenDeviceCapabilities,
                     ),
                 )

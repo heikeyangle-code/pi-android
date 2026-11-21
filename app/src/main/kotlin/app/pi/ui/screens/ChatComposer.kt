@@ -44,6 +44,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -147,7 +149,6 @@ internal fun Composer(
     val composerProse = PiTheme.text.prose
     val composerLineHeight = (composerProse.fontSize.value * 1.52f).sp
     val composerTextStyle = composerProse.copy(
-        fontFamily = PiProseFamily,
         fontWeight = FontWeight.Normal,
         lineHeight = composerLineHeight,
     )
@@ -386,14 +387,14 @@ internal fun Composer(
             if (streaming) {
                 if (canSteer || canFollowUp) {
                     DeliveryActionPill(
-                        glyph = "⇢",
+                        icon = Icons.Filled.ArrowForward,
                         label = tr("引导", "Steer"),
                         tint = palette.warning,
                         enabled = canSteer,
                         onClick = onSteer,
                     )
                     DeliveryActionPill(
-                        glyph = "⇣",
+                        icon = Icons.Filled.ArrowDownward,
                         label = tr("后续", "Follow-up"),
                         tint = palette.accent,
                         enabled = canFollowUp,
@@ -476,7 +477,7 @@ private fun ComposerModelPill(
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier = Modifier
-            .height(26.dp)
+            .height(30.dp)
             .widthIn(max = 176.dp)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f))
@@ -522,7 +523,7 @@ private fun ThinkingLevelPill(
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier = Modifier
-            .height(26.dp)
+            .height(30.dp)
             .clip(shape)
             .background(
                 if (active) dotColor.copy(alpha = 0.14f)
@@ -534,7 +535,7 @@ private fun ThinkingLevelPill(
                 onLongClickLabel = tr("选择思考等级", "Select thinking level"),
                 onLongClick = onLongClick,
             )
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -564,19 +565,19 @@ private fun ContextUsagePill(
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier = Modifier
-            .height(26.dp)
+            .height(30.dp)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
             .clickable(onClickLabel = tr("查看上下文与用量", "View context and usage"), onClick = onClick)
-            .padding(horizontal = 7.dp),
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         PiContextRing(
             percent = percent,
-            diameter = 15.dp,
+            diameter = 16.dp,
             stroke = 1.8.dp,
-            placeholderStyle = PiTheme.text.monoSmall.copy(fontSize = 9.sp, lineHeight = 10.sp),
+            placeholderStyle = PiTheme.text.monoSmall,
         )
         if (percent != null) {
             Text(
@@ -624,7 +625,7 @@ private fun ComposerQuickKey(
 
 @Composable
 private fun DeliveryActionPill(
-    glyph: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     tint: Color,
     enabled: Boolean,
@@ -647,10 +648,11 @@ private fun DeliveryActionPill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = glyph,
-            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-            color = if (enabled) tint else palette.muted,
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = if (enabled) tint else palette.muted,
         )
         Text(
             text = label,

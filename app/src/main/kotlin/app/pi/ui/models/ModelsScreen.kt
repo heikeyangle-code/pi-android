@@ -80,6 +80,7 @@ fun ModelsScreen(
     store: PiSettingsStore,
     freshness: Int = 0,
     onSettingWritten: (String) -> Unit = {},
+    onExternalSettingsWrite: () -> Unit = {},
     availableModels: List<PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
 ) {
@@ -347,6 +348,7 @@ fun ModelsScreen(
                 val budgetsSetting = settingByKey["thinkingBudgets"]
                 val cacheWarmingSetting = settingByKey["cacheWarming"]
                 val cacheMissSetting = settingByKey["showCacheMissNotices"]
+                val cacheRetentionSetting = settingByKey["app.runtime.cacheRetention"]
 
                 val persistedEnabledModels = remember(store, freshness, reload) {
                     (store.read("enabledModels") as? kotlinx.serialization.json.JsonArray)
@@ -435,8 +437,7 @@ fun ModelsScreen(
                                                 scope.launch {
                                                     runCatching { h.advanced.setCacheMode(mode) }
                                                         .onSuccess {
-                                                            store.write("cacheWarming", JsonPrimitive(mode))
-                                                            onSettingWritten("cacheWarming")
+                                                            onExternalSettingsWrite()
                                                             reload++
                                                         }
                                                         .onFailure { notice = tr("设置缓存预热失败：${it.message}", "Failed to set cache warming: ${it.message}") }
@@ -466,7 +467,7 @@ fun ModelsScreen(
                             )
                         }
 
-                        // 6. 缓存未命中提示（直走 SDK setShowCacheMissNotices）
+                        // 6. 缓存未命中提示（单写：store.write + onSettingWritten 同步 SDK 与 UiPrefs）
                         cacheMissSetting?.let { setting ->
                             ModelsDivider()
                             val checked = remember(store, setting.key, freshness, reload) { setting.boolIn(store) }
@@ -475,26 +476,23 @@ fun ModelsScreen(
                                 supporting = setting.description,
                                 checked = checked,
                                 onCheckedChange = { on ->
-                                    val h = host()
-                                    if (h != null) {
-                                        scope.launch {
-                                            runCatching { h.setShowCacheMissNotices(on) }
-                                                .onSuccess {
-                                                    onSettingWritten(setting.key)
-                                                    reload++
-                                                }
-                                                .onFailure {
-                                                    store.write(setting.key, JsonPrimitive(on))
-                                                    onSettingWritten(setting.key)
-                                                    reload++
-                                                }
-                                        }
-                                    } else {
-                                        store.write(setting.key, JsonPrimitive(on))
-                                        onSettingWritten(setting.key)
-                                        reload++
-                                    }
+                                    store.write(setting.key, JsonPrimitive(on))
+                                    onSettingWritten(setting.key)
+                                    reload++
                                 },
+                            )
+                        }
+
+                        // 7. 提示缓存保留时长（PI_CACHE_RETENTION：short / long）
+                        cacheRetentionSetting?.let { setting ->
+                            ModelsDivider()
+                            val summary = remember(store, setting.key, freshness, reload) {
+                                setting.display(setting.current(store))
+                            }
+                            PiSettingsEntryRow(
+                                title = setting.title,
+                                supporting = "$summary · ${setting.description}",
+                                onClick = { editingSetting = setting },
                             )
                         }
                     }
@@ -609,7 +607,7 @@ fun ModelsScreen(
                 onDismiss = { pickingScoped = false },
                 onApplied = { msg ->
                     notice = msg
-                    onSettingWritten("enabledModels")
+                    onExternalSettingsWrite()
                     reload++
                 },
             )
@@ -634,7 +632,7 @@ fun ModelsScreen(
                 onDismiss = { pickingModelThinking = false },
                 onChanged = { msg ->
                     notice = msg
-                    onSettingWritten("modelThinkingLevels")
+                    onExternalSettingsWrite()
                     reload++
                 },
             )
@@ -642,16 +640,7 @@ fun ModelsScreen(
     }
 }
 
-private fun thinkingLabel(level: String): String = when (level) {
-    "off" -> tr("关", "Off")
-    "minimal" -> tr("极简", "Minimal")
-    "low" -> tr("低", "Low")
-    "medium" -> tr("中", "Medium")
-    "high" -> tr("高", "High")
-    "xhigh" -> tr("超高", "Extra High")
-    "max" -> tr("最高", "Max")
-    else -> level
-}
+private fun thinkingLabel(level: String): String = app.pi.ui.chat.thinkingLabelOf(level)
 
 private class FormRequest(val form: ProviderForm, val isNew: Boolean)
 

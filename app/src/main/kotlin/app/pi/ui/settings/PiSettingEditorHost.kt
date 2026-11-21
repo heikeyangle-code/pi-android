@@ -131,19 +131,21 @@ fun PiSettingEditorSheet(
             }
         }
 
-        PiRowKind.Number -> PiNumberEditorSheet(
-            setting = setting,
-            initial = store.read(setting.key)?.intValueOrNull(),
-            // "Restore the default" **removes the key**; it must never write `JsonNull`.
-            // A null in the file is not "unset" to pi — `parseTimeoutSetting` treats it as
-            // present-and-unparseable and throws, which stops `pi --mode rpc` from starting
-            // when the key is `httpIdleTimeoutMs` (`docs/settings-audit-impl.md` §B1).
-            onSet = { value ->
-                if (value == null) store.remove(setting.key) else store.write(setting.key, JsonPrimitive(value))
-                onWritten(setting)
-            },
-            onDismiss = onDismiss,
-        )
+        PiRowKind.Number -> {
+            val rawEl = store.read(setting.key)
+            val initialNum = rawEl?.intValueOrNull() ?: (rawEl as? JsonPrimitive)
+                ?.takeIf { it.isString && it.content.equals("disabled", ignoreCase = true) }
+                ?.let { 0 }
+            PiNumberEditorSheet(
+                setting = setting,
+                initial = initialNum,
+                onSet = { value ->
+                    if (value == null) store.remove(setting.key) else store.write(setting.key, JsonPrimitive(value))
+                    onWritten(setting)
+                },
+                onDismiss = onDismiss,
+            )
+        }
 
         PiRowKind.Text -> PiTextEditorSheet(
             setting = setting,

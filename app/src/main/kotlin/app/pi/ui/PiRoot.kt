@@ -1,6 +1,22 @@
 package app.pi.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +39,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -39,8 +56,10 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,8 +75,9 @@ import app.pi.ui.screens.SessionsScreen
 import app.pi.ui.screens.SessionsView
 import app.pi.ui.screens.TerminalScreen
 import app.pi.ui.settings.PiSettingsStack
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.engineStateGlyph
+import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.engineStateTone
 import app.pi.ui.theme.stateToneColor
 
@@ -144,68 +164,69 @@ private val OVERLAY_SNACKBAR_INSET = 32.dp
 // 30/17 boxes. Every screen in this half goes through this one function instead, so
 // the chrome cannot drift screen by screen.
 
-/** 所有屏共用的顶栏高度：56（对话页顶栏同值）。 */
+/** 所有屏共用的统一顶栏规格：56dp 高，44dp 圆形热区 / 22dp 字形，与 ChatTopBar 完全一致。 */
 private val TOP_BAR_HEIGHT = 56.dp
-
-/** `06 §2`「水平 14」. */
-private val TOP_BAR_INSET = 14.dp
-
-/** The back chevron's press box and glyph: 48 热区 / 24 字形，与右侧图标同一套。 */
-private val TOP_BAR_BACK_BOX = 48.dp
-private val TOP_BAR_BACK_GLYPH = 24.dp
-
-/**
- * `TopBar`'s `margin-left:-6` on the back box: the chevron sits 8 from the edge
- * while the rest of the row still measures from 14. Reproduced by pulling the row's
- * leading inset in by the same amount only when there *is* a back box, so a screen
- * without one keeps the plain 14 (which is what `phone4` shows).
- */
-private val TOP_BAR_BACK_NUDGE = 6.dp
-
-/** The row's own gap between the back box, the title block and the actions. */
-private val TOP_BAR_GAP = 10.dp
-
-/** 右侧图标的间隔：0，48dp 热区本身已经给出 24dp 的视觉间隔。 */
-private val TOP_BAR_ACTION_GAP = 0.dp
-
-/** One action's press box and glyph: 48 热区 / 24 字形。 */
-private val TOP_BAR_ACTION_BOX = 48.dp
-private val TOP_BAR_ACTION_GLYPH = 24.dp
-
-/** The text action's own padding (`TopBar`: `5px 9px`). */
-private val TOP_BAR_TEXT_ACTION_PADDING = 9.dp
-private val TOP_BAR_TEXT_ACTION_PADDING_VERTICAL = 5.dp
-
-/** 文字按钮的按压缩形状（图标按钮用圆形，见 [TOP_BAR_ICON_SHAPE]）。 */
-private val TOP_BAR_PRESS_SHAPE = RoundedCornerShape(8.dp)
-
-/** 图标按钮/返回键的圆形热区，与对话页顶栏一致。 */
+private val TOP_BAR_INSET_START_PLAIN = 14.dp
+private val TOP_BAR_INSET_START_NAV = 6.dp
+private val TOP_BAR_INSET_END = 8.dp
+private val TOP_BAR_GAP = 6.dp
+private val TOP_BAR_ACTION_GAP = 2.dp
+private val TOP_BAR_ICON_BOX = 44.dp
+private val TOP_BAR_ICON_GLYPH = 22.dp
 private val TOP_BAR_ICON_SHAPE = CircleShape
 
 /**
- * The app bar every screen in this half draws — now the same geometry as the chat top
- * bar: 56 high, page-coloured and opaque, 16 SemiBold title, 48/24 icon actions.
- *
- * 顶栏不再画常驻分隔线；对话页的 0.5dp 发丝线由它自己的滚动状态控制。
- *
- * @param statusLabel when set, a 7dp engine-state dot is drawn before the title
- *    (colour from [stateToneColor]); the session overlay uses it.
- * @param onBack null on the top-level destinations; when set the circular back box
- *    is the first child.
- * @param actions the right cluster; callers pass [PiTopBarIcon] or a text action.
+ * 共享引擎呼吸状态点（对话顶栏等处共用）。
+ * 仅在 Warning（工作中 / 启动中）时启动动画，且只在 graphicsLayer 绘制阶段读取，零重组开销。
+ */
+@Composable
+fun PiEngineStatusDot(statusLabel: String, modifier: Modifier = Modifier) {
+    val palette = PiTheme.palette
+    val tone = engineStateTone(statusLabel)
+    val dotColor = stateToneColor(tone, palette)
+    val isActiveWork = tone == StateTone.Warning
+    val dotAlpha: androidx.compose.runtime.State<Float>? = if (isActiveWork) {
+        rememberInfiniteTransition(label = "engine-dot").animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
+            label = "engine-dot-alpha",
+        )
+    } else {
+        null
+    }
+    val engineDesc = tr("引擎：$statusLabel", "Engine: $statusLabel")
+    Box(
+        modifier = modifier
+            .size(PiSpacing.chatTopBarStatusDot)
+            .graphicsLayer { alpha = dotAlpha?.value ?: 1f }
+            .clip(CircleShape)
+            .background(dotColor)
+            .semantics { contentDescription = engineDesc },
+    )
+}
+
+/**
+ * 全 App 统一顶栏：56dp 高、页面同色背景、44dp/22dp 圆形图标按钮、可选副标题 / 自定义标题槽、
+ * 可选滚动底部分隔发丝线（与 [app.pi.ui.screens.ChatTopBar] 几何完全一致）。
  */
 @Composable
 fun PiTopBar(
-    title: String,
+    title: String = "",
     modifier: Modifier = Modifier,
     statusLabel: String? = null,
+    subtitle: String? = null,
     onBack: (() -> Unit)? = null,
+    navigationIcon: ImageVector = Icons.AutoMirrored.Filled.ArrowBack,
+    navigationContentDescription: String? = null,
+    scrolled: Boolean = false,
+    titleContent: (@Composable RowScope.() -> Unit)? = null,
     actions: (@Composable RowScope.() -> Unit)? = null,
 ) {
+    val palette = PiTheme.palette
     Column(
         modifier
             .fillMaxWidth()
-            // 不透明：状态栏、顶栏、页面同色，内容不会从下面透出半截。
             .background(MaterialTheme.colorScheme.background),
     ) {
         Row(
@@ -213,53 +234,50 @@ fun PiTopBar(
                 .fillMaxWidth()
                 .height(TOP_BAR_HEIGHT)
                 .padding(
-                    start = if (onBack != null) TOP_BAR_INSET - TOP_BAR_BACK_NUDGE else TOP_BAR_INSET,
-                    end = TOP_BAR_INSET,
+                    start = if (onBack != null) TOP_BAR_INSET_START_NAV else TOP_BAR_INSET_START_PLAIN,
+                    end = if (actions != null) TOP_BAR_INSET_END else TOP_BAR_INSET_START_PLAIN,
                 ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TOP_BAR_GAP),
         ) {
             if (onBack != null) {
-                val backLabel = piStr(R.string.nav_back)
-                Box(
-                    modifier = Modifier
-                        .size(TOP_BAR_BACK_BOX)
-                        .clip(TOP_BAR_ICON_SHAPE)
-                        .clickable(onClickLabel = backLabel, onClick = onBack),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = backLabel,
-                        modifier = Modifier.size(TOP_BAR_BACK_GLYPH),
-                        tint = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
+                val backLabel = navigationContentDescription ?: piStr(R.string.nav_back)
+                PiTopBarIcon(
+                    onClick = onBack,
+                    contentDescription = backLabel,
+                    icon = navigationIcon,
+                )
             }
             Row(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (statusLabel != null) {
-                    val engineDesc = tr("引擎：$statusLabel", "Engine: $statusLabel")
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(
-                                stateToneColor(engineStateTone(statusLabel), PiTheme.palette),
+                if (titleContent != null) {
+                    titleContent()
+                } else {
+                    if (statusLabel != null) {
+                        PiEngineStatusDot(statusLabel = statusLabel)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                        Text(
+                            title,
+                            style = PiType.topBarTitle,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (!subtitle.isNullOrBlank()) {
+                            Text(
+                                subtitle,
+                                style = PiTheme.text.meta,
+                                color = palette.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            .semantics { contentDescription = engineDesc },
-                    )
-                    Spacer(Modifier.width(8.dp))
+                        }
+                    }
                 }
-                Text(
-                    title,
-                    style = PiType.topBarTitle,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
             if (actions != null) {
                 Row(
@@ -269,118 +287,50 @@ fun PiTopBar(
                 )
             }
         }
+        if (scrolled) {
+            HorizontalDivider(
+                thickness = PiSpacing.hairlineThin,
+                color = palette.borderMuted.copy(alpha = 0.55f),
+            )
+        }
     }
 }
 
 /**
- * One icon action's press box for [PiTopBar]: 48dp 圆形热区 / 24dp 字形，和对话页
- * 顶栏的 [app.pi.ui.screens.ChatTopBarAction] 同一套尺寸。
+ * 统一顶栏图标按钮：44dp 圆形热区 / 22dp 字形，支持高亮态（搜索打开等场景）。
  */
 @Composable
-fun PiTopBarIcon(onClick: () -> Unit, contentDescription: String, icon: ImageVector) {
+fun PiTopBarIcon(
+    onClick: () -> Unit,
+    contentDescription: String,
+    icon: ImageVector,
+    highlighted: Boolean = false,
+) {
+    val accent = PiTheme.palette.accent
+    val bg by animateColorAsState(
+        targetValue = if (highlighted) accent.copy(alpha = 0.14f) else Color.Transparent,
+        animationSpec = tween(150),
+        label = "topbar-icon-bg",
+    )
     Box(
         modifier = Modifier
-            .size(TOP_BAR_ACTION_BOX)
+            .size(TOP_BAR_ICON_BOX)
             .clip(TOP_BAR_ICON_SHAPE)
+            .background(bg)
             .clickable(onClickLabel = contentDescription, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(TOP_BAR_ACTION_GLYPH),
-            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(TOP_BAR_ICON_GLYPH),
+            tint = if (highlighted) accent else MaterialTheme.colorScheme.onSurface,
         )
     }
 }
 
 /**
- * One text action's press box for [PiTopBar] — v2's 导入 / 刷新 / 保存到 Download
- * (`TopBar` right cluster: `padding:5px 9px`, `border-radius:8`, `t13`).
- *
- * The label is `bodyMedium` (14) rather than the board's 13: the app's own type scale
- * has no 13 non-monospace role, and this text is a control rather than machine
- * output, so it takes the body role the rest of the chrome uses. The one-step
- * difference is recorded in this batch's deviation list rather than invented here.
- */
-@Composable
-fun PiTopBarTextAction(label: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(TOP_BAR_PRESS_SHAPE)
-            .clickable(onClick = onClick)
-            .padding(horizontal = TOP_BAR_TEXT_ACTION_PADDING, vertical = TOP_BAR_TEXT_ACTION_PADDING_VERTICAL),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
-    }
-}
-
-/**
- * The app bar's **engine status line**, triple-encoded (symbol + word + tone) as
- * `06 §4` requires: `✓ 就绪` success, `… 工作中` warning, `◌ 启动中` warning,
- * `≡ 排队中` warning, `✗ 引擎已退出` / `■ 引擎已停止` error.
- *
- * The words are not this file's: they are [PiSessionViewModel.engineLabel]'s, which
- * returns pi's own vocabulary and also passes through a *busy verb* ("读取会话树")
- * while a request is in flight. Every one of those verbs is a wait, so the default
- * arm is `… warning` — the same rule `06 §4` states for busy verbs.
- *
- * It lives beside [PiTopBar] because the top bar is the only place that draws it: the
- * chat's app bar is the other caller, and both must spell the six states the same way
- * or the engine would read differently on two screens. That rule is now enforced by
- * **one** table rather than by this KDoc plus two hand-kept copies: the glyph is
- * `engineStateGlyph` and the tone is `engineStateTone`, both in `ui/theme/PiStateChip.kt`
- * (the columns above are that table's rows). Before the merge the two copies had already
- * drifted — 启动中, 排队中 and 引擎已停止 read differently here than on the chat page.
- */
-@Composable
-fun PiTopBarEngineMeta(word: String) {
-    val glyph = engineStateGlyph(word)
-    val tone = stateToneColor(engineStateTone(word), PiTheme.palette)
-    Row(
-        modifier = Modifier.padding(top = 1.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(TOP_BAR_ENGINE_GAP),
-    ) {
-        Text(
-            glyph,
-            style = PiTheme.text.monoSmall,
-            color = tone,
-        )
-        Text(
-            word,
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** `Engine` 的符号到词之间：`gap:5`。 */
-private val TOP_BAR_ENGINE_GAP = 5.dp
-
-/**
- * v2's `Seg` (`design-demos/direction-b-v2.html:644`) — the segmented control the
- * session overlay switches 会话 / 会话树 with, and the one the tree filters with.
- *
- * `gap:2`, `surf-high` fill, 1px `borderMuted`, radius 8, `padding:2`; each item is
- * 24 high, `padding:0 10`, radius 6, 12 at weight 500/400, the selected one on
- * `--selected-bg` in the body colour, the others transparent in `muted`.
- *
- * Hand-drawn because M3's `SegmentedButton` cannot be talked out of three things the
- * board does not have: a 40dp item, a per-item outline, and the check glyph it draws
- * inside the selected item (the app's callers were passing `shape = itemShape(...)`
- * only, so the ticks were being drawn on device).
- *
- * It sits beside [PiTopBar] rather than in `ui/components/` because that package
- * belongs to the other half of this refactor (only `PiDialog.kt` is this half's new
- * file there); it should move next to `PiDialog` when the split is next opened.
+ * 统一分段切换控件：支持平滑色变与真正的禁用态（`disabledIndices`，彻底消除点禁用页无反应的困惑）。
  */
 @Composable
 fun PiSeg(
@@ -388,39 +338,48 @@ fun PiSeg(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    disabledIndices: Set<Int> = emptySet(),
 ) {
     Row(
         modifier = modifier
             .clip(SEG_SHAPE)
-            // 去描边（与 chip 同一批）：填充底 + 选中段 `selectedBg` 就够分层了，
-            // 一圈 `borderMuted` 只会让这一行比内容更响。
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(SEG_PADDING),
         horizontalArrangement = Arrangement.spacedBy(SEG_ITEM_GAP),
     ) {
         options.forEachIndexed { index, label ->
             val selected = index == selectedIndex
+            val enabled = index !in disabledIndices
+            val bg by animateColorAsState(
+                targetValue = if (selected) PiTheme.palette.selectedBg else Color.Transparent,
+                animationSpec = tween(160),
+                label = "seg-bg-$index",
+            )
+            val fg by animateColorAsState(
+                targetValue = when {
+                    !enabled -> PiTheme.palette.dim
+                    selected -> MaterialTheme.colorScheme.onSurface
+                    else -> PiTheme.palette.muted
+                },
+                animationSpec = tween(160),
+                label = "seg-fg-$index",
+            )
             Box(
                 modifier = Modifier
                     .height(SEG_ITEM_HEIGHT)
+                    .alpha(if (enabled) 1f else 0.48f)
                     .clip(SEG_ITEM_SHAPE)
-                    .background(
-                        if (selected) PiTheme.palette.selectedBg else Color.Transparent,
-                    )
-                    .clickable { onSelect(index) }
+                    .background(bg)
+                    .clickable(enabled = enabled) { onSelect(index) }
                     .padding(horizontal = SEG_ITEM_PADDING),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                     ),
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        PiTheme.palette.muted
-                    },
+                    color = fg,
                     maxLines = 1,
                 )
             }
@@ -432,7 +391,7 @@ private val SEG_SHAPE = RoundedCornerShape(10.dp)
 private val SEG_ITEM_SHAPE = RoundedCornerShape(8.dp)
 private val SEG_PADDING = 3.dp
 private val SEG_ITEM_GAP = 3.dp
-private val SEG_ITEM_HEIGHT = 28.dp
+private val SEG_ITEM_HEIGHT = 30.dp
 private val SEG_ITEM_PADDING = 12.dp
 
 @Composable
@@ -637,182 +596,124 @@ fun PiRoot() {
         modifier = if (chatOwnsIme) Modifier else Modifier.imePadding(),
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
-            when (current) {
-                // One provider per destination, keyed by the enum constant's name:
-                // the keys are distinct by construction (an enum has no duplicate
-                // names) and stable across a switch, which is what the holder
-                // requires. No `removeState` is needed here — the set of keys is the
-                // closed set of three destinations, not a growing stack, so nothing
-                // can be orphaned. (A future sub-page stack would have to call it.)
-                PiDestination.Chat -> saveableStateHolder.SaveableStateProvider(current.name) {
-                    ChatScreen(
-                    contentPadding = padding,
-                    session = session,
-                    // The session name in the app bar is the way into the session
-                    // list. It raises the overlay only — the destination stays 对话,
-                    // because the user is picking a session *for this screen*, and
-                    // moving them first would rebuild the transcript underneath the
-                    // list they are about to read.
-                        onOpenSessions = {
-                            session.raiseOverlay(OverlaySlot.SessionList, OverlayView.List)
-                        },
-                        // 底栏拆掉之后，工作区/设置只在会话页顶栏；从对话页过去要先开会话
-                        // 覆盖层再点，多一层。这两条把入口直接放进对话页的「⋯」菜单。
-                        onOpenWorkspace = openWorkspace,
-                        onOpenSettings = openSettings,
-                    )
-                }
+            AnimatedContent(
+                targetState = current,
+                transitionSpec = {
+                    val forward = targetState.ordinal > initialState.ordinal
+                    val ease = FastOutSlowInEasing
+                    if (forward) {
+                        (slideInHorizontally(tween(210, easing = ease)) { it / 6 } + fadeIn(tween(190)))
+                            .togetherWith(slideOutHorizontally(tween(180, easing = ease)) { -it / 12 } + fadeOut(tween(140)))
+                    } else {
+                        (slideInHorizontally(tween(210, easing = ease)) { -it / 12 } + fadeIn(tween(190)))
+                            .togetherWith(slideOutHorizontally(tween(180, easing = ease)) { it / 5 } + fadeOut(tween(140)))
+                    }
+                },
+                label = "root-destination",
+            ) { dest ->
+                when (dest) {
+                    PiDestination.Chat -> saveableStateHolder.SaveableStateProvider(dest.name) {
+                        ChatScreen(
+                            contentPadding = padding,
+                            session = session,
+                            onOpenSessions = {
+                                session.raiseOverlay(OverlaySlot.SessionList, OverlayView.List)
+                            },
+                            onOpenWorkspace = openWorkspace,
+                            onOpenSettings = openSettings,
+                        )
+                    }
 
-                // The project's own screen. It reads pi's session directory, the
-                // transcript and the workspace's `.pi`, so it takes the session —
-                // the terminal it replaced took nothing.
-                PiDestination.Workbench -> saveableStateHolder.SaveableStateProvider(current.name) {
-                    ProjectScreen(
-                        contentPadding = padding,
-                        session = session,
-                        onBack = openChat,
-                    )
-                }
+                    PiDestination.Workbench -> saveableStateHolder.SaveableStateProvider(dest.name) {
+                        ProjectScreen(
+                            contentPadding = padding,
+                            session = session,
+                            onBack = openChat,
+                        )
+                    }
 
-                PiDestination.Settings -> saveableStateHolder.SaveableStateProvider(current.name) {
-                    PiSettingsStack(
-                        contentPadding = padding,
-                        onBack = openChat,
-                        extensionsAccess = session::extensionsAccess,
-                    // The real store: pi's own settings.json files, merged the way
-                    // pi merges them. Without it the stack would read and write an
-                    // in-memory map and the app would appear to accept changes
-                    // that never reach the engine.
-                    //
-                    // Wrapped for the one row whose value must **not** go to pi's file:
-                    // `app.extensions.args` is extension CLI flags, and pi has no
-                    // settings key for them (`ExtensionArgsStoreDecorator` delegates
-                    // every other key unchanged).
-                    store = remember(session) { session.settingsStoreForSettingsUi() },
-                    knownThemes = themeEntries,
-                    themeNotes = theme.notes,
-                    themeError = theme.error,
-                    // A written setting the app itself consumes (appearance, the
-                    // transcript's thinking toggle, the theme) has to be noticed:
-                    // the store is pi's file, and it has no change notification.
-                    onSettingWritten = { key -> session.onSettingWritten(key) },
-                    // The Action rows the engine has to run. The settings stack
-                    // implements the ones that need a screen of its own (the
-                    // credential form, `PiSettingsStack.hostActions`); everything
-                    // else arrives here.
-                    //
-                    // There used to be a `TERMINAL_ONLY_ACTIONS` map holding three
-                    // signposts to pi's own TUI (`/login`, `/import`, `/changelog`).
-                    // All of them are gone: a settings row whose only content is "go
-                    // somewhere else" is not a setting, and the OAuth one is now a real
-                    // feature (「订阅账号」 card, `ui/settings/SubscriptionLogin.kt`).
-                    // The registry rows those signposts answered for were deleted with
-                    // them — model & reasoning settings now live inside ModelsScreen.
-                    onRunAction = { setting ->
-                        when (setting.key) {
-                            // pi's `/compact` — the RPC command is `compact`
-                            // (`modes/rpc/rpc-types.ts:44`). The custom-instruction
-                            // form of `/compact` needs a text field and lives in the
-                            // chat palette (`ChatScreen.kt:341`), which this row's
-                            // description now names; this entry triggers the bare one.
-                            "app.compaction.runNow" -> session.compact()
-                            // pi's Escape, as a button: `clear_queue` + `abort`
-                            // (`PiEngineSession.stopAndDrainQueue` `:480-486`) plus
-                            // `abort_bash` (`PiEngineApi.kt:262`), which aborts
-                            // *every* running bash command, not just one
-                            // (`agent-session.ts:3073-3077`). Nothing is killed
-                            // outside those RPC commands, which is exactly what the
-                            // row's description promises.
-                            "app.security.emergencyStop" -> {
-                                session.stop()
-                                session.abortBash()
-                            }
-                            // Reachable for no `PiRowKind.Action` row in the registry
-                            // today: the credential rows are handled by
-                            // `PiSettingsStack.hostActions`, and the three above are
-                            // the ones this host runs. It stays as a regression guard
-                            // so a row added later without a handler is loud instead of
-                            // silent — the failure `docs/known-gaps.md` §I2 records.
-                            // The text names no internal cause on purpose: a user
-                            // cannot act on "this row has no handler".
-                            else -> session.notifyUser(
-                                tr(
-                                    "「${setting.title}」当前不可用，请把这一步报告给我们。",
-                                    "\"${setting.title}\" is currently unavailable. Please report this step.",
-                                ),
-                                warning = true,
-                            )
-                        }
-                    },
-                    // The engine restart the package and credential screens ask
-                    // for. `allowInterrupt` stays whatever the coordinator passes
-                    // (always false); a turn can never be killed by a settings tap.
-                    restartEngine = { reason, allowInterrupt ->
-                        session.restartEngine(reason, allowInterrupt)
-                    },
-                    isTurnRunning = { session.isTurnRunning() },
-                    // 导出诊断报告的两个事实来源。都是 lambda：报告必须在**打开那一屏
-                    // 的时刻**读到最新的抓取，而引擎可能在那一屏开着的时候死掉。
-                    // `engineDiagnostics` 来自引擎退出瞬间的捕获（ViewModel 在丢弃死引擎
-                    // 之前存下的退出码与 stderr），`recentFailures` 来自 App 已经记下的失败。
-                    // 没有这两条接线，报告里那两节永远只会写"还没有记录"。
-                    engineDiagnostics = { session.engineDiagnostics() },
-                    engineEntry = { session.engineEntryLabel() },
-                    recentFailures = { session.recentFailures() },
-                    // `get_available_models`: the only model list pi exposes over
-                    // RPC, used to mark a scanned id as pi metadata or as an app
-                    // default (`ModelsScreen`).
-                    availableModels = uiState.models,
-                    onLoadAvailableModels = { session.refreshModels() },
-                    advanced = { session.advanced() },
-                    modelsHost = { session.modelsHost() },
-                    // `/scoped-models`: open the group and highlight the key.
-                    focusKey = settingsFocus,
-                    onFocusConsumed = { settingsFocus = null },
-                    runtimeSwitch = runtimeSwitch,
-                    activeRuntimeEngine = { session.activeRuntimeEngine() },
-                    liveEngineState = { session.liveEngineState() },
-                    onSelectRuntimeEngine = { engine -> session.selectRuntimeEngine(engine) },
-                    onStartEngine = { session.boot() },
-                    onRepairRuntime = { session.repairRuntime() },
-                    onRebuildRuntime = { session.boot(rebuild = true) },
-                    onExternalSettingsWrite = { session.invalidateSettingsCache() },
-                    onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
-                    )
+                    PiDestination.Settings -> saveableStateHolder.SaveableStateProvider(dest.name) {
+                        PiSettingsStack(
+                            contentPadding = padding,
+                            onBack = openChat,
+                            extensionsAccess = session::extensionsAccess,
+                            store = remember(session) { session.settingsStoreForSettingsUi() },
+                            knownThemes = themeEntries,
+                            themeNotes = theme.notes,
+                            themeError = theme.error,
+                            onSettingWritten = { key -> session.onSettingWritten(key) },
+                            onRunAction = { setting ->
+                                when (setting.key) {
+                                    "app.compaction.runNow" -> session.compact()
+                                    else -> session.notifyUser(
+                                        tr(
+                                            "「${setting.title}」当前不可用，请把这一步报告给我们。",
+                                            "\"${setting.title}\" is currently unavailable. Please report this step.",
+                                        ),
+                                        warning = true,
+                                    )
+                                }
+                            },
+                            restartEngine = { reason, allowInterrupt ->
+                                session.restartEngine(reason, allowInterrupt)
+                            },
+                            isTurnRunning = { session.isTurnRunning() },
+                            engineDiagnostics = { session.engineDiagnostics() },
+                            engineEntry = { session.engineEntryLabel() },
+                            recentFailures = { session.recentFailures() },
+                            availableModels = uiState.models,
+                            onLoadAvailableModels = { session.refreshModels() },
+                            advanced = { session.advanced() },
+                            modelsHost = { session.modelsHost() },
+                            focusKey = settingsFocus,
+                            onFocusConsumed = { settingsFocus = null },
+                            runtimeSwitch = runtimeSwitch,
+                            activeRuntimeEngine = { session.activeRuntimeEngine() },
+                            liveEngineState = { session.liveEngineState() },
+                            onSelectRuntimeEngine = { engine -> session.selectRuntimeEngine(engine) },
+                            onStartEngine = { session.boot() },
+                            onRepairRuntime = { session.repairRuntime() },
+                            onRebuildRuntime = { session.boot(rebuild = true) },
+                            onExternalSettingsWrite = { session.invalidateSettingsCache() },
+                            onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
+                        )
+                    }
                 }
             }
 
-            // The overlays draw over whatever destination is active. They are
-            // checked after the destination switch so they win the draw order, and
-            // before the extension host so that a blocking dialog stays on top of
-            // them: an extension waiting on an answer must be answerable from the
-            // session list too (see the note on the single host below).
-            val shown = overlayState?.slot
-            if (shown != null) {
-                // Opaque, not translucent: the transcript underneath must not
-                // read as part of this layer (the ask that produced this batch's
-                // device checklist, §7.2 item 10). `Surface` with the scheme's
-                // background is the same backdrop the destinations themselves
-                // draw on — the same call `SessionTreeScreen.kt:100` makes.
+            // 覆盖层平滑过渡：保留离场帧的 lastOverlay 播放退场动效，同时 closeOverlay() 保持立即终结。
+            var lastOverlay by remember { mutableStateOf(overlayState) }
+            if (overlayState != null) lastOverlay = overlayState
+            val renderOverlay = overlayState ?: lastOverlay
+            val isSessionDrawer = renderOverlay?.slot == OverlaySlot.SessionList
+            AnimatedVisibility(
+                visible = overlayState != null,
+                enter = if (isSessionDrawer) {
+                    slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(180))
+                } else {
+                    slideInVertically(tween(220, easing = FastOutSlowInEasing)) { it / 6 } + fadeIn(tween(180))
+                },
+                exit = if (isSessionDrawer) {
+                    slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(140))
+                } else {
+                    slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it / 6 } + fadeOut(tween(140))
+                },
+                label = "root-overlay",
+            ) {
+                val active = renderOverlay ?: return@AnimatedVisibility
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    when (shown) {
+                    when (active.slot) {
                         OverlaySlot.SessionList -> {
-                            // 关掉这一层就走 [closeOverlay]：它同时把「打开哪一屏」复位成列表，
-                            // 所以下一次进来不会又被拉回会话树（见那个 lambda 的 KDoc）。
                             val onCloseSessionList: () -> Unit = remember { closeOverlay }
                             SessionsScreen(
                                 contentPadding = padding,
                                 session = session,
                                 onOpenChat = openChatFromOverlay,
                                 onBack = onCloseSessionList,
-                                onOpenWorkspace = openWorkspace,
-                                onOpenSettings = openSettings,
-                                // Which view to open on: `/tree` and the branch-summary
-                                // row ask for the tree, everything else for the list.
-                                initialView = if (overlayState?.view == OverlayView.Tree) {
+                                initialView = if (active.view == OverlayView.Tree) {
                                     SessionsView.Tree
                                 } else {
                                     SessionsView.List
@@ -820,9 +721,6 @@ fun PiRoot() {
                             )
                         }
 
-                        // The full-screen terminal, unchanged from when it was a
-                        // destination: this batch moves the *door*, not the room
-                        // (`05-compose-migration-plan.md` §3.8).
                         OverlaySlot.Terminal -> TerminalScreen(
                             contentPadding = padding,
                             onBack = closeOverlay,

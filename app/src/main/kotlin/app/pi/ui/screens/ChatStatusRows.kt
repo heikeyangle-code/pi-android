@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -50,7 +52,7 @@ internal fun StatusActionRow(text: String, actionLabel: String, onAction: () -> 
             .fillMaxWidth()
             .padding(horizontal = PiSpacing.composerPageMargin)
             .padding(bottom = 6.dp),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.25f)),
     ) {
@@ -132,10 +134,10 @@ internal fun QueueRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (steering > 0) {
-                    QueueCountPill(glyph = "⇢", label = tr("引导 $steering", "Steer $steering"), tone = palette.warning)
+                    QueueCountPill(icon = Icons.Filled.ArrowForward, label = tr("引导 $steering", "Steer $steering"), tone = palette.warning)
                 }
                 if (followUp > 0) {
-                    QueueCountPill(glyph = "⇣", label = tr("后续 $followUp", "Follow-up $followUp"), tone = palette.accent)
+                    QueueCountPill(icon = Icons.Filled.ArrowDownward, label = tr("后续 $followUp", "Follow-up $followUp"), tone = palette.accent)
                 }
                 Spacer(Modifier.weight(1f))
                 Surface(
@@ -212,7 +214,7 @@ internal fun QueueRow(
 }
 
 @Composable
-private fun QueueCountPill(glyph: String, label: String, tone: Color) {
+private fun QueueCountPill(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tone: Color) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
@@ -221,10 +223,11 @@ private fun QueueCountPill(glyph: String, label: String, tone: Color) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = glyph,
-            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-            color = tone,
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(13.dp),
+            tint = tone,
         )
         Text(
             text = label,

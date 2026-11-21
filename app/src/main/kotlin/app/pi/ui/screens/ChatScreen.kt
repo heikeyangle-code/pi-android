@@ -1,10 +1,13 @@
 package app.pi.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
@@ -1677,7 +1680,11 @@ internal fun ChatBody(
         // row** (`direction-b-v2.html:1366-1367`: `{p.searchBar}` then `{StateLine}`),
         // because it is chrome for the bar above it rather than a row of the
         // transcript's header — the app used to draw it under the extension status row.
-        if (searchOpen) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = searchOpen,
+            enter = androidx.compose.animation.expandVertically(tween(170)) + fadeIn(tween(150)),
+            exit = androidx.compose.animation.shrinkVertically(tween(140)) + fadeOut(tween(120)),
+        ) {
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
@@ -2523,8 +2530,7 @@ private fun ScrollArrowButton(
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier = Modifier
-            .shadow(elevation = 4.dp, shape = shape, clip = false)
-            .alpha(if (pressed || hasUnread) 1f else 0.84f)
+            .alpha(if (pressed || hasUnread) 1f else 0.88f)
             .clip(shape)
             .background(
                 if (hasUnread) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,

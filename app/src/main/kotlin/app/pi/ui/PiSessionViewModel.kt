@@ -1242,15 +1242,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.launch { runCatching { adv.setCacheMode(mode) } }
             }
         }
+        if (key == "markdown.mermaid") {
+            app.pi.ui.render.PiMermaidModeSource.invalidate()
+        }
         if (
             key == "hideThinkingBlock" ||
             key == "markdown.mermaid" ||
             key.startsWith("app.appearance.") ||
             key.startsWith("app.tools.") ||
             key == "app.runtime.keepAlive" ||
-            // pi's `showCacheMissNotices` gates the summarization billing line the
-            // transcript prints (F18), so a write has to reach `UiPrefs` before the
-            // next frame or the row would look inert.
             key == "showCacheMissNotices" ||
             key == "themes"
         ) {
@@ -1258,9 +1258,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             refreshTheme()
         }
         if (key == "enableSkillCommands") {
-            // The palette is built with this flag, so the list in `UiState` is now
-            // stale — and it is the only place the setting has any effect at all
-            // (`piCommandPalette`).
             refreshCommands()
         }
         if (
@@ -1268,6 +1265,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             key != "followUpMode" &&
             key != "compaction.enabled" &&
             key != "retry.enabled" &&
+            key != "cacheWarming" &&
             !key.startsWith("app.")
         ) {
             syncEngineSetting(key)
@@ -1310,12 +1308,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             "images.autoResize" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setImageAutoResize" to listOf(JsonPrimitive(it)) }
             "images.blockImages" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setBlockImages" to listOf(JsonPrimitive(it)) }
             "enableInstallTelemetry" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableInstallTelemetry" to listOf(JsonPrimitive(it)) }
-            "quietStartup" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setQuietStartup" to listOf(JsonPrimitive(it)) }
-            "collapseChangelog" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setCollapseChangelog" to listOf(JsonPrimitive(it)) }
             "defaultProjectTrust" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultProjectTrust" to listOf(JsonPrimitive(it)) }
             "shellPath" -> (raw as? JsonPrimitive)?.content?.let { "setShellPath" to listOf(JsonPrimitive(it)) }
             "shellCommandPrefix" -> (raw as? JsonPrimitive)?.content?.let { "setShellCommandPrefix" to listOf(JsonPrimitive(it)) }
             "enabledModels" -> (raw as? JsonArray)?.let { arr -> "setEnabledModels" to listOf(arr) }
+            "markdown.mermaid" -> (raw as? JsonPrimitive)?.content?.let { "setMermaidRenderingMode" to listOf(JsonPrimitive(it)) }
+            "npmCommand" -> (raw as? JsonArray)?.let { arr -> "setNpmCommand" to listOf(arr) }
             else -> null
         }
     }
@@ -2155,7 +2153,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         resumeSessionPath: String? = null,
     ): PiLaunchOptions = PiLaunchOptions.fromSettingValues(
         offline = null,
-        cacheRetention = null,
+        cacheRetention = settingsStore.readString("app.runtime.cacheRetention")?.takeIf { it.isNotBlank() },
         noContextFiles = null,
         noExtensions = null,
         noSkills = null,
@@ -6248,6 +6246,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                             composerFill = ComposerFill(composerFillSeq, editorText, onlyIfEmpty = true),
                         )
                     }
+                    // 对照官方 `/tree`：成功跳转到目标节点后自动收起会话树，直接回到对话页查看或改写重发。
+                    requestNav(NavRequest.Chat)
                     pushNotice(tr("已跳转到所选位置", "Navigated to selected point"), Notice.Tone.Info)
                 }
                 NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit

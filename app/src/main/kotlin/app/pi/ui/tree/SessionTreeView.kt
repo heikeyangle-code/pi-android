@@ -1,14 +1,26 @@
 package app.pi.ui.tree
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -18,16 +30,27 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -37,25 +60,32 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.protocol.SessionTreeNode
@@ -67,37 +97,30 @@ import app.pi.session.tree.TreeTone
 import app.pi.ui.chat.BranchSummaryChoice
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.components.PiSheet
-import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.launch
 
 /**
- * 会话树（对照 pi 的 `/tree`）：画 [TreeModel] 排好的行，不做任何树逻辑。
- *
- * 行的内容、顺序、缩进、连线、折叠、过滤、搜索都是 [TreeModel] 从 SDK 的 `tree-selector.js` 移植的
- * （并由 `tools/collect-tree-fixtures.mjs` 用 SDK 自己的组件生成标准答案逐行比对过），
- * 这里只负责把它们画成手机上顺手的样子：
- *
- *  - 五个过滤 chip（默认 / 无工具 / 仅用户 / 书签 / 全部）+ 搜索框（空白分词，全部命中）；
- *    初始过滤来自 pi 的 `treeFilterMode` 设置。
- *  - 每行：连线（`├ └ │ ─` 画成真线）、折叠开关（`⊟` 展开中 / `⊞` 已折叠，点它折叠整支）、
- *    `•`（在当前路径上）、`[标签]`（可选带时间）、`user:` / `assistant:` 着色，工具结果显示成
- *    `[read: 路径]` 这样的调用。当前位置那一行有底色。
- *  - 点一行 → 底部面板：跳转 / 分叉 / 标签 / 不再发给模型 / 改写 / 复制。跳转的说明会区分
- *    「回到这条用户消息之前并把它放回输入框」和「直接移到这里」，与 SDK `navigateTree` 一致。
- *  - 摘要问题：`branchSummary.skipPrompt` 未开时问（不摘要 / 摘要 / 自定义指令）；
- *    关掉面板 = TUI 里按 Escape：回到树。摘要被中止后由上层把选中状态还回来（[reselect]）。
- *
- * 所有写操作都是 SDK 的直接方法，经宿主命令完成；这里只回调。
+ * 官方 Pi `/tree` 移动端会话树视图：
+ *  - 底层逻辑 100% 委托给 [TreeModel]（已对照官方 SDK `tree-selector.js` 逐行验证）；
+ *  - 视觉与交互移动端重构：顶栏共用搜索键可折叠搜索、深度上限防窄屏挤压 + 深度角标、
+ *    矢量折叠开关（32dp 热区）、活动路径高亮轨道与圆点、工具/书签/摘要角色胶囊、
+ *    一键定位当前位置与分支跳转、加载中空态区分、平滑动效操作面板。
  */
 @Composable
 fun SessionTreeView(
     roots: List<SessionTreeNode>,
     leafId: String?,
+    loading: Boolean,
     busy: String?,
     streaming: Boolean,
+    searchOpen: Boolean,
+    showStamps: Boolean,
+    jumpCurrentTick: Int,
+    bottomPadding: Dp,
     initialFilter: TreeFilter,
     reselect: String?,
     onReselected: () -> Unit,
@@ -117,10 +140,12 @@ fun SessionTreeView(
     var folded by rememberSaveable(
         stateSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() }),
     ) { mutableStateOf(emptySet<String>()) }
-    var showStamps by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // 摘要被中止：TUI 回到树、选中同一条。
+    LaunchedEffect(searchOpen) {
+        if (!searchOpen && query.isNotEmpty()) query = ""
+    }
+
     LaunchedEffect(reselect) {
         if (reselect != null) {
             selectedId = reselect
@@ -132,72 +157,171 @@ fun SessionTreeView(
         TreeModel.view(roots, leafId, filter, query, folded, homeDir)
     }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
-    // 进来 / 换过滤时滚到「当前位置」（被过滤掉就是最近的可见祖先，同 SDK 的 findNearestVisibleIndex）：
-    // 用户进来就是想知道自己在哪。搜索和折叠不抢滚动位置。
+    val branchIndices = remember(view.rows) {
+        view.rows.mapIndexedNotNull { index, r ->
+            if (r.item.foldable || r.showConnector && r.indent > 0) index else null
+        }
+    }
+
     LaunchedEffect(filter, view.rows.isNotEmpty()) {
         val at = view.rows.indexOfFirst { it.item.id == view.nearestToLeafId }
         if (at >= 0) listState.scrollToItem((at - 2).coerceAtLeast(0))
     }
 
+    LaunchedEffect(jumpCurrentTick) {
+        if (jumpCurrentTick > 0) {
+            val at = view.rows.indexOfFirst { it.item.id == view.nearestToLeafId }
+            if (at >= 0) listState.animateScrollToItem((at - 2).coerceAtLeast(0))
+        }
+    }
+
     Column(modifier.fillMaxWidth()) {
-        FilterBar(
-            filter = filter,
-            onFilter = { filterName = it.name; folded = emptySet() },
-            query = query,
-            onQuery = { query = it; folded = emptySet() },
-            bookmarkCount = view.bookmarkCount,
-            showStamps = showStamps,
-            onToggleStamps = { showStamps = !showStamps },
-        )
-        if (busy != null) SummaryBanner(busy, onAbortSummary)
-        Text(
-            if (view.rows.size == view.totalEntries) {
-                tr("${view.totalEntries} 条 · ${filter.hint}", "${view.totalEntries} entries · ${filter.hint}")
-            } else {
-                tr("显示 ${view.rows.size} / ${view.totalEntries} · ${filter.hint}", "Showing ${view.rows.size} / ${view.totalEntries} · ${filter.hint}")
-            },
-            modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = ROW_GAP),
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
-        )
-        if (view.rows.isEmpty()) {
-            PiEmptyState(
-                icon = Icons.Filled.Search,
-                title = when {
-                    query.isNotBlank() -> tr("没有匹配的条目", "No matching entries")
-                    filter == TreeFilter.Labeled -> tr("还没有书签", "No labeled entries yet")
-                    else -> tr("这个过滤下没有条目", "No entries in this filter")
-                },
-                body = if (filter == TreeFilter.Labeled && query.isBlank()) {
-                    tr("点开任意一条，给它起个标签，之后在这里一键回到那里。", "Tap any entry to add a label, then jump back to it from here.")
-                } else {
-                    tr("换个过滤或关键词试试。", "Try a different filter or search query.")
-                },
+        // 统一筛选胶囊条
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (f in TreeFilter.entries) {
+                val baseLabel = treeFilterLabel(f)
+                val label = if (f == TreeFilter.Labeled && view.bookmarkCount > 0) "$baseLabel ${view.bookmarkCount}" else baseLabel
+                TreeFilterPill(
+                    text = label,
+                    active = f == filter,
+                    onClick = { filterName = f.name; folded = emptySet() },
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = searchOpen,
+            enter = fadeIn(tween(150)) + expandVertically(tween(180)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(150)),
+        ) {
+            TreeSearchField(
+                query = query,
+                onQuery = { query = it; folded = emptySet() },
             )
-        } else {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
-                itemsIndexed(view.rows, key = { _, r -> r.item.id }) { _, row ->
-                    TreeRowView(
-                        row = row,
-                        showStamps = showStamps,
-                        onClick = { selectedId = row.item.id },
-                        onToggleFold = {
-                            folded = if (row.item.id in folded) folded - row.item.id else folded + row.item.id
-                        },
+        }
+
+        if (busy != null) SummaryBanner(busy, onAbortSummary)
+
+        // 精简状态 + 快捷跳转栏
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = if (view.rows.size == view.totalEntries) {
+                    tr("${view.totalEntries} 条 · ${treeFilterHint(filter)}", "${view.totalEntries} · ${treeFilterHint(filter)}")
+                } else {
+                    tr("${view.rows.size}/${view.totalEntries} 条 · ${treeFilterHint(filter)}", "${view.rows.size}/${view.totalEntries} · ${treeFilterHint(filter)}")
+                },
+                modifier = Modifier.weight(1f),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (view.rows.isNotEmpty() && view.nearestToLeafId != null) {
+                MiniJumpPill(
+                    icon = Icons.Filled.MyLocation,
+                    label = tr("当前", "Now"),
+                    onClick = {
+                        val at = view.rows.indexOfFirst { it.item.id == view.nearestToLeafId }
+                        if (at >= 0) scope.launch { listState.animateScrollToItem((at - 2).coerceAtLeast(0)) }
+                    },
+                )
+            }
+            if (branchIndices.size > 1) {
+                MiniJumpIcon(
+                    icon = Icons.Filled.KeyboardArrowUp,
+                    contentDescription = tr("上一分支", "Previous branch"),
+                    onClick = {
+                        val cur = listState.firstVisibleItemIndex
+                        val prev = branchIndices.lastOrNull { it < cur } ?: branchIndices.last()
+                        scope.launch { listState.animateScrollToItem((prev - 1).coerceAtLeast(0)) }
+                    },
+                )
+                MiniJumpIcon(
+                    icon = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = tr("下一分支", "Next branch"),
+                    onClick = {
+                        val cur = listState.firstVisibleItemIndex
+                        val next = branchIndices.firstOrNull { it > cur + 1 } ?: branchIndices.first()
+                        scope.launch { listState.animateScrollToItem((next - 1).coerceAtLeast(0)) }
+                    },
+                )
+            }
+        }
+
+        when {
+            roots.isEmpty() && loading -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    PiEmptyState(
+                        icon = Icons.Filled.Refresh,
+                        title = tr("正在读取会话树…", "Loading session tree…"),
+                        body = tr("正在解析当前会话的分支与节点。", "Reading branches and entries for the active session."),
+                        modifier = Modifier.padding(top = 72.dp),
                     )
                 }
-                item(key = "tree:end") { Spacer(Modifier.height(PiSpacing.unit * 2)) }
+            }
+            view.rows.isEmpty() -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    PiEmptyState(
+                        icon = if (filter == TreeFilter.Labeled && query.isBlank()) Icons.Filled.BookmarkBorder else Icons.Filled.Search,
+                        title = when {
+                            query.isNotBlank() -> tr("没有匹配的条目", "No matching entries")
+                            filter == TreeFilter.Labeled -> tr("还没有书签", "No labeled entries yet")
+                            else -> tr("这个过滤下没有条目", "No entries in this filter")
+                        },
+                        body = if (filter == TreeFilter.Labeled && query.isBlank()) {
+                            tr("点开任意一条，给它起个标签，之后在这里一键回到那里。", "Tap any entry to add a label, then jump back to it from here.")
+                        } else {
+                            tr("换个过滤或关键词试试。", "Try a different filter or search query.")
+                        },
+                        modifier = Modifier.padding(top = 72.dp),
+                    )
+                }
+            }
+            else -> {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentPadding = PaddingValues(
+                        top = 4.dp,
+                        bottom = bottomPadding + PiSpacing.scrollBottom,
+                    ),
+                ) {
+                    itemsIndexed(view.rows, key = { _, r -> r.item.id }) { _, row ->
+                        TreeRowView(
+                            row = row,
+                            showStamps = showStamps,
+                            onClick = { selectedId = row.item.id },
+                            onToggleFold = {
+                                folded = if (row.item.id in folded) folded - row.item.id else folded + row.item.id
+                            },
+                        )
+                    }
+                }
             }
         }
     }
 
     val picked = selectedId
     if (picked != null) {
-        // 行里没有（被过滤 / 折叠掉）但面板还开着：从完整的树里取。
         val item = view.rows.firstOrNull { it.item.id == picked }?.item
             ?: remember(roots, leafId, picked) {
-                TreeModel.view(roots, leafId, TreeFilter.All, "", emptySet(), homeDir).rows.firstOrNull { it.item.id == picked }?.item
+                TreeModel.view(roots, leafId, TreeFilter.All, "", emptySet(), homeDir).rows
+                    .firstOrNull { it.item.id == picked }?.item
             }
         if (item == null) {
             selectedId = null
@@ -217,61 +341,151 @@ fun SessionTreeView(
     }
 }
 
-// ------------------------------------------------------------------ 过滤栏
+private fun treeFilterLabel(filter: TreeFilter): String = when (filter) {
+    TreeFilter.Default -> tr("默认", "Default")
+    TreeFilter.NoTools -> tr("无工具", "No tools")
+    TreeFilter.UserOnly -> tr("仅用户", "User")
+    TreeFilter.Labeled -> tr("书签", "Labeled")
+    TreeFilter.All -> tr("全部", "All")
+}
+
+private fun treeFilterHint(filter: TreeFilter): String = when (filter) {
+    TreeFilter.Default -> tr("隐藏模型/档位等设置条目", "Hides setting entries")
+    TreeFilter.NoTools -> tr("不显示工具结果", "Excludes tool results")
+    TreeFilter.UserOnly -> tr("只看你的消息", "User messages only")
+    TreeFilter.Labeled -> tr("只看书签条目", "Labeled entries only")
+    TreeFilter.All -> tr("全部条目", "All entries")
+}
+
+private fun localizedTypeTitle(raw: String): String = when (raw) {
+    "用户消息" -> tr("用户消息", "User Message")
+    "助手消息" -> tr("助手消息", "Assistant Message")
+    "工具结果" -> tr("工具结果", "Tool Result")
+    "命令" -> tr("终端命令", "Bash Command")
+    "消息" -> tr("消息", "Message")
+    "压缩" -> tr("上下文压缩", "Compaction")
+    "分支摘要" -> tr("分支摘要", "Branch Summary")
+    "扩展消息" -> tr("扩展消息", "Extension Message")
+    "扩展状态" -> tr("扩展状态", "Extension State")
+    "切换模型" -> tr("切换模型", "Model Change")
+    "思考档位" -> tr("思考档位", "Thinking Level")
+    "标签" -> tr("书签标签", "Label")
+    "会话信息" -> tr("会话信息", "Session Info")
+    "用量记录" -> tr("用量记录", "Usage")
+    "上下文编辑" -> tr("上下文编辑", "Context Edit")
+    "未知条目" -> tr("未知条目", "Unknown Entry")
+    else -> raw
+}
 
 @Composable
-private fun FilterBar(
-    filter: TreeFilter,
-    onFilter: (TreeFilter) -> Unit,
-    query: String,
-    onQuery: (String) -> Unit,
-    bookmarkCount: Int,
-    showStamps: Boolean,
-    onToggleStamps: () -> Unit,
-) {
-    Column(Modifier.padding(horizontal = PiSpacing.pageHorizontal)) {
-        // 五个 chip 在窄屏上放不下一行：横向滚动，不换行（换行会把列表挤下去一大截）。
+private fun TreeFilterPill(text: String, active: Boolean, onClick: () -> Unit) {
+    val accent = PiTheme.palette.accent
+    val bg by animateColorAsState(
+        targetValue = if (active) accent.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        animationSpec = tween(150),
+        label = "tree-pill-bg",
+    )
+    val fg by animateColorAsState(
+        targetValue = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(150),
+        label = "tree-pill-fg",
+    )
+    Box(
+        modifier = Modifier
+            .heightIn(min = 32.dp)
+            .clip(CircleShape)
+            .background(bg)
+            .then(if (active) Modifier.border(1.dp, accent.copy(alpha = 0.3f), CircleShape) else Modifier)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = PiTheme.text.meta.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium),
+            color = fg,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun MiniJumpPill(icon: ImageVector, label: String, onClick: () -> Unit) {
+    val accent = PiTheme.palette.accent
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(accent.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(12.dp), tint = accent)
+        Text(label, style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = accent, maxLines = 1)
+    }
+}
+
+@Composable
+private fun MiniJumpIcon(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClickLabel = contentDescription, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(16.dp), tint = PiTheme.palette.muted)
+    }
+}
+
+@Composable
+private fun TreeSearchField(query: String, onQuery: (String) -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp)
+            .height(40.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(ROW_GAP),
+            modifier = Modifier.padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            for (f in TreeFilter.entries) {
-                PiSettingsChip(
-                    text = if (f == TreeFilter.Labeled && bookmarkCount > 0) "${f.label} $bookmarkCount" else f.label,
-                    active = f == filter,
-                    onClick = { onFilter(f) },
-                )
-            }
-            if (bookmarkCount > 0) {
-                PiSettingsChip(text = tr("标签时间", "Timestamps"), glyph = if (showStamps) "✓" else "○", active = showStamps, onClick = onToggleStamps)
-            }
-        }
-        Spacer(Modifier.height(ROW_GAP))
-        Surface(
-            modifier = Modifier.fillMaxWidth().height(SEARCH_HEIGHT),
-            shape = PiShapes.chip,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = SEARCH_PAD),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ROW_GAP),
-            ) {
-                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(ICON), tint = PiTheme.palette.muted)
-                Box(Modifier.weight(1f)) {
-                    if (query.isEmpty()) Text(tr("搜索这棵树（空格分词，全部命中）", "Search tree (space-separated, match all)"), style = PiTheme.text.meta, color = PiTheme.palette.dim)
-                    BasicTextField(
-                        value = query,
-                        onValueChange = onQuery,
-                        singleLine = true,
-                        textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
-                        cursorBrush = SolidColor(PiTheme.palette.accent),
-                        modifier = Modifier.fillMaxWidth(),
+            Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp), tint = PiTheme.palette.muted)
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) {
+                    Text(
+                        tr("搜索会话树（空格分词，全部命中）", "Search tree (space-separated)"),
+                        style = PiTheme.text.prose,
+                        color = PiTheme.palette.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (query.isNotEmpty()) {
-                    Text(tr("清除", "Clear"), modifier = Modifier.clickable { onQuery("") }.padding(ROW_GAP), style = PiTheme.text.meta, color = PiTheme.palette.accent)
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQuery,
+                    singleLine = true,
+                    textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(PiTheme.palette.accent),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                )
+            }
+            if (query.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable(onClickLabel = tr("清除", "Clear")) { onQuery("") },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = tr("清除", "Clear"), modifier = Modifier.size(16.dp), tint = PiTheme.palette.muted)
                 }
             }
         }
@@ -280,112 +494,274 @@ private fun FilterBar(
 
 @Composable
 private fun SummaryBanner(label: String, onAbort: () -> Unit) {
+    val p = PiTheme.palette
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = ROW_GAP),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(p.warning.copy(alpha = 0.12f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, modifier = Modifier.weight(1f), style = PiTheme.text.meta, color = PiTheme.palette.warning)
-        Text(tr("停止摘要", "Abort summary"), modifier = Modifier.clickable(onClick = onAbort).padding(ROW_GAP), style = PiTheme.text.meta, color = PiTheme.palette.accent)
+        Text(label, modifier = Modifier.weight(1f), style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium), color = p.warning)
+        Text(
+            tr("停止摘要", "Abort"),
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(p.warning.copy(alpha = 0.18f))
+                .clickable(onClick = onAbort)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = p.warning,
+        )
     }
 }
 
-// ------------------------------------------------------------------ 行
-
-private fun toneColor(tone: TreeTone, p: PiPalette): Color {
-    return when (tone) {
-        TreeTone.Plain -> p.text
-        TreeTone.User -> p.accent
-        TreeTone.Assistant -> p.success
-        TreeTone.Muted -> p.muted
-        TreeTone.Dim -> p.dim
-        TreeTone.Error -> p.error
-        TreeTone.Warning -> p.warning
-        TreeTone.Accent -> p.borderAccent
-        TreeTone.Custom -> p.customMessageLabel
-    }
+private fun toneColor(tone: TreeTone, p: PiPalette): Color = when (tone) {
+    TreeTone.Plain -> p.text
+    TreeTone.User -> p.accent
+    TreeTone.Assistant -> p.success
+    TreeTone.Muted -> p.muted
+    TreeTone.Dim -> p.dim
+    TreeTone.Error -> p.error
+    TreeTone.Warning -> p.warning
+    TreeTone.Accent -> p.borderAccent
+    TreeTone.Custom -> p.customMessageLabel
 }
 
 /**
- * 一行 = 连线区（每级 [LEVEL] 宽，按 [TreeRow] 的 gutters / connector 画真线）+ 折叠开关 + 文字。
- * 层级数取自 SDK 的 3 字符一级的前缀（`prefix.length / 3`），不另算一遍。
+ * 移动端优化后的会话树节点行：
+ *  - 视觉缩进封顶 [MAX_VISUAL_DEPTH] 级（14dp/级），超深层用紧凑 `L7` 徽标提示，绝不挤扁正文；
+ *  - 圆角弯折 Canvas 连线，活动路径用主题色半透明轨道高亮；
+ *  - 32dp 触控折叠键（矢量 ChevronRight / ExpandMore）；
+ *  - 角色分级渲染（工具结果等宽灰底胶囊、书签琥珀色图标胶囊、当前叶子高亮卡 + 左侧指示条）。
  */
 @Composable
 private fun TreeRowView(row: TreeRow, showStamps: Boolean, onClick: () -> Unit, onToggleFold: () -> Unit) {
     val item = row.item
     val p = PiTheme.palette
-    val levels = row.prefix.length / 3
-    val lineColor = p.borderMuted
-    val connector = row.showConnector && !row.isVirtualRootChild
-    val text = buildAnnotatedString {
-        if (item.onPath) withStyle(SpanStyle(color = p.accent)) { append("• ") }
-        item.label?.let { withStyle(SpanStyle(color = p.warning)) { append("[$it] ") } }
-        if (showStamps && item.label != null && item.labelTimestamp != null) {
-            val stamp = TreeModel.formatLabelTimestamp(item.labelTimestamp)
-            if (stamp.isNotEmpty()) withStyle(SpanStyle(color = p.muted)) { append("$stamp ") }
-        }
-        if (item.head.isNotEmpty()) withStyle(SpanStyle(color = toneColor(item.headTone, p))) { append(item.head) }
-        withStyle(SpanStyle(color = toneColor(item.textTone, p))) { append(item.text) }
-    }
+    val rawLevels = row.prefix.length / 3
+    val levels = rawLevels.coerceAtMost(MAX_VISUAL_DEPTH)
+    val railColor = if (item.onPath) p.accent.copy(alpha = 0.55f) else p.borderMuted.copy(alpha = 0.72f)
+    val connector = row.showConnector && !row.isVirtualRootChild && levels > 0
+    val isToolRow = item.head.isEmpty() && item.text.startsWith("[") && item.text.endsWith("]")
+    val roleTag = item.head.trim().removeSuffix(":").takeIf { it.isNotEmpty() }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (item.isLeaf) p.selectedBg.copy(alpha = 0.55f) else MaterialTheme.colorScheme.background)
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (item.isLeaf) p.accent.copy(alpha = 0.10f) else Color.Transparent)
             .clickable(onClick = onClick)
             .drawBehind {
-                val stroke = 1.dp.toPx()
+                val stroke = 1.4.dp.toPx()
                 val unit = LEVEL.toPx()
-                val pageStart = PiSpacing.pageHorizontal.toPx()
+                val pageStart = 8.dp.toPx()
                 val mid = size.height / 2f
+                val r = 5.dp.toPx()
+
                 if (item.isLeaf) {
                     val barW = 3.dp.toPx()
-                    drawRect(
+                    drawRoundRect(
                         color = p.accent,
-                        topLeft = Offset(0f, 4.dp.toPx()),
-                        size = androidx.compose.ui.geometry.Size(barW, (size.height - 8.dp.toPx()).coerceAtLeast(0f)),
+                        topLeft = Offset(0f, 6.dp.toPx()),
+                        size = Size(barW, (size.height - 12.dp.toPx()).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius(barW / 2f),
                     )
                 }
                 for (g in row.gutters) {
-                    if (!g.show) continue
+                    if (!g.show || g.position >= MAX_VISUAL_DEPTH) continue
                     val x = pageStart + (g.position + 0.5f) * unit
-                    drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), stroke)
+                    drawLine(p.borderMuted.copy(alpha = 0.65f), Offset(x, 0f), Offset(x, size.height), stroke, cap = StrokeCap.Round)
                 }
                 if (connector) {
                     val x = pageStart + (levels - 1 + 0.5f) * unit
-                    drawLine(lineColor, Offset(x, 0f), Offset(x, if (row.isLast) mid else size.height), stroke)
-                    drawLine(lineColor, Offset(x, mid), Offset(pageStart + levels * unit, mid), stroke)
+                    val endX = pageStart + levels * unit - 1.dp.toPx()
+                    if (!row.isLast) {
+                        drawLine(railColor, Offset(x, 0f), Offset(x, size.height), stroke, cap = StrokeCap.Round)
+                        drawLine(railColor, Offset(x, mid), Offset(endX, mid), stroke, cap = StrokeCap.Round)
+                    } else {
+                        val elbow = Path().apply {
+                            moveTo(x, 0f)
+                            lineTo(x, (mid - r).coerceAtLeast(0f))
+                            quadraticTo(x, mid, (x + r).coerceAtMost(endX), mid)
+                            lineTo(endX, mid)
+                        }
+                        drawPath(elbow, color = railColor, style = Stroke(width = stroke, cap = StrokeCap.Round))
+                    }
                 }
             }
-            .padding(start = PiSpacing.pageHorizontal + LEVEL * levels, end = PiSpacing.pageHorizontal)
+            .padding(start = 8.dp + LEVEL * levels, end = 8.dp)
             .heightIn(min = ROW_MIN),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 折叠开关槽：固定宽度，保证各行文字对齐；SDK 把它画在连线中间（`⊟` / `⊞`），这里放在文字前。
+        // 折叠开关或活动路径圆点（统一 28dp 槽宽，对齐所有节点正文）
         Box(
-            modifier = Modifier.width(FOLD_SLOT).heightIn(min = ROW_MIN).then(
-                if (item.foldable || item.folded) Modifier.clickable(onClick = onToggleFold) else Modifier,
-            ),
+            modifier = Modifier
+                .size(width = FOLD_SLOT, height = ROW_MIN)
+                .then(
+                    if (item.foldable || item.folded) {
+                        Modifier.clickable(
+                            onClickLabel = if (item.folded) tr("展开分支", "Expand branch") else tr("折叠分支", "Collapse branch"),
+                            onClick = onToggleFold,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            if (item.foldable || item.folded) {
-                Text(if (item.folded) "⊞" else "⊟", style = PiTheme.text.meta, color = if (item.folded) p.accent else p.muted)
+            when {
+                item.foldable || item.folded -> {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (item.folded) p.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (item.folded) Icons.Filled.ChevronRight else Icons.Filled.ExpandMore,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = if (item.folded) p.accent else p.muted,
+                        )
+                    }
+                }
+                item.isLeaf -> {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(p.accent.copy(alpha = 0.25f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(Modifier.size(5.dp).clip(CircleShape).background(p.accent))
+                    }
+                }
+                item.onPath -> {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(p.accent.copy(alpha = 0.85f)))
+                }
+                else -> {
+                    Box(Modifier.size(4.dp).clip(CircleShape).background(p.borderMuted))
+                }
             }
         }
-        Text(
-            text,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            style = PiTheme.text.prose,
-            textDecoration = if (item.hiddenFromContext) TextDecoration.LineThrough else null,
-            fontWeight = if (item.isLeaf) FontWeight.SemiBold else null,
-            modifier = Modifier.weight(1f).padding(vertical = ROW_PAD),
-        )
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .alpha(if (item.hiddenFromContext) 0.52f else 1f)
+                .padding(vertical = ROW_PAD, horizontal = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            // 第一行微标签条（书签 / 角色 / 深层角标 / 当前叶子）
+            val hasTopMeta = item.label != null || roleTag != null || rawLevels > MAX_VISUAL_DEPTH || item.isLeaf
+            if (hasTopMeta) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    if (roleTag != null) {
+                        val roleColor = toneColor(item.headTone, p)
+                        Text(
+                            text = roleTag,
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                            color = roleColor,
+                            maxLines = 1,
+                        )
+                    }
+                    if (item.label != null) {
+                        Row(
+                            modifier = Modifier
+                                .clip(PiShapes.tag)
+                                .background(p.warning.copy(alpha = 0.16f))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Icon(Icons.Filled.Bookmark, contentDescription = null, modifier = Modifier.size(11.dp), tint = p.warning)
+                            Text(
+                                text = item.label,
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = p.warning,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (showStamps && item.labelTimestamp != null) {
+                                val stamp = TreeModel.formatLabelTimestamp(item.labelTimestamp)
+                                if (stamp.isNotEmpty()) {
+                                    Text(stamp, style = PiTheme.text.meta, color = p.muted, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                    if (rawLevels > MAX_VISUAL_DEPTH) {
+                        Text(
+                            text = "L$rawLevels",
+                            modifier = Modifier
+                                .clip(PiShapes.tag)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                            style = PiTheme.text.monoSmall,
+                            color = p.muted,
+                            maxLines = 1,
+                        )
+                    }
+                    if (item.isLeaf) {
+                        Text(
+                            text = tr("当前", "Current"),
+                            modifier = Modifier
+                                .clip(PiShapes.tag)
+                                .background(p.accent.copy(alpha = 0.16f))
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                            color = p.accent,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+
+            // 正文或工具胶囊
+            if (isToolRow) {
+                Text(
+                    text = item.text.removeSurrounding("[", "]"),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 7.dp, vertical = 3.dp),
+                    style = PiTheme.text.monoSmall,
+                    color = toneColor(item.textTone, p),
+                    textDecoration = if (item.hiddenFromContext) TextDecoration.LineThrough else null,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text(
+                    text = item.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = PiTheme.text.prose,
+                    color = toneColor(item.textTone, p),
+                    textDecoration = if (item.hiddenFromContext) TextDecoration.LineThrough else null,
+                    fontWeight = if (item.isLeaf) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
+        }
+
         if (item.hiddenFromContext) {
-            Text(tr("不发给模型", "Hidden"), modifier = Modifier.padding(start = ROW_GAP), style = PiTheme.text.meta, color = p.dim, maxLines = 1)
+            Icon(
+                imageVector = Icons.Filled.VisibilityOff,
+                contentDescription = tr("不再发给模型", "Excluded from context"),
+                tint = p.dim,
+                modifier = Modifier.padding(start = 6.dp).size(15.dp),
+            )
         }
     }
 }
-
-// ------------------------------------------------------------------ 动作面板
 
 private enum class Step { Actions, SummaryChoice, SummaryInstructions, Label, Replace }
 
@@ -415,14 +791,14 @@ private fun EntrySheet(
                 .fillMaxWidth()
                 .padding(horizontal = PiSpacing.pageHorizontal)
                 .padding(bottom = PiSpacing.unit),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    item.typeTitle,
+                    localizedTypeTitle(item.typeTitle),
                     style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold),
                     color = p.text,
                 )
@@ -430,7 +806,7 @@ private fun EntrySheet(
                     Text(
                         tr("当前位置", "Current"),
                         modifier = Modifier
-                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .clip(CircleShape)
                             .background(p.accent.copy(alpha = 0.16f))
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
@@ -453,117 +829,137 @@ private fun EntrySheet(
                     color = p.text,
                 )
             }
-            when (step) {
-                Step.Actions -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerLow),
-                    ) {
-                        if (!item.isLeaf) {
-                            val hint = buildString {
-                                append(
-                                    if (item.rewinds) tr("回到此消息之前并放回输入框改写重发", "Rewind before this message and restore it to the editor")
-                                    else tr("切换当前会话分支位置到这里继续对话", "Switch the active session branch to this point"),
-                                )
-                                if (streaming) append(tr("（将先停止本轮）", " (will abort current turn)"))
-                            }
-                            ActionRow(
-                                title = tr("跳转到这里", "Navigate here"),
-                                hint = hint,
-                                icon = Icons.Filled.PlayArrow,
-                                tint = p.accent,
+            AnimatedContent(
+                targetState = step,
+                transitionSpec = { fadeIn(tween(150)).togetherWith(fadeOut(tween(110))) },
+                label = "tree-sheet-step",
+            ) { currentStep ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (currentStep) {
+                        Step.Actions -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
                             ) {
-                                if (skipSummaryPrompt()) onNavigate(BranchSummaryChoice.NoSummary, null) else step = Step.SummaryChoice
+                                var hasRow = false
+                                fun dividerIfNeeded() = hasRow
+                                if (!item.isLeaf) {
+                                    val hint = buildString {
+                                        append(
+                                            if (item.rewinds) tr("回到此消息之前并放回输入框改写重发", "Rewind before this message and restore it to the editor")
+                                            else tr("切换当前会话分支位置到这里继续对话", "Switch the active session branch to this point"),
+                                        )
+                                        if (streaming) append(tr("（将先停止本轮）", " (will abort current turn)"))
+                                    }
+                                    ActionRow(
+                                        title = tr("跳转到这里", "Navigate here"),
+                                        hint = hint,
+                                        icon = Icons.Filled.PlayArrow,
+                                        tint = p.accent,
+                                    ) {
+                                        if (skipSummaryPrompt()) onNavigate(BranchSummaryChoice.NoSummary, null) else step = Step.SummaryChoice
+                                    }
+                                    hasRow = true
+                                }
+                                if (item.forkable) {
+                                    if (dividerIfNeeded()) SheetRowDivider()
+                                    ActionRow(
+                                        title = tr("从这里分叉", "Fork from here"),
+                                        hint = tr("新建独立会话文件，原会话不变", "Create a new session file; original stays intact"),
+                                        icon = Icons.Filled.AccountTree,
+                                        tint = p.success,
+                                        onClick = onFork,
+                                    )
+                                    hasRow = true
+                                }
+                                if (dividerIfNeeded()) SheetRowDivider()
+                                ActionRow(
+                                    title = if (item.label == null) tr("加标签（书签）", "Add label") else tr("改标签", "Edit label"),
+                                    hint = item.label?.let { tr("当前：「$it」", "Current: \"$it\"") } ?: tr("方便在「书签」里一键定位", "Quickly locate under Labeled"),
+                                    icon = Icons.Filled.BookmarkBorder,
+                                    tint = p.warning,
+                                ) { step = Step.Label }
+                                hasRow = true
+                                if (item.contextEditable && !item.hiddenFromContext) {
+                                    SheetRowDivider()
+                                    ActionRow(
+                                        title = tr("不再发给模型", "Exclude from context"),
+                                        hint = tr("对话记录保留，后续上下文不再携带", "Keep in transcript, omit from future model context"),
+                                        icon = Icons.Filled.VisibilityOff,
+                                        tint = p.muted,
+                                        onClick = onHide,
+                                    )
+                                    SheetRowDivider()
+                                    ActionRow(
+                                        title = tr("改写模型看到的内容", "Edit in context"),
+                                        hint = tr("仅改上下文版本，原文不变", "Modify context version only; original stays intact"),
+                                        icon = Icons.Filled.Edit,
+                                        tint = p.mdLink,
+                                    ) { step = Step.Replace }
+                                }
+                                if (item.copyText != null) {
+                                    SheetRowDivider()
+                                    ActionRow(
+                                        title = tr("复制文本", "Copy text"),
+                                        hint = null,
+                                        icon = Icons.Filled.ContentCopy,
+                                        tint = p.muted,
+                                    ) { clipboard.setText(AnnotatedString(fullText)); onDismiss() }
+                                }
                             }
                         }
-                        if (item.forkable) {
-                            ActionRow(
-                                title = tr("从这里分叉", "Fork from here"),
-                                hint = tr("新建独立会话文件，原会话不变", "Create a new session file; original stays intact"),
-                                icon = Icons.Filled.AccountTree,
-                                tint = p.success,
-                                onClick = onFork,
-                            )
+                        Step.SummaryChoice -> {
+                            Text(tr("要摘要被放弃的那一段吗？", "Summarize abandoned branch?"), style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold), color = p.text)
+                            Text(tr("摘要会调用一次模型，可随时中止；关闭面板回到树。", "Summarizing calls the model and can be aborted; dismiss to return to tree."), style = PiTheme.text.meta, color = p.muted)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                            ) {
+                                ActionRow(tr("不摘要", "No summary"), tr("直接切换，不消耗 token", "Switch immediately without using tokens")) { onNavigate(BranchSummaryChoice.NoSummary, null) }
+                                SheetRowDivider(indent = 12.dp)
+                                ActionRow(tr("自动摘要", "Summarize"), tr("使用默认摘要提示词", "Use default summary prompt")) { onNavigate(BranchSummaryChoice.Summarize, null) }
+                                SheetRowDivider(indent = 12.dp)
+                                ActionRow(tr("用自定义指令摘要…", "Summarize with custom prompt…"), tr("指定需要保留的关键信息", "Specify key details to preserve")) { step = Step.SummaryInstructions }
+                            }
                         }
-                        ActionRow(
-                            title = if (item.label == null) tr("加标签（书签）", "Add label") else tr("改标签", "Edit label"),
-                            hint = item.label?.let { tr("当前：「$it」", "Current: \"$it\"") } ?: tr("方便在「书签」里一键定位", "Quickly locate under Labeled only"),
-                            icon = Icons.Filled.BookmarkBorder,
-                            tint = p.warning,
-                        ) { step = Step.Label }
-                        if (item.contextEditable && !item.hiddenFromContext) {
-                            ActionRow(
-                                title = tr("不再发给模型", "Exclude from context"),
-                                hint = tr("对话记录保留，后续上下文不再携带", "Keep in transcript, omit from future model context"),
-                                icon = Icons.Filled.VisibilityOff,
-                                tint = p.muted,
-                                onClick = onHide,
-                            )
-                            ActionRow(
-                                title = tr("改写模型看到的内容", "Edit in context"),
-                                hint = tr("仅改上下文版本，原文不变", "Modify context version only; original stays intact"),
-                                icon = Icons.Filled.Edit,
-                                tint = p.mdLink,
-                            ) { step = Step.Replace }
+                        Step.SummaryInstructions -> {
+                            TextBox(instructions, { instructions = it }, tr("摘要指令：要留住什么", "Summary instructions: what to preserve"))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            ) {
+                                TreePillButton(tr("返回", "Back"), primary = false) { step = Step.SummaryChoice }
+                                TreePillButton(tr("开始摘要", "Summarize"), primary = true) { onNavigate(BranchSummaryChoice.SummarizeWithPrompt, instructions.trim().ifEmpty { null }) }
+                            }
                         }
-                        if (item.copyText != null) {
-                            ActionRow(
-                                title = tr("复制文本", "Copy text"),
-                                hint = null,
-                                icon = Icons.Filled.ContentCopy,
-                                tint = p.muted,
-                            ) { clipboard.setText(AnnotatedString(fullText)); onDismiss() }
+                        Step.Label -> {
+                            TextBox(labelText, { labelText = it }, tr("标签，例如「方案 A 之前」", "Label, e.g. \"Before plan A\""), singleLine = true)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            ) {
+                                if (item.label != null) {
+                                    TreePillButton(tr("清除标签", "Clear label"), primary = false) { onLabel(null) }
+                                }
+                                TreePillButton(tr("返回", "Back"), primary = false) { step = Step.Actions }
+                                TreePillButton(tr("保存", "Save"), primary = true) { onLabel(labelText.trim().ifEmpty { null }) }
+                            }
                         }
-                    }
-                }
-                Step.SummaryChoice -> {
-                    Text(tr("要摘要被放弃的那一段吗？", "Summarize abandoned branch?"), style = PiTheme.text.prose.copy(fontWeight = FontWeight.SemiBold), color = p.text)
-                    Text(tr("摘要会调用一次模型，可随时中止；关闭面板回到树。", "Summarizing calls the model and can be aborted; dismiss to return to tree."), style = PiTheme.text.meta, color = p.muted)
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerLow),
-                    ) {
-                        ActionRow(tr("不摘要", "No summary"), tr("直接切换，不消耗 token", "Switch immediately without using tokens")) { onNavigate(BranchSummaryChoice.NoSummary, null) }
-                        ActionRow(tr("自动摘要", "Summarize"), tr("使用默认摘要提示词", "Use default summary prompt")) { onNavigate(BranchSummaryChoice.Summarize, null) }
-                        ActionRow(tr("用自定义指令摘要…", "Summarize with custom prompt…"), tr("指定需要保留的关键信息", "Specify key details to preserve")) { step = Step.SummaryInstructions }
-                    }
-                }
-                Step.SummaryInstructions -> {
-                    TextBox(instructions, { instructions = it }, tr("摘要指令：要留住什么", "Summary instructions: what to preserve"))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    ) {
-                        TreePillButton(tr("返回", "Back"), primary = false) { step = Step.SummaryChoice }
-                        TreePillButton(tr("开始摘要", "Summarize"), primary = true) { onNavigate(BranchSummaryChoice.SummarizeWithPrompt, instructions.trim().ifEmpty { null }) }
-                    }
-                }
-                Step.Label -> {
-                    TextBox(labelText, { labelText = it }, tr("标签，例如「方案 A 之前」", "Label, e.g. \"Before plan A\""), singleLine = true)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    ) {
-                        if (item.label != null) {
-                            TreePillButton(tr("清除标签", "Clear label"), primary = false) { onLabel(null) }
+                        Step.Replace -> {
+                            TextBox(replacement, { replacement = it }, tr("模型将看到的内容", "Content sent to model"))
+                            Text(tr("只影响之后发给模型的上下文，不改原始记录。", "Only affects future model context; original transcript is unchanged."), style = PiTheme.text.meta, color = p.muted)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            ) {
+                                TreePillButton(tr("返回", "Back"), primary = false) { step = Step.Actions }
+                                TreePillButton(tr("保存改写", "Save edit"), primary = true) { onReplace(replacement) }
+                            }
                         }
-                        TreePillButton(tr("返回", "Back"), primary = false) { step = Step.Actions }
-                        TreePillButton(tr("保存", "Save"), primary = true) { onLabel(labelText.trim().ifEmpty { null }) }
-                    }
-                }
-                Step.Replace -> {
-                    TextBox(replacement, { replacement = it }, tr("模型将看到的内容", "Content sent to model"))
-                    Text(tr("只影响之后发给模型的上下文，不改原始记录。", "Only affects future model context; original transcript is unchanged."), style = PiTheme.text.meta, color = p.muted)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    ) {
-                        TreePillButton(tr("返回", "Back"), primary = false) { step = Step.Actions }
-                        TreePillButton(tr("保存改写", "Save edit"), primary = true) { onReplace(replacement) }
                     }
                 }
             }
@@ -572,11 +968,20 @@ private fun EntrySheet(
 }
 
 @Composable
+private fun SheetRowDivider(indent: Dp = 54.dp) {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = indent),
+        thickness = PiSpacing.hairlineThin,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+    )
+}
+
+@Composable
 private fun TreePillButton(label: String, primary: Boolean, onClick: () -> Unit) {
     val p = PiTheme.palette
     Box(
         modifier = Modifier
-            .clip(androidx.compose.foundation.shape.CircleShape)
+            .clip(CircleShape)
             .background(if (primary) p.accent else MaterialTheme.colorScheme.surfaceContainerHigh)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 9.dp),
@@ -633,11 +1038,11 @@ private fun ActionRow(
 @Composable
 private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: String, singleLine: Boolean = false) {
     Surface(
-        modifier = Modifier.fillMaxWidth().heightIn(min = if (singleLine) SEARCH_HEIGHT else BOX_MIN),
+        modifier = Modifier.fillMaxWidth().heightIn(min = if (singleLine) 40.dp else 96.dp),
         shape = PiShapes.cardInner,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
-        Box(Modifier.padding(SEARCH_PAD)) {
+        Box(Modifier.padding(12.dp)) {
             if (value.isEmpty()) Text(placeholder, style = PiTheme.text.meta, color = PiTheme.palette.dim)
             BasicTextField(
                 value = value,
@@ -651,14 +1056,8 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
     }
 }
 
-private val ROW_GAP = 6.dp
+private const val MAX_VISUAL_DEPTH = 5
 private val ROW_PAD = 7.dp
-private val ROW_MIN = 36.dp
-
-/** 一级缩进的宽度（SDK 是 3 个字符）。连线按它画，所以各级竖线在所有行上对得齐。 */
-private val LEVEL = 18.dp
-private val FOLD_SLOT = 22.dp
-private val ICON = 15.dp
-private val SEARCH_HEIGHT = 36.dp
-private val SEARCH_PAD = 10.dp
-private val BOX_MIN = 96.dp
+private val ROW_MIN = 40.dp
+private val LEVEL = 14.dp
+private val FOLD_SLOT = 28.dp

@@ -307,7 +307,10 @@ internal fun McpServersScreen(
         )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(
+                top = 8.dp,
+                bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom,
+            ),
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),
         ) {
             item {
@@ -315,10 +318,7 @@ internal fun McpServersScreen(
                     options = listOf(tr("全局", "Global"), tr("本项目", "Project")),
                     selectedIndex = if (project) 1 else 0,
                     onSelect = { project = it == 1 },
-                    modifier = Modifier.padding(
-                        horizontal = PiSettingsMetrics.pageHorizontal,
-                        vertical = PiSpacing.inline,
-                    ),
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 )
             }
             item {
@@ -395,11 +395,6 @@ internal fun McpServersScreen(
                                 onClick = { runCheck() },
                             )
                             PiSettingsChip(
-                                text = tr("＋ 添加服务", "+ Add Server"),
-                                active = true,
-                                onClick = { picking = true },
-                            )
-                            PiSettingsChip(
                                 text = tr("导入 JSON", "Import JSON"),
                                 onClick = { importing = true },
                             )
@@ -410,8 +405,8 @@ internal fun McpServersScreen(
             if (doc.corrupt) {
                 item {
                     PiInfoNote(
-                        tr("这份 mcp.json 不是合法的 JSON，请到「其他 → Pi 文件」修复后再编辑。", "This mcp.json is not valid JSON. Fix it before editing here."),
-                        tone = MaterialTheme.colorScheme.error,
+                        tr("这份 mcp.json 不是合法的 JSON，请检查 ~/.pi/agent/mcp.json 或 .pi/mcp.json 后再编辑。", "This mcp.json is not valid JSON. Fix ~/.pi/agent/mcp.json or .pi/mcp.json before editing here."),
+                        tone = PiTheme.palette.error,
                     )
                 }
             }
@@ -427,12 +422,12 @@ internal fun McpServersScreen(
                 item {
                     PiInfoNote(
                         cfgNow.errors.joinToString("\n"),
-                        tone = MaterialTheme.colorScheme.error,
+                        tone = PiTheme.palette.error,
                     )
                 }
             }
             error?.let { message ->
-                item { PiInfoNote(message, tone = MaterialTheme.colorScheme.error) }
+                item { PiInfoNote(message, tone = PiTheme.palette.error) }
             }
             if (pendingRestart) {
                 item {
@@ -460,9 +455,12 @@ internal fun McpServersScreen(
                                     color = PiTheme.palette.muted,
                                 )
                             }
-                            Button(enabled = !reloading, onClick = { reload() }) {
-                                Text(if (reloading) tr("重载中…", "Reloading…") else tr("立即生效", "Reload Now"))
-                            }
+                            PiSettingsChip(
+                                text = if (reloading) tr("重载中…", "Reloading…") else tr("立即生效", "Reload Now"),
+                                active = true,
+                                enabled = !reloading,
+                                onClick = { reload() },
+                            )
                         }
                     }
                 }

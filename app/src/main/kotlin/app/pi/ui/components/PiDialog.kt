@@ -249,21 +249,29 @@ fun PiDialogAction(
         primary -> palette.accent
         else -> palette.text
     }
-    Text(
-        text = label,
+    Box(
         modifier = modifier
             .clip(PiDialogActionShape)
             .background(bg)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                enabled = enabled,
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClick = onClick,
+            )
             .padding(
                 horizontal = PiDialogActionPaddingHorizontal,
                 vertical = PiDialogActionPaddingVertical,
             ),
-        style = MaterialTheme.typography.bodyMedium.copy(
-            fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium,
-        ),
-        color = fg,
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium,
+            ),
+            color = fg,
+        )
+    }
 }
 
 /**

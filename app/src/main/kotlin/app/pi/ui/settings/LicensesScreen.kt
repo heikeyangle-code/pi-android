@@ -58,30 +58,7 @@ private data class LicenceNotice(
 )
 
 /**
- * Settings-home entry. `null` in the caller hides it, the same way the capability
- * and package rows do, so a preview or a test can render the home without it.
- */
-@Composable
-fun PiLicensesEntryRow(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // 设置首页的一行，与统一行同一个构件：图标 + 标题 + 一行说明 + chevron，
-    // 没有「打开」这类文字尾巴。说明只有一行（说明行超出省略）。
-    PiSettingsEntryRow(
-        title = tr("开源许可", "Open Source Licenses"),
-        supporting = tr(
-            "App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式",
-            "Third-party components bundled in this app, license texts, and GPL / LGPL source offers",
-        ),
-        onClick = onClick,
-        modifier = modifier,
-        leadingIcon = Icons.Filled.Info,
-    )
-}
-
-/**
- * The notices themselves: a grouped list of every bundled licence, and the full
+ * The notices themselves: a grouped, searchable list of every bundled licence, and the full
  * text of whichever one the user opened.
  */
 @Composable
@@ -94,9 +71,8 @@ fun LicensesScreen(
         value = withContext(Dispatchers.IO) { readManifest(context) }
     }
     var open by remember { mutableStateOf<LicenceNotice?>(null) }
+    var query by remember { mutableStateOf("") }
 
-    // One level deeper than the settings stack, so back closes the text before it
-    // leaves the screen; the stack's own handler stays responsible for the rest.
     BackHandler(enabled = open != null) { open = null }
 
     val current = open
@@ -107,6 +83,13 @@ fun LicensesScreen(
             onBack = { open = null },
         )
         return
+    }
+
+    val q = query.trim()
+    val filtered = remember(notices, q) {
+        if (q.isEmpty()) notices else notices.filter {
+            it.title.contains(q, ignoreCase = true) || it.section.contains(q, ignoreCase = true)
+        }
     }
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
@@ -125,23 +108,47 @@ fun LicensesScreen(
         }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSettingsMetrics.groupGap),
+            contentPadding = PaddingValues(
+                top = app.pi.ui.theme.PiSpacing.inline,
+                bottom = contentPadding.calculateBottomPadding() + PiSettingsMetrics.groupGap,
+            ),
         ) {
-            // Grouping is by the manifest's own section field, in the order the
-            // sections first appear, so the statement, the component list, the
-            // licence texts and the per-package copyright files stay in the
-            // sequence the manifest author put them in.
-            notices.groupBy { it.section }.forEach { (section, entries) ->
+            item(key = "license-search") {
+                PiEditorField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = tr("搜索组件或协议名称", "Search package or license"),
+                    modifier = Modifier.padding(
+                        horizontal = PiSettingsMetrics.pageHorizontal,
+                    ),
+                    height = PiSettingsMetrics.searchFieldHeight,
+                )
+            }
+            filtered.groupBy { it.section }.forEach { (section, entries) ->
                 item(key = "section-$section") {
-                    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
-                        entries.forEachIndexed { index, notice ->
-                            if (index > 0) PiSettingsHairline()
-                            PiSettingsEntryRow(
-                                title = notice.title,
-                                supporting = null,
-                                onClick = { open = notice },
-                                monoTitle = true,
+                    Column(modifier = Modifier.padding(top = PiSettingsMetrics.groupGap)) {
+                        if (section.isNotBlank()) {
+                            Text(
+                                text = section,
+                                modifier = Modifier.padding(
+                                    start = PiSettingsMetrics.pageHorizontal + app.pi.ui.theme.PiSpacing.small,
+                                    end = PiSettingsMetrics.pageHorizontal,
+                                    bottom = PiSettingsMetrics.groupHeaderGap,
+                                ),
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
                             )
+                        }
+                        PiSettingsCard {
+                            entries.forEachIndexed { index, notice ->
+                                if (index > 0) PiSettingsHairline()
+                                PiSettingsEntryRow(
+                                    title = notice.title,
+                                    supporting = null,
+                                    onClick = { open = notice },
+                                    monoTitle = true,
+                                )
+                            }
                         }
                     }
                 }

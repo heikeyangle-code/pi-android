@@ -1943,18 +1943,17 @@ private const val MERMAID_SETTING_KEY = "markdown.mermaid"
 @Composable
 private fun rememberPiMermaidMode(): PiMermaidMode {
     val context = LocalContext.current
-    return remember(context) { PiMermaidModeSource.mode(context) }
+    val epoch = PiMermaidModeSource.epoch
+    return remember(context, epoch) { PiMermaidModeSource.mode(context) }
 }
 
 /**
  * The process-wide `markdown.mermaid` cache behind [rememberPiMermaidMode].
  *
- * Deliberately a process-wide singleton rather than composition state: the value is
- * asked for once per code fence, the store's own caches are per instance, and building a
- * store per fence would re-read (and re-parse) `settings.json` per fence — which is
- * exactly the kind of quiet per-row I/O this app avoids elsewhere.
+ * Exposes a reactive [epoch] bumped by `PiSessionViewModel.onSettingWritten("markdown.mermaid")`
+ * so existing rendered chat blocks update immediately without restarting or re-entering chat.
  */
-private object PiMermaidModeSource {
+internal object PiMermaidModeSource {
 
     private class Cached(
         val globalFile: File,
@@ -1965,6 +1964,13 @@ private object PiMermaidModeSource {
 
     private val lock = Any()
     private var cached: Cached? = null
+    private val _epoch = androidx.compose.runtime.mutableIntStateOf(0)
+    val epoch: Int get() = _epoch.intValue
+
+    fun invalidate() {
+        synchronized(lock) { cached = null }
+        _epoch.intValue += 1
+    }
 
     fun mode(context: Context): PiMermaidMode {
         val fresh = cached

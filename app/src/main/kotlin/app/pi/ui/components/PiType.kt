@@ -99,23 +99,6 @@ object PiType {
         }
 
     /**
-     * 没有会话标题时的「会话 ▾」：`18 + 字号偏移` / `24 + 字号偏移` SemiBold。
-     *
-     * 比 [topBarTitle] 大一档：它没有具体名字，要在同一位置撑起“这是会话入口”的重量。
-     */
-    val topBarPlaceholder: TextStyle
-        @Composable
-        @ReadOnlyComposable
-        get() {
-            val shift = PiTheme.typography.fontSizeOffsetSp
-            return PiTheme.text.meta.copy(
-                fontSize = (18 + shift).sp,
-                lineHeight = (24 + shift).sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-
-    /**
      * 模型 chip 这类紧凑标签：`13 + 字号偏移` / `18 + 字号偏移` 的 Medium，无衬线。
      * 它现在是输入框工具行那颗 chip 的样式（2026-10-26 从顶栏挪下来）。
      *

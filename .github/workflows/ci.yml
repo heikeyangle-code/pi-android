@@ -231,6 +231,11 @@ jobs:
           done
           apk="${all[0]}"
           "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
+          unzip -tq "$apk"
+          aapt2="$(find "$sdk/build-tools" -maxdepth 2 -name aapt2 -type f 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$aapt2" ] && [ -x "$aapt2" ]; then
+            "$aapt2" dump badging "$apk" | head -n 5
+          fi
           if [ -z "${PI_KEYSTORE:-}" ]; then
             expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
             if ! grep -qi "$expected" /tmp/apksigner.txt; then
@@ -271,10 +276,16 @@ jobs:
             fail=1
           fi
           exit "$fail"
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK artifact (clean single APK, stored without re-deflation)
+        uses: actions/upload-artifact@v4
         with:
           name: pi-android-${{ matrix.variant }}
-          path: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/mapping/release/mapping.txt
+          path: app/build/outputs/apk/release/*.apk
+          compression-level: 0
           if-no-files-found: error
+      - name: Upload R8 mapping artifact (separate from APK)
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8-mapping-${{ matrix.variant }}
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore

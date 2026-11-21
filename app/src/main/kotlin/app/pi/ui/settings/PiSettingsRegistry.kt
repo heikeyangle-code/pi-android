@@ -90,6 +90,7 @@ private fun choices(vararg pairs: Pair<String, String>): List<PiOption> =
 private fun buildThinkingLevelOptions(zh: Boolean): List<PiOption> {
     fun t(z: String, e: String) = if (zh) z else e
     val descriptions = mapOf(
+        "off" to t("关闭思考推理，直接输出回答", "Disable reasoning; respond directly"),
         "minimal" to t("最少推理（约 1k token 预算）", "Minimal reasoning (~1k token budget)"),
         "low" to t("轻量推理（约 2k token 预算）", "Light reasoning (~2k token budget)"),
         "medium" to t("均衡推理（约 8k token 预算）", "Balanced reasoning (~8k token budget)"),
@@ -98,7 +99,6 @@ private fun buildThinkingLevelOptions(zh: Boolean): List<PiOption> {
         "max" to t("最大推理深度（仅部分模型支持）", "Maximum reasoning depth (selected models only)"),
     )
     return PiThinkingLevel.entries
-        .filter { it != PiThinkingLevel.Off }
         .map { PiOption(it.wire, it.label, descriptions[it.wire]) }
 }
 
@@ -204,6 +204,21 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             defaultValue = bool(false),
             emptyListLabel = emptyDefault,
         ),
+        PiSetting(
+            key = "app.runtime.cacheRetention",
+            title = t("提示缓存保留时长（PI_CACHE_RETENTION）", "Prompt Cache Retention (PI_CACHE_RETENTION)"),
+            description = t("默认短期（约 5 分钟）；开启长缓存可延长至约 1 小时，适合移动端间歇对话。", "Default is short (~5 min); long extends provider prompt caching to ~1 hour for mobile use."),
+            kind = PiRowKind.Value,
+            group = G_MODELS_SCREEN,
+            section = t("缓存", "Cache"),
+            defaultValue = str("short"),
+            effective = EffectiveKind.RestartEngine,
+            options = listOf(
+                PiOption("short", t("短期（默认）", "Short (default)")),
+                PiOption("long", t("长期（约 1 小时）", "Long (~1 hour)")),
+            ),
+            emptyListLabel = emptyDefault,
+        ),
 
         // ------------------------------------------------------------------
         // 2 系统提示词与上下文（由 SystemPromptHostScreen 承载，保留搜索条目）
@@ -285,7 +300,7 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
         PiSetting(
             key = "images.autoResize",
             title = t("图片自动缩放", "Auto-Resize Images"),
-            description = t("图片自动缩到最大 2000×2000。", "Automatically resize images to at most 2000×2000 for model compatibility."),
+            description = t("图片自动缩到最大 2000×2000（附件立即生效，read 工具读图在重载或新会话生效）。", "Auto-resize images to max 2000×2000 (prompt attachments apply immediately; read tool after reload/new session)."),
             kind = PiRowKind.Switch,
             group = G_MESSAGES,
             section = t("图片", "Images"),
@@ -594,6 +609,20 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             emptyListLabel = emptyDefault,
         ),
         PiSetting(
+            key = "shellPath",
+            title = t("Bash 执行器路径（shellPath）", "Shell Path (shellPath)"),
+            description = t(
+                "自定义容器内 bash 工具使用的 Shell 路径（如 /bin/bash、/bin/sh）；留空则自动探测。",
+                "Custom shell executable inside the guest rootfs (e.g. /bin/bash); leave empty to auto-detect.",
+            ),
+            kind = PiRowKind.Text,
+            group = G_TOOLS,
+            section = t("工具", "Tools"),
+            defaultValue = str(""),
+            effective = EffectiveKind.Reload,
+            emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
             key = "shellCommandPrefix",
             title = t("Bash 命令前缀", "Shell Command Prefix"),
             description = t(
@@ -604,7 +633,7 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             group = G_TOOLS,
             section = t("工具", "Tools"),
             defaultValue = str(""),
-            effective = EffectiveKind.Immediate,
+            effective = EffectiveKind.Reload,
             emptyListLabel = emptyDefault,
         ),
         PiSetting(
@@ -642,6 +671,20 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
             defaultValue = bool(true),
             effective = EffectiveKind.Immediate,
             emptyListLabel = emptyDefault,
+        ),
+        PiSetting(
+            key = "npmCommand",
+            title = t("npm 安装命令（npmCommand）", "npm Command (npmCommand)"),
+            description = t(
+                "自定义安装包命令与参数（如切换国内镜像源或使用 pnpm）；清空恢复默认 npm。",
+                "Custom package install command and args (e.g. custom registry or pnpm); clear for default npm.",
+            ),
+            kind = PiRowKind.List,
+            group = G_RESOURCES,
+            section = t("包安装", "Package Install"),
+            effective = EffectiveKind.Immediate,
+            presets = listOf("npm", "--registry=https://registry.npmmirror.com"),
+            emptyListLabel = t("默认（npm）", "Default (npm)"),
         ),
 
         // ------------------------------------------------------------------
@@ -834,7 +877,7 @@ private fun buildGroups(zh: Boolean): List<PiSettingsGroup> {
         PiSettingsGroup(G_MESSAGES, t("对话与消息", "Chat & Messages"), Icons.Filled.CompareArrows) { store ->
             t(
                 "引导：${PiSettingsCatalog.summaryText(store, "steeringMode")} · 后续：${PiSettingsCatalog.summaryText(store, "followUpMode")} · 续接：${PiSettingsCatalog.summaryText(store, "app.sessions.resumeLast")}",
-                "Steer: ${PiSettingsCatalog.summaryText(store, "steeringMode")} · Follow-up: ${PiSettingsCatalog.summaryText(store, "followUpMode")}",
+                "Steer: ${PiSettingsCatalog.summaryText(store, "steeringMode")} · Follow-up: ${PiSettingsCatalog.summaryText(store, "followUpMode")} · Resume: ${PiSettingsCatalog.summaryText(store, "app.sessions.resumeLast")}",
             )
         },
         PiSettingsGroup(G_COMPACTION, t("压缩与上下文窗口", "Compaction & Context"), Icons.Filled.Compress) { store ->
