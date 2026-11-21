@@ -116,19 +116,16 @@ private fun PathListBlock(
     /** A tap on a returned image opens it full screen ([PiImageViewer]). */
     onImageClick: ((PiImage) -> Unit)? = null,
 ) {
+    val body = remember(item.output, PiLocale.isZh) { parse(item.output) }
+    if (body == null) {
+        // 解析不出结果就回退通用卡：在 rememberSaveable 之前分流，避免运行中→结束/失败切换时拆分 saveable 槽位。
+        ToolCallBlock(item, modifier, defaultExpanded, onImageClick)
+        return
+    }
     val palette = PiTheme.palette
     val state = toolStateOf(item)
     var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by rememberSaveable { mutableStateOf(false) }
-    val body = remember(item.output, PiLocale.isZh) { parse(item.output) }
-    if (body == null) {
-        // 解析不出结果就回退通用卡：这正是 pi 没有专属渲染器的那种形状（`06 §3`）。
-        // 这一行原先是 `ToolCallBlock(...)` —— 删 `firstOfRun`/`lastOfRun` 参数时被整行带走，
-        // 只剩裸 `return`，于是**被拒/失败**的 grep/find/ls（结果是拦截器那句话或错误文本，
-        // 解析为 null）会整张卡消失（连退回的图片也没了）。
-        ToolCallBlock(item, modifier, defaultExpanded, onImageClick)
-        return
-    }
     val command = remember(item.args) { toolCommandText(item.args) }
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
     // Expanded-state only (drawn inside the `if (expanded)` body below), so the collapsed

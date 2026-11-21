@@ -14,15 +14,11 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import app.pi.engine.PiEngineSession
 import app.pi.i18n.tr
 import app.pi.ui.extension.ExtensionWidgetsSheet
 import kotlinx.coroutines.flow.conflate
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import app.pi.settings.readBoolean
 import kotlinx.coroutines.withContext
@@ -36,36 +32,24 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -79,24 +63,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.protocol.AssistantText
 import app.pi.protocol.DateSeparator
@@ -114,7 +91,6 @@ import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.blocks.LocalTranscriptRowAnchor
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.blocks.TranscriptRowAnchor
-import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ChatAction
 import app.pi.ui.chat.argumentContextOf
@@ -126,7 +102,6 @@ import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.mayLoadEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
-import app.pi.ui.chat.earlierRowHeightPx
 import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
 import app.pi.ui.chat.itemIndexOfVisibleRow
@@ -144,7 +119,6 @@ import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWidgetSurfaceSheet
 import app.pi.ui.extension.toExtensionPalette
 import app.pi.ui.extension.ExtensionChromeBanner
-import app.pi.ui.extension.ExtensionStatusStrip
 import app.pi.ui.extension.FOOTER_COLLAPSED_ROWS
 import app.pi.ui.extension.HEADER_COLLAPSED_ROWS
 import app.pi.ui.extension.PLACEMENT_BELOW
@@ -155,32 +129,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The transcript — the app's main stage (destination 2).
+ * Conversation screen (`ChatScreen`).
  *
- * Structure follows pi's own viewport stack, with the footer moved to the top
- * because the keyboard would otherwise cover it (docs/pi-android-ui-spec.md §4.1):
- *
- *   AppBar          session name · status · model · overflow
- *   StatusRow       extension `setStatus` entries (pi's footer, relocated)
- *   Transcript      the block kinds, rendered by `ui/blocks`
- *   QueueChips      steering / follow-up
- *   Widgets         extension `setWidget`, above the editor
- *   BashPanel       a running or finished `!` command
- *   Palette         the `/` command list while the composer holds a command name
- *   Mentions        the `@` file-mention list while the composer holds a mention
- *   Composer        border colour = thinking level, or bashMode for `!`
- *   Widgets         extension `setWidget`, below the editor
- *
- * Until the engine is up this screen shows the boot surface instead: the first
- * launch unpacks a Linux userland and that takes long enough that hiding it
- * behind a spinner would read as a hang.
- *
- * The screen does **not** mount the extension UI host: PiRoot mounts
- * `ExtensionUiHost` exactly once, above the active destination, and renders this
- * screen inside that Box. Mounting it here as well would compose two hosts for
- * the same request — two dialogs, two snackbar hosts racing for one notice
- * queue — so this screen relies on PiRoot's single mount. See
- * `ui/extension/ExtensionUiHost.kt` for the feature itself.
+ * Mounts the transcript list, composer, queue/extension docks, and sheets.
+ * PiRoot mounts `ExtensionUiHost` once above the active destination.
  */
 @Composable
 fun ChatScreen(
@@ -244,104 +196,6 @@ fun ChatScreen(
     )
 }
 
-
-/**
- * 对话页顶栏的图标动作是 [ChatTopBarAction]（48dp 热区 / 24dp 字形），不是别处用的
- * `PiTopBarIcon`（30dp 框 / 17dp 字形）：56 高的对话页顶栏只放三枚 24dp 字形，
- * 48dp 热区才和 56 高匹配；两套尺寸混在一起就是用户看到的「一大一小」。
- */
-/** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
-private val EARLIER_ROW_ICON = 24.dp
-
-
-/** The 6 dp between that glyph and its label (`Spacer(Modifier.width(6.dp))`). */
-private val EARLIER_ROW_ICON_GAP = 6.dp
-
-
-/** The row's own vertical padding (`padding(vertical = 8.dp)`), 8 top and 8 bottom. */
-private val EARLIER_ROW_PADDING = 8.dp
-
-
-/**
- * 「加载更早」 drawn as an **overlay** over the transcript list, not as its item 0.
- *
- * It is the same row it always was — same `Icon`, same 6 dp, same `Text(PiTheme.text.meta)`,
- * same centred `Row`, same `fillMaxWidth().clickable{…}.padding(vertical = 8.dp)` order so the
- * ripple covers the same area and the tap target is the same one. What changed is where it
- * lives: `docs/scroll-diagnosis.md` §3.4 (landed as D51) took it out of the `LazyColumn`
- * because while it was item 0 its key stayed at index 0 across a prepend, which defeated the
- * list's own key anchoring and made every 「加载更早」 batch move the content under the reader.
- * The caller owns its position and the band the list reserves for it.
- */
-@Composable
-private fun EarlierRowsRow(
-    text: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = EARLIER_ROW_PADDING),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Filled.KeyboardArrowUp,
-            contentDescription = null,
-            tint = PiTheme.palette.muted,
-            modifier = Modifier.size(EARLIER_ROW_ICON),
-        )
-        Spacer(Modifier.width(EARLIER_ROW_ICON_GAP))
-        Text(
-            text = text,
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
-        )
-    }
-}
-
-
-/**
- * The height that row occupies, in dp — computed **before** the list is laid out, because two
- * things depend on it and both would otherwise need a second layout pass: the band the list
- * reserves in `contentPadding.top`, and the overlay's own offset. A measure → pad → measure
- * dependency is what this avoids (`design/ui-refactor/08-hang-diagnosis.md`).
- *
- * `Row` is as tall as its tallest child plus its padding, so the number is
- * `max(icon, the label's line box) + 16` — `earlierRowHeightPx` in `ui/chat/TailFollow.kt`,
- * where the harness pins the arithmetic. The label's line box is measured with the same
- * `TextMeasurer` the `Text` composable uses internally: the same merged `TextStyle` (the
- * composition's `LocalTextStyle` merged with `PiTheme.text.meta`, which is exactly what
- * `Text(text, style = …)` renders), the same `LocalDensity` (font scale included), the same
- * font resolver and the same `softWrap`/`maxLines`/`overflow` defaults, and the width the
- * `Row` leaves it — the window minus the list's own horizontal padding, the icon and the
- * spacer. That is what makes this exact rather than an estimate of "one line of meta text".
- *
- * Keyed on the inputs, so a recomposition per streamed token re-measures nothing.
- */
-@Composable
-private fun earlierRowHeight(text: String): Dp {
-    val density = LocalDensity.current
-    val measurer = rememberTextMeasurer()
-    val labelStyle = LocalTextStyle.current.merge(PiTheme.text.meta)
-    val windowWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
-    val heightPx = remember(text, labelStyle, density, windowWidthPx, measurer) {
-        val pagePx = with(density) { PiSpacing.pageHorizontal.roundToPx() }
-        val iconPx = with(density) { EARLIER_ROW_ICON.roundToPx() }
-        val gapPx = with(density) { EARLIER_ROW_ICON_GAP.roundToPx() }
-        val paddingPx = with(density) { (EARLIER_ROW_PADDING * 2).roundToPx() }
-        val availablePx = (windowWidthPx - pagePx * 2 - iconPx - gapPx).coerceAtLeast(0)
-        val linePx = measurer.measure(
-            text = text,
-            style = labelStyle,
-            constraints = Constraints(maxWidth = availablePx),
-        ).size.height
-        earlierRowHeightPx(iconPx = iconPx, textHeightPx = linePx, verticalPaddingPx = paddingPx)
-    }
-    return with(density) { heightPx.toDp() }
-}
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -451,10 +305,9 @@ internal fun ChatBody(
     // 可交互工厂 widget（带 handleInput / handleMouse）点「交互」打开的底部表面。
     var interactingWidgetKey by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
-    // 顶栏的 0.5dp 发丝线只在**手指滚动/惯性滑动期间**出现；一停就收回，
-    // 不是“离开顶部就永久留在那里”。顶栏本身是页面底色，没有常驻灰线。
+    // 顶栏的 0.5dp 发丝线随列表离开顶部平滑显现（用 drawBehind 绘制，不改变顶栏高度，零视口抖动）。
     val topBarScrolled by remember(listState) {
-        derivedStateOf { listState.isScrollInProgress }
+        derivedStateOf { listState.canScrollBackward }
     }
     val context = LocalContext.current
 
@@ -1073,26 +926,32 @@ internal fun ChatBody(
     // 现在流式增长、Markdown 异步落地、图片解码、软键盘升降、扩展面板展开/收起都走同一条非阻塞观测链。
     val latestRevision by rememberUpdatedState(state.revision)
     val latestRenderedCount by rememberUpdatedState(renderedItems.size)
+    val latestStreaming by rememberUpdatedState(state.streaming)
     LaunchedEffect(listState, sessionKey) {
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()
+            val scrollingNow = listState.isScrollInProgress
+            val atBottomNow = !listState.canScrollForward
+            // 仅在手指拖动或尚未触底时订阅首行坐标，避免 requestScrollToItem 落地后自激循环。
+            val trackAnchor = scrollingNow || !atBottomNow
             TailObservation(
                 revision = latestRevision,
                 renderedCount = latestRenderedCount,
                 poke = tailPoke,
                 totalItems = info.totalItemsCount,
-                firstVisibleIndex = listState.firstVisibleItemIndex,
-                firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
+                firstVisibleIndex = if (trackAnchor) listState.firstVisibleItemIndex else -1,
+                firstVisibleOffsetPx = if (trackAnchor) listState.firstVisibleItemScrollOffset else 0,
                 lastVisibleIndex = last?.index ?: -1,
                 lastVisibleOffsetPx = last?.offset ?: 0,
                 lastVisibleSizePx = last?.size ?: 0,
                 viewportEndOffsetPx = info.viewportEndOffset,
-                isScrollInProgress = listState.isScrollInProgress,
-                atBottom = !listState.canScrollForward,
+                isScrollInProgress = scrollingNow,
+                atBottom = atBottomNow,
             )
         }.conflate().collect { obs ->
-            withFrameNanos { }
+            // snapshotFlow 已经处于布局完成后的帧边界，直接同步决策并 requestScrollToItem，
+            // 去掉额外的 withFrameNanos 延迟，彻底消除流式增长时滞后一帧回拉产生的上下抖动。
             val wasFollowing = following
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()
@@ -1108,7 +967,7 @@ internal fun ChatBody(
                         lastVisibleOffsetPx = last?.offset ?: 0,
                         lastVisibleSizePx = last?.size ?: 0,
                         viewportEndOffsetPx = info.viewportEndOffset,
-                        bottomContentPaddingPx = listBottomPadPx,
+                        bottomContentPaddingPx = info.afterContentPadding.takeIf { it > 0 } ?: listBottomPadPx,
                         isScrollInProgress = listState.isScrollInProgress,
                         atBottom = !listState.canScrollForward,
                     ),
@@ -1671,6 +1530,7 @@ internal fun ChatBody(
             onToggleTools = {
                 val next = !toolsExpanded
                 toolsExpanded = next
+                RowHeightCache.shared.clear()
                 session.setToolsExpandedRemote(next)
             },
             onAction = { perform(it) },
@@ -1717,26 +1577,16 @@ internal fun ChatBody(
         //
         // The row component went with it: `PiStatusLine` had no caller left, so it is
         // deleted; the detail sheet draws the same figures in its own layout.
-        val emptyTranscript = state.transcript.isEmpty()
+        val emptyTranscript = state.transcript.isEmpty() && state.busy == null
 
-        // 扩展状态（setStatus）：输入框上方一行可横滑的小标签（`ExtensionStatusStrip`）。
-
-        // **An empty session shows nothing.** The two states that used to be drawn
-        // here — 「引擎正在启动」 and 「引擎已就绪」 with their two paragraphs — are
-        // deleted by the user's ruling (「引擎启动什么玩意，那些文字」: a brand-new
-        // conversation is a blank page with the top bar and the composer, and the
-        // AppBar's one-word engine state above it says everything the paragraphs did).
-        // v2's `EmptyState` component is not used here any more, but it is not dead:
-        // the session list, the settings search and the session tree still draw it.
-        //
-        // Deliberate deviation from v2's phone59/phone60: those two screens no longer
-        // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
-        // D31.
-
-        // 扩展的 header（`ctx.ui.setHeader`）：软键盘关闭且未手动收起时显示在顶栏下方；
-        // 键盘弹出时自动收进底部扩展摘要条，避免挤压聊天视口。
-        if (!imeVisible && !widgetsCollapsedByUser) {
-            state.ext.header?.let { header ->
+        // 扩展的 header（`ctx.ui.setHeader`）：软键盘关闭且未手动收起时平滑展开，避免软键盘弹起首帧瞬间跳变。
+        val extHeader = state.ext.header
+        AnimatedVisibility(
+            visible = !imeVisible && !widgetsCollapsedByUser && extHeader != null,
+            enter = expandVertically(tween(150)) + fadeIn(tween(130)),
+            exit = shrinkVertically(tween(130)) + fadeOut(tween(110)),
+        ) {
+            extHeader?.let { header ->
                 ExtensionChromeBanner(
                     lines = header.lines,
                     collapsedRows = HEADER_COLLAPSED_ROWS,
@@ -1765,6 +1615,32 @@ internal fun ChatBody(
             val blockSpacing = prefs.typographyProfile.blockSpacing
             val earlierRowHeightValue = earlierRowHeight(earlierText.orEmpty())
             val earlierBand = if (showsEarlierRow) earlierRowHeightValue + blockSpacing else 0.dp
+            val sharedToolRenderer = remember(renderRev, session) {
+                app.pi.ui.extension.ToolRenderer { item, expanded -> session.toolRenderer.render(item, expanded) }
+            }
+            val sharedEntryRenderer = remember(renderRev, session) {
+                app.pi.ui.extension.EntryRenderer { item, expanded -> session.entryRenderer.render(item, expanded) }
+            }
+            val sharedMessageRenderer = remember(renderRev, session) {
+                app.pi.ui.extension.MessageRenderer { item, expanded -> session.messageRenderer.render(item, expanded) }
+            }
+            val sharedThinkingLabel = remember(state.ext.thinkingLabel) {
+                state.ext.thinkingLabel?.let { app.pi.ui.extension.chromeText(it).trim() }?.takeIf { it.isNotEmpty() }
+            }
+            val onBranchClick: (app.pi.protocol.BranchSummary) -> Unit = remember(session) {
+                { session.requestNav(NavRequest.SessionTree) }
+            }
+            val onImageClick: (PiImage) -> Unit = remember {
+                { viewedImage = it }
+            }
+            CompositionLocalProvider(
+                app.pi.ui.extension.LocalToolRenderer provides sharedToolRenderer,
+                app.pi.ui.extension.LocalEntryRenderer provides sharedEntryRenderer,
+                app.pi.ui.extension.LocalMarkdownTransform provides session.markdownTransform,
+                app.pi.ui.extension.LocalMessageRenderer provides sharedMessageRenderer,
+                app.pi.ui.chat.LocalMessageActions provides messageActions,
+                app.pi.ui.blocks.LocalThinkingLabel provides sharedThinkingLabel,
+            ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -1889,91 +1765,38 @@ internal fun ChatBody(
                     // (pi's `updateLayout` does the same,
                     // `scroll-view.ts:189-201`), so the two must not both own the position.
                     // Read at click time, which is the only time it matters.
-                    val rowAnchor = remember(listState, sliceIndex) {
-                        TranscriptRowAnchor(listState, sliceIndex) { following }
+                    val rowAnchor = remember(listState, sliceIndex, item.key) {
+                        TranscriptRowAnchor(
+                            listState = listState,
+                            index = sliceIndex,
+                            isFollowing = { following },
+                            onPauseFollow = { pauseTail() },
+                            onEvictHeight = { RowHeightCache.shared.evict(item.key) },
+                            // 静止态展开任意卡、或流式态展开非末尾卡时立即暂停跟随，绝不把用户刚点开的卡拖走。
+                            shouldPauseOnExpand = { !latestStreaming || sliceIndex < latestRenderedCount - 1 },
+                        )
                     }
                     CompositionLocalProvider(
                         LocalTranscriptRowAnchor provides rowAnchor,
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
-                        app.pi.ui.extension.LocalToolRenderer provides remember(renderRev) {
-                            app.pi.ui.extension.ToolRenderer { item, expanded -> session.toolRenderer.render(item, expanded) }
-                        },
-                        app.pi.ui.extension.LocalEntryRenderer provides remember(renderRev) {
-                            app.pi.ui.extension.EntryRenderer { item, expanded -> session.entryRenderer.render(item, expanded) }
-                        },
-                        app.pi.ui.extension.LocalMarkdownTransform provides session.markdownTransform,
-                        app.pi.ui.extension.LocalMessageRenderer provides remember(renderRev) {
-                            app.pi.ui.extension.MessageRenderer { item, expanded -> session.messageRenderer.render(item, expanded) }
-                        },
-                        app.pi.ui.chat.LocalMessageActions provides messageActions,
-                        app.pi.ui.blocks.LocalThinkingLabel provides state.ext.thinkingLabel
-                            ?.let { app.pi.ui.extension.chromeText(it).trim() }?.takeIf { it.isNotEmpty() },
                     ) {
                         BlockRenderer(
                             item = item,
                             modifier = rowModifier,
-                            // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
-                            // the app's collapse-by-default preference both land here;
-                            // the renderer already honours both.
                             hideThinking = prefs.hideThinkingBlock,
                             thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
                             toolsDefaultExpanded = toolsExpanded,
-                            // F18 (`docs/rendering-review.md`): pi's own
-                            // `showCacheMissNotices` switch now reaches the blocks that
-                            // print the summarization billing line. pi's default is
-                            // `false` (`core/settings-manager.ts:120`), so an install
-                            // that never touched that row shows nothing new.
                             showBilledCost = prefs.showCacheMissNotices,
-                            // The clocks on the user's own bubble and on a notice line. They
-                            // used to be unconditional, which is why the 外观 switch looked
-                            // broken: it reached only the date separators, so turning it off
-                            // left a time on every message the user had written. Off is now
-                            // the default on both sides of this parameter.
                             showTimestamps = prefs.showTimestamps,
-                            // F19 (`docs/rendering-review.md`) / RR-P10: the one
-                            // remaining callback of the renderer's original five whose
-                            // target already exists in this app is supplied here instead of
-                            // leaving the block's gated label unreachable — the branch
-                            // summary → the session tree, which is where the app can move
-                            // the leaf (the same target the palette's 会话树 action uses,
-                            // `:404-407`). The model row's own tap used to be the second;
-                            // the row no longer renders (see `BlockRenderer`), so its
-                            // callback is gone with it and the model is reached from the
-                            // AppBar chip.
-                            onBranchClick = {
-                                // Navigation refreshes the tree — see the `/tree` arm in
-                                // `pick`; this pair used to run the same two RPCs twice.
-                                session.requestNav(NavRequest.SessionTree)
-                            },
-                            // §4.8's 编辑并从此分叉: pi's user-message row opens the
-                            // fork picker and re-runs from that message
-                            // (`interactive-mode.ts:5216` / `docs/sessions.md:31`).
-                            //
-                            // The block hands over its transcript key, which is pi's entry
-                            // id only on the replay path — a bubble drawn for a prompt sent
-                            // in this run carries a synthetic key (`Transcript.kt:982`,
-                            // `:1010`), and sending that to `fork` is exactly what pi
-                            // answered with `Invalid entry ID for forking`. What makes the
-                            // order reliable — reading the *full* list rather than the
-                            // rendered window — lives in `onForkFromMessage` above, which
-                            // is hoisted out of this lambda to keep its identity stable.
+                            onBranchClick = onBranchClick,
                             onForkFromMessage = onForkFromMessage,
-                            // F19 (`docs/rendering-review.md`) deleted `onImageClick`
-                            // because no viewer existed to receive it. One does now, so
-                            // the callback is back and supplied: every image anywhere in
-                            // the transcript — a user attachment, an assistant's picture,
-                            // a tool's screenshot — opens [PiImageViewer]. The other two
-                            // (`onDiffOpenFull`, `onErrorRetry`) still have no target and
-                            // stay deleted.
-                            onImageClick = { viewedImage = it },
-                            // The coarse tool clock read beside the other `state.*` values
-                            // above; only `ShellBlock` consumes it — a running `bash` is the
-                            // one live duration in the transcript.
+                            onImageClick = onImageClick,
                             nowMs = nowMs,
                         )
                     }
                 }
+            }
             }
             // 「加载更早」 — the same row, drawn *outside* the list so that inserting a batch
             // cannot move it and cannot move the reader (the block above has the mechanism
@@ -2210,26 +2033,36 @@ internal fun ChatBody(
                 )
             }
 
-            // 输入框下方的扩展组件与底栏：软键盘打开或用户折叠时自动收进顶部摘要条，绝不把输入框顶出屏幕。
-            if (!imeVisible && !widgetsCollapsedByUser) {
-                ExtensionWidgetStack(
-                    widgets = remember(state.ext.widgets) {
-                        state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
-                    },
-                    onInteract = { panel -> interactingWidgetKey = panel.key },
-                    maxStackHeight = 112.dp,
-                )
-                state.ext.footer?.let { footer ->
-                    ExtensionChromeBanner(
-                        lines = footer.lines,
-                        collapsedRows = FOOTER_COLLAPSED_ROWS,
-                        onInteract = if (footer.interactive && footer.surfaceId != null) {
-                            { interactingWidgetKey = footer.key }
-                        } else {
-                            null
-                        },
-                        modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
-                    )
+            // 输入框下方的扩展组件与底栏：软键盘打开或用户折叠时平滑收起，绝不突兀跳闪。
+            val belowWidgets = remember(state.ext.widgets) {
+                state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
+            }
+            val extFooter = state.ext.footer
+            AnimatedVisibility(
+                visible = !imeVisible && !widgetsCollapsedByUser && (belowWidgets.isNotEmpty() || extFooter != null),
+                enter = expandVertically(tween(150)) + fadeIn(tween(130)),
+                exit = shrinkVertically(tween(130)) + fadeOut(tween(110)),
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    if (belowWidgets.isNotEmpty()) {
+                        ExtensionWidgetStack(
+                            widgets = belowWidgets,
+                            onInteract = { panel -> interactingWidgetKey = panel.key },
+                            maxStackHeight = 112.dp,
+                        )
+                    }
+                    extFooter?.let { footer ->
+                        ExtensionChromeBanner(
+                            lines = footer.lines,
+                            collapsedRows = FOOTER_COLLAPSED_ROWS,
+                            onInteract = if (footer.interactive && footer.surfaceId != null) {
+                                { interactingWidgetKey = footer.key }
+                            } else {
+                                null
+                            },
+                            modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
+                        )
+                    }
                 }
             }
         }
@@ -2308,272 +2141,3 @@ internal fun ChatBody(
         )
     }
 }
-
-
-/**
- * The palette is open exactly while the first token is still being typed: the
- * draft starts with `/` and no space has been typed yet. Returns the query, or
- * null when the palette should be hidden.
- */
-internal fun paletteQueryOf(draft: String): String? {
-    val trimmed = draft.trimStart()
-    if (!trimmed.startsWith("/")) return null
-    if (trimmed.contains(' ')) return null
-    return trimmed.removePrefix("/")
-}
-
-
-/**
- * The 0-based index of the user-message row [key] among the list's user-message
- * rows, or -1 when the list does not hold it.
- *
- * This is the app-side half of pi's fork list order: `getUserMessagesForForking`
- * walks the session's entries in file order and keeps every user message with
- * text (`core/agent-session.ts:3309-3327`), and a transcript row is projected
- * from one of those same entries, so the two orders agree. It is derived on
- * demand — the callback runs once per long press — rather than kept as a map
- * that a streaming publication would rebuild on every chunk (the append-only
- * cost this screen already went out of its way to avoid, see `userRowIndices`).
- *
- * The caller in the ViewModel trusts the value only together with the row's own
- * text, because one entry can project no user row at all (`Transcript.kt:2353-2368`).
- */
-private fun userMessageOrdinal(items: List<TranscriptItem>, key: String): Int {
-    var ordinal = 0
-    for (item in items) {
-        if (item !is UserMessage) continue
-        if (item.key == key) return ordinal
-        ordinal++
-    }
-    return -1
-}
-
-
-/**
- * How long the composer waits before asking for `@` mention candidates.
- *
- * pi debounces this trigger by 20 ms and then spawns `fd` in its own process
- * (`packages/tui/src/components/editor.ts:251`, `:2362-2385`). Here the lookup is a
- * whole guest process (`ui/chat/PiMentionSource.kt`), so the wait is longer on
- * purpose. It is a delay, not a different answer: the debounce only decides *when*
- * the query runs, and a superseded query's result is dropped rather than shown.
- * No measured latency is claimed for that guest process - there is no device here.
- */
-private const val MENTION_DEBOUNCE_MS: Long = 150L
-
-/** 参数补全的防抖：每个按键都去问扩展太吵，停 120 ms 再问；旧应答由 ViewModel 丢弃。 */
-private const val ARG_COMPLETION_DEBOUNCE_MS: Long = 120L
-
-
-/**
- * F34 (`docs/rendering-review.md`) / spec §4.5: how many transcript rows are rendered
- * at once, and how many more each "load earlier" step (or a scroll to the top) reveals.
- * The spec's number is 50 for the first paint; the same step is used for the batches,
- * so the window grows in the units the spec describes.
- *
- * This is a *rendering* bound, not a data bound: the reducer keeps every row, which is
- * what makes the earlier batches instant and keeps search, the prompt jumps and the
- * reducer's own replay independent of how much is on screen.
- */
-private const val TRANSCRIPT_WINDOW_STEP = 50
-
-
-/**
- * How many row keys are remembered as "the window has just brought this row in, and it has
- * never been measured" — the gate for the one synchronous markdown parse a row may pay for
- * (`LocalPiMarkdownImmediate`, P3 of `docs/scroll-diagnosis.md` §1.2).
- *
- * One batch is at most [TRANSCRIPT_WINDOW_STEP] rows (the file read's rows enter the *window*
- * at that step too, however many entries it read), and the window's head can be grown again
- * before the reader has composed the previous batch's rows — so this holds several batches'
- * worth. A key dropped off the end costs that row the old behaviour (one frame at zero
- * height); it never costs correctness, and the set cannot grow with the session.
- */
-private const val FRESH_ROW_KEYS_MAX = 200
-
-
-private data class TailObservation(
-    val revision: Int,
-    val renderedCount: Int,
-    val poke: Long,
-    val totalItems: Int,
-    val firstVisibleIndex: Int,
-    val firstVisibleOffsetPx: Int,
-    val lastVisibleIndex: Int,
-    val lastVisibleOffsetPx: Int,
-    val lastVisibleSizePx: Int,
-    val viewportEndOffsetPx: Int,
-    val isScrollInProgress: Boolean,
-    val atBottom: Boolean,
-)
-
-/**
- * 新会话极简欢迎画布：不写废话说明，只提供工作区身份胶囊和三条高频起手快捷提示。
- */
-@Composable
-private fun ChatEmptyWelcome(
-    workspaceName: String,
-    modelLabel: String?,
-    onPickPrompt: (String) -> Unit,
-    onOpenSessions: () -> Unit,
-    onOpenWorkspace: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val palette = PiTheme.palette
-    Column(
-        modifier = modifier.padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(palette.accent.copy(alpha = 0.14f))
-                .border(1.dp, palette.accent.copy(alpha = 0.35f), RoundedCornerShape(18.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "π",
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                color = palette.accent,
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Text(
-            text = tr("准备就绪", "Ready"),
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = palette.text,
-        )
-        Spacer(Modifier.height(6.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = workspaceName.ifBlank { tr("默认项目", "Default Project") },
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .clickable(onClick = onOpenWorkspace)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                style = PiTheme.text.monoSmall,
-                color = palette.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (!modelLabel.isNullOrBlank()) {
-                Text(
-                    text = modelLabel,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = PiTheme.text.monoSmall,
-                    color = palette.accent,
-                    maxLines = 1,
-                    overflow = TextOverflow.MiddleEllipsis,
-                )
-            }
-        }
-        Spacer(Modifier.height(22.dp))
-        val starters = listOf(
-            tr("帮我梳理当前项目的目录结构和核心文件", "Summarize the directory structure and key files in this project"),
-            tr("检查项目里最近的改动和潜在问题", "Review recent changes and potential issues in this project"),
-            "/resume",
-        )
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            starters.forEach { prompt ->
-                val isResume = prompt == "/resume"
-                val label = if (isResume) tr("查看历史会话与会话树…", "Browse past sessions & session tree…") else prompt
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                        .border(1.dp, palette.borderMuted.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                        .clickable {
-                            if (isResume) onOpenSessions() else onPickPrompt(prompt)
-                        }
-                        .padding(horizontal = 14.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = label,
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.prose,
-                        color = palette.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScrollArrowButton(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    unreadCount: Int = 0,
-) {
-    val palette = PiTheme.palette
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val hasUnread = unreadCount > 0
-    val shape = RoundedCornerShape(999.dp)
-    Row(
-        modifier = Modifier
-            .alpha(if (pressed || hasUnread) 1f else 0.88f)
-            .clip(shape)
-            .background(
-                if (hasUnread) palette.accent else MaterialTheme.colorScheme.surfaceContainerHigh,
-            )
-            .border(
-                width = 1.dp,
-                color = if (hasUnread) palette.accent else palette.borderMuted.copy(alpha = 0.65f),
-                shape = shape,
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = ripple(color = MaterialTheme.colorScheme.onSurface),
-                onClickLabel = label,
-                onClick = onClick,
-            )
-            .padding(
-                horizontal = if (hasUnread) 11.dp else 9.dp,
-                vertical = 8.dp,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        val fg = if (hasUnread) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            modifier = Modifier.size(18.dp),
-            tint = fg,
-        )
-        if (hasUnread) {
-            Text(
-                text = if (unreadCount > 99) "99+" else "$unreadCount",
-                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
-                color = fg,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
-    save = { it.savedState() },
-    restore = { saved -> TailFollow.fromSavedState(saved) },
-)
-
-

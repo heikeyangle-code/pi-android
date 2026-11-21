@@ -1,6 +1,7 @@
 package app.pi.ui.resources
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -124,38 +126,66 @@ internal fun ResourcesHubScreen(
             PiInfoNote(tr("引擎还没起来。资源由引擎里的 pi 加载与管理，起来之后这里才有内容。", "Engine is not running yet. Resources are loaded and managed by pi once the engine starts."))
             return@Column
         }
-        when (page) {
-            "edit" -> ResourceFileEditor(
-                path = editPath,
-                model = model,
-                contentPadding = contentPadding,
-                onClose = { page = editReturn },
-                onDeleted = { model.refresh(); page = editReturn },
-            )
-            "ext", "skills", "prompts", "themes" -> ResourceTypeScreen(
-                type = typeOfPage(page),
-                model = model,
-                contentPadding = contentPadding,
-                onBack = { page = "hub" },
-                onEdit = edit,
-            )
-            "context" -> ContextScreen(model, contentPadding, onBack = { page = "hub" }, onEdit = edit)
-            "packages" -> PackagesScreen(
-                access = host,
-                model = model,
-                contentPadding = contentPadding,
-                onBack = { page = "hub" },
-            )
-            else -> Hub(
-                model = model,
-                contentPadding = contentPadding,
-                onBack = onBack,
-                onOpen = { page = it },
-                onOpenMcp = onOpenMcp,
-                onOpenFlags = { showFlagsSheet = true },
-                onOpenCommandSettings = onOpenCommandSettings,
-                onOpenTrustPolicy = onOpenTrustPolicy,
-            )
+        androidx.compose.animation.AnimatedContent(
+            targetState = page,
+            transitionSpec = {
+                val toChild = targetState != "hub" && (initialState == "hub" || targetState == "edit")
+                val ease = androidx.compose.animation.core.FastOutSlowInEasing
+                if (toChild) {
+                    (androidx.compose.animation.slideInHorizontally(androidx.compose.animation.core.tween(190, easing = ease)) { it / 6 } +
+                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(170)))
+                        .togetherWith(
+                            androidx.compose.animation.slideOutHorizontally(androidx.compose.animation.core.tween(160, easing = ease)) { -it / 12 } +
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+                        )
+                } else {
+                    (androidx.compose.animation.slideInHorizontally(androidx.compose.animation.core.tween(190, easing = ease)) { -it / 12 } +
+                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(170)))
+                        .togetherWith(
+                            androidx.compose.animation.slideOutHorizontally(androidx.compose.animation.core.tween(160, easing = ease)) { it / 5 } +
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+                        )
+                }
+            },
+            label = "resources-page",
+        ) { targetPage ->
+            androidx.compose.foundation.layout.Box(
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+            ) {
+                when (targetPage) {
+                    "edit" -> ResourceFileEditor(
+                        path = editPath,
+                        model = model,
+                        contentPadding = contentPadding,
+                        onClose = { page = editReturn },
+                        onDeleted = { model.refresh(); page = editReturn },
+                    )
+                    "ext", "skills", "prompts", "themes" -> ResourceTypeScreen(
+                        type = typeOfPage(targetPage),
+                        model = model,
+                        contentPadding = contentPadding,
+                        onBack = { page = "hub" },
+                        onEdit = edit,
+                    )
+                    "context" -> ContextScreen(model, contentPadding, onBack = { page = "hub" }, onEdit = edit)
+                    "packages" -> PackagesScreen(
+                        access = host,
+                        model = model,
+                        contentPadding = contentPadding,
+                        onBack = { page = "hub" },
+                    )
+                    else -> Hub(
+                        model = model,
+                        contentPadding = contentPadding,
+                        onBack = onBack,
+                        onOpen = { page = it },
+                        onOpenMcp = onOpenMcp,
+                        onOpenFlags = { showFlagsSheet = true },
+                        onOpenCommandSettings = onOpenCommandSettings,
+                        onOpenTrustPolicy = onOpenTrustPolicy,
+                    )
+                }
+            }
         }
     }
 

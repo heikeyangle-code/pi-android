@@ -1,5 +1,9 @@
 package app.pi.ui.components
 
+import android.view.WindowManager
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,12 +26,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -104,9 +110,14 @@ fun PiDialog(
         ),
     ) {
         ClearPlatformDim()
+        val enter = remember { Animatable(0f) }
+        LaunchedEffect(Unit) {
+            enter.animateTo(1f, tween(140, easing = FastOutSlowInEasing))
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer { alpha = enter.value }
                 .background(MaterialTheme.colorScheme.scrim.copy(alpha = PiDialogScrimAlpha))
                 // A tap anywhere on the scrim dismisses, which is the half of
                 // `dismissOnClickOutside` the platform cannot do once the window is
@@ -123,6 +134,11 @@ fun PiDialog(
                 modifier = modifier
                     .widthIn(max = PiDialogMaxWidth)
                     .fillMaxWidth()
+                    .graphicsLayer {
+                        val s = 0.96f + 0.04f * enter.value
+                        scaleX = s
+                        scaleY = s
+                    }
                     // Swallows taps so a tap inside the shell is not read as a tap
                     // outside it. No ripple and no semantics: this box is not a
                     // control.
@@ -282,8 +298,19 @@ fun PiDialogAction(
 @Composable
 private fun ClearPlatformDim() {
     val view = LocalView.current
+    // 在首帧绘制前同步清掉 FLAG_DIM_BEHIND + dimAmount=0f，彻底消除 Dialog 首帧双重暗幕闪烁。
+    remember(view) {
+        (view.parent as? DialogWindowProvider)?.window?.let { w ->
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setDimAmount(0f)
+        }
+        true
+    }
     SideEffect {
-        (view.parent as? DialogWindowProvider)?.window?.setDimAmount(0f)
+        (view.parent as? DialogWindowProvider)?.window?.let { w ->
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setDimAmount(0f)
+        }
     }
 }
 

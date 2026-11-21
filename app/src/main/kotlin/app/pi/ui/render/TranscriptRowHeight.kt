@@ -151,25 +151,25 @@ internal fun Modifier.rememberedRowHeight(rowKey: String, contentReady: Boolean)
     // straight through.
     val heightModifier = remember(rowKey, floor, density) {
         val floorPx = floor?.let { with(density) { it.roundToPx() } }
-        val base = if (floorPx != null && floorPx > 0) {
+        if (floorPx != null && floorPx > 0) {
+            // Measure the child's REAL height (`placeable.height`) inside `layout`, NOT via a
+            // trailing `onSizeChanged` (which saw the floored `maxOf(placeable.height, floorPx)`
+            // and prematurely released the floor on Frame 1 while markdown was still State.Loading!).
             Modifier.layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints)
+                if (placeable.height > 0) {
+                    RowHeightCache.shared.record(rowKey, placeable.height)
+                    measured = true
+                }
                 layout(placeable.width, maxOf(placeable.height, floorPx)) {
                     placeable.placeRelative(0, 0)
                 }
             }
         } else {
-            Modifier
-        }
-        // Recorded on every positive measurement. While the floor is up the content may be
-        // measured at zero, which `record` drops on purpose — storing it would make the
-        // next composition's floor a no-op — and the frame the real content lands
-        // overwrites the entry with the same number, so the write is a no-op in the common
-        // case.
-        base.onSizeChanged { size ->
-            if (size.height > 0) {
-                RowHeightCache.shared.record(rowKey, size.height)
-                if (floorPx != null) measured = true
+            Modifier.onSizeChanged { size ->
+                if (size.height > 0) {
+                    RowHeightCache.shared.record(rowKey, size.height)
+                }
             }
         }
     }

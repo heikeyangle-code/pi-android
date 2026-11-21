@@ -278,20 +278,24 @@ internal fun PiMarkdownText(
     // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
     // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
     // 拿到的是同一个对象，逐字节相同。
-    val prepared = remember(markdown, streaming) {
-        val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
-        runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
-            .getOrElse { PiLatex.PreparedMath(markdown, false) }
+    // 普通正文不含数学/脚注标记时短路，避免 streaming 从 true→false 落地时无谓重算与重排。
+    val hasMathSyntax = remember(markdown) {
+        markdown.contains('$') || markdown.contains("\\(") || markdown.contains("\\[")
     }
-    // 脚注（Phase 5）：库的 AST 没有脚注节点，所以在交给库之前把 `[^id]` 换成 Unicode
-    // 上标、把定义块换成末尾的有序列表（见 `PiFootnoteMarkdown`）。流式期间**不换** ——
-    // 半份定义会被改写成半张列表，不如先按源码显示；`null` 表示"没有脚注可改"，此时
-    // 下面拿到的就是 `prepared.text` 本身，逐字节与上一版相同。
-    val footnoteSource = remember(prepared.text, streaming) {
-        if (streaming) {
+    val prepared = remember(markdown, streaming && hasMathSyntax, hasMathSyntax) {
+        if (!hasMathSyntax) {
+            PiLatex.PreparedMath(markdown, false)
+        } else {
+            val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
+            runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
+                .getOrElse { PiLatex.PreparedMath(markdown, false) }
+        }
+    }
+    val hasFootnoteSyntax = remember(prepared.text) { prepared.text.contains("[^") }
+    val footnoteSource = remember(prepared.text, streaming && hasFootnoteSyntax, hasFootnoteSyntax) {
+        if (streaming || !hasFootnoteSyntax) {
             null
         } else {
-            // 与 `PiLatex.prepare` 同一条理由：这里在组合里跑，不许抛。
             runCatching { PiFootnoteMarkdown.rewrite(prepared.text) }.getOrNull()
         }
     }

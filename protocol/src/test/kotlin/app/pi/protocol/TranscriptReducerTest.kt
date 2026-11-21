@@ -572,4 +572,46 @@ class TranscriptReducerTest {
         val card = r.transcript.single() as ToolCall
         assertEquals(1200L, card.elapsedMs)
     }
+
+    // --------------------------------------------------------- thinking streaming
+
+    @Test
+    fun `empty thinking_end content preserves streamed thinking deltas`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"agent_start"}"""))
+        r.onEvent(thinking("step 1. "))
+        r.onEvent(thinking("step 2."))
+        // Some providers emit thinking_end with an empty string `""` instead of omitting content.
+        // The reducer must keep the accumulated deltas and only close the streaming flag.
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":""}}"""))
+        assertEquals(1, r.transcript.size)
+        val block = r.transcript[0] as ThinkingBlock
+        assertEquals("step 1. step 2.", block.text)
+        assertFalse(block.streaming)
+    }
+
+    @Test
+    fun `sequential thinking blocks with the same contentIndex do not overwrite each other`() {
+        val r = reducer()
+        r.onEvent(thinking("first thought"))
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"first thought"}}"""))
+        r.onEvent(thinking("second thought"))
+        assertEquals(2, r.transcript.size)
+        val first = r.transcript[0] as ThinkingBlock
+        val second = r.transcript[1] as ThinkingBlock
+        assertEquals("first thought", first.text)
+        assertFalse(first.streaming)
+        assertEquals("second thought", second.text)
+        assertTrue(second.streaming)
+    }
+
+    @Test
+    fun `leading empty thinking_delta does not emit a blank thinking block`() {
+        val r = reducer()
+        r.onEvent(thinking(""))
+        assertEquals(0, r.transcript.size)
+        r.onEvent(thinking("actual thought"))
+        assertEquals(1, r.transcript.size)
+        assertEquals("actual thought", (r.transcript[0] as ThinkingBlock).text)
+    }
 }

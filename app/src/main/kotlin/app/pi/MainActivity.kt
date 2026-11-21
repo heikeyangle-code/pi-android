@@ -16,6 +16,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import app.pi.i18n.LocalPiResources
 import app.pi.i18n.PiLocale
 import app.pi.ui.PiMemoryTrimmer
@@ -51,7 +53,10 @@ class MainActivity : ComponentActivity() {
             val systemDark = isSystemInDarkTheme()
             val session: PiSessionViewModel = viewModel()
             val theme by session.theme.collectAsState()
-            val uiState by session.state.collectAsState()
+            // 仅订阅 typographyProfile：避免流式输出每 token / 1Hz 工具计时都触发整个 MainActivity 根重组。
+            val typographyProfile by remember(session) {
+                session.state.map { it.prefs.typographyProfile }.distinctUntilChanged()
+            }.collectAsState(initial = session.state.value.prefs.typographyProfile)
 
             LaunchedEffect(systemDark) { session.startUiPreferences(systemDark) }
 
@@ -137,7 +142,7 @@ class MainActivity : ComponentActivity() {
                     // once in `readPrefs`. It replaced the bare `fontScaleDelta`: the same
                     // offset is inside the profile, together with the preset's sizes, gaps,
                     // headings and radii.
-                    typographyProfile = uiState.prefs.typographyProfile,
+                    typographyProfile = typographyProfile,
                 ) {
                     PiRoot()
                 }

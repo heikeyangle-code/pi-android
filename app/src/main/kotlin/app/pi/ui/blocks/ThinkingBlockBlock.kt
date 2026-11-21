@@ -1,16 +1,11 @@
 package app.pi.ui.blocks
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -129,14 +124,16 @@ fun ThinkingBlockBlock(
                         tint = muted.copy(alpha = 0.7f),
                     )
                 }
-                AnimatedVisibility(
-                    visible = expanded,
-                    enter = expandVertically(tween(180)) + fadeIn(tween(180)),
-                    exit = shrinkVertically(tween(150)) + fadeOut(tween(120)),
-                ) {
-                    SelectableContent {
+                // LazyColumn 内不做多帧高度缩展动画（与 ToolCard 一致）：
+                // 避免 150ms shrinkVertically 与收起锚点（TranscriptRowAnchor.onCollapse）及
+                // 触底跟随（TailFollow）互相拉扯，确保展开/收起与流式增长同时进行时零跳动、零闪烁。
+                if (expanded) {
+                    val bodyText = item.text.ifEmpty {
+                        if (item.streaming) tr("正在思考…", "Thinking…") else tr("（无思考内容）", "(No thinking content)")
+                    }
+                    val bodyContent: @Composable () -> Unit = {
                         Text(
-                            text = item.text.ifEmpty { tr("（无思考内容）", "(No thinking content)") },
+                            text = bodyText,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp, bottom = 2.dp)
@@ -154,6 +151,12 @@ fun ThinkingBlockBlock(
                             },
                             color = palette.thinkingBodyOnCanvas.copy(alpha = 0.82f),
                         )
+                    }
+                    // 流式期间不包裹 SelectionContainer，避免每个思考 token 都触发选择注册表重算与闪烁。
+                    if (item.streaming) {
+                        bodyContent()
+                    } else {
+                        SelectableContent { bodyContent() }
                     }
                 }
             }

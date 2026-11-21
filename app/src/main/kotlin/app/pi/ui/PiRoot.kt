@@ -58,6 +58,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -224,10 +228,22 @@ fun PiTopBar(
     actions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
     Column(
         modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            .drawBehind {
+                if (scrolled) {
+                    val strokePx = PiSpacing.hairlineThin.toPx()
+                    drawLine(
+                        color = hairlineColor,
+                        start = Offset(0f, size.height - strokePx / 2f),
+                        end = Offset(size.width, size.height - strokePx / 2f),
+                        strokeWidth = strokePx,
+                    )
+                }
+            },
     ) {
         Row(
             modifier = Modifier
@@ -286,12 +302,6 @@ fun PiTopBar(
                     content = actions,
                 )
             }
-        }
-        if (scrolled) {
-            HorizontalDivider(
-                thickness = PiSpacing.hairlineThin,
-                color = palette.borderMuted.copy(alpha = 0.55f),
-            )
         }
     }
 }
@@ -515,17 +525,19 @@ fun PiRoot() {
     // request: the handler writes the request back to `null`, so the effect runs
     // once for the request and once for the `null`, and the second run is how the
     // same request can be made again (two `/tree` commands in a row).
-    val uiState by session.state.collectAsState()
-    // **覆盖层开着与否，读的是 ViewModel 自己那条流，不是 `UiState`、也不是
-    // `rememberSaveable`。** 用户的要求是硬的：「点叉就必须退出，不管打断还是怎么的。」
-    // 这条流只有 `raiseOverlay`/`closeOverlay` 两个写者，任何晚到的 `_state` 写、任何
-    // restored state 都碰不到它 —— 于是"关掉之后又被举起来"在结构上不可能。
+    // 按需切片订阅 session.state，彻底避免流式输出每 token / 1Hz 工具计时引发整个 PiRoot 重组。
+    val navEvent by remember(session) {
+        session.state.map { it.navRequest to it.navSeq }.distinctUntilChanged()
+    }.collectAsState(initial = session.state.value.navRequest to session.state.value.navSeq)
+    val availableModels by remember(session) {
+        session.state.map { it.models }.distinctUntilChanged()
+    }.collectAsState(initial = session.state.value.models)
     val overlayState by session.overlay.collectAsState()
-    val navRequest = uiState.navRequest
-    LaunchedEffect(navRequest, uiState.navSeq) {
-        // **先领处理权，再执行。** 请求的身份是 uiState.navSeq：关掉覆盖层时
+    val (navRequest, navSeq) = navEvent
+    LaunchedEffect(navRequest, navSeq) {
+        // **先领处理权，再执行。** 请求的身份是 navSeq：关掉覆盖层时
         // discardPendingNav() 已把高水位推过去，排队到现在才跑到的请求在这里被拒。
-        if (navRequest == null || !session.claimNav(uiState.navSeq)) return@LaunchedEffect
+        if (navRequest == null || !session.claimNav(navSeq)) return@LaunchedEffect
         when (navRequest) {
             // The session list is an overlay, so the request only raises the
             // layer; it must not also move the destination. Landing on 对话
@@ -611,6 +623,8 @@ fun PiRoot() {
                 },
                 label = "root-destination",
             ) { dest ->
+                // 每个目的地自绘不透明底色，避免水平滑动过渡期间前后两屏互相透底发闪。
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 when (dest) {
                     PiDestination.Chat -> saveableStateHolder.SaveableStateProvider(dest.name) {
                         ChatScreen(
@@ -661,7 +675,7 @@ fun PiRoot() {
                             engineDiagnostics = { session.engineDiagnostics() },
                             engineEntry = { session.engineEntryLabel() },
                             recentFailures = { session.recentFailures() },
-                            availableModels = uiState.models,
+                            availableModels = availableModels,
                             onLoadAvailableModels = { session.refreshModels() },
                             advanced = { session.advanced() },
                             modelsHost = { session.modelsHost() },
@@ -678,6 +692,7 @@ fun PiRoot() {
                             onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
                         )
                     }
+                }
                 }
             }
 

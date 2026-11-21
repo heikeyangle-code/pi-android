@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -138,51 +139,63 @@ internal fun ChatDockStatusAndWidgets(
             }
         }
 
+        // 始终保留列宽探测（即使收起也把最新列数同步给宿主）
         if (hasAnyExtDockContent) {
-            // 始终保留列宽探测（即使收起也把最新列数同步给宿主）
             if (compactExtMode) {
                 ExtensionWidgetStack(
                     widgets = emptyList(),
                     onColumns = session::setPanelColumns,
                 )
-                ExtensionDockSummaryBar(
-                    working = state.ext.working,
-                    streaming = state.streaming,
-                    statusCount = state.ext.statuses.size,
-                    widgetCount = totalWidgetCount,
-                    hasChrome = hasChrome,
-                    interactivePanel = firstInteractive,
-                    collapsedByUser = widgetsCollapsedByUser,
-                    imeVisible = imeVisible,
-                    onToggleCollapse = onToggleWidgetsCollapse,
-                    onOpenInspector = onOpenWidgetsInspector,
-                    onInteract = onInteractWidget,
-                )
-            } else {
-                // 多个扩展面板同时存在时给出轻量折叠头，让用户随时一键收起
-                if (totalWidgetCount >= 2 || (totalWidgetCount >= 1 && (belowWidgets.isNotEmpty() || state.ext.footer != null))) {
-                    ExtensionDockSummaryBar(
-                        working = state.ext.working,
-                        streaming = state.streaming,
-                        statusCount = state.ext.statuses.size,
-                        widgetCount = totalWidgetCount,
-                        hasChrome = hasChrome,
-                        interactivePanel = null,
-                        collapsedByUser = false,
-                        imeVisible = false,
-                        onToggleCollapse = onToggleWidgetsCollapse,
-                        onOpenInspector = onOpenWidgetsInspector,
-                        onInteract = onInteractWidget,
-                    )
+            }
+            androidx.compose.animation.AnimatedContent(
+                targetState = compactExtMode,
+                transitionSpec = {
+                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140)))
+                        .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(110)))
+                },
+                label = "ext-dock-mode",
+            ) { compact ->
+                Column(Modifier.fillMaxWidth()) {
+                    if (compact) {
+                        ExtensionDockSummaryBar(
+                            working = state.ext.working,
+                            streaming = state.streaming,
+                            statusCount = state.ext.statuses.size,
+                            widgetCount = totalWidgetCount,
+                            hasChrome = hasChrome,
+                            interactivePanel = firstInteractive,
+                            collapsedByUser = widgetsCollapsedByUser,
+                            imeVisible = imeVisible,
+                            onToggleCollapse = onToggleWidgetsCollapse,
+                            onOpenInspector = onOpenWidgetsInspector,
+                            onInteract = onInteractWidget,
+                        )
+                    } else {
+                        if (totalWidgetCount >= 2 || (totalWidgetCount >= 1 && (belowWidgets.isNotEmpty() || state.ext.footer != null))) {
+                            ExtensionDockSummaryBar(
+                                working = state.ext.working,
+                                streaming = state.streaming,
+                                statusCount = state.ext.statuses.size,
+                                widgetCount = totalWidgetCount,
+                                hasChrome = hasChrome,
+                                interactivePanel = null,
+                                collapsedByUser = false,
+                                imeVisible = false,
+                                onToggleCollapse = onToggleWidgetsCollapse,
+                                onOpenInspector = onOpenWidgetsInspector,
+                                onInteract = onInteractWidget,
+                            )
+                        }
+                        ExtensionWorkingStrip(working = state.ext.working, streaming = state.streaming)
+                        ExtensionStatusStrip(statuses = state.ext.statuses, editorTakeover = state.ext.editorTakeover)
+                        ExtensionWidgetStack(
+                            widgets = aboveWidgets,
+                            onColumns = session::setPanelColumns,
+                            onInteract = onInteractWidget,
+                            maxStackHeight = 132.dp,
+                        )
+                    }
                 }
-                ExtensionWorkingStrip(working = state.ext.working, streaming = state.streaming)
-                ExtensionStatusStrip(statuses = state.ext.statuses, editorTakeover = state.ext.editorTakeover)
-                ExtensionWidgetStack(
-                    widgets = aboveWidgets,
-                    onColumns = session::setPanelColumns,
-                    onInteract = onInteractWidget,
-                    maxStackHeight = 132.dp,
-                )
             }
         } else {
             ExtensionWidgetStack(

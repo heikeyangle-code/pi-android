@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -97,11 +98,23 @@ internal fun ChatTopBar(
     val palette = PiTheme.palette
     val widePhone = LocalConfiguration.current.screenWidthDp >= 360
 
+    val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
     Column(
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            .drawBehind {
+                if (scrolled) {
+                    val strokePx = PiSpacing.hairlineThin.toPx()
+                    drawLine(
+                        color = hairlineColor,
+                        start = androidx.compose.ui.geometry.Offset(0f, size.height - strokePx / 2f),
+                        end = androidx.compose.ui.geometry.Offset(size.width, size.height - strokePx / 2f),
+                        strokeWidth = strokePx,
+                    )
+                }
+            },
     ) {
         Row(
             Modifier
@@ -177,12 +190,6 @@ internal fun ChatTopBar(
                     icon = Icons.Filled.MoreHoriz,
                 )
             }
-        }
-        if (scrolled) {
-            HorizontalDivider(
-                thickness = PiSpacing.hairlineThin,
-                color = palette.borderMuted.copy(alpha = 0.55f),
-            )
         }
     }
 

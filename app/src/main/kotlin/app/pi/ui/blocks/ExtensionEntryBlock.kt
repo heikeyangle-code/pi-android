@@ -45,7 +45,7 @@ fun ExtensionEntryBlock(
                 RenderedAnsiBlock(
                     lines = shown,
                     expanded = expanded,
-                    collapsedLimit = Int.MAX_VALUE,
+                    collapsedLimit = 4,
                 )
             }
         }

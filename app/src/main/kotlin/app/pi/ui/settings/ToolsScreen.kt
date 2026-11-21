@@ -86,7 +86,7 @@ internal fun ToolsScreen(
         if (reloadingResources) return
         reloadingResources = true
         scope.launch {
-            runCatching { ext.reload() }
+            runCatching { ext.ext.reload() }
                 .onSuccess {
                     pendingReload = false
                     reloadEpoch++

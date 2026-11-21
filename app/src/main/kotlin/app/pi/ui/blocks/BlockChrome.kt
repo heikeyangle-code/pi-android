@@ -478,21 +478,32 @@ internal class TranscriptRowAnchor(
     private val listState: LazyListState,
     private val index: Int,
     private val isFollowing: () -> Boolean,
+    private val onPauseFollow: () -> Unit = {},
+    private val onEvictHeight: () -> Unit = {},
+    private val shouldPauseOnExpand: () -> Boolean = { true },
 ) {
     /**
-     * Called by [toggleContent] just before a row collapses. Does nothing unless the row's
-     * start has been scrolled above the viewport top — the only case where the list cannot
-     * keep it, and the only case where the reader was looking at the middle of the row —
-     * and nothing while the follow is armed (see the class KDoc).
+     * Called by [toggleContent] right before a row expands or collapses.
+     *
+     * - Always evicts the cached row height so a recycled row never inherits a stale floor.
+     * - On **expand**: pauses tail follow when appropriate so `TailFollow` never yanks the viewport
+     *   away from the card the reader just tapped to inspect.
+     * - On **collapse**: if the row's top was scrolled above the viewport (`offset < 0`), pauses follow
+     *   and anchors this row's top at `offset = 0` so `LazyColumn` does not skip past the collapsed card.
      */
-    fun onCollapse() {
-        if (isFollowing()) return
+    fun onBeforeToggle(expanding: Boolean) {
+        onEvictHeight()
+        if (expanding) {
+            if (isFollowing() && shouldPauseOnExpand()) {
+                onPauseFollow()
+            }
+            return
+        }
         val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: return
-        // `offset` is relative to the viewport's start: negative means the row's top is
-        // above it, which is exactly when the pixel offset is about to stop meaning
-        // anything (this row is not going to be that tall any more).
-        if (row.offset >= 0) return
-        listState.requestScrollToItem(index, 0)
+        if (row.offset < 0) {
+            if (isFollowing()) onPauseFollow()
+            listState.requestScrollToItem(index, 0)
+        }
     }
 }
 
@@ -566,10 +577,7 @@ internal fun Modifier.toggleContent(
     return then(
         if (enabled) {
             Modifier.clickable(onClickLabel = if (expanded) tr("收起", "Collapse") else tr("展开", "Expand")) {
-                // The row is about to get shorter; ask the list to keep its start where the
-                // reader can see it *before* the height changes (see [TranscriptRowAnchor]).
-                // Expanding needs nothing: growing does not move this row's top.
-                if (expanded) anchor?.onCollapse()
+                anchor?.onBeforeToggle(expanding = !expanded)
                 onToggle()
             }
         } else {

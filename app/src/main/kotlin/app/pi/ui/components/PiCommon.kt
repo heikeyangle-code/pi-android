@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -257,8 +258,13 @@ fun PiMenu(
         onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true),
     ) {
+        val enterAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            enterAlpha.animateTo(1f, androidx.compose.animation.core.tween(110))
+        }
         Column(
             modifier = modifier
+                .graphicsLayer { alpha = enterAlpha.value }
                 .width(PI_MENU_WIDTH)
                 .heightIn(max = maxHeight)
                 .clip(RoundedCornerShape(PI_MENU_RADIUS))

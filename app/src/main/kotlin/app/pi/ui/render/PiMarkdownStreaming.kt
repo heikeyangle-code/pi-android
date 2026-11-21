@@ -1,6 +1,6 @@
 package app.pi.ui.render
 
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
 
 /**
  * 这条 Markdown 表面是否还在流式生成。
@@ -24,4 +24,4 @@ import androidx.compose.runtime.staticCompositionLocalOf
  * 富渲染必须同时检查结构完整性（围栏结束 token、`$$` 闭合、JSON/XML 解析成功），
  * 不能只读这个布尔值。
  */
-internal val LocalPiMarkdownStreaming = staticCompositionLocalOf { false }
+internal val LocalPiMarkdownStreaming = compositionLocalOf { false }

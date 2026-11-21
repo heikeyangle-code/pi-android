@@ -1455,10 +1455,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             is AssistantDelta.ThinkingDelta -> {
                 val index = thinkingIndexByContentIndex[delta.contentIndex]
                 if (index != null && items.getOrNull(index) is ThinkingBlock) {
+                    if (delta.delta.isEmpty()) return TranscriptChange.None
                     val current = items[index] as ThinkingBlock
                     items[index] = current.copy(text = current.text + delta.delta)
                     TranscriptChange.Updated(index)
                 } else {
+                    if (delta.delta.isEmpty()) return TranscriptChange.None
                     thinkingIndexByContentIndex[delta.contentIndex] = items.size
                     append(
                         ThinkingBlock(
@@ -1477,9 +1479,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // a dropped or reordered delta cannot leave the row wrong.
             is AssistantDelta.TextEnd -> {
                 val content = delta.content
-                val index = textIndexByContentIndex[delta.contentIndex]
+                val index = textIndexByContentIndex.remove(delta.contentIndex)
                 val current = if (index == null) null else items.getOrNull(index) as? AssistantText
-                if (content == null || current == null || current.text == content) {
+                if (content.isNullOrEmpty() || current == null || current.text == content) {
                     TranscriptChange.None
                 } else {
                     items[index!!] = current.copy(text = content)
@@ -1497,7 +1499,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // does not merely risk a corrupt row, it loses the block entirely.
             is AssistantDelta.ThinkingEnd -> {
                 val content = delta.content
-                val index = thinkingIndexByContentIndex[delta.contentIndex]
+                val index = thinkingIndexByContentIndex.remove(delta.contentIndex)
                 val current = if (index == null) null else items.getOrNull(index) as? ThinkingBlock
                 if (current != null) {
                     // `thinking_end` is where **thinking** ends — not the message. The row used
@@ -1505,8 +1507,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     // ([finishStreaming]), i.e. through the whole answer text that follows, so the
                     // reported time included the reply and the state never matched what the model
                     // was doing. Close it here and stamp the duration at this moment.
+                    // Guard against empty string `""` in `thinking_end.content` from some providers:
+                    // never wipe accumulated streaming deltas with an empty string.
                     items[index!!] = current.copy(
-                        text = content ?: current.text,
+                        text = content?.takeIf { it.isNotEmpty() } ?: current.text,
                         streaming = false,
                         elapsedMs = current.elapsedMs ?: (now() - current.ts).coerceAtLeast(0),
                     )
@@ -1517,7 +1521,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     // Redacted thinking can be complete at start with no deltas: this event is the
                     // only thing that carries it, and it is already finished, so no running state
                     // and no duration (nothing was measured).
-                    thinkingIndexByContentIndex[delta.contentIndex] = items.size
                     append(
                         ThinkingBlock(
                             key = nextKey("thinking"),

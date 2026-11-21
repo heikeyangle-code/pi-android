@@ -378,7 +378,7 @@ fun ExtensionWorkingStrip(
                 defaultColor = palette.text,
                 style = PiTheme.text.meta,
                 modifier = Modifier.weight(1f),
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 richStyle = true,
             )

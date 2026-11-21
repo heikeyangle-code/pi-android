@@ -65,6 +65,11 @@ internal class RowHeightCache(private val capacity: Int = DEFAULT_CAPACITY) {
         if (heightPx > 0) heights[key] = heightPx
     }
 
+    /** Drop a stale cached height when a row toggles expanded/collapsed state. */
+    fun evict(key: String) {
+        heights.remove(key)
+    }
+
     /** Entries currently held. For diagnostics and the harness's bound check. */
     fun size(): Int = heights.size
 

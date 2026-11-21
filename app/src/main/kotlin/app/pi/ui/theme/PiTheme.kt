@@ -750,21 +750,21 @@ fun PiTheme(
     // costs a field read — the previous `remember(textScaleDelta)` was allocating a
     // five-`TextStyle` `PiTextStyles` right here on every offset change.
     val styles = typographyProfile.styles
+    val colorScheme = androidx.compose.runtime.remember(palette) { palette.colorScheme() }
+    val typography = androidx.compose.runtime.remember(typographyProfile.fontSizeOffsetSp) {
+        piTypography(typographyProfile.fontSizeOffsetSp)
+    }
+    val shapes = androidx.compose.runtime.remember { piShapes() }
     CompositionLocalProvider(
         LocalPiPalette provides palette,
         LocalPiTextStyles provides styles,
         LocalPiTypographyProfile provides typographyProfile,
-        // The long-press highlight, from pi's own selection token — see
-        // [textSelectionColors]. Provided here rather than through the M3
-        // `ColorScheme` because M3 has no slot for it: it is a Compose-foundation
-        // composition local, and every `SelectionContainer` in `ui/blocks/**`
-        // (one scope per card, `BlockChrome.kt`'s `SelectableContent`) reads it.
         LocalTextSelectionColors provides palette.textSelectionColors,
     ) {
         MaterialTheme(
-            colorScheme = palette.colorScheme(),
-            typography = piTypography(typographyProfile.fontSizeOffsetSp),
-            shapes = piShapes(),
+            colorScheme = colorScheme,
+            typography = typography,
+            shapes = shapes,
             content = content,
         )
     }

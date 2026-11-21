@@ -75,26 +75,15 @@ fun HookMessageBlock(
                     app.pi.ui.extension.RenderedAnsiBlock(
                         lines = renderedLines,
                         expanded = expanded,
-                        collapsedLimit = Int.MAX_VALUE,
+                        collapsedLimit = COLLAPSED_MESSAGE_LINES,
                         modifier = Modifier.padding(top = PiSpacing.tiny),
                     )
                 } else if (expanded || !collapsible) {
-                // Expanded (or short enough that there is nothing to collapse):
-                // markdown. The renderer's own hook-message component builds a
-                // `Markdown` over the message body
-                // (`packages/coding-agent/src/modes/interactive/components/custom-message.ts:107-111`),
-                // and the engine names the field `markdown` for the same reason.
-                // `custom-message.ts:107-111` builds the `Markdown` with an explicit base
-                // colour, and it is not `text`:
-                //   `color: (text) => theme.fg("customMessageText", text)`
-                // (`components/custom-message.js:83-85`). All four `customMessageBg` cards take
-                // that same token — this one used to fall through to `text` (`PiMarkdownTheme`'s
-                // `textColor ?: palette.text`), which is the one thing that made it a different
-                // card from `SkillInvocationBlock`.
                 PiMarkdownText(
                     markdown = item.markdown.ifEmpty { tr("（空消息）", "(Empty message)") },
                     modifier = Modifier.fillMaxWidth(),
                     textColor = palette.customMessageText,
+                    immediate = expanded,
                 )
             } else {
                 // Collapsed preview, unchanged: plain text cut to four lines.

@@ -117,18 +117,11 @@ fun BranchSummaryBlock(
                 )
             }
             if (expanded) {
-                // Expanded: markdown. pi's expanded branch is a `Markdown` over
-                // the summary (`packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:41-45`),
-                // so headings, lists and fences in a model-written summary read
-                // as structure instead of as source.
-                // The base colour of that `Markdown` is `customMessageText`, not `text`:
-                //   `color: (text) => theme.fg("customMessageText", text)`
-                // (`components/branch-summary-message.js:34-36`). This card and its three
-                // siblings share one background, so they share one foreground too.
                 PiMarkdownText(
                     markdown = item.summary.ifEmpty { tr("（无摘要）", "(No summary)") },
                     modifier = Modifier.fillMaxWidth(),
                     textColor = palette.customMessageText,
+                    immediate = true,
                 )
             } else {
                 // Collapsed: plain text cut to the same preview this block has

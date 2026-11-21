@@ -276,11 +276,14 @@ internal fun Composer(
         }
 
         // 3) 文本输入区 + 右侧快捷清空
-        val field = remember {
+        // 不在组合期间直接写 MutableState（旧代码每次外部修改 draft 都会同步写 field.value，引发额外重组帧与光标闪烁）。
+        var fieldState by remember {
             mutableStateOf(TextFieldValue(text = draft, selection = TextRange(draft.length)))
         }
-        if (field.value.text != draft) {
-            field.value = TextFieldValue(text = draft, selection = TextRange(draft.length))
+        val activeValue = if (fieldState.text == draft) {
+            fieldState
+        } else {
+            TextFieldValue(text = draft, selection = TextRange(draft.length))
         }
         Row(
             modifier = Modifier
@@ -289,10 +292,10 @@ internal fun Composer(
             verticalAlignment = Alignment.Top,
         ) {
             BasicTextField(
-                value = field.value,
+                value = activeValue,
                 onValueChange = { updated ->
-                    val textChanged = updated.text != field.value.text
-                    field.value = updated
+                    val textChanged = updated.text != activeValue.text
+                    fieldState = updated
                     if (textChanged) onDraftChange(updated.text)
                 },
                 modifier = Modifier

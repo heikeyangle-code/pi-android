@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -128,7 +127,8 @@ internal fun ResourceFileEditor(
         }
     }
 
-    Column(Modifier.fillMaxSize().imePadding()) {
+    // PiRoot 已经在非对话目的地挂载了 imePadding()，这里不重复加，避免软键盘弹起时双倍抬升。
+    Column(Modifier.fillMaxSize()) {
         PiTopBar(
             title = d?.let { it.kind.label + " · " + it.rel.substringAfterLast('/') } ?: tr("编辑", "Edit"),
             onBack = { leave() },

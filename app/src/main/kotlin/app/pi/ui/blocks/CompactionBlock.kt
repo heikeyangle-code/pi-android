@@ -133,10 +133,8 @@ fun CompactionBlock(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = PiSpacing.tiny),
-                            // pi's `Markdown` base colour for this card is `customMessageText`
-                            // (`compaction-summary-message.js:35`), the same token its three
-                            // siblings use.
                             textColor = palette.customMessageText,
+                            immediate = true,
                         )
                     } else {
                         ProseText(

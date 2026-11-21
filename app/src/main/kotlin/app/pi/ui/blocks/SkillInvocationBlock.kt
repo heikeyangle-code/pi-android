@@ -90,32 +90,11 @@ fun SkillInvocationBlock(
                     ExpandLabel(expanded)
                 }
                 if (expanded) {
-                // Expanded: markdown, not prose. pi's expanded branch builds a
-                // `Markdown` over the skill body
-                // (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:42-45`),
-                // so headings, lists and fences inside SKILL.md read as structure
-                // instead of as source.
-                //
-                // `textColor = customMessageText` is exactly the option pi passes
-                // (`skill-invocation-message.ts:43`: `color: (text) => theme.fg("customMessageText", text)`).
-                // pi's `Markdown` applies it as the *base* foreground
-                // (`components/markdown.ts:385`, inside `applyDefaultStyle` at
-                // `:377-403`), so headings, links and code keep their own
-                // `md*` tokens on top of it — which is what `PiMarkdownText`'s
-                // `textColor` does. It cannot be folded into a constant: a
-                // hand-written theme may set `customMessageText` differently from
-                // `text`.
-                //
-                // One deliberate deviation, kept from before: pi prepends `**name**`
-                // as a bold markdown header inside this document
-                // (`skill-invocation-message.ts:40`), because in pi the name
-                // otherwise appears only in the collapsed line. This card's header
-                // row carries `/skill:name` in *both* states (spec §7.4), so
-                // prepending it here would print the name twice.
                     PiMarkdownText(
                         markdown = item.body.ifEmpty { tr("（技能没有正文）", "(Empty skill body)") },
                         modifier = Modifier.fillMaxWidth(),
                         textColor = palette.customMessageText,
+                        immediate = true,
                     )
                 }
             }

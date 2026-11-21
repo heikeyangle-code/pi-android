@@ -1150,8 +1150,18 @@ internal fun WsSheet(
 @Composable
 private fun ClearSheetPlatformDim() {
     val view = LocalView.current
+    remember(view) {
+        (view.parent as? DialogWindowProvider)?.window?.let { w ->
+            w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setDimAmount(0f)
+        }
+        true
+    }
     SideEffect {
-        (view.parent as? DialogWindowProvider)?.window?.setDimAmount(0f)
+        (view.parent as? DialogWindowProvider)?.window?.let { w ->
+            w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setDimAmount(0f)
+        }
     }
 }
 

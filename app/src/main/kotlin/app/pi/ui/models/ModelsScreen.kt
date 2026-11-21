@@ -87,6 +87,7 @@ fun ModelsScreen(
     val scope = rememberCoroutineScope()
     var reload by remember { mutableStateOf(0) }
     var data by remember { mutableStateOf<Data?>(null) }
+    var loaded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var notice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -103,6 +104,7 @@ fun ModelsScreen(
         val h = host()
         if (h == null) {
             data = null
+            loaded = true
             return@LaunchedEffect
         }
         val providers = runCatching { h.auth.providers() }
@@ -117,6 +119,7 @@ fun ModelsScreen(
             scoped = runCatching { h.advanced.scopedModels() }.getOrDefault(emptyList()),
             cache = runCatching { h.advanced.cacheStatus() }.getOrNull(),
         )
+        loaded = true
     }
 
     val modelSettings = remember { PiSettingsCatalog.settingsIn(G_MODELS_SCREEN) }
@@ -125,7 +128,9 @@ fun ModelsScreen(
         PiTopBar(title = tr("模型与供应商", "Models & Providers"), onBack = onBack)
         val d = data
         if (d == null) {
-            PiInfoNote(tr("引擎没有在运行，这一页读不到模型与供应商。启动后再来。", "Engine is not running, so models and providers cannot be loaded. Start the engine and try again."))
+            if (loaded) {
+                PiInfoNote(tr("引擎没有在运行，这一页读不到模型与供应商。启动后再来。", "Engine is not running, so models and providers cannot be loaded. Start the engine and try again."))
+            }
             return@Column
         }
 

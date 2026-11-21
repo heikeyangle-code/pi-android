@@ -127,7 +127,7 @@ fun ToolCallBlock(
     }
     val previewText = remember(bodyText, expanded, fullOutput, outputOversize) {
         when {
-            (!expanded && state != ToolState.Failed) || outputOversize -> ""
+            !expanded || outputOversize -> ""
             fullOutput -> bodyText
             else -> headLines(bodyText, COLLAPSED_OUTPUT_LINES)
         }
@@ -222,7 +222,8 @@ fun ToolCallBlock(
                         app.pi.ui.extension.RenderedAnsiBlock(
                             lines = combined,
                             expanded = expanded,
-                            collapsedLimit = Int.MAX_VALUE,
+                            collapsedLimit = 2,
+                            expandHint = { hidden -> tr("还有 $hidden 行，点击展开", "$hidden more lines, tap to expand") },
                         )
                         ToolImages(item.images, onImageClick)
                     }
@@ -316,8 +317,8 @@ fun ToolCallBlock(
                 // argument under the title (`render-utils.js:60-79`); the collapsed title cell
                 // can only carry one ellipsized line, so an MCP or extension tool's parameters
                 // were unreadable there. Same body budget and the same admission as the script.
-                // 扩展渲染器的 call / result 分段呈现：直接完整展示官方 ToolExecutionComponent 按 expanded
-                // 渲染出来的行（不再二次截断或硬编码「还有 N 行，点标题展开」）。
+                // 扩展渲染器的 call / result 分段呈现：折叠态只保留紧凑摘要（最多 2 行调用摘要，隐藏结果正文），
+                // 展开态完整展示官方 ToolExecutionComponent 按 expanded 渲染出来的全部行，确保失败/长输出可收起。
                 rendered?.let { r ->
                     val callLines = r.call.orEmpty()
                     val resultLines = r.result.orEmpty()
@@ -325,11 +326,11 @@ fun ToolCallBlock(
                         app.pi.ui.extension.RenderedAnsiBlock(
                             lines = callLines,
                             expanded = expanded,
-                            collapsedLimit = Int.MAX_VALUE,
+                            collapsedLimit = 2,
                             modifier = Modifier.padding(top = PiSpacing.tiny),
                         )
                     }
-                    if (callLines.isNotEmpty() && resultLines.isNotEmpty()) {
+                    if (expanded && callLines.isNotEmpty() && resultLines.isNotEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -338,10 +339,10 @@ fun ToolCallBlock(
                                 .background(palette.borderMuted.copy(alpha = 0.45f)),
                         )
                     }
-                    if (resultLines.isNotEmpty()) {
+                    if (expanded && resultLines.isNotEmpty()) {
                         app.pi.ui.extension.RenderedAnsiBlock(
                             lines = resultLines,
-                            expanded = expanded,
+                            expanded = true,
                             collapsedLimit = Int.MAX_VALUE,
                             modifier = Modifier.padding(top = if (callLines.isEmpty()) PiSpacing.tiny else PiSpacing.hairline),
                         )
@@ -425,7 +426,7 @@ fun ToolCallBlock(
                     }
                 }
 
-                if ((expanded || state == ToolState.Failed) && item.output.isNotEmpty() && rendered?.result == null) {
+                if (expanded && item.output.isNotEmpty() && rendered?.result == null) {
                     if (outputOversize) {
                         // The 200 KB ceiling is *ours* — a rendering budget, not a pi
                         // rule — and pi has usually already truncated this result at

@@ -165,8 +165,12 @@ fun SettingsGroupScreen(
         if (index >= 0) listState.animateScrollToItem(index)
     }
 
-    // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
-    val scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+    // 使用 derivedStateOf 避免滚动时每像素触发整页重组。
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        }
+    }
     val showSectionHeaders = sections.size > 1
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
@@ -350,14 +354,14 @@ private fun SettingSlot(
  * 分组只决定**哪些行躺在一张卡里、以什么次序**；原来那个 `label` 字段（节标题）
  * 已经删掉 —— 统一后的设置面不再有节标题，也不再显示「N 项」。
  */
-private class GroupSection(val settings: List<PiSetting>)
+private class GroupSection(val title: String, val settings: List<PiSetting>)
 
 private fun buildGroupSections(groupId: String): List<GroupSection> {
     val settings = PiSettingsCatalog.settingsIn(groupId)
     return PiSettingsCatalog.sectionsIn(groupId).mapNotNull { section ->
         val rows = settings.filter { setting -> setting.section == section }
         // 过滤后空掉的一段整段去掉：一张没有行的卡就是一块空白。
-        if (rows.isEmpty()) null else GroupSection(rows)
+        if (rows.isEmpty()) null else GroupSection(section, rows)
     }
 }
 
