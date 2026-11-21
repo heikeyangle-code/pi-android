@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  原生 Jetpack Compose · 官方 Pi 1.6.0 SDK · 三引擎 Linux 容器 · 完整扩展与 TUI 兼容 · 免 Root · 免 Termux
+  原生 Jetpack Compose · 官方 Pi 1.6.0 SDK · 中英双语零重启切换 · 三引擎 Linux 容器 · 完整扩展与 TUI 兼容 · 免 Root · 免 Termux
 </p>
 
 <p align="center">
@@ -19,7 +19,8 @@
   <img src="https://img.shields.io/badge/ABI-arm64--v8a-555" alt="ARM64" />
   <img src="https://img.shields.io/badge/pi-1.6.0-7C5CFF" alt="pi 1.6.0" />
   <img src="https://img.shields.io/badge/Node.js-24.22.1-339933?logo=node.js&logoColor=white" alt="Node.js 24.22.1" />
-  <img src="https://img.shields.io/badge/SDK_Host_Tests-299_PASS-2ea44f" alt="299 SDK Host Tests" />
+  <img src="https://img.shields.io/badge/i18n-%E4%B8%AD%E8%8B%B1%E5%8F%8C%E8%AF%AD-007ACC" alt="中英双语" />
+  <img src="https://img.shields.io/badge/SDK_Host_Tests-307_PASS-2ea44f" alt="307 SDK Host Tests" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
 </p>
 
@@ -57,14 +58,14 @@
       <sub><b>克制通透的工具卡与行内字级 Diff</b> —— 每次命令、读文件、改代码都清晰折叠、就地展开，像看代码评审一样舒服。</sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/screenshots/workspace.jpg" width="280" alt="工作区文件列表与本次改动" /><br />
-      <sub><b>手机本地真工作区</b> —— 直接操作手机上的真实项目目录，本次会话改过的文件自动置顶归集。</sub>
+      <img src="docs/screenshots/tools-manager.jpg" width="280" alt="全部工具实时开关与 Codemode 管理" /><br />
+      <sub><b>全部工具实时总控与 Codemode</b> —— 内置/扩展/MCP 工具一键启停、设为新会话默认，完整对齐 Pi 1.6.0 Codemode 与 Shell 前缀。</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/chat-markdown.jpg" width="280" alt="对话里的 Markdown 与公式渲染" /><br />
-      <sub><b>旗舰级原生富文本渲染</b> —— 宿主毫秒级语法高亮、LaTeX 数学公式、Mermaid 流程图与全屏看图。</sub>
+      <img src="docs/screenshots/system-prompt-context.jpg" width="280" alt="系统提示词与上下文管线管理页" /><br />
+      <sub><b>统一系统提示词与上下文管线</b> —— 全局与项目级 <code>APPEND_SYSTEM.md</code> / <code>SYSTEM.md</code> / <code>AGENTS.md</code> 一站编辑与即时重载。</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/models-providers.jpg" width="280" alt="模型与供应商设置页" /><br />
@@ -91,18 +92,20 @@
 
 - **虚拟 TUI 表面实时投影（`ui/surfaces.mjs` → 原生 Compose 交互面板）**：
   - 扩展调用 `ctx.ui.custom()`、`setWidget()`、`setHeader()`、`setFooter()`、`tui.showOverlay()` 时，宿主把真实 Pi TUI 组件挂载到虚拟终端表面，按帧去重推送给 Android 原生界面，**支持最小化常驻停靠栏、随时收起与重开**。
-  - 完整实现官方 `OverlayHandle`（`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`）、`Focusable.focused` 焦点流转与 `OverlayOptions`（`visible(w, h)`、`nonCapturing` 等）。
-  - **小屏自适应宽度 + 触控键鼠双打通**：默认「适配宽度」把 80 列桌面 TUI 自动缩放进手机屏幕，并按真实列数回传 `ui.resize`；视口高度按屏幕动态计算，不再死板截断；接入官方 `KeybindingsManager` 匹配快捷键，并把触屏点按实时翻译为 `TuiMouseEvent` 交给组件的 `handleMouse()`。
+  - 完整实现官方 `OverlayHandle`（`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`）、`Focusable.focused` 焦点流转与 `OverlayOptions`（`visible(w, h)`、`nonCapturing` 悬浮 HUD 浮层等）。
+  - **小屏自适应宽度 + 触控键鼠双打通 + OSC 8 链接**：默认「适配宽度」把 80 列桌面 TUI 自动缩放进手机屏幕，并按真实列数回传 `ui.resize`；原生支持可点击 **OSC 8 超链接**；接入官方 `KeybindingsManager` 匹配快捷键，并把触屏点按实时翻译为 `TuiMouseEvent` 交给组件的 `handleMouse()`。
   - **终端控制序列原生桥接**：精准剥离零宽 `CURSOR_MARKER`、把 `FAKE_CURSOR` 转为反显 SGR，并实时拦截 `tui.terminal.write()` 发出的 **`BEL`（`\x07`）响铃**、**OSC 777 / 99 / 9 通知**、**OSC 0/2 窗口标题**与 **OSC 9;4 进度指示** —— 连社区写的终端小游戏音效和进度条，在手机上都能活起来！
 - **1:1 官方扩展渲染与拦截管线（`commands/catalog.mjs`）**：
-  - 第三方扩展与 MCP 工具直接交给官方 `ToolExecutionComponent`（经 `resolveToolRenderers`）渲染，完整保留 `details`、跨帧持久化 `state`、`renderShell: "self"` 自绘框架，以及防抖异步重绘（`render.invalidate`）。
-  - 全面接通 `registerMessageRenderer`（`CustomMessageComponent`）、`registerEntryRenderer`（`CustomEntryComponent`）、`registerMarkdownTransformer`、`addAutocompleteProvider`（输入框实时补全扩展命令与参数）、`onTerminalInput`、`registerFlag` 与真实 `FooterDataProvider`（实时 Git 分支与可用供应商计数）。
+  - 第三方扩展与 MCP 工具直接交给官方 `ToolExecutionComponent`（经 `resolveToolRenderers`）渲染，完整保留 `details`、跨帧持久化 `state`、`renderShell: "self"` 自绘框架、防抖异步重绘（`render.invalidate`）与 `/reload` 缓存清理。
+  - 全面接通 `registerMessageRenderer`（`CustomMessageComponent`）、`registerEntryRenderer`（`CustomEntryComponent`）、`registerMarkdownTransformer`、`addAutocompleteProvider`（输入框实时补全扩展命令与参数）、`onTerminalInput`、`registerShortcut`（`catalog.shortcuts` / `triggerShortcut`）、`ctx.ui.getAllThemes()` / `getTheme()` / `setTheme()`、`registerFlag` 与真实 `FooterDataProvider`（实时 Git 分支与可用供应商计数）。
   - 会话切换与 `/reload` 严格同步官方 `resetExtensionUI`（`ui.reset`）与 `catalog.changed` —— 装完新扩展包，**一键重载，命令面板、工具列表与模型目录秒级同步**。
 - **随包内置的自研原生增强扩展（`app/src/main/assets/pi-extensions/`）**：
   - **`pi-highlight`**：通过认证本地回环服务直接复用 guest 里 Pi 自带的 `highlight.js` 与 `lovely-mermaid`，不在 Android 端塞第二套 JS 引擎，就能实现毫秒级语法高亮与 Mermaid 排版，且配色 100% 跟随官方主题。
   - **`pi-android-bridge` + `pi-android-permission-gate`**：把 Android 设备能力封装为标准 Pi 扩展，关闭即零消耗，高危操作按规则拦截弹窗。
-- **透明统一的扩展与资源中心（设置 → 扩展与资源）**：
-  - 扩展、技能（Skills）、提示模板、主题、上下文文件、npm/git 包、MCP 服务器与项目信任一站直达；每一条都标明真实磁盘路径与作用域（项目级 / 全局级），没有封闭私有商店，与桌面端 `~/.pi/agent/` 和 `.pi/` 配置 100% 互通。
+- **透明统一的资源、工具与提示词总控台**：
+  - **设置 → 扩展与资源**：扩展、技能（Skills）、提示模板、主题、上下文文件、npm/git 包、MCP 服务器与项目信任一站直达，支持用户资源快捷删除，与桌面端 `~/.pi/agent/` 和 `.pi/` 配置 100% 互通。
+  - **设置 → 工具**：内置核心工具、Pi 内置高级工具（`codemode` / `mcp`）与全部用户扩展/MCP 工具实时分组开关，支持一键「设为新会话默认（`defaultTools`）」与「恢复默认」，完整集成 Pi 1.6.0 Codemode 与 `shellCommandPrefix`。
+  - **系统提示词与上下文管线 + 对话内一键查阅**：按 Pi 1.6.0 真实拼装顺序管理全局与项目级 `APPEND_SYSTEM.md` / `SYSTEM.md` / `AGENTS.md` 并就地重载；对话页右上角命令中心一键弹出「当前生效系统提示词」并按 `<tools>/<rules>/<addendum>/<project_context>/<skills>` 分段筛选。
 
 ---
 
@@ -126,7 +129,7 @@ Pi for Android 不是山寨重写，也不是脆弱的 CLI 文本解析器，而
 
 - **第一时间享受上游最新进化**：已升级至 **Pi `1.6.0`** —— 内置 **GPT-6.2 Sol / GPT-6.2 Astra**（OpenAI / Azure / Codex 默认切换，自动隐藏不支持的 `off` 思考档位）、通义 Token Plan 新网关与 `qwen4-max-preview` / `deepseek-v4.1-flash`、1,698 个官方 chat 模型、`undici 8.12.4`（6 项 GHSA 安全修复）、Codex 长思考断连续传与缓存命中优化。
 - **深度吃透 1.6.0 宿主新特性**：接入 `takeUnreportedDiagnostics()`（启动与每次会话替换精准推送模型回退与扩展报错）、`commandOutput: "capture"`（彻底防止 `git`/`npm` 污染管道或卡死密码输入）、OpenAI & Anthropic 推理块被丢弃实时诊断通知、以及 `read` 非视觉模型读图折叠态警告。
-- **秒级冷启动与实时状态推流**：优先加载 `dist/bundle/index.js` 打包入口、延迟加载重型模块；上下文用量、Token 计数与费用全部由宿主 `stateStore` 实时推送，告别卡顿轮询。
+- **全链路冷启动提速与实时状态推流**：优先加载 `dist/bundle/index.js`、未配置自定义代理/超时时延迟加载 `http-dispatcher`/`undici`、`session.open` 响应直出初始状态快照、APK 版本戳跳过重复资产哈希、延后后台会话列表扫描；上下文用量、Token 计数与费用全部由宿主 `stateStore` 实时推送，告别卡顿轮询。
 
 ---
 
@@ -194,7 +197,7 @@ flowchart TB
 ```
 
 ### 面向开发者的工程护城河
-- **299 项真引擎集成测试 + 契约守卫**：每次提交都在真实 Pi SDK 上跑满 `contract.mjs`（覆盖公开导出 + 全部内部 `dist/` 路径）与 3 套 `test.mjs`（`bundle` / `--no-bundle` / `--scandir-fix`），再叠加 `:rpc` JVM 单测、Android API 静态守卫、TAWCROOT NDK 编译与双变体签名 APK 构建（6/6 GitHub Actions CI）。
+- **307 项真引擎集成测试 + 契约守卫**：每次提交都在真实 Pi SDK 上跑满 `contract.mjs`（覆盖公开导出 + 全部内部 `dist/` 路径）与 3 套 `test.mjs`（`bundle` / `--no-bundle` / `--scandir-fix`），再叠加 `:rpc` JVM 单测、Android API 与双语 i18n 静态守卫、TAWCROOT NDK 编译与双变体签名 APK 构建（6/6 GitHub Actions CI）。
 - **自动化上游升级审计流**：内置 [tools/pi-upgrade-audit.mjs](tools/pi-upgrade-audit.mjs) 与 [docs/sdk-host/upgrading.md](docs/sdk-host/upgrading.md)，上游 Pi 一发新包，一条命令自动扫描 9 条集成接缝并精确列出宿主层与 App 层改动清单。
 
 ```bash
@@ -225,7 +228,7 @@ node tools/fetch-runtime.mjs
 ## 坦诚说明与参与贡献
 
 - **CI 绿灯能证明什么**：6/6 CI 全绿证明代码可编译、与锁定版本 Pi SDK 契约 100% 对齐、双签名 APK 装配完整；具体机型的三运行时切换与硬件权限体验需以真机实测为准。
-- **界面语言**：当前界面为简体中文，中英双语（`strings.xml` 抽离 + App 内零重启切换）已进入规划与推进阶段。
+- **界面语言**：已全面支持 **简体中文 / English 双语界面**，默认跟随系统语言，并可在 **设置 → 外观 → 界面语言** 中秒切零重启生效。
 - **欢迎 Star 与 PR**：如果你喜欢「把真正的 Coding Agent 塞进手机」这件事，欢迎点一颗 **Star** 支持！无论你是想提 Issue、补充更多机型实测反馈，还是参与多语言与扩展生态建设，都非常欢迎。
 
 ---

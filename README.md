@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  Native Jetpack Compose · Official Pi 1.6.0 SDK · Three Linux Runtimes · Full Extension &amp; TUI Parity · Zero Root, Zero Termux
+  Native Jetpack Compose · Official Pi 1.6.0 SDK · Bilingual EN / 中文 · Three Linux Runtimes · Full Extension &amp; TUI Parity · Zero Root, Zero Termux
 </p>
 
 <p align="center">
@@ -19,7 +19,8 @@
   <img src="https://img.shields.io/badge/ABI-arm64--v8a-555" alt="ARM64" />
   <img src="https://img.shields.io/badge/pi-1.6.0-7C5CFF" alt="pi 1.6.0" />
   <img src="https://img.shields.io/badge/Node.js-24.22.1-339933?logo=node.js&logoColor=white" alt="Node.js 24.22.1" />
-  <img src="https://img.shields.io/badge/SDK_Host_Tests-299_PASS-2ea44f" alt="299 SDK Host Tests" />
+  <img src="https://img.shields.io/badge/i18n-EN_%2F_%E4%B8%AD%E6%96%87-007ACC" alt="Bilingual EN / ZH" />
+  <img src="https://img.shields.io/badge/SDK_Host_Tests-307_PASS-2ea44f" alt="307 SDK Host Tests" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
 </p>
 
@@ -53,21 +54,21 @@ It bundles a complete **Ubuntu 24.04 ARM64 userspace + Node.js 24.22.1 + Git + r
 <table align="center">
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/chat-tools.jpg" width="280" alt="Tool cards and an inline diff in a conversation" /><br />
+      <img src="docs/screenshots/chat-tools.jpg" width="280" alt="Chat stream with calm tool cards and inline diff" /><br />
       <sub><b>Calm tool cards &amp; intra-line diffs</b> — every shell command, file read, and edit stays structured and effortless to review.</sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/screenshots/workspace.jpg" width="280" alt="Workspace file list with this session's changes" /><br />
-      <sub><b>Real local workspace</b> — browse any folder on your phone with files edited in this session pinned right at the top.</sub>
+      <img src="docs/screenshots/tools-manager.jpg" width="280" alt="Unified Tools & Codemode manager" /><br />
+      <sub><b>Live Tools &amp; Codemode Manager</b> — toggle every built-in, extension &amp; MCP tool live, save defaults, and tune Pi 1.6.0 Codemode.</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/chat-markdown.jpg" width="280" alt="Markdown and LaTeX rendering in the transcript" /><br />
-      <sub><b>Native rich rendering</b> — guest-powered syntax highlighting, LaTeX math, Mermaid diagrams, and full-screen image viewer.</sub>
+      <img src="docs/screenshots/system-prompt-context.jpg" width="280" alt="Unified System Prompt & Context pipeline" /><br />
+      <sub><b>Unified Prompt &amp; Context Pipeline</b> — manage global &amp; project <code>APPEND_SYSTEM.md</code>, <code>SYSTEM.md</code>, and <code>AGENTS.md</code> with 1-tap reload.</sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/screenshots/models-providers.jpg" width="280" alt="Model providers screen" /><br />
+      <img src="docs/screenshots/models-providers.jpg" width="280" alt="Models & Providers screen" /><br />
       <sub><b>Full provider freedom</b> — 7 OAuth subscription logins, 35+ presets (1,698 chat models), or any OpenAI-compatible endpoint.</sub>
     </td>
   </tr>
@@ -82,17 +83,19 @@ It bundles a complete **Ubuntu 24.04 ARM64 userspace + Node.js 24.22.1 + Git + r
 
 - **Virtual TUI Surface Projection (`ui/surfaces.mjs` → Jetpack Compose)**:
   - Extensions calling `ctx.ui.custom()`, `setWidget()`, `setHeader()`, `setFooter()`, or `tui.showOverlay()` mount real Pi TUI components into an in-host virtual surface — **minimizable to a dock, collapsible, and reopenable at any time**.
-  - Full `OverlayHandle` (`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`), `Focusable.focused`, and `OverlayOptions` (`visible(w, h)`, `nonCapturing`, anchors) parity.
-  - **Responsive 80-col width-fitting + touch & keyboard dispatch**: scales 80-column desktop TUI layouts cleanly into your phone viewport, reports real columns back via `ui.resize`, wires official `KeybindingsManager`, and translates touchscreen taps into `TuiMouseEvent` for `handleMouse()`.
+  - Full `OverlayHandle` (`hide` / `setHidden` / `focus` / `unfocus` / `getBounds`), `Focusable.focused`, and `OverlayOptions` (`visible(w, h)`, `nonCapturing` floating HUD overlays, anchors) parity.
+  - **Responsive 80-col width-fitting + touch & keyboard dispatch**: scales 80-column desktop TUI layouts cleanly into your phone viewport, reports real columns back via `ui.resize`, wires official `KeybindingsManager`, renders clickable **OSC 8 hyperlinks**, and translates touchscreen taps into `TuiMouseEvent` for `handleMouse()`.
   - **Terminal control sequence bridge**: strips zero-width `CURSOR_MARKER`, turns `FAKE_CURSOR` into inverse SGR, and intercepts `BEL` (`\x07`) sound bells, `OSC 777 / 99 / 9` notifications, `OSC 0/2` window titles, and `OSC 9;4` progress indicators — even interactive TUI games with terminal bells come alive on Android.
 - **1:1 Official Extension Renderers & Hooks (`commands/catalog.mjs`)**:
-  - Extension & MCP tool cards run through Pi's own `ToolExecutionComponent` (`resolveToolRenderers`), preserving per-call `state`, `details`, `renderShell: "self"`, and debounced `render.invalidate`.
-  - Complete plumbing for `registerMessageRenderer` (`CustomMessageComponent`), `registerEntryRenderer` (`CustomEntryComponent`), `registerMarkdownTransformer`, `addAutocompleteProvider`, `onTerminalInput`, `registerFlag`, `FooterDataProvider` (live git branch & provider count), plus official `resetExtensionUI` and 1-tap reload (`catalog.changed`).
+  - Extension & MCP tool cards run through Pi's own `ToolExecutionComponent` (`resolveToolRenderers`), preserving per-call `state`, `details`, `renderShell: "self"`, debounced `render.invalidate`, and clean cache invalidation on `/reload`.
+  - Complete plumbing for `registerMessageRenderer` (`CustomMessageComponent`), `registerEntryRenderer` (`CustomEntryComponent`), `registerMarkdownTransformer`, `addAutocompleteProvider`, `onTerminalInput`, `registerShortcut` (`catalog.shortcuts` / `triggerShortcut`), `ctx.ui.getAllThemes()` / `getTheme()` / `setTheme()`, `registerFlag`, `FooterDataProvider` (live git branch & provider count), plus official `resetExtensionUI` and 1-tap reload (`catalog.changed`).
 - **Bundled Native-Enhancement Extensions (`app/src/main/assets/pi-extensions/`)**:
   - **`pi-highlight`**: exposes Pi's own guest `highlight.js` + `lovely-mermaid` over an authenticated local loopback service — instant syntax highlighting and Mermaid rendering with zero second JS runtime on Android and 100% official theme parity.
   - **`pi-android-bridge` & `pi-android-permission-gate`**: bridges opt-in Android device automation into Pi as a standard extension — **0 tokens when off**, native 3-choice confirmation dialogs for irreversible actions.
-- **Unified Transparent Resource Hub (**设置 → 扩展与资源**)**:
-  - Extensions, skills, prompt templates, themes, context files, npm/git packages, MCP servers, and project trust in one place — every row names its real path and scope (project vs. global), 100% compatible with desktop `~/.pi/agent/` and `.pi/` layouts.
+- **Unified Transparent Resource, Tools & Prompt Control**:
+  - **Settings → Extensions & Resources**: extensions, skills, prompt templates, themes, context files, npm/git packages, MCP servers, and project trust in one place — with quick delete for user-owned files and 100% desktop `~/.pi/agent/` & `.pi/` compatibility.
+  - **Settings → Tools**: live switches for every built-in, built-in extension (`codemode`, `mcp`), and user extension/MCP tool, with **Save as Default** (`defaultTools`), Pi 1.6.0 **Codemode** settings, and official `shellCommandPrefix`.
+  - **Unified System Prompt & Context + In-Chat Inspector**: edit global & project `APPEND_SYSTEM.md`, `SYSTEM.md`, and `AGENTS.md`/`CLAUDE.md` with 1-tap reload, or inspect the active assembled prompt with XML section filters directly from the chat top-right command center.
 
 ---
 
@@ -111,7 +114,7 @@ First launch unpacks a deterministic, per-payload versioned Linux environment (*
 Running the real Pi SDK via a typed, backpressured, epoch-isolated **Node.js SDK Host** means ~85% of every upstream Pi release lands automatically:
 - **Pi `1.6.0` ready**: GPT-6.2 Sol & Astra (default on OpenAI / Azure / Codex, auto-hiding unsupported `off` thinking), Qwen Token Plan new gateways & models, 1,698 chat models, `undici 8.12.4` (6 GHSA security fixes), Codex WebSocket & prompt-cache fixes.
 - **Deep 1.6.0 host integration**: `AgentSessionRuntime.takeUnreportedDiagnostics()` (reports model fallbacks and extension errors once per occurrence on startup & session switches), `commandOutput: "capture"` (prevents git/npm subprocesses from corrupting protocol stdout or hanging on password prompts), OpenAI & Anthropic dropped-reasoning notices (`showCacheMissNotices`), and collapsed-state `imageUnsupportedByModel` warnings on `read` cards.
-- **Fast cold start & live telemetry**: loads `dist/bundle/index.js` first, lazy-loads heavy modules, and streams live context usage, token counts, and costs directly from `stateStore`.
+- **Optimized cold start & live telemetry**: loads `dist/bundle/index.js` first, defers `http-dispatcher`/`undici` unless custom proxy or timeouts are configured, embeds initial state directly in `session.open`, uses APK-stamp fast-paths to skip redundant per-boot asset hashing, and streams live context usage, token counts, and costs directly from `stateStore`.
 
 ---
 
@@ -178,7 +181,7 @@ flowchart TB
     H --> L
 ```
 
-- **299 real-SDK host checks + 6/6 CI**: every push verifies `:rpc` JVM tests, real Pi SDK contract (`contract.mjs`), 3× SDK Host suites (`bundle`, `--no-bundle`, `--scandir-fix`), Android API static guards, TAWCROOT NDK build, and both signed APKs (`sideload28` + `modern36`).
+- **307 real-SDK host checks + 6/6 CI**: every push verifies `:rpc` JVM tests, real Pi SDK contract (`contract.mjs`), 3× SDK Host suites (`bundle`, `--no-bundle`, `--scandir-fix`), Android API & i18n parity static guards, TAWCROOT NDK build, and both signed APKs (`sideload28` + `modern36`).
 - **Automated upstream upgrade auditing**: run `node tools/pi-upgrade-audit.mjs` to scan all 9 host & app integration seams whenever upstream Pi publishes a release (full SOP in [`docs/sdk-host/upgrading.md`](docs/sdk-host/upgrading.md)).
 
 ```bash
@@ -200,7 +203,7 @@ Docs: [`architecture.md`](docs/sdk-host/architecture.md) · [`protocol.md`](docs
 ## Honest Notes & Contributing
 
 - **What green CI proves**: compilation, real Pi 1.6.0 SDK contract & behavior parity, and clean signed APK assembly; hardware-level runtime switching and Android permissions are verified on real devices.
-- **Interface language**: currently Simplified Chinese; full Chinese/English bilingual i18n (`strings.xml` extraction + instant in-app switching) is actively planned next.
+- **Interface language**: full **English & Simplified Chinese** bilingual UI — follows your Android system language by default and switches instantly without restart under **Settings → Appearance → Language**.
 - **Star & Contribute**: if you've ever wanted a real Linux coding agent in your pocket, drop a **Star** — issues, device reports, and PRs are all welcome!
 
 ---
