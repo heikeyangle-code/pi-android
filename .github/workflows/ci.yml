@@ -31,14 +31,14 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Test :rpc
-        run: ./gradlew :rpc:test --console=plain
+      - name: Test :protocol
+        run: ./gradlew :protocol:test --console=plain
       - name: Publish test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rpc-test-report
-          path: rpc/build/reports/tests/test
+          name: protocol-test-report
+          path: protocol/build/reports/tests/test
           if-no-files-found: ignore
 
   sdk-host:
@@ -83,6 +83,8 @@ jobs:
         run: bash tools/check-android-apis.sh
       - name: Verify i18n XML parity & format specifiers
         run: node tools/check-i18n.mjs
+      - name: Verify cold-startup speed invariants
+        run: node tools/check-startup-perf.mjs
 
   tawcroot:
     runs-on: ubuntu-latest

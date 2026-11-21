@@ -70,10 +70,10 @@ import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
 import app.pi.i18n.tr
 import app.pi.packages.AgentLayout
-import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolDiff
-import app.pi.rpc.ToolStatus
-import app.pi.rpc.TranscriptItem
+import app.pi.protocol.ToolCall
+import app.pi.protocol.ToolDiff
+import app.pi.protocol.ToolStatus
+import app.pi.protocol.TranscriptItem
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.WorkspaceChoice

@@ -8,7 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import app.pi.rpc.Ansi
+import app.pi.protocol.Ansi
 import app.pi.ui.render.PiCodeLanguage
 import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.theme.PiTheme

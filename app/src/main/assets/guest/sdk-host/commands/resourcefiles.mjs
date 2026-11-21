@@ -112,9 +112,9 @@ const templates = {
   skill: (name) => `---\nname: ${name}\ndescription: 一句话说清它做什么、什么时候该用（模型靠这句话决定要不要读它，必填，≤1024 字）\n---\n\n# ${name}\n\n在这里写具体步骤。需要的脚本、参考文档放在这个目录里，用相对路径引用。\n`,
   prompt: () => `---\ndescription: 一句话说明这个模板做什么\nargument-hint: "[参数]"\n---\n\n在这里写提示正文。$1 是第一个参数，$@ 是全部参数。\n`,
   extension: (name) => `// ${name}：pi 扩展。默认导出一个函数，pi 启动（或重新加载）时用扩展 API 调它。\nexport default function (pi) {\n  pi.registerCommand("${name}", {\n    description: "示例命令",\n    handler: async (_args, ctx) => {\n      ctx.ui.notify("${name} 运行了", "info");\n    },\n  });\n}\n`,
-  context: (name) => `# ${name === "AGENTS.md" ? "项目说明" : name}\n\n写给 pi 的背景：项目结构、构建与测试命令、代码约定、要避开的东西。\n`,
-  system: () => `你是……（这份文件会**替换** pi 的默认系统提示；只想补充几句请用 APPEND_SYSTEM.md）\n`,
-  "append-system": () => `（追加到系统提示末尾的内容）\n`,
+  context: () => "",
+  system: () => "",
+  "append-system": () => "",
 };
 
 export function register(reg, { controller }) {

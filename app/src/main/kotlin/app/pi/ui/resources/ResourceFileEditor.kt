@@ -69,7 +69,36 @@ internal fun ResourceFileEditor(
     LaunchedEffect(path) {
         when (val r = model.readFile(path)) {
             is Parsed.Ok -> { doc = r.value; draft = r.value.text }
-            is Parsed.Error -> loadError = r.message
+            is Parsed.Error -> {
+                val fileName = path.substringAfterLast('/')
+                val virtualKind = when (fileName) {
+                    "SYSTEM.md" -> PiResourceFile.Kind.System
+                    "APPEND_SYSTEM.md" -> PiResourceFile.Kind.AppendSystem
+                    "AGENTS.md", "CLAUDE.md", "AGENTS.override.md" -> PiResourceFile.Kind.Context
+                    else -> null
+                }
+                if (virtualKind != null) {
+                    val scopeKind = if (path.contains("/.pi/agent/")) {
+                        app.pi.packages.PiLoadedResources.Scope.User
+                    } else {
+                        app.pi.packages.PiLoadedResources.Scope.Project
+                    }
+                    doc = PiResourceFile.Doc(
+                        path = path,
+                        kind = virtualKind,
+                        scope = scopeKind,
+                        rel = fileName,
+                        text = "",
+                        size = -1L,
+                        mtimeMs = 0L,
+                        writable = true,
+                        reason = null,
+                    )
+                    draft = ""
+                } else {
+                    loadError = r.message
+                }
+            }
         }
     }
 
@@ -90,7 +119,8 @@ internal fun ResourceFileEditor(
             when (val r = model.writeFile(cur.path, draft, PiResourceFile.Stamp(cur.size, cur.mtimeMs))) {
                 is Parsed.Ok -> {
                     doc = cur.copy(text = draft, size = r.value.size, mtimeMs = r.value.mtimeMs)
-                    message = tr("已保存。回到枢纽页点「重新加载」后，正在运行的会话才会读到。", "Saved. Tap \"Reload\" on the hub for the running session to pick up the change.")
+                    model.reload()
+                    message = tr("已保存并重载生效。", "Saved and reloaded into active session.")
                 }
                 is Parsed.Error -> failure = r.message
             }
@@ -142,7 +172,7 @@ internal fun ResourceFileEditor(
                         horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (d.writable) PiSettingsChip(text = deleteLabel(d), onClick = { askDelete = true })
+                        if (d.writable && d.size >= 0L) PiSettingsChip(text = deleteLabel(d), onClick = { askDelete = true })
                     }
                 }
             }
@@ -206,7 +236,7 @@ internal fun NewResourceDialog(
 ) {
     val scope = rememberCoroutineScope()
     var type by remember { mutableStateOf(initial ?: PiResourceFile.Creatable.Skill) }
-    var project by remember { mutableStateOf(false) }
+    var project by remember { mutableStateOf(model.effectiveLayer == app.pi.packages.PiResourceCatalog.Layer.Project && model.projectUsable) }
     var name by remember { mutableStateOf("") }
     var failure by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }

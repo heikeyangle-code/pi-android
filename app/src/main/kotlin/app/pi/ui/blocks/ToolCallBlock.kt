@@ -20,8 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
-import app.pi.rpc.ToolCall
+import app.pi.protocol.PiImage
+import app.pi.protocol.ToolCall
 import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

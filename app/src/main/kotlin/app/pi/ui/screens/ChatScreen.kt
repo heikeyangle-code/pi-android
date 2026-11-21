@@ -95,14 +95,14 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import app.pi.rpc.AssistantText
-import app.pi.rpc.DateSeparator
-import app.pi.rpc.ErrorText
-import app.pi.rpc.ModelChange
-import app.pi.rpc.ThinkingBlock
-import app.pi.rpc.TranscriptItem
-import app.pi.rpc.PiImage
-import app.pi.rpc.UserMessage
+import app.pi.protocol.AssistantText
+import app.pi.protocol.DateSeparator
+import app.pi.protocol.ErrorText
+import app.pi.protocol.ModelChange
+import app.pi.protocol.ThinkingBlock
+import app.pi.protocol.TranscriptItem
+import app.pi.protocol.PiImage
+import app.pi.protocol.UserMessage
 import app.pi.ui.Boot
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
@@ -756,7 +756,7 @@ internal fun ChatBody(
         state.transcript.filter { item ->
             when (item) {
                 is DateSeparator -> prefs.showTimestamps
-                is app.pi.rpc.ExtensionEntry -> item.customType in entryRenderable
+                is app.pi.protocol.ExtensionEntry -> item.customType in entryRenderable
                 else -> true
             }
         }
@@ -1432,7 +1432,7 @@ internal fun ChatBody(
             label = session::labelMessage,
             hideFromContext = session::hideMessageFromContext,
             streaming = state.streaming,
-            retryKey = (state.transcript.lastOrNull() as? app.pi.rpc.ErrorText)?.key?.takeIf { !state.streaming },
+            retryKey = (state.transcript.lastOrNull() as? app.pi.protocol.ErrorText)?.key?.takeIf { !state.streaming },
             retry = session::retryLastPrompt,
         )
     }

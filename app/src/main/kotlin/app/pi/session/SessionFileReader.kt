@@ -1,7 +1,7 @@
 package app.pi.session
 
-import app.pi.rpc.JsonlFramer
-import app.pi.rpc.PiJson
+import app.pi.protocol.JsonlFramer
+import app.pi.protocol.PiJson
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -88,7 +88,7 @@ import java.io.Reader
  * non-blank line, skip malformed ones, and require the **first** parsed entry to be a
  * `session` header with a string `id`. This reader applies the same rules — LF only, one
  * trailing CR stripped, U+2028/U+2029 are **not** terminators, which is the trap
- * [app.pi.rpc.JsonlFramer] documents for the wire and which `String.lines()` would get
+ * [app.pi.protocol.JsonlFramer] documents for the wire and which `String.lines()` would get
  * wrong on both channels.
  *
  * ## The one difference from pi's own reader, and why it is safe

@@ -44,9 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
-import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
+import app.pi.protocol.PiImage
+import app.pi.protocol.ToolCall
+import app.pi.protocol.ToolStatus
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

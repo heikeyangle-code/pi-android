@@ -114,10 +114,10 @@ object PiResourceFile {
     /** 能新建的上下文 / 系统提示文件。项目里的 `AGENTS.md` 在项目根，`SYSTEM.md` 在 `.pi` 里（宿主定位置）。 */
     val CONTEXT_FILES: List<Pair<String, String>>
         get() = listOf(
-            "AGENTS.md" to tr("上下文文件：项目说明、约定、构建与测试命令，每次对话都带给模型", "Context file: project overview, conventions, build/test commands sent on every turn"),
-            "CLAUDE.md" to tr("兼容 Claude Code 的项目说明文件，与 AGENTS.md 同级加载", "Claude Code compatible context file, loaded alongside AGENTS.md"),
-            "APPEND_SYSTEM.md" to tr("推荐：在默认系统提示末尾安全追加指令，不破坏工具说明", "Recommended: safely append instructions after pi's default system prompt"),
-            "SYSTEM.md" to tr("高级：整份替换 pi 的默认系统提示（会覆盖工具清单与默认规则）", "Advanced: replaces pi's entire default system prompt (overrides tool list & rules)"),
+            "AGENTS.md" to tr("项目说明与代码约定", "Project instructions & conventions"),
+            "CLAUDE.md" to tr("兼容 Claude Code 的说明文件", "Claude Code compatible context file"),
+            "APPEND_SYSTEM.md" to tr("在默认系统提示后追加指令（推荐）", "Append to default system prompt (recommended)"),
+            "SYSTEM.md" to tr("整份替换默认系统提示（高级）", "Replace entire default system prompt (advanced)"),
         )
 
     // ------------------------------------------------------------------ 预检

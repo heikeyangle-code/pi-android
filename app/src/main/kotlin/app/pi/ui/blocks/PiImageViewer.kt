@@ -58,7 +58,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.io.File

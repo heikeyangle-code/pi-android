@@ -22,7 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.ui.render.rich.PiFootnoteMarkdown
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.Markdown

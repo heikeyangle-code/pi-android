@@ -211,6 +211,13 @@ export class Controller {
     return this.httpSettingsPromise;
   }
 
+  #hasCustomHttpSettings(sm) {
+    if (this.appliedHttpProxy) return true;
+    const rawGlobal = sm?.getGlobalSettings?.() ?? {};
+    const rawProject = sm?.getProjectSettings?.() ?? {};
+    return rawGlobal.httpIdleTimeoutMs !== undefined || rawProject.httpIdleTimeoutMs !== undefined;
+  }
+
   /** 应用全局设置里的 httpProxy 与 httpIdleTimeoutMs（对照 Pi `main.ts` 调用官方 `http-dispatcher.js`）。 */
   async applyHttpSettings() {
     if (!this.cfg.piDir) {
@@ -222,6 +229,10 @@ export class Controller {
         ?? (this.sdk ? this.sdk.SettingsManager.create(this.cwd, this.cfg.agentDir, { projectTrusted: false }) : null);
       if (!sm) return;
       const proxy = this.#applyProxyEnvFromSettings(sm);
+      if (!this.#hasCustomHttpSettings(sm) && !this.httpDispatcherMod) {
+        this.httpSettingsApplied = true;
+        return;
+      }
       if (!this.httpDispatcherMod) {
         const { pathToFileURL } = await import("node:url");
         this.httpDispatcherMod = await import(pathToFileURL(join(this.cfg.piDir, "dist", "core", "http-dispatcher.js")).href);
@@ -568,7 +579,7 @@ export class Controller {
             // 仅当用户配置了代理或自定义空闲超时时，才在启动后异步加载官方 http-dispatcher（undici，proot 下约 1.5~3s）；
             // 否则留给首次发起网络请求（prompt / auth）时由 `ensureHttpSettings()` 按需加载，避免拖慢冷启动。
             const sm = this.runtime?.services?.settingsManager;
-            const hasCustomHttp = Boolean(this.appliedHttpProxy) || (sm?.getHttpIdleTimeoutMs?.() !== undefined);
+            const hasCustomHttp = this.#hasCustomHttpSettings(sm);
             if (hasCustomHttp) {
               setImmediate(() => void this.ensureHttpSettings());
             }

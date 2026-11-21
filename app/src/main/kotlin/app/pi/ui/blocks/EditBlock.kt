@@ -10,8 +10,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
-import app.pi.rpc.ToolCall
+import app.pi.protocol.PiImage
+import app.pi.protocol.ToolCall
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -20,7 +20,7 @@ import app.pi.ui.theme.PiTheme
  * pi's card is `edit <path>` (`formatEditCall`, `:83-86`) followed by the diff its result
  * carried (`:108-111`: `result.details.diff` → `renderDiff`), or by the error text on
  * failure (`:97-106`). In this app the diff is already its own transcript row — the reducer
- * lifts `details.diff` out of the call and appends a [app.pi.rpc.ToolDiff] behind the card
+ * lifts `details.diff` out of the call and appends a [app.pi.protocol.ToolDiff] behind the card
  * (`rpc/.../Transcript.kt:1405-1442`), which `BlockRenderer` draws with `DiffBlock`. So this
  * block is exactly the half pi's renderer draws from the call: the title, and the error when
  * there is one.

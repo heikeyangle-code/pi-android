@@ -713,7 +713,7 @@ private fun SurfaceRowItem(
     Box(modifier = tapModifier) {
         val spans = remember(line) { chromeSpans(line) }
         ExtensionSpans(
-            spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.rpc.Ansi.Span(" ")) else spans,
+            spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.protocol.Ansi.Span(" ")) else spans,
             defaultColor = PiTheme.palette.text,
             style = monoStyle,
             maxLines = 1,

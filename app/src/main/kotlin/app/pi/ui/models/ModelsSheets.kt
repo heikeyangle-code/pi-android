@@ -204,7 +204,7 @@ internal fun ProviderSheet(
     host: () -> ModelsHost?,
     provider: HostAuth.Provider,
     facts: ProviderFacts,
-    available: List<app.pi.rpc.PiResponses.ModelInfo>,
+    available: List<app.pi.protocol.PiResponses.ModelInfo>,
     current: Pair<String, String>?,
     custom: JsonObject?,
     onChanged: () -> Unit,
@@ -227,7 +227,7 @@ internal fun ProviderSheet(
     var working by remember { mutableStateOf(false) }
 
     // 目录里这家的全部模型：还没连接也看得到它有什么（`model.list {all, provider}`）。
-    var catalog by remember { mutableStateOf<List<app.pi.rpc.PiResponses.ModelInfo>?>(null) }
+    var catalog by remember { mutableStateOf<List<app.pi.protocol.PiResponses.ModelInfo>?>(null) }
     LaunchedEffect(provider.id, provider.configured) {
         catalog = host()?.let { h -> runCatching { h.catalog(provider.id) }.getOrNull() }
     }
@@ -678,7 +678,7 @@ private const val MODEL_SEARCH_THRESHOLD = 12
 @Composable
 internal fun ScopedModelsSheet(
     host: () -> ModelsHost?,
-    models: List<app.pi.rpc.PiResponses.ModelInfo>,
+    models: List<app.pi.protocol.PiResponses.ModelInfo>,
     providerNames: Map<String, String>,
     initialScoped: List<app.pi.host.HostAdvanced.ModelRef>,
     persistedPatterns: List<String>,
@@ -921,7 +921,7 @@ private fun officialThinkingMeta(level: String): Pair<String, String>? = when (l
 @Composable
 internal fun ModelThinkingLevelsSheet(
     host: () -> ModelsHost?,
-    models: List<app.pi.rpc.PiResponses.ModelInfo>,
+    models: List<app.pi.protocol.PiResponses.ModelInfo>,
     providerNames: Map<String, String>,
     overrides: Map<String, String>,
     defaultLevel: String,
@@ -930,7 +930,7 @@ internal fun ModelThinkingLevelsSheet(
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
-    var selectedModel by remember { mutableStateOf<app.pi.rpc.PiResponses.ModelInfo?>(null) }
+    var selectedModel by remember { mutableStateOf<app.pi.protocol.PiResponses.ModelInfo?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var liveOverrides by remember(overrides) { mutableStateOf(overrides) }
@@ -947,7 +947,7 @@ internal fun ModelThinkingLevelsSheet(
             }
         }
         hit.sortedWith(
-            compareByDescending<app.pi.rpc.PiResponses.ModelInfo> { "${it.provider.orEmpty()}/${it.id}" in liveOverrides }
+            compareByDescending<app.pi.protocol.PiResponses.ModelInfo> { "${it.provider.orEmpty()}/${it.id}" in liveOverrides }
                 .thenBy { (providerNames[it.provider.orEmpty()] ?: it.provider.orEmpty()).lowercase() }
                 .thenBy { it.name.lowercase() },
         )

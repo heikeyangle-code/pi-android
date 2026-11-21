@@ -1,6 +1,6 @@
 package app.pi.host
 
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

@@ -38,7 +38,7 @@ import app.pi.host.HostAdvanced
 import app.pi.host.HostAuth
 import app.pi.i18n.tr
 import app.pi.models.ProviderForm
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import app.pi.ui.PiTopBar
 import app.pi.ui.settings.G_MODELS_SCREEN
 import app.pi.ui.settings.PiEditorField

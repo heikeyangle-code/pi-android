@@ -31,7 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.ErrorText
+import app.pi.protocol.ErrorText
 import app.pi.ui.chat.LocalMessageActions
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

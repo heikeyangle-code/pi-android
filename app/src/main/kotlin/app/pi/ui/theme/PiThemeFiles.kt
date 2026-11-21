@@ -2,7 +2,7 @@ package app.pi.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import app.pi.i18n.tr
-import app.pi.rpc.PiJson
+import app.pi.protocol.PiJson
 import app.pi.runtime.PiProjectConfig
 import java.io.File
 import kotlinx.serialization.json.JsonElement

@@ -197,7 +197,7 @@ flowchart TB
 ```
 
 ### 面向开发者的工程护城河
-- **307 项真引擎集成测试 + 契约守卫**：每次提交都在真实 Pi SDK 上跑满 `contract.mjs`（覆盖公开导出 + 全部内部 `dist/` 路径）与 3 套 `test.mjs`（`bundle` / `--no-bundle` / `--scandir-fix`），再叠加 `:rpc` JVM 单测、Android API 与双语 i18n 静态守卫、TAWCROOT NDK 编译与双变体签名 APK 构建（6/6 GitHub Actions CI）。
+- **307 项真引擎集成测试 + 契约守卫**：每次提交都在真实 Pi SDK 上跑满 `contract.mjs`（覆盖公开导出 + 全部内部 `dist/` 路径）与 3 套 `test.mjs`（`bundle` / `--no-bundle` / `--scandir-fix`），再叠加 `:protocol` JVM 单测、Android API 与双语 i18n 静态守卫、TAWCROOT NDK 编译与双变体签名 APK 构建（6/6 GitHub Actions CI）。
 - **自动化上游升级审计流**：内置 [tools/pi-upgrade-audit.mjs](tools/pi-upgrade-audit.mjs) 与 [docs/sdk-host/upgrading.md](docs/sdk-host/upgrading.md)，上游 Pi 一发新包，一条命令自动扫描 9 条集成接缝并精确列出宿主层与 App 层改动清单。
 
 ```bash
@@ -212,7 +212,7 @@ node tools/sdk-host/contract.mjs
 node tools/sdk-host/test.mjs
 
 # 运行协议单测并构建发布版 APK
-./gradlew :rpc:test
+./gradlew :protocol:test
 node tools/fetch-runtime.mjs
 ./gradlew :app:assembleRelease
 ```

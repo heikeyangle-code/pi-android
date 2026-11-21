@@ -1,6 +1,6 @@
 package app.pi.host
 
-import app.pi.rpc.PiJson
+import app.pi.protocol.PiJson
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

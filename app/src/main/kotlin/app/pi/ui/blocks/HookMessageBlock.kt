@@ -14,7 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import app.pi.i18n.tr
-import app.pi.rpc.HookMessage
+import app.pi.protocol.HookMessage
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

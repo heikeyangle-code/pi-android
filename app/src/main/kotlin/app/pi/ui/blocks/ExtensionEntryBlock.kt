@@ -9,7 +9,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import app.pi.rpc.ExtensionEntry
+import app.pi.protocol.ExtensionEntry
 import app.pi.ui.extension.LocalEntryRenderer
 import app.pi.ui.extension.RenderedAnsiBlock
 import app.pi.ui.theme.PiTheme

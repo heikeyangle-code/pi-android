@@ -1,9 +1,9 @@
 package app.pi.ui.render
 
 import androidx.compose.ui.unit.Dp
-import app.pi.rpc.DateSeparator
-import app.pi.rpc.TranscriptItem
-import app.pi.rpc.UserMessage
+import app.pi.protocol.DateSeparator
+import app.pi.protocol.TranscriptItem
+import app.pi.protocol.UserMessage
 import app.pi.ui.theme.PiTypographyProfile
 
 /**

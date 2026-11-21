@@ -45,7 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType

@@ -86,7 +86,7 @@ object SessionImport {
             if (line.isBlank()) continue
             // Never throws (`PiJson`'s contract), so a malformed line is simply not
             // a candidate — which is pi's own skip rule (`session-manager.ts:499-508`).
-            val entry = app.pi.rpc.PiJson.parseObjectOrNull(line) ?: continue
+            val entry = app.pi.protocol.PiJson.parseObjectOrNull(line) ?: continue
             val id = entry.string("id")
             return if (entry.string("type") == "session" && id != null) {
                 Verdict.Found(Header(id = id, cwd = entry.string("cwd")))

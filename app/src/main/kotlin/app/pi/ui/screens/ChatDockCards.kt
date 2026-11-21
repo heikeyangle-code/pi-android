@@ -15,7 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtPanel
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.chat.ArgumentContext
 import app.pi.ui.chat.ArgumentPalette

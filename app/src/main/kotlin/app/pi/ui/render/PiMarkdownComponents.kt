@@ -82,7 +82,7 @@ import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.PiJsonTreeView
 import app.pi.ui.render.rich.PiTreeMode

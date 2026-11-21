@@ -4,8 +4,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import app.pi.rpc.AssistantText
-import app.pi.rpc.PiImage
+import app.pi.protocol.AssistantText
+import app.pi.protocol.PiImage
 import app.pi.ui.chat.MessageActionTarget
 import app.pi.ui.chat.MessageRole
 import app.pi.ui.render.PiMarkdownText

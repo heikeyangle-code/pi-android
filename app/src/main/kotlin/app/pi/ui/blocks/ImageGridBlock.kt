@@ -31,7 +31,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing

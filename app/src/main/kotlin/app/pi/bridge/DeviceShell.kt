@@ -78,7 +78,7 @@ object AppUidShellBackend : DeviceShellBackend {
      *
      * That copy is exactly how the U+FFFD bug outlived its fix: the decoder here was
      * corrected to carry a partial multi-byte sequence across reads
-     * (`app.pi.rpc.Utf8StreamDecoder`), and the identical-looking reader in
+     * (`app.pi.protocol.Utf8StreamDecoder`), and the identical-looking reader in
      * `DeviceShizuku.kt` kept decoding each 8 KiB buffer on its own — so the *elevated*
      * backend (the one a user enables precisely because they want the better path)
      * still returned 乱码 for Chinese output, and its `truncated` flag still ignored
@@ -149,7 +149,7 @@ object AppUidShellBackend : DeviceShellBackend {
         // 8192-byte intervals. `Utf8StreamDecoder` carries the partial sequence into the
         // next read, and `flush()` closes the last one; it is the class the engine's own
         // stdout pump uses for exactly this reason (`PiEngineSession.kt:448`).
-        val decoder = app.pi.rpc.Utf8StreamDecoder()
+        val decoder = app.pi.protocol.Utf8StreamDecoder()
         stream.use { input ->
             val buffer = ByteArray(8192)
             while (true) {

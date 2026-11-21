@@ -1,9 +1,9 @@
 package app.pi.session.tree
 
-import app.pi.rpc.PiContentBlock
-import app.pi.rpc.PiMessage
-import app.pi.rpc.SessionEntry
-import app.pi.rpc.SessionTreeNode
+import app.pi.protocol.PiContentBlock
+import app.pi.protocol.PiMessage
+import app.pi.protocol.SessionEntry
+import app.pi.protocol.SessionTreeNode
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId

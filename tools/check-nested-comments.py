@@ -156,7 +156,7 @@ def scan(path: Path) -> list[tuple[int, str, str]]:
 
 
 def main(argv: list[str]) -> int:
-    roots = [Path(a) for a in argv[1:]] or [Path("app/src"), Path("rpc/src")]
+    roots = [Path(a) for a in argv[1:]] or [Path("app/src"), Path("protocol/src")]
     files = sorted(p for root in roots if root.exists() for p in root.rglob("*.kt"))
     if not files:
         print(f"nothing scanned under {', '.join(str(r) for r in roots)}", file=sys.stderr)

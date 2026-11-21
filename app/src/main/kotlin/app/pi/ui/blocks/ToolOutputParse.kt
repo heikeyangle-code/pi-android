@@ -917,7 +917,7 @@ internal fun lsSubject(args: JsonObject?): List<ToolCallPart> = buildList {
  * This is the shape a tool with **no** renderer of its own gets — `tool_search`, an MCP tool
  * before its extension's renderer is consulted, any extension tool that did not register
  * one — and it is what `ToolCallBlock` used to approximate with a single value
- * ([app.pi.rpc.summarizeToolArgs]). That approximation silently dropped every other
+ * ([app.pi.protocol.summarizeToolArgs]). That approximation silently dropped every other
  * argument: `tool_search query="x" limit=8` arrived as `x`, and an MCP call's real subject
  * (its own named parameters) was invisible. The text here is pi's, built by pi's rule.
  *

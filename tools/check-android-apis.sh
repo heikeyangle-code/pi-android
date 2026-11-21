@@ -14,7 +14,7 @@ scan() { # $1 = 扩展正则, $2 = 替代写法
   local pattern="$1" instead="$2" hits
   # 注释里的名字（`// Path.of(...)`、` * Path.of(...)`）不算使用：它们在 KDoc 里
   # 解释的往往正是"不要用这个"。
-  hits="$(grep -rnE --include='*.kt' -- "$pattern" app/src/main rpc/src/main 2>/dev/null \
+  hits="$(grep -rnE --include='*.kt' -- "$pattern" app/src/main protocol/src/main 2>/dev/null \
     | grep -vE ':[0-9]+:[[:space:]]*(//|\*|/\*)' || true)"
   if [ -n "$hits" ]; then
     printf '%s\n' "$hits" | sed 's/^/  /'

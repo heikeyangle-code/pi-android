@@ -41,7 +41,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.ThinkingBlock
+import app.pi.protocol.ThinkingBlock
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
 

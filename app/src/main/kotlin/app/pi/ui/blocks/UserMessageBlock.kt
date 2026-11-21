@@ -15,8 +15,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import app.pi.rpc.PiImage
-import app.pi.rpc.UserMessage
+import app.pi.protocol.PiImage
+import app.pi.protocol.UserMessage
 import app.pi.ui.chat.MessageActionTarget
 import app.pi.ui.chat.MessageRole
 import app.pi.ui.render.PiMarkdownText

@@ -16,7 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import app.pi.i18n.tr
-import app.pi.rpc.CompactionMarker
+import app.pi.protocol.CompactionMarker
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiSpacing

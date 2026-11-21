@@ -17,9 +17,9 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
-import app.pi.rpc.Ansi
-import app.pi.rpc.PiImage
-import app.pi.rpc.ToolCall
+import app.pi.protocol.Ansi
+import app.pi.protocol.PiImage
+import app.pi.protocol.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 

@@ -53,7 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.TranscriptItem
+import app.pi.protocol.TranscriptItem
 import app.pi.ui.components.PiSheet
 import app.pi.ui.components.PiType
 import app.pi.ui.theme.PiShapes

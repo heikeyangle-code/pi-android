@@ -1,7 +1,7 @@
 package app.pi.ui.screens
 
-import app.pi.rpc.JsonlFramer
-import app.pi.rpc.PiResponses
+import app.pi.protocol.JsonlFramer
+import app.pi.protocol.PiResponses
 
 /**
  * The arithmetic behind one message's inline images, and **only** the arithmetic.

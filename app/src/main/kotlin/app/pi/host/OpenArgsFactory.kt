@@ -1,6 +1,6 @@
 package app.pi.host
 
-import app.pi.rpc.PiLaunchOptions
+import app.pi.protocol.PiLaunchOptions
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 

@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.pi.i18n.tr
-import app.pi.rpc.Notice
+import app.pi.protocol.Notice
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.theme.PiTheme
 

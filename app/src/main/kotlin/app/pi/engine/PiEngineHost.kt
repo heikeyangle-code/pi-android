@@ -17,7 +17,7 @@ import app.pi.runtime.RuntimeSelfCheck
 import app.pi.runtime.RuntimeTreeAudit
 import app.pi.runtime.WorkspaceStore
 import app.pi.host.toOpenArgs
-import app.pi.rpc.PiLaunchOptions
+import app.pi.protocol.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,41 +32,17 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Brings up one pi engine and hands back a session the UI can talk to.
+ * Brings up the guest Node.js SDK Host (`sdk-host/main.mjs`) inside the active
+ * Linux runtime (PRoot / Proroot / TAWCROOT) and hands back a [PiEngineSession].
  *
- * The pipeline is: unpack the runtime (once) → build proot's argv → spawn pi in
- * `--mode rpc` → wrap its stdio in [PiEngineSession]. Nothing here translates the
- * wire format; pi's own JSONL is the protocol (docs/pi-android-app-design.md §7).
+ * The pipeline is: unpack the runtime (once) → install fast-path stamps →
+ * spawn `node sdk-host/main.mjs` → negotiate `host.hello` & `session.open` over
+ * typed JSONL frames (`docs/sdk-host/protocol.md`).
  *
- * Engines are per *working directory*, because that is pi's own model: a session
- * belongs to a cwd, and `PI_CODING_AGENT_SESSION_DIR` groups sessions by it. One
- * process per cwd keeps the two from sharing state they should not — which is why
- * [restart] closes the old process *before* starting the new one.
- *
- * ## Why this file owns a `restart`
- *
- * pi loads extensions, skills, prompt templates and themes **into the running
- * process** at startup, and there are exactly two ways to make it re-read them:
- * `/reload`, or a fresh process. `/reload` is not reachable for this app:
- *
- *  - it is a *built-in* command (`slash-commands.ts:41`), and built-ins are excluded
- *    from `get_commands` (`docs/rpc.md:853`) and are not dispatched by `prompt`
- *    either — `_tryExecuteExtensionCommand` only looks in the **extension** runner
- *    (`agent-session.ts:1331-1343`);
- *  - there is no `reload` command in the protocol at all: the `RpcCommand` union
- *    (`modes/rpc/rpc-types.ts:20-74`) has none;
- *  - the reload plumbing *is* wired for RPC, but only for extensions:
- *    `rpc-mode.ts:341-343` supplies `reload: async () => { await session.reload() }`
- *    as an extension `commandContextActions` entry, i.e. it is reachable from an
- *    extension command's `ctx.reload()` — which requires an extension the app owns
- *    to already be loaded, and none of the app's shipped extensions expose one.
- *
- * So for this app a restart **is** the reload. Everything that installs or edits a
- * resource therefore has to be able to ask for one, and the answer has to be
- * explicit: a restart kills any in-flight turn. `ExtensionLifecycle` in
- * `app.pi.packages` is the state machine that decides *whether* to ask; this method
- * is the thing it calls, and it refuses on its own authority as well, so a caller
- * that skips the state machine still cannot silently interrupt a turn.
+ * Resource changes (extensions, skills, prompts, themes, packages) reload in-place
+ * via `session.reload` without killing the process; [restart] is reserved for
+ * process-level launch changes (runtime engine switch, workspace root switch,
+ * `PI_OFFLINE`, `PI_CACHE_RETENTION`, `--no-*` flags, or crash recovery).
  */
 class PiEngineHost(private val appContext: Context) {
 

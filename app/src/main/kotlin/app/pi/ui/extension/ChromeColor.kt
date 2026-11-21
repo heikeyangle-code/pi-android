@@ -2,7 +2,7 @@ package app.pi.ui.extension
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import app.pi.rpc.Ansi
+import app.pi.protocol.Ansi
 import app.pi.ui.theme.PiPalette
 
 /**

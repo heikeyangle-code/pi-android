@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.Notice
+import app.pi.protocol.Notice
 import app.pi.ui.theme.PiTheme
 
 /** 单行状态提示（自动重试、扩展提示、系统告警）：轻量微色带胶囊。 */

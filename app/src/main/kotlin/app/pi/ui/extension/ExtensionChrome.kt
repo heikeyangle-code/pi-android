@@ -17,7 +17,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
-import app.pi.rpc.Ansi
+import app.pi.protocol.Ansi
 import app.pi.ui.theme.PiTheme
 
 /**

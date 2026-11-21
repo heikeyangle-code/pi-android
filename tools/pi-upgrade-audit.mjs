@@ -536,7 +536,7 @@ async function main() {
     if (fd.added.length || fd.removed.length) {
       level = "ACTION";
       details.push(`CLI flags 变化: +[${fd.added.join(", ")}] -[${fd.removed.join(", ")}]`);
-      files.push("rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt", "app/src/main/kotlin/app/pi/host/OpenArgsFactory.kt");
+      files.push("protocol/src/main/kotlin/app/pi/protocol/PiPreSpawnConfig.kt", "app/src/main/kotlin/app/pi/host/OpenArgsFactory.kt");
     } else if (!argsEq) {
       details.push(`CLI flags 集合未变（${nFlags.length} 个），cli/args.js 仅文案/环境变量帮助变化`);
     } else {
@@ -626,12 +626,12 @@ async function main() {
     if (!smDtsEq) {
       level = "REVIEW";
       details.push("session-manager.d.ts 有变动（检查 SessionEntry / Transcript.kt）");
-      files.push("rpc/src/main/kotlin/app/pi/rpc/Transcript.kt", "rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt");
+      files.push("protocol/src/main/kotlin/app/pi/protocol/Transcript.kt", "protocol/src/main/kotlin/app/pi/protocol/SessionEntries.kt");
     }
     if (!rpcDtsEq) {
       level = "REVIEW";
       details.push("rpc-types.d.ts 有变动（检查 Events.kt / Responses.kt）");
-      files.push("rpc/src/main/kotlin/app/pi/rpc/Events.kt", "rpc/src/main/kotlin/app/pi/rpc/Responses.kt");
+      files.push("protocol/src/main/kotlin/app/pi/protocol/Events.kt", "protocol/src/main/kotlin/app/pi/protocol/Responses.kt");
     }
     if (coreWatch.length) {
       if (level === "OK") level = "INFO";

@@ -38,20 +38,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.AssistantText
-import app.pi.rpc.BranchSummary
-import app.pi.rpc.CompactionMarker
-import app.pi.rpc.DateSeparator
-import app.pi.rpc.ErrorText
-import app.pi.rpc.HookMessage
-import app.pi.rpc.ModelChange
-import app.pi.rpc.Notice
-import app.pi.rpc.SkillInvocation
-import app.pi.rpc.ThinkingBlock
-import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolDiff
-import app.pi.rpc.TranscriptItem
-import app.pi.rpc.UserMessage
+import app.pi.protocol.AssistantText
+import app.pi.protocol.BranchSummary
+import app.pi.protocol.CompactionMarker
+import app.pi.protocol.DateSeparator
+import app.pi.protocol.ErrorText
+import app.pi.protocol.HookMessage
+import app.pi.protocol.ModelChange
+import app.pi.protocol.Notice
+import app.pi.protocol.SkillInvocation
+import app.pi.protocol.ThinkingBlock
+import app.pi.protocol.ToolCall
+import app.pi.protocol.ToolDiff
+import app.pi.protocol.TranscriptItem
+import app.pi.protocol.UserMessage
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.chat.ChatChip
 import app.pi.ui.chat.mergeRestoredQueue
@@ -112,7 +112,7 @@ internal fun searchHits(item: TranscriptItem, query: String): Boolean = when (it
     is CompactionMarker -> item.summary.hits(query)
     is BranchSummary -> item.summary.hits(query)
     is HookMessage -> item.markdown.hits(query)
-    is app.pi.rpc.ExtensionEntry -> false
+    is app.pi.protocol.ExtensionEntry -> false
     is ModelChange -> listOfNotNull(item.provider, item.modelId).joinToString("/").hits(query)
     is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n").hits(query)
     is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n").hits(query)

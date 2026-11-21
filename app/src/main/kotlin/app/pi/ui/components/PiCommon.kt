@@ -51,7 +51,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
-import app.pi.rpc.TokenUsage
+import app.pi.protocol.TokenUsage
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

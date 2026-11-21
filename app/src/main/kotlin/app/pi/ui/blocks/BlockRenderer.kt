@@ -2,21 +2,21 @@ package app.pi.ui.blocks
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import app.pi.rpc.AssistantText
-import app.pi.rpc.BranchSummary
-import app.pi.rpc.CompactionMarker
-import app.pi.rpc.DateSeparator
-import app.pi.rpc.ErrorText
-import app.pi.rpc.HookMessage
-import app.pi.rpc.ModelChange
-import app.pi.rpc.Notice
-import app.pi.rpc.SkillInvocation
-import app.pi.rpc.ThinkingBlock
-import app.pi.rpc.ToolCall
-import app.pi.rpc.PiImage
-import app.pi.rpc.ToolDiff
-import app.pi.rpc.TranscriptItem
-import app.pi.rpc.UserMessage
+import app.pi.protocol.AssistantText
+import app.pi.protocol.BranchSummary
+import app.pi.protocol.CompactionMarker
+import app.pi.protocol.DateSeparator
+import app.pi.protocol.ErrorText
+import app.pi.protocol.HookMessage
+import app.pi.protocol.ModelChange
+import app.pi.protocol.Notice
+import app.pi.protocol.SkillInvocation
+import app.pi.protocol.ThinkingBlock
+import app.pi.protocol.ToolCall
+import app.pi.protocol.PiImage
+import app.pi.protocol.ToolDiff
+import app.pi.protocol.TranscriptItem
+import app.pi.protocol.UserMessage
 
 /**
  * The one place a [TranscriptItem] becomes pixels.
@@ -163,7 +163,7 @@ fun BlockRenderer(
         is HookMessage -> HookMessageBlock(item, modifier, defaultExpanded = toolsDefaultExpanded)
 
         // 扩展自己的 `custom` 条目：有 `registerEntryRenderer` 才会进到这里（见 ChatScreen 的可见项过滤）。
-        is app.pi.rpc.ExtensionEntry -> ExtensionEntryBlock(item, modifier, defaultExpanded = toolsDefaultExpanded)
+        is app.pi.protocol.ExtensionEntry -> ExtensionEntryBlock(item, modifier, defaultExpanded = toolsDefaultExpanded)
 
         // **pi does not draw `model_change` in the transcript, so neither does this.**
         // The entry exists in the session file (`core/session-manager.ts:64`, written

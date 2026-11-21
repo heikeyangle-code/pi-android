@@ -68,7 +68,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import app.pi.ui.components.EffectiveKind
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject

@@ -1,8 +1,8 @@
 package app.pi.host
 
-import app.pi.rpc.PiMessage
-import app.pi.rpc.PiResponses
-import app.pi.rpc.QueueMode
+import app.pi.protocol.PiMessage
+import app.pi.protocol.PiResponses
+import app.pi.protocol.QueueMode
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -35,28 +35,20 @@ class HostEngineApi(private val commands: HostCommands) {
 
     /** 现在的会话状态。其实是一次对账（`session.snapshot`），UI 平时应直接吃 `stateStore`。 */
     suspend fun getState(): PiResponses.SessionState {
-        val snap = guarded("get_state") { commands.snapshot() }
+        val snap = guarded("session.snapshot") { commands.snapshot() }
         // 宿主快照用 messageCounts.total，读取器读 messageCount。
         val total = (snap["messageCounts"] as? JsonObject)?.get("total")
         val shaped = JsonObject(snap + ("messageCount" to (total ?: JsonPrimitive(0))))
-        return required("get_state", PiResponses.sessionState(shaped))
+        return required("session.snapshot", PiResponses.sessionState(shaped))
     }
 
     suspend fun getMessages(): List<PiMessage> = PiResponses.messages(read("session.messages"))
 
     suspend fun getEntries(since: String? = null): PiResponses.EntriesPage =
-        required("get_entries", PiResponses.sessionEntries(read("session.entries", obj { since?.let { put("since", JsonPrimitive(it)) } })))
+        required("session.entries", PiResponses.sessionEntries(read("session.entries", obj { since?.let { put("since", JsonPrimitive(it)) } })))
 
-    /**
-     * `get_entries` 的**原始**条目，给历史回放和分支过滤用。
-     *
-     * 那两处要的是 pi 自己那一层 JSON：`TranscriptReducer.seedFromHistory` 直接折
-     * `JsonObject`，`activeBranch` 按 `id` / `parentId` 走树。类型化之后的
-     * [PiResponses.EntriesPage] 只剩 `SessionEntry`，这一层字段就丢了 —— 所以同一份应答
-     * 这里再取一次原始形状，而不是从类型化条目反序列化回去（那等于写第二个解析器）。
-     */
     suspend fun getEntriesRaw(since: String? = null): RawEntriesPage {
-        val data = guarded("get_entries") {
+        val data = guarded("session.entries") {
             commands.client.callObject("session.entries", obj { since?.let { put("since", JsonPrimitive(it)) } })
         }
         val entries = (data["entries"] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
@@ -64,14 +56,14 @@ class HostEngineApi(private val commands: HostCommands) {
         return RawEntriesPage(entries, leafId)
     }
 
-    suspend fun getTree(): PiResponses.TreePage = required("get_tree", PiResponses.tree(read("session.tree")))
+    suspend fun getTree(): PiResponses.TreePage = required("session.tree", PiResponses.tree(read("session.tree")))
 
     suspend fun getForkMessages(): List<PiResponses.ForkMessage> = PiResponses.forkMessages(read("session.forkMessages"))
 
     suspend fun getLastAssistantText(): String? = PiResponses.lastAssistantText(read("session.lastText"))
 
     suspend fun getSessionStats(): PiResponses.SessionStats =
-        required("get_session_stats", PiResponses.sessionStats(read("session.stats")))
+        required("session.stats", PiResponses.sessionStats(read("session.stats")))
 
     suspend fun getAvailableModels(): List<PiResponses.ModelInfo> = PiResponses.availableModels(read("model.list"))
 
@@ -115,7 +107,7 @@ class HostEngineApi(private val commands: HostCommands) {
             if (persist) put("persist", JsonPrimitive(true))
         })
         // 宿主应答 {model, state}；读取器直接读 model 对象。
-        return required("set_model", PiResponses.setModel(r.data["model"]))
+        return required("model.set", PiResponses.setModel(r.data["model"]))
     }
 
     /**
@@ -135,7 +127,7 @@ class HostEngineApi(private val commands: HostCommands) {
         val r = write("model.cycle")
         val result = r.data["result"]
         if (result == null || result is JsonNull) return null
-        return required("cycle_model", PiResponses.cycleModel(result))
+        return required("model.cycle", PiResponses.cycleModel(result))
     }
 
     suspend fun setThinkingLevel(level: String, persist: Boolean = false) {
@@ -148,20 +140,20 @@ class HostEngineApi(private val commands: HostCommands) {
     suspend fun cycleThinkingLevel(): PiResponses.CycleThinkingResult? {
         val level = write("thinking.cycle").data["level"]
         if (level == null || level is JsonNull) return null
-        return required("cycle_thinking_level", PiResponses.cycleThinkingLevel(obj { put("level", level) }))
+        return required("thinking.cycle", PiResponses.cycleThinkingLevel(obj { put("level", level) }))
     }
 
     suspend fun setSteeringMode(mode: QueueMode) { write("queue.steeringMode", obj { put("mode", JsonPrimitive(mode.wire)) }) }
     suspend fun setFollowUpMode(mode: QueueMode) { write("queue.followUpMode", obj { put("mode", JsonPrimitive(mode.wire)) }) }
 
     suspend fun clearQueue(): PiResponses.ClearQueueResult =
-        required("clear_queue", PiResponses.clearQueueResult(write("session.clearQueue").data))
+        required("session.clearQueue", PiResponses.clearQueueResult(write("session.clearQueue").data))
 
     // ---- 压缩 / 重试 ----
 
     suspend fun compact(customInstructions: String? = null): PiResponses.CompactionResult =
         required(
-            "compact",
+            "session.compact",
             PiResponses.compactionResult(
                 write("session.compact", obj { customInstructions?.let { put("customInstructions", JsonPrimitive(it)) } }, HostCommands.LONG_TIMEOUT_MS).data,
             ),
@@ -175,7 +167,7 @@ class HostEngineApi(private val commands: HostCommands) {
 
     suspend fun bash(command: String, excludeFromContext: Boolean? = null): PiResponses.BashResult =
         required(
-            "bash",
+            "session.bash",
             PiResponses.bashResult(
                 write(
                     "session.bash",
@@ -196,19 +188,19 @@ class HostEngineApi(private val commands: HostCommands) {
     /** @return 导出文件的路径（宿主按 `outputPath` 或默认命名）。 */
     suspend fun exportHtml(outputPath: String? = null): String =
         PiResponses.exportResult(read("session.export", obj { outputPath?.let { put("outputPath", JsonPrimitive(it)) } }, HostCommands.LONG_TIMEOUT_MS))
-            ?.path ?: throw HostCommandException("export_html", "宿主没有返回导出路径")
+            ?.path ?: throw HostCommandException("session.export", app.pi.i18n.tr("宿主没有返回导出路径", "Host did not return an export path"))
 
     // ---- 会话 ----
 
     /** [cwd]（guest 路径）非空 = 在那个项目里开新会话，宿主不重启（SDK 的 cwd 是会话的属性）。 */
     suspend fun newSession(parentSession: String? = null, cwd: String? = null): PiResponses.CancelledResult =
-        required("new_session", PiResponses.cancelledResult(write("session.new", obj {
+        required("session.new", PiResponses.cancelledResult(write("session.new", obj {
             parentSession?.let { put("parentSession", JsonPrimitive(it)) }
             cwd?.let { put("cwd", JsonPrimitive(it)) }
         }, HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun switchSession(sessionPath: String, cwd: String? = null): PiResponses.CancelledResult =
-        required("switch_session", PiResponses.cancelledResult(write("session.switch", obj {
+        required("session.switch", PiResponses.cancelledResult(write("session.switch", obj {
             put("sessionPath", JsonPrimitive(sessionPath))
             cwd?.let { put("cwd", JsonPrimitive(it)) }
         }, HostCommands.LONG_TIMEOUT_MS).data))
@@ -229,16 +221,16 @@ class HostEngineApi(private val commands: HostCommands) {
 
     /** 导入外部 `.jsonl` 会话文件并切换到它（SDK `runtime.importFromJsonl`）。 */
     suspend fun importSessionFile(path: String, cwd: String? = null): PiResponses.CancelledResult =
-        required("import_session", PiResponses.cancelledResult(write("session.import", obj {
+        required("session.import", PiResponses.cancelledResult(write("session.import", obj {
             put("path", JsonPrimitive(path))
             cwd?.let { put("cwd", JsonPrimitive(it)) }
         }, HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun fork(entryId: String): PiResponses.ForkResult =
-        required("fork", PiResponses.forkResult(write("session.fork", obj { put("entryId", JsonPrimitive(entryId)) }, HostCommands.LONG_TIMEOUT_MS).data))
+        required("session.fork", PiResponses.forkResult(write("session.fork", obj { put("entryId", JsonPrimitive(entryId)) }, HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun cloneSession(): PiResponses.CancelledResult =
-        required("clone", PiResponses.cancelledResult(write("session.clone", timeoutMs = HostCommands.LONG_TIMEOUT_MS).data))
+        required("session.clone", PiResponses.cancelledResult(write("session.clone", timeoutMs = HostCommands.LONG_TIMEOUT_MS).data))
 
     suspend fun setSessionName(name: String) { write("session.name", obj { put("name", JsonPrimitive(name)) }) }
 
@@ -251,7 +243,7 @@ class HostEngineApi(private val commands: HostCommands) {
         guarded(cmd) { commands.call(cmd, args, timeoutMs) }
 
     private fun <T : Any> required(cmd: String, value: T?): T =
-        value ?: throw HostCommandException(cmd, "宿主的应答里没有可读的数据")
+        value ?: throw HostCommandException(cmd, app.pi.i18n.tr("宿主的应答里没有可读的数据", "Host reply contained no readable data"))
 
     private suspend fun <T> guarded(cmd: String, block: suspend () -> T): T = try {
         block()

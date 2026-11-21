@@ -112,7 +112,7 @@ fun SettingsGroupScreen(
      * `PiEffectiveDialog` call.
      */
     onRestartEngine: (() -> Unit)? = null,
-    availableModels: List<app.pi.rpc.PiResponses.ModelInfo> = emptyList(),
+    availableModels: List<app.pi.protocol.PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
 ) {
     val group = PiSettingsCatalog.group(groupId)

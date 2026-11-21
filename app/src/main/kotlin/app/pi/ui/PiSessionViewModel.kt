@@ -23,26 +23,26 @@ import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.asOutcome
-import app.pi.rpc.Notice
-import app.pi.rpc.PiEvent
-import app.pi.rpc.PiImage
-import app.pi.rpc.PiLaunchOptions
-import app.pi.rpc.PiResponses
-import app.pi.rpc.parseSessionEntry
-import app.pi.rpc.QueueMode
-import app.pi.rpc.SessionEntry
-import app.pi.rpc.StreamingBehavior
+import app.pi.protocol.Notice
+import app.pi.protocol.PiEvent
+import app.pi.protocol.PiImage
+import app.pi.protocol.PiLaunchOptions
+import app.pi.protocol.PiResponses
+import app.pi.protocol.parseSessionEntry
+import app.pi.protocol.QueueMode
+import app.pi.protocol.SessionEntry
+import app.pi.protocol.StreamingBehavior
 import app.pi.runtime.PiPaths
-import app.pi.rpc.TOOL_UPDATE_THROTTLE_MS
-import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
-import app.pi.rpc.TranscriptItem
-import app.pi.rpc.UserMessage
-import app.pi.rpc.AssistantText
+import app.pi.protocol.TOOL_UPDATE_THROTTLE_MS
+import app.pi.protocol.ToolCall
+import app.pi.protocol.ToolStatus
+import app.pi.protocol.TranscriptItem
+import app.pi.protocol.UserMessage
+import app.pi.protocol.AssistantText
 import app.pi.ui.chat.EntryText
 import app.pi.ui.chat.MessageEntryResolver
 import app.pi.ui.chat.MessageRole
-import app.pi.rpc.extensionErrorHeadline
+import app.pi.protocol.extensionErrorHeadline
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
@@ -81,7 +81,7 @@ import app.pi.ui.chat.builtinRows
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.wantsSummary
 import app.pi.ui.extension.ComposerFill
-import app.pi.rpc.ExtensionEntry
+import app.pi.protocol.ExtensionEntry
 import app.pi.ui.extension.EntryRenderer
 import app.pi.ui.extension.EntryRendererCache
 import app.pi.ui.extension.MarkdownTransform
@@ -358,7 +358,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * 命中率 wants this field, and a reader that wants "what did this turn cost"
          * wants [turnUsage] instead.
          */
-        val lastUsage: app.pi.rpc.TokenUsage? = null,
+        val lastUsage: app.pi.protocol.TokenUsage? = null,
         /**
          * **This turn's** usage: every assistant reply since the turn started, summed
          * (`TranscriptReducer.turnUsage` — read its KDoc for the definition, for why
@@ -368,7 +368,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * `null` when the turn reported no usage at all, or before any turn has run;
          * a reader hides its group rather than printing zeros.
          */
-        val turnUsage: app.pi.rpc.TokenUsage? = null,
+        val turnUsage: app.pi.protocol.TokenUsage? = null,
         /**
          * App-local UI preferences read from pi's settings documents. Seeded at
          * boot and refreshed whenever the settings stack writes a key that the
@@ -625,29 +625,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         ).also { settingsStoreCache = it }
 
     /**
-     * The store the **settings screen** must be handed: [settingsStore] with the app's
-     * non-`settings.json` rows served from their own homes —
-     * `app.extensions.args` from the app-only sidecar ([ExtensionArgsStoreDecorator]) and
-     * the two prompt rows from pi's own files ([PromptFileSettingsStoreDecorator]).
-     *
-     * A separate accessor rather than decorating [settingsStore] itself, because the
-     * launch mapping and the credential screens read pi's document directly and have
-     * no business with rows that are not pi's (`settingsStoreForSettingsUi` is the
-     * one caller that renders and writes them).
-     *
-     * **Order: the prompt decorator is outermost.** The two decorators intercept disjoint
-     * key sets and both delegate every other key unconditionally, so no read or write
-     * changes meaning with the order — but these two rows are also the ones whose value an
-     * older build left in a *store* (`app-prefs.json`, plus a legacy copy in
-     * `settings.json`), so putting the file decorator outermost makes "the file answers,
-     * never a stored value" a fact about the chain's position rather than a conclusion
-     * about the inner layer's key routing.
+     * The store the **settings screen** must be handed: [settingsStore] with the
+     * app-only sidecar for `app.extensions.args` ([ExtensionArgsStoreDecorator]).
+     * System prompt & context files are now managed directly via SDK Host
+     * (`resources.loaded` + `ContextScreen`).
      */
     fun settingsStoreForSettingsUi(): PiSettingsStore =
-        PromptFileSettingsStoreDecorator(
-            ExtensionArgsStoreDecorator(settingsStore, extensionArgsStore),
-            promptFileStore,
-        )
+        ExtensionArgsStoreDecorator(settingsStore, extensionArgsStore)
 
     /**
      * The app-only sidecar behind `app.extensions.args`.
@@ -658,19 +642,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * value in `settings.json` would be a key pi never reads (see [ExtensionArgsStore]).
      */
     private val extensionArgsStore: ExtensionArgsStore by lazy { ExtensionArgsStore(getApplication()) }
-
-    /**
-     * The two prompt files behind `app.prompts.system` / `app.prompts.append`
-     * (`<agentDir>/SYSTEM.md` / `APPEND_SYSTEM.md`).
-     *
-     * One instance for the whole ViewModel, not one per decorator construction: the store
-     * caches each file's text against its `(size, mtime)`, and a fresh instance per
-     * `settingsStoreForSettingsUi()` call would re-read a multi-kilobyte document on every
-     * row, every frame. Built lazily from the host's own path layout, like [settingsStore]
-     * — the agent dir is a fixed path inside the rootfs, so it does not move with the
-     * workspace, and a runtime re-extract writes the same path.
-     */
-    private val promptFileStore: PromptFileStore by lazy { PromptFileStore(host.paths().agentDir) }
 
     /**
      * 会话库：列表 / 搜索 / 改名 / 删除，全部经宿主命令（SDK 的 `SessionManager`）。
@@ -1338,18 +1309,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             "treeFilterMode" -> (raw as? JsonPrimitive)?.content?.let { "setTreeFilterMode" to listOf(JsonPrimitive(it)) }
             "transport" -> (raw as? JsonPrimitive)?.content?.let { "setTransport" to listOf(JsonPrimitive(it)) }
             "httpIdleTimeoutMs" -> (raw as? JsonPrimitive)?.content?.toIntOrNull()?.let { "setHttpIdleTimeoutMs" to listOf(JsonPrimitive(it)) }
-            "websocketConnectTimeoutMs" -> (raw as? JsonPrimitive)?.content?.toIntOrNull()?.let { "setWebSocketConnectTimeoutMs" to listOf(JsonPrimitive(it)) }
             "cacheWarming" -> (raw as? JsonPrimitive)?.content?.let { "setCacheWarmingMode" to listOf(JsonPrimitive(it)) }
             "showCacheMissNotices" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setShowCacheMissNotices" to listOf(JsonPrimitive(it)) }
             "hideThinkingBlock" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setHideThinkingBlock" to listOf(JsonPrimitive(it)) }
             "enableSkillCommands" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableSkillCommands" to listOf(JsonPrimitive(it)) }
+            "images.autoResize" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setImageAutoResize" to listOf(JsonPrimitive(it)) }
+            "images.blockImages" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setBlockImages" to listOf(JsonPrimitive(it)) }
+            "enableInstallTelemetry" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setEnableInstallTelemetry" to listOf(JsonPrimitive(it)) }
             "quietStartup" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setQuietStartup" to listOf(JsonPrimitive(it)) }
             "collapseChangelog" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setCollapseChangelog" to listOf(JsonPrimitive(it)) }
             "defaultProjectTrust" -> (raw as? JsonPrimitive)?.content?.let { "setDefaultProjectTrust" to listOf(JsonPrimitive(it)) }
             "shellPath" -> (raw as? JsonPrimitive)?.content?.let { "setShellPath" to listOf(JsonPrimitive(it)) }
             "shellCommandPrefix" -> (raw as? JsonPrimitive)?.content?.let { "setShellCommandPrefix" to listOf(JsonPrimitive(it)) }
-            "branchSummary.skipPrompt" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setBranchSummarySkipPrompt" to listOf(JsonPrimitive(it)) }
-            "markdown.mermaid" -> (raw as? JsonPrimitive)?.content?.toBooleanStrictOrNull()?.let { "setMarkdownMermaidEnabled" to listOf(JsonPrimitive(it)) }
             "enabledModels" -> (raw as? JsonArray)?.let { arr -> "setEnabledModels" to listOf(arr) }
             else -> null
         }
@@ -1533,12 +1504,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun invalidateSettingsCache() {
         (settingsStore as? PiSettingsFileStore)?.invalidate()
-        // The two prompt files are read by a store of their own (`PromptFileStore`), which
-        // caches their text the same way. This function is the one hook every external
-        // writer already reaches — the settings page's file watcher and `attach()` — so the
-        // prompt cache is dropped here too; without it a `SYSTEM.md` edited in 「Pi 文件」
-        // or by the terminal would keep showing its old text until the 250 ms stamp check.
-        promptFileStore.invalidate()
     }
 
     // ----------------------------------------------------- extension UI state
@@ -2147,27 +2112,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         continueSessionId: String? = null,
         resumeSessionPath: String? = null,
     ): PiLaunchOptions = PiLaunchOptions.fromSettingValues(
-        offline = settingsStore.readBoolean("app.runtime.offline"),
-        cacheRetention = settingsStore.readString("app.runtime.cacheRetention"),
-        noContextFiles = settingsStore.readBoolean("app.runtime.noContextFiles"),
-        noExtensions = settingsStore.readBoolean("app.runtime.noExtensions"),
-        noSkills = settingsStore.readBoolean("app.runtime.noSkills"),
-        noPromptTemplates = settingsStore.readBoolean("app.runtime.noPromptTemplates"),
-        noThemes = settingsStore.readBoolean("app.runtime.noThemes"),
-        // App-only (`ExtensionArgsStore`), deliberately not pi's settings.json: pi has
-        // no key for extension flags, and the text is parsed with pi's own rules for an
-        // unrecognised `--flag` (`ExtensionFlagArgs`) before it becomes argv.
+        offline = null,
+        cacheRetention = null,
+        noContextFiles = null,
+        noExtensions = null,
+        noSkills = null,
+        noPromptTemplates = null,
+        noThemes = null,
         extensionArgs = extensionArgsStore.read(),
-        // 用户此刻在哪条对话上：`meta.sessionId` 就是 `get_state` 报出来的那个 id，也正是
-        // `--session-id` 要的值。**但它只在 pi 找得到时才可用** —— 见 [resumeTarget]：那句
-        // 「用同一个 id 新建」在 `findById` 漏掉时会**用同一个 id 再建一个文件**，于是一段对话
-        // 被劈成两个同 id 的文件。所以这里与 [resumeSessionPath] 二选一，由 [resumeTarget] 决定。
         continueSessionId = continueSessionId,
-        // 另一条路：只在 id 形式注定解析不到、而且那个文件已经被读过、确实是这一段会话时才给
-        // （`app.pi.session.resumeTargetFor`）。路径形式是唯一不带 cwd 过滤的参数。
         resumeSessionPath = resumeSessionPath,
-        // 冷启动那条路：开关开着就带 `-c`，接回同一 cwd 的最近一段。它的默认值在注册表
-        // （`defaultValue = bool(true)`），这里读的也是那一处。
         continueMostRecent = resumeLastEnabled(),
     )
 

@@ -31,9 +31,15 @@ function expect(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${!ok && detail ? ` — ${detail}` : ""}`);
 }
 
-const nodeArgs = [];
+const nodeArgs = ["--import", join(here, "fixtures/import-audit.mjs")];
 if (flag("scandir-fix")) nodeArgs.push("--import", join(repo, "app/src/main/assets/guest/scandir-fix.mjs"));
-const env = flag("no-bundle") ? { PI_HOST_NO_BUNDLE: "1" } : {};
+const importAuditFile = join(repo, "build", `.import-audit-${process.pid}.log`);
+mkdirSync(join(repo, "build"), { recursive: true });
+writeFileSync(importAuditFile, "");
+const env = {
+  PI_IMPORT_AUDIT_FILE: importAuditFile,
+  ...(flag("no-bundle") ? { PI_HOST_NO_BUNDLE: "1" } : {}),
+};
 
 const h = startHost({
   hostEntry: join(hostDir, "main.mjs"),
@@ -103,6 +109,7 @@ try {
   // ---- 2. 打开会话 ------------------------------------------------------
   const opened = await h.call("session.open", {}, 120000);
   expect("session.open", opened.ok && typeof opened.data.sessionId === "string", JSON.stringify(opened.error ?? opened.data));
+  expect("session.open 应答直出初始 state 快照", opened.ok && opened.data?.state && typeof opened.data.state === "object" && opened.data.state.sessionId === opened.data.sessionId);
   expect(`SDK 入口：${opened.data?.sdkVia}`, flag("no-bundle") ? opened.data?.sdkVia === "package" : ["bundle", "package"].includes(opened.data?.sdkVia));
 
   // ---- 3. UI 面 ---------------------------------------------------------
@@ -145,6 +152,13 @@ try {
   // bindExtensions 要等所有 session_start 处理器（上面那串对话框）跑完，所以 ext.bound 只能在这之后。
   const bound = await h.waitFor(h.evt("ext.bound"), 30000);
   expect("扩展绑定完成（open 的应答没有被它拖住）", bound.data.ok === true, bound.data.error);
+  await new Promise((r) => setTimeout(r, 50));
+  const bootImports = existsSync(importAuditFile) ? readFileSync(importAuditFile, "utf8").trim() : "";
+  expect(
+    "冷启动完成时未提前加载 http-dispatcher / undici / session-selector-search",
+    !bootImports.includes("http-dispatcher") && !bootImports.includes("undici") && !bootImports.includes("session-selector-search"),
+    bootImports,
+  );
   // 扩展工具的渲染器：renderCall / renderResult 渲成行；同一次调用的 state 共享；没有渲染器的工具返回 null；
   // 同步调用 render.tool 期间绝不能反向触发 render.invalidate 死循环。
   const invalidatesBefore = h.frames.filter(h.evt("render.invalidate")).length;
@@ -1089,6 +1103,7 @@ try {
   probeServer.close();
   h.stop();
   rmSync(h.root, { recursive: true, force: true });
+  rmSync(importAuditFile, { force: true });
 }
 
 const failed = results.filter((r) => !r.ok);

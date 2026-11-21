@@ -2,10 +2,10 @@ package app.pi.ui.extension
 
 import androidx.compose.runtime.staticCompositionLocalOf
 import app.pi.host.HostCommands
-import app.pi.rpc.ExtensionEntry
-import app.pi.rpc.HookMessage
-import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
+import app.pi.protocol.ExtensionEntry
+import app.pi.protocol.HookMessage
+import app.pi.protocol.ToolCall
+import app.pi.protocol.ToolStatus
 
 /**
  * 扩展 / MCP 工具自带的 `renderCall` / `renderResult` 的手机侧入口。

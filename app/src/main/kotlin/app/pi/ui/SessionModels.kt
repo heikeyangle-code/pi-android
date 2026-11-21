@@ -5,7 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import app.pi.engine.EngineFailure
 import app.pi.engine.EngineFailureClassify
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.WorkspaceStore

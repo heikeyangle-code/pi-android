@@ -17,7 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.i18n.tr
 import app.pi.packages.EngineRestartCoordinator
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher

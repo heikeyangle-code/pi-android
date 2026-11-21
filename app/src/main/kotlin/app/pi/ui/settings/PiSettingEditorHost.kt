@@ -58,7 +58,7 @@ fun PiSettingEditorSheet(
     /** 选项标签是「分组 / 名字」时按分组排版（默认模型）。 */
     pickerGrouped: Boolean = false,
     /** 来自 SDK `model.list` 的可用模型列表，供 `compaction.modelOverrides` 等结构化选择器使用。 */
-    availableModels: List<app.pi.rpc.PiResponses.ModelInfo> = emptyList(),
+    availableModels: List<app.pi.protocol.PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
     onWritten: (PiSetting) -> Unit = {},
 ) {

@@ -58,7 +58,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.SessionTreeNode
+import app.pi.protocol.SessionTreeNode
 import app.pi.session.tree.TreeFilter
 import app.pi.session.tree.TreeItem
 import app.pi.session.tree.TreeModel

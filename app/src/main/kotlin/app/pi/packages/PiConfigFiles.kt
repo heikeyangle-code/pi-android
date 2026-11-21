@@ -1,6 +1,6 @@
 package app.pi.packages
 
-import app.pi.rpc.PiJson
+import app.pi.protocol.PiJson
 import app.pi.settings.PiSettingsFileStore
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement

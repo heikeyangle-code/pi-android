@@ -15,7 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme

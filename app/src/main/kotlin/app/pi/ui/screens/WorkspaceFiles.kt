@@ -3,9 +3,9 @@ package app.pi.ui.screens
 import app.pi.i18n.tr
 import app.pi.packages.PiConfigFiles
 import app.pi.runtime.GuestWorkspacePath
-import app.pi.rpc.ToolCall
-import app.pi.rpc.TranscriptItem
-import app.pi.rpc.ToolStatus
+import app.pi.protocol.ToolCall
+import app.pi.protocol.TranscriptItem
+import app.pi.protocol.ToolStatus
 import app.pi.ui.blocks.argString
 import java.io.File
 import java.text.SimpleDateFormat
@@ -673,7 +673,7 @@ internal object WorkspaceFiles {
                     )
                 }
 
-                is app.pi.rpc.ToolDiff -> {
+                is app.pi.protocol.ToolDiff -> {
                     if (item.path.isEmpty()) continue
                     val previous = byPath[item.path]
                     byPath[item.path] = ProjectFile(

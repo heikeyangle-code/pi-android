@@ -1,6 +1,6 @@
 package app.pi.ui.blocks
 
-import app.pi.rpc.Ansi
+import app.pi.protocol.Ansi
 
 /**
  * The transcript's **cross-composition** parse caches: the parses a row must not redo when

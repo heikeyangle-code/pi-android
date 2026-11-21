@@ -1,6 +1,6 @@
 package app.pi.ui.render
 
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import java.util.Base64
 
 /**

@@ -10,7 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
-import app.pi.rpc.RpcLocale
+import app.pi.protocol.ProtocolLocale
 import java.util.Locale
 
 /**
@@ -87,7 +87,7 @@ object PiLocale {
             val sysLocale = primaryLocale(newConfig)
             val nextZh = isLocaleChinese(sysLocale)
             isZh = nextZh
-            RpcLocale.isChinese = nextZh
+            ProtocolLocale.isChinese = nextZh
             cachedResources = buildResources(app, AppLanguage.System, newConfig)
             onLanguageApplied?.invoke()
         }
@@ -124,7 +124,7 @@ object PiLocale {
         }
         language = next
         isZh = nextZh
-        RpcLocale.isChinese = nextZh
+        ProtocolLocale.isChinese = nextZh
         cachedResources = buildResources(app, next, app.resources.configuration)
         onLanguageApplied?.invoke()
     }

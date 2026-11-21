@@ -248,7 +248,7 @@ class HostCommands(
         durationMs: Long?,
         width: Int,
         details: JsonElement? = null,
-        images: List<app.pi.rpc.PiImage> = emptyList(),
+        images: List<app.pi.protocol.PiImage> = emptyList(),
         argsComplete: Boolean = true,
     ): ToolRender {
         val data = client.call("render.tool", obj {
@@ -447,7 +447,7 @@ class HostCommands(
 
     companion object {
         /** 附件 → `images` 参数（SDK 的 `ImageContent`：`{type:"image", data(base64), mimeType}`）。 */
-        fun imagesJson(images: List<app.pi.rpc.PiImage>): JsonArray = JsonArray(
+        fun imagesJson(images: List<app.pi.protocol.PiImage>): JsonArray = JsonArray(
             images.map {
                 JsonObject(mapOf("type" to JsonPrimitive("image"), "data" to JsonPrimitive(it.base64), "mimeType" to JsonPrimitive(it.mimeType)))
             },
@@ -464,7 +464,7 @@ private inline fun obj(build: MutableMap<String, JsonElement>.() -> Unit): JsonO
     JsonObject(LinkedHashMap<String, JsonElement>().apply(build))
 
 /** `session.prompt` / `session.steer` / `session.followUp` 的参数：`{message, images?}`。 */
-fun sendArgs(message: String, images: List<app.pi.rpc.PiImage>): JsonObject = JsonObject(
+fun sendArgs(message: String, images: List<app.pi.protocol.PiImage>): JsonObject = JsonObject(
     buildMap {
         put("message", JsonPrimitive(message))
         if (images.isNotEmpty()) put("images", HostCommands.imagesJson(images))

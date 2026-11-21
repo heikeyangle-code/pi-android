@@ -2,7 +2,7 @@ package app.pi.ui.render
 
 import android.content.Context
 import app.pi.bridge.GuestImageBytes
-import app.pi.rpc.PiImage
+import app.pi.protocol.PiImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

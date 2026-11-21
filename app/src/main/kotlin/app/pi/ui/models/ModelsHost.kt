@@ -4,7 +4,7 @@ import app.pi.host.HostAdvanced
 import app.pi.host.HostAuth
 import app.pi.host.HostRequest
 import app.pi.host.HostSignal
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 

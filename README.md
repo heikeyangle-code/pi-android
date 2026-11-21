@@ -181,7 +181,7 @@ flowchart TB
     H --> L
 ```
 
-- **307 real-SDK host checks + 6/6 CI**: every push verifies `:rpc` JVM tests, real Pi SDK contract (`contract.mjs`), 3× SDK Host suites (`bundle`, `--no-bundle`, `--scandir-fix`), Android API & i18n parity static guards, TAWCROOT NDK build, and both signed APKs (`sideload28` + `modern36`).
+- **307 real-SDK host checks + 6/6 CI**: every push verifies `:protocol` JVM tests, real Pi SDK contract (`contract.mjs`), 3× SDK Host suites (`bundle`, `--no-bundle`, `--scandir-fix`), Android API & i18n parity static guards, TAWCROOT NDK build, and both signed APKs (`sideload28` + `modern36`).
 - **Automated upstream upgrade auditing**: run `node tools/pi-upgrade-audit.mjs` to scan all 9 host & app integration seams whenever upstream Pi publishes a release (full SOP in [`docs/sdk-host/upgrading.md`](docs/sdk-host/upgrading.md)).
 
 ```bash
@@ -191,7 +191,7 @@ cd pi-android
 node tools/pi-upgrade-audit.mjs --check-only
 node tools/sdk-host/contract.mjs
 node tools/sdk-host/test.mjs
-./gradlew :rpc:test
+./gradlew :protocol:test
 node tools/fetch-runtime.mjs
 ./gradlew :app:assembleRelease
 ```

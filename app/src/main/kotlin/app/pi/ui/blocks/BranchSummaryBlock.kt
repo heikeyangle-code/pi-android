@@ -20,7 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.BranchSummary
+import app.pi.protocol.BranchSummary
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme

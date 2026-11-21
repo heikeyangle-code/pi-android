@@ -35,10 +35,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
-import app.pi.rpc.DiffHunk
-import app.pi.rpc.DiffLine
-import app.pi.rpc.DiffLineKind
-import app.pi.rpc.ToolDiff
+import app.pi.protocol.DiffHunk
+import app.pi.protocol.DiffLine
+import app.pi.protocol.DiffLineKind
+import app.pi.protocol.ToolDiff
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 

@@ -15,8 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
-import app.pi.rpc.PiImage
-import app.pi.rpc.ToolCall
+import app.pi.protocol.PiImage
+import app.pi.protocol.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.numeric

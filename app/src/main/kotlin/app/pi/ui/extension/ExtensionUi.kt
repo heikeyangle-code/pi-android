@@ -1,8 +1,8 @@
 package app.pi.ui.extension
 
 import app.pi.i18n.tr
-import app.pi.rpc.Ansi
-import app.pi.rpc.Notice
+import app.pi.protocol.Ansi
+import app.pi.protocol.Notice
 
 /**
  * The UI half of pi's extension UI sub-protocol (`docs/rpc.md` §"Extension UI

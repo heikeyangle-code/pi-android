@@ -74,7 +74,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.i18n.tr
-import app.pi.rpc.PiResponses
+import app.pi.protocol.PiResponses
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiType

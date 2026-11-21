@@ -666,7 +666,7 @@ private fun InteractPill(onClick: () -> Unit) {
 internal fun PanelLine(raw: String, wrap: Boolean) {
     val spans = remember(raw) { chromeSpans(raw) }
     ExtensionSpans(
-        spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.rpc.Ansi.Span(" ")) else spans,
+        spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.protocol.Ansi.Span(" ")) else spans,
         defaultColor = PiTheme.palette.muted,
         style = PiTheme.text.monoSmall,
         maxLines = if (wrap) Int.MAX_VALUE else 1,

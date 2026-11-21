@@ -1,8 +1,8 @@
 package app.pi.ui.chat
 
 import app.pi.i18n.tr
-import app.pi.rpc.PiResponses
-import app.pi.rpc.PiSourceInfo
+import app.pi.protocol.PiResponses
+import app.pi.protocol.PiSourceInfo
 
 /**
  * 对话页上一个「动作」：命令面板的行、顶栏「⋯」菜单的项**共用这一个枚举和同一个执行函数**
