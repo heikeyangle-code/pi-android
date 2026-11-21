@@ -119,37 +119,22 @@ object WorkspaceChoice {
      * 目录名/label，于是同一个工作区在两处印出两个名字（改过 label 之后是 `我的项目` 与
      * `workspace-2`），切完的头一两秒还会印着**上一个**工作区的名字。
      */
-    fun displayName(name: String, label: String?): String =
-        label?.trim()?.ifEmpty { null } ?: name
+    fun displayName(name: String, label: String?): String {
+        val custom = label?.trim()?.takeIf { it.isNotEmpty() && it != name }
+        if (custom != null) return custom
+        if (name == GuestWorkspacePath.DEFAULT_NAME) return tr("默认项目", "Default Project")
+        if (name.startsWith("/")) {
+            val leaf = name.trimEnd('/').substringAfterLast('/')
+            if (leaf.isNotEmpty()) return leaf
+        }
+        return name
+    }
 
     /**
      * 会话列表里一组的标题：一个 **guest** cwd 该印成什么名字。
-     *
-     * 会话列表按 pi 记在会话头里的 cwd 分组（`session-manager.ts:33/37`），而那是 guest 写法
-     * （本应用的工作区是 `/workspace/pi/workspaces/workspace-1`，终端里自己起的 pi 是 `/root`）。
-     * 直接印路径既没人能读，也是全应用唯一会露出内部目录的地方 —— 所以：
-     *
-     *  - cwd 正是**本应用某个工作区**（`[workspacesRoot]/<name>`，且 `[name]` 通过 [isOwned]）
-     *    → 与工作区页印的**同一个**名字（[displayName]，label 优先）。
-     *  - **恰好一层**才算：`.../workspace-1/src` 是另一个目录（终端里 `cd` 进去起过 pi），
-     *    不是 `workspace-1`，所以照旧取末段。
-     *  - 其余（`/root`、别的项目、workspaces 根自己）→ 末段。
-     *
-     * 为什么这一步是必要的，而不仅仅是好看：这个标题以前把**当前**工作区那一组印成通用词
-     * 「工作区」，其余组印目录名，于是同一个工作区在会话页叫「工作区」、在工作区页叫「我的项目」；
-     * 而它自己的注释承认这是 `ProjectResources.workspaceName` 的第二份拷贝。现在所有工作区组
-     * 用同一套名字，工作区页/切换面板/会话页三处一致。
-     *
-     * [workspacesRoot] 由调用方给（`GuestWorkspacePath` 的 `GUEST_ROOT` + `ROOT_RELATIVE`），
-     * 而不是这里读那个对象：这个文件因此可以单独编译进 harness（注册行只有两个文件）。
-     * [labels] 是 `WorkspaceStore.labels` 的读数（目录名 → label，已过滤掉不存在的目录），
-     * 缺项就退回目录名 —— 不是错误，只是那个工作区没改过名。
      */
     fun sessionGroupLabel(cwd: String, workspacesRoot: String, labels: Map<String, String>): String {
         val raw = cwd.trim()
-        // Only a **missing** cwd gets the sentence. It is not the same as a cwd that is the guest
-        // root: pi recorded `/` (a session started at the root of the guest), and answering
-        // 「工作目录未记录」 there would be this app inventing a fact about pi's file.
         if (raw.isEmpty()) return tr("工作目录未记录", "Working directory not recorded")
         val clean = raw.trimEnd('/')
         if (clean.isEmpty()) return "/"
@@ -160,6 +145,12 @@ object WorkspaceChoice {
             if (leaf.isNotEmpty() && !leaf.contains('/') && isOwned(leaf)) {
                 return displayName(leaf, labels[leaf])
             }
+        }
+        // Check custom labels for external project directories (both direct `/storage/...` and legacy `/workspace/storage/...`).
+        labels[clean]?.takeIf { it.isNotBlank() }?.let { return it }
+        if (clean.startsWith("${GuestWorkspacePath.GUEST_ROOT}/")) {
+            val unprefixed = "/" + clean.removePrefix("${GuestWorkspacePath.GUEST_ROOT}/")
+            labels[unprefixed]?.takeIf { it.isNotBlank() }?.let { return it }
         }
         return clean.substringAfterLast('/').ifEmpty { clean }
     }
@@ -220,14 +211,14 @@ object WorkspaceChoice {
             "/storage", "/mnt", "/sbin", "/bin", "/lib", "/usr", "/boot", "/init",
         )
         if (clean in forbidden) {
-            return tr("「$clean」不是用户内容（系统目录或根本不是目录），不能当工作区。", "\"$clean\" is not a user directory and cannot be used as a workspace.")
+            return tr("「$clean」是系统目录，不能设为项目目录。", "\"$clean\" is a system directory and cannot be used as a project.")
         }
         val inVolume = volumes.any { volume -> clean == volume || clean.startsWith("$volume/") }
         if (!inVolume) {
             val where = volumes.joinToString(tr("、", ", ")).ifEmpty { tr("（这台设备没报告任何存储卷）", "(no storage volumes reported)") }
-            return tr("只能选存储卡或共享存储里的目录（现在能选的是：$where）。", "Only directories under shared storage or SD card are allowed ($where).")
+            return tr("只能选存储卡或共享存储里的目录（当前可用：$where）。", "Only directories under shared storage or SD card are allowed ($where).")
         }
-        if (!readable) return tr("这个目录现在读不到（可能是存储卡被拔出、正在卸载，或者没有权限），先换一个。", "This directory is not readable right now (storage unmounted or missing permission).")
+        if (!readable) return tr("这个目录现在读不到（可能是存储卡被拔出、正在卸载，或缺少权限），请换一个。", "This directory is not readable right now (storage unmounted or missing permission).")
         return null
     }
 
@@ -379,7 +370,7 @@ object WorkspaceChoice {
             return Fallback(
                 name = defaultName,
                 requested = name,
-                note = "设置里的当前工作区「$name」不是本应用创建的工作区，已回到默认工作区「$defaultName」。",
+                note = tr("设置里的当前项目「$name」不可用，已回到默认项目。", "Saved project \"$name\" is unavailable; switched back to Default Project."),
             )
         }
         val probe = look(name)
@@ -388,9 +379,9 @@ object WorkspaceChoice {
                 name = defaultName,
                 requested = name,
                 note = if (name == defaultName) {
-                    "默认工作区「$defaultName」是一个符号链接，不是一个真实目录；请把它换成真实目录。"
+                    tr("默认项目目录是一个符号链接，请把它换成真实目录。", "Default project directory is a symlink; please replace it with a real directory.")
                 } else {
-                    "工作区「$name」是一个符号链接，不是一个真实目录，已回到默认工作区「$defaultName」。"
+                    tr("项目「$name」是一个符号链接，已回到默认项目。", "Project \"$name\" is a symlink; switched back to Default Project.")
                 },
             )
         }
@@ -399,7 +390,7 @@ object WorkspaceChoice {
             return Fallback(
                 name = defaultName,
                 requested = name,
-                note = "工作区「$name」的目录不存在（可能被外部删除了），已回到默认工作区「$defaultName」。",
+                note = tr("项目「$name」的目录不存在，已回到默认项目。", "Project directory \"$name\" no longer exists; switched back to Default Project."),
             )
         }
         return Chosen(name, name)

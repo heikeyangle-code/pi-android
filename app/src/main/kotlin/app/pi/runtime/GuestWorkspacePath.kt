@@ -196,8 +196,56 @@ object GuestWorkspacePath {
      * the rule reads identically at every call site.
      */
     fun under(base: String, hostWorkspace: String): String {
-        val relative = hostWorkspace.removePrefix(base).trimStart('/')
+        val cleanBase = base.trimEnd('/')
+        val cleanHost = hostWorkspace.trimEnd('/').ifEmpty { "/" }
+        if (cleanHost == cleanBase) return GUEST_ROOT
+        if (cleanHost.startsWith("$cleanBase/")) {
+            val relative = cleanHost.removePrefix("$cleanBase/").trimStart('/')
+            return if (relative.isEmpty()) GUEST_ROOT else "$GUEST_ROOT/$relative"
+        }
+        // Any other path inside rootfs (e.g. `<rootfs>/root/my-repo`) maps directly to `/...`.
+        val rootfs = cleanBase.removeSuffix("/workspace").takeIf { it != cleanBase && it.isNotEmpty() }
+        if (rootfs != null) {
+            if (cleanHost == rootfs) return "/"
+            if (cleanHost.startsWith("$rootfs/")) {
+                return "/" + cleanHost.removePrefix("$rootfs/").trimStart('/')
+            }
+        }
+        // Primary shared storage is already bind-mounted by `GuestRecipe.binds` at `/storage/emulated/0`
+        // and `/sdcard` on every launch, so using the real path directly enables instant hot-switching
+        // without restarting the engine and keeps `pwd` identical across Pi, Terminal, and Android.
+        if (cleanHost == "/storage/emulated/0" ||
+            cleanHost.startsWith("/storage/emulated/0/") ||
+            cleanHost == "/sdcard" ||
+            cleanHost.startsWith("/sdcard/")
+        ) {
+            return cleanHost
+        }
+        val relative = cleanHost.trimStart('/')
         return if (relative.isEmpty()) GUEST_ROOT else "$GUEST_ROOT/$relative"
+    }
+
+    /**
+     * Whether [hostWorkspace] requires an explicit proot/proroot `-b host:guest` bind mount to be
+     * reachable at [guestWorkspace] inside the guest.
+     *
+     * Paths inside [rootfs] are reachable natively via the rootfs prefix; primary shared storage
+     * (`/storage/emulated/0`, `/sdcard`) is already mounted by `GuestRecipe.binds` on every boot.
+     * Only removable SD cards or custom volumes outside those trees need an extra bind mount.
+     */
+    fun needsBind(rootfs: File, hostWorkspace: File, guestWorkspace: String): Boolean {
+        val root = runCatching { rootfs.canonicalPath }.getOrDefault(rootfs.absolutePath).trimEnd('/')
+        val host = runCatching { hostWorkspace.canonicalPath }.getOrDefault(hostWorkspace.absolutePath).trimEnd('/')
+        if (host == root || host.startsWith("$root/")) return false
+        val guest = guestWorkspace.trimEnd('/')
+        if (guest == "/storage/emulated/0" ||
+            guest.startsWith("/storage/emulated/0/") ||
+            guest == "/sdcard" ||
+            guest.startsWith("/sdcard/")
+        ) {
+            return false
+        }
+        return true
     }
 
     /**

@@ -393,12 +393,14 @@ class GuestCommand(private val layout: AgentLayout) {
      */
     private fun bindList(): List<Pair<String, String>> {
         layout.ensureAgentMirrorDir()
-        val binds = listOf(layout.workspaceBind())
+        val binds = if (app.pi.runtime.GuestWorkspacePath.needsBind(layout.paths.rootfs, layout.hostWorkspace, layout.guestWorkspace)) {
+            java.io.File(layout.paths.rootfs, layout.guestWorkspace.removePrefix("/")).mkdirs()
+            listOf(layout.workspaceBind())
+        } else {
+            emptyList()
+        }
         val misleading = PiAgentDirContract.misleadingAgentDirBinds(binds)
         check(misleading.isEmpty()) {
-            // No source citation in this text: an invariant message can reach a log or a
-            // crash report, and the rule for strings is the same in both places. The
-            // reasoning is in this method's KDoc.
             "guest 命令把 agent 目录绑到了别处：$misleading；" +
                 "这会让 pi install/list 写到一个引擎不读的目录"
         }

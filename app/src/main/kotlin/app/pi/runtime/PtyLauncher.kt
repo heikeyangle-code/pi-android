@@ -168,59 +168,26 @@ object PtyLauncher {
         val storage = android.os.Environment.getExternalStorageDirectory()
         val flags = probe(paths, storage)
         val workspace = workspaceHost(context)
-
-        val guestCommand = buildGuestCommand(spec, flags, guestWorkspace)
-        // proot binds nothing that does not exist on the host side, and the
-        // terminal can legitimately be the first thing the user opens — before any
-        // engine boot has created the agent dir or the workspace. `PiRuntime`'s own
-        // getters create their directories the same way, the engine creates the
-        // workspace before binding it (`PiEngineHost`, `val workspace = …; workspace.mkdirs()`),
-        // and `AgentLayout.ensureAgentMirrorDir` exists for exactly this reason on
-        // the package path.
+        val projectGuestPath = GuestWorkspacePath.under(
+            paths.workspaceBase.absolutePath,
+            workspace.absolutePath,
+        )
+        val guestCommand = buildGuestCommand(spec, flags, projectGuestPath)
         workspace.mkdirs()
         paths.agentDir.mkdirs()
-        // The terminal's argv comes from the same decision point the engine uses, so
-        // the terminal and the chat page cannot end up on different runtimes without
-        // one of them saying so. `allowProroot` stays at its default (true): this is
-        // the interactive path, which is exactly what proroot is for.
+        val extraBinds = if (GuestWorkspacePath.needsBind(paths.rootfs, workspace, projectGuestPath)) {
+            File(paths.rootfs, projectGuestPath.removePrefix("/")).mkdirs()
+            listOf(workspace.absolutePath to projectGuestPath)
+        } else {
+            emptyList()
+        }
         val selection = RuntimeSelection.of(context, paths)
         val plan = selection.plan(
             guestCommand = guestCommand,
-            // A shell starts at home, like a desktop terminal. The workspace is
-            // the *bind mount* the chat engine uses, not the cwd.
             cwd = "/root",
             storage = storage,
-            extraBinds = listOf(
-                // The terminal's `/workspace` is the **one bind left**, and it stays
-                // because it is the one *different spelling* of a directory that both
-                // sides already agree on: the engine's cwd is
-                // `/workspace/pi/workspaces/<name>` (a plain rootfs path now), while a
-                // shell wants the short `/workspace`. Only a bind can name one directory
-                // twice.
-                //
-                // Its host side moved into the rootfs with everything else
-                // (`PiPaths.workspaces`) — but the rootfs **is** `<files>/pi/runtime/rootfs`,
-                // so this bind's source is *still* an app-private directory, which is the
-                // property every measured failing bind shared (`docs/proroot-scandir-defect.md`
-                // §3.1): a **native** tool run here — `git init`, `gcc` — is therefore still in
-                // that defect's range, since `/opt/pi/scandir-fix.mjs` only wraps Node's `fs`.
-                // (Not separately measured: §3.1's `/workspace` row was read in the **engine**,
-                // where that path is a plain rootfs directory and not this mount point.)
-                // What the workspace move changed is the blast radius: `git` run from the
-                // **engine's** cwd is on a plain rootfs path (no bind) and works.
-                workspace.absolutePath to guestWorkspace,
-                // The agent dir is **not** bound any more (2026-09-23). It lives at
-                // `<rootfs>/root/.pi/agent`, which is exactly the guest's
-                // `/root/.pi/agent`, so the guest reaches it through the rootfs prefix and
-                // the app addresses the same directory through `PiPaths.agentDir`. The
-                // earlier reason for binding it — that the terminal's copy was a second,
-                // volatile agent dir with different sessions, settings and credentials —
-                // is now answered by there being only one directory at all.
-            ),
+            extraBinds = extraBinds,
             extraEnv = spec.environment(),
-            // The one caller that ever passes `false` is [start]'s retry, after a proroot
-            // launch failed to come up: the same "count it, then bring it up on proot"
-            // discipline the engine and the package commands already use.
             allowProroot = allowProroot,
         )
         return Prepared(

@@ -94,7 +94,7 @@ enum class PiDestination {
     val label: String
         get() = when (this) {
             Chat -> tr("对话", "Chat")
-            Workbench -> tr("工作区", "Workspace")
+            Workbench -> tr("项目", "Project")
             Settings -> tr("设置", "Settings")
         }
 }

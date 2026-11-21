@@ -210,10 +210,18 @@ fun SessionsScreen(
         value = withContext(Dispatchers.IO) { WorkspaceStore.labels(context) }
     }
     val workspacesRoot = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.ROOT_RELATIVE
-    // 当前工作区在会话文件头里的 cwd 写法：自带工作区是 guest 路径，设备目录是它自己的路径。
-    val currentCwds = remember(state.workspace.relative, state.workspace.hostPath) {
-        listOfNotNull(GuestWorkspacePath.GUEST_ROOT + "/" + state.workspace.relative, state.workspace.hostPath)
-            .map { it.trimEnd('/') }
+    // 当前项目在会话文件头里的 cwd 写法（含 guestPath、hostPath 以及旧版 `/workspace/storage/...` 兼容）。
+    val currentCwds = remember(state.workspace.guestPath, state.workspace.hostPath) {
+        buildList {
+            add(state.workspace.guestPath.trimEnd('/'))
+            state.workspace.hostPath?.let { host ->
+                val clean = host.trimEnd('/')
+                add(clean)
+                if (clean.startsWith("/storage/") || clean.startsWith("/sdcard/")) {
+                    add(GuestWorkspacePath.GUEST_ROOT + clean)
+                }
+            }
+        }.distinct()
     }
     var collapsedGroups by remember { mutableStateOf(emptySet<String>()) }
     val groups = remember(list.rows, currentCwds, workspaceLabels, activeFile, list.query.query, list.query.namedOnly) {
@@ -238,7 +246,7 @@ fun SessionsScreen(
                         icon = Icons.Filled.Search,
                     )
                 }
-                PiTopBarIcon(onClick = onOpenWorkspace, contentDescription = tr("工作区", "Workspace"), icon = Icons.Filled.FolderOpen)
+                PiTopBarIcon(onClick = onOpenWorkspace, contentDescription = tr("项目与文件", "Project & Files"), icon = Icons.Filled.FolderOpen)
                 PiTopBarIcon(onClick = onOpenSettings, contentDescription = tr("设置", "Settings"), icon = Icons.Filled.Settings)
                 Box {
                     PiTopBarIcon(onClick = { menuOpen = true }, contentDescription = tr("更多", "More"), icon = Icons.Filled.MoreVert)
@@ -490,7 +498,7 @@ fun SessionsScreen(
                                 if (group.rows.isEmpty()) {
                                     item(key = "empty:${group.cwd}") {
                                         Text(
-                                            tr("这个工作区还没有会话", "No sessions in this workspace yet"),
+                                            tr("这个项目还没有会话", "No sessions in this project yet"),
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(horizontal = PiSettingsMetrics.pageHorizontal)
@@ -689,7 +697,7 @@ fun SessionsScreen(
                 buildString {
                     append(missingPrompt.reason)
                     missingPrompt.issue?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(it) }
-                    append(tr("\n\n可在当前工作区继续打开，或分支一份新会话到当前工作区。", "\n\nYou can resume it in the current workspace, or fork a new session here."))
+                    append(tr("\n\n可在当前项目继续打开，或分支一份新会话到当前项目。", "\n\nYou can resume it in the current project, or fork a new session here."))
                 },
             )
             PiDialogActions {
@@ -1105,7 +1113,7 @@ private fun WorkspaceGroupHeader(
                 overflow = TextOverflow.Ellipsis,
             )
             if (current) {
-                Text(tr("当前工作区", "Current workspace"), style = PiTheme.text.meta, color = accent, maxLines = 1)
+                Text(tr("当前项目", "Current project"), style = PiTheme.text.meta, color = accent, maxLines = 1)
             }
         }
         if (onNewSession != null) {
@@ -1120,7 +1128,7 @@ private fun WorkspaceGroupHeader(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Add,
-                    contentDescription = tr("在当前工作区新建会话", "New session in current workspace"),
+                    contentDescription = tr("在当前项目新建会话", "New session in current project"),
                     tint = accent,
                     modifier = Modifier.size(13.dp),
                 )

@@ -80,16 +80,22 @@ sealed interface Boot {
  * the session changed.
  */
 data class WorkspaceState(
-    /** The current workspace's directory name — the identity, e.g. `workspace-1`. */
+    /** The current project's identity (directory name under projects root, or absolute host path). */
     val name: String = WorkspaceStore.DEFAULT_NAME,
-    /** [name] as a path relative to the files directory (`pi/workspaces/…`). */
+    /** Human-facing display name (`Default Project` / real folder name / custom label). */
+    val displayName: String = app.pi.runtime.WorkspaceChoice.displayName(WorkspaceStore.DEFAULT_NAME, null),
+    /** Path relative to the app workspace base (owned) or absolute host path (external). */
     val relative: String = GuestWorkspacePath.DEFAULT_RELATIVE,
+    /** Guest cwd spelling as seen by Pi (`/workspace/pi/workspaces/...` or `/storage/emulated/0/...`). */
+    val guestPath: String = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.DEFAULT_RELATIVE,
     /** The host directory, for a screen that wants to show it. Null if not resolvable. */
     val hostPath: String? = null,
+    /** True when the project lives outside the app-private projects root. */
+    val isExternal: Boolean = false,
     /** Bumped on every successful switch; see the class KDoc. Starts at 0. */
     val revision: Int = 0,
     /**
-     * Why the current workspace is not the stored choice, when the stored choice
+     * Why the current project is not the stored choice, when the stored choice
      * was unusable. Shown to the user once; null on the normal path.
      */
     val note: String? = null,

@@ -162,6 +162,7 @@ internal fun WorkspaceViewer(
     onMessage: (String) -> Unit,
     onSaved: (String) -> Unit,
     onMore: () -> Unit,
+    onMention: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -335,6 +336,7 @@ internal fun WorkspaceViewer(
                     onBack = { leave() },
                     onEdit = { beginEdit() },
                     onSave = { save() },
+                    onMention = onMention,
                     onMore = onMore,
                 )
                 HorizontalDivider(
@@ -498,6 +500,7 @@ private fun ViewerTopBar(
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onSave: () -> Unit,
+    onMention: (() -> Unit)?,
     onMore: () -> Unit,
 ) {
     Column(
@@ -599,6 +602,21 @@ private fun ViewerTopBar(
                 }
 
                 else -> {
+                    if (onMention != null) {
+                        Surface(
+                            onClick = onMention,
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            Text(
+                                "@",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                     if (canEdit) {
                         Surface(
                             onClick = onEdit,
@@ -1149,7 +1167,7 @@ private fun EditorBody(
                 }
             }
             Text(
-                if (saving) tr("正在把整份文件写回工作区。", "Writing file back to workspace.") else tr("返回时如果还没保存，会先问你一次。", "You'll be prompted before leaving with unsaved changes."),
+                if (saving) tr("正在保存文件…", "Saving file…") else tr("未保存离开时会先提醒确认。", "You'll be prompted before leaving with unsaved changes."),
                 modifier = Modifier.padding(top = PiSpacing.inline),
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.muted,

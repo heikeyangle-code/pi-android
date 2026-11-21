@@ -1643,7 +1643,7 @@ internal fun ChatBody(
         ChatTopBar(
             engineLabel = session.engineLabel(state),
             sessionTitle = state.meta.sessionName?.takeIf { it.isNotBlank() },
-            workspaceName = state.workspace.name.takeIf { it.isNotBlank() },
+            workspaceName = state.workspace.displayName.takeIf { it.isNotBlank() },
             searchOpen = searchOpen,
             scrolled = topBarScrolled,
             toolsExpanded = toolsExpanded,
@@ -1747,7 +1747,7 @@ internal fun ChatBody(
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             if (emptyTranscript) {
                 ChatEmptyWelcome(
-                    workspaceName = state.workspace.name,
+                    workspaceName = state.workspace.displayName,
                     modelLabel = modelLabel,
                     onPickPrompt = { prompt -> draft = prompt },
                     onOpenSessions = onOpenSessions,
@@ -2444,7 +2444,7 @@ private fun ChatEmptyWelcome(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = workspaceName.ifBlank { tr("默认工作区", "Default Workspace") },
+                text = workspaceName.ifBlank { tr("默认项目", "Default Project") },
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -2471,7 +2471,7 @@ private fun ChatEmptyWelcome(
         }
         Spacer(Modifier.height(22.dp))
         val starters = listOf(
-            tr("帮我梳理当前工作区的目录结构和核心文件", "Summarize the directory structure and key files in this workspace"),
+            tr("帮我梳理当前项目的目录结构和核心文件", "Summarize the directory structure and key files in this project"),
             tr("检查项目里最近的改动和潜在问题", "Review recent changes and potential issues in this project"),
             "/resume",
         )

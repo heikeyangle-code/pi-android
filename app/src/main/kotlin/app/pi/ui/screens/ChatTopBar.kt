@@ -192,7 +192,7 @@ internal fun ChatTopBar(
                 }
                 ChatTopBarAction(
                     onClick = onOpenWorkspace,
-                    contentDescription = tr("工作区", "Workspace"),
+                    contentDescription = tr("项目与文件", "Project & Files"),
                     icon = Icons.Filled.FolderOpen,
                 )
                 ChatTopBarAction(

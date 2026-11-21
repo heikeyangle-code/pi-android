@@ -610,18 +610,16 @@ class PiEngineHost(private val appContext: Context) {
             // 2026-11-02 用户报的就是这个：选手机目录 → 引擎起不来 → 以为只能重建。
             //
             // 挂载点必须先在 rootfs 里存在：proot/proroot 不会替我们创建 `-b` 的目标。
-            val workspaceBasePath = paths.workspaceBase.absolutePath
-            val externalWorkspace = workspace.absolutePath != workspaceBasePath &&
-                !workspace.absolutePath.startsWith(workspaceBasePath + File.separator)
-            // **绑的是「所有已登记的外部工作区」，不只是当前这个。** pi 的 cwd 是会话的属性，
-            // 切项目 = 在新 cwd 里开会话，不需要重启进程；前提是那个目录在 guest 里已经可达。
-            // 内部工作区靠 rootfs 前缀天然可达，外部的只能在启动时挂上 —— 所以启动时把已登记的
-            // 全挂上，之后在它们之间切换都是热切换。新登记的外部目录才需要重启一次（诚实地说）。
+            // 内部项目和 `/storage/emulated/0`（`GuestRecipe.binds` 已在启动时挂好）都无需额外 bind；
+            // 只有真正未挂载的外部卷（例如可移除 SD 卡）才需要加 `-b` 挂载。
             val externalEntries = runCatching { WorkspaceStore.list(appContext) }.getOrDefault(emptyList())
                 .filter { it.external && it.available && it.host.isDirectory }
             val extraBinds = buildList {
-                if (externalWorkspace) add(workspace.absolutePath to guestWorkspace)
+                if (GuestWorkspacePath.needsBind(paths.rootfs, workspace, guestWorkspace)) {
+                    add(workspace.absolutePath to guestWorkspace)
+                }
                 for (entry in externalEntries) {
+                    if (!GuestWorkspacePath.needsBind(paths.rootfs, entry.host, entry.guestPath)) continue
                     val pair = entry.host.absolutePath to entry.guestPath
                     if (pair !in this) add(pair)
                 }

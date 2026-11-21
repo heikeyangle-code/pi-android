@@ -142,7 +142,7 @@ object WorkspaceStore {
         val available: Boolean = true,
     ) {
         /** What a list row shows. */
-        val displayName: String get() = WorkspaceChoice.displayName(name, label)
+        val displayName: String get() = WorkspaceChoice.displayName(name, label.takeIf { it != name })
     }
 
     // `Resolution` used to be declared here. It is [WorkspaceChoice.Current] now: the
@@ -411,35 +411,79 @@ object WorkspaceStore {
     }
 
     /**
+     * Create a new project folder [folderName] inside [parentDir] (which may be either the app-private
+     * projects root or any writable directory on device storage), and register it if outside the app root.
+     */
+    fun createInDirectory(context: Context, parentDir: File, folderName: String): Create {
+        val cleanName = folderName.trim()
+        WorkspaceChoice.nameProblem(cleanName)?.let { return Create.Failed(it) }
+        if (!parentDir.isDirectory && !parentDir.mkdirs()) {
+            return Create.Failed(tr("无法访问目标目录：${parentDir.absolutePath}", "Cannot access parent directory: ${parentDir.absolutePath}"))
+        }
+        val target = File(parentDir, cleanName)
+        if (target.exists()) {
+            return Create.Failed(tr("这里已经有叫「$cleanName」的文件夹了。", "A folder named \"$cleanName\" already exists here."))
+        }
+        if (!target.mkdirs() || !target.isDirectory) {
+            return Create.Failed(tr("无法创建项目目录：${target.absolutePath}（存储空间或权限问题）。", "Could not create project directory: ${target.absolutePath}."))
+        }
+        return registerDirectory(context, target)
+    }
+
+    /**
+     * Register any existing host directory [dir] as a project: if it is a direct child of the
+     * app-private projects root, return its owned [Entry]; otherwise register its absolute path
+     * in [EXTERNAL_KEY] without moving or copying any files.
+     */
+    fun registerDirectory(context: Context, dir: File): Create {
+        if (!dir.isDirectory) {
+            return Create.Failed(tr("目录不存在：${dir.absolutePath}", "Directory does not exist: ${dir.absolutePath}"))
+        }
+        val rootCanonical = runCatching { root(context).canonicalFile }.getOrDefault(root(context).absoluteFile)
+        val dirCanonical = runCatching { dir.canonicalFile }.getOrDefault(dir.absoluteFile)
+        if (dirCanonical.parentFile == rootCanonical && isOwned(dirCanonical.name)) {
+            return Create.Ok(entry(context, dirCanonical.name, dirCanonical))
+        }
+        return registerExternal(context, dirCanonical.absolutePath)
+    }
+
+    /**
+     * Resolve a guest `cwd` from a Pi session header to its real host [File], when reachable on this device.
+     */
+    fun hostDirForGuestCwd(context: Context, guestCwd: String): File? {
+        val clean = guestCwd.trim().trimEnd('/')
+        if (clean.isEmpty()) return null
+        val mapped = nameForGuestCwd(clean)
+        if (mapped != null) {
+            val candidate = if (isOwned(mapped)) File(root(context), mapped) else File(mapped)
+            if (candidate.isDirectory && !Files.isSymbolicLink(candidate.toPath())) return candidate
+        }
+        if (clean.startsWith("/storage/") || clean.startsWith("/sdcard/")) {
+            val direct = File(clean)
+            if (direct.isDirectory && !Files.isSymbolicLink(direct.toPath())) return direct
+        }
+        if (clean.startsWith("/")) {
+            val inRootfs = File(pathsOf(context).rootfs, clean.removePrefix("/"))
+            if (inRootfs.isDirectory && !Files.isSymbolicLink(inRootfs.toPath())) return inRootfs
+        }
+        return null
+    }
+
+    /**
      * Give [name] a user-facing label. **The directory is not moved, renamed or
      * touched** — the label is stored in [NAMES_KEY].
-     *
-     * That is the decision this method exists to record. A workspace's identity is
-     * its directory path: pi keys the project's trust entry by cwd, and every
-     * session header records the cwd it ran in, which is how the app decides which
-     * sessions belong to the workspace on screen. Renaming the directory would
-     * therefore quietly do two things the user did not ask for — drop the project's
-     * trust back to the default, and make every session in that workspace
-     * disappear from its list (they are still on disk under the old cwd). A label
-     * changes nothing the engine or pi can see, which is exactly what "rename"
-     * should mean for a thing whose path is its identity.
-     *
-     * An empty label, or one that equals the directory name, clears the label.
      */
     fun rename(context: Context, name: String, label: String): Rename {
         val external = !isOwned(name)
         if (external && name !in externals(context)) {
-            return Rename.Failed(tr("工作区「$name」不存在或不是本应用登记的工作区，无法重命名。", "Workspace \"$name\" does not exist or is not registered."))
+            return Rename.Failed(tr("项目「$name」不存在或未登记，无法重命名。", "Project \"$name\" does not exist or is not registered."))
         }
         val dir = if (external) File(name) else File(root(context), name)
         if (!external && !dir.isDirectory) {
-            return Rename.Failed(tr("工作区「$name」不存在或不是本应用创建的，无法重命名。", "Workspace \"$name\" does not exist or is not managed by this app."))
+            return Rename.Failed(tr("项目「$name」不存在，无法重命名。", "Project \"$name\" does not exist."))
         }
         val cleaned = WorkspaceChoice.label(label)
-            ?: return Rename.Failed(tr("名称不能为空（也可以清空它，恢复为「$name」）。", "Name cannot be empty (leave blank to restore \"$name\")."))
-        // The **raw** map, not [labels]: that one drops entries whose directory is gone
-        // (a card that is out, a workspace the user deleted from a file manager), and
-        // renaming one workspace must not delete the labels of the others.
+            ?: return Rename.Failed(tr("名称不能为空。", "Name cannot be empty."))
         val next = labelsRaw(context).toMutableMap()
         if (cleaned == name || cleaned == dir.name) next.remove(name) else next[name] = cleaned
         if (!writeLabels(context, next)) {
@@ -474,14 +518,11 @@ object WorkspaceStore {
         val dir = if (external) File(name) else File(root(context), name)
         if (external) {
             if (name == currentName(context)) {
-                return Preview.Refused(tr("「${displayOf(context, name)}」是当前工作区，引擎正运行在里面。请先切换到别的工作区，再删掉它。", "\"${displayOf(context, name)}\" is the active workspace. Switch to another workspace first."))
+                return Preview.Refused(tr("「${displayOf(context, name)}」是当前项目，请先切换到别的项目再移除。", "\"${displayOf(context, name)}\" is the active project. Switch to another project first."))
             }
-            // Deliberately no existence check: a registered directory that is not there
-            // right now (the card is out) is exactly when a user wants to stop having it
-            // registered, and unregistering it cannot fail for lack of a directory.
             val target = DeleteTarget(
                 name = name,
-                label = labels(context)[name] ?: name,
+                label = labels(context)[name] ?: WorkspaceChoice.displayName(name, null),
                 host = dir,
                 files = 0,
                 dirs = 0,
@@ -492,18 +533,18 @@ object WorkspaceStore {
             return Preview.Ok(target, DeleteConfirmation(target))
         }
         if (!dir.isDirectory) {
-            return Preview.Refused(tr("工作区「$name」的目录不存在，没有可删除的内容。", "Workspace \"$name\" directory does not exist."))
+            return Preview.Refused(tr("项目「${displayOf(context, name)}」的目录不存在。", "Project \"${displayOf(context, name)}\" directory does not exist."))
         }
         if (Files.isSymbolicLink(dir.toPath())) {
-            return Preview.Refused(tr("工作区「$name」是一个符号链接，不是本应用创建的目录，已拒绝删除。", "Workspace \"$name\" is a symlink; deletion refused."))
+            return Preview.Refused(tr("项目「$name」是一个符号链接，已拒绝删除。", "Project \"$name\" is a symlink; deletion refused."))
         }
         if (name == currentName(context)) {
-            return Preview.Refused(tr("「$name」是当前工作区，引擎正运行在里面。请先切换到别的工作区，再删除它。", "\"$name\" is the active workspace. Switch to another workspace first."))
+            return Preview.Refused(tr("「${displayOf(context, name)}」是当前项目，请先切换到别的项目再删除。", "\"${displayOf(context, name)}\" is the active project. Switch to another project first."))
         }
-        val tally = tally(dir) ?: return Preview.Refused(tr("无法读取工作区「$name」的内容，已拒绝删除。", "Could not read workspace \"$name\"; deletion refused."))
+        val tally = tally(dir) ?: return Preview.Refused(tr("无法读取项目「${displayOf(context, name)}」的内容，已拒绝删除。", "Could not read project \"${displayOf(context, name)}\"; deletion refused."))
         val target = DeleteTarget(
             name = name,
-            label = labels(context)[name] ?: name,
+            label = labels(context)[name] ?: WorkspaceChoice.displayName(name, null),
             host = dir,
             files = tally.files,
             dirs = tally.dirs,
@@ -536,43 +577,36 @@ object WorkspaceStore {
         val name = confirmation.target.name
         if (!isOwned(name)) {
             if (name !in externals(context)) {
-                return Delete.Refused(tr("只能删除本应用创建或登记过的工作区，「$name」不是。", "\"$name\" is not managed by this app."))
+                return Delete.Refused(tr("只能移除已登记的项目，「$name」不在列表中。", "\"$name\" is not registered."))
             }
             if (name == currentName(context)) {
-                return Delete.Refused(tr("「${displayOf(context, name)}」是当前工作区，请先切换到别的工作区。", "\"${displayOf(context, name)}\" is the active workspace. Switch first."))
+                return Delete.Refused(tr("「${displayOf(context, name)}」是当前项目，请先切换到别的项目。", "\"${displayOf(context, name)}\" is the active project. Switch first."))
             }
             if (!writeExternals(context, externals(context) - name)) {
-                return Delete.Failed(tr("取消登记失败：无法写入设置文件，工作区仍在列表里。", "Failed to unregister workspace (settings file not writable)."))
+                return Delete.Failed(tr("移除失败：无法写入设置文件。", "Failed to remove project (settings file not writable)."))
             }
             val labelled = labelsRaw(context).toMutableMap()
             if (labelled.remove(name) != null) writeLabels(context, labelled)
             return Delete.Ok(name, 0, 0)
         }
         val dir = File(root(context), name)
-        if (!dir.isDirectory) return Delete.Refused(tr("工作区「$name」已经不存在了。", "Workspace \"$name\" no longer exists."))
+        if (!dir.isDirectory) return Delete.Refused(tr("项目「${displayOf(context, name)}」已经不存在了。", "Project \"${displayOf(context, name)}\" no longer exists."))
         if (Files.isSymbolicLink(dir.toPath())) {
-            return Delete.Refused(tr("工作区「$name」是一个符号链接，已拒绝删除。", "Workspace \"$name\" is a symlink; deletion refused."))
+            return Delete.Refused(tr("项目「$name」是一个符号链接，已拒绝删除。", "Project \"$name\" is a symlink; deletion refused."))
         }
         if (name == currentName(context)) {
-            return Delete.Refused(tr("「$name」是当前工作区，引擎正运行在里面。请先切换到别的工作区，再删除它。", "\"$name\" is the active workspace. Switch first."))
+            return Delete.Refused(tr("「${displayOf(context, name)}」是当前项目，请先切换到别的项目再删除。", "\"${displayOf(context, name)}\" is the active project. Switch first."))
         }
-        // Belt and braces: the name is already a single path segment, but the
-        // deletion is recursive, so the target is re-checked to be a direct child
-        // of our root by canonical path before anything is removed.
         val root = root(context).canonicalFile
         val canonical = runCatching { dir.canonicalFile }.getOrNull()
-            ?: return Delete.Failed("无法解析工作区「$name」的路径，已拒绝删除。")
+            ?: return Delete.Failed(tr("无法解析项目「$name」的路径，已拒绝删除。", "Could not resolve path for project \"$name\"; deletion refused."))
         if (canonical.parentFile != root) {
-            return Delete.Refused("工作区「$name」不在 ${root.absolutePath} 下，已拒绝删除。")
+            return Delete.Refused(tr("项目「$name」不在 ${root.absolutePath} 下，已拒绝删除。", "Project \"$name\" is not under ${root.absolutePath}; deletion refused."))
         }
-        val before = tally(dir) ?: return Delete.Failed("无法读取工作区「$name」的内容，已拒绝删除。")
-        // Read the labels *before* the directory goes away: [labels] filters out
-        // entries whose directory no longer exists, so asking it afterwards would
-        // report "no label for this name" and the stale `app.workspace.names`
-        // entry would survive to be inherited by the next `workspace-N`.
+        val before = tally(dir) ?: return Delete.Failed(tr("无法读取项目「$name」的内容，已拒绝删除。", "Could not read project \"$name\"; deletion refused."))
         val labelled = labelsRaw(context)
         if (!deleteTree(dir)) {
-            return Delete.Failed(tr("删除工作区「$name」失败，可能有文件正被占用。", "Failed to delete workspace \"$name\"; files may be in use."))
+            return Delete.Failed(tr("删除项目「${displayOf(context, name)}」失败，可能有文件正被占用。", "Failed to delete project \"${displayOf(context, name)}\"; files may be in use."))
         }
         val next = labelled.toMutableMap()
         if (next.remove(name) != null) writeLabels(context, next)
@@ -782,12 +816,8 @@ object WorkspaceStore {
      * last path segment (an external path's `name` is a whole path and reading it out
      * loud in a dialog is worse than the folder name).
      */
-    private fun displayOf(context: Context, name: String): String {
-        val label = labelsRaw(context)[name]
-        if (!label.isNullOrBlank()) return label
-        if (isOwned(name)) return name
-        return File(name).name.ifEmpty { name }
-    }
+    private fun displayOf(context: Context, name: String): String =
+        WorkspaceChoice.displayName(name, labelsRaw(context)[name])
 
     private fun writeSetting(context: Context, key: String, value: JsonElement): Boolean =
         runCatching { store(context).write(key, value) }.isSuccess

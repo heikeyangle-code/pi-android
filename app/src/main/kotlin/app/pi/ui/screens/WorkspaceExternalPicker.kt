@@ -9,15 +9,40 @@ import android.os.storage.StorageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Button
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.sp
+import app.pi.ui.components.PiAutoFocus
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.components.PiDialogBody
+import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.theme.PiSpacing
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +67,7 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -148,48 +174,29 @@ internal fun WorkspaceExternalPicker(
 @Composable
 private fun WorkspaceExternalIntro(onClose: () -> Unit, onAsk: () -> Unit) {
     WsSheet(
-        title = tr("需要「所有文件访问」", "\"All files access\" required"),
+        title = tr("需要「所有文件访问」权限", "\"All files access\" Required"),
         onClose = onClose,
-        subtitle = tr("只有把设备目录当工作区时才需要它。", "Only needed when using a device folder as a workspace."),
-        footer = tr("授权之后回到这里就能浏览设备目录；App 私有目录里的工作区不需要任何权限。", "Return here after granting access to browse device folders. App-private workspaces need no permissions."),
+        subtitle = tr("用于在手机存储中直接打开或新建项目目录。", "Needed to open or create project folders on device storage."),
+        footer = tr("应用沙盒内的项目不需要此权限。", "App-private projects do not require this permission."),
     ) {
         WsNotice(
             text = tr(
-                "工作区必须是设备的**真实目录**：引擎要把它 bind 进 guest 并作为工作目录，" +
-                    "而系统文档选择器给的是内容 URI，绑不了。所以这一项要的是「所有文件访问」。",
-                "A workspace must be a real device directory: the engine binds it into the guest as its working directory, " +
-                    "whereas the system document picker returns a content URI that cannot be bound. This is why \"All files access\" is required.",
+                "Pi 需要真实目录路径作为工作目录（cwd），因此需要「所有文件访问」权限。",
+                "Pi requires a real directory path as its working directory (cwd), which requires \"All files access\".",
             ),
             tone = StateTone.Warning,
             glyph = "!",
         )
         WsCard {
             WsRow(
-                title = tr("去系统设置授权", "Grant in System Settings"),
+                title = tr("前往系统设置授权", "Grant in System Settings"),
                 strong = true,
                 titleColor = PiTheme.palette.accent,
                 lead = { PickerFolderGlyph() },
-                meta = tr("打开本应用的「所有文件访问」页；回来时会重新检查，没开就还是这一屏。", "Opens this app's \"All files access\" page. Access is re-checked when you return."),
+                meta = tr("开启后返回此页即可浏览与新建目录。", "Return here after enabling to browse and create folders."),
                 onClick = onAsk,
             )
         }
-        Text(
-            tr(
-                "授权页由系统提供：本应用无法替你打开那个开关。Android 11 起这一项在「设置 → 应用 → " +
-                    "本应用 → 特殊应用权限 → 所有文件访问」；Android 10 及更早用的是普通存储权限，" +
-                    "点上面那一行会直接弹系统的授权框。",
-                "The permission screen is managed by Android; this app cannot toggle it for you. On Android 11+, go to Settings → Apps → " +
-                    "this app → Special app access → All files access. On Android 10 and earlier, tapping above prompts for standard storage permission.",
-            ),
-            modifier = Modifier.padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.cardPaddingLoose,
-                bottom = PiSettingsMetrics.groupGap,
-            ),
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
-        )
     }
 }
 
@@ -219,12 +226,15 @@ private fun WorkspaceExternalBrowser(
     onPick: (String) -> Unit,
 ) {
     val volumes = remember { volumeRoots(context) }
-    // 从第一个卷根开始。没有卷根（理论上不会发生）时说清楚，而不是显示一个空列表。
+    val scope = rememberCoroutineScope()
     var current by remember { mutableStateOf(volumes.firstOrNull()) }
     var level by remember { mutableStateOf<ExternalLevel?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var reloadTick by remember { mutableIntStateOf(0) }
+    var createFolderOpen by remember { mutableStateOf(false) }
+    var createError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(current) {
+    LaunchedEffect(current, reloadTick) {
         val path = current ?: return@LaunchedEffect
         loading = true
         level = withContext(Dispatchers.IO) { readLevel(File(path)) }
@@ -237,91 +247,124 @@ private fun WorkspaceExternalBrowser(
         }
         return
     }
-    // 只认**当前这一层**的读取结果：切目录时 `level` 还是上一层的，拿它判断新目录会放行一个
-    // 根本没读过的目录。读完之前一律不让选。
     val levelHere = level?.takeIf { it.dir.absolutePath == here }
     val refusal = when {
         levelHere == null -> WorkspaceChoice.pickRefusal(here, volumes, readable = true)
             ?: tr("正在读这个目录…", "Reading directory…")
         else -> WorkspaceChoice.pickRefusal(here, volumes, levelHere.readable)
             ?: if (!levelHere.writable) {
-                tr("这个目录不可写（只读目录，或没有写权限）：pi 要在里面建文件，选它也用不了。", "This directory is not writable (read-only or missing write permission). Pi needs to create files inside the workspace.")
+                tr("这个目录不可写，Pi 无法在其中创建或编辑文件。", "This directory is not writable; Pi cannot create or edit files here.")
             } else {
                 null
             }
     }
 
-    // 「选择」放在头里（✕ 旁边）：目录一深，列表往下滚，钉在头里的按钮始终够得着；
-    // 不能选时它灰着，原因在正文顶部那条提示里（每一次拒绝都有一句话）。
     val volumeRoot = volumes.firstOrNull { here == it || here.startsWith(it.trimEnd('/') + "/") }
+    // Quick shortcuts for common storage roots so users don't have to hunt through 30 Android folders.
+    val quickPlaces = remember(volumes) {
+        buildList {
+            volumes.forEachIndexed { idx, root ->
+                add((if (idx == 0) tr("内部存储", "Internal") else root.substringAfterLast('/')) to root)
+            }
+            val primary = volumes.firstOrNull()
+            if (primary != null) {
+                listOf("Download" to tr("下载", "Download"), "Documents" to tr("文档", "Documents")).forEach { (dir, label) ->
+                    val f = File(primary, dir)
+                    if (f.isDirectory) add(label to f.absolutePath)
+                }
+            }
+        }
+    }
+
     WsSheet(
-        title = tr("选择设备目录", "Select Device Folder"),
+        title = tr("设备目录", "Device Folder"),
         onClose = onClose,
         subtitle = here,
         subtitleMono = true,
         trailing = {
-            Button(onClick = { onPick(here) }, enabled = refusal == null) { Text(tr("选择", "Select")) }
+            Button(onClick = { onPick(here) }, enabled = refusal == null) { Text(tr("设为项目", "Use Folder")) }
         },
         footer = tr(
-            "选中的目录会成为 pi 的现场目录：项目设置、技能、提示词都从它的 .pi 里读，" +
-                "在里面写文件就是写到设备上这个目录。",
-            "The selected folder becomes pi's working directory: project settings, skills, and prompts load from its .pi folder, " +
-                "and file writes go directly to this folder on your device.",
+            "直接将所选目录设为 Pi 项目目录（cwd），不复制或移动任何文件。",
+            "Uses this folder directly as Pi's project directory (cwd) without copying files.",
         ),
         maxBodyHeight = EXTERNAL_SHEET_BODY_MAX,
     ) {
-        // 多个存储卷（内置 + 存储卡）才出现：一键换卷。
-        if (volumes.size > 1) {
+        // Quick location chips (Internal / Download / Documents / SD Card)
+        if (quickPlaces.size > 1) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
                     .padding(
                         horizontal = PiSettingsMetrics.pageHorizontal,
-                        vertical = PiSettingsMetrics.groupGap,
+                        vertical = 6.dp,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
             ) {
-                volumes.forEachIndexed { index, root ->
+                quickPlaces.forEach { (label, targetPath) ->
                     WsChip(
-                        text = if (index == 0) tr("内部存储", "Internal Storage") else root.substringAfterLast('/'),
-                        solid = root == volumeRoot,
-                        onClick = { current = root },
+                        text = label,
+                        solid = here == targetPath,
+                        onClick = {
+                            createError = null
+                            current = targetPath
+                        },
                     )
                 }
             }
         }
 
-        // 面包屑：从卷根到这里，每一段都能点 —— 比一行「上一级」多出「直接跳回第 N 层」。
+        // Breadcrumbs + "+ 新建文件夹" button
         if (volumeRoot != null) {
-            val rootLabel = if (volumes.indexOf(volumeRoot) <= 0) tr("内部存储", "Internal Storage") else volumeRoot.substringAfterLast('/')
+            val rootLabel = if (volumes.indexOf(volumeRoot) <= 0) tr("内部存储", "Internal") else volumeRoot.substringAfterLast('/')
             val segments = here.removePrefix(volumeRoot).trim('/').split('/').filter { it.isNotEmpty() }
             val scroll = rememberScrollState()
             LaunchedEffect(here) { scroll.animateScrollTo(scroll.maxValue) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(scroll)
                     .padding(horizontal = PiSettingsMetrics.pageHorizontal),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PickerCrumb(rootLabel, current = segments.isEmpty()) { current = volumeRoot }
-                var acc = volumeRoot.trimEnd('/')
-                segments.forEachIndexed { index, segment ->
-                    acc = "$acc/$segment"
-                    val target = acc
-                    Text(
-                        "›",
-                        modifier = Modifier.padding(horizontal = PiSpacing.tiny),
-                        style = PiTheme.text.monoSmall,
-                        color = PiTheme.palette.muted,
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(scroll),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PickerCrumb(rootLabel, current = segments.isEmpty()) { current = volumeRoot }
+                    var acc = volumeRoot.trimEnd('/')
+                    segments.forEachIndexed { index, segment ->
+                        acc = "$acc/$segment"
+                        val target = acc
+                        Text(
+                            "›",
+                            modifier = Modifier.padding(horizontal = PiSpacing.tiny),
+                            style = PiTheme.text.monoSmall,
+                            color = PiTheme.palette.muted,
+                        )
+                        PickerCrumb(segment, current = index == segments.lastIndex) { current = target }
+                    }
+                }
+                if (levelHere?.writable == true) {
+                    WsChip(
+                        text = tr("新建文件夹", "New Folder"),
+                        glyphIcon = Icons.Filled.CreateNewFolder,
+                        onClick = {
+                            createError = null
+                            createFolderOpen = true
+                        },
                     )
-                    PickerCrumb(segment, current = index == segments.lastIndex) { current = target }
                 }
             }
         }
 
-        // 不能选的原因：一句话，放在列表之前。读取中是中性色，真拒绝是警告色。
+        if (createError != null) {
+            WsNotice(text = createError.orEmpty(), tone = StateTone.Warning, glyph = "!")
+        }
+
         if (refusal != null) {
             WsNotice(
                 text = refusal,
@@ -337,22 +380,18 @@ private fun WorkspaceExternalBrowser(
         val children = levelHere?.children
         if (children != null && children.isEmpty()) {
             WsNotice(
-                text = tr("这个目录里没有子目录（空目录也可以当工作区）。", "No subfolders in this directory (an empty folder can still be used as a workspace)."),
+                text = tr("此目录下暂无子文件夹，可直接点击右上角「设为项目」或新建文件夹。", "No subfolders here. Tap \"Use Folder\" above or create a new folder."),
                 tone = StateTone.Muted,
                 glyph = "·",
             )
         }
         if (children != null && children.isNotEmpty()) {
-            // 一张卡、`forEachIndexed` 的行，**不是** `LazyColumn`：`WsSheet` 的正文本身是
-            // `verticalScroll` + 有上限的 `Column`，里面再放纵向懒列表是「无限高约束下测量
-            // 可滚动组件」，那是崩溃不是慢。子目录数有 `EXTERNAL_MAX_CHILDREN` 封顶，列是有界的。
-            WsSectionHeader(label = tr("子目录", "Subfolders"), count = "${children.size}")
+            WsSectionHeader(label = tr("子文件夹", "Subfolders"), count = "${children.size}")
             WsCard {
                 children.forEachIndexed { index, child ->
                     if (index > 0) WsHairline(startInset = WsIconHairlineStart)
                     WsRow(
                         title = child.file.name,
-                        // 目录名是名字，不是路径：等宽只留给路径（与文件列表同一规矩）。
                         mono = false,
                         lead = { PickerFolderGlyph() },
                         badge = if (child.count == null) {
@@ -361,9 +400,9 @@ private fun WorkspaceExternalBrowser(
                             null
                         },
                         meta = when {
-                            child.count == null -> tr("没有权限，或者这个卷现在不可用。", "Permission denied or this volume is currently unavailable.")
-                            child.count == 0 -> tr("空目录", "Empty folder")
-                            else -> tr("${child.count} 个条目", if (child.count == 1) "1 item" else "${child.count} items")
+                            child.count == null -> tr("没有权限或存储不可用", "Permission denied or unavailable")
+                            child.count == 0 -> tr("空目录", "Empty")
+                            else -> tr("${child.count} 项", if (child.count == 1) "1 item" else "${child.count} items")
                         },
                         trail = if (child.count == null) {
                             null
@@ -378,7 +417,10 @@ private fun WorkspaceExternalBrowser(
                             }
                         },
                         onClick = if (child.count == null) null else {
-                            { current = child.file.absolutePath }
+                            {
+                                createError = null
+                                current = child.file.absolutePath
+                            }
                         },
                     )
                 }
@@ -386,14 +428,120 @@ private fun WorkspaceExternalBrowser(
         }
         if (children != null && levelHere?.truncated == true) {
             WsNotice(
-                text = tr(
-                    "这个目录里还有更多子目录，这里只列了前 $EXTERNAL_MAX_CHILDREN 个；" +
-                        "从上面逐级下去，或者点面包屑换一条路。",
-                    "This directory has more subfolders; only the first $EXTERNAL_MAX_CHILDREN are shown. " +
-                        "Navigate deeper above or tap the breadcrumbs to switch paths.",
-                ),
+                text = tr("仅展示前 $EXTERNAL_MAX_CHILDREN 个子文件夹。", "Showing first $EXTERNAL_MAX_CHILDREN subfolders."),
                 tone = StateTone.Muted,
                 glyph = "·",
+            )
+        }
+    }
+
+    if (createFolderOpen) {
+        ExternalNewFolderDialog(
+            parentPath = here,
+            onDismiss = { createFolderOpen = false },
+            onCreate = { folderName ->
+                createFolderOpen = false
+                scope.launch {
+                    val created = withContext(Dispatchers.IO) {
+                        val target = File(here, folderName)
+                        when {
+                            target.exists() -> Result.failure(IllegalStateException(tr("已有同名文件夹「$folderName」。", "Folder \"$folderName\" already exists.")))
+                            !target.mkdirs() -> Result.failure(IllegalStateException(tr("创建文件夹失败，请检查存储权限。", "Failed to create folder; check storage permission.")))
+                            else -> Result.success(target)
+                        }
+                    }
+                    created.fold(
+                        onSuccess = { dir ->
+                            createError = null
+                            current = dir.absolutePath
+                            reloadTick++
+                        },
+                        onFailure = { err ->
+                            createError = err.message ?: tr("创建文件夹失败", "Failed to create folder")
+                        },
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ExternalNewFolderDialog(
+    parentPath: String,
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val trimmed = name.trim()
+    val problem = if (name.isEmpty()) null else WorkspaceChoice.nameProblem(trimmed)
+    val canSubmit = trimmed.isNotEmpty() && problem == null
+    val focus = remember { FocusRequester() }
+    PiAutoFocus(focus)
+
+    PiDialog(onDismissRequest = onDismiss) {
+        PiDialogTitle(title = tr("新建文件夹", "New Folder"))
+        PiDialogBody(parentPath, mono = true)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = PiSettingsMetrics.cardPadding)
+                .height(52.dp)
+                .clip(RoundedCornerShape(WsShape.medium))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .border(
+                    PiSettingsMetrics.hairline,
+                    if (problem != null) PiTheme.palette.error else PiTheme.palette.borderAccent,
+                    RoundedCornerShape(WsShape.medium),
+                ),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            BasicTextField(
+                value = name,
+                onValueChange = { name = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (canSubmit) onCreate(trimmed) }),
+                textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
+                cursorBrush = SolidColor(PiTheme.palette.accent),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (name.isEmpty()) {
+                            Text(
+                                tr("文件夹名称，例如 my-app", "Folder name, e.g. my-app"),
+                                style = PiTheme.text.mono.copy(fontSize = 16.sp),
+                                color = PiTheme.palette.muted,
+                                maxLines = 1,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+        }
+        if (problem != null) {
+            Text(
+                problem,
+                modifier = Modifier.padding(top = PiSpacing.inline),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.error,
+            )
+        }
+        PiDialogActions {
+            PiDialogAction(label = tr("取消", "Cancel"), primary = false, onClick = onDismiss)
+            PiDialogAction(
+                label = tr("创建并进入", "Create & Open"),
+                primary = true,
+                enabled = canSubmit,
+                onClick = { onCreate(trimmed) },
             )
         }
     }

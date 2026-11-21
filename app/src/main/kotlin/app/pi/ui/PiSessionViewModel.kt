@@ -1736,12 +1736,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun workspaceEntries(): List<WorkspaceStore.Entry> = WorkspaceStore.list(getApplication())
 
-    /** Create project directory [name] (blank = next `workspace-N`). Does **not** switch to it; see [switchWorkspace]. */
+    /** Create project directory [name] under the app-private projects root. Does **not** switch to it; see [switchWorkspace]. */
     fun createWorkspace(name: String? = null): WorkspaceStore.Create = WorkspaceStore.create(getApplication(), name)
 
-    /** Give a workspace a display label. Never moves the directory — see [WorkspaceStore.rename]. */
-    fun renameWorkspace(name: String, label: String): WorkspaceStore.Rename =
-        WorkspaceStore.rename(getApplication(), name, label)
+    /** Create a new project folder [folderName] inside any writable [parentDir] and register it. */
+    fun createProjectInDirectory(parentDir: File, folderName: String): WorkspaceStore.Create =
+        WorkspaceStore.createInDirectory(getApplication(), parentDir, folderName)
+
+    /** Register any existing host directory [dir] as a project without copying or moving files. */
+    fun registerProjectDirectory(dir: File): WorkspaceStore.Create =
+        WorkspaceStore.registerDirectory(getApplication(), dir)
+
+    /** Give a project a display label. Never moves the directory — see [WorkspaceStore.rename]. */
+    fun renameWorkspace(name: String, label: String): WorkspaceStore.Rename {
+        val result = WorkspaceStore.rename(getApplication(), name, label)
+        if (result is WorkspaceStore.Rename.Ok && name == _state.value.workspace.name) {
+            publishWorkspaceState(name, note = null, bumped = false)
+        }
+        return result
+    }
 
     /**
      * Count what deleting [name] would destroy. The returned
@@ -1808,22 +1821,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (name == previous) return WorkspaceSwitch.AlreadyCurrent(name)
 
         val target = WorkspaceStore.existing(app, name)
-            ?: return WorkspaceSwitch.Refused(tr("工作区「$name」不存在或不是本应用创建的，没有切换。", "Workspace \"$name\" does not exist or is not managed by this app; switch cancelled."))
+            ?: return WorkspaceSwitch.Refused(tr("项目「$name」不存在或未登记，未切换。", "Project \"$name\" does not exist or is not registered; switch cancelled."))
         if (!target.host.isDirectory || !target.host.canWrite()) {
             return WorkspaceSwitch.Refused(
-                tr("工作区「${target.displayName}」的目录不可写（${target.host.absolutePath}），没有切换。", "Workspace \"${target.displayName}\" directory is not writable (${target.host.absolutePath}); switch cancelled."),
+                tr("项目「${target.displayName}」的目录不可写（${target.host.absolutePath}），未切换。", "Project \"${target.displayName}\" directory is not writable (${target.host.absolutePath}); switch cancelled."),
             )
         }
         // **热切换（pi 的原语义）。** SDK 里 cwd 是会话的属性：`session.new{cwd}` 在新项目里开一段
-        // 新会话，宿主进程、模型、MCP、扩展都不动 —— 省掉十几秒冷启动。条件只有一个：那个目录在
-        // guest 里已经可达（内部工作区靠 rootfs 前缀天然可达；外部的要在引擎启动时已挂上）。
-        // 不可达才走下面的重启（要加 bind）。
+        // 新会话，宿主进程、模型、MCP、扩展都不动 —— 省掉十几秒冷启动。
+        // 内部项目、任意 rootfs 目录、以及主共享存储（`/storage/emulated/0` 已随 GuestRecipe 挂载）
+        // 全部天然可达，直接热切换；仅可移除 SD 卡等需额外 `-b` 挂载的卷在首次登记时重启一次。
         val liveApi = api
-        val reachable = !target.external || target.host.absolutePath in host.boundExternalHostPaths
+        val piPaths = PiPaths(
+            filesDir = app.filesDir,
+            nativeLibDir = File(app.applicationInfo.nativeLibraryDir),
+        )
+        val reachable = !GuestWorkspacePath.needsBind(piPaths.rootfs, target.host, target.guestPath) ||
+            target.host.absolutePath in host.boundExternalHostPaths
         if (liveApi != null && reachable && !engineDownNow()) {
             val wasBusyLive = host.turnRunning
             if (wasBusyLive && !allowInterrupt) {
-                val detail = tr("正在生成回答，没有切换工作区。", "Cannot switch workspace while generating a response.")
+                val detail = tr("正在生成回答，未切换项目。", "Cannot switch project while generating a response.")
                 pushNotice(detail, Notice.Tone.Warning)
                 return WorkspaceSwitch.Refused(detail)
             }
@@ -1831,7 +1849,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val created = liveApi.newSession(cwd = target.guestPath)
                 if (created.cancelled) {
-                    val detail = tr("扩展取消了这次切换，仍在「${WorkspaceChoice.displayName(previous, null)}」。", "An extension cancelled the workspace switch; staying in \"${WorkspaceChoice.displayName(previous, null)}\".")
+                    val detail = tr("扩展取消了这次切换，仍在「${WorkspaceChoice.displayName(previous, null)}」。", "An extension cancelled the project switch; staying in \"${WorkspaceChoice.displayName(previous, null)}\".")
                     pushNotice(detail, Notice.Tone.Warning)
                     return WorkspaceSwitch.Refused(detail)
                 }
@@ -1840,16 +1858,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 afterSessionReplaced(brandNew = true)
                 requestNav(NavRequest.Chat)
                 if (wasBusyLive) {
-                    pushNotice(tr("切换工作区中断了正在运行的回合：上一轮未完成的模型调用与工具都被停掉了。", "Switching workspace interrupted the active turn; unfinished model and tool calls were stopped."), Notice.Tone.Warning)
+                    pushNotice(tr("切换项目中断了正在运行的回合：上一轮未完成的模型调用与工具已停止。", "Switching project interrupted the active turn; unfinished model and tool calls were stopped."), Notice.Tone.Warning)
                 }
                 if (!stored) {
-                    pushNotice(tr("工作区已切换，但这次选择没有保存成功（设置文件不可写）；重启应用后会回到「$previous」。", "Workspace switched, but could not be saved (settings file not writable); app restart will revert to \"$previous\"."), Notice.Tone.Warning)
+                    pushNotice(tr("项目已切换，但设置文件不可写；重启应用后会回到上一个项目。", "Project switched, but could not be saved (settings file not writable); app restart will revert to the previous project."), Notice.Tone.Warning)
                 }
                 return WorkspaceSwitch.Ok(name, interruptedTurn = wasBusyLive)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                val detail = error.message?.takeIf { it.isNotBlank() } ?: tr("切换工作区失败", "Failed to switch workspace")
+                val detail = error.message?.takeIf { it.isNotBlank() } ?: tr("切换项目失败", "Failed to switch project")
                 pushNotice(detail, Notice.Tone.Warning)
                 return WorkspaceSwitch.Refused(detail)
             } finally {
@@ -1983,14 +2001,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun publishWorkspaceState(name: String, note: String?, bumped: Boolean) {
         val current = _state.value.workspace
-        val host = runCatching { WorkspaceStore.existing(getApplication(), name)?.host?.absolutePath }
-            .getOrNull()
+        val app = getApplication<Application>()
+        val entry = runCatching { WorkspaceStore.existing(app, name) }.getOrNull()
+        val owned = WorkspaceStore.isOwned(name)
+        val relative = entry?.relative ?: if (owned) WorkspaceStore.relativeOf(name) else name
+        val guestPath = entry?.guestPath ?: if (owned) {
+            GuestWorkspacePath.GUEST_ROOT + "/" + WorkspaceStore.relativeOf(name)
+        } else {
+            GuestWorkspacePath.under(workspaceBase().absolutePath, name)
+        }
+        val displayName = entry?.displayName ?: WorkspaceChoice.displayName(name, null)
         val revision = current.revision + if (bumped) 1 else 0
         _state.value = _state.value.copy(
             workspace = current.copy(
                 name = name,
-                relative = WorkspaceStore.relativeOf(name),
-                hostPath = host,
+                displayName = displayName,
+                relative = relative,
+                guestPath = guestPath,
+                hostPath = entry?.host?.absolutePath,
+                isExternal = entry?.external ?: !owned,
                 revision = revision,
                 note = note,
             ),
@@ -5750,32 +5779,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * 宁可保持现状，也不要猜一个工作区。
      */
     private suspend fun adoptSessionWorkspace(summary: SessionSummary, generation: Long) {
-        // **只处理"看起来是另一个工作区"的点击，而且不读文件。**
-        //
-        // `SessionSummary.cwd` 本来就是宿主从会话文件头里读出来的（SDK `SessionInfo.cwd`），所以为了认领再开一次文件是多余的 IO。用户的原话：
-        // 「大多数时候点的都是当下选择的工作区的会话」—— 那就一条内存里的字符串映射搞定：
-        //
-        //  - 映射结果 == 当前工作区 → 直接返回（同工作区的点击，**零 IO**）；
-        //  - 映射结果 != 当前工作区 → 可能是跨工作区，继续（后台写设置）；
-        //  - 映射不出来（空 cwd、别的安装留下的怪路径）→ 什么都不做，宁可芯片不动也不猜。
-        val name = WorkspaceStore.nameForGuestCwd(summary.cwd) ?: return
-        if (name == _state.value.workspace.name) return
-        // 认领是**后台**跑的：这期间用户可能已经点开了另一段会话（甚至又切了工作区）。
-        // 过期的认领会把工作区改回上一段会话的那个 —— 芯片指错，文件/终端跟着错。
-        // 以"引擎现在打开的是哪一段"为准判一次：`meta.sessionFile` 已经是另一段就丢弃。
-        // 它还没到（`get_state` 在路上）时为 null，按"可能是这一段"处理。
+        val app = getApplication<Application>()
+        var name = WorkspaceStore.nameForGuestCwd(summary.cwd)
+        if (name != null && name == _state.value.workspace.name) return
+        if (generation != sessionOpenGeneration) return
+        val entry = withContext(Dispatchers.IO) {
+            val existing = name?.let { WorkspaceStore.existing(app, it) }
+            if (existing != null) {
+                existing
+            } else {
+                val hostDir = WorkspaceStore.hostDirForGuestCwd(app, summary.cwd)
+                if (hostDir != null) {
+                    (WorkspaceStore.registerDirectory(app, hostDir) as? WorkspaceStore.Create.Ok)?.entry
+                } else {
+                    null
+                }
+            }
+        } ?: return
+        name = entry.name
         if (generation != sessionOpenGeneration) return
         if (_state.value.workspace.name == name) return
-        val app = getApplication<Application>()
-        // `existing` 同时校验「这个名字现在真的是一个工作区目录」；拿不到就越过。
-        val entry = withContext(Dispatchers.IO) { WorkspaceStore.existing(app, name) } ?: return
-        if (generation != sessionOpenGeneration) return
         val before = _state.value.workspace.name
         val saved = withContext(Dispatchers.IO) { WorkspaceStore.setCurrent(app, name) }
         if (generation != sessionOpenGeneration) {
-            // 写盘期间用户又点了别的会话：不发布（免得芯片闪到一个马上要变走的工作区），
-            // 并把刚写的设置退回去 —— 新一次点击若映射到的正是 `before`，它会因「已是当前」
-            // 而提前返回，设置里就会留着这一次的中间值。
             withContext(Dispatchers.IO) { WorkspaceStore.setCurrent(app, before) }
             return
         }
@@ -5786,8 +5812,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (!saved) {
             pushNotice(
                 tr(
-                    "这段对话属于工作区「${entry.displayName}」，但这次切换没有保存成功（设置文件不可写）；重启应用后会回到原来的工作区。",
-                    "This conversation belongs to workspace \"${entry.displayName}\", but the switch could not be saved (settings file not writable); restarting will return to the previous workspace.",
+                    "这段对话属于项目「${entry.displayName}」，但设置文件不可写；重启应用后会回到上一个项目。",
+                    "This conversation belongs to project \"${entry.displayName}\", but the switch could not be saved (settings file not writable); restarting will return to the previous project.",
                 ),
                 Notice.Tone.Warning,
             )
