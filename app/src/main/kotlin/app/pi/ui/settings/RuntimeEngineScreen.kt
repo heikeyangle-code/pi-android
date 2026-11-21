@@ -276,7 +276,7 @@ fun RuntimeEngineScreen(
         PiTopBar(
             title = tr("引擎与运行环境", "Engine & Runtime"),
             onBack = onBack,
-            trailing = {
+            actions = {
                 PiTopBarIcon(
                     icon = Icons.Filled.Refresh,
                     contentDescription = tr("刷新状态", "Refresh status"),
