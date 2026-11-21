@@ -18,7 +18,7 @@ class RpcLocaleTest {
             assertEquals("Extension error", extensionErrorHeadline(null))
 
             val parsed = ExtensionFlagArgs.parse("-x")
-            assertTrue(parsed.warning?.startsWith("Extension flags ignored:") == true)
+            assertTrue(parsed.refusal?.startsWith("Extension flags ignored:") == true)
         } finally {
             RpcLocale.isChinese = prev
         }
