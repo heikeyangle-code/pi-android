@@ -1778,7 +1778,7 @@ internal fun ChatBody(
                     val enteringFromAbove = androidx.compose.runtime.snapshots.Snapshot
                         .withoutReadObservation { sliceIndex <= listState.firstVisibleItemIndex }
                     val itemCharCount = when (item) {
-                        is AssistantText -> item.markdown.length
+                        is AssistantText -> item.text.length
                         is UserMessage -> item.text.length
                         is ThinkingBlock -> item.text.length
                         else -> 0

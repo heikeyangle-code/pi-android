@@ -1315,7 +1315,7 @@ class PiEngineSession(
         }
         // 绝不在主线程阻塞等待 1s 管道排空；若调用方在主线程则移交独立守护线程异步收尾。
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            Thread(drainAndDestroy, "pi-session-close").apply {
+            Thread(Runnable { drainAndDestroy() }, "pi-session-close").apply {
                 isDaemon = true
                 start()
             }
