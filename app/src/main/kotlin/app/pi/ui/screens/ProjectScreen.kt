@@ -1,5 +1,7 @@
 package app.pi.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,18 +27,33 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DataObject
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -299,6 +316,9 @@ fun ProjectScreen(
     var filterText by remember(currentDir.absolutePath) { mutableStateOf("") }
     // 排序：默认最近修改在最上面；其余三种目录在文件前面。记在 rememberSaveable 里（只存序号）。
     var filterOpen by remember(currentDir.absolutePath) { mutableStateOf(false) }
+    var searchWholeProject by rememberSaveable { mutableStateOf(false) }
+    var recursiveHits by remember { mutableStateOf<List<WorkspaceEntry>>(emptyList()) }
+    var recursiveSearching by remember { mutableStateOf(false) }
     var sortIndex by rememberSaveable { mutableIntStateOf(WorkspaceSort.Newest.ordinal) }
     var sortMenu by remember { mutableStateOf(false) }
     // pi 的 find / grep / `@` 补全都带 `--hidden`（点开头的照列），但**排除 `.git`**（补全里显式 `--exclude .git`，
@@ -312,6 +332,20 @@ fun ProjectScreen(
         val q = filterText.trim()
         val filtered = if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
         filtered.sortedWith(sortMode.comparator)
+    }
+    LaunchedEffect(searchWholeProject, filterText, showIgnored, workspace.absolutePath, refreshTick) {
+        val q = filterText.trim()
+        if (!searchWholeProject || q.isEmpty()) {
+            recursiveHits = emptyList()
+            recursiveSearching = false
+            return@LaunchedEffect
+        }
+        recursiveSearching = true
+        delay(140)
+        recursiveHits = withContext(Dispatchers.IO) {
+            WorkspaceFiles.searchRecursive(workspace, q, includeIgnored = showIgnored, limit = 120)
+        }
+        recursiveSearching = false
     }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
         if (listedDir != currentDir.absolutePath) listing = null
@@ -397,6 +431,31 @@ fun ProjectScreen(
 
     fun say(text: String, tone: StateTone = StateTone.Muted) {
         snack = WorkspaceSnack(text, tone)
+    }
+
+    val importFilesLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val destDir = currentDir
+        scope.launch {
+            val (count, err) = withContext(Dispatchers.IO) {
+                importWorkspaceUris(context, destDir, uris)
+            }
+            if (count > 0) {
+                refreshTick++
+                say(
+                    if (err == null) {
+                        tr("已导入 $count 个文件到当前目录", if (count == 1) "Imported 1 file" else "Imported $count files")
+                    } else {
+                        tr("已导入 $count 个文件，部分失败：$err", "Imported $count, some failed: $err")
+                    },
+                    if (err == null) StateTone.Muted else StateTone.Warning,
+                )
+            } else if (err != null) {
+                say(tr("导入失败：$err", "Import failed: $err"), StateTone.Error)
+            }
+        }
     }
 
     LaunchedEffect(snack) {
@@ -680,6 +739,12 @@ fun ProjectScreen(
                             onDismiss = { overflow = false },
                             placement = PiMenuPlacement.Below,
                             items = buildList {
+                                add(
+                                    PiMenuItem(tr("导入手机文件到当前目录", "Import files into this folder")) {
+                                        overflow = false
+                                        importFilesLauncher.launch(arrayOf("*/*"))
+                                    },
+                                )
                                 add(
                                     PiMenuItem(tr("从设备目录打开或新建项目", "Open or create in device folder")) {
                                         overflow = false
@@ -974,7 +1039,7 @@ fun ProjectScreen(
                                 detail = error.detail,
                                 actions = {
                                     WsErrAction(tr("重试", "Retry")) { refreshTick++ }
-                                    WsErrAction(tr("回到工作区", "Back to Workspace")) { crumbs = homeCrumbs }
+                                    WsErrAction(tr("回到项目根目录", "Back to Project Root")) { crumbs = homeCrumbs }
                                 },
                             )
                         }
@@ -1014,23 +1079,31 @@ fun ProjectScreen(
                                         color = PiTheme.palette.muted,
                                     )
                                     Spacer(Modifier.height(WS_EMPTY_DIR_BUTTON_GAP))
-                                    WsChip(
-                                        text = tr("新建文件", "New File"),
-                                        glyphIcon = Icons.Filled.Add,
-                                        solid = true,
-                                        onClick = {
-                                            inputDialog = WorkspaceInputDialog(
-                                                kind = WorkspaceInputKind.NewFile,
-                                                title = tr("新建文件", "New File"),
-                                                where = whereLabel,
-                                                relativeParent = parentRelative,
-                                                absoluteParent = currentDir,
-                                                initial = "",
-                                            )
-                                        },
-                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        WsChip(
+                                            text = tr("新建文件", "New File"),
+                                            glyphIcon = Icons.Filled.Add,
+                                            solid = true,
+                                            onClick = {
+                                                inputDialog = WorkspaceInputDialog(
+                                                    kind = WorkspaceInputKind.NewFile,
+                                                    title = tr("新建文件", "New File"),
+                                                    where = whereLabel,
+                                                    relativeParent = parentRelative,
+                                                    absoluteParent = currentDir,
+                                                    initial = "",
+                                                )
+                                            },
+                                        )
+                                        WsChip(
+                                            text = tr("导入文件", "Import"),
+                                            glyphIcon = Icons.Filled.UploadFile,
+                                            solid = false,
+                                            onClick = { importFilesLauncher.launch(arrayOf("*/*")) },
+                                        )
+                                    }
                                     Text(
-                                        tr("也可以从段头的「新建」里建一个文件夹。", "You can also create a folder from \"New\" in the section header."),
+                                        tr("也可以从右上「新建」里建文件夹或导入文件。", "You can also create folders or import files from \"New\" above."),
                                         modifier = Modifier.padding(top = WS_EMPTY_DIR_HINT_GAP),
                                         style = PiTheme.text.meta,
                                         color = PiTheme.palette.muted,
@@ -1039,18 +1112,33 @@ fun ProjectScreen(
                             }
                         }
                     } else {
-                        // 目录里东西多的时候：一个就地筛选框（只筛当前这一层的名字）。
+                        // 就地筛选框：支持「当前目录」与「全项目（递归）」两种范围一键切换。
                         val filtering = filterOpen || filterText.isNotEmpty()
                         if (filtering) {
                             item(key = "entry-filter") {
                                 WorkspaceFilterField(
                                     value = filterText,
                                     onChange = { filterText = it },
+                                    wholeProject = searchWholeProject,
+                                    onToggleWholeProject = { searchWholeProject = !searchWholeProject },
                                 )
                             }
                         }
-                        val shown = sortedEntries
-                        if (shown.isEmpty()) {
+                        val isRecursiveActive = searchWholeProject && filterText.isNotBlank()
+                        val shown = if (isRecursiveActive) recursiveHits else sortedEntries
+                        if (isRecursiveActive && recursiveSearching) {
+                            item(key = "entry-recursive-loading") {
+                                Text(
+                                    tr("正在全项目搜索「${filterText.trim()}」…", "Searching project for \"${filterText.trim()}\"…"),
+                                    modifier = Modifier.padding(
+                                        horizontal = PiSettingsMetrics.pageHorizontal,
+                                        vertical = 14.dp,
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                        } else if (shown.isEmpty()) {
                             item(key = "entry-filter-empty") {
                                 Text(
                                     tr("没有名字里带「${filterText.trim()}」的项。", "No items matching \"${filterText.trim()}\"."),
@@ -1064,14 +1152,17 @@ fun ProjectScreen(
                             }
                         }
                         shown.forEachIndexed { index, entry ->
-                            item(key = "entry:${entry.path}") {
+                            val itemKey = if (isRecursiveActive) "rec:${entry.path}" else "entry:${entry.path}"
+                            item(key = itemKey) {
                               Box(Modifier.animateItem()) {
+                                val entryFile = if (isRecursiveActive) File(workspace, entry.path) else File(currentDir, entry.name)
+                                val displayPath = remember(workspace.absolutePath, entryFile.absolutePath) {
+                                    workspaceDisplayPath(workspace, entryFile)
+                                }
                                 // 这一行的**工作区相对**路径，与「本次会话」徽标比对用。
-                                val entryRelative = remember(currentDir, entry.name, workspace) {
+                                val entryRelative = remember(entryFile.absolutePath, workspace.absolutePath) {
                                     val root = workspace.canonicalFile
-                                    val canonical = runCatching {
-                                        File(currentDir, entry.name).canonicalFile
-                                    }.getOrNull()
+                                    val canonical = runCatching { entryFile.canonicalFile }.getOrNull()
                                     when {
                                         canonical == null -> null
                                         canonical.path == root.path -> null
@@ -1099,17 +1190,25 @@ fun ProjectScreen(
                                         entry = entry,
                                         sessionChanged = matched,
                                         diff = entryDiff,
+                                        subtitlePrefix = if (isRecursiveActive) entry.path.substringBeforeLast('/', "").ifEmpty { null } else null,
                                         onOpen = {
                                             if (entry.isDirectory) {
-                                                crumbs = crumbs + entry.name
+                                                if (isRecursiveActive) {
+                                                    val segs = entry.path.split('/').filter { it.isNotEmpty() }
+                                                    crumbs = homeCrumbs + segs
+                                                    filterText = ""
+                                                    filterOpen = false
+                                                } else {
+                                                    crumbs = crumbs + entry.name
+                                                }
                                             } else {
-                                                openRelative(entry.path, File(currentDir, entry.name))
+                                                openRelative(displayPath, entryFile)
                                             }
                                         },
                                         onMenu = {
                                             menuFor = menuTargetFor(
-                                                path = entry.path,
-                                                file = File(currentDir, entry.name),
+                                                path = displayPath,
+                                                file = entryFile,
                                                 fromSession = false,
                                             )
                                         },
@@ -1363,6 +1462,21 @@ fun ProjectScreen(
                     say(result.sentence, if (result.ok) StateTone.Muted else StateTone.Warning)
                 }
             },
+            onShareFile = {
+                menuFor = null
+                val file = target.file
+                scope.launch {
+                    val result = shareWorkspaceFile(context, file)
+                    say(result.sentence, if (result.ok) StateTone.Muted else StateTone.Warning)
+                }
+            },
+            onDuplicate = {
+                menuFor = null
+                val source = target.file
+                runFileOp(tr("已创建副本 · ${source.name}", "Duplicated · ${source.name}")) {
+                    WorkspaceFiles.duplicate(source)
+                }
+            },
             onExport = {
                 menuFor = null
                 val file = target.file
@@ -1449,6 +1563,10 @@ fun ProjectScreen(
                     initial = "",
                 )
             },
+            onImportFiles = {
+                newSheet = false
+                importFilesLauncher.launch(arrayOf("*/*"))
+            },
         )
     }
 
@@ -1501,7 +1619,19 @@ fun ProjectScreen(
 
                         WorkspaceInputKind.Rename -> {
                             val target = File(dialog.absoluteParent ?: workspace, dialog.initial)
-                            runFileOp(tr("已重命名 · $typed", "Renamed · $typed")) { WorkspaceFiles.rename(target, typed) }
+                            val renamed = File(target.parentFile, typed)
+                            runFileOp(
+                                what = tr("已重命名 · $typed", "Renamed · $typed"),
+                                onDone = { ok ->
+                                    if (ok && viewer?.file?.absolutePath == target.absolutePath) {
+                                        viewer = targetFor(
+                                            displayPath = workspaceDisplayPath(workspace, renamed),
+                                            file = renamed,
+                                            editable = true,
+                                        )
+                                    }
+                                },
+                            ) { WorkspaceFiles.rename(target, typed) }
                         }
 
                         WorkspaceInputKind.RenameWorkspace -> dialog.workspaceName?.let { target ->
@@ -1546,7 +1676,14 @@ fun ProjectScreen(
                     onClick = {
                         val victim = target
                         deleteFor = null
-                        runFileOp(tr("已删除 · ${victim.file.name}", "Deleted · ${victim.file.name}")) {
+                        runFileOp(
+                            what = tr("已删除 · ${victim.file.name}", "Deleted · ${victim.file.name}"),
+                            onDone = { ok ->
+                                if (ok && viewer?.file?.absolutePath == victim.file.absolutePath) {
+                                    viewer = null
+                                }
+                            },
+                        ) {
                             WorkspaceFiles.delete(victim.file)
                         }
                     },
@@ -2097,6 +2234,7 @@ private fun WorkspaceEntryRow(
     entry: WorkspaceEntry,
     sessionChanged: String?,
     diff: ToolDiff?,
+    subtitlePrefix: String? = null,
     onOpen: () -> Unit,
     onMenu: () -> Unit,
 ) {
@@ -2105,6 +2243,7 @@ private fun WorkspaceEntryRow(
         System.currentTimeMillis() - entry.modifiedAt in 0..RECENT_ROW_MS
     }
     val barColor = PiTheme.palette.accent
+    val iconTintBg = entryIconTint(entry.kind, entry.name)?.copy(alpha = 0.13f)
     Column(
         Modifier
             .fillMaxWidth()
@@ -2123,14 +2262,10 @@ private fun WorkspaceEntryRow(
     ) {
         WsRow(
             title = WorkspaceFiles.middleEllipsis(entry.name, ENTRY_NAME_MAX_CHARS),
-            // **文件名用无衬线 15/Medium**（设计稿）：等宽只留给路径。原来这里是
-            // `mono = true, strong = true` —— 每行又粗又等宽，和路径、代码混在一起，
-            // 一屏看下来没有层级。
             mono = false,
             strong = false,
-            // 图标底由 `WsRow` 统一给（32dp 圆角方块），这里只画图标。
-            lead = { EntryGlyph(entry.kind) },
-            leadBackground = if (entry.isDirectory) PiTheme.palette.accent.copy(alpha = 0.14f) else null,
+            lead = { EntryGlyph(entry.kind, entry.name) },
+            leadBackground = iconTintBg,
             badge = if (sessionChanged != null) {
                 {
                     WsBadge(text = tr("本次会话", "This session"), tone = StateTone.Accent, glyph = "●")
@@ -2138,11 +2273,13 @@ private fun WorkspaceEntryRow(
             } else {
                 null
             },
-            // 相对时间（「3分钟前」）比绝对钟点好扫；大小挪到行尾。
-            meta = if (entry.isDirectory) {
-                tr("${entry.childCount}项 · ${relativeTime(entry.modifiedAt)}", "${entry.childCount} ${if (entry.childCount == 1) "item" else "items"} · ${relativeTime(entry.modifiedAt)}")
-            } else {
-                relativeTime(entry.modifiedAt)
+            meta = buildString {
+                if (!subtitlePrefix.isNullOrEmpty()) append(subtitlePrefix).append(" · ")
+                if (entry.isDirectory) {
+                    append(tr("${entry.childCount}项 · ${relativeTime(entry.modifiedAt)}", "${entry.childCount} ${if (entry.childCount == 1) "item" else "items"} · ${relativeTime(entry.modifiedAt)}"))
+                } else {
+                    append(relativeTime(entry.modifiedAt))
+                }
             },
             value = if (diff != null && (diff.added > 0 || diff.removed > 0)) {
                 {
@@ -2219,7 +2356,13 @@ private enum class WorkspaceSort(comparatorOf: () -> Comparator<WorkspaceEntry>)
 
 
 @Composable
-private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
+private fun WorkspaceFilterField(
+    value: String,
+    onChange: (String) -> Unit,
+    wholeProject: Boolean? = null,
+    onToggleWholeProject: (() -> Unit)? = null,
+) {
+    val palette = PiTheme.palette
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2230,7 +2373,7 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
             .height(44.dp)
             .clip(RoundedCornerShape(WsShape.medium))
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .padding(start = 12.dp),
+            .padding(start = 12.dp, end = if (wholeProject != null) 6.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -2238,7 +2381,7 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
             Icons.Filled.Search,
             contentDescription = null,
             modifier = Modifier.size(18.dp),
-            tint = PiTheme.palette.muted,
+            tint = palette.muted,
         )
         androidx.compose.foundation.text.BasicTextField(
             value = value,
@@ -2246,11 +2389,20 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
             modifier = Modifier.weight(1f),
             singleLine = true,
             textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(PiTheme.palette.accent),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(palette.accent),
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (value.isEmpty()) {
-                        Text(tr("筛选这一层的文件名", "Filter files in this folder"), style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+                        Text(
+                            if (wholeProject == true) {
+                                tr("全项目递归搜索文件名…", "Search all project files…")
+                            } else {
+                                tr("筛选这一层的文件名", "Filter files in this folder")
+                            },
+                            style = PiTheme.text.mono,
+                            color = palette.muted,
+                            maxLines = 1,
+                        )
                     }
                     inner()
                 }
@@ -2259,7 +2411,8 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
         if (value.isNotEmpty()) {
             Box(
                 Modifier
-                    .size(44.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
                     .clickable { onChange("") },
                 contentAlignment = Alignment.Center,
             ) {
@@ -2267,7 +2420,24 @@ private fun WorkspaceFilterField(value: String, onChange: (String) -> Unit) {
                     Icons.Filled.Close,
                     contentDescription = tr("清除筛选", "Clear filter"),
                     modifier = Modifier.size(16.dp),
-                    tint = PiTheme.palette.muted,
+                    tint = palette.muted,
+                )
+            }
+        }
+        if (wholeProject != null && onToggleWholeProject != null) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (wholeProject) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable(onClick = onToggleWholeProject)
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (wholeProject) tr("全项目", "Project") else tr("当前层", "Folder"),
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                    color = if (wholeProject) palette.accent else palette.muted,
+                    maxLines = 1,
                 )
             }
         }
@@ -2606,40 +2776,89 @@ private const val ENTRY_NAME_MAX_CHARS = 28
  * folder/file/bin 三种文件图标），而一张图在列表里和一份文本长得一模一样，就等于又把
  * 「能渲染」这件事藏回「文件」里 —— 这一批修的就是它。
  */
+private val CODE_EXTS = setOf(
+    "kt", "kts", "java", "ts", "tsx", "js", "mjs", "cjs", "jsx", "py", "rs", "go",
+    "c", "h", "cpp", "hpp", "cc", "sh", "bash", "zsh", "css", "scss", "sql", "rb", "php", "swift", "dart",
+)
+private val CONFIG_EXTS = setOf("json", "jsonc", "yaml", "yml", "toml", "xml", "properties", "gradle", "env", "ini", "lock")
+private val DOC_EXTS = setOf("md", "markdown", "mdx", "txt", "rst")
+
 @Composable
-private fun EntryGlyph(kind: WorkspaceEntryKind) {
-    when (kind) {
-        // 目录用强调色：一屏文件里「能点进去的」一眼就和「只能打开的」分开，
-        // 不用再靠图标形状去认。
-        WorkspaceEntryKind.Directory -> Icon(
+private fun entryIconTint(kind: WorkspaceEntryKind, name: String): androidx.compose.ui.graphics.Color? {
+    val palette = PiTheme.palette
+    val ext = name.substringAfterLast('.', "").lowercase(Locale.US)
+    return when {
+        kind == WorkspaceEntryKind.Directory -> palette.accent
+        kind == WorkspaceEntryKind.Image -> palette.accent
+        kind == WorkspaceEntryKind.Html || ext == "svg" -> palette.mdLink
+        kind == WorkspaceEntryKind.Binary -> null
+        ext in DOC_EXTS -> palette.success
+        ext in CONFIG_EXTS -> palette.warning
+        ext in CODE_EXTS -> palette.mdLink
+        else -> null
+    }
+}
+
+@Composable
+private fun EntryGlyph(kind: WorkspaceEntryKind, name: String = "") {
+    val palette = PiTheme.palette
+    val ext = name.substringAfterLast('.', "").lowercase(Locale.US)
+    val tint = entryIconTint(kind, name) ?: palette.muted
+    when {
+        kind == WorkspaceEntryKind.Directory -> Icon(
             Icons.Filled.Folder,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            tint = PiTheme.palette.accent,
+            tint = tint,
         )
 
-        // 稿子给二进制**单加了一个图标态**（`workspace-final.html:311` 的 `Icon n="bin"`：
-        // 文件轮廓 + 右下角一块实心矩形）。原来这里画的是字符 `▤` —— 一个标点当图标，
-        // 与旁边两个真矢量笔画不同源，字号一变就不齐。
-        WorkspaceEntryKind.Binary -> Icon(
+        kind == WorkspaceEntryKind.Binary -> Icon(
             imageVector = WsBinaryFileGlyph,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            tint = PiTheme.palette.muted,
+            tint = tint,
         )
 
-        WorkspaceEntryKind.Image -> Icon(
+        kind == WorkspaceEntryKind.Image -> Icon(
             Icons.Filled.Image,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            tint = PiTheme.palette.muted,
+            tint = tint,
         )
 
-        WorkspaceEntryKind.Html, WorkspaceEntryKind.Text -> Icon(
+        kind == WorkspaceEntryKind.Html || ext == "svg" -> Icon(
+            Icons.Filled.Language,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = tint,
+        )
+
+        ext in DOC_EXTS -> Icon(
+            Icons.Filled.Description,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = tint,
+        )
+
+        ext in CONFIG_EXTS -> Icon(
+            Icons.Filled.DataObject,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = tint,
+        )
+
+        ext in CODE_EXTS -> Icon(
+            Icons.Filled.Code,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = tint,
+        )
+
+        else -> Icon(
             Icons.AutoMirrored.Filled.InsertDriveFile,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-            tint = PiTheme.palette.muted,
+            tint = tint,
         )
     }
 }
@@ -2841,11 +3060,17 @@ private fun WorkspaceRowMenuSheet(
         subtitle = if (entry.external) entry.host.absolutePath else "~/projects/${entry.name}",
         subtitleMono = true,
     ) {
-        MenuAction(tr("重命名显示名", "Rename"), onRename)
+        MenuAction(
+            tr("重命名显示名", "Rename"),
+            onRename,
+            icon = Icons.Filled.DriveFileRenameOutline,
+        )
+        WsHairline()
         MenuAction(
             if (entry.external) tr("从列表移除", "Remove from list") else tr("删除项目", "Delete project"),
             onDelete,
             tone = PiTheme.palette.error,
+            icon = Icons.Filled.Delete,
         )
     }
 }
@@ -2913,6 +3138,8 @@ private fun WorkspaceMenuSheet(
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onOpenWithApp: () -> Unit,
+    onShareFile: () -> Unit,
+    onDuplicate: () -> Unit,
     onExport: () -> Unit,
     onEnter: () -> Unit,
     onOpenAsProject: (() -> Unit)? = null,
@@ -2921,6 +3148,7 @@ private fun WorkspaceMenuSheet(
     onCopyPath: () -> Unit,
     onMention: () -> Unit,
 ) {
+    val palette = PiTheme.palette
     WsSheet(
         title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
         onClose = onClose,
@@ -2928,25 +3156,38 @@ private fun WorkspaceMenuSheet(
         subtitleMono = true,
     ) {
         if (target.isDirectory) {
-            MenuAction(tr("进入文件夹", "Open Folder"), onEnter)
+            MenuAction(tr("进入文件夹", "Open Folder"), onEnter, icon = Icons.Filled.FolderOpen)
             if (onOpenAsProject != null) {
-                MenuAction(tr("设为当前项目（切换工作目录）", "Open as Active Project (cwd)"), onOpenAsProject, tone = PiTheme.palette.accent)
+                MenuAction(
+                    tr("设为当前项目（切换工作目录）", "Open as Active Project (cwd)"),
+                    onOpenAsProject,
+                    tone = palette.accent,
+                    icon = Icons.Filled.SwapHoriz,
+                )
             }
-            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention)
-            MenuAction(tr("重命名", "Rename"), onRename)
-            MenuAction(tr("复制路径", "Copy path"), onCopyPath)
-            MenuAction(tr("删除", "Delete"), onDelete, tone = PiTheme.palette.error)
+            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, icon = Icons.Filled.AlternateEmail)
+            WsHairline()
+            MenuAction(tr("复制副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)
+            MenuAction(tr("重命名", "Rename"), onRename, icon = Icons.Filled.DriveFileRenameOutline)
+            MenuAction(tr("复制路径", "Copy path"), onCopyPath, icon = Icons.Filled.ContentCopy)
+            WsHairline()
+            MenuAction(tr("删除文件夹", "Delete folder"), onDelete, tone = palette.error, icon = Icons.Filled.Delete)
         } else {
-            MenuAction(tr("打开", "Open"), onOpen)
+            MenuAction(tr("打开查看", "Open"), onOpen, icon = Icons.Filled.Visibility)
             if (WorkspaceFiles.editableAsText(target.kind)) {
-                MenuAction(tr("编辑", "Edit"), onEdit)
+                MenuAction(tr("编辑", "Edit"), onEdit, icon = Icons.Filled.Edit)
             }
-            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention)
-            MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp)
-            MenuAction(tr("导出到 Download", "Export to Downloads"), onExport)
-            MenuAction(tr("重命名", "Rename"), onRename)
-            MenuAction(tr("复制路径", "Copy path"), onCopyPath)
-            MenuAction(tr("删除", "Delete"), onDelete, tone = PiTheme.palette.error)
+            MenuAction(tr("在对话里引用（@）", "Mention in chat (@)"), onMention, tone = palette.accent, icon = Icons.Filled.AlternateEmail)
+            WsHairline()
+            MenuAction(tr("分享文件", "Share file"), onShareFile, icon = Icons.Filled.Share)
+            MenuAction(tr("用其他应用打开", "Open with another app"), onOpenWithApp, icon = Icons.Filled.OpenInNew)
+            MenuAction(tr("导出到 Download", "Export to Downloads"), onExport, icon = Icons.Filled.Download)
+            WsHairline()
+            MenuAction(tr("复制副本", "Duplicate"), onDuplicate, icon = Icons.Filled.FileCopy)
+            MenuAction(tr("重命名", "Rename"), onRename, icon = Icons.Filled.DriveFileRenameOutline)
+            MenuAction(tr("复制路径", "Copy path"), onCopyPath, icon = Icons.Filled.ContentCopy)
+            WsHairline()
+            MenuAction(tr("删除文件", "Delete file"), onDelete, tone = palette.error, icon = Icons.Filled.Delete)
         }
     }
 }
@@ -2954,34 +3195,37 @@ private fun WorkspaceMenuSheet(
 /** 稿子给这个标题的 `mid(…, 22)`。 */
 private const val MENU_TITLE_MAX_CHARS = 22
 
-/**
- * 菜单里的一条动作：`14 / 10` 的行内边距 + `15/500` 的标题 —— 与设置面的 `PiSettingsEntryRow`
- * 同一组数。
- *
- * 稿子这一行写的是 `12px 14px` + 14 的正文（`workspace-final.html` 的菜单面板），本轮按
- * 「弹出层里的行与设置面同一套」收到 `10 / 14` 与 `15/500`：`10` 是 `rowPaddingVertical`、
- * `15` 是行标题那一档（`PiType.rowTitle`，与设置面 `RowBody` 同一个角色）。
- */
 @Composable
 private fun MenuAction(
     label: String,
     onClick: () -> Unit,
     tone: androidx.compose.ui.graphics.Color? = null,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
+    val fg = tone ?: MaterialTheme.colorScheme.onSurface
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(
                 horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                vertical = PiSettingsMetrics.rowPaddingVertical,
+                vertical = 11.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(19.dp),
+                tint = tone ?: PiTheme.palette.muted,
+            )
+        }
         Text(
             label,
             style = PiType.rowTitle,
-            color = tone ?: MaterialTheme.colorScheme.onSurface,
+            color = fg,
         )
     }
 }
@@ -2998,11 +3242,12 @@ private fun WorkspaceNewSheet(
     onClose: () -> Unit,
     onNewFile: () -> Unit,
     onNewDir: () -> Unit,
+    onImportFiles: () -> Unit,
 ) {
     WsSheet(
-        title = tr("新建", "New"),
+        title = tr("新建与导入", "New & Import"),
         onClose = onClose,
-        subtitle = tr("建在「$where」里", "Create in \"$where\""),
+        subtitle = tr("当前目录：$where", "Directory: $where"),
     ) {
         NewChoice(
             title = tr("新建文件", "New File"),
@@ -3016,6 +3261,20 @@ private fun WorkspaceNewSheet(
             supporting = tr("放在当前目录下。", "Created in the current directory."),
             glyph = { EntryGlyph(WorkspaceEntryKind.Directory) },
             onClick = onNewDir,
+        )
+        WsHairline()
+        NewChoice(
+            title = tr("从手机导入文件", "Import Files from Device"),
+            supporting = tr("支持多选任意文档、图片或代码，自动防重名。", "Select one or more files from your phone; auto-renames on conflict."),
+            glyph = {
+                Icon(
+                    Icons.Filled.UploadFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                    tint = PiTheme.palette.accent,
+                )
+            },
+            onClick = onImportFiles,
         )
     }
 }

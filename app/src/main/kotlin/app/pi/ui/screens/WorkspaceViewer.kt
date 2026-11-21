@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -189,6 +191,10 @@ internal fun WorkspaceViewer(
     var exporting by remember(target.relativePath) { mutableStateOf(false) }
 
     val isHtml = target.kind == WorkspaceEntryKind.Html
+    val isMarkdown = remember(target.file.name, target.kind) {
+        target.kind == WorkspaceEntryKind.Text && WorkspaceFiles.isMarkdown(target.file)
+    }
+    var markdownPreview by remember(target.relativePath) { mutableStateOf(true) }
 
     /**
      * 把这一屏正在看的文件导出到公共 Download，并把**落点**说给用户听。
@@ -323,7 +329,7 @@ internal fun WorkspaceViewer(
         ),
     ) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxSize().imePadding()) {
+            Column(Modifier.fillMaxSize().navigationBarsPadding().imePadding()) {
                 ViewerTopBar(
                     name = target.file.name,
                     relativePath = target.relativePath,
@@ -333,6 +339,9 @@ internal fun WorkspaceViewer(
                     saving = saving,
                     editing = mode == ViewerMode.Edit,
                     canEdit = canEditNow && !editLoading,
+                    isMarkdown = isMarkdown && opened is WorkspaceOpen.Text,
+                    markdownPreview = markdownPreview,
+                    onToggleMarkdownPreview = { markdownPreview = !markdownPreview },
                     onBack = { leave() },
                     onEdit = { beginEdit() },
                     onSave = { save() },
@@ -404,20 +413,15 @@ internal fun WorkspaceViewer(
                             opened = opened,
                             saveError = saveError,
                             file = target.file,
-                            // 高亮语言按工作区相对路径判（`PiCodeLanguage.forPath`），与对话里
-                            // read/write 卡同一条路径；pi 也一样按路径后缀决定语言
-                            // （`renderers/read.ts:126-127`）。
                             path = target.relativePath,
+                            renderMarkdown = isMarkdown && markdownPreview,
                             onRetry = { reloadTick++ },
                             onRetrySave = { save() },
-                            // 二进制那一支是唯一还从正文里拿这三个回调的一支（它自己就在
-                            // 正文里摆着三颗按钮）；其余形态的两条路在行菜单里
-                            // （`WorkspaceMenuSheet` 的「用其他应用打开」/「导出到 Download」）。
-                            // 两条都离开主线程：导出要写盘，「用其他应用打开」要先在 IO 上
-                            // 定 MIME（名字答不出来时要闻文件头）。
                             onExport = { exportToDownload() },
                             onShare = {
-                                onMessage(sharePath(context, target))
+                                scope.launch {
+                                    onMessage(shareWorkspaceFile(context, target.file).sentence)
+                                }
                             },
                             onOpenWithApp = {
                                 scope.launch {
@@ -428,8 +432,6 @@ internal fun WorkspaceViewer(
                                 copyToClipboard(context, saveError?.detail.orEmpty())
                                 onMessage(tr("已复制错误", "Error copied"))
                             },
-                            // 图片那一支的 ✕ / 点空白处：与顶栏返回走同一条路（`leave()`），
-                            // 图片没有草稿，它只会关掉这一层。
                             onDismissImage = { leave() },
                             onMessage = onMessage,
                         )
@@ -497,6 +499,9 @@ private fun ViewerTopBar(
     saving: Boolean,
     editing: Boolean,
     canEdit: Boolean,
+    isMarkdown: Boolean,
+    markdownPreview: Boolean,
+    onToggleMarkdownPreview: () -> Unit,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onSave: () -> Unit,
@@ -506,7 +511,8 @@ private fun ViewerTopBar(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceDim),
+            .background(MaterialTheme.colorScheme.surfaceDim)
+            .statusBarsPadding(),
     ) {
         Row(
             modifier = Modifier
@@ -602,6 +608,21 @@ private fun ViewerTopBar(
                 }
 
                 else -> {
+                    if (isMarkdown) {
+                        Surface(
+                            onClick = onToggleMarkdownPreview,
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            Text(
+                                if (markdownPreview) tr("源码", "Source") else tr("预览", "Preview"),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                     if (onMention != null) {
                         Surface(
                             onClick = onMention,
@@ -645,29 +666,16 @@ private fun ViewerTopBar(
 private fun ViewerBody(
     opened: WorkspaceOpen?,
     saveError: WorkspaceOpen.Failed?,
-    /**
-     * 正在看的那个文件。
-     *
-     * 图片那一支要把它交给图片查看器（[PiImageViewerSurface] 收的是宿主文件），别的几支只
-     * 用到它的名字 —— 一个 [File] 足够，不需要再带一个 `fileName` 字符串（两个参数说的是
-     * 同一件事，就有第二份真相）。
-     */
     file: File,
-    /**
-     * 工作区相对路径。只做两件事：给正文挑高亮语言（`PiCodeLanguage.forPath`，与对话里的
-     * `read`/`write` 卡同一条路径），以及 [`TooLargeBody`] 的提示。**显示**用的是
-     * [file] 的名字与顶栏那份 meta。
-     */
     path: String,
+    renderMarkdown: Boolean,
     onRetry: () -> Unit,
     onRetrySave: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
     onOpenWithApp: () -> Unit,
     onCopyError: () -> Unit,
-    /** 图片那一支的 ✕ / 点图片周围：关掉整个查看器（图片没有草稿，中间没有可问的东西）。 */
     onDismissImage: () -> Unit,
-    /** 图片查看器里「保存到下载目录」的结果。 */
     onMessage: (String) -> Unit,
 ) {
     if (saveError != null) {
@@ -689,6 +697,8 @@ private fun ViewerBody(
         null -> LoadingBody()
         is WorkspaceOpen.Text -> if (opened.lines.isEmpty()) {
             EmptyFileBody(file.name)
+        } else if (renderMarkdown) {
+            MarkdownPreviewBody(opened.lines, opened.totalLines, opened.truncated)
         } else {
             CodeBody(opened.lines, opened.totalLines, opened.truncated, path)
         }
@@ -850,6 +860,38 @@ private fun CodeBody(lines: List<String>, totalLines: Int?, truncated: Boolean, 
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MarkdownPreviewBody(lines: List<String>, totalLines: Int?, truncated: Boolean) {
+    val source = remember(lines) { lines.joinToString("\n") }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal + 2.dp,
+                vertical = PiSettingsMetrics.cardPadding,
+            ),
+    ) {
+        app.pi.ui.render.PiMarkdownText(
+            markdown = source,
+            modifier = Modifier.fillMaxWidth(),
+            immediate = true,
+        )
+        if (truncated) {
+            Text(
+                tr(
+                    "… 其余 ${(totalLines ?: 0) - lines.size} 行未显示（切换「源码」或让 Pi 读取全文）",
+                    "… ${(totalLines ?: 0) - lines.size} more lines not shown",
+                ),
+                modifier = Modifier.padding(top = PiSettingsMetrics.cardPadding),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+            )
+        }
+        Spacer(Modifier.height(PiSpacing.scrollBottom))
     }
 }
 
@@ -1659,19 +1701,82 @@ private fun startViewIntent(
     }
 }
 
-/** 分享：App 的分享通道只送文本（`ACTION_SEND` + `text/plain`），所以送路径。 */
-private fun sharePath(context: Context, target: WorkspaceViewerTarget): String = try {
-    DeviceSystemActions.share(
-        context = context,
-        text = tr("工作区文件：${target.relativePath}\n${target.file.absolutePath}", "Workspace file: ${target.relativePath}\n${target.file.absolutePath}"),
-        subject = target.file.name,
-        url = null,
-    )
-    tr("已打开分享", "Share sheet opened")
-} catch (error: DeviceActionException) {
-    tr("分享失败：", "Share failed: ") + error.message
-} catch (error: Exception) {
-    tr("分享失败：${error::class.java.simpleName}: ${error.message}", "Share failed: ${error::class.java.simpleName}: ${error.message}")
+/**
+ * 真正分享文件（`ACTION_SEND` + `EXTRA_STREAM` + `FileProvider` 读权限）；
+ * 外部目录文件自动先流式导出到 Download 获取可授权 `content://` URI 后再唤起系统分享面板。
+ */
+internal suspend fun shareWorkspaceFile(context: Context, file: File): FileActionResult {
+    val mime = withContext(Dispatchers.IO) { DeviceSystemActions.mimeTypeForFile(file) }
+    val uri: String = try {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file).toString()
+    } catch (_: IllegalArgumentException) {
+        val exported = withContext(Dispatchers.IO) { exportWorkspaceFile(context, file) }
+        if (!exported.ok) return exported
+        exported.handoffUri ?: return FileActionResult(
+            sentence = exported.sentence + tr("；请从文件管理器分享刚导出的副本。", "; share the exported copy from your file manager."),
+            ok = false,
+        )
+    }
+    return try {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, android.net.Uri.parse(uri))
+            putExtra(Intent.EXTRA_SUBJECT, file.name)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(intent, tr("分享 · ${file.name}", "Share · ${file.name}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+        FileActionResult(tr("已打开分享 · ${file.name}", "Share sheet opened · ${file.name}"), ok = true)
+    } catch (error: Exception) {
+        FileActionResult(
+            tr("分享失败：${error::class.java.simpleName}: ${error.message}", "Share failed: ${error::class.java.simpleName}: ${error.message}"),
+            ok = false,
+        )
+    }
+}
+
+/**
+ * 将用户通过系统文件选择器选中的 `content://` 文档流式导入当前目录（自动防重名，拒绝往 `.pi` 导入未校验 JSON）。
+ */
+internal fun importWorkspaceUris(
+    context: Context,
+    targetDir: File,
+    uris: List<android.net.Uri>,
+): Pair<Int, String?> {
+    if (uris.isEmpty()) return 0 to null
+    var imported = 0
+    var lastError: String? = null
+    val resolver = context.contentResolver
+    for (uri in uris) {
+        runCatching {
+            val displayName = resolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+            } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "imported"
+            val dest = WorkspaceFiles.uniqueImportTarget(targetDir, displayName)
+            if (WorkspacePiWrite.isPiJsonTarget(dest)) {
+                throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
+            }
+            dest.parentFile?.mkdirs()
+            val input = resolver.openInputStream(uri)
+                ?: throw java.io.IOException(tr("无法读取所选文件：$displayName", "Cannot read selected file: $displayName"))
+            input.use { stream ->
+                dest.outputStream().use { out -> stream.copyTo(out, bufferSize = 64 * 1024) }
+            }
+            imported++
+        }.onFailure { err ->
+            lastError = err.message ?: err::class.java.simpleName
+        }
+    }
+    return imported to lastError
 }
 
 /** 复制一段文本（错误详情、`/名字`）；失败不抛，回一句人话。 */

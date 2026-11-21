@@ -247,6 +247,115 @@ internal object WorkspaceFiles {
     fun editableAsText(kind: WorkspaceEntryKind): Boolean =
         kind == WorkspaceEntryKind.Text || kind == WorkspaceEntryKind.Html
 
+    fun isMarkdown(file: File): Boolean {
+        val ext = file.name.substringAfterLast('.', "").lowercase(Locale.US)
+        return ext == "md" || ext == "markdown" || ext == "mdx"
+    }
+
+    /**
+     * 递归搜索项目内匹配 [query] 的文件与目录（跳过 `.git` / `node_modules`，除非 [includeIgnored] 为真）。
+     * 严格限制返回数量与遍历上限，防止在超大目录上拖慢 IO。
+     */
+    fun searchRecursive(
+        root: File,
+        query: String,
+        includeIgnored: Boolean = false,
+        limit: Int = 120,
+    ): List<WorkspaceEntry> {
+        val q = query.trim()
+        if (q.isEmpty() || !root.isDirectory) return emptyList()
+        val base = runCatching { root.canonicalPath }.getOrDefault(root.absolutePath).trimEnd('/')
+        val results = ArrayList<WorkspaceEntry>(limit.coerceAtMost(64))
+        val queue = ArrayDeque<File>()
+        queue.add(root)
+        var visited = 0
+        val maxVisits = 8_000
+        while (queue.isNotEmpty() && results.size < limit && visited < maxVisits) {
+            val dir = queue.removeFirst()
+            val children = runCatching { dir.listFiles() }.getOrNull() ?: continue
+            for (child in children) {
+                if (results.size >= limit || visited >= maxVisits) break
+                visited++
+                val isLink = runCatching { java.nio.file.Files.isSymbolicLink(child.toPath()) }.getOrDefault(false)
+                val isDir = !isLink && child.isDirectory
+                if (isDir && !includeIgnored && (child.name == ".git" || child.name == "node_modules")) continue
+                val full = runCatching { child.canonicalPath }.getOrDefault(child.absolutePath)
+                val rel = if (full.startsWith("$base/")) full.removePrefix("$base/") else child.name
+                if (child.name.contains(q, ignoreCase = true) || rel.contains(q, ignoreCase = true)) {
+                    results.add(entryOf(child, rel))
+                }
+                if (isDir) queue.add(child)
+            }
+        }
+        return results.sortedWith(compareBy({ !it.isDirectory }, { it.path.lowercase(Locale.US) }))
+    }
+
+    /**
+     * 在同目录创建副本（不跟随符号链接）。自动避开重名（`foo copy.kt`、`foo copy 2.kt`）。
+     */
+    fun duplicate(source: File): Result<File> = runCatching {
+        if (!source.exists()) throw java.io.FileNotFoundException(tr("源文件不存在。", "Source does not exist."))
+        val parent = source.parentFile ?: throw java.io.IOException(tr("无法确定目标目录。", "Unable to determine parent directory."))
+        val target = uniqueCopyTarget(parent, source.name, source.isDirectory)
+        if (!source.isDirectory && WorkspacePiWrite.isPiJsonTarget(target)) {
+            throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
+        }
+        copyNoFollow(source, target)
+        target
+    }
+
+    fun uniqueCopyTarget(parent: File, originalName: String, isDirectory: Boolean): File {
+        val dot = if (isDirectory) -1 else originalName.lastIndexOf('.')
+        val stem = if (dot > 0) originalName.substring(0, dot) else originalName
+        val ext = if (dot > 0) originalName.substring(dot) else ""
+        var candidate = File(parent, "$stem copy$ext")
+        var n = 2
+        while (candidate.exists()) {
+            candidate = File(parent, "$stem copy $n$ext")
+            n++
+        }
+        return candidate
+    }
+
+    fun uniqueImportTarget(parent: File, originalName: String): File {
+        val clean = originalName.replace('/', '_').replace('\\', '_').trim().ifEmpty { "imported_file" }
+        var candidate = File(parent, clean)
+        if (!candidate.exists()) return candidate
+        val dot = clean.lastIndexOf('.')
+        val stem = if (dot > 0) clean.substring(0, dot) else clean
+        val ext = if (dot > 0) clean.substring(dot) else ""
+        var n = 1
+        while (candidate.exists()) {
+            candidate = File(parent, "$stem ($n)$ext")
+            n++
+        }
+        return candidate
+    }
+
+    private fun copyNoFollow(source: File, target: File) {
+        val srcPath = source.toPath()
+        if (java.nio.file.Files.isSymbolicLink(srcPath)) {
+            val linkTarget = java.nio.file.Files.readSymbolicLink(srcPath)
+            java.nio.file.Files.createSymbolicLink(target.toPath(), linkTarget)
+            return
+        }
+        if (source.isDirectory) {
+            if (!target.mkdirs() && !target.isDirectory) {
+                throw java.io.IOException(tr("无法创建目标文件夹：${target.name}", "Unable to create folder: ${target.name}"))
+            }
+            source.listFiles()?.forEach { child ->
+                copyNoFollow(child, File(target, child.name))
+            }
+        } else {
+            source.inputStream().use { input ->
+                target.outputStream().use { output ->
+                    input.copyTo(output, bufferSize = 64 * 1024)
+                }
+            }
+            if (source.canExecute()) target.setExecutable(true, true)
+        }
+    }
+
     /**
      * 读一个文本文件，按 design 稿的三档分流：整份 / 只预览前 25 行 / 二进制。
      *
