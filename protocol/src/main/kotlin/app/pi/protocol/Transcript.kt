@@ -2035,7 +2035,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 )
                 // F8: closing the card publishes it, so a chunk the throttle was
                 // still holding is delivered with it.
-                lastToolPublishAt.remove(call.callId)
+                lastToolPublishAt.remove(call.toolCallId)
                 if (suppressedToolUpdate == i) suppressedToolUpdate = null
                 change = TranscriptChange.Updated(i)
             }
