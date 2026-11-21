@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +43,8 @@ fun SettingsHome(
     onOpenGroup: (String) -> Unit,
     onOpenModels: (() -> Unit)? = null,
     freshness: Int = 0,
+    onOpenRuntime: (() -> Unit)? = null,
+    runtimeSummary: String? = null,
     onOpenOther: (() -> Unit)? = null,
     onOpenMcp: (() -> Unit)? = null,
 ) {
@@ -174,15 +176,20 @@ fun SettingsHome(
             item(key = "label:system") { HomeSectionLabel(tr("系统", "System")) }
             item(key = "card:system") {
                 PiSettingsCard {
-                    PiSettingsEntryRow(
-                        title = PiSettingsCatalog.groupTitle("runtime"),
-                        supporting = PiSettingsCatalog.groups.firstOrNull { it.id == "runtime" }?.summary?.invoke(store),
-                        onClick = { onOpenGroup("runtime") },
-                        leadingIcon = Icons.Filled.Build,
-                        leadingTint = palette.muted,
-                    )
+                    if (onOpenRuntime != null) {
+                        PiSettingsEntryRow(
+                            title = tr("引擎与运行环境", "Engine & Runtime"),
+                            supporting = runtimeSummary ?: tr(
+                                "引擎状态、容器运行时（proot / proroot / tawcroot）、工具链自检与诊断报告",
+                                "Engine status, container runtime (proot / proroot / tawcroot), self-check & diagnostics",
+                            ),
+                            onClick = onOpenRuntime,
+                            leadingIcon = Icons.Filled.Memory,
+                            leadingTint = palette.accent,
+                        )
+                    }
                     if (onOpenOther != null) {
-                        PiSettingsHairline()
+                        if (onOpenRuntime != null) PiSettingsHairline()
                         PiSettingsEntryRow(
                             title = tr("其他", "More"),
                             supporting = tr("终端、设备能力、安全与隐私、开源许可", "Terminal, device capabilities, security & privacy, licenses"),

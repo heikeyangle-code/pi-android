@@ -769,18 +769,15 @@ fun PiRoot() {
                     // `/scoped-models`: open the group and highlight the key.
                     focusKey = settingsFocus,
                     onFocusConsumed = { settingsFocus = null },
-                    // 「运行时加速（实验性）」那一行拨完之后的进度：探针在跑的时候，「运行时
-                    // （实际生效）」那一行显示「正在测探针」而不是上一次的旧结论。
                     runtimeSwitch = runtimeSwitch,
-                    // The credential form writes settings.json through the packages
-                    // layer, which invalidates a store instance of its own; the store
-                    // this app reads belongs to the ViewModel, so dropping its cache
-                    // is the ViewModel's job.
+                    activeRuntimeEngine = { session.activeRuntimeEngine() },
+                    liveEngineState = { session.liveEngineState() },
+                    onSelectRuntimeEngine = { engine -> session.selectRuntimeEngine(engine) },
+                    onStartEngine = { session.boot() },
+                    onRepairRuntime = { session.repairRuntime() },
+                    onRebuildRuntime = { session.boot(rebuild = true) },
                     onExternalSettingsWrite = { session.invalidateSettingsCache() },
-                    // The terminal is the settings home's one row now, and the
-                    // screen it opens belongs to this overlay layer — so the stack
-                    // hands the tap back up rather than opening it itself.
-                        onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
+                    onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
                     )
                 }
             }

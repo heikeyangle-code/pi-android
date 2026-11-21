@@ -26,7 +26,7 @@ object TawcrootProbe {
     const val EXEC_TIMEOUT_MS: Long = 20_000L
 
     private const val MAX_OUTPUT_CHARS = 64_000
-    private const val CACHE_VERSION = "t2"
+    private const val CACHE_VERSION = "t3"
 
     fun key(revision: String, digest: String): String =
         ProrootProbeCache.key(revision, digest, CACHE_VERSION)
@@ -90,11 +90,11 @@ object TawcrootProbe {
             val argv = GuestCommandLine.build(
                 paths, GuestEngine.Tawcroot, ProrootExecProbe.guestCommand(), cwd = "/", storage = storage,
             )
-            val process = ProcessBuilder(argv)
+            val builder = ProcessBuilder(argv)
                 .directory(TawcrootCommand.hostCwd(paths))
                 .redirectErrorStream(true)
                 .also { it.environment().putAll(GuestCommandLine.environment(paths, GuestEngine.Tawcroot)) }
-                .start()
+            val process = PersistentProcessSpawner.start(builder)
             val finished = runCatching { process.waitFor(EXEC_TIMEOUT_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)
             if (!finished) {
                 process.destroyForcibly()

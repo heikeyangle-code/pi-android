@@ -312,6 +312,11 @@ class PiEngineHost(private val appContext: Context) {
     var lastEngineEntry: EngineEntry? = null
         private set
 
+    /** The container runtime actually hosting the live engine process, or null when stopped. */
+    @Volatile
+    var activeEngine: app.pi.runtime.GuestEngine? = null
+        private set
+
     /**
      * Which of pi's two SDK entries this process was launched on.
      *
@@ -688,6 +693,7 @@ class PiEngineHost(private val appContext: Context) {
             // produces a `Boot.Failed`, and the autopsy below is what turns it into
             // evidence a user can read (`lastProrootForensics`).
             var prorootSpawnError: Throwable? = null
+            var actualEngine = firstPlan.engine
             val spawned = first.recoverCatching { error ->
                 if (!firstPlan.usingExperimental) throw error
                 prorootSpawnError = error
@@ -700,6 +706,7 @@ class PiEngineHost(private val appContext: Context) {
                     extraEnv = extraEnv,
                     allowProroot = false,
                 )
+                actualEngine = retry.engine
                 PiEngineSession.spawn(
                     argv = retry.argv,
                     env = retry.environment,
@@ -710,7 +717,10 @@ class PiEngineHost(private val appContext: Context) {
 
             spawned.fold(
                 onSuccess = { session ->
-                    if (firstPlan.usingExperimental) selection.recordEngineSuccess()
+                    activeEngine = actualEngine
+                    if (firstPlan.usingExperimental && actualEngine == firstPlan.engine) {
+                        selection.recordEngineSuccess()
+                    }
                     // The engine's own record-level problems (an event the flow could
                     // not deliver, a transcript fold that threw) are counted inside the
                     // session and read back by the diagnostic report; this is where they
@@ -927,6 +937,7 @@ class PiEngineHost(private val appContext: Context) {
         runCatching { current.closeAfterSettling() }
         reapEngineTree(tree, launch, "引擎停止")
         engineLaunch = null
+        activeEngine = null
         _session.value = null
         true
     }
@@ -1025,6 +1036,7 @@ class PiEngineHost(private val appContext: Context) {
         // read-then-write cannot interleave, and staying off the extension function
         // keeps this file's imports to the flow types it actually names.
         val previous = _session.value
+        if (next == null) activeEngine = null
         _session.value = next
         if (previous != null && previous !== next) {
             runCatching { previous.close() }

@@ -15,14 +15,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.DeviceCapabilityStore
+import app.pi.engine.PiEngineSession
 import app.pi.i18n.tr
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.protocol.PiResponses
+import app.pi.runtime.GuestEngine
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
-import app.pi.runtime.RuntimeSelection
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
@@ -142,18 +143,13 @@ fun PiSettingsStack(
      * `null` 时那一行不画（与 设备能力 / 扩展包 / 开源许可 三行的约定一致）。
      */
     onOpenTerminal: (() -> Unit)? = null,
-    /**
-     * 「运行时加速（实验性）」开关**当场生效**的进度（`PiSessionViewModel.runtimeSwitch`）。
-     *
-     * 拨完那个开关要跑一次门禁探针、10~60 秒，通过后再重启引擎。这段时间屏幕上必须说它在
-     * 跑，否则用户看到的就是「点了开关什么都没发生」——这个改动要消灭的正是那个形状。用的
-     * 是这一屏**已有的**那两个位置：`运行时（实际生效）` 那一行的值（见 [runtimeStatusText]）
-     * 和它下面那块逐阶段记录；不新造进度控件、不新造弹窗。
-     *
-     * 值同时是那个 `LaunchedEffect` 的键：动作结束回到 `Idle` 时它变一次，状态行于是重读
-     * `RuntimeSelection.status()` —— 探针的新结论、被回滚的开关值都在那一刻落到行上。
-     */
     runtimeSwitch: RuntimeSwitchAction.Step = RuntimeSwitchAction.Step.Idle,
+    activeRuntimeEngine: () -> GuestEngine? = { null },
+    liveEngineState: () -> PiEngineSession.EngineState? = { null },
+    onSelectRuntimeEngine: (GuestEngine) -> Unit = {},
+    onStartEngine: () -> Unit = {},
+    onRepairRuntime: () -> Unit = {},
+    onRebuildRuntime: () -> Unit = {},
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
     // Every level of this stack is `rememberSaveable`, not `remember`: the settings
@@ -180,27 +176,17 @@ fun PiSettingsStack(
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
     var licenses by rememberSaveable { mutableStateOf(false) }
-    // 设置 → 运行时与诊断 → 导出诊断报告（`app.runtime.diagnostics`）。
-    var diagnostics by rememberSaveable { mutableStateOf(false) }
+    // 「引擎与运行环境」专页（`RuntimeEngineScreen`）：实时状态、容器运行时切换、工具链自检、诊断报告与环境维护。
+    var runtimeScreen by rememberSaveable { mutableStateOf(false) }
     // 设置首页「MCP 服务器」（`McpServersScreen`）：pi 的 `mcp.json` 编辑器。
     var mcp by rememberSaveable { mutableStateOf(false) }
 
-    // The 运行时 group's four read-only rows: their facts live in the runtime
-    // tree and in the engine's foreground service, not in the settings store, so
-    // they are read here and passed down as overrides. The read is a directory
-    // walk plus a few small files, hence IO, hence a state that starts null
-    // (rows show 未读取 for exactly one frame).
     val context = LocalContext.current
     val paths = remember(context) {
         PiPaths(
             filesDir = context.filesDir,
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
-    }
-    val runtimeFacts = remember(paths) { RuntimeFacts(paths = paths) }
-    var facts by remember { mutableStateOf<RuntimeFacts.Snapshot?>(null) }
-    LaunchedEffect(runtimeFacts) {
-        facts = withContext(Dispatchers.IO) { runtimeFacts.read() }
     }
 
     // A restart asked for from the 进程 section. It is not routed through
@@ -286,69 +272,24 @@ fun PiSettingsStack(
         },
     )
 
-    // ---- 运行时选择（proroot）---------------------------------------------
-    // The switch lives in the app's own SharedPreferences and the effective runtime is
-    // derived from the probe cache plus the failure counter, so both rows are served by
-    // a decorator over the real settings store rather than by pi's `settings.json`
-    // (`AppOnlySettingsStore` says why).
-    //
-    // `status()` reads the digest of five `.so` files plus one small cache file, so it
-    // runs once per epoch on IO — never per frame, and never inside `read(key)`.
-    //
-    // One read feeds **both** strings the row needs: the sentence (which now names the
-    // probe stage that refused) and the bounded block of raw per-phase lines under it.
-    // Both come out of the same `Status`, so the expensive read above is still paid
-    // once; `runtimeDetailOverrides` is pure string work over fields already in hand
-    // (see its KDoc), which is why the block cannot turn into a per-frame `.so` hash.
     val runtimePrefs = remember(context) { RuntimePreferences.get(context) }
-    val runtimeSelection = remember(paths, runtimePrefs) { RuntimeSelection(paths, runtimePrefs) }
-    var runtimeStatusEpoch by remember { mutableStateOf(0) }
-    // Null until the first IO read lands: the row shows its own 未读取 for that frame and
-    // the detail block renders nothing, rather than a default that looks like a reading.
-    var runtimeStatus by remember { mutableStateOf<RuntimeSelection.Status?>(null) }
-    var engineStatuses by remember {
-        mutableStateOf<Map<app.pi.runtime.GuestEngine, RuntimeSelection.Status>?>(null)
-    }
-    // `runtimeSwitch` is a key for the reason its KDoc gives: the toggle's own flow changes
-    // the switch value (a refused restart rolls it back) and the cached verdict (a probe just
-    // ran), and neither bump reaches this screen on its own — the epoch above only fires on
-    // the write itself, which happens *before* the probe. It also covers a plain
-    // `Probing → Idle` transition for a probe that changed nothing.
-    LaunchedEffect(runtimeSelection, filesEpoch, runtimeStatusEpoch, runtimeSwitch) {
-        val read = withContext(Dispatchers.IO) {
-            runtimeSelection.status() to app.pi.runtime.GuestEngine.entries.associateWith {
-                runtimeSelection.statusFor(it)
-            }
+    val runtimeHomeSummary = run {
+        val active = activeRuntimeEngine()
+        val state = liveEngineState()
+        val engineName = (active ?: runtimePrefs.selectedEngine).name.lowercase()
+        val stateText = when {
+            runtimeSwitch.inFlight -> tr("切换中…", "Switching…")
+            state == PiEngineSession.EngineState.Ready -> tr("运行中", "Running")
+            state == PiEngineSession.EngineState.Busy -> tr("回合执行中", "Busy")
+            state == PiEngineSession.EngineState.Starting -> tr("启动中", "Starting")
+            state == PiEngineSession.EngineState.Failed -> tr("异常退出", "Failed")
+            else -> tr("未运行", "Stopped")
         }
-        runtimeStatus = read.first
-        engineStatuses = read.second
+        tr("$engineName · $stateText · 诊断与维护", "$engineName · $stateText · Diagnostics & repair")
     }
-    // While the toggle's flow is doing something, the row says so instead of showing the
-    // previous verdict: the probe runs for tens of seconds and a row that keeps showing the
-    // old sentence is the "switch did nothing" shape this change removes. `null` (Idle) means
-    // "show the real reading" — see `RuntimeSwitchAction.statusLine`.
-    val runtimeStatusText = RuntimeSwitchAction.statusLine(
-        runtimeSwitch,
-        RuntimeSwitchAction.Target.valueOf(runtimeSelection.selectedEngine.name),
-    )
-        ?: runtimeStatus?.summary
-        ?: tr("未读取", "Not loaded")
 
-    val engineMatrix = engineMatrixOverrides(engineStatuses)
-    val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText, engineMatrix.first) {
-        AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText, engineMatrix.first)
-    }
-    // Turning the switch must refresh the status row in the same breath; an app-only
-    // write touches no pi document, so nothing else in the stack would notice, and the
-    // status text is exactly what a stale value would lie about.
     val handleSettingWritten: (String) -> Unit = { key ->
-        if (key == AppOnlySettingsStore.KEY_ENGINE) runtimeStatusEpoch++
-        // 先让宿主读它要读的（`refreshPrefs` / `refreshTheme` / proroot 的探针流程），再让这一栈
-        // 的行重读 store。顺序反过来，proroot 那两行会先用旧的 `runtimeStatusText` 重读一次。
         onSettingWritten(key)
-        // 这一行才是「行刷新」的那一半：见上面 `writeEpoch` 的注释 —— store 不可订阅，
-        // 而写完之后被通知的 `_state` / `_theme` 不是设置页读的东西，所以必须显式换一个
-        // 会让行重读的 epoch。
         writeEpoch++
     }
 
@@ -360,6 +301,8 @@ fun PiSettingsStack(
             resources = true
         } else if (key == "hub:models") {
             modelFlow = true
+        } else if (key == "hub:runtime") {
+            runtimeScreen = true
         } else if (key == "hub:prompts") {
             groupId = "prompts"
             highlightKey = null
@@ -384,14 +327,9 @@ fun PiSettingsStack(
         onFocusConsumed()
     }
 
-    // Action rows this stack implements itself. Everything else is delegated to
-    // [onRunAction]; when the caller supplies nothing, the row keeps its honest
-    // "not wired" dialog — which is why this is a per-key map and not a lambda
-    // that would have to pretend every key is handled.
     val openModelFlow: () -> Unit = { modelFlow = true }
     val hostActions: Map<String, () -> Unit> = mapOf(
         "app.runtime.restartEngine" to { restartPrompt = true },
-        "app.runtime.diagnostics" to { diagnostics = true },
     )
 
     BackHandler(enabled = true) {
@@ -399,8 +337,8 @@ fun PiSettingsStack(
             mcp = false
         } else if (licenses) {
             licenses = false
-        } else if (diagnostics) {
-            diagnostics = false
+        } else if (runtimeScreen) {
+            runtimeScreen = false
         } else if (modelFlow) {
             modelFlow = false
         } else if (deviceCapabilities) {
@@ -434,19 +372,30 @@ fun PiSettingsStack(
                 onBack = { licenses = false },
             )
 
-            diagnostics -> DiagnosticsScreen(
+            runtimeScreen -> RuntimeEngineScreen(
                 contentPadding = contentPadding,
-                onBack = { diagnostics = false },
-                engine = engineDiagnostics,
-                failures = recentFailures,
+                onBack = { runtimeScreen = false },
+                store = activeStore,
+                onSettingWritten = handleSettingWritten,
+                activeEngine = activeRuntimeEngine,
+                engineState = liveEngineState,
+                engineDiagnostics = engineDiagnostics,
+                recentFailures = recentFailures,
                 engineEntry = engineEntry,
+                runtimeSwitch = runtimeSwitch,
+                onSelectEngine = onSelectRuntimeEngine,
+                restartEngine = restartEngine,
+                isTurnRunning = isTurnRunning,
+                onStartEngine = onStartEngine,
+                onRepairRuntime = onRepairRuntime,
+                onRebuildRuntime = onRebuildRuntime,
             )
 
             modelFlow -> app.pi.ui.models.ModelsScreen(
                 contentPadding = contentPadding,
                 onBack = { modelFlow = false },
                 host = modelsHost,
-                store = effectiveStore,
+                store = activeStore,
                 freshness = rowsEpoch,
                 onSettingWritten = handleSettingWritten,
                 availableModels = availableModels,
@@ -484,7 +433,7 @@ fun PiSettingsStack(
             )
 
             currentGroup == "tools" -> ToolsScreen(
-                store = effectiveStore,
+                store = activeStore,
                 freshness = rowsEpoch,
                 contentPadding = contentPadding,
                 advanced = advanced,
@@ -498,7 +447,7 @@ fun PiSettingsStack(
             currentGroup == "prompts" -> app.pi.ui.resources.SystemPromptHostScreen(
                 contentPadding = contentPadding,
                 access = extensionsAccess,
-                store = effectiveStore,
+                store = activeStore,
                 onSettingWritten = handleSettingWritten,
                 onBack = {
                     groupId = null
@@ -508,7 +457,7 @@ fun PiSettingsStack(
 
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
-                store = effectiveStore,
+                store = activeStore,
                 freshness = rowsEpoch,
                 contentPadding = contentPadding,
                 onBack = {
@@ -522,17 +471,6 @@ fun PiSettingsStack(
                 onSettingWritten = handleSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
-                valueOverrides = runtimeOverrides(facts),
-                detailOverrides = (if (runtimeSwitch.inFlight) {
-                    emptyMap()
-                } else {
-                    runtimeDetailOverrides(runtimeStatus)
-                }) +
-                    (if (runtimeSwitch.inFlight || engineMatrix.second.isEmpty()) {
-                        emptyMap()
-                    } else {
-                        mapOf(AppOnlySettingsStore.KEY_MATRIX to engineMatrix.second)
-                    }),
                 onRestartEngine = { restartPrompt = true },
                 availableModels = availableModels,
                 onLoadAvailableModels = onLoadAvailableModels,
@@ -556,7 +494,7 @@ fun PiSettingsStack(
             )
 
             else -> SettingsHome(
-                store = effectiveStore,
+                store = activeStore,
                 contentPadding = contentPadding,
                 onBack = onBack,
                 freshness = rowsEpoch,
@@ -569,6 +507,8 @@ fun PiSettingsStack(
                     }
                 },
                 onOpenModels = openModelFlow,
+                onOpenRuntime = { runtimeScreen = true },
+                runtimeSummary = runtimeHomeSummary,
                 onOpenOther = { other = true },
                 onOpenMcp = { mcp = true },
             )

@@ -1540,7 +1540,7 @@ class PiEngineSession(
                 .directory(cwd)
                 .redirectErrorStream(false)
             builder.environment().putAll(env)
-            val process = builder.start()
+            val process = app.pi.runtime.PersistentProcessSpawner.start(builder)
             return PiEngineSession(process, scope).also { it.start() }
         }
     }

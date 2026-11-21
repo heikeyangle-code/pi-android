@@ -98,7 +98,6 @@ import app.pi.ui.extension.ToolRendererCache
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.extension.trimNoticeQueue
-import app.pi.ui.settings.AppOnlySettingsStore
 import app.pi.ui.settings.EngineDiagnostics
 import app.pi.ui.settings.PiSettingsCatalog
 import app.pi.ui.settings.PiSettingsStore
@@ -1264,11 +1263,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // (`piCommandPalette`).
             refreshCommands()
         }
-        if (key == AppOnlySettingsStore.KEY_ENGINE) {
-            // 开关当场生效：清结论（写入本身已经做了）→ 现在跑探针 → 通过就当场重启引擎。
-            // 见 [applyRuntimeSwitch] 与 `RuntimeSwitchAction`。
-            applyRuntimeSwitch()
-        }
         if (
             key != "steeringMode" &&
             key != "followUpMode" &&
@@ -1366,6 +1360,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * （`RuntimeSelection.setProrootEnabled` → `ProrootRetry`），也就是「关掉再打开＝重试
      * 一次」那件事 —— 这个改动把它从「下一次启动 guest 时重测」变成「现在重测、现在切换」。
      */
+    /** 当前实际运行中的容器运行时（proot / proroot / tawcroot），引擎未运行时为 null。 */
+    fun activeRuntimeEngine(): app.pi.runtime.GuestEngine? = host.activeEngine
+
+    /** 当前引擎会话状态，未启动时为 null。 */
+    fun liveEngineState(): PiEngineSession.EngineState? = session?.state?.value
+
+    /**
+     * 在「引擎与运行环境」页选中目标容器运行时：清探针缓存与失败计数 → 必要时跑探针 → 自动重启引擎。
+     */
+    fun selectRuntimeEngine(engine: app.pi.runtime.GuestEngine) {
+        val context = getApplication<Application>()
+        RuntimeSelection.of(context, host.paths()).setSelectedEngine(engine)
+        applyRuntimeSwitch()
+    }
+
+    /** 无损修复内置运行载荷（重解包，保留用户安装的包与全部数据）。 */
+    fun repairRuntime() = boot(rebuild = false, forceRepair = true)
+
     private fun applyRuntimeSwitch() {
         val context = getApplication<Application>()
         val prefs = RuntimePreferences.get(context)
@@ -1427,8 +1439,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             notifyUser(
                 tr(
-                    "没有切换到 $name。实际生效：${rowSentence ?: plan.summary}——逐阶段记录在「运行时（实际生效）」那一行下面。",
-                    "Did not switch to $name. Active runtime: ${rowSentence ?: plan.summary}. See per-stage details under Active Engine.",
+                    "没有切换到 $name。实际生效：${rowSentence ?: plan.summary}——可在「引擎与运行环境」页查看逐阶段探针记录。",
+                    "Did not switch to $name. Active runtime: ${rowSentence ?: plan.summary}. See per-stage probe log in Engine & Runtime.",
                 ),
                 warning = true,
             )
@@ -2287,7 +2299,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *        the only path in the app that may delete the tree; a payload change never
      *        reaches it.
      */
-    fun boot(rebuild: Boolean = false) {
+    fun boot(rebuild: Boolean = false, forceRepair: Boolean = false) {
         if (_state.value.boot is Boot.Working) return
         // 「重试」不是"再跑一遍同样的东西"：运行环境那类失败第一次重试要走不删数据的修复
         // （重新解包），否则戳记相符的快路径会让它永远返回成功、引擎永远起不来。
@@ -2297,7 +2309,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             (_state.value.boot as? Boot.Failed)?.failure?.retryMode(provisioningRepairAttempted)
                 ?: RetryMode.Plain
         }
-        val repair = retryMode == RetryMode.Repair
+        val repair = forceRepair || retryMode == RetryMode.Repair
         if (repair) provisioningRepairAttempted = true
         viewModelScope.launch {
             // Read the preferences first: `app.runtime.keepAlive` decides whether

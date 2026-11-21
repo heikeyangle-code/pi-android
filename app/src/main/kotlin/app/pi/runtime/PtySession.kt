@@ -200,7 +200,7 @@ class PtySession private constructor(
                 engine == GuestEngine.Tawcroot && launchToken != null -> ProrootLaunchHandle.armByToken(launchToken)
                 else -> null
             }
-            val process = builder.start()
+            val process = PersistentProcessSpawner.start(builder)
             // Resolve after the process exists: the table is written by the launcher,
             // which is now running.
             handle?.resolveLauncherPid()

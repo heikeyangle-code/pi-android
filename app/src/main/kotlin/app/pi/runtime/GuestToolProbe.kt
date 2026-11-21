@@ -296,7 +296,7 @@ object GuestToolProbe {
         val argv = GuestCommandLine.build(paths, engine, guestCommand(), cwd = "/", storage = storage)
         val env = GuestCommandLine.environment(paths, engine)
         val process = try {
-            ProcessBuilder(argv)
+            val builder = ProcessBuilder(argv)
                 // tawcroot 的宿主 cwd 必须在 rootfs 里（getcwd 反向翻译）；proot/proroot 保持
                 // 原来的 runtime 目录，避免为一次探针改动既有运行时的行为。
                 .directory(
@@ -308,7 +308,7 @@ object GuestToolProbe {
                 // deadlock, which a concurrent-reader-free caller cannot fix.
                 .redirectErrorStream(true)
                 .also { it.environment().putAll(env) }
-                .start()
+            PersistentProcessSpawner.start(builder)
         } catch (error: Throwable) {
             return Report(
                 emptyList(),

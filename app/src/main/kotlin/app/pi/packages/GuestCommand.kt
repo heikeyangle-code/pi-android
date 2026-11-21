@@ -203,10 +203,10 @@ class GuestCommand(private val layout: AgentLayout) {
         // platform will let the app learn (`ProrootLaunchHandle` says why).
         val handle = plan.armHandle(layout.paths)
         val process = try {
-            ProcessBuilder(plan.argv)
+            val builder = ProcessBuilder(plan.argv)
                 .directory(GuestCommandLine.hostCwd(layout.paths, plan.engine))
                 .also { it.environment().putAll(plan.environment) }
-                .start()
+            app.pi.runtime.PersistentProcessSpawner.start(builder)
         } catch (error: Throwable) {
             return Attempt(
                 outcome = Outcome(

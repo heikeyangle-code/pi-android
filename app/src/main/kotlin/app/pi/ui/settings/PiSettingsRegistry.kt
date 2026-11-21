@@ -7,7 +7,6 @@ import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -80,7 +79,6 @@ private const val G_TOOLS = "tools"
 private const val G_RESOURCES = "resources"
 private const val G_APPEARANCE = "appearance"
 private const val G_SECURITY = "security"
-private const val G_RUNTIME = "runtime"
 
 private fun str(value: String): JsonElement = JsonPrimitive(value)
 private fun bool(value: Boolean): JsonElement = JsonPrimitive(value)
@@ -799,80 +797,7 @@ private fun buildSettings(zh: Boolean): List<PiSetting> {
         ),
 
         // ------------------------------------------------------------------
-        // 9 运行时与诊断
-        // ------------------------------------------------------------------
-        PiSetting(
-            key = "app.runtime.piVersion",
-            title = t("pi 版本", "Pi Version"),
-            description = t("内置 pi SDK 版本。", "Bundled pi coding-agent SDK version."),
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = t("状态", "Status"),
-            defaultValue = str(t("未读取", "Not loaded")),
-            readOnly = true,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "app.runtime.nodeVersion",
-            title = t("Node 版本", "Node Version"),
-            description = t("内置 Node 运行时版本。", "Bundled Node.js runtime version."),
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = t("状态", "Status"),
-            defaultValue = str(t("未读取", "Not loaded")),
-            readOnly = true,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "app.runtime.rootfsUsage",
-            title = t("运行时占用", "Runtime Disk Usage"),
-            description = t("运行时目录实际磁盘占用。", "Disk space used by the Linux runtime directory."),
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = t("状态", "Status"),
-            defaultValue = str(t("未读取", "Not loaded")),
-            readOnly = true,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "app.runtime.engine",
-            title = t("运行时引擎", "Runtime Engine"),
-            description = t("proot 最稳；proroot / tawcroot 为实验性加速。", "proot is most reliable; proroot / tawcroot are experimental accelerators."),
-            kind = PiRowKind.Value,
-            group = G_RUNTIME,
-            section = t("引擎", "Engine"),
-            defaultValue = str("proot"),
-            options = choices(
-                "proot" to t("proot（默认）", "proot (default)"),
-                "proroot" to t("proroot（实验）", "proroot (experimental)"),
-                "tawcroot" to t("tawcroot（实验）", "tawcroot (experimental)"),
-            ),
-            effective = EffectiveKind.AutoRestartEngine,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "app.runtime.prorootStatus",
-            title = t("当前生效", "Active Engine"),
-            description = t("实际运行中的引擎及回退原因。", "Runtime currently active and any fallback reason."),
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = t("引擎", "Engine"),
-            defaultValue = str(t("未读取", "Not loaded")),
-            readOnly = true,
-            emptyListLabel = emptyDefault,
-        ),
-        PiSetting(
-            key = "app.runtime.diagnostics",
-            title = t("导出诊断报告", "Export Diagnostics Report"),
-            description = t("汇总引擎日志与设备环境，引擎退出后仍可用。", "Collect engine logs and device environment details; works even after engine exit."),
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = t("维护与诊断", "Maintenance & Diagnostics"),
-            emptyListLabel = emptyDefault,
-        ),
-
-        // ------------------------------------------------------------------
-        // 10 安全与隐私
+        // 9 安全与隐私
         // ------------------------------------------------------------------
         PiSetting(
             key = "defaultProjectTrust",
@@ -953,10 +878,6 @@ private fun buildGroups(zh: Boolean): List<PiSettingsGroup> {
                 "信任：${PiSettingsCatalog.summaryText(store, "defaultProjectTrust")} · 遥测：${PiSettingsCatalog.summaryText(store, "enableInstallTelemetry")}",
                 "Trust: ${PiSettingsCatalog.summaryText(store, "defaultProjectTrust")} · Telemetry: ${PiSettingsCatalog.summaryText(store, "enableInstallTelemetry")}",
             )
-        },
-        PiSettingsGroup(G_RUNTIME, t("运行时与诊断", "Runtime & Diagnostics"), Icons.Filled.Memory) { store ->
-            val runtime = PiSettingsCatalog.summaryText(store, "app.runtime.prorootStatus")
-            t("运行时：$runtime · 诊断报告", "Runtime: $runtime · Diagnostics")
         },
     )
 }
