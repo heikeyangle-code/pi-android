@@ -79,7 +79,7 @@ fun CompactionBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.customMessageBg,
-            borderColor = null,
+            borderColor = palette.customMessageLabel.copy(alpha = 0.20f),
             modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
         ) {
             Row(

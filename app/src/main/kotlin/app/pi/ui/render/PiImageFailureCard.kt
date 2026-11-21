@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -65,8 +66,8 @@ internal fun PiImageFailureCard(
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clip(shape)
-            .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
-            .border(BorderStroke(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f)), shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.58f)), shape)
             .then(
                 if (full != null) {
                     Modifier.clickable(onClickLabel = tr("复制图片地址", "Copy image URL")) {

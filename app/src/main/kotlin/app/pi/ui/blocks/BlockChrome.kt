@@ -117,10 +117,11 @@ internal fun ProseText(
     Text(
         text = text,
         modifier = modifier,
-        // M3's `bodyLarge` is 15 sp — which is v2's *row-title* step, not its chat-text
-        // step (`06 §2` 字号 5 档: 14 = 正文、聊天文本、按钮). [app.pi.ui.theme.PiTextStyles]
-        // carries the right one.
-        style = PiTheme.text.prose.copy(fontFamily = PiProseFamily, fontWeight = FontWeight.Normal),
+        // 跟随当前用户所选的阅读字体（Sans / Serif / Mono），避免折叠预览与展开后 Markdown 字体跳变。
+        style = PiTheme.text.prose.copy(
+            fontFamily = PiTheme.typography.proseFontFamily(),
+            fontWeight = FontWeight.Normal,
+        ),
         color = color ?: MaterialTheme.colorScheme.onSurface,
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,

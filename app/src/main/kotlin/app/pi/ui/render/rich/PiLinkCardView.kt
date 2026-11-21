@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -85,7 +86,7 @@ fun PiLinkCardView(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(12.dp)
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -98,8 +99,8 @@ fun PiLinkCardView(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
-            .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.58f), shape)
             .combinedClickable(
                 onClickLabel = tr("打开链接", "Open link"),
                 onClick = { onOpen(info.url) },
@@ -109,16 +110,16 @@ fun PiLinkCardView(
                     copied = true
                 },
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = info.kind.label,
             style = PiTheme.text.monoSmall,
-            color = palette.accent,
+            color = palette.muted,
             maxLines = 1,
             modifier = Modifier
-                .background(palette.accent.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
                 .padding(horizontal = 7.dp, vertical = 2.dp),
         )
         Column(

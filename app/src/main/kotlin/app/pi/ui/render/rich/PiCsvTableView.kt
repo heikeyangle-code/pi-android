@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -181,13 +182,15 @@ fun PiCsvTableBody(
                 .fillMaxWidth()
                 .horizontalScroll(scroll),
         ) {
+            val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
+            val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
             Column(Modifier.width(tableWidth)) {
                 CsvRow(
                     cells = List(table.columnCount) { table.header.getOrNull(it) ?: "" },
                     widths = widths,
                     numeric = numeric,
                     style = headerStyle,
-                    background = palette.mdHr.copy(alpha = 0.14f),
+                    background = headerBg,
                     onCopyCell = onCopyCell,
                 )
                 CsvDivider()
@@ -198,8 +201,7 @@ fun PiCsvTableBody(
                         widths = widths,
                         numeric = numeric,
                         style = cellStyle,
-                        // 隔行淡底色，与 Markdown 表格同一套。
-                        background = if (rowIndex % 2 == 1) palette.mdHr.copy(alpha = 0.06f) else Color.Transparent,
+                        background = if (rowIndex % 2 == 1) zebraBg else Color.Transparent,
                         onCopyCell = onCopyCell,
                     )
                 }

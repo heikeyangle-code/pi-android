@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,6 +48,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -61,6 +63,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CollectionItemInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.collectionItemInfo
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -98,9 +101,11 @@ import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
 import java.io.File
 import com.mikepenz.markdown.compose.LocalImageTransformer
+import com.mikepenz.markdown.compose.LocalMarkdownComponents
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
+import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
@@ -115,6 +120,7 @@ import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
+import com.mikepenz.markdown.model.DefaultMarkdownTypography
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.model.MarkdownDimens
 import com.mikepenz.markdown.model.MarkdownTypography
@@ -253,42 +259,117 @@ internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null
 internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     codeFence = { model -> PiCodeFence(model) },
     codeBlock = { model -> PiCodeBlock(model) },
-    // 2026-10-26: 标题额外上边距。库的 MarkdownElement 在每个块前插一个 block
-    // Spacer；这里在标题组件内部再叠 16/12/8/4（经典 0，首块/前一块也是标题时不叠）。
-    heading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 16.dp) },
+    blockQuote = { model -> PiBlockQuote(model) },
+    // 标题额外上边距：h1 14dp / h2 12dp / h3 8dp / h4–h6 4dp（经典 0，首块或连续标题不叠）。
+    heading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 14.dp) },
     heading2 = { model -> PiMarkdownHeading(model, level = 2, extraTop = 12.dp) },
     heading3 = { model -> PiMarkdownHeading(model, level = 3, extraTop = 8.dp) },
     heading4 = { model -> PiMarkdownHeading(model, level = 4, extraTop = 4.dp) },
     heading5 = { model -> PiMarkdownHeading(model, level = 5, extraTop = 4.dp) },
     heading6 = { model -> PiMarkdownHeading(model, level = 6, extraTop = 4.dp) },
-    setextHeading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 16.dp, setext = true) },
+    setextHeading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 14.dp, setext = true) },
     setextHeading2 = { model -> PiMarkdownHeading(model, level = 2, extraTop = 12.dp, setext = true) },
-    // 分割线：非经典 0.75dp 厚、上下各加 4dp（block 8/12/20 → 12/16/24）；
-    // 经典冻结 1dp、0 额外。
     horizontalRule = { model -> PiMarkdownDivider(model) },
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
     table = { model -> PiTable(model) },
-    // 任务清单的勾选标记：库的默认槽画的是源码文本 `[x] `（等宽），这里换成只读图形。
-    // 见 piMarkdownComponents 的注释与 [PiTaskCheckbox]。
     checkbox = { model -> PiTaskCheckbox(model) },
-    // 链接卡片与显示式公式（Phase 3/5）：这两样都必须**接管整个段落**才做得到 ——
-    // 库的 `PARAGRAPH` 一旦有内容就不再往下分派，`custom` 槽收不到里面的 math 节点，
-    // 而"整段只有一个 URL"也只能在段落这一层看。其余段落原样交给库的
-    // `MarkdownParagraph`，逐字节不变。
     paragraph = { model -> PiParagraph(model) },
     custom = { type, model -> piCustomComponent(type, model) },
 )
 
 /**
- * 一个 Markdown 标题：库的 [MarkdownHeader] + **额外上边距**。
- *
- * 库在每个块前插一个 `block` Spacer，标题自己没有上下边距；这里只在标题
- * 组件内部再加 16/12/8/4dp（h1/h2/h3/h4–h6），所以总数是 `block + extra`：
- * 紧凑 24/20/16/12、舒适 28/24/20/16、宽松 36/32/28/24。
- *
- * 不加的两种情况：消息的第一块（`startOffset == 0` 或前面只有 EOL），以及
- * 前一块也是标题（连续标题不叠）。经典档全部 0，冻结。
+ * 杂志感引用块：柔和微亮底色 + 左侧 2.5dp 圆头竖条 + 真正把引文文字染成 `mdQuote`（修复库 0.45.0
+ * 默认 `MarkdownBlockQuote` 只给竖条上色、不给正文上色的问题）。
+ */
+@Composable
+private fun PiBlockQuote(model: MarkdownComponentModel) {
+    val palette = PiTheme.palette
+    val components = LocalMarkdownComponents.current
+    val baseTypo = LocalMarkdownTypography.current
+    val quoteColor = palette.mdQuote
+    val railColor = palette.mdQuoteBorder.copy(alpha = 0.78f)
+    val quoteTypo = remember(baseTypo, quoteColor) {
+        DefaultMarkdownTypography(
+            h1 = baseTypo.h1,
+            h2 = baseTypo.h2,
+            h3 = baseTypo.h3,
+            h4 = baseTypo.h4,
+            h5 = baseTypo.h5,
+            h6 = baseTypo.h6,
+            alertTitle = baseTypo.alertTitle,
+            text = baseTypo.text.copy(color = quoteColor),
+            code = baseTypo.code,
+            inlineCode = baseTypo.inlineCode,
+            quote = baseTypo.quote.copy(color = quoteColor),
+            paragraph = baseTypo.paragraph.copy(color = quoteColor),
+            ordered = baseTypo.ordered.copy(color = quoteColor),
+            bullet = baseTypo.bullet,
+            list = baseTypo.list.copy(color = quoteColor),
+            textLink = baseTypo.textLink,
+            table = baseTypo.table,
+        )
+    }
+    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+    val quoteDesc = tr("引用内容", "Block quote")
+
+    CompositionLocalProvider(LocalMarkdownTypography provides quoteTypo) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.72f))
+                .drawBehind {
+                    val railW = 2.5.dp.toPx()
+                    drawRoundRect(
+                        color = railColor,
+                        topLeft = Offset(0f, 0f),
+                        size = Size(railW, size.height),
+                        cornerRadius = CornerRadius(railW / 2f, railW / 2f),
+                    )
+                }
+                .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
+                .semantics { contentDescription = quoteDesc },
+        ) {
+            var renderedAny = false
+            model.node.children.forEach { child ->
+                key(child.startOffset) {
+                    when (child.type) {
+                        MarkdownTokenTypes.BLOCK_QUOTE -> Unit
+                        MarkdownTokenTypes.EOL -> {
+                            // 仅在相邻子块之间留柔和段距；首尾空行忽略
+                            if (renderedAny) Spacer(Modifier.height(6.dp))
+                        }
+                        MarkdownElementTypes.BLOCK_QUOTE -> {
+                            if (renderedAny) Spacer(Modifier.height(6.dp))
+                            PiBlockQuote(
+                                MarkdownComponentModel(
+                                    content = model.content,
+                                    node = child,
+                                    typography = quoteTypo,
+                                ),
+                            )
+                            renderedAny = true
+                        }
+                        else -> {
+                            MarkdownElement(
+                                node = child,
+                                components = components,
+                                content = model.content,
+                                includeSpacer = renderedAny,
+                            )
+                            renderedAny = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 一个 Markdown 标题：库的 [MarkdownHeader] + 克制呼吸感上边距。
+ * 去掉旧版 `layout` 负裁剪 hack 以及 h2 下划线，仅在 h1 下保留极细 0.5dp 发丝线，层次干净利落。
  */
 @Composable
 private fun PiMarkdownHeading(
@@ -309,17 +390,11 @@ private fun PiMarkdownHeading(
     val palette = PiTheme.palette
     val classic = PiTheme.typography.isClassic
     val extra = if (classic || headingSkipsExtra(model.node)) 0.dp else extraTop
-    val pull = if (classic) 0.dp else 5.dp
-    val showRule = !classic && (level == 1 || level == 2)
+    val showRule = !classic && level == 1
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(top = extra)
-            .layout { measurable, constraints ->
-                val placeable = measurable.measure(constraints)
-                val cut = pull.roundToPx().coerceAtMost(placeable.height)
-                layout(placeable.width, placeable.height - cut) { placeable.place(0, 0) }
-            },
+            .padding(top = extra),
     ) {
         MarkdownHeader(
             content = model.content,
@@ -332,12 +407,12 @@ private fun PiMarkdownHeading(
             },
         )
         if (showRule) {
-            Spacer(Modifier.height(5.dp))
+            Spacer(Modifier.height(6.dp))
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(if (level == 1) 1.dp else 0.5.dp)
-                    .background(palette.mdHr.copy(alpha = if (level == 1) 0.38f else 0.25f)),
+                    .height(0.5.dp)
+                    .background(palette.borderMuted.copy(alpha = 0.55f)),
             )
         }
     }
@@ -376,8 +451,8 @@ private val HEADING_TYPES = setOf(
 @Composable
 private fun PiMarkdownDivider(model: MarkdownComponentModel) {
     val classic = PiTheme.typography.isClassic
-    Box(Modifier.padding(vertical = if (classic) 0.dp else 4.dp)) {
-        MarkdownDivider(thickness = if (classic) 1.dp else 0.75.dp)
+    Box(Modifier.padding(vertical = if (classic) 0.dp else 8.dp)) {
+        MarkdownDivider(thickness = if (classic) 1.dp else 0.5.dp)
     }
 }
 
@@ -561,6 +636,13 @@ private fun PiParagraph(model: MarkdownComponentModel) {
         } else {
             (PiLinkCard.parse(text) as? LinkCardResult.Info)?.info
         }
+    }
+    // 含行内 LaTeX 哨兵的已落定段落：交给 [PiInlineMathParagraph] 渲染真矢量 MathJax SVG，
+    // 同时保留段落内所有加粗/斜体/代码/链接等行内 Markdown 样式。
+    val inlineMathEntries = LocalPiInlineMathTable.current
+    if (inlineMathEntries.isNotEmpty() && bounds.second.indexOf(PiInlineMath.SENTINEL_START) >= 0) {
+        PiInlineMathParagraph(model = model, entries = inlineMathEntries)
+        return
     }
     // 流式中**正在写的那一段**不画卡片：URL 一个字一个字出现，卡片会随着域名逐字变化并反复
     // 跳高。写完（下一段开始、或整条结束）再换成卡片；前面已写完的段落不受影响。
@@ -988,123 +1070,225 @@ private fun PiTable(model: MarkdownComponentModel) {
     val palette = PiTheme.palette
     val dimens = LocalMarkdownDimens.current
     val density = LocalDensity.current
-    // 列数只用于「拟合列宽」和右缘渐隐两个判断，算法与库 MarkdownTable.kt:86 一样。
-    val columns = remember(model.node) { piTableColumnCount(model.node) }
-    // 每列对齐方式：从 `TABLE_SEPARATOR` 的**文本**里再读一次（解析器不把它放进 AST）。
-    // 纯函数在 `PiTableAlignment.kt`，这里只负责把它接到两个行槽上。
-    val alignments = remember(model.content, model.node) {
-        piTableAlignments(model.content, model.node)
+    val content = model.content
+    val node = model.node
+
+    val headerNode = remember(node) { node.findChildOfType(GFMElementTypes.HEADER) }
+    val rowNodes = remember(node) { node.children.filter { it.type == GFMElementTypes.ROW } }
+    val columns = remember(headerNode) {
+        headerNode?.children?.count { it.type == GFMTokenTypes.CELL } ?: 0
     }
-    // 只有真的写了冒号才走"按列对齐"那条路；全是 `---` 的表仍由库自己的行组件画，
-    // 与这次改动之前逐字节相同（`MarkdownTableHeader` / `MarkdownTableRow`）。
-    val aligned = alignments.any { it != PiTableAlign.Default }
+    if (headerNode == null || columns <= 0) {
+        MarkdownTable(content = content, node = node, style = model.typography.table)
+        return
+    }
+
+    val alignments = remember(content, node) { piTableAlignments(content, node) }
+    // 按表头 + 前 12 行采样估算每列自然显示宽度，让短列（如 `#` / `状态`）不再白占 120dp，
+    // 长说明列获得更宽松的阅读宽度，减少不必要折行与横滑。
+    val columnDisplayChars = remember(content, headerNode, rowNodes, columns) {
+        val maxChars = IntArray(columns)
+        fun sampleRow(r: ASTNode) {
+            val cells = r.children.filter { it.type == GFMTokenTypes.CELL }
+            for (c in 0 until minOf(columns, cells.size)) {
+                val cellNode = cells[c]
+                val s = cellNode.startOffset.coerceIn(0, content.length)
+                val e = cellNode.endOffset.coerceIn(s, content.length)
+                val w = estimateTableCellDisplayChars(content.substring(s, e))
+                if (w > maxChars[c]) maxChars[c] = w
+            }
+        }
+        sampleRow(headerNode)
+        val sampleLimit = minOf(rowNodes.size, 12)
+        for (i in 0 until sampleLimit) sampleRow(rowNodes[i])
+        maxChars.toList()
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val available = maxWidth
-        // 2026-10-26：160dp 固定列宽在手机上很怪 —— 两列留一大块空、三列就横滑。
-        // 现在先按可用宽度均分（1 列 = 全宽、2 列 = 一半），只有均分后低于
-        // MIN_TABLE_CELL_WIDTH 才保持最小列宽并横滑。这样 3 列在 393dp 上也能
-        // 直接铺满，4 列以上才滚动。
-        val fitted = if (columns > 0) available / columns else dimens.tableCellWidth
-        val cell = fitted.coerceAtLeast(MIN_TABLE_CELL_WIDTH)
-        val tableDimens = object : MarkdownDimens by dimens {
-            override val tableCellWidth: Dp get() = cell
+        val colWidthsDp = remember(columnDisplayChars, available) {
+            computePiTableColumnWidthsDp(
+                columnDisplayChars = columnDisplayChars,
+                availableDp = available.value,
+                charWidthDp = 8.2f,
+                horizontalPaddingDp = 24f,
+                minColDp = 56f,
+                maxColDp = 240f,
+            ).map { it.dp }
         }
-        // 单元格内容宽 = 列宽 − 两侧内边距；图片 transformer 用它解码缩略图。
-        val cellWidthPx = with(density) {
-            (cell - dimens.tableCellPadding * 2).roundToPx()
+        val totalWidth = colWidthsDp.fold(0.dp) { acc, w -> acc + w }.coerceAtLeast(available)
+        val scrolls = totalWidth > available + 1.dp
+        val maxColWidthPx = with(density) {
+            (colWidthsDp.maxOfOrNull { it } ?: 120.dp).roundToPx()
         }.coerceAtLeast(1)
-        val tableWidth = cell * columns
-        // 只有最小列宽真的把表撑出可用宽时才横滑/画渐隐；均分成功时不画。
-        val scrolls = columns > 0 && cell > fitted
-        val transformer = rememberPiGuestImageTransformer(cellWidthPx)
-        // 表头底色裁成表格的上圆角，否则一层方角底色会盖掉 8dp 圆角的右上/左上。
-        val headerShape = RoundedCornerShape(
-            topStart = dimens.tableCornerSize,
-            topEnd = dimens.tableCornerSize,
-        )
-        val tableShape = RoundedCornerShape(dimens.tableCornerSize)
+        val transformer = rememberPiGuestImageTransformer(maxColWidthPx)
+        val tableShape = RoundedCornerShape(12.dp)
+        val scrollState = rememberScrollState()
+        val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
+        val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
+        val borderStrokeColor = palette.borderMuted.copy(alpha = 0.56f)
+        val rowHairlineColor = palette.borderMuted.copy(alpha = 0.30f)
+        val colHairlineColor = palette.borderMuted.copy(alpha = 0.16f)
+        val surfaceBg = MaterialTheme.colorScheme.surfaceContainerLow
+
         CompositionLocalProvider(
             LocalImageTransformer provides transformer,
             LocalPiImageTransformer provides transformer,
-            LocalMarkdownDimens provides tableDimens,
         ) {
             Box(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .clip(tableShape)
-                    .border(1.dp, palette.borderMuted.copy(alpha = 0.45f), tableShape),
+                    .background(surfaceBg)
+                    .border(0.5.dp, borderStrokeColor, tableShape),
             ) {
-            MarkdownTable(
-                content = model.content,
-                node = model.node,
-                style = model.typography.table,
-                headerBlock = { content, header, tableWidth, tableStyle ->
-                    Box(
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(scrollState)
+                        .width(totalWidth),
+                ) {
+                    // 表头行
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(headerShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f)),
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max)
+                            .background(headerBg),
                     ) {
-                        if (aligned) {
-                            PiTableHeaderCells(
-                                content = content,
-                                header = header,
-                                tableWidth = tableWidth,
-                                style = tableStyle,
-                                alignments = alignments,
-                            )
-                        } else {
-                            MarkdownTableHeader(
-                                content, header, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES,
-                            )
+                        val headerCells = headerNode.children.filter { it.type == GFMTokenTypes.CELL }
+                        for (col in 0 until columns) {
+                            val colW = colWidthsDp[col]
+                            val cell = headerCells.getOrNull(col)
+                            Box(
+                                modifier = Modifier
+                                    .width(colW)
+                                    .fillMaxHeight()
+                                    .then(
+                                        if (col > 0) {
+                                            Modifier.drawBehind {
+                                                drawLine(
+                                                    colHairlineColor,
+                                                    Offset(0f, 0f),
+                                                    Offset(0f, size.height),
+                                                    0.5.dp.toPx(),
+                                                )
+                                            }
+                                        } else {
+                                            Modifier
+                                        },
+                                    )
+                                    .padding(horizontal = 12.dp, vertical = 9.dp)
+                                    .semantics {
+                                        heading()
+                                        collectionItemInfo = CollectionItemInfo(
+                                            rowIndex = 0, rowSpan = 1,
+                                            columnIndex = col, columnSpan = 1,
+                                        )
+                                    },
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (cell != null) {
+                                    PiTableCellText(
+                                        content = content,
+                                        cell = cell,
+                                        style = model.typography.table.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = palette.text,
+                                        ),
+                                        align = alignments.alignAt(col),
+                                    )
+                                }
+                            }
                         }
                     }
-                },
-                rowBlock = { content, row, tableWidth, tableStyle ->
-                    val stripe = LocalTableRowIndex.current % 2 == 0
-                    Box(
-                        modifier = Modifier.background(
-                            if (stripe) MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f) else Color.Transparent,
-                        ),
-                    ) {
-                    if (aligned) {
-                        PiTableBodyCells(
-                            content = content,
-                            row = row,
-                            tableWidth = tableWidth,
-                            style = tableStyle,
-                            alignments = alignments,
-                        )
-                    } else {
-                        MarkdownTableRow(content, row, tableWidth, tableStyle, maxLines = TABLE_MAX_LINES)
-                    }
-                    }
-                },
-            )
-            }
-        }
 
-        if (scrolls) {
-            Box(modifier = Modifier.matchParentSize()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .width(TABLE_FADE_WIDTH)
-                        .fillMaxHeight()
-                        .clip(tableShape)
-                        .background(
-                            Brush.horizontalGradient(listOf(Color.Transparent, palette.cardBg)),
-                        ),
-                )
-                Text(
-                    text = "↔",
-                    style = PiTheme.text.monoSmall,
-                    color = palette.accent,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 4.dp, end = 6.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(palette.accent.copy(alpha = 0.14f))
-                        .padding(horizontal = 5.dp, vertical = 1.dp),
-                )
+                    // 表头与数据分隔发丝线
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(0.5.dp)
+                            .background(borderStrokeColor),
+                    )
+
+                    // 数据行
+                    rowNodes.forEachIndexed { rowIdx, rowNode ->
+                        if (rowIdx > 0) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(0.5.dp)
+                                    .background(rowHairlineColor),
+                            )
+                        }
+                        val rowCells = rowNode.children.filter { it.type == GFMTokenTypes.CELL }
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Max)
+                                .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
+                        ) {
+                            for (col in 0 until columns) {
+                                val colW = colWidthsDp[col]
+                                val cell = rowCells.getOrNull(col)
+                                Box(
+                                    modifier = Modifier
+                                        .width(colW)
+                                        .fillMaxHeight()
+                                        .then(
+                                            if (col > 0) {
+                                                Modifier.drawBehind {
+                                                    drawLine(
+                                                        colHairlineColor,
+                                                        Offset(0f, 0f),
+                                                        Offset(0f, size.height),
+                                                        0.5.dp.toPx(),
+                                                    )
+                                                }
+                                            } else {
+                                                Modifier
+                                            },
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                                        .semantics {
+                                            collectionItemInfo = CollectionItemInfo(
+                                                rowIndex = rowIdx + 1, rowSpan = 1,
+                                                columnIndex = col, columnSpan = 1,
+                                            )
+                                        },
+                                ) {
+                                    if (cell != null) {
+                                        PiTableCellText(
+                                            content = content,
+                                            cell = cell,
+                                            style = model.typography.table,
+                                            align = alignments.alignAt(col),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 仅在仍可向右滑动时在右缘画一条柔和渐隐提示（不再叠放遮挡表头文字的 `↔` 胶囊）
+                if (scrolls && scrollState.value < scrollState.maxValue) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize(),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .width(TABLE_FADE_WIDTH)
+                                .fillMaxHeight()
+                                .background(
+                                    Brush.horizontalGradient(listOf(Color.Transparent, surfaceBg)),
+                                ),
+                        )
+                    }
+                }
             }
         }
     }

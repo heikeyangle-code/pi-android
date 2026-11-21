@@ -48,7 +48,7 @@ fun HookMessageBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.customMessageBg,
-            borderColor = null,
+            borderColor = palette.customMessageLabel.copy(alpha = 0.20f),
         ) {
             // F28: the card's content is the target (pi's rule — see
             // `ToggleContent`); `enabled` keeps a short message from toggling into

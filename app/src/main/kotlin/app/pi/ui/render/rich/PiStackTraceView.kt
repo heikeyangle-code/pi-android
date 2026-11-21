@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -111,7 +112,7 @@ fun PiStackTraceCard(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(12.dp)
     val clipboard = LocalClipboardManager.current
     var copied by remember(source) { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -134,8 +135,8 @@ fun PiStackTraceCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
-            .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape),
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.58f), shape),
     ) {
         PiCardHeader(
             language = trace.kind.displayName,

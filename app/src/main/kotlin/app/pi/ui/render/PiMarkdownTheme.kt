@@ -187,8 +187,9 @@ internal fun piMarkdownColors(
     DefaultMarkdownColors(
         text = textColor ?: palette.text,
         codeBackground = Color.Transparent,
-        inlineCodeBackground = palette.mdCode.copy(alpha = 0.11f),
-        dividerColor = palette.mdHr.copy(alpha = 0.42f),
+        // 中性柔和底色胶囊：不喧宾夺主，深浅主题下都像 Linear / Claude / Notion 一样克制清晰。
+        inlineCodeBackground = palette.borderMuted.copy(alpha = if (darkTheme) 0.42f else 0.36f),
+        dividerColor = palette.mdHr.copy(alpha = 0.28f),
         tableBackground = palette.cardBg,
         // One value for both slots: the renderer uses this flag for its own
         // derived container/on-container pairs, and the alert accents below
@@ -303,27 +304,26 @@ internal fun piMarkdownTypography(
     val base = profile.styles.prose.copy(
         fontFamily = profile.proseFontFamily(),
         fontWeight = FontWeight.Normal,
+        // 轻微字距让中英混排在手机高分屏上更有呼吸感与质感（等宽模式保持 0）。
+        letterSpacing = if (profile.proseFont == PiTypographyProfile.FONT_MONO || profile.isClassic) 0.sp else 0.15.sp,
     )
     val mono = profile.styles.mono
     val code = profile.styles.code
-    // 标题/强调都落在真实 700：`PiProseFamily` 把 700 同时注册为 `SemiBold` 与
-    // `Bold`，所以这里的 `SemiBold` 与库 annotator 给 `**strong**` 的 `Bold`
-    // 取到的是同一个字体文件 —— 不是合成粗体。
+    // 标题落到真实 Bold / SemiBold，并配收紧负字距营造杂志级排版层次。
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
     val body = textColor ?: palette.text
 
     return DefaultMarkdownTypography(
-        // h1 不画下划线（所有档位）：下划线 + 金色标题读起来像一条链接，层级靠字号与字重。
-        h1 = heading.headingSlot(profile.h1),
-        h2 = heading.headingSlot(profile.h2),
-        h3 = heading.headingSlot(profile.h3),
-        h4 = heading.headingSlot(profile.h4),
-        h5 = heading.headingSlot(profile.h5),
-        h6 = heading.headingSlot(profile.h6),
+        h1 = heading.headingSlot(profile.h1, weight = FontWeight.Bold, letterSpacingSp = -0.35f),
+        h2 = heading.headingSlot(profile.h2, weight = FontWeight.Bold, letterSpacingSp = -0.25f),
+        h3 = heading.headingSlot(profile.h3, weight = FontWeight.SemiBold, letterSpacingSp = -0.15f),
+        h4 = heading.headingSlot(profile.h4, weight = FontWeight.SemiBold, letterSpacingSp = -0.05f),
+        h5 = heading.headingSlot(profile.h5, weight = FontWeight.SemiBold, letterSpacingSp = 0f),
+        h6 = heading.headingSlot(profile.h6, weight = FontWeight.Medium, letterSpacingSp = 0f),
         // GFM alert titles (`> [!NOTE]`) read as a small heading, not as body
         // text — same slot as h4, since the alert body is already inset. That is
         // what this line has always been; the preset moves both together.
-        alertTitle = heading.headingSlot(profile.h4),
+        alertTitle = heading.headingSlot(profile.h4, weight = FontWeight.SemiBold, letterSpacingSp = 0f),
         text = base.copy(color = body),
         code = code.copy(color = palette.mdCodeBlock),
         inlineCode = mono.copy(
@@ -331,68 +331,51 @@ internal fun piMarkdownTypography(
             lineHeight = profile.inlineCodeLineHeightSp.sp,
             fontWeight = profile.inlineCodeWeight,
             color = palette.mdCode,
+            letterSpacing = 0.sp,
         ),
-        // pi's markdown renderer puts **two** decorations on a blockquote, not one: the theme
-        // supplies the colour (`quote: (text) => theme.fg("mdQuote", text)`,
-        // `modes/interactive/theme/theme.js:936`) and the renderer's blockquote case wraps that
-        // in italic —
-        //   `case"blockquote":{let quoteStyle=text=>this.theme.quote(this.theme.italic(text)) …`
-        // (bundled pi-tui, `@earendil-works/pi-tui/dist/components/markdown.js:417`; the bundle
-        // copy is `dist/bundle/chunks/chunk-JVUZSMYM.js:584`, which is where this was verified).
-        // The colour was here and the italic was not, so a quote read as body text in a slightly
-        // different hue instead of as a quote.
-        //
-        // 审计备注（2026-10-31）：库 0.45.0 的 `MarkdownBlockQuote` 只把这份 style 用在
-        // **竖条颜色**与**空行高度**上 —— 块内文字是经 `MarkdownElement` 派发到
-        // `paragraph` 槽渲染的（`MarkdownBlockQuote.kt:90-96`），所以这里的 mdQuote/斜体
-        // 目前落在竖条上，引文正文仍是 paragraph 的颜色与字形。这是库的实现，不是本文件
-        // 的笔误；要不要把引文真正染成 mdQuote+斜体，需要另立一项（会改变引用的观感）。
         quote = base.copy(color = palette.mdQuote),
         paragraph = if (monoParagraph) mono.copy(color = body) else base.copy(color = body),
         ordered = base.copy(color = body),
-        // 2026-10-26: 圆点只放大字形（1.4×），行高保持正文档，不把列表项撑高；
-        // 经典档冻结，仍是正文 14。
-        //
-        // 2026-10-31（宋体）：圆点**只**是标记符号，标记字回到系统 UI 字。思源宋体的
-        // U+2022 是 CJK 全宽字形（advance 1.000 em，墨迹只有 0.10 em），`"• "` 在
-        // 1.4× 下要占 1.76 em：圆点缩成 2 dp 左右、列表正文比改前右移 ~15 dp，多一层
-        // 嵌套再叠一次。标记不是正文，列表**文字**仍是宋体；换成系统 UI 字的比例宽度
-        // 就能保住 10-26 定下的 1.4× 几何。（若要彻底与字体无关，下一步可以把圆点
-        // 画成板上那个 4 dp 圆点，见 v2 `width:4,height:4,borderRadius:999`。）
         bullet = if (profile.isClassic) {
             base.copy(color = palette.mdListBullet, fontFamily = FontFamily.Default)
         } else {
+            // 1.12× 精巧圆点（旧 1.4× 圆点过于臃肿抢眼），行高保持正文不撑高列表项。
             base.copy(
                 color = palette.mdListBullet,
                 fontFamily = FontFamily.Default,
-                fontSize = (base.fontSize.value * 1.4f).sp,
+                fontSize = (base.fontSize.value * 1.12f).sp,
                 lineHeight = base.lineHeight,
             )
         },
         list = base.copy(color = body),
         textLink = TextLinkStyles(
-            style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
+            style = SpanStyle(
+                color = palette.mdLink,
+                fontWeight = FontWeight.Medium,
+                textDecoration = TextDecoration.Underline,
+            ),
         ),
-        // 表格属于"正文阅读体系"（任务书 §7.6），不是等宽表面：阅读字族 + 预设的
-        // 字号/行高 + 正文底色。两个数字从 profile **原样**取 —— 行距/字号乘子特意
-        // 跳过它们（`PiTypographyProfile`），因为单元格的行高只决定格子多高，而它要
-        // 挤进的列宽由 `PiTable` 决定。经典是 12.5/18，正是这行以前写死的那一对。
-        // 表头由库自己在这份 style 上 `copy(fontWeight = Bold)`，经字族的 Bold 别名
-        // 命中真实 600。**格子里**的行内代码仍走 `inlineCode`（mono）：只有单元格的
-        // 正文换成阅读字体。
         table = base.copy(
             fontSize = profile.tableSizeSp.sp,
             lineHeight = profile.tableLineHeightSp.sp,
             color = body,
+            letterSpacing = 0.sp,
         ),
     )
 }
 
-/** One heading slot at the profile's size and leading; [underline] only for h1. */
-private fun TextStyle.headingSlot(slot: PiHeading, underline: Boolean = false): TextStyle =
+/** One heading slot at the profile's size, leading, weight and subtle editorial tracking. */
+private fun TextStyle.headingSlot(
+    slot: PiHeading,
+    underline: Boolean = false,
+    weight: FontWeight = FontWeight.SemiBold,
+    letterSpacingSp: Float = 0f,
+): TextStyle =
     copy(
         fontSize = slot.sizeSp.sp,
         lineHeight = slot.lineHeightSp.sp,
+        fontWeight = weight,
+        letterSpacing = letterSpacingSp.sp,
         textDecoration = if (underline) TextDecoration.Underline else null,
     )
 

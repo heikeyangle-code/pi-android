@@ -43,6 +43,11 @@ sealed interface PiSvgResult {
         val svg: String,
         val widthPx: Int,
         val heightPx: Int,
+        /** MathJax 原始 `viewBox` 换算出的光学尺寸（em 单位，0 表示未知，由视图层走比例回退）。 */
+        val emWidth: Float = 0f,
+        val emHeight: Float = 0f,
+        /** 数学基线在总高度中的位置（0 = 顶边，1 = 底边；MathJax `viewBox` 中 `-yMin / h`）。 */
+        val baselineRatio: Float = 0.8f,
     ) : PiSvgResult
 
     /** 失败必须回退源码/现有 PiLatex，不允许空白。 */

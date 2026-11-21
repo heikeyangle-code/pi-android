@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.rounded.Check
@@ -115,10 +119,10 @@ internal fun PiRichCodeBlock(
 
     MarkdownCodeBackground(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         border = BorderStroke(
-            1.dp,
-            palette.mdCodeBlockBorder.copy(alpha = 0.34f),
+            0.5.dp,
+            palette.borderMuted.copy(alpha = 0.58f),
         ),
         modifier = Modifier
             .fillMaxWidth()
@@ -128,6 +132,7 @@ internal fun PiRichCodeBlock(
         code = code,
     ) {
         Column {
+            // 「横向滚动 / 自动换行」「显示行号」「展开/收起」统一收进 ⋮ 菜单，保持代码块头部极简克制。
             PiCardHeader(
                 language = info.language,
                 title = info.title,
@@ -138,29 +143,6 @@ internal fun PiRichCodeBlock(
                     copied = true
                 },
                 status = if (lineCount > 1) tr("$lineCount 行", "$lineCount lines") else null,
-                trailingPill = {
-                    Text(
-                        text = if (wrap) tr("换行", "Wrap") else tr("滚动", "Scroll"),
-                        style = PiTheme.text.monoSmall,
-                        color = if (wrap) palette.accent else palette.muted,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .padding(end = 2.dp)
-                            .background(
-                                if (wrap) palette.accent.copy(alpha = 0.14f)
-                                else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                RoundedCornerShape(6.dp),
-                            )
-                            .clickable(
-                                role = Role.Button,
-                                onClickLabel = if (wrap) tr("切回横向滚动", "Switch to horizontal scroll") else tr("开启自动换行", "Enable word wrap"),
-                            ) {
-                                wrap = !wrap
-                                if (wrap) showLineNumbers = false
-                            }
-                            .padding(horizontal = 7.dp, vertical = 3.dp),
-                    )
-                },
                 menu = {
                     PiCardMenu(
                         palette = palette,
@@ -173,7 +155,7 @@ internal fun PiRichCodeBlock(
                                 ) { showLineNumbers = !showLineNumbers },
                             )
                             add(
-                                PiCardMenuItem(label = if (wrap) tr("横向滚动", "Horizontal scroll") else tr("自动换行", "Word wrap")) {
+                                PiCardMenuItem(label = if (wrap) tr("切回横向滚动", "Horizontal scroll") else tr("自动换行", "Word wrap")) {
                                     wrap = !wrap
                                     if (wrap) showLineNumbers = false
                                 },
@@ -198,21 +180,26 @@ internal fun PiRichCodeBlock(
                     style = style.copy(color = codeColor),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                 )
             } else {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                 ) {
                     if (showLineNumbers) {
+                        val gutterColor = palette.borderMuted.copy(alpha = 0.35f)
                         Text(
                             text = (1..shownLineCount).joinToString("\n"),
-                            style = style.copy(color = palette.muted.copy(alpha = 0.72f), textAlign = TextAlign.End),
+                            style = style.copy(color = palette.dim.copy(alpha = 0.78f), textAlign = TextAlign.End),
                             modifier = Modifier
-                                .width((shownLineCount.coerceAtLeast(1).toString().length * 8 + 9).dp)
-                                .padding(end = 8.dp),
+                                .padding(end = 10.dp)
+                                .drawBehind {
+                                    val x = size.width + 4.dp.toPx()
+                                    drawLine(gutterColor, Offset(x, 0f), Offset(x, size.height), 0.5.dp.toPx())
+                                }
+                                .width((shownLineCount.coerceAtLeast(1).toString().length * 8 + 6).dp),
                         )
                     }
                     Text(
@@ -228,13 +215,13 @@ internal fun PiRichCodeBlock(
                 Text(
                     text = if (expanded) tr("收起代码 ▴", "Collapse code ▴") else tr("展开全部 $lineCount 行 ▾", "Expand all $lineCount lines ▾"),
                     style = MaterialTheme.typography.labelMedium,
-                    color = palette.accent,
+                    color = palette.muted,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.65f))
+                        .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.42f))
                         .clickable { expanded = !expanded }
-                        .padding(vertical = 9.dp),
+                        .padding(vertical = 8.dp),
                 )
             }
         }
@@ -305,8 +292,8 @@ internal fun PiRichCardFrame(
     val shownStatus = status ?: slot.status
     MarkdownCodeBackground(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.34f)),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.58f)),
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = topPadding, bottom = if (classic) 8.dp else 0.dp),
@@ -343,33 +330,37 @@ internal fun PiCardHeader(
     copied: Boolean,
     onCopy: () -> Unit,
     status: String? = null,
-    trailingPill: (@Composable () -> Unit)? = null,
     menu: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f))
-            .padding(start = 12.dp, end = 4.dp),
+            .heightIn(min = 36.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.48f))
+            .padding(start = 14.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (language.isNotEmpty()) {
             Text(
                 text = language,
-                style = PiTheme.text.monoSmall,
-                color = palette.accent,
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                color = palette.muted,
                 maxLines = 1,
-                modifier = Modifier
-                    .background(palette.accent.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
             )
         }
         if (!title.isNullOrEmpty()) {
-            if (language.isNotEmpty()) Spacer(Modifier.width(8.dp))
+            if (language.isNotEmpty()) {
+                Text(
+                    text = "·",
+                    style = PiTheme.text.monoSmall,
+                    color = palette.dim,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+            }
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelMedium,
-                color = palette.muted,
+                color = palette.text.copy(alpha = 0.86f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -380,28 +371,26 @@ internal fun PiCardHeader(
             Text(
                 text = status,
                 style = PiTheme.text.monoSmall,
-                color = palette.muted,
+                color = palette.dim,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 6.dp),
             )
         }
-        trailingPill?.invoke()
         PiCopyIcon(palette = palette, copied = copied, onCopy = onCopy)
         menu?.invoke()
     }
 }
 
 /**
- * 所有卡片共用的复制按钮：一个 18 dp 的小图标（复制后 1.2 s 变成对勾），触控区 40 dp。
- * 不再占一个「复制」字的宽度，窄屏上语言胶囊、标题、状态都有更多位置。
+ * 所有卡片共用的复制按钮：16 dp 精致图标（复制后 1.2 s 变成对勾），触控区 36 dp。
  */
 @Composable
 internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit) {
     val copyDesc = if (copied) tr("已复制", "Copied") else tr("复制", "Copy")
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(36.dp)
             .clickable(role = Role.Button, onClickLabel = tr("复制源码", "Copy source"), onClick = onCopy)
             .semantics { contentDescription = copyDesc },
         contentAlignment = Alignment.Center,
@@ -409,8 +398,8 @@ internal fun PiCopyIcon(palette: PiPalette, copied: Boolean, onCopy: () -> Unit)
         Icon(
             imageVector = if (copied) Icons.Rounded.Check else Icons.Outlined.ContentCopy,
             contentDescription = null,
-            tint = if (copied) palette.accent else palette.muted,
-            modifier = Modifier.size(18.dp),
+            tint = if (copied) palette.success else palette.muted,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
@@ -453,7 +442,7 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
         val moreLabel = tr("更多选项", "More options")
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(36.dp)
                 .clickable(role = Role.Button, onClickLabel = moreLabel) { open = true }
                 .semantics { contentDescription = moreLabel },
             contentAlignment = Alignment.Center,
@@ -462,7 +451,7 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
                 imageVector = Icons.Rounded.MoreVert,
                 contentDescription = null,
                 tint = palette.muted,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -480,13 +469,13 @@ internal fun PiCardMenu(palette: PiPalette, items: List<PiCardMenuItem>) {
     }
 }
 
-/** 卡片内的发丝分隔线（头 / 正文 / 折叠条之间）。 */
+/** 卡片内的极细发丝分隔线（头 / 正文 / 折叠条之间）。 */
 @Composable
 internal fun PiCardDivider(palette: PiPalette) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(1.dp)
-            .background(palette.mdCodeBlockBorder.copy(alpha = 0.16f)),
+            .height(0.5.dp)
+            .background(palette.borderMuted.copy(alpha = 0.42f)),
     )
 }

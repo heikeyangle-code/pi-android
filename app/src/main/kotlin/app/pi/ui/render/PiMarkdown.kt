@@ -279,16 +279,29 @@ internal fun PiMarkdownText(
     // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
     // 拿到的是同一个对象，逐字节相同。
     // 普通正文不含数学/脚注标记时短路，避免 streaming 从 true→false 落地时无谓重算与重排。
+    // 已落定消息走 [PiInlineMath.extract]：行内 `$...$` / `\(...\)` 用哨兵编码保住原 TeX（供
+    // `PiInlineMathParagraph` 升级为 MathJax 真矢量 SVG），独立 `\[...\]` 同步规范化为块级公式；
+    // 流式期间保持 `PiLatex.prepare` 零延迟 Unicode 路径，60fps 零 WebView 抖动。
     val hasMathSyntax = remember(markdown) {
         markdown.contains('$') || markdown.contains("\\(") || markdown.contains("\\[")
     }
-    val prepared = remember(markdown, streaming && hasMathSyntax, hasMathSyntax) {
-        if (!hasMathSyntax) {
-            PiLatex.PreparedMath(markdown, false)
+    val inlineExtracted = remember(markdown, streaming, hasMathSyntax) {
+        if (streaming || !hasMathSyntax) {
+            null
         } else {
-            val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
-            runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
-                .getOrElse { PiLatex.PreparedMath(markdown, false) }
+            runCatching { PiInlineMath.extract(markdown) }.getOrNull()
+        }
+    }
+    val inlineMathEntries = inlineExtracted?.entries ?: emptyList()
+    val prepared = remember(markdown, streaming && hasMathSyntax, hasMathSyntax, inlineExtracted) {
+        when {
+            !hasMathSyntax -> PiLatex.PreparedMath(markdown, false)
+            inlineExtracted != null -> PiLatex.PreparedMath(inlineExtracted.markdown, false)
+            else -> {
+                val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
+                runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
+                    .getOrElse { PiLatex.PreparedMath(markdown, false) }
+            }
         }
     }
     val hasFootnoteSyntax = remember(prepared.text) { prepared.text.contains("[^") }
@@ -454,6 +467,7 @@ internal fun PiMarkdownText(
     // `MarkdownParseBudget` for the measurements the 4 ms figure rests on and for why the bill
     // is elapsed time and not a character count.
     val parseStartedNanos = if (immediate) System.nanoTime() else 0L
+    val hasInlineMathSentinels = inlineMathEntries.isNotEmpty()
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides imageTransformer,
@@ -461,6 +475,7 @@ internal fun PiMarkdownText(
         // 所以正文之外那几个没传回调的 markdown 表面不受影响。
         LocalPiImageClick provides onImageClick,
         LocalPiMarkdownStreaming provides streaming,
+        LocalPiInlineMathTable provides inlineMathEntries,
     ) {
         Markdown(
             // The state built above, not the `content` overload: the state is what makes the
@@ -473,25 +488,32 @@ internal fun PiMarkdownText(
             dimens = piMarkdownDimensRoomy,
             imageTransformer = imageTransformer,
             components = components,
-            // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')
-            // else append(' ')`（`annotator/AnnotatedStringKtx.kt`）默认走 `else`，一块
-            // 网格会被压成一行 —— 比不画更糟。只在含网格的消息里打开（见 `hasGrid`）。
-            // pi 自己就是保留换行的（`components/markdown.js:367-369` 把段落文本整串
-            // 推进 `lines`），所以这是往 pi 靠；**不全量打开**是因为那会改掉所有消息的
-            // 段落观感（App 的软换行今天渲染成空格），那是另一笔交易。
-            //
-            // `annotate` 是行内裸 HTML 的认领钩子（`piInlineHtmlAnnotate` 的注释里有它
-            // 为什么只能落在这一层、以及它的代价）：库拿它当"这个 child 我处理了吗"，
-            // 返回 `false` 就原样走库自己的 switch，所以只有 `HTML_TAG` 会被认领。
-            // **而且只在源文本里真的有 `<` 时才装**（`hasHtmlTagStart`）—— 没装时库那行
-            // 判定是 `annotate == null` 的短路，这类消息的 annotator 路径与这次改动之前
-            // 逐字节相同。两个参数共用同一个 `remember`：`markdownAnnotator` 造出来的
-            // `DefaultMarkdownAnnotator` 按 `config` + `annotate` 判等，而这两者都是稳定
-            // 的（两个布尔是这次渲染的常量，lambda 是顶层 `val`）。
-            annotator = remember(hasGrid, hasHtmlTagStart) {
+            annotator = remember(hasGrid, hasHtmlTagStart, hasInlineMathSentinels, inlineMathEntries) {
+                val hook: (AnnotatedString.Builder.(String, ASTNode) -> Boolean)? = when {
+                    !hasHtmlTagStart && !hasInlineMathSentinels -> null
+                    hasHtmlTagStart && !hasInlineMathSentinels -> piInlineHtmlAnnotate
+                    else -> { src, child ->
+                        if (hasHtmlTagStart && PiHtml.handlesInline(child.type.name)) {
+                            piInlineHtmlAnnotate(src, child)
+                        } else if (child.children.isEmpty()) {
+                            val start = child.startOffset.coerceIn(0, src.length)
+                            val end = child.endOffset.coerceIn(start, src.length)
+                            val slice = src.substring(start, end)
+                            if (slice.indexOf(PiInlineMath.SENTINEL_START) >= 0) {
+                                // 非段落表面（标题 / 表格单元格 / 紧密列表等）安全还原为 Unicode 近似，绝不泄漏哨兵。
+                                append(PiInlineMath.resolveToUnicode(slice, inlineMathEntries))
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                }
                 markdownAnnotator(
                     config = markdownAnnotatorConfig(eolAsNewLine = hasGrid),
-                    annotate = if (hasHtmlTagStart) piInlineHtmlAnnotate else null,
+                    annotate = hook,
                 )
             },
             // Two library defaults this renderer must not inherit. Both are about the
@@ -591,7 +613,7 @@ internal fun PiMarkdownText(
             // 那份源文本。`State.Success` 永远到不了这个槽，所以正常路径一个字节不变。
             error = { errorModifier ->
                 Text(
-                    text = content,
+                    text = PiInlineMath.resolveToUnicode(content, inlineMathEntries),
                     style = typography.text,
                     color = colors.text,
                     modifier = errorModifier,

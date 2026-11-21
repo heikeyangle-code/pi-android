@@ -53,7 +53,7 @@ fun ErrorBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.toolErrorBg,
-            borderColor = null,
+            borderColor = palette.error.copy(alpha = 0.26f),
             padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
         ) {
             ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }, enabled = expandable) {

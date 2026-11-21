@@ -627,6 +627,9 @@ internal object PiMathRenderEngine : PiSvgEngine {
                     if (document == null) {
                         PiSvgResult.Failure("MathJax 的输出里没有完整的 <svg> 文档")
                     } else {
+                        // 在 fitViewBox 等比归一化之前读取 MathJax 原始 1/1000 em 坐标系度量，
+                        // 让行内与块级公式按真实光学 em 比例排版（短公式不再撑满整屏、分式不再被压扁）。
+                        val metrics = extractMathEmMetrics(document)
                         val prepared = fitViewBox(
                             ensureNamespaces(
                                 promoteHrefAttributes(escapeLessThanInAttributes(document)),
@@ -642,7 +645,14 @@ internal object PiMathRenderEngine : PiSvgEngine {
                                 if (size == null) {
                                     PiSvgResult.Failure("公式 SVG 缺少可用的 viewBox，无法确定固有尺寸")
                                 } else {
-                                    PiSvgResult.Ok(sanitized.svg, size.first, size.second)
+                                    PiSvgResult.Ok(
+                                        svg = sanitized.svg,
+                                        widthPx = size.first,
+                                        heightPx = size.second,
+                                        emWidth = metrics?.emWidth ?: 0f,
+                                        emHeight = metrics?.emHeight ?: 0f,
+                                        baselineRatio = metrics?.baselineRatio ?: 0.8f,
+                                    )
                                 }
                             }
                         }
@@ -1337,6 +1347,34 @@ private fun mathAbsoluteLength(tag: String, pattern: Regex): Int? {
     val value = numberText.toDoubleOrNull() ?: return null
     if (!value.isFinite() || value <= 0.0) return null
     return mathClampDimension(value)
+}
+
+private class MathEmMetrics(
+    val emWidth: Float,
+    val emHeight: Float,
+    val baselineRatio: Float,
+)
+
+/**
+ * 读取 MathJax 原始 `<svg viewBox="xMin yMin width height">`（单位 = 1/1000 em）的光学度量。
+ *
+ * MathJax 4 SVG 输出的 `viewBox` 恒以 `1/1000 em` 计量：
+ * - `emWidth = width / 1000`、`emHeight = height / 1000`
+ * - `baselineRatio = (-yMin) / height`（即基线 y=0 距顶边的比例，用来对齐行内正文的基线）。
+ */
+private fun extractMathEmMetrics(svg: String): MathEmMetrics? {
+    val root = SVG_ROOT_TAG.find(svg)?.value ?: return null
+    val viewBox = VIEW_BOX_ATTR.find(root)?.groupValues?.get(1) ?: return null
+    val parts = viewBox.trim().split(VIEWBOX_SPLIT).filter { it.isNotEmpty() }
+    if (parts.size != 4) return null
+    val yMin = parts[1].toDoubleOrNull() ?: return null
+    val w = parts[2].toDoubleOrNull() ?: return null
+    val h = parts[3].toDoubleOrNull() ?: return null
+    if (!yMin.isFinite() || !w.isFinite() || !h.isFinite() || w <= 0.0 || h <= 0.0) return null
+    val emW = (w / 1000.0).toFloat()
+    val emH = (h / 1000.0).toFloat()
+    val baseline = ((-yMin) / h).toFloat().coerceIn(0.15f, 0.95f)
+    return MathEmMetrics(emW, emH, baseline)
 }
 
 private fun mathClampDimension(value: Double): Int =

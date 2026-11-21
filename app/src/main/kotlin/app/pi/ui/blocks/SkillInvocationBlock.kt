@@ -61,7 +61,7 @@ fun SkillInvocationBlock(
             // `#ede7f6` vs `#ffffff` (`interactive/theme/dark.json:20,88`,
             // `light.json:19,87`).
             color = palette.customMessageBg,
-            borderColor = null,
+            borderColor = palette.customMessageLabel.copy(alpha = 0.20f),
         ) {
             // F28: pi's only toggle is the content region (see `ToggleContent`);
             // the header row is not a separate hit target.

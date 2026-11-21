@@ -57,7 +57,7 @@ fun BranchSummaryBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.customMessageBg,
-            borderColor = null,
+            borderColor = palette.customMessageLabel.copy(alpha = 0.20f),
         ) {
             Row(
                 modifier = Modifier

@@ -16,7 +16,10 @@ import app.pi.i18n.tr
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -238,16 +241,30 @@ fun PiMathView(
                     overflow = TextOverflow.Ellipsis,
                 )
             } else {
+                val bodySp = PiTheme.typography.styles.prose.fontSize.value.coerceIn(12f, 24f)
+                val inlineEmDp = (bodySp * 1.08f).dp
                 val aspect = piMathAspectOrFallback(ready)
-                val naturalWidth = PI_MATH_INLINE_HEIGHT * aspect
-                // 上限取屏宽；父级若更窄，`width()` 修饰符会自己被父级约束收住。
-                val availableWidth = configuration.screenWidthDp.dp
+                val naturalHeight = if (ready.emHeight > 0f) {
+                    (inlineEmDp * ready.emHeight).coerceIn((bodySp * 0.9f).dp, (bodySp * 2.4f).dp)
+                } else {
+                    PI_MATH_INLINE_HEIGHT
+                }
+                val naturalWidth = if (ready.emWidth > 0f) {
+                    inlineEmDp * ready.emWidth
+                } else {
+                    naturalHeight * aspect
+                }
+                val availableWidth = (configuration.screenWidthDp - 32).coerceAtLeast(120).dp
                 val formulaWidth = minOf(naturalWidth, availableWidth).coerceAtLeast(1.dp)
+                val formulaHeight = if (naturalWidth > availableWidth && naturalWidth.value > 0f) {
+                    (naturalHeight * (availableWidth.value / naturalWidth.value)).coerceAtLeast(14.dp)
+                } else {
+                    naturalHeight
+                }
                 Canvas(
                     modifier = Modifier
                         .width(formulaWidth)
-                        // 行高固定：公式在行高里居中，宽公式按宽度缩、高公式按行高缩。
-                        .height(PI_MATH_INLINE_HEIGHT)
+                        .height(formulaHeight)
                         .semantics { contentDescription = tr("行内公式", "Inline formula") },
                 ) {
                     val fit = piMathFitScale(
@@ -303,49 +320,74 @@ fun PiMathView(
             ) {
                 if (image != null) {
                     val aspect = piMathAspectOrFallback(image)
-                    // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 而不是先量宽度再算
-                    // 高度，这样不需要 `BoxWithConstraints`。
+                    val bodySp = PiTheme.typography.styles.prose.fontSize.value.coerceIn(12f, 24f)
+                    val displayEmDp = (bodySp * 1.28f).dp
                     val mathDesc = tr("数学公式：$source", "Math formula: $source")
-                    Canvas(
+                    // 用 MathJax 真实 em 度量排版：短公式（如 `E = mc^2`）居中按自然光学字号绘制，
+                    // 不再把 3 个字符拉伸成占满整屏宽度的巨幅标语；超宽长公式按容器宽度等比缩入并可 1×–8× 捏合缩放。
+                    BoxWithConstraints(
                         modifier = Modifier
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .heightIn(min = PI_MATH_MIN_IMAGE_HEIGHT, max = PI_MATH_MAX_IMAGE_HEIGHT)
                             .fillMaxWidth()
-                            .aspectRatio(aspect.coerceIn(0.05f, 60f))
-                            .clipToBounds()
-                            .pointerInput(image) {
-                                piMathTransformGestures(
-                                    image = image,
-                                    readScale = { scale },
-                                    readOffset = { offset },
-                                ) { nextScale, nextOffset ->
-                                    scale = nextScale
-                                    offset = nextOffset
-                                }
-                            }
-                            .semantics { contentDescription = mathDesc },
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        val fit = piMathFitScale(
-                            viewWidth = size.width,
-                            viewHeight = size.height,
-                            baseWidthPx = image.baseWidthPx,
-                            baseHeightPx = image.baseHeightPx,
-                        ) * scale
-                        drawIntoCanvas { canvas ->
-                            val native = canvas.nativeCanvas
-                            // 变换放在 native canvas 上，不用 `graphicsLayer`：图层会缩放
-                            // 已经录制好的位图，8× 时字会糊；这里交给矢量回放。
-                            native.save()
-                            // 显式裁到画布：放大后图不许画进标题栏/卡片边缘（只靠 clipToBounds 不够稳）。
-                            native.clipRect(0f, 0f, size.width, size.height)
-                            native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
-                            native.scale(fit, fit)
-                            native.translate(
-                                -image.baseWidthPx / 2f,
-                                -image.baseHeightPx / 2f,
-                            )
-                            native.drawPicture(image.picture)
-                            native.restore()
+                        val canvasHeight = if (image.emWidth > 0f && image.emHeight > 0f) {
+                            val naturalW = displayEmDp * image.emWidth
+                            val naturalH = displayEmDp * image.emHeight
+                            val fittedH = if (naturalW > maxWidth && naturalW.value > 0f) {
+                                naturalH * (maxWidth.value / naturalW.value)
+                            } else {
+                                naturalH
+                            }
+                            fittedH.coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
+                        } else {
+                            (maxWidth / aspect.coerceIn(0.05f, 60f))
+                                .coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
+                        }
+                        val desiredWidth = if (image.emWidth > 0f && image.emHeight > 0f) {
+                            minOf(displayEmDp * image.emWidth, maxWidth).coerceAtLeast(1.dp)
+                        } else {
+                            maxWidth
+                        }
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(canvasHeight)
+                                .graphicsLayer {
+                                    clip = true
+                                    compositingStrategy = CompositingStrategy.Offscreen
+                                }
+                                .pointerInput(image) {
+                                    piMathTransformGestures(
+                                        image = image,
+                                        readScale = { scale },
+                                        readOffset = { offset },
+                                    ) { nextScale, nextOffset ->
+                                        scale = nextScale
+                                        offset = nextOffset
+                                    }
+                                }
+                                .semantics { contentDescription = mathDesc },
+                        ) {
+                            val baseFit = piMathFitScale(
+                                viewWidth = desiredWidth.toPx().coerceAtMost(size.width),
+                                viewHeight = size.height,
+                                baseWidthPx = image.baseWidthPx,
+                                baseHeightPx = image.baseHeightPx,
+                            ) * scale
+                            drawIntoCanvas { canvas ->
+                                val native = canvas.nativeCanvas
+                                native.save()
+                                native.clipRect(0f, 0f, size.width, size.height)
+                                native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
+                                native.scale(baseFit, baseFit)
+                                native.translate(
+                                    -image.baseWidthPx / 2f,
+                                    -image.baseHeightPx / 2f,
+                                )
+                                native.drawPicture(image.picture)
+                                native.restore()
+                            }
                         }
                     }
                 } else if (draw == PiMathDraw.Rendering && pinned != true) {
@@ -378,7 +420,7 @@ fun PiMathView(
 private val PI_MATH_CARD_INFO = FenceInfo(language = "math", title = null, attributes = emptyMap(), raw = "math")
 
 /** 已渲染公式的缓存键：源码、块/行内、基准宽度、主题，缺一不可（任何一个变了图就不同）。 */
-private data class PiMathDrawKey(
+internal data class PiMathDrawKey(
     val source: String,
     val display: Boolean,
     val widthPx: Int,
@@ -386,11 +428,11 @@ private data class PiMathDrawKey(
 )
 
 /**
- * 最近渲染成功的公式（`Picture` 是录制好的矢量，很小）：24 条 LRU。行滚出屏幕再回来命中它，
- * 不再重走「渲染中 → 公式」，也就不会让行高变两次。只缓存成功结果。
+ * 最近渲染成功的公式（`Picture` 是录制好的矢量，很小）：128 条 LRU（同时服务行内与块级公式）。
+ * 行滚出屏幕再回来同步命中它，不再重走「渲染中 → 公式」，也就不会让行高变两次。只缓存成功结果。
  */
-private object PiMathDrawCache {
-    private const val CAPACITY = 24
+internal object PiMathDrawCache {
+    private const val CAPACITY = 128
     private val entries = object : LinkedHashMap<PiMathDrawKey, PiMathDraw.Ready>(CAPACITY, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PiMathDrawKey, PiMathDraw.Ready>): Boolean =
             size > CAPACITY
@@ -406,23 +448,59 @@ private object PiMathDrawCache {
 }
 
 /** 一次请求目前产出的东西。永远不持有"解析到一半"的文档。 */
-private sealed interface PiMathDraw {
+internal sealed interface PiMathDraw {
     /** 围栏还没闭合：只显示源码。 */
     data object Streaming : PiMathDraw
 
     /** 已经问过管线、还没回答：源码 + "渲染中…"。 */
     data object Rendering : PiMathDraw
 
-    /** 已录制的矢量图。 */
+    /** 已录制的矢量图（附带 MathJax 原始光学 em 度量与基线比例）。 */
     data class Ready(
         val picture: Picture,
         val baseWidthPx: Int,
         val baseHeightPx: Int,
         val aspect: Float,
+        val emWidth: Float = 0f,
+        val emHeight: Float = 0f,
+        val baselineRatio: Float = 0.8f,
     ) : PiMathDraw
 
     /** 这段源码不会出图；原因印在源码块上。 */
     data class Unavailable(val reason: String) : PiMathDraw
+}
+
+/** 供行内段落组件构造缓存键与主题值（与块级 [PiMathView] 共享同一套缓存与渲染管线）。 */
+internal fun piMathThemeFor(background: Color, foreground: Color, accent: Color, muted: Color): PiSvgTheme =
+    PiSvgTheme(
+        background = background.piMathHex(),
+        foreground = foreground.piMathHex(),
+        accent = accent.piMathHex(),
+        muted = muted.piMathHex(),
+        fontFamily = PI_MATH_FONT_FAMILY,
+    )
+
+internal fun piMathInlineCached(source: String, widthPx: Int, theme: PiSvgTheme): PiMathDraw.Ready? =
+    PiMathDrawCache.get(PiMathDrawKey(source, display = false, widthPx = widthPx, theme = theme))
+
+/** 离屏渲染一条行内公式并写入共享 LRU；失败返回 null（调用方保持 Unicode 近似）。 */
+internal suspend fun piMathRenderInline(source: String, widthPx: Int, theme: PiSvgTheme): PiMathDraw.Ready? {
+    if (source.isBlank() || source.length > PI_MATH_MAX_SOURCE_CHARS) return null
+    val key = PiMathDrawKey(source, display = false, widthPx = widthPx, theme = theme)
+    PiMathDrawCache.get(key)?.let { return it }
+    val result = try {
+        PiMathSvg.renderMathSvg(source, display = false, widthPx = widthPx, theme = theme)
+    } catch (c: CancellationException) {
+        throw c
+    } catch (_: Throwable) {
+        return null
+    }
+    if (result !is PiSvgResult.Ok) return null
+    val ready = withContext(Dispatchers.Default) {
+        piMathDrawSvg(result, widthPx) as? PiMathDraw.Ready
+    } ?: return null
+    PiMathDrawCache.put(key, ready)
+    return ready
 }
 
 // ---------------------------------------------------------------------------------
@@ -466,7 +544,15 @@ private fun piMathDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiMath
     } catch (error: Exception) {
         return PiMathDraw.Unavailable(tr("公式 SVG 绘制失败：${error.message ?: error::class.java.simpleName}", "Formula SVG render failed: ${error.message ?: error::class.java.simpleName}"))
     }
-    return PiMathDraw.Ready(picture, baseWidth, baseHeight, aspect)
+    return PiMathDraw.Ready(
+        picture = picture,
+        baseWidthPx = baseWidth,
+        baseHeightPx = baseHeight,
+        aspect = aspect,
+        emWidth = result.emWidth,
+        emHeight = result.emHeight,
+        baselineRatio = result.baselineRatio,
+    )
 }
 
 /**

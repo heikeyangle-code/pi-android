@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -139,15 +140,11 @@ fun PiMermaidView(
     val palette = PiTheme.palette
     val density = LocalDensity.current
 
-    // The pipeline's theme is a pure value: `PiSvgTheme` is a data class, so this
-    // `remember` only changes when the palette does, and the equals-based
-    // `LaunchedEffect` key below then re-renders instead of keeping stale colours.
-    val theme = remember(palette) {
+    val cardBg = MaterialTheme.colorScheme.surfaceContainerLow
+    val theme = remember(palette, cardBg) {
         PiSvgTheme(
-            // 与卡片正文同色（页面底 + 6% 的卡片淡底）：节点底色与连线标签底色不再是比卡片更亮
-            // 的一块块「白块」。
-            background = palette.mdCodeBlockBorder.copy(alpha = 0.06f)
-                .compositeOver(palette.pageBg).piHex(),
+            // 与 PiRichCardFrame 正文底色完全一致，杜绝节点底色与卡片背景之间出现色差接缝。
+            background = cardBg.compositeOver(palette.pageBg).piHex(),
             foreground = palette.text.piHex(),
             accent = palette.accent.piHex(),
             muted = palette.muted.piHex(),

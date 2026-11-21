@@ -79,3 +79,62 @@ private fun alignmentOf(cell: String): PiTableAlign {
         else -> PiTableAlign.Default
     }
 }
+
+/**
+ * 估算一格文本的显示宽度（按半角字符计：CJK / 全角记 2，ASCII 记 1），忽略常见 Markdown 标记符号。
+ */
+internal fun estimateTableCellDisplayChars(raw: String): Int {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return 0
+    var units = 0
+    var i = 0
+    val limit = minOf(trimmed.length, 160)
+    while (i < limit) {
+        val c = trimmed[i]
+        if (c == '`' || c == '*' || c == '_') {
+            i++
+            continue
+        }
+        units += if (c.code >= 0x2E80) 2 else 1
+        i++
+    }
+    return units
+}
+
+/**
+ * 按列内容估算比例列宽（dp）：
+ * - 短列（如 `#` / `状态` / `版本`）不再硬占 120 dp 留出大片空白；
+ * - 长说明列获得更宽的空间，减少无谓折行与横向滚动；
+ * - 若所有列的自然宽度之和 <= [availableDp]，按比例温和撑满 [availableDp]；
+ * - 若超过 [availableDp]，保持自然夹紧宽度，由表格外层横向平滑滚动。
+ */
+internal fun computePiTableColumnWidthsDp(
+    columnDisplayChars: List<Int>,
+    availableDp: Float,
+    charWidthDp: Float = 8.4f,
+    horizontalPaddingDp: Float = 24f,
+    minColDp: Float = 56f,
+    maxColDp: Float = 240f,
+): List<Float> {
+    if (columnDisplayChars.isEmpty()) return emptyList()
+    val natural = columnDisplayChars.map { chars ->
+        val raw = chars.coerceAtLeast(2) * charWidthDp + horizontalPaddingDp
+        raw.coerceIn(minColDp, maxColDp)
+    }
+    val total = natural.sum()
+    if (availableDp <= 0f || total <= 0f) return natural
+    if (total <= availableDp) {
+        // 分配多余空间时偏向较宽的列（避免把 2 字符的 `#` 列拉成 100dp）
+        val extra = availableDp - total
+        val weights = natural.map { (it - minColDp + 16f).coerceAtLeast(8f) }
+        val weightSum = weights.sum()
+        return natural.mapIndexed { idx, w -> w + extra * (weights[idx] / weightSum) }
+    }
+    // 略微超宽（<= 1.18x）且压缩后每列仍 >= minColDp 时温和收进屏幕，避免轻微溢出也要横滑
+    if (total <= availableDp * 1.18f) {
+        val scale = availableDp / total
+        val shrunk = natural.map { (it * scale).coerceAtLeast(minColDp) }
+        if (shrunk.sum() <= availableDp + 1f) return shrunk
+    }
+    return natural
+}

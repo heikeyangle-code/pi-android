@@ -21,7 +21,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -133,25 +138,27 @@ private fun RenderBlock(node: PiHtmlNode.Block, style: TextStyle) {
 
         "div", "li", "figure" -> RenderBlocks(node.children, style)
 
-        "blockquote" -> Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-        ) {
-            Box(
-                Modifier
-                    .width(3.dp)
-                    .fillMaxHeight()
-                    .background(palette.mdQuoteBorder),
-            )
+        "blockquote" -> {
+            val quoteShape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+            val railColor = palette.mdQuoteBorder.copy(alpha = 0.78f)
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 10.dp, top = 2.dp, bottom = 2.dp),
+                    .fillMaxWidth()
+                    .clip(quoteShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.72f))
+                    .drawBehind {
+                        val railW = 2.5.dp.toPx()
+                        drawRoundRect(
+                            color = railColor,
+                            topLeft = Offset(0f, 0f),
+                            size = Size(railW, size.height),
+                            cornerRadius = CornerRadius(railW / 2f, railW / 2f),
+                        )
+                    }
+                    .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
             ) {
                 RenderBlocks(
                     nodes = node.children,
-                    // 不用斜体：中文没有真斜体，合成倾斜很难看（Markdown 引用同理）。
                     style = style.copy(color = palette.mdQuote),
                 )
             }
@@ -166,9 +173,9 @@ private fun RenderBlock(node: PiHtmlNode.Block, style: TextStyle) {
         "hr" -> HorizontalDivider(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            thickness = 1.dp,
-            color = palette.mdHr.copy(alpha = 0.35f),
+                .padding(vertical = 8.dp),
+            thickness = 0.5.dp,
+            color = palette.mdHr.copy(alpha = 0.28f),
         )
 
         // 未知块：不丢内容，透明地画子节点。文档层对未知标签通常已经展开；这里
@@ -395,7 +402,7 @@ private fun inlineSpanFor(tag: String, palette: PiPalette): SpanStyle? = when (t
 private fun inlineCodeSpan(palette: PiPalette): SpanStyle = SpanStyle(
     fontFamily = PiMonoFamily,
     color = palette.mdCode,
-    background = palette.mdCode.copy(alpha = 0.10f),
+    background = palette.borderMuted.copy(alpha = 0.38f),
 )
 
 /**
@@ -455,17 +462,17 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(palette.mdCodeBlockBorder.copy(alpha = 0.06f))
-            .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape),
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(0.5.dp, palette.borderMuted.copy(alpha = 0.58f), shape),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 44.dp)
+                .heightIn(min = 42.dp)
                 .clickable(
                     onClickLabel = if (expanded) tr("收起详情", "Collapse details") else tr("展开详情", "Expand details"),
                 ) { expanded = !expanded }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -496,13 +503,13 @@ private fun HtmlDetails(node: PiHtmlNode.Details, style: TextStyle) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(1.dp)
-                    .background(palette.mdCodeBlockBorder.copy(alpha = 0.16f)),
+                    .height(0.5.dp)
+                    .background(palette.borderMuted.copy(alpha = 0.42f)),
             )
             RenderBlocks(
                 nodes = node.body,
                 style = style,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+                modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 12.dp),
             )
         }
     }
@@ -563,26 +570,31 @@ private fun HtmlTable(node: PiHtmlNode.Table, style: TextStyle) {
             val tableWidth = node.rows.maxOf { row ->
                 row.cells.sumOf { (PI_HTML_TABLE_CELL_WIDTH.value * it.colspan.coerceIn(1, 4)).toDouble() }
             }.toFloat().dp
+            val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
+            val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
+            val borderColor = palette.borderMuted.copy(alpha = 0.56f)
+            val dividerColor = palette.borderMuted.copy(alpha = 0.30f)
             Box(
                 modifier = Modifier
                     .clip(shape)
-                    .border(1.dp, palette.mdCodeBlockBorder.copy(alpha = 0.28f), shape),
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .border(0.5.dp, borderColor, shape),
             ) {
                 Column(Modifier.horizontalScroll(scroll).width(tableWidth)) {
                     var dataIndex = 0
                     node.rows.forEachIndexed { rowIndex, row ->
                         val headerRow = row.header || row.cells.all { it.header }
                         val background = when {
-                            headerRow -> palette.mdHr.copy(alpha = 0.14f)
-                            dataIndex++ % 2 == 1 -> palette.mdHr.copy(alpha = 0.06f)
+                            headerRow -> headerBg
+                            dataIndex++ % 2 == 1 -> zebraBg
                             else -> Color.Transparent
                         }
                         if (rowIndex > 0) {
                             Box(
                                 Modifier
                                     .fillMaxWidth()
-                                    .height(1.dp)
-                                    .background(palette.mdHr.copy(alpha = 0.35f)),
+                                    .height(0.5.dp)
+                                    .background(dividerColor),
                             )
                         }
                         Row(
@@ -677,7 +689,7 @@ private fun HtmlImage(node: PiHtmlNode.Image, modifier: Modifier = Modifier) {
 private fun piHtmlBodyStyle(): TextStyle {
     val palette = PiTheme.palette
     return PiTheme.typography.styles.prose.copy(
-        fontFamily = PiProseFamily,
+        fontFamily = PiTheme.typography.proseFontFamily(),
         fontWeight = FontWeight.Normal,
         color = palette.text,
     )

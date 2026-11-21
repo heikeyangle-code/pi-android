@@ -1220,7 +1220,6 @@ internal object PiLatex {
                 index = end + closing.length
                 continue
             }
-            val code = INLINE_CODE.find(markdown, index)
             if (code != null && code.range.first == index) {
                 out.append(code.value)
                 index = code.range.last + 1

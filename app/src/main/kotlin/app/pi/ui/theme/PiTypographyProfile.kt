@@ -435,40 +435,37 @@ data class PiTypographyProfile(
                 headings = intArrayOf(22, 20, 18, 16, 15, 14),
             ),
             COMPACT to Preset(
-                proseSize = 15, proseLine = 25,
-                // 列表项 padding 是每项上下各一份：项间距 = 2 × listItem（3 → 6）。
+                proseSize = 15, proseLine = 24,
                 block = 10, listItem = 3, indent = 18,
-                codeSize = 13, codeLine = 21,
-                blockSpacing = 4,
+                codeSize = 12, codeLine = 19,
+                blockSpacing = 6,
                 messageGap = 18,
-                // 行内代码不再比正文重一档：等宽本来就显重，500 = 正文。
-                inlineSize = 13f, inlineWeight = 500,
-                tableSize = 14f, tableLine = 22,
-                headings = intArrayOf(22, 20, 18, 17, 16, 15),
+                // JetBrains Mono 仅内置 400 / 700，使用真实 Regular 400 避免合成粗重感。
+                inlineSize = 12.5f, inlineWeight = 400,
+                tableSize = 13.5f, tableLine = 21,
+                headings = intArrayOf(21, 19, 17, 16, 15, 15),
             ),
             COMFORTABLE to Preset(
-                // 母版（2026-11-01 重排）：宋体 16 sp 配 27 sp 行高（1.69）。汉字是满格方块，
-                // 行距低于 1.65 就挤，25 在真机深色底上读久了发闷；段间 14、项间 10。
-                // 标题阶梯收到 22/20/18/17：比正文大一档即可，粗体 + 金色已经承担层级，
-                // 再把字号拉到 25 只会让一屏里全是标题。紧凑/宽松照这一套比例推。
-                proseSize = 16, proseLine = 27,
-                block = 14, listItem = 5, indent = 22,
-                codeSize = 14, codeLine = 22,
+                // 现代杂志感舒适档：16/26（1.625 黄金中英混排行距），克制清晰的标题阶梯 22/19/17/16，
+                // 段落 12dp、列表项 8dp（上下各 4）、行内代码 13.5sp Regular（约 0.84em 视觉等高）。
+                proseSize = 16, proseLine = 26,
+                block = 12, listItem = 4, indent = 20,
+                codeSize = 13, codeLine = 21,
                 blockSpacing = 8,
                 messageGap = 24,
-                inlineSize = 14f, inlineWeight = 500,
-                tableSize = 15f, tableLine = 24,
-                headings = intArrayOf(24, 22, 20, 18, 17, 16),
+                inlineSize = 13.5f, inlineWeight = 400,
+                tableSize = 14f, tableLine = 22,
+                headings = intArrayOf(22, 19, 17, 16, 16, 15),
             ),
             LOOSE to Preset(
                 proseSize = 17, proseLine = 28,
-                block = 22, listItem = 6, indent = 26,
-                codeSize = 15, codeLine = 24,
+                block = 18, listItem = 5, indent = 24,
+                codeSize = 14, codeLine = 23,
                 blockSpacing = 12,
-                messageGap = 36,
-                inlineSize = 15f, inlineWeight = 500,
-                tableSize = 16f, tableLine = 25,
-                headings = intArrayOf(26, 24, 22, 20, 19, 18),
+                messageGap = 32,
+                inlineSize = 14.5f, inlineWeight = 400,
+                tableSize = 15f, tableLine = 24,
+                headings = intArrayOf(24, 21, 19, 18, 17, 17),
             ),
         )
 
