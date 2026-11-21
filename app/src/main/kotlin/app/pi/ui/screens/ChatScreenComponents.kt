@@ -246,6 +246,7 @@ internal data class TailObservation(
     val lastVisibleOffsetPx: Int,
     val lastVisibleSizePx: Int,
     val viewportEndOffsetPx: Int,
+    val afterContentPaddingPx: Int,
     val isScrollInProgress: Boolean,
     val atBottom: Boolean,
 )

@@ -9,12 +9,14 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.onSizeChanged
 import app.pi.engine.PiEngineSession
 import app.pi.i18n.tr
 import app.pi.ui.extension.ExtensionWidgetsSheet
@@ -245,14 +247,18 @@ internal fun ChatBody(
     var draft by session.composerDraft.text
     var attachments by session.composerDraft.attachments
 
-    // 底部工作台与软键盘感知：
-    // 对话流与底部工作台采用真实的弹性 Column 上下布局（非悬浮覆盖），从结构上彻底杜绝
-    // 输入框、队列、Bash 面板或上下扩展组件遮挡最后几行消息的问题。
+    // 悬浮底部工作台与软键盘感知：
+    // 软键盘升降由根 Column 的 imePadding() 同步承担（零 1 帧滞后）；键盘收起时聊天列表
+    // 一路延展至屏幕最底端，输入框作为悬浮卡片叠在柔和渐隐羽化层之上，并始终通过
+    // listBottomPad 保证末条消息完整停在输入框上方、零遮挡。
     val density = LocalDensity.current
-    val dockInsets = WindowInsets.navigationBars.union(WindowInsets.ime)
+    val navOnlyInsets = WindowInsets.navigationBars.exclude(WindowInsets.ime)
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
-    val listBottomPad = 14.dp
-    val listBottomPadPx = with(density) { listBottomPad.roundToPx() }
+    val defaultDockHeightPx = with(density) { 128.dp.roundToPx() }
+    var dockHeightPx by remember { mutableIntStateOf(defaultDockHeightPx) }
+    val dockHeightDp = with(density) { dockHeightPx.toDp() }
+    val listBottomPad = dockHeightDp + 12.dp
+    val listBottomPadPx = dockHeightPx + with(density) { 12.dp.roundToPx() }
     var widgetsCollapsedByUser by rememberSaveable { mutableStateOf(false) }
     var widgetsInspectorOpen by remember { mutableStateOf(false) }
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
@@ -946,6 +952,7 @@ internal fun ChatBody(
                 lastVisibleOffsetPx = last?.offset ?: 0,
                 lastVisibleSizePx = last?.size ?: 0,
                 viewportEndOffsetPx = info.viewportEndOffset,
+                afterContentPaddingPx = info.afterContentPadding,
                 isScrollInProgress = scrollingNow,
                 atBottom = atBottomNow,
             )
@@ -1491,7 +1498,7 @@ internal fun ChatBody(
     /** 命令面板点了一行 / 手敲了 `/name args`。 */
     fun pick(command: PiSlashCommand, args: String) = perform(command.action, command, args)
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().imePadding()) {
         // ---------------------------------------------------------------- 顶栏
         //
         // 用户 2026-10-26 的裁决（截图里的五个问题）：56 高、页面同色不透明、默认没有
@@ -1600,7 +1607,7 @@ internal fun ChatBody(
             }
         }
 
-        // 真实弹性聊天视口：永远位于顶栏之下、底部工作台之上，0 像素遮挡！
+        // 全高聊天视口：一路铺到屏幕最底端（含底部手势条区域），悬浮工作台叠于柔和渐隐羽化层之上。
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             if (emptyTranscript) {
                 ChatEmptyWelcome(
@@ -1609,7 +1616,9 @@ internal fun ChatBody(
                     onPickPrompt = { prompt -> draft = prompt },
                     onOpenSessions = onOpenSessions,
                     onOpenWorkspace = onOpenWorkspace,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = dockHeightDp),
                 )
             } else {
             val blockSpacing = prefs.typographyProfile.blockSpacing
@@ -1862,6 +1871,32 @@ internal fun ChatBody(
                 }
             }
 
+            // 底部柔和渐隐羽化层：消除输入框色带上方半毫米的硬切遮罩感，
+            // 同时在全面屏底部手势条区域留出呼吸感、柔化滑过的历史文字而不显凌乱。
+            val fadeFeather = PiSpacing.composerGradientFade
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(dockHeightDp + fadeFeather)
+                    .drawBehind {
+                        val featherPx = fadeFeather.toPx().coerceAtMost(size.height)
+                        val stopFeather = if (size.height > 0f) (featherPx / size.height).coerceIn(0.06f, 0.85f) else 0.18f
+                        val stopLower = (stopFeather + (1f - stopFeather) * 0.48f).coerceIn(stopFeather, 0.98f)
+                        val featherAlpha = if (imeVisible) 0.90f else 0.72f
+                        val lowerAlpha = if (imeVisible) 0.97f else 0.86f
+                        val bottomAlpha = if (imeVisible) 1.00f else 0.90f
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to pageBackground.copy(alpha = 0f),
+                                stopFeather to pageBackground.copy(alpha = featherAlpha),
+                                stopLower to pageBackground.copy(alpha = lowerAlpha),
+                                1f to pageBackground.copy(alpha = bottomAlpha),
+                            ),
+                        )
+                    },
+            )
+
             val showDown = !following
             androidx.compose.animation.AnimatedVisibility(
                 visible = showUp || showDown,
@@ -1869,7 +1904,7 @@ internal fun ChatBody(
                 exit = fadeOut() + scaleOut(targetScale = 0.85f),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 10.dp, bottom = 10.dp),
+                    .padding(end = 10.dp, bottom = dockHeightDp + 10.dp),
             ) {
                 Column(
                     horizontalAlignment = Alignment.End,
@@ -1920,7 +1955,7 @@ internal fun ChatBody(
                 )
             }
 
-            // 瞬时自动补全浮层（`/` 命令、`@` 文件、参数、扩展补全）：悬浮在聊天视口底缘正上方，不挤动列表滚动位置
+            // 瞬时自动补全浮层（`/` 命令、`@` 文件、参数、扩展补全）：悬浮在底部工作台正上方，不挤动列表滚动位置
             ChatTransientPalettes(
                 state = state,
                 session = session,
@@ -1931,137 +1966,142 @@ internal fun ChatBody(
                 argContext = argContext,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 4.dp),
-            )
-        }
-
-        // 底部工作台：独立位于聊天视口下方，由导航条与软键盘整体抬升，与消息流零重叠。
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(pageBackground)
-                .windowInsetsPadding(dockInsets),
-        ) {
-            ChatDockStatusAndWidgets(
-                state = state,
-                session = session,
-                draft = draft,
-                onDraft = { draft = it },
-                attachments = attachments,
-                onAttachments = { attachments = it },
-                imeVisible = imeVisible,
-                widgetsCollapsedByUser = widgetsCollapsedByUser,
-                onToggleWidgetsCollapse = { widgetsCollapsedByUser = !widgetsCollapsedByUser },
-                onOpenWidgetsInspector = { widgetsInspectorOpen = true },
-                onInteractWidget = { panel -> interactingWidgetKey = panel.key },
+                    .padding(bottom = dockHeightDp + 4.dp),
             )
 
-            Box(
+            // 悬浮底部工作台：透明底叠在柔和羽化层之上；高度同步反馈给 listBottomPad，末条消息永远零遮挡。
+            Column(
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(horizontal = PiSpacing.composerPageMargin)
-                    .padding(top = 4.dp, bottom = PiSpacing.composerBottomGap),
-            ) {
-                Composer(
-                    draft = draft,
-                    onPickAttachment = { attachmentSheetOpen = true },
-                    contextUsage = state.stats?.contextUsage,
-                    onOpenContext = { perform(ChatAction.ContextUsage) },
-                    modelLabel = modelLabel,
-                    onOpenModel = { perform(ChatAction.PickModel) },
-                    onCycleModel = { perform(ChatAction.CycleModel) },
-                    onDraftChange = { draft = it },
-                    thinkingLevel = state.meta.thinkingLevel,
-                    streaming = state.streaming,
-                    canFollowUp = state.streaming && draft.isNotBlank(),
-                    canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
-                    onCycleThinking = { session.cycleThinkingLevel() },
-                    onPickThinking = { sheet = ChatSheet.Thinking },
-                    onOpenPalette = { if (draft.isBlank()) draft = "/" },
-                    onOpenBash = { if (draft.isBlank()) draft = "!" },
-                    onOpenBashExcluded = { if (draft.isBlank()) draft = "!!" },
-                    onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
-                    onSteer = {
-                        session.send(draft, attachments)
-                        draft = ""
-                        attachments = emptyList()
-                        reArmTail()
-                        dismissKeys()
-                    },
-                    onSend = {
-                        when (val route = routeComposerText(draft, state.commands)) {
-                            ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
-                                session.send("", attachments)
-                                attachments = emptyList()
-                                reArmTail()
-                                dismissKeys()
-                            }
-                            is ComposerRoute.Message -> {
-                                session.send(route.text, attachments)
-                                draft = ""
-                                attachments = emptyList()
-                                reArmTail()
-                                dismissKeys()
-                            }
-                            is ComposerRoute.Bash -> {
-                                session.runBash(route.command, route.excludeFromContext)
-                                draft = ""
-                                dismissKeys()
-                            }
-                            is ComposerRoute.Command -> {
-                                draft = ""
-                                pick(route.command, route.args)
-                            }
-                            is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
+                    .onSizeChanged { size ->
+                        if (size.height > 0 && size.height != dockHeightPx) {
+                            dockHeightPx = size.height
                         }
-                    },
-                    canClear = draft.isNotBlank() || attachments.isNotEmpty(),
-                    onClear = {
-                        draft = ""
-                        attachments = emptyList()
-                    },
-                    onFollowUp = {
-                        session.sendFollowUp(draft, attachments)
-                        draft = ""
-                        attachments = emptyList()
-                        reArmTail()
-                        dismissKeys()
-                    },
-                    onStop = {
-                        session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
-                    },
-                )
-            }
-
-            // 输入框下方的扩展组件与底栏：软键盘打开或用户折叠时平滑收起，绝不突兀跳闪。
-            val belowWidgets = remember(state.ext.widgets) {
-                state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
-            }
-            val extFooter = state.ext.footer
-            AnimatedVisibility(
-                visible = !imeVisible && !widgetsCollapsedByUser && (belowWidgets.isNotEmpty() || extFooter != null),
-                enter = expandVertically(tween(150)) + fadeIn(tween(130)),
-                exit = shrinkVertically(tween(130)) + fadeOut(tween(110)),
-            ) {
-                Column(Modifier.fillMaxWidth()) {
-                    if (belowWidgets.isNotEmpty()) {
-                        ExtensionWidgetStack(
-                            widgets = belowWidgets,
-                            onInteract = { panel -> interactingWidgetKey = panel.key },
-                            maxStackHeight = 112.dp,
-                        )
                     }
-                    extFooter?.let { footer ->
-                        ExtensionChromeBanner(
-                            lines = footer.lines,
-                            collapsedRows = FOOTER_COLLAPSED_ROWS,
-                            onInteract = if (footer.interactive && footer.surfaceId != null) {
-                                { interactingWidgetKey = footer.key }
-                            } else {
-                                null
-                            },
-                            modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
-                        )
+                    .windowInsetsPadding(navOnlyInsets),
+            ) {
+                ChatDockStatusAndWidgets(
+                    state = state,
+                    session = session,
+                    draft = draft,
+                    onDraft = { draft = it },
+                    attachments = attachments,
+                    onAttachments = { attachments = it },
+                    imeVisible = imeVisible,
+                    widgetsCollapsedByUser = widgetsCollapsedByUser,
+                    onToggleWidgetsCollapse = { widgetsCollapsedByUser = !widgetsCollapsedByUser },
+                    onOpenWidgetsInspector = { widgetsInspectorOpen = true },
+                    onInteractWidget = { panel -> interactingWidgetKey = panel.key },
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PiSpacing.composerPageMargin)
+                        .padding(top = 2.dp, bottom = PiSpacing.composerBottomGap),
+                ) {
+                    Composer(
+                        draft = draft,
+                        onPickAttachment = { attachmentSheetOpen = true },
+                        contextUsage = state.stats?.contextUsage,
+                        onOpenContext = { perform(ChatAction.ContextUsage) },
+                        modelLabel = modelLabel,
+                        onOpenModel = { perform(ChatAction.PickModel) },
+                        onCycleModel = { perform(ChatAction.CycleModel) },
+                        onDraftChange = { draft = it },
+                        thinkingLevel = state.meta.thinkingLevel,
+                        streaming = state.streaming,
+                        canFollowUp = state.streaming && draft.isNotBlank(),
+                        canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
+                        onCycleThinking = { session.cycleThinkingLevel() },
+                        onPickThinking = { sheet = ChatSheet.Thinking },
+                        onOpenPalette = { if (draft.isBlank()) draft = "/" },
+                        onOpenBash = { if (draft.isBlank()) draft = "!" },
+                        onOpenBashExcluded = { if (draft.isBlank()) draft = "!!" },
+                        onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
+                        onSteer = {
+                            session.send(draft, attachments)
+                            draft = ""
+                            attachments = emptyList()
+                            reArmTail()
+                            dismissKeys()
+                        },
+                        onSend = {
+                            when (val route = routeComposerText(draft, state.commands)) {
+                                ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
+                                    session.send("", attachments)
+                                    attachments = emptyList()
+                                    reArmTail()
+                                    dismissKeys()
+                                }
+                                is ComposerRoute.Message -> {
+                                    session.send(route.text, attachments)
+                                    draft = ""
+                                    attachments = emptyList()
+                                    reArmTail()
+                                    dismissKeys()
+                                }
+                                is ComposerRoute.Bash -> {
+                                    session.runBash(route.command, route.excludeFromContext)
+                                    draft = ""
+                                    dismissKeys()
+                                }
+                                is ComposerRoute.Command -> {
+                                    draft = ""
+                                    pick(route.command, route.args)
+                                }
+                                is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
+                            }
+                        },
+                        canClear = draft.isNotBlank() || attachments.isNotEmpty(),
+                        onClear = {
+                            draft = ""
+                            attachments = emptyList()
+                        },
+                        onFollowUp = {
+                            session.sendFollowUp(draft, attachments)
+                            draft = ""
+                            attachments = emptyList()
+                            reArmTail()
+                            dismissKeys()
+                        },
+                        onStop = {
+                            session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
+                        },
+                    )
+                }
+
+                // 输入框下方的扩展组件与底栏：软键盘打开或用户折叠时平滑收起，绝不突兀跳闪。
+                val belowWidgets = remember(state.ext.widgets) {
+                    state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
+                }
+                val extFooter = state.ext.footer
+                AnimatedVisibility(
+                    visible = !imeVisible && !widgetsCollapsedByUser && (belowWidgets.isNotEmpty() || extFooter != null),
+                    enter = expandVertically(tween(150)) + fadeIn(tween(130)),
+                    exit = shrinkVertically(tween(130)) + fadeOut(tween(110)),
+                ) {
+                    Column(Modifier.fillMaxWidth()) {
+                        if (belowWidgets.isNotEmpty()) {
+                            ExtensionWidgetStack(
+                                widgets = belowWidgets,
+                                onInteract = { panel -> interactingWidgetKey = panel.key },
+                                maxStackHeight = 112.dp,
+                            )
+                        }
+                        extFooter?.let { footer ->
+                            ExtensionChromeBanner(
+                                lines = footer.lines,
+                                collapsedRows = FOOTER_COLLAPSED_ROWS,
+                                onInteract = if (footer.interactive && footer.surfaceId != null) {
+                                    { interactingWidgetKey = footer.key }
+                                } else {
+                                    null
+                                },
+                                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
+                            )
+                        }
                     }
                 }
             }

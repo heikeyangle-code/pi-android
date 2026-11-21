@@ -191,7 +191,7 @@ internal fun Composer(
                 val factor = pulseState?.value ?: 1f
                 val strokePx = borderWidth.toPx()
                 val half = strokePx / 2f
-                val radiusPx = PiSpacing.composerRadius.toPx()
+                val radiusPx = (PiSpacing.composerRadius.toPx() - half).coerceAtLeast(0f)
                 val alpha = (borderColor.alpha * idleAlpha * factor).coerceIn(0.15f, 1f)
                 drawRoundRect(
                     color = borderColor.copy(alpha = alpha),
