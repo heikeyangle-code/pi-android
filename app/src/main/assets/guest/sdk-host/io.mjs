@@ -46,49 +46,102 @@ export class Transport {
   /** @param {(text: string, cb: (err?: Error | null) => void) => boolean} rawWrite */
   constructor(rawWrite) {
     this.rawWrite = rawWrite;
-    this.tail = Promise.resolve();
+    this.queue = [];
+    this.flushing = false;
+    this.flushWaiters = [];
     this.pendingBytes = 0;
     this.waiters = [];
     this.closed = false;
   }
 
-  /** 排队写一帧；不等待。帧顺序 = 调用顺序。 */
+  /** True when buffered output has reached backpressure high-water mark. */
+  isBackpressured() {
+    return this.pendingBytes >= HIGH_WATER_BYTES;
+  }
+
+  /** 排队写一帧；不等待。帧顺序 = 调用顺序；连续帧自动合并为单次 write(2)。 */
   send(frame) {
     if (this.closed) return;
     const text = `${JSON.stringify(frame)}\n`;
     const bytes = Buffer.byteLength(text);
     this.pendingBytes += bytes;
-    this.tail = this.tail
-      .then(() => this.#writeChunk(text))
-      .catch(() => {
-        // 对端关了管道：之后的写全部丢弃，进程由 stdin 的 end 事件收尾。
-        this.closed = true;
-      })
-      .finally(() => {
-        this.pendingBytes -= bytes;
-        if (this.pendingBytes < HIGH_WATER_BYTES) this.#wake();
-      });
+    this.queue.push({ text, bytes });
+    if (!this.flushing) {
+      this.flushing = true;
+      void this.#drain();
+    }
   }
 
   /** 生产者在高水位时 await 它。 */
   drained() {
-    if (this.pendingBytes < HIGH_WATER_BYTES) return Promise.resolve();
+    if (this.pendingBytes < HIGH_WATER_BYTES || this.closed) return Promise.resolve();
     return new Promise((resolve) => this.waiters.push(resolve));
   }
 
   /** 关机前等所有已排队的帧写完。 */
   flush() {
-    return this.tail;
+    if (!this.flushing && this.queue.length === 0) return Promise.resolve();
+    return new Promise((resolve) => this.flushWaiters.push(resolve));
   }
 
   #wake() {
+    if (this.waiters.length === 0) return;
     const waiters = this.waiters;
     this.waiters = [];
     for (const resolve of waiters) resolve();
   }
 
+  #wakeFlush() {
+    if (this.flushWaiters.length === 0) return;
+    const waiters = this.flushWaiters;
+    this.flushWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  async #drain() {
+    try {
+      while (!this.closed && this.queue.length > 0) {
+        // Coalesce all currently queued frames into one write syscall (huge win under proot/proroot).
+        let text;
+        let bytes;
+        if (this.queue.length === 1) {
+          const item = this.queue.pop();
+          text = item.text;
+          bytes = item.bytes;
+        } else {
+          const batch = this.queue;
+          this.queue = [];
+          bytes = 0;
+          const parts = new Array(batch.length);
+          for (let i = 0; i < batch.length; i++) {
+            parts[i] = batch[i].text;
+            bytes += batch[i].bytes;
+          }
+          text = parts.join("");
+        }
+        try {
+          await this.#writeChunk(text);
+        } catch {
+          // 对端关了管道：之后的写全部丢弃，进程由 stdin 的 end 事件收尾。
+          this.closed = true;
+          this.queue.length = 0;
+          this.pendingBytes = 0;
+          this.#wake();
+          break;
+        }
+        this.pendingBytes = Math.max(0, this.pendingBytes - bytes);
+        if (this.pendingBytes < HIGH_WATER_BYTES) this.#wake();
+      }
+    } finally {
+      this.flushing = false;
+      this.#wake();
+      this.#wakeFlush();
+    }
+  }
+
   async #writeChunk(text) {
     for (;;) {
+      if (this.closed) return;
       try {
         await new Promise((resolve, reject) => {
           try {
@@ -113,14 +166,16 @@ export function readLines(stream, onLine, onEnd) {
   let buffer = "";
   const onData = (chunk) => {
     buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    let start = 0;
     for (;;) {
-      const nl = buffer.indexOf("\n");
+      const nl = buffer.indexOf("\n", start);
       if (nl < 0) break;
-      let line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
+      const end = nl > start && buffer.charCodeAt(nl - 1) === 13 ? nl - 1 : nl;
+      const line = buffer.slice(start, end);
+      start = nl + 1;
       if (line.trim()) onLine(line);
     }
+    if (start > 0) buffer = start >= buffer.length ? "" : buffer.slice(start);
   };
   const end = () => {
     buffer += decoder.end();

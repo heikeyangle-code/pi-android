@@ -309,32 +309,7 @@ class PiEngineSession(
     private val _state = MutableStateFlow(EngineState.Starting)
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
-    private val _changes = MutableStateFlow(0)
-    /**
-     * Bumped on every publication, for a consumer that wants nothing but a wake-up.
-     *
-     * It moves for **every** event that is published, including one whose
-     * [TranscriptChange] is [TranscriptChange.None] (`handle`), because a `None`
-     * change says "no row changed", not "nothing changed": the `PiEvent.AgentStart`
-     * arm of `TranscriptReducer.onEvent` sets `TranscriptReducer.streaming` and
-     * returns `None`, and the same holds for `TranscriptReducer.onMessageUpdate`
-     * when an update carries only `usage`. The UI's composer reads that flag, so a
-     * revision that moved only for row changes would leave it stale. Exactly two
-     * kinds of event publish nothing at all: a `response` (pi answering a command,
-     * which never projects a row) and F8's throttled `tool_execution_update`
-     * (`handle`), so this flow reports no gap for either.
-     *
-     * **Nothing collects this flow.** Its only consumer, the chat ViewModel, now
-     * collects [publication] (its `engine.publication.collect` plus the
-     * `syncTranscript(engine, pub)` it calls) — because a bare number cannot say
-     * which rows moved, which is the whole point of F7/RR-P7 — and a search over
-     * `app/` and `rpc/` finds no other reader of `revision`. It is kept because it is
-     * still a valid coarse signal and removing it would be an API change, not a
-     * comment change; a new consumer should use [publication]. [publish] always writes
-     * [publication] first, so `publication.value.revision` is never smaller than a
-     * `revision` a collector of this flow has just observed.
-     */
-    val revision: StateFlow<Int> = _changes.asStateFlow()
+    private var revisionSeq = 0
 
     private val _publication = MutableStateFlow(
         TranscriptPublication(
@@ -362,7 +337,14 @@ class PiEngineSession(
      */
     private var publishedRows: List<TranscriptItem> = emptyList()
 
-    val stderr = StringBuilder()
+    /** Bounded **tail** ring buffer of engine stderr (keeps the latest [MAX_STDERR_CHARS]). */
+    private val stderrBuf = StringBuilder()
+
+    /** Thread-safe snapshot of the captured stderr tail. */
+    fun stderrSnapshot(): String = synchronized(stderrBuf) { stderrBuf.toString() }
+
+    /** Underlying process handle for O(1) launcher PID resolution in [PiEngineHost]. */
+    internal val rawProcess: Process get() = process
 
     /**
      * What the process exited with, or null while it is running / was never reaped.
@@ -390,6 +372,7 @@ class PiEngineSession(
     private var requestJob: Job? = null
     private var stderrJob: Job? = null
     private var waitJob: Job? = null
+    private var startHostJob: Job? = null
 
     enum class EngineState { Starting, Ready, Busy, Stopped, Failed }
 
@@ -500,8 +483,13 @@ class PiEngineSession(
         stderrJob = scope.launch(Dispatchers.IO) {
             runCatching {
                 process.errorStream.bufferedReader().forEachLine { line ->
-                    synchronized(stderr) {
-                        if (stderr.length < MAX_STDERR_CHARS) stderr.appendLine(line)
+                    synchronized(stderrBuf) {
+                        stderrBuf.append(line).append('\n')
+                        if (stderrBuf.length > MAX_STDERR_CHARS) {
+                            // Retain the **tail** (most recent lines) so crash diagnostics after
+                            // long uptime are never discarded by earlier warnings.
+                            stderrBuf.delete(0, stderrBuf.length - MAX_STDERR_CHARS)
+                        }
                     }
                 }
             }
@@ -509,14 +497,9 @@ class PiEngineSession(
         waitJob = scope.launch {
             val code = runCatching { process.waitFor() }.getOrDefault(-1)
             lastExitCode = code
-            _state.value = if (code == 0) EngineState.Stopped else EngineState.Failed
-            // Fail every in-flight request rather than letting callers hang.
-            //
-            // The message carries the engine's own last words, not just the number:
-            // the number alone is what the user already sees (`rpc: engine exited
-            // with code 1`), and the cause is only ever in the stderr. See
-            // [EngineExitCause] for what each line means and
-            // `docs/engine-exit-review.md` §2 for the runs that produced them.
+            if (!closing) {
+                _state.value = if (code == 0) EngineState.Stopped else EngineState.Failed
+            }
             val reason = buildString {
                 append("engine exited with code ").append(code)
                 val tail = stderrTail()
@@ -526,17 +509,8 @@ class PiEngineSession(
         }
     }
 
-    /**
-     * The engine's own last words, for the sentence a waiting caller gets.
-     *
-     * A bounded tail rather than the whole capture: this string ends up inside a
-     * snackbar and a failure screen (the full 64 KB is what the diagnostic report is
-     * for). Read under the same monitor the stderr drain writes under, because
-     * [stderrJob] may be appending its final line while this runs — the process is
-     * gone, but the drain reads the pipe to EOF.
-     */
-    private fun stderrTail(): String = synchronized(stderr) {
-        val text = stderr.toString().trim()
+    private fun stderrTail(): String = synchronized(stderrBuf) {
+        val text = stderrBuf.toString().trim()
         when {
             text.isEmpty() -> ""
             text.length <= EXIT_STDERR_TAIL_CHARS -> text
@@ -544,36 +518,25 @@ class PiEngineSession(
         }
     }.replace('\n', ' ')
 
-    /**
-     * 握手并打开会话：`host.hello` → `session.open`，成功后 [state] 才离开 [EngineState.Starting]。
-     *
-     * ## 为什么是「命令」而不是「等第一个字节」
-     * `session.open` 的应答证明宿主的读取端已就绪、SDK 已加载、会话已建好 —— 界面说「就绪」要的正是这个。
-     * 它先应答、扩展在后台绑（`ext.bound` 事件），所以扩展对话框卡住不会让这里超时。
-     *
-     * ## 为什么超时不等于失败
-     * 超时只是留在 [EngineState.Starting]：手机上冷启动要三分钟是慢，不是坏；为了让计时器满意而说「就绪」
-     * 正是这个方法要消灭的谎。进程真死了由 [waitJob] 报 `Failed`。
-     * 但宿主**明确拒绝**（协议版本不对、设置非法、会话文件打不开）是另一回事：进程活着却用不了，记为
-     * `Failed` 并把原话留在 [lastOpenError]，否则界面会永远转圈。
-     *
-     * 状态的改写只在这里和 [handleAgent]：一处决定 [state] 的含义。
-     * 同时记录这次等了多久（[lastServingMs]）—— 区分「手机慢」和「我们在宿主能读之前就要了昂贵的东西」
-     * 的唯一办法（docs/known-gaps.md §M1）。
-     */
     fun startHost(open: OpenArgs, timeoutMs: Long = SERVING_PROBE_TIMEOUT_MS) {
-        scope.launch {
+        startHostJob?.cancel()
+        startHostJob = scope.launch {
             val startedAt = System.nanoTime()
             try {
-                val hello = commands.hello()
+                // Honor the caller's full cold-start timeout budget on hello as well as open,
+                // instead of timing out at DEFAULT_TIMEOUT_MS (30 s) and leaving the engine wedged in Starting.
+                val hello = commands.hello(timeoutMs)
                 if (hello.protocol != SUPPORTED_PROTOCOL) {
                     throw HostException("protocol", "宿主协议 v${hello.protocol}，App 只认 v$SUPPORTED_PROTOCOL（App 与 guest 里的宿主版本不一致）")
                 }
                 hostHello = hello
-                commands.open(open, timeoutMs)
+                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                val remainingMs = (timeoutMs - elapsedMs).coerceAtLeast(30_000L)
+                commands.open(open, remainingMs)
                 lastServingMs = (System.nanoTime() - startedAt) / 1_000_000
-                if (_state.value == EngineState.Starting) _state.value = EngineState.Ready
+                if (!closing && _state.value == EngineState.Starting) _state.value = EngineState.Ready
             } catch (e: HostException) {
+                if (closing) return@launch
                 when (e.code) {
                     HostException.TIMEOUT -> Unit // 慢，不是坏：留在 Starting
                     HostException.CLOSED -> Unit // 进程退出由 waitJob 报
@@ -716,11 +679,23 @@ class PiEngineSession(
                 scope.launch { runCatching { commands.snapshot() } }
             }
             is HostSignal.Event -> {
-                _hostEvents.tryEmit(signal)
                 when (signal.name) {
-                    "agent" -> signal.data?.let { handleAgent(PiEvents.parse(it.toString())) }
-                    "state" -> commands.stateStore.offerEvent(signal.data)
+                    // Hot path: parse already-decoded JsonObject directly (zero re-serialization,
+                    // zero double JSON parse) and do NOT flood `_hostEvents` (no collector consumes "agent").
+                    "agent" -> {
+                        val obj = signal.data as? JsonObject
+                        if (obj != null) {
+                            handleAgent(PiEvents.parse(obj))
+                        } else {
+                            signal.data?.let { handleAgent(PiEvents.parse(it.toString())) }
+                        }
+                    }
+                    "state" -> {
+                        _hostEvents.tryEmit(signal)
+                        commands.stateStore.offerEvent(signal.data)
+                    }
                     else -> {
+                        _hostEvents.tryEmit(signal)
                         extUiReducer.apply(signal.name, signal.data)?.let { _extUi.value = it }
                         eventToLegacy(signal.name, signal.data)?.let { emitEvent(it) }
                     }
@@ -925,7 +900,7 @@ class PiEngineSession(
         // the only case in which the previous snapshot is still the current truth.
         val rows = if (rolled || changed.isNotEmpty()) current.toList() else previous
         publishedRows = rows
-        val next = _changes.value + 1
+        val next = ++revisionSeq
         _publication.value = TranscriptPublication(
             revision = next,
             change = change,
@@ -934,7 +909,6 @@ class PiEngineSession(
             replaced = rolled,
             streaming = transcript.streaming,
         )
-        _changes.value = next
     }
 
     /**
@@ -1016,7 +990,17 @@ class PiEngineSession(
                 commands.call(cmd, args)
             } catch (e: HostException) {
                 if (e.code != HostException.CLOSED) {
-                    emitEvent(PiEvent.Response(id = null, command = cmd, success = false, error = e.message ?: e.code, data = null))
+                    val response = PiEvent.Response(
+                        id = null,
+                        command = cmd,
+                        success = false,
+                        error = e.message ?: e.code,
+                        data = null,
+                    )
+                    // Clear any optimistic PendingUserEcho so a rejected prompt cannot swallow
+                    // the next user message confirmation.
+                    synchronized(transcriptLock) { transcript.onEvent(response) }
+                    emitEvent(response)
                 }
             }
         }
@@ -1293,12 +1277,20 @@ class PiEngineSession(
             return
         }
         runCatching {
-            val snapshot = commands.snapshot()
+            val snapshot = withTimeout(minOf(timeoutMs, 5_000L)) { commands.snapshot() }
             val streaming = (snapshot["isStreaming"] as? JsonPrimitive)?.content == "true"
             val compacting = (snapshot["isCompacting"] as? JsonPrimitive)?.content == "true"
             if (streaming || compacting) {
                 withTimeout(timeoutMs) { commands.call("session.abort", timeoutMs = timeoutMs) }
             }
+        }
+        // Ask sdk-host to run `runtime.dispose()` & extension `session_shutdown` hooks cleanly
+        // before hard-killing the process.
+        runCatching {
+            withTimeout(2_500L) { commands.shutdown(2_500L) }
+        }
+        runCatching {
+            withContext(Dispatchers.IO) { process.waitFor(2, TimeUnit.SECONDS) }
         }
         close()
     }
@@ -1315,18 +1307,14 @@ class PiEngineSession(
         // every normal close, and reporting that as a failure would put a spurious
         // sentence in the diagnostic report of every healthy session.
         closing = true
-        // Close stdin *before* killing the process, and let the writer thread be the
-        // one that does it: every queued command is written and flushed first, and a
-        // write parked on a full pipe unblocks as soon as the pipe's read end goes
-        // away. Bounded, because this runs while a screen or a ViewModel is going
-        // away: past [WRITER_DRAIN_TIMEOUT_MS] the destroy below is what frees the
-        // writer, and the thread is a daemon.
+        startHostJob?.cancel()
         runCatching {
             writeQueue.execute { runCatching { writer.close() } }
             writeQueue.shutdown()
             writeQueue.awaitTermination(WRITER_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         }
         runCatching { process.destroy() }
+        runCatching { writeQueue.shutdownNow() }
         client.close("会话已关闭")
         readerJob?.cancel()
         signalJob?.cancel()
@@ -1520,7 +1508,7 @@ class PiEngineSession(
         }
 
         private fun legacyParse(o: JsonObject): PiEvent.ExtensionUiRequest? =
-            PiEvents.parse(o.toString()) as? PiEvent.ExtensionUiRequest
+            PiEvents.parse(o) as? PiEvent.ExtensionUiRequest
 
         private inline fun legacyObj(build: MutableMap<String, JsonElement>.() -> Unit): JsonObject =
             JsonObject(LinkedHashMap<String, JsonElement>().apply(build))

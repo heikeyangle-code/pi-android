@@ -288,20 +288,44 @@ object PtyLauncher {
     )
 
     private fun probe(paths: PiPaths, storage: File): ScriptFlags {
-        // One guest exec, cached against the unpacked runtime's stamp so it is
-        // re-run when the runtime changes and never inside a hot path.
+        // One guest exec, cached both in-memory and on disk against the unpacked runtime's stamp
+        // so reopening the terminal after cold start does not pay 300-1500 ms for a redundant proot spawn.
         val stamp = paths.stampRevision()
         val cached = cachedFlags
         if (cached != null && cachedStamp == stamp) return cached
+
+        if (!stamp.isNullOrEmpty()) {
+            val disk = readCachedProbe(paths, stamp)
+            if (disk != null) {
+                cachedFlags = disk
+                cachedStamp = stamp
+                return disk
+            }
+        }
 
         val output = runCatching { runGuest(paths, PROBE_SCRIPT, storage) }.getOrNull()
         val flags = parseProbe(output)
         if (flags.scriptAvailable) {
             cachedFlags = flags
             cachedStamp = stamp
+            if (!stamp.isNullOrEmpty()) {
+                writeStampAtomically(
+                    paths.ptyScriptProbeCache(),
+                    "$stamp\n${if (flags.exitStatus) "e" else ""}\n",
+                )
+            }
         }
         return flags
     }
+
+    private fun readCachedProbe(paths: PiPaths, stamp: String): ScriptFlags? = runCatching {
+        val file = paths.ptyScriptProbeCache()
+        if (!file.isFile) return@runCatching null
+        val lines = file.readLines()
+        if (lines.firstOrNull()?.trim() != stamp) return@runCatching null
+        val flags = lines.getOrNull(1)?.trim().orEmpty()
+        ScriptFlags(scriptAvailable = true, exitStatus = flags.contains("e"))
+    }.getOrNull()
 
     private fun runGuest(paths: PiPaths, script: String, storage: File): String {
         // The `script(1)` capability probe runs on **proot**, deliberately. It is a

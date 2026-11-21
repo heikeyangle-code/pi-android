@@ -511,18 +511,18 @@ internal object SessionFileReader {
                     val thisOffset = lineStartBytes
                     lineStartBytes = reader.offsetOf(chunk, index)
                     if (line.isBlank()) continue
-                    // `thisOffset` is relative to the range start, so the file
-                    // offset is the base plus it. Getting this wrong is how a
-                    // backward window ends up 15 KB off and re-delivers entries the
-                    // next window already had.
-                    if (collected.isEmpty()) firstOffset = from + thisOffset
-                    collectedOffsets += thisOffset
+                    if (onLine == null) {
+                        if (collected.isEmpty()) firstOffset = from + thisOffset
+                        collectedOffsets += thisOffset
+                        collected += line
+                    } else if (seenChars == 0L) {
+                        firstOffset = from + thisOffset
+                    }
                     // `lineStartBytes` was just advanced past this line's terminator, so this
                     // is the end of the line that is being collected — not of the last line
                     // seen (one dropped for its length advances the same pointer).
                     collectedEnd = from + lineStartBytes
                     seenChars += line.length
-                    collected += line
                     if (onLine != null && !onLine(line)) {
                         stopped = true
                         break

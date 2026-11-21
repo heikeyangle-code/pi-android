@@ -56,17 +56,9 @@ class RuntimePreferences private constructor(context: Context) {
             return stored ?: if (prefs.getBoolean(KEY_ENABLED, false)) GuestEngine.Proroot else GuestEngine.Proot
         }
 
-    /** 选的是不是 proroot——旧调用方的问法，保留。 */
-    val prorootEnabled: Boolean get() = selectedEngine == GuestEngine.Proroot
-
     /** Consecutive proroot launches that failed before doing any work. */
     val prorootFailures: Int get() = prefs.getInt(KEY_FAILURES, 0)
 
-    /**
-     * Store the switch. Turning it **on** clears the failure streak: the row's own
-     * text promises that re-enabling is how a forced fallback is undone, and a
-     * counter that survived it would make the switch a no-op.
-     */
     /** 选运行时；失败计数清零（换了引擎，旧引擎攒的失败不算新引擎的）。 */
     fun setSelectedEngine(engine: GuestEngine) {
         prefs.edit()
@@ -75,10 +67,6 @@ class RuntimePreferences private constructor(context: Context) {
             .putInt(KEY_FAILURES, 0)
             .apply()
     }
-
-    /** 旧的开关语义：开 = proroot，关 = proot。 */
-    fun setProrootEnabled(enabled: Boolean) =
-        setSelectedEngine(if (enabled) GuestEngine.Proroot else GuestEngine.Proot)
 
     fun setProrootFailures(count: Int) {
         prefs.edit().putInt(KEY_FAILURES, count).apply()

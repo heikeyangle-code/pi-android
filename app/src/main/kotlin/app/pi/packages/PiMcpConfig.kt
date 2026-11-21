@@ -620,20 +620,18 @@ class PiMcpFile(val file: File) {
      * 重读、套 [transform]、写回。返回 `null` = 成功；否则是给用户看的原因。
      * 文件损坏或写盘失败都不会动原文件。
      */
-    @Synchronized
-    fun update(transform: (JsonObject) -> JsonObject): String? {
-        val before = read()
-        if (before.corrupt) return "这份 mcp.json 不是合法的 JSON，为了不弄丢里面的内容，没有改动它。请先在「Pi 文件」里修好或删掉它。"
-        val after = PiMcpConfig.dropNulls(transform(before.root))
-        return try {
-            file.parentFile?.mkdirs()
-            val temp = File(file.parentFile, "${file.name}.tmp-${COUNTER.incrementAndGet()}")
-            temp.writeText(PiMcpConfig.render(after))
-            Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            null
-        } catch (e: Exception) {
-            "写入失败：${e.message ?: e.javaClass.simpleName}"
+    fun update(transform: (JsonObject) -> JsonObject): String? = try {
+        PiConfigFiles.withLock(file) {
+            val before = read()
+            if (before.corrupt) {
+                return@withLock "这份 mcp.json 不是合法的 JSON，为了不弄丢里面的内容，没有改动它。请先手动修好或删掉该文件。"
+            }
+            val after = PiMcpConfig.dropNulls(transform(before.root))
+            val ok = PiConfigFiles.write(file, PiMcpConfig.render(after))
+            if (ok) null else "写入 mcp.json 失败"
         }
+    } catch (e: Exception) {
+        "写入失败：${e.message ?: e.javaClass.simpleName}"
     }
 
     private companion object {

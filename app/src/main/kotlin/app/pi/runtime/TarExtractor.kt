@@ -75,6 +75,11 @@ class TarExtractor(
     private var symlinksWritten = 0L
     private var degradedLinks = 0L
     private var danglingLinks = 0L
+    /** Reusable copy/skip buffers to avoid per-entry throwaway allocations (~1.5 GB across 21k entries). */
+    private val copyBuf = ByteArray(1 shl 16)
+    private val skipBuf = ByteArray(8192)
+    /** Canonical parent directory cache keyed by lexical parent path; invalidated on unlink. */
+    private val canonicalParentCache = HashMap<String, File>(512)
     /**
      * 建不出来、等着铺成实物的链接：`(链接路径, 目标, tar 条目名)`。
      *
@@ -138,7 +143,9 @@ class TarExtractor(
 
     fun extractGzip(stream: InputStream): Result {
         destination.mkdirs()
-        GZIPInputStream(BufferedInputStream(stream, 1 shl 16)).use { gz ->
+        // Explicit 64 KiB inflater buffer: the 1-arg GZIPInputStream constructor defaults to 512 B,
+        // causing ~900k tiny JNI inflate calls on a 90 MB runtime archive.
+        GZIPInputStream(BufferedInputStream(stream, 1 shl 16), 1 shl 16).use { gz ->
             extractTar(gz)
         }
         materialisePendingLinks()
@@ -191,7 +198,7 @@ class TarExtractor(
                 'L' -> { longName = readPayload(input, size).toString(Charsets.UTF_8).trimEnd('\u0000', '\n'); continue }
                 'K' -> { longLink = readPayload(input, size).toString(Charsets.UTF_8).trimEnd('\u0000', '\n'); continue }
                 'x', 'X' -> {
-                    val records = readPayload(input, size).toString(Charsets.UTF_8)
+                    val records = readPayload(input, size)
                     parsePax(records).let { pax ->
                         pax["path"]?.let { paxPath = it }
                         pax["linkpath"]?.let { paxLink = it }
@@ -433,6 +440,9 @@ class TarExtractor(
             val target = runCatching { Files.readSymbolicLink(source.toPath()) }.getOrNull()
                 ?: return listOf("${source.path}：链接读不出来")
             val resolved = linkSource(source, target.toString())
+            if (!insideDestination(resolved)) {
+                return listOf("${source.path} -> $target：目标在 rootfs 之外，拒绝复制")
+            }
             // 官方 base 里本来就有悬空链接（`etc/rmt -> /usr/sbin/rmt`）；复制它们没有对象，
             // 而"复制不了的悬空链接"和"原本就悬空的链接"对 guest 是同一个结果。
             if (!resolved.exists()) return emptyList()
@@ -515,6 +525,7 @@ class TarExtractor(
     /** [ensureDirectory] for every component between [destination] and [target]'s parent. */
     private fun ensureParent(target: File) {
         val parent = target.parentFile ?: return
+        if (parent.path in verifiedDirs) return
         val relative = parent.path.removePrefix(canonicalBase).trimStart(File.separatorChar)
         if (relative.isEmpty()) return
         var current = File(canonicalBase)
@@ -531,6 +542,7 @@ class TarExtractor(
      */
     private fun unlinkIfPresent(path: File) {
         verifiedDirs.remove(path.path)
+        canonicalParentCache.clear()
         if (isSymlink(path)) {
             runCatching { Files.deleteIfExists(path.toPath()) }
             return
@@ -577,12 +589,12 @@ class TarExtractor(
             )
         }
         stream.use { out ->
-            val buffer = ByteArray(1 shl 16)
+            val buffer = copyBuf
             var remaining = size
             while (remaining > 0) {
                 val want = minOf(remaining, buffer.size.toLong()).toInt()
                 val read = input.read(buffer, 0, want)
-                if (read < 0) throw IllegalStateException("truncated tar entry at ${target.path}")
+                if (read < 0) throw IOException("truncated tar entry at ${target.path}")
                 out.write(buffer, 0, read)
                 remaining -= read
                 bytesWritten += read
@@ -605,14 +617,14 @@ class TarExtractor(
             throw IOException("tar metadata record of $size bytes is out of range")
         }
         val data = ByteArray(size.toInt())
-        if (!readFully(input, data, data.size)) throw IllegalStateException("truncated tar metadata")
+        if (!readFully(input, data, data.size)) throw IOException("truncated tar metadata")
         skip(input, pad512(size))
         return data
     }
 
     private fun skip(input: InputStream, count: Long) {
         var remaining = count
-        val scratch = ByteArray(8192)
+        val scratch = skipBuf
         while (remaining > 0) {
             val want = minOf(remaining, scratch.size.toLong()).toInt()
             val read = input.read(scratch, 0, want)
@@ -671,7 +683,7 @@ class TarExtractor(
         // name (handled above) has no parent.
         val parent = lexical.parentFile ?: return null
         val base = canonicalBase
-        val canonicalParent = parent.canonicalFile
+        val canonicalParent = canonicalParentCache.getOrPut(parent.path) { parent.canonicalFile }
         if (canonicalParent.path != base && !canonicalParent.path.startsWith(base + File.separator)) {
             return null
         }
@@ -690,30 +702,36 @@ class TarExtractor(
 
     private fun applyMode(file: File, mode: Long) {
         // Only the executable bits are meaningful for us: Android cannot carry
-        // setuid/setgid across to the guest anyway.
+        // setuid/setgid across to the guest anyway, and newly created files are already readable
+        // by the app uid.
         val owner = (mode and 0b000_000_100) != 0L // 0100
         val group = (mode and 0b000_000_010) != 0L
         val other = (mode and 0b000_000_001) != 0L
         if (owner || group || other) {
             file.setExecutable(true, false)
         }
-        val readable = (mode and 0b100_000_000) != 0L
-        if (readable) file.setReadable(true, false)
     }
 
-    private fun parsePax(records: String): Map<String, String> {
+    /**
+     * Parse POSIX PAX extended header records strictly by UTF-8 **byte** length (per POSIX.1-2001).
+     * Advancing by UTF-16 char count breaks whenever a non-ASCII path precedes another record.
+     */
+    private fun parsePax(records: ByteArray): Map<String, String> {
         val out = mutableMapOf<String, String>()
         var cursor = 0
-        while (cursor < records.length) {
-            val space = records.indexOf(' ', cursor)
-            if (space < 0) break
-            val length = records.substring(cursor, space).toIntOrNull() ?: break
-            if (length <= 0 || cursor + length > records.length) break
-            val record = records.substring(cursor, cursor + length)
-            val eq = record.indexOf('=')
-            if (eq > 0) {
-                val key = record.substring(space + 1 - cursor, eq)
-                val value = record.substring(eq + 1).trimEnd('\n', '\u0000')
+        while (cursor < records.size) {
+            var space = cursor
+            while (space < records.size && records[space] != ' '.code.toByte()) space++
+            if (space >= records.size) break
+            val length = String(records, cursor, space - cursor, Charsets.US_ASCII).toIntOrNull() ?: break
+            if (length <= 0 || cursor + length > records.size) break
+            val end = cursor + length
+            var eq = space + 1
+            while (eq < end && records[eq] != '='.code.toByte()) eq++
+            if (eq > space + 1 && eq < end) {
+                val key = String(records, space + 1, eq - (space + 1), Charsets.UTF_8)
+                val value = String(records, eq + 1, end - (eq + 1), Charsets.UTF_8)
+                    .trimEnd('\n', '\u0000')
                 out[key] = value
             }
             cursor += length

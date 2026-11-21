@@ -339,6 +339,16 @@ class DeviceBridgeHttpServer(
      */
     private fun factsOf(response: BridgeHttpResponse): ResponseFacts {
         if (response.status in 200..299) {
+            // Avoid re-parsing multi-MB base64 screenshot / file payloads just to extract audit tags.
+            if (response.body.length > MAX_AUDIT_PARSE_BYTES) {
+                return ResponseFacts(
+                    note = "",
+                    denialCode = null,
+                    targetPackage = null,
+                    backend = null,
+                    exitCode = null,
+                )
+            }
             val data = runCatching { JSONObject(response.body).optJSONObject("data") }.getOrNull()
             return ResponseFacts(
                 note = "",
@@ -358,18 +368,27 @@ class DeviceBridgeHttpServer(
         )
     }
 
-    private fun authorized(request: BridgeHttpRequest): Boolean {
-        val bearer = request.header("authorization")
+    private fun authorized(request: BridgeHttpRequest): Boolean =
+        authorizedHeaders(request.headers)
+
+    private fun authorizedHeaders(headers: Map<String, String>): Boolean {
+        val bearer = headers["authorization"]
         val supplied = when {
             bearer != null && bearer.startsWith("Bearer ", ignoreCase = true) -> bearer.substring(7).trim()
-            request.header("x-pi-android-token") != null -> request.header("x-pi-android-token")!!.trim()
-            request.queryValue("token") != null -> request.queryValue("token")!!
+            headers["x-pi-android-token"] != null -> headers["x-pi-android-token"]!!.trim()
             else -> return false
         }
+        if (supplied.isEmpty()) return false
         return MessageDigest.isEqual(
             supplied.toByteArray(Charsets.UTF_8),
             token.toByteArray(Charsets.UTF_8),
         )
+    }
+
+    private fun isAllowedHost(hostHeader: String?): Boolean {
+        if (hostHeader.isNullOrBlank()) return true
+        val h = hostHeader.trim().lowercase()
+        return h == "127.0.0.1:$port" || h == "127.0.0.1" || h == "localhost:$port" || h == "localhost"
     }
 
     private fun readRequest(input: InputStream): BridgeHttpRequest? {
@@ -390,6 +409,8 @@ class DeviceBridgeHttpServer(
             }
             if (state == 4) break
         }
+        // Reject incomplete / oversized header blocks that did not reach `\r\n\r\n`.
+        if (state != 4) return null
         val lines = String(header.toByteArray(), Charsets.ISO_8859_1).split("\r\n").filter { it.isNotEmpty() }
         if (lines.isEmpty()) return null
         val requestLine = lines.first().split(' ')
@@ -406,7 +427,31 @@ class DeviceBridgeHttpServer(
             headers[line.substring(0, colon).trim().lowercase()] = line.substring(colon + 1).trim()
         }
 
-        val length = headers["content-length"]?.toIntOrNull() ?: 0
+        if (!isAllowedHost(headers["host"])) {
+            throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.BAD_REQUEST,
+                    reason = "拒绝非本机 Host 请求头。",
+                ),
+            )
+        }
+
+        // Authenticate BEFORE allocating or reading any request body (prevents pre-auth 8 MiB OOM / Slowloris DoS).
+        if (!authorizedHeaders(headers)) {
+            return BridgeHttpRequest(method, path, query, headers, ByteArray(0))
+        }
+
+        val rawLength = headers["content-length"]
+        val length = if (rawLength == null) {
+            0
+        } else {
+            rawLength.toIntOrNull() ?: throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.BAD_REQUEST,
+                    reason = "非法的 Content-Length：$rawLength。",
+                ),
+            )
+        }
         if (length < 0 || length > MAX_BODY_BYTES) {
             throw DeviceActionException(
                 DeviceDenial(
@@ -419,11 +464,17 @@ class DeviceBridgeHttpServer(
         var read = 0
         while (read < length) {
             val count = buffered.read(body, read, length - read)
-            if (count <= 0) break
+            if (count <= 0) {
+                throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.BAD_REQUEST,
+                        reason = "请求体未传完（预期 $length 字节，实收 $read 字节）。",
+                    ),
+                )
+            }
             read += count
         }
-        val actual = if (read == length) body else body.copyOf(read)
-        return BridgeHttpRequest(method, path, query, headers, actual)
+        return BridgeHttpRequest(method, path, query, headers, body)
     }
 
     private fun parseQuery(raw: String): Map<String, String> {
@@ -475,6 +526,7 @@ class DeviceBridgeHttpServer(
         private const val LF = '\n'.code
         private const val MAX_HEADER_BYTES = 16 * 1024
         private const val MAX_BODY_BYTES = 8 * 1024 * 1024
+        private const val MAX_AUDIT_PARSE_BYTES = 64 * 1024
     }
 }
 

@@ -108,5 +108,9 @@ readLines(
 for (const signal of ["SIGTERM", "SIGHUP"]) {
   process.on(signal, () => void controller.shutdown(signal === "SIGHUP" ? 129 : 143));
 }
-process.on("uncaughtException", (error) => hub.emit("host.fatal", { code: "uncaught", message: String(error?.stack ?? error) }));
+process.on("uncaughtException", (error) => {
+  hub.emit("host.fatal", { code: "uncaught", message: String(error?.stack ?? error) });
+  // Flush the fatal event (bounded) and exit instead of leaving Node in a corrupted zombie state.
+  Promise.race([transport.flush(), new Promise((r) => setTimeout(r, 500))]).finally(() => process.exit(1));
+});
 process.on("unhandledRejection", (error) => hub.emit("host.log", { level: "error", message: `unhandledRejection: ${error?.stack ?? error}` }));

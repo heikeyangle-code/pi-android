@@ -57,6 +57,10 @@ class Utf8StreamDecoder {
      */
     private var carry: ByteArray = EMPTY
 
+    /** Reusable scratch buffers (single-threaded contract) to avoid 32 KiB+ allocations per pipe read. */
+    private var charBuf: CharBuffer = CharBuffer.allocate(16 * 1024 + 4)
+    private var outBuf: StringBuilder = StringBuilder(16 * 1024 + 4)
+
     /** Bytes currently carried into the next [decode] call. For diagnostics/tests. */
     val carriedBytes: Int get() = carry.size
 
@@ -70,22 +74,32 @@ class Utf8StreamDecoder {
         require(length in 0..bytes.size) { "length $length is not within 0..${bytes.size}" }
         if (length == 0) return ""
         val input = input(bytes, length)
-        val out = StringBuilder(length + 4)
+        val needed = length + 4
+        if (charBuf.capacity() < needed) {
+            charBuf = CharBuffer.allocate(needed)
+        }
+        val out = outBuf
+        out.setLength(0)
         var result: CoderResult
-        var chars = CharBuffer.allocate(length + 4)
         do {
-            chars.clear()
-            result = decoder.decode(input, chars, false)
-            chars.flip()
-            out.append(chars)
-            if (result.isOverflow) chars = CharBuffer.allocate(chars.capacity() * 2)
+            charBuf.clear()
+            result = decoder.decode(input, charBuf, false)
+            charBuf.flip()
+            out.append(charBuf)
+            if (result.isOverflow) charBuf = CharBuffer.allocate(charBuf.capacity() * 2)
         } while (result.isOverflow)
         // Whatever the decoder did not consume is an incomplete sequence (a `REPLACE`
         // decoder consumes everything it can), so it belongs to the next read.
         if (input.hasRemaining()) {
             carry = ByteArray(input.remaining()).also { input.get(it) }
         }
-        return out.toString()
+        val decoded = out.toString()
+        if (out.capacity() > 256 * 1024) {
+            outBuf = StringBuilder(16 * 1024 + 4)
+        } else {
+            out.setLength(0)
+        }
+        return decoded
     }
 
     /**

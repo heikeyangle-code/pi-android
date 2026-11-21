@@ -244,7 +244,7 @@ class GuestCommand(private val layout: AgentLayout) {
         // The launcher's pid, from its own config table plus this launch's token. Null
         // when it never appeared; see [ProrootLaunchHandle] for why nothing is guessed
         // in that case.
-        handle?.resolveLauncherPid()
+        handle?.resolveLauncherPid(process = process)
 
         // proroot's launcher refuses a bad argument set **immediately** and exits with
         // its usage line (`docs/proroot-research.md` §4.2). Sampling a short grace
@@ -267,14 +267,18 @@ class GuestCommand(private val layout: AgentLayout) {
             val captured = if (plan.usingExperimental) {
                 val pid = handle?.launcherPid
                 if (pid == null) {
-                    err.append("\n超时后无法回收 guest 进程树：拿不到 launcher pid（${plan.engine.name.lowercase()} 的 launch token 没在 /proc 里出现）")
+                    synchronized(err) {
+                        err.append("\n超时后无法回收 guest 进程树：拿不到 launcher pid（${plan.engine.name.lowercase()} 的 launch token 没在 /proc 里出现）")
+                    }
                     null
                 } else {
                     runCatching {
                         GuestTreeReaper.capture(pid, expectedStartTime = handle?.launcherStartTime)
                     }.getOrNull()
                         ?: run {
-                            err.append("\n超时后无法回收 guest 进程树：launcher pid 已不存在或已被回收")
+                            synchronized(err) {
+                                err.append("\n超时后无法回收 guest 进程树：launcher pid 已不存在或已被回收")
+                            }
                             null
                         }
                 }
@@ -282,31 +286,25 @@ class GuestCommand(private val layout: AgentLayout) {
                 null
             }
             process.destroyForcibly()
-            // Give the readers a moment to drain what the guest already wrote; a
-            // killed process closes its pipes, so this cannot block indefinitely.
             process.waitFor(5, TimeUnit.SECONDS)
-            // The launcher is gone; its captured descendants are matched by
-            // `(pid, starttime)`, so this is what actually stops the guest tree.
             if (captured != null) {
                 val report = runCatching { GuestTreeReaper.reap(captured) }.getOrNull()
                 if (report != null && !report.clean) {
-                    err.append("\n停止超时命令后仍有 guest 进程存活：${report.survivors.joinToString()}")
+                    synchronized(err) {
+                        err.append("\n停止超时命令后仍有 guest 进程存活：${report.survivors.joinToString()}")
+                    }
                 }
             }
         }
         outThread.join(READER_JOIN_MS)
         errThread.join(READER_JOIN_MS)
-
-        // This launch is over (finished, killed, or killed and reaped above), so the
-        // `.proroot-config-<pid>` table it wrote is garbage. Deleting it here is the
-        // "delete the stopped guest's own table" half of the cleanup contract; the
-        // sweep before the next launch is the other half, and it is the one that
-        // covers a launch whose pid could never be resolved.
         handle?.deleteConfig()
 
+        val stdoutSnapshot = synchronized(out) { out.toString() }
+        val stderrSnapshot = synchronized(err) { err.toString() }
         val exitCode = if (finished) runCatching { process.exitValue() }.getOrNull() else null
         val failure = if (plan.usingExperimental && exitCode != null && exitCode != 0) {
-            EngineRefusal.of(plan.engine, "$out\n$err")
+            EngineRefusal.of(plan.engine, "$stdoutSnapshot\n$stderrSnapshot")
         } else {
             null
         }
@@ -315,8 +313,8 @@ class GuestCommand(private val layout: AgentLayout) {
                 argv = plan.argv,
                 guestCommand = guestCommand,
                 exitCode = exitCode,
-                stdout = out.toString(),
-                stderr = err.toString(),
+                stdout = stdoutSnapshot,
+                stderr = stderrSnapshot,
                 timedOut = !finished,
                 outputTruncated = outOverflow.get() || errOverflow.get(),
             ),

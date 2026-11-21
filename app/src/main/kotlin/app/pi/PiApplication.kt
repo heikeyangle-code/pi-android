@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.os.Build
 import app.pi.i18n.PiLocale
 import app.pi.i18n.PiStrings
+import app.pi.runtime.PiCrashStore
 
 /**
  * Process-wide entry point.
@@ -22,8 +23,9 @@ class PiApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        PiCrashStore.installUncaughtExceptionHandler(this)
+        // PiLocale.init() invokes the callback once synchronously when ready.
         PiLocale.init(this) { createNotificationChannels() }
-        createNotificationChannels()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

@@ -6,7 +6,9 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -50,6 +52,8 @@ class PiEngineService : Service() {
      */
     @Volatile
     private var wakeLock: PowerManager.WakeLock? = null
+    private val wakeLockLock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -82,19 +86,24 @@ class PiEngineService : Service() {
     }
 
     private fun startForegroundWithNotification() {
-        acquireWakeLock()
+        val active = desiredWorkActive
+        if (active) acquireWakeLock() else releaseWakeLock()
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
             0
         }
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            buildNotification(runningTasks = 0),
+            buildNotification(runningTasks = if (active) 1 else 0),
             type,
         )
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Android 15+ FGS timeout safety net: always stop foreground cleanly rather than crashing.
+        stopServiceOnlyInternal()
     }
 
     /**
@@ -132,55 +141,52 @@ class PiEngineService : Service() {
 
     /** Re-post with the live task count. */
     fun updateNotification(runningTasks: Int) {
-        NotificationManagerCompat.from(this)
-            .notify(NOTIFICATION_ID, buildNotification(runningTasks))
+        runCatching {
+            NotificationManagerCompat.from(this)
+                .notify(NOTIFICATION_ID, buildNotification(runningTasks))
+        }
     }
 
-    /**
-     * Apply the app's answer to "is there work that must not be frozen?".
-     *
-     * The lock is taken per busy period rather than for the service's lifetime
-     * ([PiEngineLifecyclePolicy.shouldHoldWakeLock]): the runtime unpacking and pi's
-     * cold start are CPU-bound with no UI, and so is a turn; an engine that is merely
-     * alive is neither. That also means the six-hour cap now only ever expires inside
-     * a single six-hour turn instead of silently dropping the lock in the middle of
-     * a normal one — which is what the old always-held lock did (see
-     * [WAKE_LOCK_TIMEOUT_MS]).
-     *
-     * The notification's count is the same fact, one task or none: it used to be
-     * hard-wired to 0 and [updateNotification] had no caller at all, so the line
-     * 「%d 个任务进行中」 was a number nothing ever wrote.
-     */
     private fun applyWork(active: Boolean) {
         if (active) acquireWakeLock() else releaseWakeLock()
         updateNotification(if (active) 1 else 0)
     }
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val power = getSystemService(PowerManager::class.java) ?: return
-        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
-            setReferenceCounted(false)
-            acquire(WAKE_LOCK_TIMEOUT_MS)
+        synchronized(wakeLockLock) {
+            if (wakeLock?.isHeld == true) return
+            val power = getSystemService(PowerManager::class.java) ?: return
+            wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_TIMEOUT_MS)
+            }
         }
     }
 
     private fun stopEngineAndSelf() {
-        // The engine first, then the service that exists for it: `PiEngineController`
-        // invokes the handler its owner registered (`PiSessionViewModel.stopEngineHook`
-        // → `PiEngineHost.shutdown`), which settles any running turn before closing pi
-        // — the same graceful path a restart takes. Both halves are idempotent, so a
-        // second tap (or an engine that already exited) is a no-op rather than a
-        // second teardown.
         PiEngineController.stop()
+        stopServiceOnlyInternal()
+    }
+
+    /** Stop the foreground service and release WakeLock WITHOUT stopping the engine process. */
+    private fun stopServiceOnlyInternal() {
         releaseWakeLock()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            runCatching { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) }
+            stopSelf()
+        } else {
+            mainHandler.post {
+                runCatching { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) }
+                stopSelf()
+            }
+        }
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
+        synchronized(wakeLockLock) {
+            wakeLock?.let { runCatching { if (it.isHeld) it.release() } }
+            wakeLock = null
+        }
     }
 
     override fun onDestroy() {
@@ -222,28 +228,29 @@ class PiEngineService : Service() {
         @Volatile
         private var instance: PiEngineService? = null
 
+        /** Latest requested WakeLock/work state; applied in `onStartCommand` if reported before start. */
+        @Volatile
+        private var desiredWorkActive: Boolean = false
+
         /** Whether the service exists right now. */
         fun isRunning(): Boolean = instance != null
 
-        /**
-         * Tell the service whether anything needs the CPU. No-op when it is not
-         * running (with `app.runtime.keepAlive` off there is no service at all, which
-         * is the switch's whole meaning) — the caller never has to ask first.
-         */
         fun reportWork(active: Boolean) {
+            desiredWorkActive = active
             instance?.applyWork(active)
+        }
+
+        /** Stop the foreground service + WakeLock ONLY (never kills the engine process). */
+        fun stopServiceOnly() {
+            desiredWorkActive = false
+            instance?.stopServiceOnlyInternal()
         }
 
         /**
          * Stop the service **and the engine it exists for**, if it is running.
-         *
-         * The engine's teardown is `PiEngineController`'s: the app registers the one
-         * handler that knows how to stop the engine ([PiEngineController.stop]), so
-         * this is not "stop the notification" — it is the notification's 停止 button
-         * doing what it says. Called by the ViewModel when the engine is gone (there
-         * is nothing left to protect) and by the button itself.
          */
         fun stopIfRunning() {
+            desiredWorkActive = false
             instance?.stopEngineAndSelf()
         }
 

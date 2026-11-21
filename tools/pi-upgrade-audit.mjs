@@ -793,7 +793,10 @@ async function main() {
   process.stdout.write(markdown);
 
   const hasAction = sections.some((s) => s.level === "ACTION");
-  process.exit(hasAction ? 0 : 0);
+  if (hasAction && process.argv.includes("--fail-on-action")) {
+    process.exit(2);
+  }
+  process.exit(0);
 }
 
 main().catch((err) => {

@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -77,13 +76,21 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             val hasKey = System.getenv("PI_KEYSTORE") != null ||
                 rootProject.file("keystore/pi-sideload.jks").exists()
             signingConfig =
                 if (hasKey) signingConfigs.getByName("sideload") else signingConfigs.getByName("debug")
         }
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     compileOptions {
@@ -180,6 +187,7 @@ android {
         // Mono, ~6.7 MB). A stored font is `mmap`ped by the platform, so only the glyph pages
         // actually drawn become resident; a deflated one is inflated into memory in full first.
         noCompress += listOf("tgz", "xz", "tar", "ttf")
+        localeFilters += listOf("en", "zh-rCN")
     }
 
     packaging {
@@ -191,6 +199,10 @@ android {
             "META-INF/AL2.0",
             "META-INF/LGPL2.1",
             "META-INF/*.kotlin_module",
+            "META-INF/LICENSE*",
+            "META-INF/NOTICE*",
+            "META-INF/DEPENDENCIES",
+            "DebugProbesKt.bin",
         )
     }
 
@@ -211,7 +223,7 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
-    implementation(libs.compose.ui.tooling.preview)
+    debugImplementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
@@ -221,8 +233,6 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
-    implementation(libs.navigation.compose)
-    implementation(libs.documentfile)
     implementation(libs.webkit)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.markdown.renderer.m3)
@@ -247,6 +257,8 @@ dependencies {
     // neither pulls native code.
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+
+    testImplementation(libs.junit)
 }
 
 // The markdown renderer is built by a newer Kotlin than this project's compiler

@@ -189,10 +189,10 @@
         <service
             android:name=".service.PiEngineService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|specialUse">
+            android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Runs a local AI coding agent (pi) whose tool calls can exceed the dataSync time limit" />
+                android:value="Runs a local AI coding agent (pi) whose tool calls run while backgrounded" />
         </service>
 
         <!--

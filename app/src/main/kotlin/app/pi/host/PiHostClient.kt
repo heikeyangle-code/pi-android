@@ -138,7 +138,13 @@ class PiHostClient(
         val waiter = CompletableDeferred<JsonElement?>()
         pending[id] = waiter
         try {
-            val line = JsonObject(mapOf("id" to JsonPrimitive(id), "cmd" to JsonPrimitive(cmd), "args" to args)).toString()
+            val frame = JsonObject(mapOf("id" to JsonPrimitive(id), "cmd" to JsonPrimitive(cmd), "args" to args))
+            // Move serialization of large payloads (e.g. inline base64 images) off the Main thread.
+            val line = if ("images" in args) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { frame.toString() }
+            } else {
+                frame.toString()
+            }
             try {
                 synchronized(writeLock) { sendLine(line) }
             } catch (e: IOException) {

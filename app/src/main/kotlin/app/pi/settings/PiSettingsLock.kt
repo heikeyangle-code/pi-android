@@ -67,8 +67,8 @@ object PiSettingsLock {
             // **for ever**, without the sleep below, at 100% of one core — the one state this
             // function cannot report through its `held` flag because it never returns. Within
             // the budget this branch is unchanged, byte for byte.
-            val age = System.currentTimeMillis() - lockDir.lastModified()
-            if (lockDir.isDirectory && age > STALE_MS && attempt < MAX_ATTEMPTS) {
+            val mtime = lockDir.lastModified()
+            if (mtime > 0L && System.currentTimeMillis() - mtime > STALE_MS && lockDir.isDirectory && attempt < MAX_ATTEMPTS) {
                 runCatching { lockDir.delete() }
                 continue
             }

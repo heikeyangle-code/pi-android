@@ -350,6 +350,11 @@ internal object GuestImageBytes {
         val header = link.substring("data:".length, comma)
         val payload = link.substring(comma + 1)
         val base64 = header.split(';').any { it.trim().equals("base64", ignoreCase = true) }
+        // Guard against OOM BEFORE Base64.decode() / Uri.decode() allocates a huge ByteArray.
+        val maxEncodedChars = if (base64) (MAX_BYTES.toLong() * 4L / 3L) + 64L else MAX_BYTES.toLong() * 3L
+        if (payload.length.toLong() > maxEncodedChars) {
+            return fail("data: URI 超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+        }
         val bytes = if (base64) {
             Base64.decode(payload, Base64.DEFAULT)
         } else {
@@ -368,8 +373,11 @@ internal object GuestImageBytes {
 
             else -> link
         }
+        val allowedRoots = allowedLocalImageRoots(context)
         for (candidate in hostCandidates(context, path)) {
             if (!candidate.isFile) continue
+            val canon = runCatching { candidate.canonicalPath }.getOrNull() ?: continue
+            if (allowedRoots.none { root -> canon == root || canon.startsWith("$root/") }) continue
             if (candidate.length() > MAX_BYTES) {
                 return fail("图片文件 ${candidate.name} 超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
             }
@@ -377,8 +385,28 @@ internal object GuestImageBytes {
             if (bytes.isEmpty()) return fail("图片文件 ${candidate.name} 是空文件")
             return GuestImage(bytes, mimeOf(bytes, "", candidate.name), candidate.absolutePath)
         }
-        return fail("找不到图片文件：$path（已尝试 guest 到 host 的全部绑定映射）")
+        return fail("找不到允许读取的图片文件：$path")
     }
+
+    /**
+     * Restrict local Markdown image reads to safe user/guest directories (workspace, rootfs `/tmp`,
+     * and external storage) so untrusted Markdown cannot probe or read `auth.json` / `shared_prefs`.
+     */
+    private fun allowedLocalImageRoots(context: Context): List<String> = buildList {
+        val paths = PiPaths(
+            filesDir = context.filesDir,
+            nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
+        )
+        fun addCanon(f: File?) {
+            if (f == null) return
+            runCatching { f.canonicalPath }.getOrNull()?.let { add(it) }
+        }
+        addCanon(paths.workspaceBase)
+        addCanon(File(paths.rootfs, "tmp"))
+        addCanon(File(paths.rootfs, "var/tmp"))
+        addCanon(runCatching { app.pi.runtime.WorkspaceStore.currentHost(context) }.getOrNull())
+        addCanon(android.os.Environment.getExternalStorageDirectory())
+    }.distinct()
 
     /**
      * 远端图片。整段在 [Dispatchers.IO] 上，所以调用方在哪个线程都不会把网络读进帧里。
@@ -421,7 +449,10 @@ internal object GuestImageBytes {
         // 也从**拿到许可之后**才算（`fetchOverNetwork` 内部），所以排队不占网络预算。
         val bytes = fetchOverNetwork(uri) ?: return@withContext null
 
-        cacheFile?.let { file -> rememberOnDisk(file, bytes) }
+        // Only cache payloads that sniff as a supported image format (stops HTML/404 cache churn).
+        if (sniff(bytes) != null) {
+            cacheFile?.let { file -> rememberOnDisk(file, bytes) }
+        }
         GuestImage(bytes, mimeOf(bytes, "", null), "远端 $uri（${bytes.size} 字节）")
     }
 
@@ -457,6 +488,10 @@ internal object GuestImageBytes {
         var current = start
         var hops = 0
         while (true) {
+            // SSRF defense on every hop (including initial URL and redirects): reject loopback,
+            // RFC1918 LAN, link-local metadata, CGNAT, multicast, and IPv6 ULA addresses.
+            val hostRejection = rejectUnsafeRemoteHost(current.host)
+            if (hostRejection != null) return fail(hostRejection)
             val connection = (current.toURL().openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = CONNECT_TIMEOUT_MS
@@ -505,6 +540,45 @@ internal object GuestImageBytes {
                 connection.disconnect()
             }
         }
+    }
+
+    /** Reject loopback, private LAN, link-local, multicast, CGNAT, and IPv6 ULA hosts (SSRF guard). */
+    internal fun rejectUnsafeRemoteHost(host: String?): String? {
+        val h = host?.trim()?.lowercase() ?: return "远端图片链接缺少主机名，拒绝"
+        if (h.isEmpty() || h == "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) {
+            return "远端图片指向本机或局域网主机（$h），按安全策略拒绝"
+        }
+        val addresses = runCatching { java.net.InetAddress.getAllByName(h) }.getOrNull()
+            ?: return "远端图片主机名无法解析：$h"
+        if (addresses.isEmpty()) return "远端图片主机名解析为空：$h"
+        for (addr in addresses) {
+            if (isDisallowedAddress(addr)) {
+                return "远端图片解析到受限内网或回环地址（$h），按安全策略拒绝"
+            }
+        }
+        return null
+    }
+
+    internal fun isDisallowedAddress(addr: java.net.InetAddress): Boolean {
+        if (addr.isAnyLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress ||
+            addr.isSiteLocalAddress || addr.isMulticastAddress
+        ) {
+            return true
+        }
+        val b = addr.address
+        if (b.size == 4) {
+            val b0 = b[0].toInt() and 0xFF
+            val b1 = b[1].toInt() and 0xFF
+            // 0.0.0.0/8, 100.64.0.0/10 (CGNAT), 198.18.0.0/15 (benchmark)
+            if (b0 == 0) return true
+            if (b0 == 100 && b1 in 64..127) return true
+            if (b0 == 198 && (b1 == 18 || b1 == 19)) return true
+        } else if (b.size == 16) {
+            val b0 = b[0].toInt() and 0xFF
+            // fc00::/7 (IPv6 Unique Local Address)
+            if ((b0 and 0xFE) == 0xFC) return true
+        }
+        return false
     }
 
     /**

@@ -24,7 +24,7 @@ package app.pi.protocol
  */
 class JsonlFramer(private val maxRecordChars: Int = DEFAULT_MAX_RECORD_CHARS) {
 
-    private val pending = StringBuilder()
+    private var pending = StringBuilder(INITIAL_CAPACITY)
     private var dropping = false
 
     /** Number of over-long records thrown away since the last [reset]. */
@@ -34,44 +34,61 @@ class JsonlFramer(private val maxRecordChars: Int = DEFAULT_MAX_RECORD_CHARS) {
     /** Characters currently buffered for the in-flight record. */
     val bufferedChars: Int get() = pending.length
 
-    /**
-     * Consume a chunk of decoded text and return every complete record it
-     * completed, in order.
-     *
-     * Blank records (empty, or whitespace-only after a trailing CR is stripped)
-     * are dropped **on purpose, and this is not what pi's reader does**: pi's
-     * `attachJsonlLineReader` emits every LF-delimited span including `""`, and
-     * `rpc-mode.ts` answers a blank line with a
-     * `{"command":"parse","success":false}` error. pi never writes a blank
-     * record, so forwarding ours would only manufacture parse failures; the
-     * difference is recorded here because the framing tolerance looks identical
-     * from the outside.
-     */
     fun feed(chunk: CharSequence): List<String> {
+        if (chunk.isEmpty()) return emptyList()
         var out: MutableList<String>? = null
-        for (i in chunk.indices) {
-            val c = chunk[i]
-            if (c == '\n') {
-                val record = if (dropping) {
-                    dropping = false
-                    droppedRecords++
-                    null
-                } else {
-                    pending.toString().removeSuffix("\r")
+        val text = chunk as? String
+        val len = chunk.length
+        var start = 0
+        while (start < len) {
+            val nl = if (text != null) text.indexOf('\n', start) else indexOfLf(chunk, start, len)
+            if (nl < 0) {
+                if (!dropping) {
+                    val remaining = len - start
+                    if (pending.length + remaining > maxRecordChars) {
+                        dropping = true
+                        clearPending()
+                    } else {
+                        pending.append(chunk, start, len)
+                    }
                 }
-                pending.setLength(0)
+                break
+            }
+            if (dropping) {
+                dropping = false
+                droppedRecords++
+                clearPending()
+            } else {
+                val end = if (nl > start && chunk[nl - 1] == '\r') nl - 1 else nl
+                val record = if (pending.isEmpty()) {
+                    if (end - start > maxRecordChars) {
+                        droppedRecords++
+                        null
+                    } else {
+                        chunk.subSequence(start, end).toString()
+                    }
+                } else {
+                    val segLen = end - start
+                    if (pending.length + segLen > maxRecordChars) {
+                        droppedRecords++
+                        clearPending()
+                        null
+                    } else {
+                        if (segLen > 0) pending.append(chunk, start, end)
+                        val s = if (segLen == 0 && pending.isNotEmpty() && pending[pending.length - 1] == '\r') {
+                            pending.substring(0, pending.length - 1)
+                        } else {
+                            pending.toString()
+                        }
+                        clearPending()
+                        s
+                    }
+                }
                 if (record != null && record.isNotBlank()) {
                     (out ?: ArrayList<String>(4).also { out = it }).add(record)
                 }
-                continue
             }
-            if (dropping) continue
-            if (pending.length >= maxRecordChars) {
-                dropping = true
-                pending.setLength(0)
-                continue
-            }
-            pending.append(c)
+            start = nl + 1
         }
         return out ?: emptyList()
     }
@@ -84,23 +101,44 @@ class JsonlFramer(private val maxRecordChars: Int = DEFAULT_MAX_RECORD_CHARS) {
     fun flush(): List<String> {
         if (dropping) {
             dropping = false
-            pending.setLength(0)
+            clearPending()
             droppedRecords++
             return emptyList()
         }
         if (pending.isEmpty()) return emptyList()
         val record = pending.toString().removeSuffix("\r")
-        pending.setLength(0)
+        clearPending()
         return if (record.isNotBlank()) listOf(record) else emptyList()
     }
 
     fun reset() {
-        pending.setLength(0)
+        clearPending()
         dropping = false
         droppedRecords = 0L
     }
 
+    /**
+     * Reset [pending] and release oversized backing `char[]` storage so a single large image or
+     * session-replay record cannot permanently pin tens of megabytes in heap.
+     */
+    private fun clearPending() {
+        if (pending.capacity() > SHRINK_THRESHOLD_CHARS) {
+            pending = StringBuilder(INITIAL_CAPACITY)
+        } else {
+            pending.setLength(0)
+        }
+    }
+
+    private fun indexOfLf(cs: CharSequence, from: Int, len: Int): Int {
+        for (i in from until len) {
+            if (cs[i] == '\n') return i
+        }
+        return -1
+    }
+
     companion object {
+        private const val INITIAL_CAPACITY = 4 * 1024
+        private const val SHRINK_THRESHOLD_CHARS = 256 * 1024
         /**
          * 64 MiB. pi's largest legitimate single record is a tool result, which pi
          * itself truncates at 50 KB / 2000 lines; this cap exists for the one

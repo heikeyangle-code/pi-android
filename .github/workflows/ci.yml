@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   protocol:
-    name: Protocol core (JVM unit tests)
+    name: JVM unit tests (:protocol & :app)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,15 +30,26 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: android-actions/setup-android@v3
+        continue-on-error: true
       - uses: gradle/actions/setup-gradle@v4
-      - name: Test :protocol
-        run: ./gradlew :protocol:test --console=plain
-      - name: Publish test report
+      - name: Run :protocol and :app JVM unit tests
+        run: |
+          ./gradlew :protocol:test :app:testDebugUnitTest \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=768m -XX:+UseG1GC -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.parallel=true \
+            -Dorg.gradle.workers.max=4 \
+            -Pkotlin.daemon.jvmargs=-Xmx2g \
+            -Pkotlin.incremental=true \
+            --console=plain
+      - name: Publish test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: protocol-test-report
-          path: protocol/build/reports/tests/test
+          name: jvm-test-reports
+          path: |
+            protocol/build/reports/tests/test
+            app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
 
   sdk-host:
@@ -57,8 +68,13 @@ jobs:
       - name: Install the pinned engine
         run: |
           version="$(node -e 'const t=require("fs").readFileSync("tools/fetch-runtime.mjs","utf8");process.stdout.write(/const PI_VERSION = "([^"]+)"/.exec(t)[1])')"
-          mkdir -p build/pi-contract
-          ( cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$version" )
+          pkg="build/pi-contract/node_modules/@earendil-works/pi-coding-agent/package.json"
+          if [ -f "$pkg" ] && [ "$(node -e "process.stdout.write(require('./$pkg').version)")" = "$version" ]; then
+            echo "Cached @earendil-works/pi-coding-agent@$version matches; skipping npm install"
+          else
+            mkdir -p build/pi-contract
+            ( cd build/pi-contract && npm install --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@$version" )
+          fi
           test -d "build/pi-contract/node_modules/@earendil-works/pi-coding-agent/dist"
       - name: sdk-host contract (SDK surface the host depends on)
         run: node tools/sdk-host/contract.mjs
@@ -143,7 +159,7 @@ jobs:
           java-version: "17"
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
       - uses: android-actions/setup-android@v3
         continue-on-error: true
       - name: Ensure an Android SDK is on the environment
@@ -175,7 +191,11 @@ jobs:
           set -o pipefail
           ./gradlew :app:assembleRelease \
             -Ppi.targetSdk=${{ matrix.targetSdk }} \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=768m -XX:+UseG1GC -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.parallel=true \
+            -Dorg.gradle.workers.max=4 \
             -Pkotlin.daemon.jvmargs=-Xmx2g \
+            -Pkotlin.incremental=true \
             --console=plain 2>&1 | tee /tmp/assemble.log
       - name: Report Kotlin errors as annotations
         if: failure()
@@ -211,10 +231,12 @@ jobs:
           done
           apk="${all[0]}"
           "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
-          expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
-          if ! grep -qi "$expected" /tmp/apksigner.txt; then
-            echo "::error::$apk is not signed with keystore/pi-sideload.jks"
-            exit 1
+          if [ -z "${PI_KEYSTORE:-}" ]; then
+            expected=b12b3607b5978386c13a55a47020fd95750fa6f9db048cdf6148661c05a09c7c
+            if ! grep -qi "$expected" /tmp/apksigner.txt; then
+              echo "::error::$apk is not signed with keystore/pi-sideload.jks"
+              exit 1
+            fi
           fi
       - name: Verify runtime payloads are stored uncompressed
         run: |
@@ -252,5 +274,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pi-android-${{ matrix.variant }}
-          path: app/build/outputs/apk/release/*.apk
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error

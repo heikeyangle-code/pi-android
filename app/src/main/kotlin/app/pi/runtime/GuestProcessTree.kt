@@ -83,10 +83,12 @@ object GuestProcessTree {
      * this correct: `comm` is the only field that can contain a `)`, and the state
      * field directly follows it.
      */
+    private val WHITESPACE = Regex("\\s+")
+
     fun parseStatPpid(statLine: String): Int? {
         val close = statLine.lastIndexOf(')')
         if (close < 0 || close + 2 >= statLine.length) return null
-        val fields = statLine.substring(close + 1).trim().split(Regex("\\s+"))
+        val fields = statLine.substring(close + 1).trim().split(WHITESPACE)
         // fields[0] = state, fields[1] = ppid
         return fields.getOrNull(1)?.toIntOrNull()
     }
@@ -125,7 +127,7 @@ object GuestProcessTree {
     fun parseStatStartTime(statLine: String): Long? {
         val close = statLine.lastIndexOf(')')
         if (close < 0 || close + 2 >= statLine.length) return null
-        val fields = statLine.substring(close + 1).trim().split(Regex("\\s+"))
+        val fields = statLine.substring(close + 1).trim().split(WHITESPACE)
         return fields.getOrNull(19)?.toLongOrNull()
     }
 }

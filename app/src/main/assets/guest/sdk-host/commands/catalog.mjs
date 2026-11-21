@@ -113,10 +113,13 @@ export function register(reg, { controller }) {
     const prefix = optStr(args, "prefix") ?? "";
     const command = controller.requireSession().extensionRunner.getRegisteredCommands().find((c) => c.invocationName === name);
     if (typeof command?.getArgumentCompletions !== "function") return { items: [] };
+    let timer;
     try {
       const items = await Promise.race([
         Promise.resolve(command.getArgumentCompletions(prefix)),
-        new Promise((resolve) => setTimeout(() => resolve("timeout"), 2000)),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), 2000);
+        }),
       ]);
       if (items === "timeout") return { items: [], error: "补全超时" };
       return {
@@ -128,6 +131,8 @@ export function register(reg, { controller }) {
       };
     } catch (e) {
       return { items: [], error: String(e?.message ?? e) };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   });
 
@@ -313,6 +318,15 @@ export function register(reg, { controller }) {
   // 会话切换或 /reload 时必须清空，避免残留旧扩展闭包或旧渲染器。
   const toolComponents = new Map();
   controller.clearToolRenderCache = () => {
+    for (const timer of invalidateTimers.values()) clearTimeout(timer);
+    invalidateTimers.clear();
+    for (const comp of toolComponents.values()) {
+      try {
+        comp?.dispose?.();
+      } catch {
+        // ignore
+      }
+    }
     toolComponents.clear();
   };
   const componentFor = (id, name, def, callArgs, cwd) => {
@@ -320,7 +334,16 @@ export function register(reg, { controller }) {
     if (!c) {
       c = new controller.sdk.ToolExecutionComponent(name, id, callArgs, { showImages: false, outputPad: 0 }, def, tui({ kind: "tool", toolCallId: id }), cwd);
       toolComponents.set(id, c);
-      if (toolComponents.size > TOOL_STATE_LIMIT) toolComponents.delete(toolComponents.keys().next().value);
+      if (toolComponents.size > TOOL_STATE_LIMIT) {
+        const oldestKey = toolComponents.keys().next().value;
+        const oldest = toolComponents.get(oldestKey);
+        toolComponents.delete(oldestKey);
+        try {
+          oldest?.dispose?.();
+        } catch {
+          // ignore
+        }
+      }
     }
     return c;
   };

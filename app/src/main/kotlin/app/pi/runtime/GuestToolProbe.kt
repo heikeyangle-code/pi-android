@@ -321,14 +321,15 @@ object GuestToolProbe {
         // and a process that hangs is bounded here instead of in `readText()`.
         val finished = runCatching { process.waitFor(timeoutMs, TimeUnit.MILLISECONDS) }.getOrDefault(false)
         if (!finished) {
+            // Non-blocking drain BEFORE kill: avoids hanging forever if a grandchild keeps the pipe open.
+            val partial = drainProcessAvailable(process.inputStream, 32 * 1024, 300L)
             process.destroyForcibly()
-            val partial = runCatching {
-                process.inputStream.bufferedReader().use { it.readText() }
-            }.getOrDefault("")
+            runCatching { process.inputStream.close() }
+            runCatching { process.outputStream.close() }
             val tail = partial.trim().takeLast(200)
             return Report(
                 emptyList(),
-                launchError = "探针 ${timeoutMs / 1000} 秒没有返回（proot 或 guest 卡住）" +
+                launchError = "探针 ${timeoutMs / 1000} 秒没有返回（${engine.name.lowercase()} 或 guest 卡住）" +
                     if (tail.isBlank()) "" else "；已收到的输出：$tail",
             )
         }
@@ -336,12 +337,14 @@ object GuestToolProbe {
         val text = runCatching {
             process.inputStream.bufferedReader().use { it.readText() }
         }.getOrElse { error ->
+            runCatching { process.outputStream.close() }
             return Report(
                 emptyList(),
                 launchError = "读不到探针输出：${error::class.java.simpleName}: ${error.message}",
                 exitCode = exitCode,
             )
         }
+        runCatching { process.outputStream.close() }
         return parse(text, exitCode)
     }
 

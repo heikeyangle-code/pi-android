@@ -423,12 +423,13 @@ class RuntimeProvisioner(
         next()
         val plannedAssets = plan.mapTo(HashSet()) { "runtime/${it.name}" }
         val payloadBytes = payloads.filter { it.ok && it.asset in plannedAssets }.sumOf { it.bytes }
+        val fullUnpack = rebuild || rootfsMissing || migration || plan.size == PAYLOADS.size
         val available = paths.home.usableSpace
-        RuntimeSpaceBudget.shortfall(available, payloadBytes)?.let { missing ->
+        RuntimeSpaceBudget.shortfall(available, payloadBytes, fullUnpack)?.let { missing ->
             throw ProvisioningException(
-                RuntimeSpaceBudget.message(available, payloadBytes) +
+                RuntimeSpaceBudget.message(available, payloadBytes, fullUnpack) +
                     "\n（本次预检：可用 $available 字节，本次要解的载荷 $payloadBytes 字节，" +
-                    "预计至少需要 ${RuntimeSpaceBudget.requiredBytes(payloadBytes)} 字节，" +
+                    "预计至少需要 ${RuntimeSpaceBudget.requiredBytes(payloadBytes, fullUnpack)} 字节，" +
                     "还差 $missing 字节）",
             )
         }
@@ -751,7 +752,12 @@ class RuntimeProvisioner(
                     "删掉链接目标里的内容。",
             )
         }
-        target.deleteRecursively()
+        // Strict no-follow post-order walk: unlike `File.deleteRecursively()`, `Files.walkFileTree`
+        // (with default empty FileVisitOption) NEVER follows nested symlinks — a symlink inside
+        // rootfs pointing to `/sdcard` or `persist` is unlinked directly without touching its target.
+        if (target.exists()) {
+            deleteTreeNoFollow(target.toPath())
+        }
         // P1a: a recursive delete that could not finish must never be reported as a rebuild.
         // The call above returns `false` for a tree it could not take apart (a directory whose
         // parent is not writable, a mode the filesystem refuses) and that result used to be
@@ -768,6 +774,40 @@ class RuntimeProvisioner(
                     (if (left.isNotEmpty()) "，例如 $left" else "") +
                     "。常见原因是这些节点的父目录不可写（guest 里 chmod 过）或文件系统拒绝删除。" +
                     "运行时**没有**被重建，本次按失败处理，不会假装成功。",
+            )
+        }
+    }
+
+    /** Delete a directory tree bottom-up without ever following nested symlinks. */
+    private fun deleteTreeNoFollow(root: java.nio.file.Path) {
+        runCatching {
+            java.nio.file.Files.walkFileTree(
+                root,
+                object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun visitFile(
+                        file: java.nio.file.Path,
+                        attrs: java.nio.file.attribute.BasicFileAttributes,
+                    ): java.nio.file.FileVisitResult {
+                        runCatching { java.nio.file.Files.deleteIfExists(file) }
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFileFailed(
+                        file: java.nio.file.Path,
+                        exc: java.io.IOException?,
+                    ): java.nio.file.FileVisitResult {
+                        runCatching { java.nio.file.Files.deleteIfExists(file) }
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+
+                    override fun postVisitDirectory(
+                        dir: java.nio.file.Path,
+                        exc: java.io.IOException?,
+                    ): java.nio.file.FileVisitResult {
+                        runCatching { java.nio.file.Files.deleteIfExists(dir) }
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+                },
             )
         }
     }
@@ -945,11 +985,20 @@ class RuntimeProvisioner(
         val root = runCatching { paths.runtime.canonicalPath }.getOrNull() ?: return
         PayloadPrune.victims(old, new, present).forEach { relative ->
             val target = File(paths.runtime, relative)
-            val canonical = runCatching { target.canonicalPath }.getOrNull() ?: run {
-                payloadWarnings += "$relative（规范路径读不出来，未删除）"
+            // Canonicalize only the parent directory, keeping the leaf literal:
+            // deleting a symlink removes the link itself, never its target, whereas
+            // `target.canonicalPath` dereferences guest-absolute symlinks (like `/usr/local/bin/foo -> /opt/...`)
+            // outside `paths.runtime` and would falsely refuse to prune them.
+            val parent = target.parentFile ?: run {
+                payloadWarnings += "$relative（缺少父目录，未删除）"
                 return@forEach
             }
-            if (!PayloadPrune.within(root, canonical)) {
+            val canonicalParent = runCatching { parent.canonicalPath }.getOrNull() ?: run {
+                payloadWarnings += "$relative（父目录规范路径读不出来，未删除）"
+                return@forEach
+            }
+            val canonicalLeaf = "$canonicalParent${File.separator}${target.name}"
+            if (!PayloadPrune.within(root, canonicalLeaf)) {
                 payloadWarnings += "$relative（已指向易失树之外，按规则拒绝删除）"
                 return@forEach
             }
@@ -1031,10 +1080,13 @@ class RuntimeProvisioner(
         if (digest == null) return null
         val dir = paths.payloadStateDir().also { it.mkdirs() }
         val name = payloadMetaName(payload)
-        val digestWritten = writeStampAtomically(File(dir, "$name.digest"), digest + "\n")
+        // Write `.list` BEFORE `.digest`: `.digest` is the commit marker that says "this payload
+        // is done". Writing `.list` first guarantees a crash between the two triggers a safe
+        // re-extract on next launch rather than leaving a stale `.list` paired with a current digest.
         val listWritten = list?.let {
             writeStampAtomically(File(dir, "$name.list"), PayloadPrune.encodeList(it))
         } ?: true
+        val digestWritten = writeStampAtomically(File(dir, "$name.digest"), digest + "\n")
         if (digestWritten && listWritten) return null
         return "$name（" +
             buildList {
@@ -1363,19 +1415,17 @@ class RuntimeProvisioner(
         // Scratch, under the volatile tree, created by this method; see
         // [deleteTreeInsideVolatile] for the check that keeps that true.
         deleteTreeInsideVolatile(staging, "node 暂存目录")
-        extractAsset(NODE_ARCHIVE, staging)
-        val top = staging.listFiles()?.firstOrNull { it.isDirectory }
-            ?: throw ProvisioningException("node archive had no top-level directory")
-        val target = File(paths.rootfs, "opt/node")
-        target.parentFile?.mkdirs()
-        // 首次安装（目标还不存在）：整棵树**改名**过去，而不是逐文件复制。暂存目录和目标同在
-        // `paths.runtime` 之下、同一个文件系统，`rename(2)` 是一次元数据操作；旧实现在这里把
-        // 约 195 MB 解出来之后又整棵读-写一遍（File.copyTo），首次安装白白多写一份 node。
-        // 目标已存在（升级、或用户 `npm -g` 过）才走下面的覆盖合并——那条路径要保住用户的东西，
-        // 不能改名顶替。改名失败（极少数文件系统）同样落回合并，行为与此前一致。
-        val renamed = !existsWithoutFollowing(target) && top.renameTo(target)
-        val notMerged = if (renamed) emptyList() else mergeTreeOver(top, target)
-        deleteTreeInsideVolatile(staging, "node 暂存目录")
+        val notMerged = try {
+            extractAsset(NODE_ARCHIVE, staging)
+            val top = staging.listFiles()?.firstOrNull { it.isDirectory }
+                ?: throw ProvisioningException("node archive had no top-level directory")
+            val target = File(paths.rootfs, "opt/node")
+            target.parentFile?.mkdirs()
+            val renamed = !existsWithoutFollowing(target) && top.renameTo(target)
+            if (renamed) emptyList() else mergeTreeOver(top, target)
+        } finally {
+            runCatching { deleteTreeInsideVolatile(staging, "node 暂存目录") }
+        }
         // 失败 ⇒ 不许记账。 `mergeTreeOver` used to swallow a copy or symlink it could not
         // perform (`runCatching { … }` with no result check), and `provision` then recorded
         // node's digest right afterwards — so the tree kept whatever the blocked node was, the
@@ -1463,8 +1513,7 @@ class RuntimeProvisioner(
                             // inside it is the user's, and the failure is named instead.
                             if (!target.delete()) return@runCatching false
                         }
-                        java.nio.file.Files.createSymbolicLink(target.toPath(), link)
-                        true
+                        createLink(target, link.toString()) == null
                     }.getOrDefault(false)
                     if (!linked) failed += child.path
                     continue
@@ -1474,12 +1523,25 @@ class RuntimeProvisioner(
                     continue
                 }
                 if (!child.isFile) continue
-                val copied = runCatching {
-                    child.copyTo(target, overwrite = true)
-                    if (child.canExecute()) target.setExecutable(true, false)
-                    true
+                val movedOrCopied = runCatching {
+                    // Prefer O(1) same-filesystem rename (preserves permissions & avoids rewriting ~195 MB).
+                    // Never overwrite a directory via rename/copy.
+                    if (target.isDirectory && !java.nio.file.Files.isSymbolicLink(target.toPath())) {
+                        return@runCatching false
+                    }
+                    if (java.nio.file.Files.isSymbolicLink(target.toPath())) {
+                        java.nio.file.Files.deleteIfExists(target.toPath())
+                    }
+                    if (child.renameTo(target)) {
+                        true
+                    } else {
+                        val exec = child.canExecute()
+                        child.copyTo(target, overwrite = true)
+                        if (exec) target.setExecutable(true, false)
+                        true
+                    }
                 }.getOrDefault(false)
-                if (!copied) failed += child.path
+                if (!movedOrCopied) failed += child.path
             }
         }
         return failed
@@ -1568,29 +1630,21 @@ class RuntimeProvisioner(
         // Scratch, under the volatile tree, created by this method; see
         // [deleteTreeInsideVolatile] for the check that keeps that true.
         deleteTreeInsideVolatile(staging, "$binaryName 暂存目录")
-        extractAsset(archive, staging)
-        val binary = staging.walkTopDown()
-            .filter { it.isFile && it.name == binaryName }
-            .maxByOrNull { it.length() }
-            ?: throw ProvisioningException("$binaryName not found in $archive")
+        try {
+            extractAsset(archive, staging)
+            val binary = staging.walkTopDown()
+                .filter { it.isFile && it.name == binaryName }
+                .maxByOrNull { it.length() }
+                ?: throw ProvisioningException("$binaryName not found in $archive")
 
-        // Both copies, deliberately — a tool installed into only one of them is
-        // invisible to one of the three things that launch a guest process. Read
-        // [PiPaths.agentBinDir] before moving either line: the short version is that
-        // the engine and package commands bind the durable dir over the guest's
-        // `/root/.pi/agent` and the terminal does not, so `agentBinDir` is the copy
-        // with the bind and `rootfsAgentBinDir` is the copy without it.
-        //
-        // 2026-09-23: there is only **one** directory now — the agent dir moved into the
-        // rootfs, the bind went away, and `rootfsAgentBinDir()` is defined as
-        // `agentBinDir()`. The loop below therefore had two identical iterations; it has
-        // one, and this comment stays so the *reason* it used to be two is not lost.
-        val dir = paths.agentBinDir()
-        dir.mkdirs()
-        val dest = File(dir, binaryName)
-        binary.copyTo(dest, overwrite = true)
-        dest.setExecutable(true, false)
-        deleteTreeInsideVolatile(staging, "$binaryName 暂存目录")
+            val dir = paths.agentBinDir()
+            dir.mkdirs()
+            val dest = File(dir, binaryName)
+            binary.copyTo(dest, overwrite = true)
+            dest.setExecutable(true, false)
+        } finally {
+            runCatching { deleteTreeInsideVolatile(staging, "$binaryName 暂存目录") }
+        }
         publishTool(binaryName)
     }
 
@@ -1875,12 +1929,17 @@ class RuntimeProvisioner(
     private fun ensureAndroidGroups(): String? {
         val file = File(paths.rootfs, "etc/group")
         if (!file.isFile) return null
+        val key = "${file.path}:${file.length()}:${file.lastModified()}"
+        if (verifiedGroupsKey == key) return null
         val wanted = androidGroupIds()
         if (wanted.isEmpty()) return null
         val text = runCatching { file.readText() }.getOrNull() ?: return null
         val present = groupIdsIn(text)
         val missing = wanted.filter { it !in present }
-        if (missing.isEmpty()) return null
+        if (missing.isEmpty()) {
+            verifiedGroupsKey = key
+            return null
+        }
         val appended = buildString {
             if (text.isNotEmpty() && !text.endsWith("\n")) append('\n')
             missing.forEach { gid -> append(androidGroupName(gid)).append(":x:").append(gid).append(":\n") }
@@ -1889,6 +1948,7 @@ class RuntimeProvisioner(
         val after = runCatching { file.readText() }.getOrNull().orEmpty()
         val stillMissing = missing.filter { it !in groupIdsIn(after) }
         return if (stillMissing.isEmpty()) {
+            verifiedGroupsKey = "${file.path}:${file.length()}:${file.lastModified()}"
             null
         } else {
             "guest 的 /etc/group 没能补全（缺 ${stillMissing.joinToString()}）：开终端可能仍看到 groups 报错"
@@ -2034,8 +2094,18 @@ class RuntimeProvisioner(
 
     private fun guestSymlink(guestLink: String, guestTarget: String) {
         val link = File(paths.rootfs, guestLink.removePrefix("/"))
+        val linkPath = link.toPath()
+        // Fast path: if the symlink already points to the exact guest target, avoid unlinking & recreating.
+        val existingTarget = runCatching {
+            if (java.nio.file.Files.isSymbolicLink(linkPath)) {
+                java.nio.file.Files.readSymbolicLink(linkPath).toString()
+            } else {
+                null
+            }
+        }.getOrNull()
+        if (existingTarget == guestTarget) return
         link.parentFile?.mkdirs()
-        if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
+        if (link.exists() || java.nio.file.Files.isSymbolicLink(linkPath)) link.delete()
         if (createLink(link, guestTarget) == null) return
         val wrapped = runCatching {
             link.writeText("#!/bin/sh\nexec $guestTarget \"\$@\"\n")
@@ -2108,6 +2178,10 @@ class RuntimeProvisioner(
         }
 
     companion object {
+        /** Cached `<path>:<len>:<mtime>` of `/etc/group` once verified in this process. */
+        @Volatile
+        private var verifiedGroupsKey: String? = null
+
         /** `.stamp` 的第二行：这棵树被 `RuntimeTreeAudit` 验过（见 `stampAudited`）。 */
         private const val AUDITED_LINE = "audited-1"
 

@@ -46,7 +46,8 @@ object TawcrootCommand {
     // Android 应用可 stat 但无法列目录的宿主机设备节点（参考 dsh-go TawcrootLaunch）。
     private val DEV_NODES = listOf("null", "zero", "full", "urandom", "tty", "ptmx", "pts")
 
-    fun bindArgument(value: String): String = ProrootCommand.bindArgument(value)
+    @Volatile
+    private var verifiedDevViewPath: String? = null
 
     /** `<runtime>/tawcroot-dev-view`：给 tawcroot 绑定为 `/dev` 的符号链接目录。 */
     fun devViewDir(paths: PiPaths): File = File(paths.runtime, "tawcroot-dev-view")
@@ -60,6 +61,9 @@ object TawcrootCommand {
      */
     fun ensureDevView(paths: PiPaths): File? = runCatching {
         val dir = devViewDir(paths)
+        if (verifiedDevViewPath == dir.path && dir.isDirectory && File(dir, "random").exists()) {
+            return@runCatching dir
+        }
         val dirPath = dir.toPath()
         if (java.nio.file.Files.isSymbolicLink(dirPath)) return@runCatching null
         if (!dir.isDirectory && !dir.mkdirs()) return@runCatching null
@@ -84,6 +88,7 @@ object TawcrootCommand {
             java.nio.file.Files.deleteIfExists(link)
             java.nio.file.Files.createSymbolicLink(link, File(target).toPath())
         }
+        verifiedDevViewPath = dir.path
         dir
     }.getOrNull()
 
@@ -107,7 +112,7 @@ object TawcrootCommand {
                 when {
                     guest == "/dev/shm" -> null
                     guest == "/dev" && devView != null && devView.isDirectory ->
-                        devView.absolutePath to "/dev"
+                        GuestRecipe.canonicalHost(devView.absolutePath) to "/dev"
                     !File(host).isDirectory -> null
                     else -> host to guest
                 }

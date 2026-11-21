@@ -52,6 +52,12 @@ object RuntimeSpaceBudget {
     const val MIN_REQUIRED_BYTES: Long = 480L * 1024 * 1024
 
     /**
+     * Conservative floor for an **incremental** single- or partial-payload update (e.g. a 1–2 MB
+     * tool bump or 23 MB engine update) so small updates do not falsely require 480 MB free.
+     */
+    const val INCREMENTAL_MIN_REQUIRED_BYTES: Long = 64L * 1024 * 1024
+
+    /**
      * Expansion factor applied to the measured payload bytes.
      *
      * Measured per payload: ubuntu x3.4, node x6.4, pi-engine x6.2. Four is the
@@ -61,9 +67,10 @@ object RuntimeSpaceBudget {
     const val PAYLOAD_MULTIPLIER: Int = 4
 
     /** What the unpack is allowed to need, given the payloads this APK carries. */
-    fun requiredBytes(payloadBytes: Long): Long {
+    fun requiredBytes(payloadBytes: Long, fullUnpack: Boolean = true): Long {
         val fromPayloads = if (payloadBytes > 0L) payloadBytes * PAYLOAD_MULTIPLIER else 0L
-        return maxOf(MIN_REQUIRED_BYTES, fromPayloads)
+        val floor = if (fullUnpack) MIN_REQUIRED_BYTES else INCREMENTAL_MIN_REQUIRED_BYTES
+        return maxOf(floor, fromPayloads)
     }
 
     /**
@@ -72,9 +79,9 @@ object RuntimeSpaceBudget {
      * `null` also covers "the available figure is unreadable", which is why the
      * caller does not have to special-case it.
      */
-    fun shortfall(availableBytes: Long, payloadBytes: Long): Long? {
+    fun shortfall(availableBytes: Long, payloadBytes: Long, fullUnpack: Boolean = true): Long? {
         if (availableBytes <= 0L) return null
-        val required = requiredBytes(payloadBytes)
+        val required = requiredBytes(payloadBytes, fullUnpack)
         return if (availableBytes >= required) null else required - availableBytes
     }
 
@@ -83,8 +90,8 @@ object RuntimeSpaceBudget {
      * failure: what is wrong, the number, and the next step. No paths, no class
      * names - it is rendered on the failure screen in monospace under the title.
      */
-    fun message(availableBytes: Long, payloadBytes: Long): String {
-        val required = requiredBytes(payloadBytes)
+    fun message(availableBytes: Long, payloadBytes: Long, fullUnpack: Boolean = true): String {
+        val required = requiredBytes(payloadBytes, fullUnpack)
         val missing = (required - availableBytes).coerceAtLeast(0L)
         return tr(
             "存储空间不足：解包运行时至少需要 ${megabytes(required)} MB 可用空间，" +

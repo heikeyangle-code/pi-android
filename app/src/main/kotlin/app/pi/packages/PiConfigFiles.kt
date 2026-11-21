@@ -129,8 +129,8 @@ object PiConfigFiles {
             if (attempt >= MAX_ATTEMPTS) {
                 throw IllegalStateException("无法获取 ${lockDir.name} 的锁（${lockDir.absolutePath}）")
             }
-            val age = System.currentTimeMillis() - lockDir.lastModified()
-            if (lockDir.isDirectory && age > STALE_MS) {
+            val mtime = lockDir.lastModified()
+            if (mtime > 0L && System.currentTimeMillis() - mtime > STALE_MS && lockDir.isDirectory) {
                 // A process died holding it. proper-lockfile removes stale locks too.
                 runCatching { lockDir.delete() }
             }
@@ -140,21 +140,49 @@ object PiConfigFiles {
 
     // ------------------------------------------------------------------- writing
 
+    private val tempSeq = java.util.concurrent.atomic.AtomicLong(0L)
+
     /**
-     * Atomic replace. [mode600] additionally restricts the result to owner-only,
-     * which is what `auth.json` needs and `models.json` does not.
+     * Atomic replace with fsync. When [mode600] is true, the temporary file is restricted to
+     * `0600` **before** any secret bytes are written to disk, eliminating the world-readable window.
      */
     fun write(target: File, text: String, mode600: Boolean = false): Boolean = runCatching {
         target.parentFile?.mkdirs()
-        val temp = File(target.parentFile, "${target.name}.tmp-${android.os.Process.myPid()}")
-        temp.writeText(text)
-        runCatching { Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-            .onFailure {
-                target.writeText(text)
-                temp.delete()
+        val seq = tempSeq.incrementAndGet()
+        val temp = File(target.parentFile, "${target.name}.tmp-${System.nanoTime()}-$seq")
+        try {
+            if (mode600) {
+                runCatching {
+                    val attrs = java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                    )
+                    Files.createFile(temp.toPath(), attrs)
+                }.onFailure {
+                    temp.createNewFile()
+                    restrictToOwner(temp)
+                }
             }
-        if (mode600) restrictToOwner(target)
-        true
+            java.io.FileOutputStream(temp).use { out ->
+                out.write(text.toByteArray(Charsets.UTF_8))
+                out.flush()
+                runCatching { out.fd.sync() }
+            }
+            if (mode600) restrictToOwner(temp)
+            try {
+                Files.move(
+                    temp.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            if (mode600) restrictToOwner(target)
+            true
+        } finally {
+            runCatching { if (temp.exists()) temp.delete() }
+        }
     }.getOrDefault(false)
 
     /**

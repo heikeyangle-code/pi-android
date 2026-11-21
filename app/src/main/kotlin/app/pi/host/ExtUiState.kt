@@ -140,7 +140,19 @@ class ExtUiReducer {
         widgetSurface.clear()
         widgetPlacement.clear()
         slotSurface.clear()
+        closedSurfaces.clear()
         state = ExtUiState(toolsExpanded = state.toolsExpanded, bellSeq = state.bellSeq)
+    }
+
+    /** Bounded tombstone set preventing late `ui.surface` frames from resurrecting closed surfaces. */
+    private val closedSurfaces = LinkedHashSet<String>()
+
+    private fun markClosed(id: String) {
+        closedSurfaces.add(id)
+        if (closedSurfaces.size > 256) {
+            val oldest = closedSurfaces.iterator().next()
+            closedSurfaces.remove(oldest)
+        }
     }
 
     private fun status(d: JsonObject) {
@@ -161,12 +173,19 @@ class ExtUiReducer {
         val placement = str(d["placement"])
         val sid = str(d["surfaceId"])
         if (sid != null) {
+            widgetSurface[key]?.takeIf { it != sid }?.let { oldId ->
+                frames.remove(oldId)
+                markClosed(oldId)
+            }
             widgetSurface[key] = sid
             widgetPlacement[key] = placement
             frames[sid]?.let { setWidget(key, it.lines, placement, surfaceId = sid, interactive = it.interactive) }
             return
         }
-        widgetSurface.remove(key)?.let { frames.remove(it) }
+        widgetSurface.remove(key)?.let { oldId ->
+            frames.remove(oldId)
+            markClosed(oldId)
+        }
         widgetPlacement.remove(key)
         setWidget(key, linesOf(d["lines"]), placement, surfaceId = null, interactive = false)
     }
@@ -197,9 +216,16 @@ class ExtUiReducer {
             "header", "footer" -> {
                 val sid = str(d["surfaceId"])
                 if (!attached || sid == null) {
-                    slotSurface.remove(slot)?.let { frames.remove(it) }
+                    slotSurface.remove(slot)?.let { oldId ->
+                        frames.remove(oldId)
+                        markClosed(oldId)
+                    }
                     setSlot(slot, null)
                 } else {
+                    slotSurface[slot]?.takeIf { it != sid }?.let { oldId ->
+                        frames.remove(oldId)
+                        markClosed(oldId)
+                    }
                     slotSurface[slot] = sid
                     frames[sid]?.let { setSlot(slot, ExtPanel(slot, it.lines, surfaceId = sid, interactive = it.interactive)) }
                 }
@@ -214,6 +240,7 @@ class ExtUiReducer {
 
     private fun surface(d: JsonObject) {
         val id = str(d["surfaceId"]) ?: return
+        if (id in closedSurfaces) return
         val mode = str(d["mode"]) ?: return
         val rev = (d["rev"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
         if ((frames[id]?.rev ?: -1L) >= rev) return
@@ -264,6 +291,7 @@ class ExtUiReducer {
     private fun close(d: JsonObject) {
         val id = str(d["surfaceId"]) ?: return
         frames.remove(id)
+        markClosed(id)
         when (str(d["mode"])) {
             "widget" -> {
                 val key = (str(d["key"]) ?: return).removePrefix("widget:")

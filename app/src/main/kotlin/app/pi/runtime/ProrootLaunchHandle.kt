@@ -92,7 +92,20 @@ class ProrootLaunchHandle private constructor(
      * working launch this returns on the first or second poll. The timeout is a bound
      * on a broken launcher, not a typical wait.
      */
-    fun resolveLauncherPid(timeoutMs: Long = DEFAULT_RESOLVE_TIMEOUT_MS): Int? {
+    fun resolveLauncherPid(
+        timeoutMs: Long = DEFAULT_RESOLVE_TIMEOUT_MS,
+        process: Process? = null,
+    ): Int? {
+        // Fast path: read the direct child's PID straight from the JVM/ART Process implementation
+        // in O(1) without scanning `/proc` or waiting for `.proroot-config-<pid>` to appear.
+        if (process != null) {
+            val direct = pidOfProcess(process)
+            if (direct != null && direct > 0) {
+                launcherPid = direct
+                launcherStartTime = readStartTime(direct)
+                return direct
+            }
+        }
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         while (true) {
             // Only a pid that *is* this launch can be selected: see the class KDoc for
@@ -110,10 +123,25 @@ class ProrootLaunchHandle private constructor(
                 launcherStartTime = readStartTime(candidate)
                 return candidate
             }
+            // If the launched process already exited, do not burn the remaining 1.5 s polling.
+            if (process != null && !runCatching { process.isAlive }.getOrDefault(false)) return null
             if (System.nanoTime() >= deadline) return null
             runCatching { Thread.sleep(POLL_MS) }
         }
     }
+
+    private fun pidOfProcess(process: Process): Int? = runCatching {
+        var cls: Class<*>? = process.javaClass
+        while (cls != null) {
+            val field = runCatching { cls.getDeclaredField("pid") }.getOrNull()
+            if (field != null) {
+                field.isAccessible = true
+                return@runCatching (field.get(process) as? Number)?.toInt()
+            }
+            cls = cls.superclass
+        }
+        null
+    }.getOrNull()
 
     /**
      * Whether `/proc/<pid>/environ` identifies [pid] as **this** launch.

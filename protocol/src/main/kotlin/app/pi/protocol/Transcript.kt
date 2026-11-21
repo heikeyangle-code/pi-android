@@ -2035,6 +2035,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 )
                 // F8: closing the card publishes it, so a chunk the throttle was
                 // still holding is delivered with it.
+                lastToolPublishAt.remove(call.callId)
                 if (suppressedToolUpdate == i) suppressedToolUpdate = null
                 change = TranscriptChange.Updated(i)
             }
@@ -2738,7 +2739,15 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
          * (`docs/rpc.md`: "`success: false` means the prompt was rejected before
          * acceptance").
          */
-        val ECHOED_COMMANDS = setOf("prompt", "steer", "follow_up")
+        val ECHOED_COMMANDS = setOf(
+            "prompt",
+            "steer",
+            "follow_up",
+            "session.prompt",
+            "session.steer",
+            "session.followUp",
+            "chat.send",
+        )
         /**
          * Entry-shaped events that a newer pi may emit directly on stdout. They
          * are projectable through [onEntry]; everything else unknown is inert.

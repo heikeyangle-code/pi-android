@@ -178,8 +178,13 @@ internal fun rememberAnimatedPainter(link: String, widthPx: Int): Painter? {
     val bytes = PiAnimatedImages.get(link) ?: return null
     if (Build.VERSION.SDK_INT < 28) return null
     val painter by produceState<AnimatedDrawablePainter?>(null, link, widthPx) {
-        value = withContext(Dispatchers.Default) { decodeAnimated(bytes, widthPx) }
+        val created = withContext(Dispatchers.Default) { decodeAnimated(bytes, widthPx) }
             ?.let { AnimatedDrawablePainter.tryCreate(it) }
+        value = created
+        // Guarantee slot release even if composition leaves before DisposableEffect commits.
+        awaitDispose {
+            created?.release()
+        }
     }
     val p = painter
     AnimatedPainterEffects(p)
@@ -191,9 +196,13 @@ internal fun rememberAnimatedPainter(link: String, widthPx: Int): Painter? {
 internal fun rememberAnimatedPainterFor(key: Any, widthPx: Int, loadBytes: () -> ByteArray?): Painter? {
     if (Build.VERSION.SDK_INT < 28) return null
     val painter by produceState<AnimatedDrawablePainter?>(null, key, widthPx) {
-        value = withContext(Dispatchers.IO) {
+        val created = withContext(Dispatchers.IO) {
             val bytes = loadBytes()?.takeIf { PiAnimatedImages.isAnimated(it) } ?: return@withContext null
             decodeAnimated(bytes, widthPx)?.let { AnimatedDrawablePainter.tryCreate(it) }
+        }
+        value = created
+        awaitDispose {
+            created?.release()
         }
     }
     val p = painter

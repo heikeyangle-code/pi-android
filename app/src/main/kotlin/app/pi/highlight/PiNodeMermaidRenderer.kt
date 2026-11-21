@@ -91,17 +91,15 @@ internal object PiNodeMermaidRenderer {
      *
      * 只读、无副作用（无竞争时只是几次原子操作），所以可以安全地在组合期调用。
      */
-    fun cached(source: String, mode: PiMermaidMode): PiMermaidReply? = memo.get(source, mode)
+    fun cached(source: String, mode: PiMermaidMode): PiMermaidReply? {
+        if (source.length > MAX_SOURCE_CHARS) return PiMermaidReply.NoArt
+        return memo.get(cacheKey(source), mode)
+    }
 
-    /**
-     * 一个 source 在一个 mode 下的答案：先看缓存，未命中才问 guest，并把**可缓存**的
-     * 答案写回去（失败由 [PiMermaidMemo] 的 `storable` 挡掉）。
-     *
-     * mode 是参数而不是调用方拼出来的东西：键里必须有它（`final` 与 `streaming` 画的
-     * 是两张不同的图），而把 mode 放进签名是让调用方**没法忘**的唯一写法。
-     */
     fun render(source: String, mode: PiMermaidMode): PiMermaidReply {
-        cached(source, mode)?.let { return it }
+        if (source.length > MAX_SOURCE_CHARS) return PiMermaidReply.NoArt
+        val key = cacheKey(source)
+        memo.get(key, mode)?.let { return it }
         val answer = try {
             PiNodeCodeHighlighter.attached()?.mermaid(source) ?: PiMermaidReply.Unavailable
         } catch (error: Throwable) {
@@ -109,9 +107,25 @@ internal object PiNodeMermaidRenderer {
             // class contract above.
             PiMermaidReply.Unavailable
         }
-        memo.put(source, mode, answer)
+        memo.put(key, mode, answer)
         return answer
     }
+
+    /** Hash long Mermaid sources so giant inputs cannot pin unbounded RAM in cache keys. */
+    private fun cacheKey(source: String): String {
+        if (source.length <= 256) return source
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val digest = md.digest(source.toByteArray(Charsets.UTF_8))
+        return buildString(64) {
+            for (b in digest) {
+                val v = b.toInt() and 0xFF
+                append("0123456789abcdef"[v ushr 4])
+                append("0123456789abcdef"[v and 0x0F])
+            }
+        }
+    }
+
+    private const val MAX_SOURCE_CHARS = 64 * 1024
 
     /** 清空 Mermaid 渲染缓存（内存紧张时调用）。 */
     fun clear() {

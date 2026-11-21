@@ -348,11 +348,16 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     const provider = getAutocompleteChain();
     if (!provider) return { prefix: "", items: [] };
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), AUTOCOMPLETE_TIMEOUT_MS);
+    let timer;
     try {
       const result = await Promise.race([
         Promise.resolve(provider.getSuggestions(lines, cursorLine, cursorCol, { signal: ac.signal, force: Boolean(force) })),
-        new Promise((resolve) => setTimeout(() => resolve("timeout"), AUTOCOMPLETE_TIMEOUT_MS)),
+        new Promise((resolve) => {
+          timer = setTimeout(() => {
+            ac.abort();
+            resolve("timeout");
+          }, AUTOCOMPLETE_TIMEOUT_MS);
+        }),
       ]);
       if (result === "timeout") return { prefix: "", items: [], error: "补全超时" };
       if (!result || !Array.isArray(result.items)) return { prefix: "", items: [] };
@@ -408,6 +413,7 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
       surfaces.closeAll();
       hub.cancelAllAsks();
       state.statuses.clear();
+      branchListeners.clear();
       activeFooterData?.clearExtensionStatuses?.();
       state.terminalInputHandlers.clear();
       state.autocompleteProviders.length = 0;

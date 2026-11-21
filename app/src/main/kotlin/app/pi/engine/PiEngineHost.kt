@@ -550,6 +550,12 @@ class PiEngineHost(private val appContext: Context) {
             // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。与 APK 版本 + 运行时 revision 对账，
             //     版本未变且入口存在时跳过全目录 60+ 次 AssetManager / 磁盘比对。
             lastSdkHostInstall = installSdkHost(revision)
+            if (lastSdkHostInstall != null && !File(paths.rootfs, "${SdkHostLaunch.GUEST_DIR.removePrefix("/")}/main.mjs").isFile) {
+                return@withContext Boot.Failed("sdk-host 安装失败", lastSdkHostInstall)
+            }
+
+            // Background maintenance: sweep stale `proot-*` scratch dirs in PROOT_TMP_DIR.
+            scope.launch { runCatching { paths.sweepStaleProotTmp() } }
 
             // 4. Spawn pi inside the guest.
             val workspace = workspaceProvider()
@@ -574,7 +580,6 @@ class PiEngineHost(private val appContext: Context) {
                     "\n打包运行时需要包含 pi 引擎（tools/fetch-runtime.mjs）",
             )
             val entry = chosen.first
-            val cli = chosen.second
             // Recorded here rather than threaded through `Boot.Ready`/`Restart.Ok`: it is a
             // property of *this host's* last launch, and the diagnostic report asks for it
             // while the engine is running (not only at the exit it captures). Written before
@@ -673,7 +678,7 @@ class PiEngineHost(private val appContext: Context) {
             // reaped at all — proroot rejects `--kill-on-exit` and
             // `PiEngineSession.close()` only destroys the direct child, so every stop
             // would leave `bash` and a Node engine behind.
-            val engineHandle = firstPlan.armHandle(paths)
+            var engineHandle = firstPlan.armHandle(paths)
             val first = runCatching {
                 PiEngineSession.spawn(
                     argv = firstPlan.argv,
@@ -682,21 +687,13 @@ class PiEngineHost(private val appContext: Context) {
                     scope = scope,
                 )
             }
-            // Fallback layer ②: proroot could not even start the process. The gate
-            // has already proven that proroot *can* run a guest here, so this is a
-            // genuinely new failure — count it, and bring the engine up on proot
-            // rather than failing the boot. `spawn` throwing means the process never
-            // existed, which is the only engine-side failure this layer can attribute
-            // without reading `PiEngineSession`'s internals (deliberately out of scope).
-            //
-            // Kept rather than only logged: this is the one proroot failure that still
-            // produces a `Boot.Failed`, and the autopsy below is what turns it into
-            // evidence a user can read (`lastProrootForensics`).
             var prorootSpawnError: Throwable? = null
             var actualEngine = firstPlan.engine
             val spawned = first.recoverCatching { error ->
                 if (!firstPlan.usingExperimental) throw error
                 prorootSpawnError = error
+                // Clear handle on fallback to proot so we never stall 1.5 s polling for a dead launcher PID.
+                engineHandle = null
                 selection.recordEngineFailure("${error::class.java.simpleName}: ${error.message}")
                 val retry = selection.plan(
                     guestCommand = guestCommand,
@@ -721,66 +718,43 @@ class PiEngineHost(private val appContext: Context) {
                     if (firstPlan.usingExperimental && actualEngine == firstPlan.engine) {
                         selection.recordEngineSuccess()
                     }
-                    // The engine's own record-level problems (an event the flow could
-                    // not deliver, a transcript fold that threw) are counted inside the
-                    // session and read back by the diagnostic report; this is where they
-                    // also reach logcat. `PiEngineSession` is deliberately Android-free
-                    // (no `android.util.Log`), so the host owns the line — and the
-                    // session rate-limits the overflow case, which arrives as a burst.
                     session.onRecordProblem = { message -> Log.w(TAG, message) }
-                    engineHandle?.resolveLauncherPid()
-                    engineLaunch = engineHandle
-                    if (engineHandle?.launcherPid != null) {
-                        // The engine can also end **without** anyone asking: pi exits on
-                        // its own (`Stopped`) or dies (`Failed`). `state` is the session's
-                        // own published flow, so this needs nothing from
-                        // `PiEngineSession`'s internals, and `first` releases the
-                        // collector as soon as it fires.
-                        scope.launch {
-                            val end = session.state.first {
-                                it == PiEngineSession.EngineState.Stopped ||
-                                    it == PiEngineSession.EngineState.Failed
-                            }
-                            // Best effort, and honestly so: by the time the session
-                            // publishes `Stopped` the launcher has usually exited, and a
-                            // dead launcher's children can no longer be identified as
-                            // ours. When the capture comes back empty the log says so —
-                            // `docs/known-gaps.md` §N2 records the residual case. The
-                            // capture stays **before** the autopsy for that reason.
-                            //
-                            // A proroot engine that ends with 126/127 never ran the guest
-                            // command: the number is the whole failure, and it is the one
-                            // shape the boot-time `Boot.Failed` cannot carry (the boot had
-                            // already returned `Ready`). This is where it becomes evidence —
-                            // bounded, after the fact, never on a healthy start
-                            // (`autopsyProrootFailure`).
-                            val tree = captureEngineTree(engineHandle)
-                            reapEngineTree(tree, engineHandle, "引擎自行结束（$end）")
+                    // O(1) direct PID fast path from Process; never stalls 1.5 s on fast-exiting launches.
+                    val handleForSession = engineHandle
+                    handleForSession?.resolveLauncherPid(process = session.rawProcess)
+                    engineLaunch = handleForSession
+                    exitWatcherJob?.cancel()
+                    exitWatcherJob = scope.launch {
+                        val end = session.state.first {
+                            it == PiEngineSession.EngineState.Stopped ||
+                                it == PiEngineSession.EngineState.Failed
+                        }
+                        if (end == PiEngineSession.EngineState.Failed) {
+                            app.pi.runtime.PiCrashStore.recordEngineExit(
+                                paths = paths,
+                                engineName = actualEngine.name,
+                                exitCode = session.lastExitCode,
+                                state = end.name,
+                                stderrTail = session.stderrSnapshot(),
+                            )
+                        }
+                        if (handleForSession?.launcherPid != null && engineLaunch === handleForSession) {
+                            val tree = captureEngineTree(handleForSession)
+                            reapEngineTree(tree, handleForSession, "引擎自行结束（$end）")
                             if (session.lastExitCode?.let { ProrootExecProbe.isLaunchFailure(it) } == true) {
                                 autopsyProrootFailure(
                                     selection = selection,
                                     storage = android.os.Environment.getExternalStorageDirectory(),
                                     exitCode = session.lastExitCode,
-                                    launcherSource = session.stderr.toString(),
+                                    launcherSource = session.stderrSnapshot(),
                                     cwd = guestWorkspace,
                                     extraBinds = extraBinds,
                                 )
                             }
-                            if (engineLaunch === engineHandle) engineLaunch = null
+                            if (engineLaunch === handleForSession) engineLaunch = null
                         }
                     }
-                    // A boot that succeeds while an engine is already attached must not
-                    // leave the old process alive: two pi processes on one cwd would both
-                    // append to the same session file and both hold the same settings.
                     publish(session)
-                    // Spawned is not the same as serving, and the difference is what the
-                    // user sees as "发消息不回复": pi does not read its stdin until its
-                    // startup is over. Ask it a question so `PiEngineSession.state` can
-                    // leave `Starting` on evidence instead of on the process existing
-                    // (docs/known-gaps.md §M1). Deliberately not awaited here — the
-                    // caller gets the session now and the UI reports 启动中 until the
-                    // answer arrives, which is also what lets a first message be typed
-                    // during the wait instead of being rejected.
                     session.startHost(launch.toOpenArgs(sessionDir = "$guestAgentDir/sessions"))
                     Boot.Ready(session)
                 },
@@ -883,24 +857,14 @@ class PiEngineHost(private val appContext: Context) {
         }
 
         if (current != null) {
-            // `closeAfterSettling`, not `close`: `allowInterrupt` is the caller
-            // accepting that this restart stops a running turn, and pi only writes
-            // the turn it is in when that turn ends — `close()` shuts stdin and pi
-            // exits on a closed stdin without waiting for the agent, so a hard close
-            // here would drop the turn from the conversation on disk.
-            // `PiEngineSession.closeAfterSettling` carries the file:line chain.
-            // Captured while the old engine is still alive; see `captureEngineTree`.
+            // Cancel auto-exit watcher BEFORE closing so restart() and watcher cannot double-reap.
+            exitWatcherJob?.cancel()
+            exitWatcherJob = null
             val previousLaunch = engineLaunch
             val previousTree = captureEngineTree(previousLaunch)
             runCatching { current.closeAfterSettling() }
-            // The old engine's guest tree is this app's to stop (proroot has no
-            // `--kill-on-exit`). Doing it here — after the session settled, before the new
-            // engine exists — is what keeps a restart from leaving one orphaned Node
-            // engine per attempt.
             reapEngineTree(previousTree, previousLaunch, "引擎重启（$reason）")
             engineLaunch = null
-            // Publish null *before* the new engine exists, so a UI collecting the
-            // flow shows "restarting" instead of holding the dead object.
             _session.value = null
         }
 
@@ -930,8 +894,8 @@ class PiEngineHost(private val appContext: Context) {
      */
     suspend fun shutdown(): Boolean = lifecycleLock.withLock {
         val current = _session.value ?: return@withLock false
-        // Same as `restart`, and for the same reason the capture comes first: the settle
-        // ends in `process.destroy()`, which destroys the edges the tree is found by.
+        exitWatcherJob?.cancel()
+        exitWatcherJob = null
         val launch = engineLaunch
         val tree = captureEngineTree(launch)
         runCatching { current.closeAfterSettling() }
@@ -1071,10 +1035,20 @@ class PiEngineHost(private val appContext: Context) {
      * an empty string: `BootAudit.shouldRecord` treats an unreadable value as "record",
      * so a device that cannot answer still gets its line.
      */
-    private fun apkStamp(): String = runCatching {
-        val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-        "${info.lastUpdateTime}-${info.versionCode}"
-    }.getOrElse { error -> "读不到：${error::class.java.simpleName}" }
+    @Volatile
+    private var exitWatcherJob: kotlinx.coroutines.Job? = null
+
+    @Volatile
+    private var cachedApkStamp: String? = null
+
+    private fun apkStamp(): String {
+        cachedApkStamp?.let { return it }
+        return runCatching {
+            val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            val versionCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)
+            "${info.lastUpdateTime}-$versionCode".also { cachedApkStamp = it }
+        }.getOrElse { error -> "读不到：${error::class.java.simpleName}" }
+    }
 
     /**
      * The per-payload digests currently recorded in `<files>/pi/runtime/.payloads`, as

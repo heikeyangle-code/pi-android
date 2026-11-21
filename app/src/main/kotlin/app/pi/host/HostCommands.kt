@@ -81,8 +81,8 @@ class HostCommands(
 ) {
     // ---- host ----
 
-    suspend fun hello(): HostHello {
-        val d = client.callObject("host.hello")
+    suspend fun hello(timeoutMs: Long? = null): HostHello {
+        val d = client.callObject("host.hello", timeoutMs = timeoutMs)
         return HostHello(
             protocol = d.long("protocol")?.toInt() ?: 0,
             engine = d.str("engine") ?: "coding-agent",
@@ -93,7 +93,7 @@ class HostCommands(
     }
 
     suspend fun ping(): JsonObject = client.callObject("host.ping")
-    suspend fun shutdown() { client.call("host.shutdown") }
+    suspend fun shutdown(timeoutMs: Long = 3_000L) { client.call("host.shutdown", timeoutMs = timeoutMs) }
 
     // ---- session ----
 

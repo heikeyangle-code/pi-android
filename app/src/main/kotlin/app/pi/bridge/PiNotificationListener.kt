@@ -31,11 +31,13 @@ private const val EVENT_REPLY_FAILED = "reply_failed"
 private const val EVENT_DISMISSED = "dismissed"
 private const val EVENT_SNOOZED = "snoozed"
 
+private val WHITESPACE_REGEX = Regex("\\s+")
+
 /** 空白折叠 + 截断。通知正文经常是整段文字，入缓冲前先压成一行。 */
 private fun clipText(raw: CharSequence?, max: Int = 200): String {
     val value = raw?.toString()?.trim().orEmpty()
     if (value.isEmpty()) return ""
-    val collapsed = value.replace(Regex("\\s+"), " ")
+    val collapsed = value.replace(WHITESPACE_REGEX, " ")
     return if (collapsed.length <= max) collapsed else collapsed.substring(0, max) + "…"
 }
 
@@ -84,10 +86,12 @@ class PiNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         if (instance === this) instance = null
+        synchronized(lock) { live.clear() }
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        synchronized(lock) { live.clear() }
         super.onDestroy()
     }
 

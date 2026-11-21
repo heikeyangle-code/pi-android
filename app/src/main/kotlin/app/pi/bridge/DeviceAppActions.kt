@@ -68,7 +68,9 @@ object DeviceAppActions {
         }
 
         val byUid = runCatching {
-            manager.getInstalledApplications(PackageManager.GET_META_DATA)
+            // Flag 0: we never read ApplicationInfo.metaData; GET_META_DATA inflates Binder parcels
+            // and can trigger TransactionTooLargeException on devices with many apps.
+            manager.getInstalledApplications(0)
         }.getOrNull().orEmpty()
 
         // `getInstalledApplications` 在某些 ROM / 构建上只返回调用者自己。实测这台 HyperOS +
@@ -102,8 +104,8 @@ object DeviceAppActions {
         val array = JSONArray()
         var matched = 0
         var withLaunchIntent = 0
-        val packages = all.sortedBy { it.packageName }
-        for (info in packages) {
+        // `all` is already sorted by packageName inside installedApplications().
+        for (info in all) {
             val system = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             if (!includeSystem && system) continue
             val label = runCatching { manager.getApplicationLabel(info).toString() }.getOrDefault(info.packageName)

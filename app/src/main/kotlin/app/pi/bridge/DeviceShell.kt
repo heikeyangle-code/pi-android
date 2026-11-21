@@ -122,33 +122,24 @@ object AppUidShellBackend : DeviceShellBackend {
         if (!finished) {
             process.destroy()
             if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
+            runCatching { process.inputStream.close() }
+            runCatching { process.errorStream.close() }
         }
         outReader.join(500)
         errReader.join(500)
 
         return DeviceShellResult(
-            stdout = stdout.toString(),
-            stderr = stderr.toString(),
+            stdout = synchronized(stdout) { stdout.toString() },
+            stderr = synchronized(stderr) { stderr.toString() },
             exitCode = if (finished) process.exitValue() else -1,
             backend = id,
             uid = Process.myUid(),
-            // No `truncated = …` argument: both per-stream flags are derived on
-            // `DeviceShellResult` from the strings and the shared cap, so this backend
-            // and the Shizuku one cannot state it differently again.
             timedOut = !finished,
         )
     }
 
     /** See [MAX_OUTPUT_BYTES]: shared with the Shizuku backend, one definition. */
     internal fun readCapped(stream: java.io.InputStream, into: StringBuilder) {
-        // **One decoder for the whole stream, not one per read.** Decoding each 8 KiB
-        // buffer on its own splits any multi-byte character that straddles a read
-        // boundary into two malformed halves, and a `REPLACE` decoder turns each half
-        // into U+FFFD — so Chinese output (three bytes per character, and this bridge's
-        // usual input on a Chinese device) came back with replacement characters at
-        // 8192-byte intervals. `Utf8StreamDecoder` carries the partial sequence into the
-        // next read, and `flush()` closes the last one; it is the class the engine's own
-        // stdout pump uses for exactly this reason (`PiEngineSession.kt:448`).
         val decoder = app.pi.protocol.Utf8StreamDecoder()
         stream.use { input ->
             val buffer = ByteArray(8192)
@@ -159,12 +150,20 @@ object AppUidShellBackend : DeviceShellBackend {
                     -1
                 }
                 if (read <= 0) break
-                if (into.length < MAX_OUTPUT_BYTES) {
-                    into.append(decoder.decode(buffer, read))
+                val decoded = decoder.decode(buffer, read)
+                synchronized(into) {
+                    if (into.length < MAX_OUTPUT_BYTES) {
+                        into.append(decoded)
+                    }
                 }
             }
         }
-        if (into.length < MAX_OUTPUT_BYTES) into.append(decoder.flush())
+        val tail = decoder.flush()
+        if (tail.isNotEmpty()) {
+            synchronized(into) {
+                if (into.length < MAX_OUTPUT_BYTES) into.append(tail)
+            }
+        }
     }
 }
 

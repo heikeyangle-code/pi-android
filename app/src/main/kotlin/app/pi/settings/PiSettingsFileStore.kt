@@ -230,19 +230,27 @@ class PiSettingsFileStore(
 
     private fun writeDocument(file: File, document: JsonObject): Boolean = runCatching {
         file.parentFile?.mkdirs()
-        // Unique per call, not per process: two writers used to share `<name>.tmp-<pid>` and
-        // could interleave into the same temp file before either renamed it
-        // (`docs/settings-audit-impl.md` §B3). `android.os.Process.myPid()` is gone with it,
-        // which is also what lets this file compile in the bare-JVM harness.
-        val temp = File(file.parentFile, "${file.name}.tmp-${TEMP_SEQUENCE.incrementAndGet()}")
-        temp.writeText(document.toString())
-        runCatching { Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-            .onFailure {
-                // Cross-device rename can fail; fall back to a copy.
-                file.writeText(document.toString())
-                temp.delete()
+        val temp = File(file.parentFile, "${file.name}.tmp-${System.nanoTime()}-${TEMP_SEQUENCE.incrementAndGet()}")
+        try {
+            java.io.FileOutputStream(temp).use { out ->
+                out.write(document.toString().toByteArray(Charsets.UTF_8))
+                out.flush()
+                runCatching { out.fd.sync() }
             }
-        true
+            try {
+                Files.move(
+                    temp.toPath(),
+                    file.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            true
+        } finally {
+            runCatching { if (temp.exists()) temp.delete() }
+        }
     }.getOrDefault(false)
 
     // ------------------------------------------------------------------ helpers
@@ -355,9 +363,17 @@ class PiSettingsFileStore(
          */
         private const val STAMP_CHECK_INTERVAL_MS = 250L
 
-        private val DOCUMENTS = LinkedHashMap<String, Document>()
+        private const val MAX_CACHED_STORES = 64
 
-        private val INSTANCES = LinkedHashMap<String, PiSettingsFileStore>()
+        private val DOCUMENTS = object : LinkedHashMap<String, Document>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Document>?): Boolean =
+                size > MAX_CACHED_STORES
+        }
+
+        private val INSTANCES = object : LinkedHashMap<String, PiSettingsFileStore>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PiSettingsFileStore>?): Boolean =
+                size > MAX_CACHED_STORES
+        }
 
         /** The one [Document] for [file]'s canonical path, shared by every instance. */
         private fun documentFor(file: File): Document = synchronized(DOCUMENTS) {

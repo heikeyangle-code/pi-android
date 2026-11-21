@@ -1642,7 +1642,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (PiEngineLifecyclePolicy.shouldServiceRun(keepAlive, engineAttached, bootInProgress, turnRunning())) {
             return
         }
-        PiEngineService.stopIfRunning()
+        // Only dismiss the foreground service & WakeLock; do NOT tear down a live engine!
+        PiEngineService.stopServiceOnly()
     }
 
     /** 与 [reportWakeLockNeed] 同一组输入：引擎在忙、正在流式、或有一个工具在跑。 */
@@ -2721,38 +2722,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     // only evidence the failure leaves behind. `DiagnosticsReport`
                     // renders them; nothing else can still read them once this
                     // function returns.
+                    val capturedStderr = engine.stderrSnapshot()
                     lastEngineExit = EngineDiagnostics(
                         state = engineState.name,
                         exitCode = engine.lastExitCode,
-                        // The engine's own last words. Without this the failure screen
-                        // said "引擎异常退出" and the report said the exit code was not
-                        // recorded — for the one failure both exist to explain.
-                        stderr = engine.stderr.toString().ifBlank { null },
+                        stderr = capturedStderr.ifBlank { null },
                         startupMs = PiEngineSession.lastServingMs,
-                        // The reader-thread losses: an event the engine's flow could not
-                        // hand to this ViewModel, or a transcript fold that threw. Both
-                        // used to be invisible; a non-zero count here is what turns
-                        // "引擎好像没回话" into a number and a sentence.
                         droppedEvents = engine.droppedEvents,
                         reducerFailures = engine.reducerFailures,
                         lastRecordProblem = engine.lastRecordProblem,
                     )
-                    // The dead engine can never deliver the `bash` response that would
-                    // have replaced this accumulation, and the panel is dropped just
-                    // below — so the builder goes with it.
                     bashStream.setLength(0)
                     lastBashPublishAt = 0L
                     bashStreamTrimmed = false
-                    // 中途退出不是"运行环境没准备好"。这两件事以前共用一屏，于是一次
-                    // 被系统杀掉（客人里跑 `npm run build` 时最容易被 LMK 收走）就把整屏
-                    // 对话换成失败页，还配一个会删掉 guest 里所有安装物的「重建运行时」。
-                    // 先静默重启（有上限），连续失败才让用户看到那一屏，而且不给重建按钮。
                     val crashedMidSession = !engineTransition
                     val recovery = if (crashedMidSession) {
                         EngineCrashRecovery.decide(
                             attempts = autoEngineRestarts,
                             exitCode = engine.lastExitCode,
-                            stderr = engine.stderr.toString(),
+                            stderr = capturedStderr,
                         )
                     } else {
                         EngineCrashRecovery.Decision.GiveUp
@@ -2761,30 +2749,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
-                        // The engine is gone, so nothing can still be streaming —
-                        // and this flag is one of the inputs to `reportWakeLockNeed`,
-                        // so leaving it true would keep the CPU wake lock held for a
-                        // turn that no longer exists.
                         streaming = false,
                         boot = if (autoRestarting) {
-                            // 对话留在屏幕上：这次死亡不打断用户。失败页只留给
-                            // "重启也修不好"的那种退出。
                             _state.value.boot
                         } else Boot.Failed(
-                            // 真实原因：退出码 + stderr 决定这是"被系统结束"、"内存耗尽"、
-                            // "参数/扩展错"还是普通崩溃。四类的标题、解释、是否给
-                            // 「重建运行时」都不同（`EngineFailureClassify`）。
-                            //
-                            // 第三个实参是 `app.extensions.args`：唯一由用户自由输入的启动
-                            // 输入，也是 App 开始转发它之后 `Unknown option` 最常见的来源。
-                            // 它经与启动同一个 sidecar 读取（`ExtensionArgsStore`）—— 只有
-                            // 这一层拥有存储。
                             EngineFailureClassify.exit(
                                 exitCode = engine.lastExitCode,
-                                stderr = engine.stderr.toString(),
+                                stderr = capturedStderr,
                                 detail = EngineExitCause.detail(
                                     engine.lastExitCode,
-                                    engine.stderr.toString(),
+                                    capturedStderr,
                                     extensionArgsStore.read(),
                                 ),
                             ),
@@ -6428,12 +6402,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * **交付句柄**收尾（[ExportedSession]）。一份都没写出来时说没写出来。
      */
     fun exportSession(fileName: String? = null) {
-        val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
+        val raw = fileName?.trim()?.takeIf { it.isNotEmpty() }
+        val name = raw?.let { sanitizeExportFileName(it) }
+        if (raw != null && name == null) {
+            pushNotice(
+                tr("导出文件名非法（不允许包含路径分隔符或 ..）。", "Invalid export filename (path separators and '..' are not allowed)."),
+                Notice.Tone.Warning,
+            )
+            return
+        }
         when {
             name != null && SessionExportNaming.isJsonl(name) -> exportJsonlOnly(name)
             name != null -> exportHtmlOnly(name)
             else -> exportBoth()
         }
+    }
+
+    /** Restrict export file names to a single safe basename inside the workspace directory. */
+    private fun sanitizeExportFileName(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() || trimmed == "." || trimmed == "..") return null
+        if (trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\u0000') || trimmed.contains("..")) {
+            return null
+        }
+        return trimmed
     }
 
     /** `/export <path>` 的 HTML 分支（pi 的分派）。 */
@@ -6494,9 +6486,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun exportedSessionFile(name: String? = null): ExportedFile? {
         val source = hostSessionFile(_state.value.meta.sessionFile) ?: return null
-        val target = File(defaultWorkspace(), name ?: source.name)
+        val safeName = if (name != null) sanitizeExportFileName(name) ?: return null else source.name
+        val base = defaultWorkspace()
+        val target = File(base, safeName)
         val copied = withContext(Dispatchers.IO) {
             runCatching {
+                val baseCanon = base.canonicalFile.toPath()
+                val targetCanon = target.canonicalFile.toPath()
+                if (!targetCanon.startsWith(baseCanon) || targetCanon == baseCanon) return@runCatching null
                 target.parentFile?.mkdirs()
                 source.copyTo(target, overwrite = true)
             }.getOrNull()?.takeIf { it.isFile }
@@ -6853,9 +6850,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // while the next ViewModel (a relaunch) boots a new engine on the same session
         // file (`PiEngineHost.PROCESS_LOCK`). The service is stopped after the settle,
         // so a backgrounded app does not keep a notification claiming 「PI 正在运行」.
+        val myGen = viewModelGeneration
         teardownScope.launch {
-            host.shutdown()
-            PiEngineService.stopIfRunning()
+            // Only shut down the process-wide engine/service if a newer ViewModel has not already
+            // replaced this one during Activity recreation.
+            if (activeViewModelGeneration.get() == myGen) {
+                host.shutdown()
+                if (activeViewModelGeneration.get() == myGen) {
+                    PiEngineService.stopServiceOnly()
+                }
+            }
         }
         super.onCleared()
     }
@@ -6880,14 +6884,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var sessionOpenGeneration = 0L
 
     private fun guestSessionPath(file: File): String? {
-        val sessionsRoot = File(host.paths().agentDir, "sessions").absolutePath
-        val path = file.absolutePath
-        if (!path.startsWith(sessionsRoot)) return null
+        val sessionsRoot = runCatching { File(host.paths().agentDir, "sessions").canonicalPath }.getOrNull() ?: return null
+        val path = runCatching { file.canonicalPath }.getOrNull() ?: return null
+        if (path != sessionsRoot && !path.startsWith(sessionsRoot + File.separator)) return null
         val relative = path.removePrefix(sessionsRoot).trimStart('/')
         return "${host.guestAgentDir}/sessions/$relative"
     }
 
+    private val viewModelGeneration: Long = activeViewModelGeneration.incrementAndGet()
+
     private companion object {
+        private val activeViewModelGeneration = java.util.concurrent.atomic.AtomicLong(0L)
         /**
          * 「启动续接最近会话」那一行的键。默认值不在这里 —— 它在注册表那一行
          * （`PiSettingsCatalog`，`defaultValue = bool(true)`），这里只放键名，免得两处各写一遍。

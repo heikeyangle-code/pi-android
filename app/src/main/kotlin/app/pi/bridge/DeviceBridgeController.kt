@@ -124,6 +124,7 @@ object DeviceBridgeController {
      *
      * @return a short human-readable status, also used by the diagnostics screen.
      */
+    @Synchronized
     fun start(context: Context): String {
         val appContext = context.applicationContext
         stop()
@@ -173,6 +174,7 @@ object DeviceBridgeController {
         }
     }
 
+    @Synchronized
     fun stop() {
         server?.stop()
         server = null
@@ -241,10 +243,7 @@ object DeviceBridgeController {
 
         val written = mutableListOf<String>()
         for (target in targets) {
-            runCatching {
-                target.parentFile?.mkdirs()
-                target.writeText(payload)
-                restrictToOwner(target)
+            if (app.pi.packages.PiConfigFiles.write(target, payload, mode600 = true)) {
                 written.add(target.absolutePath)
             }
         }
@@ -284,16 +283,21 @@ object DeviceBridgeController {
             filesDir = context.filesDir,
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
-        val roots = mutableListOf(File(paths.agentDir, "extensions"))
-        if (paths.rootfs.isDirectory) {
-            roots.add(File(paths.rootfs, "root/.pi/agent/extensions"))
-        }
+        val roots = linkedMapOf<String, File>().apply {
+            val agentExt = File(paths.agentDir, "extensions")
+            put(runCatching { agentExt.canonicalPath }.getOrDefault(agentExt.absolutePath), agentExt)
+            if (paths.rootfs.isDirectory) {
+                val rootfsExt = File(paths.rootfs, "root/.pi/agent/extensions")
+                put(runCatching { rootfsExt.canonicalPath }.getOrDefault(rootfsExt.absolutePath), rootfsExt)
+            }
+        }.values.toList()
         return try {
             // 快路径：同一 APK 安装（lastUpdateTime + versionCode 未变）且所有目标目录已存在校验戳时，
             // 直接跳过 20+ 次 AssetManager 递归列举与 SHA-256 哈希，显著加快冷启动。
             val apkStamp = runCatching {
                 val info = context.packageManager.getPackageInfo(context.packageName, 0)
-                "${info.lastUpdateTime}-${info.versionCode}"
+                val code = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)
+                "${info.lastUpdateTime}-$code"
             }.getOrNull()
             if (apkStamp != null && roots.all { root ->
                     val apkMarker = File(root, ".pi-android-apk-stamp")

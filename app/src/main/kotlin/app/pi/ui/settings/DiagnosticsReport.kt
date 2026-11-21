@@ -12,6 +12,7 @@ import app.pi.runtime.BootAudit
 import app.pi.runtime.DurableLayout
 import app.pi.runtime.GuestEngine
 import app.pi.runtime.GuestToolProbe
+import app.pi.runtime.PiCrashStore
 import app.pi.runtime.PiPaths
 import app.pi.runtime.ProrootConfigSweep
 import app.pi.runtime.ProrootProbeNarrative
@@ -579,6 +580,26 @@ object DiagnosticsReport {
                 appendLine(tr("（App 目前没有记录到失败或错误）", "(no failures or errors recorded)"))
             } else {
                 failures.forEach { appendLine("- $it") }
+            }
+
+            // Durable cross-process crash / exit telemetry (persisted under <files>/pi/persist/).
+            val persistedExit = PiCrashStore.readLastEngineExit(paths)
+            if (engine == null && !persistedExit.isNullOrBlank()) {
+                appendLine()
+                appendLine(tr("── 上次引擎异常退出记录（持久化）──", "-- Persisted Last Engine Exit --"))
+                appendLine(persistedExit)
+            }
+            val exitReasons = PiCrashStore.readHistoricalExitReasons(context)
+            if (exitReasons.isNotEmpty()) {
+                appendLine()
+                appendLine(tr("── 系统进程退出记录（ApplicationExitInfo）──", "-- System Process Exit Reasons (ApplicationExitInfo) --"))
+                exitReasons.forEach { appendLine("- $it") }
+            }
+            val crashLog = PiCrashStore.readCrashLog(paths)
+            if (!crashLog.isNullOrBlank()) {
+                appendLine()
+                appendLine(tr("── Android 未捕获崩溃日志 ──", "-- Android Uncaught Crash Log --"))
+                appendLine(crashLog)
             }
         }
 

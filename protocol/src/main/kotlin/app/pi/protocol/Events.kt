@@ -474,7 +474,13 @@ object PiEvents {
         } catch (t: Throwable) {
             return PiEvent.Unknown("__unparsable__", JsonObject(emptyMap()))
         } ?: return PiEvent.Unknown("__unparsable__", JsonObject(emptyMap()))
+        return parse(obj)
+    }
 
+    /**
+     * Parse an already-decoded [JsonObject] without re-serializing or re-parsing JSON. Never throws.
+     */
+    fun parse(obj: JsonObject): PiEvent {
         val type = obj.str("type") ?: return PiEvent.Unknown("", obj)
         return try {
             dispatch(type, obj)

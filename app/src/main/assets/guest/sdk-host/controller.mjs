@@ -372,10 +372,11 @@ export class Controller {
 
     this.#bind({ background: true }); // 同步段：订阅 + epoch；扩展绑定在后台
     const startupDiagnostics = this.#takeUnreportedDiagnostics();
-    setImmediate(() => {
-      this.pushState("open"); // 应答先出去，状态紧随其后
-      this.#emitDiagnostics(startupDiagnostics);
-    });
+    if (startupDiagnostics.length > 0) {
+      setImmediate(() => {
+        this.#emitDiagnostics(startupDiagnostics);
+      });
+    }
 
     const session = this.session;
     const initialState = snapshotOf(this);
@@ -539,9 +540,10 @@ export class Controller {
       if (event.type === "agent_settled" && this.shutdownRequested) void this.shutdown(0);
     });
     // 事件产生得比管道消化得快时，让 agent 停一停，而不是在内存里堆帧。
-    this.unsubscribeBackpressure = session.agent.subscribe(async () => {
-      await this.transport.drained();
-    });
+    // 同步快路径：低水位时不分配 Promise，消除高频 token 下的额外微任务。
+    this.unsubscribeBackpressure = session.agent.subscribe(() =>
+      this.transport.isBackpressured() ? this.transport.drained() : undefined,
+    );
 
     const bindings = {
       uiContext: this.ui.context,

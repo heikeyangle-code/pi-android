@@ -447,21 +447,16 @@ object ProrootProbe {
             .redirectErrorStream(true)
             .also { it.environment().putAll(env) }
             .start()
-        handle?.resolveLauncherPid()
+        handle?.resolveLauncherPid(process = process)
         val finished = runCatching { process.waitFor(timeoutMs, TimeUnit.MILLISECONDS) }.getOrDefault(false)
         if (!finished) {
-            // Hand over the tree **before** killing the direct child: it is only reachable
-            // through its parent/child edges, and `destroyForcibly()` reparents the children to
-            // init. The callee captures it (the start time recorded at resolve time makes a
-            // recycled pid safe to reject) and reaps it after the kill.
+            // Non-blocking drain BEFORE killing so a surviving grandchild cannot block `readBounded` forever.
+            val partial = drainProcessAvailable(process.inputStream, maxChars, 300L).take(maxChars)
             runCatching { onTimeoutTree(handle?.launcherPid, handle?.launcherStartTime) }
             process.destroyForcibly()
+            runCatching { process.inputStream.close() }
+            runCatching { process.outputStream.close() }
             runCatching { handle?.deleteConfig() }
-            val partial = readBounded(process, maxChars)
-            // The timeout is reported in the raw probe's marker vocabulary on purpose:
-            // `ProrootRawProbe.parse` already knows how to render it, `ProrootExecProbe.parse`
-            // reads the same line, and every stage therefore reports "the runtime did not
-            // return" with one spelling (`ProrootRawProbe.TIMEOUT_MARKER`).
             return partial + "\n" + ProrootRawProbe.TIMEOUT_MARKER + "\t" +
                 "proroot 探针 ${timeoutMs / 1000} 秒没有返回"
         }
@@ -469,7 +464,9 @@ object ProrootProbe {
         // `RuntimeSelection.sweepProrootConfigs` would do on the next enabled launch, only
         // earlier.
         runCatching { handle?.deleteConfig() }
-        return readBounded(process, maxChars)
+        val result = readBounded(process, maxChars)
+        runCatching { process.outputStream.close() }
+        return result
     }
 
     /** Read at most [maxChars] of the process's merged output, then stop reading. */

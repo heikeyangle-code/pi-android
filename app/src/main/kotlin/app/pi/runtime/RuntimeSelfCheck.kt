@@ -103,7 +103,8 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         // failure is never cached, and `RuntimeProvisioner.wipe()` removes the stamp
         // together with the tree it describes.
         val revision = paths.stampRevision()
-        if (!revision.isNullOrEmpty() && passedAtRevision(revision)) {
+        val checkKey = selfCheckKey(revision)
+        if (!checkKey.isNullOrEmpty() && passedAtKey(checkKey, revision)) {
             return@withContext Outcome(
                 Status.Ok,
                 "运行时可用（这个解包版本上次已通过自检，本次没有重复探测）",
@@ -184,12 +185,13 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
                 // surviving descendant still holds, and on this platform it closes the
                 // stream outright, which loses the diagnosis instead. [drainAvailable]
                 // asks only for bytes the kernel already has.
-                val text = drainAvailable(process.inputStream, MAX_TIMEOUT_DIAGNOSTIC_CHARS, TIMEOUT_DRAIN_MS)
+                val text = drainProcessAvailable(process.inputStream, MAX_TIMEOUT_DIAGNOSTIC_CHARS, TIMEOUT_DRAIN_MS)
                 process.destroyForcibly()
                 // Already closed by the kill on the platform measured here (reading it
                 // afterwards answers `Stream closed`); closing it again is what keeps a
                 // timeout from leaking a descriptor where the kill does not.
                 runCatching { process.inputStream.close() }
+                runCatching { process.outputStream.close() }
                 return@runCatching Outcome(
                     Status.ProotFailed,
                     "proot 启动后 60 秒没有返回——通常是 ptrace 被 SELinux 拦下，" +
@@ -251,57 +253,34 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         // mid-write would leave a short one — which reads as "no pass", so the next
         // boot spends a whole proot probe re-learning a result that had already been
         // established. A failure here is silent by design: the cost is one probe.
-        if (outcome.ok && !revision.isNullOrEmpty()) {
-            writeStampAtomically(paths.selfCheckStamp(), revision + "\n")
+        if (outcome.ok && !checkKey.isNullOrEmpty()) {
+            writeStampAtomically(paths.selfCheckStamp(), checkKey + "\n")
         }
         outcome
     }
 
     /**
-     * Whatever [stream] has **already** buffered, without waiting for end-of-file.
-     *
-     * This is what bounds the timeout branch of [run]. `available()` never blocks, so
-     * every read below asks only for bytes the kernel says are there; the only waiting
-     * is [TIMEOUT_DRAIN_POLL_MS] between polls and the whole call stops at
-     * [TIMEOUT_DRAIN_MS] whether or not the writer ever closes. A closed stream ends the
-     * drain instead of throwing out of it.
-     *
-     * @param maxChars ceiling on the returned text, so a guest that streams megabytes
-     *        cannot grow the heap for a diagnostic that is then cut to 2000 characters.
+     * Key `.selfcheck` by the components that actually determine whether proot can execute a
+     * guest binary (`ubuntu-base` digest + `libproot.so` / `libproot-loader.so` size+mtime),
+     * falling back to `revision`. Upgrading only `pi-engine.tgz` or `rg`/`fd` therefore does
+     * not pay 0.3–3 s to re-verify proot W^X execution.
      */
-    private fun drainAvailable(stream: InputStream, maxChars: Int, waitMs: Long): String {
-        val bytes = ByteArrayOutputStream()
-        val buffer = ByteArray(8 * 1024)
-        val deadline = System.nanoTime() + waitMs * 1_000_000L
-        while (bytes.size() < maxChars) {
-            val ready = try {
-                stream.available()
-            } catch (_: IOException) {
-                break
-            }
-            if (ready <= 0) {
-                if (System.nanoTime() >= deadline) break
-                runCatching { Thread.sleep(TIMEOUT_DRAIN_POLL_MS) }
-                continue
-            }
-            val want = minOf(ready, buffer.size, maxChars - bytes.size())
-            val read = try {
-                stream.read(buffer, 0, want)
-            } catch (_: IOException) {
-                break
-            }
-            if (read < 0) break
-            bytes.write(buffer, 0, read)
-        }
-        return String(bytes.toByteArray(), Charsets.UTF_8)
+    private fun selfCheckKey(revision: String?): String? {
+        val ubuntuDigest = runCatching {
+            File(paths.payloadStateDir(), "ubuntu-base.digest").takeIf { it.isFile }?.readText()?.trim()
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
+        if (ubuntuDigest == null) return revision
+        val proot = paths.prootBinary()
+        val loader = paths.prootLoader()
+        return "v2:$ubuntuDigest:${proot.length()}:${proot.lastModified()}:${loader.length()}:${loader.lastModified()}"
     }
 
-    /** Has a probe already passed at this unpacked revision? */
-    private fun passedAtRevision(revision: String): Boolean = runCatching {
-        // `revision` is `PiPaths.stampRevision()` — the **first line** of `.stamp`. This
-        // file's own format is unchanged (one line), so it is compared whole.
+    /** Has a probe already passed at this key (or legacy revision stamp)? */
+    private fun passedAtKey(key: String, legacyRevision: String?): Boolean = runCatching {
         val stamp = paths.selfCheckStamp()
-        stamp.isFile && stamp.readText().trim() == revision
+        if (!stamp.isFile) return@runCatching false
+        val saved = stamp.readText().trim()
+        saved == key || (!legacyRevision.isNullOrEmpty() && saved == legacyRevision)
     }.getOrDefault(false)
 
     private fun looksLikeExecDenial(stderr: String): Boolean {
@@ -361,4 +340,40 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
          */
         const val MAX_TIMEOUT_DIAGNOSTIC_CHARS: Int = 64 * 1024
     }
+}
+
+/**
+ * Non-blocking bounded drain of bytes already buffered in a process stdout/stderr stream.
+ * Safe to call on timeout before `destroyForcibly()` — unlike `readText()`, never hangs forever
+ * if a surviving grandchild keeps the pipe write-end open.
+ */
+internal fun drainProcessAvailable(
+    stream: InputStream,
+    maxBytes: Int = 64 * 1024,
+    waitMs: Long = 500L,
+): String {
+    val bytes = ByteArrayOutputStream()
+    val buffer = ByteArray(8 * 1024)
+    val deadline = System.nanoTime() + waitMs * 1_000_000L
+    while (bytes.size() < maxBytes) {
+        val ready = try {
+            stream.available()
+        } catch (_: IOException) {
+            break
+        }
+        if (ready <= 0) {
+            if (System.nanoTime() >= deadline) break
+            runCatching { Thread.sleep(25L) }
+            continue
+        }
+        val want = minOf(ready, buffer.size, maxBytes - bytes.size())
+        val read = try {
+            stream.read(buffer, 0, want)
+        } catch (_: IOException) {
+            break
+        }
+        if (read < 0) break
+        bytes.write(buffer, 0, read)
+    }
+    return String(bytes.toByteArray(), Charsets.UTF_8)
 }

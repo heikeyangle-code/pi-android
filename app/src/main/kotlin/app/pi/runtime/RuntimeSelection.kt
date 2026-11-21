@@ -68,9 +68,6 @@ class RuntimeSelection(
     private val prefs: RuntimePreferences?,
 ) {
 
-    /** The user's standing choice, as the settings row reads it. */
-    val prorootEnabled: Boolean get() = prefs?.prorootEnabled ?: false
-
     /** 用户选的运行时（三选一）。 */
     val selectedEngine: GuestEngine get() = prefs?.selectedEngine ?: GuestEngine.Proot
 
@@ -93,40 +90,6 @@ class RuntimeSelection(
         GuestEngine.Proot -> emptyList()
         GuestEngine.Proroot -> paths.missingProrootComponents()
         GuestEngine.Tawcroot -> paths.missingTawcrootComponents()
-    }
-
-    /**
-     * Write the switch, keeping everything that means "try again" together.
-     *
-     * The preference itself clears the consecutive-failure counter
-     * ([RuntimePreferences.setProrootEnabled]). This method adds the other half: when the
-     * switch goes **on**, the gate's cached verdict is deleted, because that verdict is
-     * keyed by the runtime revision and the binary digest — neither of which a switch
-     * changes — so a cached *failure* would otherwise survive the retry and proroot would
-     * stay disabled for good. [RuntimeChoice.invalidatesProbeCache] carries the full
-     * case and the reason the *off* direction does not need it.
-     *
-     * The deletion has to happen here rather than in the preference: this is the layer
-     * that holds both the pref store and [PiPaths], and the point of the split is that
-     * reading the switch (a high-frequency call — it is read on every guest launch) never
-     * touches the filesystem.
-     */
-    fun setProrootEnabled(enabled: Boolean) {
-        var removed = false
-        // The transition itself lives in [ProrootRetry] so that the rule — counter always,
-        // cached verdict only when the switch goes on — is executed by the harness on a
-        // bare JVM with these two effects injected, rather than re-implemented there.
-        ProrootRetry.apply(
-            nowEnabled = enabled,
-            resetFailures = { prefs?.setProrootEnabled(enabled) },
-            invalidateProbeCache = {
-                removed = runCatching { paths.clearProrootProbeCache() }.getOrDefault(false)
-                removed
-            },
-        )
-        if (enabled) {
-            Log.i(TAG, if (removed) "开关重新打开：已删除探针缓存，下次启动 guest 时重跑门禁" else "开关重新打开：没有探针缓存需要删除")
-        }
     }
 
     /** Guards against two main-thread callers starting the gate at once. */

@@ -109,44 +109,43 @@ class PtySession private constructor(
     fun close() {
         if (!closed.compareAndSet(false, true)) return
         val launch = handle
-        // Capture **first**, on this thread, while the launcher is still alive: the
-        // tree is only reachable through its parent-child edges, and the
-        // `process.destroy()` below reparents the children to init
-        // ([GuestTreeReaper.capture]). The capture is a `/proc` read — milliseconds —
-        // whereas the reaping that follows waits for TERM and then KILL, which is why
-        // only that half goes to a thread.
-        val captured = if (engine != GuestEngine.Proot) {
-            val pid = launch?.launcherPid
-            if (pid == null) {
-                lastError = "停止终端时拿不到 ${engine.name.lowercase()} 的 launcher pid，未回收 guest 进程树"
-                runCatching { onStopped(launch) }
-                null
-            } else {
-                runCatching { GuestTreeReaper.capture(pid, launch.launcherStartTime) }
-                    .getOrNull()
-                    .also { snapshot ->
-                        if (snapshot == null) {
-                            lastError = "停止终端时无法捕获 guest 进程树：launcher pid 已不存在或已被回收"
-                            runCatching { onStopped(launch) }
+        if (engine != GuestEngine.Proot) {
+            // Capture `/proc` + destroy + reap completely off the caller thread (which may be Main
+            // inside Compose `DisposableEffect.onDispose`), while strictly preserving capture-before-destroy
+            // ordering so children are not reparented to init before snapshotting.
+            val reaper = Thread({
+                val pid = launch?.launcherPid
+                val captured = if (pid == null) {
+                    lastError = "停止终端时拿不到 ${engine.name.lowercase()} 的 launcher pid，未回收 guest 进程树"
+                    null
+                } else {
+                    runCatching { GuestTreeReaper.capture(pid, launch.launcherStartTime) }
+                        .getOrNull()
+                        .also { snapshot ->
+                            if (snapshot == null) {
+                                lastError = "停止终端时无法捕获 guest 进程树：launcher pid 已不存在或已被回收"
+                            }
                         }
+                }
+                runCatching { output.close() }
+                runCatching { process.destroy() }
+                runCatching { input.close() }
+                if (captured != null) {
+                    val report = runCatching { GuestTreeReaper.reap(captured) }.getOrNull()
+                    if (report != null && !report.clean) {
+                        lastError = "停止终端后仍有 guest 进程存活：${report.survivors.joinToString()}"
                     }
-            }
-        } else {
-            null
+                }
+                runCatching { onStopped(launch) }
+                if (exitCode == null) exitCode = process.exitValueOrNull()
+            }, "pi-pty-close")
+            reaper.isDaemon = true
+            reaper.start()
+            return
         }
         runCatching { output.close() }
         runCatching { process.destroy() }
         runCatching { input.close() }
-        if (captured != null) {
-            runCatching {
-                GuestTreeReaper.reapInBackground(captured) { report ->
-                    if (!report.clean) {
-                        lastError = "停止终端后仍有 guest 进程存活：${report.survivors.joinToString()}"
-                    }
-                    runCatching { onStopped(launch) }
-                }
-            }.onFailure { runCatching { onStopped(launch) } }
-        }
         if (exitCode == null) exitCode = process.exitValueOrNull()
     }
 
@@ -201,9 +200,8 @@ class PtySession private constructor(
                 else -> null
             }
             val process = PersistentProcessSpawner.start(builder)
-            // Resolve after the process exists: the table is written by the launcher,
-            // which is now running.
-            handle?.resolveLauncherPid()
+            // Resolve after the process exists (O(1) via process PID fast path).
+            handle?.resolveLauncherPid(process = process)
             val session = PtySession(process, process.outputStream, process.inputStream, engine, handle, onStopped)
             if (!greeting.isNullOrEmpty()) {
                 // Paint first, then read: the greeting is our own text and must
@@ -250,6 +248,12 @@ class PtySession private constructor(
             // the last frame of a TUI *is* the output, and dropping it is the
             // difference between a clean exit and a torn screen.
             runCatching { reader.join(1000) }
+            // Release pipe FDs and `.proroot-config-<pid>` on natural exit when close() was not called.
+            if (closed.compareAndSet(false, true)) {
+                runCatching { output.close() }
+                runCatching { input.close() }
+                runCatching { onStopped(handle) }
+            }
             onExit(code)
         }, "pi-pty-waiter")
         waiter.isDaemon = true

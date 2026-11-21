@@ -63,9 +63,10 @@ object DurablePreserve {
         }
         val entries = mutableListOf<Pair<File, File>>()
         for (dir in present) {
-            // 名字带纳秒，所以同一轮里两个同名的耐久目录不会互相覆盖；落脚名字本身没有
-            // 语义，恢复时用的是 `entries` 里记下的原位置。
-            val stash = File(preserveDir, "${dir.name}-${System.nanoTime()}")
+            // Zero-padded monotonic timestamp so directory names sort chronologically even as
+            // digits grow, while staying collision-free within the same moveOut pass.
+            val stamp = String.format(java.util.Locale.US, "%019d", System.nanoTime())
+            val stash = File(preserveDir, "${dir.name}-$stamp")
             if (!dir.renameTo(stash)) {
                 restore(Stash(entries))
                 throw IOException("无法把 ${dir.path} 移出易失树（目标 ${stash.path}）")
@@ -110,9 +111,15 @@ object DurablePreserve {
     fun recoveryTargets(preserveDir: File, durable: List<File>): List<Pair<File, File>> {
         val entries = runCatching { preserveDir.listFiles() }.getOrNull().orEmpty()
         return durable.flatMap { dir ->
+            val prefix = "${dir.name}-"
             entries.asSequence()
-                .filter { it.isDirectory && it.name.startsWith("${dir.name}-") }
-                .sortedBy { it.name }
+                .filter { it.isDirectory && it.name.startsWith(prefix) }
+                .sortedWith(
+                    compareBy<File>(
+                        { it.name.removePrefix(prefix).toLongOrNull() ?: Long.MAX_VALUE },
+                        { it.name },
+                    ),
+                )
                 .map { it to dir }
                 .toList()
         }

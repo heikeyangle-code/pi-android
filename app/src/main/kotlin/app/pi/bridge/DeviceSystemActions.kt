@@ -129,7 +129,8 @@ object DeviceSystemActions {
             )
         }
         ensureChannel(context)
-        val safeId = id.coerceIn(1, 100000)
+        // Disjoint from PiEngineService.NOTIFICATION_ID (1001) so agent notifications cannot overwrite the FGS.
+        val safeId = if (id in 10_000..110_000) id else 10_000 + (id.coerceIn(1, 100_000) % 100_000)
         val builder = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
@@ -1014,7 +1015,7 @@ object DeviceSystemActions {
                     hint = "默认只能读本应用导出的文件；其他文件需用户授予存储访问。",
                 ),
             )
-            input.use { it.readBytes().let { data -> if (data.size > limit) data.copyOf(limit) else data } }
+            input.use { readUpTo(it, limit) }
         } else {
             val target = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), safeName)
             if (!target.isFile) {
@@ -1022,7 +1023,7 @@ object DeviceSystemActions {
                     DeviceDenial(DeviceDenial.NOT_FOUND, "Download 里找不到「$safeName」。"),
                 )
             }
-            target.readBytes().let { if (it.size > limit) it.copyOf(limit) else it }
+            target.inputStream().use { readUpTo(it, limit) }
         }
 
         val isText = bytes.all { byte ->
@@ -1039,6 +1040,20 @@ object DeviceSystemActions {
                 put("base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
             }
         }
+    }
+
+    /** Bounded stream read: avoids OOM when importing a large file from Downloads. */
+    private fun readUpTo(stream: java.io.InputStream, limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream(minOf(limit, 64 * 1024))
+        val buf = ByteArray(16 * 1024)
+        var remaining = limit
+        while (remaining > 0) {
+            val read = stream.read(buf, 0, minOf(buf.size, remaining))
+            if (read < 0) break
+            out.write(buf, 0, read)
+            remaining -= read
+        }
+        return out.toByteArray()
     }
 
     /** No path separators, no traversal, no leading dot, bounded length. */

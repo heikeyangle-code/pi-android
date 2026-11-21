@@ -31,10 +31,17 @@ object TawcrootProbe {
     fun key(revision: String, digest: String): String =
         ProrootProbeCache.key(revision, digest, CACHE_VERSION)
 
-    /** 二进制内容的摘要：缓存的结论只对**这一份**二进制成立。 */
+    @Volatile
+    private var cachedDigest: Triple<String, Long, Long>? = null
+    @Volatile
+    private var cachedDigestValue: String = ""
+
+    /** 二进制内容的摘要：缓存的结论只对**这一份**二进制成立。进程内按 `(path, size, mtime)` 缓存。 */
     fun digestOf(paths: PiPaths): String {
         val file = paths.tawcrootBinary()
         if (!file.isFile) return ""
+        val key = Triple(file.absolutePath, file.length(), file.lastModified())
+        if (cachedDigest == key && cachedDigestValue.isNotEmpty()) return cachedDigestValue
         val md = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buffer = ByteArray(1 shl 16)
@@ -44,7 +51,10 @@ object TawcrootProbe {
                 md.update(buffer, 0, read)
             }
         }
-        return md.digest().joinToString("") { "%02x".format(it) }
+        val hex = md.digest().joinToString("") { "%02x".format(it) }
+        cachedDigestValue = hex
+        cachedDigest = key
+        return hex
     }
 
     fun cached(paths: PiPaths, revision: String, digest: String): ProrootProbe.Verdict? {
@@ -97,11 +107,20 @@ object TawcrootProbe {
             val process = PersistentProcessSpawner.start(builder)
             val finished = runCatching { process.waitFor(EXEC_TIMEOUT_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)
             if (!finished) {
+                val partial = drainProcessAvailable(process.inputStream, MAX_OUTPUT_CHARS, 300L)
                 process.destroyForcibly()
-                "tawcroot 探针 ${EXEC_TIMEOUT_MS / 1000} 秒没有返回"
+                runCatching { process.inputStream.close() }
+                runCatching { process.outputStream.close() }
+                val tail = partial.trim().takeLast(200)
+                if (tail.isBlank()) {
+                    "tawcroot 探针 ${EXEC_TIMEOUT_MS / 1000} 秒没有返回"
+                } else {
+                    "tawcroot 探针 ${EXEC_TIMEOUT_MS / 1000} 秒没有返回；已收到的输出：$tail"
+                }
             } else {
                 val code = runCatching { process.exitValue() }.getOrNull()
                 val text = process.inputStream.reader().use { it.readText() }.take(MAX_OUTPUT_CHARS)
+                runCatching { process.outputStream.close() }
                 // 没有标记行时把**进程退出码**和第一行原始输出补进去：tawcroot 崩溃（139）、
                 // bind 解析失败（84）、seccomp 装不上（88）在这里一眼分得开。没有这两个数，
                 // 真机上只能看到"没输出"，这正是这次卡住的原因。

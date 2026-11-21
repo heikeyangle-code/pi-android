@@ -36,8 +36,8 @@ function plannedSessionFile(controller) {
 }
 
 export function register(reg, { controller }) {
-  // 应答附 state：打开后状态仓立刻有值，不用等下一条 state 事件。
-  reg.add("session.open", async (args) => withState(controller, await controller.open(args)));
+  // `controller.open` 已经内置 `state: initialState`，避免再算第二次 snapshotOf。
+  reg.add("session.open", async (args) => await controller.open(args));
   reg.add("session.snapshot", (args) => snapshotOf(controller, { messages: bool(args, "messages", false) }));
 
   // ---- 对话 ---------------------------------------------------------------
@@ -60,6 +60,12 @@ export function register(reg, { controller }) {
           },
         }),
       )
+      .then(() => {
+        if (!preflighted) {
+          preflighted = true;
+          reply.ok(withState(controller, { disposition: "unknown" }));
+        }
+      })
       .catch((error) => {
         if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
         else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });
@@ -100,6 +106,12 @@ export function register(reg, { controller }) {
           },
         }),
       )
+      .then(() => {
+        if (!preflighted) {
+          preflighted = true;
+          reply.ok(withState(controller, { disposition: "unknown" }));
+        }
+      })
       .catch((error) => {
         if (!preflighted) reply.fail(new HostError(ERR.REJECTED, String(error?.message ?? error)));
         else controller.hub.emit("agent.error", { message: String(error?.message ?? error) });

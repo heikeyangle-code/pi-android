@@ -134,15 +134,35 @@ class SessionLibrary(
     }
 
     /** 只在**完整读完**、**无查询**时写；原样存宿主给的行（所以读回来走同一个解析）。 */
+    @Synchronized
     fun writeCache(q: SessionListQuery, rawRows: JsonArray?, total: Int) {
         val f = cacheFile ?: return
         // 只存默认视图：用户切过排序 / 命名过滤后重启，缓存键对不上就会白屏，所以别用「当时的视图」当键。
         if (q.query.isNotBlank() || rawRows == null || q != SessionListQuery()) return
         runCatching {
             f.parentFile?.mkdirs()
-            val tmp = File(f.parentFile, f.name + ".tmp")
-            tmp.writeText(JsonObject(mapOf("key" to JsonPrimitive(q.cacheKey), "root" to JsonPrimitive(hostRoot), "total" to JsonPrimitive(total), "rows" to rawRows)).toString())
-            tmp.renameTo(f)
+            val tmp = File(f.parentFile, "${f.name}.tmp-${System.nanoTime()}")
+            try {
+                tmp.writeText(
+                    JsonObject(
+                        mapOf(
+                            "key" to JsonPrimitive(q.cacheKey),
+                            "root" to JsonPrimitive(hostRoot),
+                            "total" to JsonPrimitive(total),
+                            "rows" to rawRows,
+                        ),
+                    ).toString(),
+                )
+                if (!tmp.renameTo(f)) {
+                    java.nio.file.Files.move(
+                        tmp.toPath(),
+                        f.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    )
+                }
+            } finally {
+                runCatching { if (tmp.exists()) tmp.delete() }
+            }
         }
     }
 
@@ -167,14 +187,21 @@ class SessionLibrary(
     // ---- 路径换算 ----
 
     fun guestPathOf(file: File): String? {
-        val p = file.absolutePath
-        if (p != hostRoot && !p.startsWith("$hostRoot/")) return null
-        return guestRoot + p.removePrefix(hostRoot)
+        val rootCanon = runCatching { File(hostRoot).canonicalPath }.getOrDefault(hostRoot)
+        val p = runCatching { file.canonicalPath }.getOrNull() ?: return null
+        if (p != rootCanon && !p.startsWith("$rootCanon/")) return null
+        return guestRoot + p.removePrefix(rootCanon)
     }
 
     fun hostFileOf(guestPath: String): File? {
         if (guestPath != guestRoot && !guestPath.startsWith("$guestRoot/")) return null
-        return File(hostRoot + guestPath.removePrefix(guestRoot))
+        val rel = guestPath.removePrefix(guestRoot).trimStart('/')
+        if (rel.split('/').any { it == ".." }) return null
+        val candidate = File(hostRoot, rel)
+        val rootCanon = runCatching { File(hostRoot).canonicalPath }.getOrDefault(hostRoot)
+        val candCanon = runCatching { candidate.canonicalPath }.getOrNull() ?: return null
+        if (candCanon != rootCanon && !candCanon.startsWith("$rootCanon/")) return null
+        return candidate
     }
 
     // ---- 内部 ----

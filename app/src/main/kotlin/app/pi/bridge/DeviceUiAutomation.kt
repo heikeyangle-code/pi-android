@@ -1410,13 +1410,17 @@ object DeviceUiAutomation {
                     override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                         runCatching {
                             val hardware = result.hardwareBuffer
-                            val wrapped = Bitmap.wrapHardwareBuffer(hardware, result.colorSpace)
-                            // The hardware bitmap is GPU-resident and cannot be
-                            // scaled or encoded directly; copy it into CPU memory.
-                            val copy = wrapped?.copy(Bitmap.Config.ARGB_8888, false)
-                            wrapped?.recycle()
-                            hardware.close()
-                            captured.set(copy)
+                            var wrapped: Bitmap? = null
+                            try {
+                                wrapped = Bitmap.wrapHardwareBuffer(hardware, result.colorSpace)
+                                // Mutable copy so `drawMarks()` can draw directly onto the bitmap
+                                // even when `scaleDown()` returns it unchanged.
+                                val copy = wrapped?.copy(Bitmap.Config.ARGB_8888, true)
+                                captured.set(copy)
+                            } finally {
+                                wrapped?.recycle()
+                                runCatching { hardware.close() }
+                            }
                         }.onFailure { failure.set(-1) }
                         latch.countDown()
                     }

@@ -472,10 +472,50 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
         val real = File(nativeLibDir, "libtalloc.so")
         if (!real.exists()) return
         val alias = File(lib, "libtalloc.so.2")
-        if (java.nio.file.Files.isSymbolicLink(alias.toPath()) || alias.exists()) alias.delete()
+        val aliasPath = alias.toPath()
+        val realPath = real.toPath()
+        val existing = runCatching {
+            if (java.nio.file.Files.isSymbolicLink(aliasPath)) {
+                java.nio.file.Files.readSymbolicLink(aliasPath)
+            } else {
+                null
+            }
+        }.getOrNull()
+        if (existing == realPath) return
+        if (java.nio.file.Files.isSymbolicLink(aliasPath) || alias.exists()) alias.delete()
         runCatching {
-            java.nio.file.Files.createSymbolicLink(alias.toPath(), real.toPath())
+            java.nio.file.Files.createSymbolicLink(aliasPath, realPath)
         }
+    }
+
+    /** Persistent cache for `PtyLauncher`'s `script(1)` capability probe, invalidated with the runtime tree. */
+    fun ptyScriptProbeCache(): File = File(runtime, ".pty-script-probe")
+
+    /** Durable Android uncaught-exception log (outside volatile `runtime/`). */
+    fun crashLogFile(): File = File(persist, "android-crashes.log")
+
+    /** Durable snapshot of the last unexpected engine exit (outside volatile `runtime/`). */
+    fun lastEngineExitFile(): File = File(persist, "last-engine-exit.txt")
+
+    /**
+     * Sweep stale `proot-*` scratch entries left inside `PROOT_TMP_DIR` (`paths.tmp`) by dead proot
+     * processes. Live PIDs (present in `/proc/<pid>`) and recently touched entries (<60 s) are left alone.
+     */
+    fun sweepStaleProotTmp(): Int {
+        val dir = File(runtime, "tmp")
+        if (!dir.isDirectory) return 0
+        val entries = runCatching { dir.listFiles() }.getOrNull() ?: return 0
+        val now = System.currentTimeMillis()
+        var removed = 0
+        for (entry in entries) {
+            val name = entry.name
+            if (!name.startsWith("proot-")) continue
+            val pid = name.removePrefix("proot-").substringBefore('-').toIntOrNull()
+            if (pid != null && File("/proc/$pid").exists()) continue
+            if (now - entry.lastModified() < 60_000L) continue
+            if (runCatching { entry.deleteRecursively() }.getOrDefault(false)) removed++
+        }
+        return removed
     }
 
     /** Marker recording which packaged runtime revision is unpacked. */
@@ -676,19 +716,34 @@ object ProotCommand {
  *
  * @return true when the target now holds [text].
  */
+private val stampTempSeq = java.util.concurrent.atomic.AtomicLong(0L)
+
 internal fun writeStampAtomically(target: File, text: String): Boolean = runCatching {
     target.parentFile?.mkdirs()
-    // Suffixed with the wall clock rather than a pid: `android.os.Process` would make
-    // this file Android-dependent (the bare-JVM checks compile it) and
-    // `java.lang.ProcessHandle` is not on every API level this app supports. Two
-    // writers of the same target would have to start within a nanosecond to collide.
-    val temp = File(target.parentFile, "${target.name}.tmp-${System.nanoTime()}")
-    temp.writeText(text)
-    java.nio.file.Files.move(
-        temp.toPath(),
-        target.toPath(),
-        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-    )
-    temp.delete()
-    true
+    val seq = stampTempSeq.incrementAndGet()
+    val temp = File(target.parentFile, "${target.name}.tmp-${System.nanoTime()}-$seq")
+    try {
+        java.io.FileOutputStream(temp).use { out ->
+            out.write(text.toByteArray(Charsets.UTF_8))
+            out.flush()
+            runCatching { out.fd.sync() }
+        }
+        try {
+            java.nio.file.Files.move(
+                temp.toPath(),
+                target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            java.nio.file.Files.move(
+                temp.toPath(),
+                target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            )
+        }
+        true
+    } finally {
+        runCatching { if (temp.exists()) temp.delete() }
+    }
 }.getOrDefault(false)

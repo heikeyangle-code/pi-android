@@ -544,11 +544,28 @@ export function register(reg, { controller }) {
       state[scope] = sessions;
       state[`${scope}HasText`] = hasText;
       state.load = undefined;
+      if (hasText) scheduleFullTextSweep();
       return sessions;
     })();
     mine.promise.catch(() => {}); // 没人等的加载被换掉不算未处理的拒绝
     state.load = mine;
     return mine;
+  };
+
+  // Strip heavy `allMessagesText` from cached sessions after 60 s of search idle so V8 heap
+  // does not permanently hold full text of every session on disk (50–200+ MB).
+  let fullTextSweepTimer;
+  const scheduleFullTextSweep = () => {
+    if (fullTextSweepTimer) clearTimeout(fullTextSweepTimer);
+    fullTextSweepTimer = setTimeout(() => {
+      fullTextSweepTimer = undefined;
+      for (const sc of ["current", "all"]) {
+        if (!state[`${sc}HasText`] || !Array.isArray(state[sc])) continue;
+        state[sc] = state[sc].map((s) => (s && s.allMessagesText ? { ...s, allMessagesText: "" } : s));
+        state[`${sc}HasText`] = false;
+      }
+    }, 60_000);
+    fullTextSweepTimer.unref?.();
   };
 
   reg.add("session.list", async (args) => {
