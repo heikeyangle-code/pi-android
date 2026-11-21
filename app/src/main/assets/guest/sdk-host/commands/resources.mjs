@@ -74,12 +74,14 @@ export function wireExtension(e) {
   };
 }
 
-export function wireLoaded(rl) {
+export function wireLoaded(rl, paths = null) {
   const ext = rl.getExtensions();
   const skills = rl.getSkills();
   const prompts = rl.getPrompts();
   const themes = rl.getThemes();
   return {
+    agentDir: paths?.agentDir ?? null,
+    cwd: paths?.cwd ?? null,
     extensions: (ext.extensions ?? []).map(wireExtension),
     extensionErrors: (ext.errors ?? []).map((x) => ({ path: x.path, message: String(x.error) })),
     extensionWarnings: (ext.warnings ?? []).map((x) => ({ path: x.path, message: String(x.warning) })),
@@ -179,7 +181,12 @@ export function register(reg, { controller }) {
 
   // 「现在到底加载了什么」：来自会话的 `ResourceLoader`（热重载后就是新的），与 `resources.list`
   // （开关清单，含没开的）互补——这里只有**实际生效**的，带描述、来源、冲突与错误。
-  reg.add("resources.loaded", () => wireLoaded(controller.requireSession().resourceLoader));
+  reg.add("resources.loaded", () =>
+    wireLoaded(controller.requireSession().resourceLoader, {
+      agentDir: controller.cfg.agentDir,
+      cwd: controller.cwd,
+    }),
+  );
 
   reg.add("resources.toggle", async (args) => {
     const scope = str(args, "scope");

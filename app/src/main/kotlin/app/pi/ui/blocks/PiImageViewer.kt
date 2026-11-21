@@ -892,8 +892,10 @@ private fun ClearViewerPlatformDim() {
     }
     SideEffect {
         (view.parent as? DialogWindowProvider)?.window?.let { w ->
-            w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            w.setDimAmount(0f)
+            if ((w.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 || w.attributes.dimAmount != 0f) {
+                w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                w.setDimAmount(0f)
+            }
         }
     }
 }

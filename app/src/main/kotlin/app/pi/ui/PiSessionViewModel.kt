@@ -311,6 +311,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val stats: PiResponses.SessionStats? = null,
         /** `get_tree` — branches, for the session tree overlay. */
         val tree: PiResponses.TreePage? = null,
+        /** 分支跳转或会话替换后自增，让对话页清空旧锚点并重新触底到新分支末尾。 */
+        val transcriptResetSeq: Long = 0L,
         /** `get_entries` — the append-only entry log, for the same overlay. */
         val entries: List<SessionEntry> = emptyList(),
         /**

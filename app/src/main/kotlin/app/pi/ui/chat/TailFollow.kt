@@ -88,13 +88,13 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
 
         val pinKey = pin?.let {
             PinGuardKey(
-                pin = it,
                 totalItems = viewport.totalItems,
                 lastVisibleIndex = viewport.lastVisibleIndex,
                 lastVisibleOffsetPx = viewport.lastVisibleOffsetPx,
                 lastVisibleSizePx = viewport.lastVisibleSizePx,
                 viewportEndOffsetPx = viewport.viewportEndOffsetPx,
                 bottomContentPaddingPx = viewport.bottomContentPaddingPx,
+                poke = snapshot.poke,
             )
         }
         val repeated = pinKey != null && pinKey == lastPinKey
@@ -110,13 +110,13 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     fun savedState(): List<Int> = listOf(if (following) 1 else 0, unseenRows, previousRows)
 
     private data class PinGuardKey(
-        val pin: TailPin,
         val totalItems: Int,
         val lastVisibleIndex: Int,
         val lastVisibleOffsetPx: Int,
         val lastVisibleSizePx: Int,
         val viewportEndOffsetPx: Int,
         val bottomContentPaddingPx: Int,
+        val poke: Long,
     )
 
     companion object {

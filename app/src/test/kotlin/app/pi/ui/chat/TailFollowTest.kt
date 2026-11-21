@@ -189,4 +189,49 @@ class TailFollowTest {
         assertFalse(afterRelease.following)
         assertNull(afterRelease.pin)
     }
+
+    @Test
+    fun `never re-pins in a tight loop when scrollPosition updates before layoutInfo remeasures`() {
+        val follow = TailFollow(initiallyFollowing = true)
+        val first = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 100,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1230,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertEquals(TailPin(index = 5, offsetPx = 150), first.pin)
+
+        // Simulate requestScrollToItem immediately mutating firstVisibleOffsetPx to 150
+        // BEFORE Choreographer runs the measure pass (layoutInfo is still stale!).
+        val beforeMeasure = follow.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 10,
+                viewport = TailViewport(
+                    totalItems = 10,
+                    firstVisibleIndex = 5,
+                    firstVisibleOffsetPx = 150,
+                    lastVisibleIndex = 9,
+                    lastVisibleOffsetPx = 1230,
+                    lastVisibleSizePx = 400,
+                    viewportEndOffsetPx = 1980,
+                    bottomContentPaddingPx = 400,
+                    isScrollInProgress = false,
+                    atBottom = false,
+                ),
+            ),
+        )
+        assertTrue(beforeMeasure.following)
+        assertNull(beforeMeasure.pin)
+    }
 }

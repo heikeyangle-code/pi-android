@@ -141,7 +141,7 @@ private data class SessionsOverlaySlice(
     val sessionFile: String?,
     val workspaceGuestPath: String,
     val workspaceHostPath: String?,
-    val tree: PiResponses.SessionTree?,
+    val tree: PiResponses.TreePage?,
     val busy: String?,
     val streaming: Boolean,
 )
@@ -216,6 +216,9 @@ fun SessionsScreen(
 
     // 读一次、之后秒开：依赖 VM 后台常驻列表与静默刷新。
     LaunchedEffect(Unit) { session.ensureSessionList() }
+    LaunchedEffect(view, sessionSlice.sessionFile) {
+        if (view == SessionsView.Tree) session.refreshTree()
+    }
 
     val activeFile = sessionSlice.sessionFile?.substringAfterLast('/')
     val zh = PiLocale.isZh
@@ -411,7 +414,6 @@ fun SessionsScreen(
                     onReselected = { treeReselect = null },
                     onFork = { entryId ->
                         session.forkFrom(entryId)
-                        onBack()
                     },
                     onNavigate = { entryId, choice, instructions ->
                         session.navigateTo(entryId, choice, instructions, onAborted = { treeReselect = entryId })

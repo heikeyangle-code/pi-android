@@ -171,7 +171,8 @@ object TreeModel {
         for (f in filtered) visibleIds.add(f.id)
         fun visibleAncestor(id: String): String? {
             var cur = byId[id]?.parentId
-            while (cur != null) {
+            val visited = HashSet<String>()
+            while (cur != null && visited.add(cur)) {
                 if (cur in visibleIds) return cur
                 cur = byId[cur]?.parentId
             }
@@ -277,7 +278,8 @@ object TreeModel {
             val visible = HashSet<String>()
             for (r in rows) visible.add(r.item.id)
             var cur = leafId
-            while (cur != null) {
+            val visited = HashSet<String>()
+            while (cur != null && visited.add(cur)) {
                 if (cur in visible) { nearest = cur; break }
                 cur = byId[cur]?.parentId
             }

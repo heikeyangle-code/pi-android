@@ -752,29 +752,42 @@ internal fun PiSessionViewModel.navigateToImpl(
             return@call
         }
         val cancelled = flag("cancelled")
-        if (cancelled) pushNotice(tr("跳转已取消", "Navigation cancelled"), Notice.Tone.Warning)
+        if (cancelled) {
+            pushNotice(tr("跳转已取消", "Navigation cancelled"), Notice.Tone.Warning)
+            return@call
+        }
+
+        val editorText = (result.data["editorText"] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() }
 
         // 唯一权威的「动没动」：`get_tree` / `get_entries` 报的是内存里的叶子。
-        when (navigateOutcome(before, api.getTree().leafId, refused = cancelled)) {
-            NavigateOutcome.Moved -> {
-                replayActiveBranch(engine)
-                // 树是同一件事的第二个视图；摘要会多一条 `branch_summary` 条目。
-                refreshTree()
-                // `contextUsage` 是当前分支的读数，也跟着变。
-                refreshStats()
-                val editorText = (result.data["editorText"] as? kotlinx.serialization.json.JsonPrimitive)
-                    ?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() }
-                if (editorText != null) {
-                    composerFillSeq += 1
-                    _state.value = _state.value.copy(
-                        composerFill = ComposerFill(composerFillSeq, editorText, onlyIfEmpty = true),
-                    )
-                }
-                // 对照官方 `/tree`：成功跳转到目标节点后自动收起会话树，直接回到对话页查看或改写重发。
-                requestNav(NavRequest.Chat)
-                pushNotice(tr("已跳转到所选位置", "Navigated to selected point"), Notice.Tone.Info)
+        // 注意：当选中的是「当前叶子的直接子用户消息」时，官方 `navigateTree` 会把叶子保持在父节点
+        // 并把该用户消息放回 `editorText`；这种情况 `leafAfter == before` 但 `editorText != null`，
+        // 必须与官方 TUI 一样把文字放回输入框并收起会话树，不能静默无响应。
+        val outcome = navigateOutcome(before, api.getTree().leafId, refused = false)
+        if (outcome == NavigateOutcome.Moved) {
+            replayActiveBranch(engine)
+            refreshTree()
+            refreshStats()
+        }
+        if (outcome == NavigateOutcome.Moved || editorText != null) {
+            if (editorText != null) {
+                composerFillSeq += 1
+                _state.value = _state.value.copy(
+                    composerFill = ComposerFill(composerFillSeq, editorText, onlyIfEmpty = true),
+                )
             }
-            NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit
+            requestNav(NavRequest.Chat)
+            pushNotice(
+                if (editorText != null) {
+                    tr("已回到此消息之前，原文已放回输入框", "Rewound before message; text restored to input")
+                } else {
+                    tr("已切换到所选分支位置", "Switched to selected branch point")
+                },
+                Notice.Tone.Info,
+            )
+        } else {
+            pushNotice(tr("已经在这个位置", "Already at this point"), Notice.Tone.Info)
         }
     }
 }
@@ -822,6 +835,7 @@ private suspend fun PiSessionViewModel.replayActiveBranch(engine: PiEngineSessio
     evictedEntries = 0
     _state.value = _state.value.copy(
         history = HistoryCursor(startOffset = 0L, reachedStart = true),
+        transcriptResetSeq = _state.value.transcriptResetSeq + 1L,
     )
     syncTranscript(engine, engine.publication.value)
 }
@@ -1115,6 +1129,11 @@ internal suspend fun PiSessionViewModel.afterSessionReplaced(brandNew: Boolean =
     // there is no file yet — which is what `brandNew` is for.
     // 同上：`refreshState` 是 fire-and-forget，replay 会拿着**上一条会话**的 meta 去读
     // 文件（`switch_session`/import 之后屏幕上还是旧对话，直到下一帧 publication）。
+    // 清除上一条会话的会话树缓存并自增重建序号，避免切换/新建会话后打开会话树瞬间看到旧会话分支。
+    _state.value = _state.value.copy(
+        tree = null,
+        transcriptResetSeq = _state.value.transcriptResetSeq + 1L,
+    )
     api?.let { refreshStateNow(it) }
     replayHistory(engine, brandNew)
     refreshStats()

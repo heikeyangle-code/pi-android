@@ -113,6 +113,8 @@ object PiLoadedResources {
         val contextFiles: List<ContextFile>,
         val systemPrompt: String?,
         val appendSystemPrompt: List<String>,
+        val agentDir: String? = null,
+        val cwd: String? = null,
     ) {
         /** 给用户看的扩展：去掉 pi 自带的隐藏项。 */
         val visibleExtensions: List<Extension> get() = extensions.filterNot { it.hidden }
@@ -161,6 +163,8 @@ object PiLoadedResources {
         contextFiles = rows(root["contextFiles"]).map { ContextFile(str(it["path"]).orEmpty(), body(it["body"])) },
         systemPrompt = str(root["systemPrompt"]),
         appendSystemPrompt = (root["appendSystemPrompt"] as? JsonArray).orEmpty().mapNotNull { str(it) },
+        agentDir = str(root["agentDir"]),
+        cwd = str(root["cwd"]),
     )
 
     // ---- 内部 ----

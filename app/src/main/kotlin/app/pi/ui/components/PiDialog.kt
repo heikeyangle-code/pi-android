@@ -308,8 +308,10 @@ private fun ClearPlatformDim() {
     }
     SideEffect {
         (view.parent as? DialogWindowProvider)?.window?.let { w ->
-            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            w.setDimAmount(0f)
+            if ((w.attributes.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 || w.attributes.dimAmount != 0f) {
+                w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                w.setDimAmount(0f)
+            }
         }
     }
 }

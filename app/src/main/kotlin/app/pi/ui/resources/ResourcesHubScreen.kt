@@ -157,8 +157,8 @@ internal fun ResourcesHubScreen(
                         path = editPath,
                         model = model,
                         contentPadding = contentPadding,
-                        onClose = { page = editReturn },
-                        onDeleted = { model.refresh(); page = editReturn },
+                        onClose = { page = editReturn; model.refresh() },
+                        onDeleted = { page = editReturn; model.refresh() },
                     )
                     "ext", "skills", "prompts", "themes" -> ResourceTypeScreen(
                         type = typeOfPage(targetPage),

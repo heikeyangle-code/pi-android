@@ -34,7 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.pi.host.ExtCustomSurface
+import app.pi.host.ExtCustom
 import app.pi.i18n.tr
 import app.pi.protocol.Notice
 import app.pi.ui.PiSessionViewModel
@@ -47,9 +47,9 @@ private data class ExtensionHostSlice(
     val extensionDialog: ExtensionDialog?,
     val extensionDialogBacklog: Int,
     val bellSeq: Long,
-    val custom: ExtCustomSurface?,
-    val nonCapturingCustom: ExtCustomSurface?,
-    val customStack: List<ExtCustomSurface>,
+    val custom: ExtCustom?,
+    val nonCapturingCustom: ExtCustom?,
+    val customStack: List<ExtCustom>,
 )
 
 private fun PiSessionViewModel.UiState.toExtensionHostSlice(): ExtensionHostSlice = ExtensionHostSlice(

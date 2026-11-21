@@ -2,6 +2,7 @@ package app.pi.ui.resources
 
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.pi.host.ExtensionsAccess
@@ -10,8 +11,8 @@ import app.pi.packages.PiLoadedResources
 import app.pi.packages.PiProjectTrust
 import app.pi.packages.PiResourceCatalog
 import app.pi.packages.PiResourceCatalog.Layer
-import app.pi.packages.PiResourceFile
 import app.pi.packages.PiResourceCatalog.Parsed
+import app.pi.packages.PiResourceFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -19,12 +20,12 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
- * 「扩展与资源」整组页面共用的一份状态。三个读数都来自宿主（SDK），这里不推算：
- *  - [snapshot]：开关清单（`resources.list`，含没开的、按来源分组）；
- *  - [loaded]：pi **此刻实际加载**的（`resources.loaded`：描述、扩展注册了什么、冲突与错误）；
- *  - [trust]：项目信任现状（`project.trustState`）。
- * 改动（开关、信任）写完后重读这三份；开关要让**已在跑的会话**读到，得 `session.reload`，
- * 所以一次改动只记 [pendingReload]，由用户点「重新加载」一次性生效（连点三个开关不用重载三遍）。
+ * 「扩展与资源」与「系统提示词与上下文」共用的统一状态源。
+ * 全部读数来自宿主（SDK），不在客户端猜测或缓存过时状态：
+ *  - [snapshot]：开关清单（`resources.list`）；
+ *  - [loaded]：pi 此刻实际加载的生效资源（`resources.loaded`）；
+ *  - [trust]：项目信任现状（`project.trustState`）；
+ *  - [dataVersion]：每次刷新、写文件、删文件、重载完成后自增，驱动界面即时同步。
  */
 @Stable
 internal class ResourcesModel(
@@ -52,6 +53,10 @@ internal class ResourcesModel(
         private set
     var pendingReload by mutableStateOf(false)
         private set
+    var dataVersion by mutableIntStateOf(0)
+        private set
+
+    private var refreshQueued = false
 
     /** 项目没被信任时，项目层的东西 pi 根本不读：界面只给全局层。 */
     val projectUsable: Boolean get() = trust?.trusted != false
@@ -59,9 +64,21 @@ internal class ResourcesModel(
     val effectiveLayer: Layer get() = if (projectUsable) layer else Layer.Global
 
     fun refresh() {
-        if (loading) return
+        if (loading) {
+            refreshQueued = true
+            return
+        }
         loading = true
-        scope.launch { readAll(); loading = false }
+        scope.launch {
+            try {
+                do {
+                    refreshQueued = false
+                    readAll()
+                } while (refreshQueued)
+            } finally {
+                loading = false
+            }
+        }
     }
 
     private suspend fun readAll() {
@@ -83,6 +100,7 @@ internal class ResourcesModel(
                 is Parsed.Error -> problem = problem ?: r.message
             }
             error = problem
+            dataVersion++
         }
     }
 
@@ -98,6 +116,7 @@ internal class ResourcesModel(
                     error = null
                     r.value.snapshot?.let { snapshot = it }
                     if (r.value.snapshot == null) (access.resources.list() as? Parsed.Ok)?.let { snapshot = it.value }
+                    dataVersion++
                 }
                 is Parsed.Error -> error = r.message
             }
@@ -105,7 +124,7 @@ internal class ResourcesModel(
         }
     }
 
-    // ---- 资源文件（宿主 `resources.file.*`）。改完只记「待重新加载」，由用户点一次「重新加载」。 ----
+    // ---- 资源文件（宿主 `resources.file.*`） ----
 
     suspend fun readFile(path: String) = access.resources.readFile(path)
 
@@ -120,27 +139,38 @@ internal class ResourcesModel(
 
     private suspend fun markChanged() {
         pendingReload = true
-        // 清单（开关那张表）也随之变：新建的出现、删掉的消失。
         (access.resources.list() as? Parsed.Ok)?.let { snapshot = it.value }
+        dataVersion++
+    }
+
+    /**
+     * 同步挂起版热重载：等待 `session.reload` + 重读全部生效状态完成后才返回。
+     * 成功返回 null，失败返回可读错误文案。
+     */
+    suspend fun reloadAndRefresh(): String? {
+        if (reloading) return null
+        reloading = true
+        return try {
+            access.ext.reload()
+            pendingReload = false
+            error = null
+            readAll()
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val msg = e.message ?: tr("重新加载失败", "Reload failed")
+            error = msg
+            msg
+        } finally {
+            reloading = false
+        }
     }
 
     /** `session.reload`：扩展 / 技能 / 提示 / 主题 / 上下文文件热重载，不重启进程。 */
     fun reload() {
         if (reloading) return
-        reloading = true
-        scope.launch {
-            try {
-                access.ext.reload()
-                pendingReload = false
-                error = null
-                readAll()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = e.message ?: tr("重新加载失败", "Reload failed")
-            }
-            reloading = false
-        }
+        scope.launch { reloadAndRefresh() }
     }
 
     /** 表态后宿主已写信任库、已让会话重载；读回新的结论与资源。失败返回宿主原话。 */

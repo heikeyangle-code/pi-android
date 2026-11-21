@@ -1400,6 +1400,14 @@ internal fun PiEditorField(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    val effectiveFocus = focusRequester ?: remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val innerMinHeight = when {
+        singleLine -> null
+        minHeight != null -> (minHeight - 20.dp).coerceAtLeast(24.dp)
+        height != null -> (height - 20.dp).coerceAtLeast(24.dp)
+        else -> null
+    }
     Column(modifier) {
         if (label != null) {
             Text(
@@ -1422,6 +1430,14 @@ internal fun PiEditorField(
                     if (focused) PiTheme.palette.borderAccent else idleBorder,
                     PiFieldShape,
                 )
+                .clickable(
+                    enabled = enabled && !readOnly,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    runCatching { effectiveFocus.requestFocus() }
+                    keyboard?.show()
+                }
                 .padding(contentPadding),
             verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
@@ -1431,9 +1447,8 @@ internal fun PiEditorField(
                 onValueChange = onValueChange,
                 modifier = Modifier
                     .weight(1f)
-                    .then(
-                        if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
-                    ),
+                    .then(if (innerMinHeight != null) Modifier.heightIn(min = innerMinHeight) else Modifier)
+                    .focusRequester(effectiveFocus),
                 enabled = enabled,
                 readOnly = readOnly,
                 singleLine = singleLine,
@@ -1443,13 +1458,18 @@ internal fun PiEditorField(
                 cursorBrush = SolidColor(PiTheme.palette.accent),
                 interactionSource = interaction,
                 decorationBox = { innerTextField ->
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (innerMinHeight != null) Modifier.heightIn(min = innerMinHeight) else Modifier),
+                        contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart,
+                    ) {
                         if (value.isEmpty() && placeholder != null) {
                             Text(
                                 placeholder,
                                 style = textStyle,
                                 color = PiTheme.palette.muted,
-                                maxLines = 1,
+                                maxLines = if (singleLine) 1 else 4,
                             )
                         }
                         innerTextField()

@@ -172,7 +172,7 @@ fun SessionTreeView(
         }
     }
 
-    LaunchedEffect(filter, view.rows.isNotEmpty()) {
+    LaunchedEffect(filter, leafId, view.rows.isNotEmpty()) {
         val at = view.rows.indexOfFirst { it.item.id == view.nearestToLeafId }
         if (at >= 0) listState.scrollToItem((at - 2).coerceAtLeast(0))
     }
@@ -784,11 +784,11 @@ private fun EntrySheet(
     onHide: () -> Unit,
     onReplace: (String) -> Unit,
 ) {
-    var step by remember { mutableStateOf(Step.Actions) }
-    var labelText by remember { mutableStateOf(item.label.orEmpty()) }
-    var instructions by remember { mutableStateOf("") }
+    var step by remember(item.id) { mutableStateOf(Step.Actions) }
+    var labelText by remember(item.id) { mutableStateOf(item.label.orEmpty()) }
+    var instructions by remember(item.id) { mutableStateOf("") }
     val fullText = item.copyText ?: (item.head + item.text)
-    var replacement by remember { mutableStateOf(item.copyText.orEmpty()) }
+    var replacement by remember(item.id) { mutableStateOf(item.copyText.orEmpty()) }
     val clipboard = LocalClipboardManager.current
     val p = PiTheme.palette
 
@@ -853,15 +853,20 @@ private fun EntrySheet(
                                 var hasRow = false
                                 fun dividerIfNeeded() = hasRow
                                 if (!item.isLeaf) {
+                                    val title = if (item.rewinds) {
+                                        tr("回到此消息并改写重发", "Rewind & edit message")
+                                    } else {
+                                        tr("切换到此节点继续对话", "Switch branch here")
+                                    }
                                     val hint = buildString {
                                         append(
-                                            if (item.rewinds) tr("回到此消息之前并放回输入框改写重发", "Rewind before this message and restore it to the editor")
-                                            else tr("切换当前会话分支位置到这里继续对话", "Switch the active session branch to this point"),
+                                            if (item.rewinds) tr("撤回到此条之前，原文放回输入框（Pi 官方 /tree 语义）", "Rewinds before this entry and puts its text into the editor")
+                                            else tr("保留到此条为止的对话上下文，从这里继续", "Continue conversation from this entry"),
                                         )
                                         if (streaming) append(tr("（将先停止本轮）", " (will abort current turn)"))
                                     }
                                     ActionRow(
-                                        title = tr("跳转到这里", "Navigate here"),
+                                        title = title,
                                         hint = hint,
                                         icon = Icons.Filled.PlayArrow,
                                         tint = p.accent,
@@ -1044,12 +1049,25 @@ private fun ActionRow(
 
 @Composable
 private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: String, singleLine: Boolean = false) {
+    val focus = remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    app.pi.ui.components.PiAutoFocus(focus)
+    val boxMin = if (singleLine) 42.dp else 108.dp
     Surface(
-        modifier = Modifier.fillMaxWidth().heightIn(min = if (singleLine) 40.dp else 96.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = boxMin)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+            ) {
+                runCatching { focus.requestFocus() }
+                keyboard?.show()
+            },
         shape = PiShapes.cardInner,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
-        Box(Modifier.padding(12.dp)) {
+        Box(Modifier.fillMaxWidth().heightIn(min = boxMin).padding(12.dp)) {
             if (value.isEmpty()) Text(placeholder, style = PiTheme.text.meta, color = PiTheme.palette.dim)
             BasicTextField(
                 value = value,
@@ -1057,7 +1075,10 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
                 singleLine = singleLine,
                 textStyle = PiTheme.text.prose.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(PiTheme.palette.accent),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = (boxMin - 24.dp).coerceAtLeast(20.dp))
+                    .focusRequester(focus),
             )
         }
     }

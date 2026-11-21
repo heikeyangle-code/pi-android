@@ -941,15 +941,16 @@ internal fun ChatBody(
             val last = info.visibleItemsInfo.lastOrNull()
             val scrollingNow = listState.isScrollInProgress
             val atBottomNow = !listState.canScrollForward
-            // 仅在手指拖动或尚未触底时订阅首行坐标，避免 requestScrollToItem 落地后自激循环。
-            val trackAnchor = scrollingNow || !atBottomNow
+            // 仅在用户手指真正拖动（scrollingNow）时订阅首行坐标：
+            // `requestScrollToItem` 会同步写入 `firstVisibleItemScrollOffset`（未等 layoutInfo 重测），
+            // 若在非拖动期订阅该字段，会在同一帧内反复唤醒 snapshotFlow 造成主线程死循环 ANR！
             TailObservation(
                 revision = latestRevision,
                 renderedCount = latestRenderedCount,
                 poke = tailPoke,
                 totalItems = info.totalItemsCount,
-                firstVisibleIndex = if (trackAnchor) listState.firstVisibleItemIndex else -1,
-                firstVisibleOffsetPx = if (trackAnchor) listState.firstVisibleItemScrollOffset else 0,
+                firstVisibleIndex = if (scrollingNow) listState.firstVisibleItemIndex else -1,
+                firstVisibleOffsetPx = if (scrollingNow) listState.firstVisibleItemScrollOffset else 0,
                 lastVisibleIndex = last?.index ?: -1,
                 lastVisibleOffsetPx = last?.offset ?: 0,
                 lastVisibleSizePx = last?.size ?: 0,
@@ -959,8 +960,6 @@ internal fun ChatBody(
                 atBottom = atBottomNow,
             )
         }.conflate().collect { obs ->
-            // snapshotFlow 已经处于布局完成后的帧边界，直接同步决策并 requestScrollToItem，
-            // 去掉额外的 withFrameNanos 延迟，彻底消除流式增长时滞后一帧回拉产生的上下抖动。
             val wasFollowing = following
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()
@@ -987,6 +986,9 @@ internal fun ChatBody(
             val pin = decision.pin
             if (pin != null && !listState.isScrollInProgress) {
                 listState.requestScrollToItem(pin.index, pin.offsetPx)
+                // 在触发滚动请求之后让出一帧，确保 Compose 完成真实测量与输入事件派发，
+                // 既保持触底零滞后，又从结构上彻底杜绝同帧自激死循环与 ANR。
+                withFrameNanos { }
             }
         }
     }
@@ -1078,6 +1080,15 @@ internal fun ChatBody(
     // switch were missing.
     var anchorKey by rememberSaveable(sessionKey) { mutableStateOf<String?>(null) }
     var anchorOffset by rememberSaveable(sessionKey) { mutableIntStateOf(0) }
+    // 分支跳转（/tree navigate）或会话替换后，清空旧分支阅读锚点并重新触底到新分支末尾。
+    LaunchedEffect(state.transcriptResetSeq) {
+        if (state.transcriptResetSeq > 0L) {
+            anchorKey = null
+            anchorOffset = 0
+            windowOpen = false
+            reArmTail()
+        }
+    }
     // False until the correction below has run once for this composition. The tracker
     // must not write before that: on the frame a destination is re-entered, the position
     // it would read is the *restored, already drifted* one, and recording that would

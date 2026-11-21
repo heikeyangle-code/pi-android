@@ -341,8 +341,10 @@ internal fun WorkspaceViewer(
         }
         androidx.compose.runtime.SideEffect {
             (dialogView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.let { w ->
-                w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                w.setDimAmount(0f)
+                if ((w.attributes.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 || w.attributes.dimAmount != 0f) {
+                    w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                    w.setDimAmount(0f)
+                }
             }
         }
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
