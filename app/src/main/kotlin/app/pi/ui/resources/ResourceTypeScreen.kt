@@ -81,7 +81,6 @@ internal fun ResourceTypeScreen(
             },
         )
         val sections = if (snapshot == null) emptyList() else sections(type, snapshot, layer, model.loaded, query)
-        val totalRows = remember(sections) { sections.sumOf { it.rows.size } }
         val diagnostics = diagnosticsFor(type, model.loaded)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -97,18 +96,16 @@ internal fun ResourceTypeScreen(
                 )
             }
             if (!model.projectUsable) {
-                item { PiInfoNote(tr("当前项目尚未信任，仅可管理全局资源。", "Project is not trusted yet; only global resources can be managed."), tone = PiTheme.palette.warning) }
+                item { PiInfoNote(tr("当前项目尚未信任：去「扩展与资源 → 项目信任」信任本项目后即可配置项目层资源。", "Project is not trusted yet: trust it under Extensions & Resources → Project Trust to configure project-level resources."), tone = PiTheme.palette.warning) }
             }
             model.error?.let { item { PiInfoNote(it, tone = PiTheme.palette.error) } }
-            if (totalRows > 3 || query.isNotEmpty()) {
-                item {
-                    PiEditorField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = tr("搜索名字、描述、路径", "Search name, description, path"),
-                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                    )
-                }
+            item {
+                PiEditorField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = tr("搜索名字、描述、路径", "Search name, description, path"),
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                )
             }
             if (diagnostics.isNotEmpty()) {
                 item {
