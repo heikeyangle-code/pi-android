@@ -90,6 +90,8 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
             PinGuardKey(
                 pin = it,
                 totalItems = viewport.totalItems,
+                lastVisibleIndex = viewport.lastVisibleIndex,
+                lastVisibleOffsetPx = viewport.lastVisibleOffsetPx,
                 lastVisibleSizePx = viewport.lastVisibleSizePx,
                 viewportEndOffsetPx = viewport.viewportEndOffsetPx,
                 bottomContentPaddingPx = viewport.bottomContentPaddingPx,
@@ -110,6 +112,8 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private data class PinGuardKey(
         val pin: TailPin,
         val totalItems: Int,
+        val lastVisibleIndex: Int,
+        val lastVisibleOffsetPx: Int,
         val lastVisibleSizePx: Int,
         val viewportEndOffsetPx: Int,
         val bottomContentPaddingPx: Int,

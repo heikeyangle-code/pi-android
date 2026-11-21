@@ -67,6 +67,7 @@ import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
@@ -638,11 +639,16 @@ fun ProjectScreen(
         }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(contentPadding)) {
+        Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
             PiTopBar(
                 onBack = onBack,
                 title = tr("项目与文件", "Project & Files"),
+                scrolled = scrolled,
                 actions = {
                     PiTopBarIcon(
                         onClick = { refreshTick++ },
@@ -698,8 +704,9 @@ fun ProjectScreen(
                 },
             )
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = PiSpacing.scrollBottom),
+                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             ) {
                 run {
                     // 项目 Hero 卡：当前项目、位置/信任/改动状态、以及切换项目 / 新建项目。

@@ -237,10 +237,15 @@ internal fun ContextScreen(
         loaded.contextFiles.filter { it.path !in primaryKnownPaths }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize()) {
         PiTopBar(
             title = tr("系统提示词与上下文", "System Prompt & Context"),
             onBack = onBack,
+            scrolled = scrolled,
             actions = {
                 PiTopBarIcon(
                     onClick = {
@@ -253,6 +258,7 @@ internal fun ContextScreen(
             },
         )
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = 8.dp,

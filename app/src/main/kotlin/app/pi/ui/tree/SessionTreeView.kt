@@ -133,6 +133,7 @@ fun SessionTreeView(
     skipSummaryPrompt: () -> Boolean,
     modifier: Modifier = Modifier,
     homeDir: String? = null,
+    onScrolledChange: ((Boolean) -> Unit)? = null,
 ) {
     var filterName by rememberSaveable { mutableStateOf(initialFilter.name) }
     val filter = TreeFilter.valueOf(filterName)
@@ -158,6 +159,12 @@ fun SessionTreeView(
     }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    if (onScrolledChange != null) {
+        val treeScrolled by remember(listState) {
+            androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+        }
+        LaunchedEffect(treeScrolled, onScrolledChange) { onScrolledChange(treeScrolled) }
+    }
 
     val branchIndices = remember(view.rows) {
         view.rows.mapIndexedNotNull { index, r ->

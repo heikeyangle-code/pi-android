@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import app.pi.i18n.tr
 import app.pi.ui.PiTopBar
@@ -37,9 +38,14 @@ internal fun OtherSettingsScreen(
     } else {
         tr("$capUsable/${capStates.size} 组就绪 · 屏幕自动化、通知与设备 Shell", "$capUsable/${capStates.size} active · Screen automation, notifications & device shell")
     }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled = remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }.value
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = tr("其他", "More"), onBack = onBack)
+        PiTopBar(title = tr("其他", "More"), onBack = onBack, scrolled = scrolled)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = PiSettingsMetrics.groupGap,

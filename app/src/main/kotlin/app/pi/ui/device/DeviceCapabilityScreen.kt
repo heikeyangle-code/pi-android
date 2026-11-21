@@ -156,9 +156,14 @@ fun DeviceCapabilityScreen(
         }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = tr("设备能力", "Device Capabilities"), onBack = onBack)
+        PiTopBar(title = tr("设备能力", "Device Capabilities"), onBack = onBack, scrolled = scrolled)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = PiSpacing.inline,

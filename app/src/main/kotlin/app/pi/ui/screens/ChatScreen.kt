@@ -9,10 +9,12 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
@@ -252,7 +254,7 @@ internal fun ChatBody(
     // 一路延展至屏幕最底端，输入框作为悬浮卡片叠在柔和渐隐羽化层之上，并始终通过
     // listBottomPad 保证末条消息完整停在输入框上方、零遮挡。
     val density = LocalDensity.current
-    val navOnlyInsets = WindowInsets.navigationBars.exclude(WindowInsets.ime)
+    val navOnlyInsets = WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).exclude(WindowInsets.ime)
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val defaultDockHeightPx = with(density) { 128.dp.roundToPx() }
     var dockHeightPx by remember { mutableIntStateOf(defaultDockHeightPx) }
@@ -1897,7 +1899,7 @@ internal fun ChatBody(
                     },
             )
 
-            val showDown = !following
+            val showDown = !following && (canScrollForward || unseenRows > 0)
             androidx.compose.animation.AnimatedVisibility(
                 visible = showUp || showDown,
                 enter = fadeIn() + scaleIn(initialScale = 0.85f),

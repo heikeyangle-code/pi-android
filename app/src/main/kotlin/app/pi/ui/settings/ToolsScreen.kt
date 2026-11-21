@@ -192,10 +192,15 @@ internal fun ToolsScreen(
         )
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = tr("工具", "Tools"),
             onBack = onBack,
+            scrolled = scrolled,
             actions = {
                 PiTopBarIcon(
                     onClick = { reloadEpoch++ },
@@ -205,6 +210,7 @@ internal fun ToolsScreen(
             },
         )
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = 8.dp,

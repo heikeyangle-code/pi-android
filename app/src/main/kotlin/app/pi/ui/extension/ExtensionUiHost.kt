@@ -34,10 +34,33 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.host.ExtCustomSurface
 import app.pi.i18n.tr
 import app.pi.protocol.Notice
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+
+private data class ExtensionHostSlice(
+    val notices: List<ExtensionNotice>,
+    val extensionDialog: ExtensionDialog?,
+    val extensionDialogBacklog: Int,
+    val bellSeq: Long,
+    val custom: ExtCustomSurface?,
+    val nonCapturingCustom: ExtCustomSurface?,
+    val customStack: List<ExtCustomSurface>,
+)
+
+private fun PiSessionViewModel.UiState.toExtensionHostSlice(): ExtensionHostSlice = ExtensionHostSlice(
+    notices = notices,
+    extensionDialog = extensionDialog,
+    extensionDialogBacklog = extensionDialogBacklog,
+    bellSeq = ext.bellSeq,
+    custom = ext.custom,
+    nonCapturingCustom = ext.nonCapturingCustom,
+    customStack = ext.customStack,
+)
 
 /**
  * 全应用扩展交互与顶部通知宿主（由 PiRoot 唯一挂载）：
@@ -52,14 +75,17 @@ fun ExtensionUiHost(
     modifier: Modifier = Modifier.fillMaxSize(),
     snackbarBottomPadding: Dp = 0.dp,
 ) {
-    val state by session.state.collectAsState()
+    // 仅订阅扩展 UI / 通知 / 响铃切片：流式每 token 与 1Hz 工具计时不再触发全应用顶层宿主重组。
+    val hostSlice by remember(session) {
+        session.state.map { it.toExtensionHostSlice() }.distinctUntilChanged()
+    }.collectAsState(initial = session.state.value.toExtensionHostSlice())
     val hostState = remember { SnackbarHostState() }
     var bellMuted by remember { mutableStateOf(false) }
     var minimizedSurfaceId by remember { mutableStateOf<String?>(null) }
     var promotedFloatingId by remember { mutableStateOf<String?>(null) }
 
-    val floatingCustom = state.ext.nonCapturingCustom
-    val activeCustom = state.ext.custom
+    val floatingCustom = hostSlice.nonCapturingCustom
+    val activeCustom = hostSlice.custom
         ?: floatingCustom?.takeIf { it.surfaceId == promotedFloatingId }
     val activeSurfaceId = activeCustom?.surfaceId
     LaunchedEffect(activeSurfaceId) {
@@ -73,14 +99,14 @@ fun ExtensionUiHost(
         }
     }
 
-    LaunchedEffect(state.ext.bellSeq) {
-        if (state.ext.bellSeq > 0L && !bellMuted) {
+    LaunchedEffect(hostSlice.bellSeq) {
+        if (hostSlice.bellSeq > 0L && !bellMuted) {
             ExtensionSound.playBell()
         }
     }
 
     var shownTone by remember { mutableStateOf(Notice.Tone.Info) }
-    val head = state.notices.firstOrNull()
+    val head = hostSlice.notices.firstOrNull()
 
     LaunchedEffect(head?.seq) {
         val current = head ?: return@LaunchedEffect
@@ -111,7 +137,7 @@ fun ExtensionUiHost(
                     top = ToastTopOffset,
                 ),
         ) { data ->
-            val tone = state.notices.firstOrNull { it.message == data.visuals.message }?.tone ?: shownTone
+            val tone = hostSlice.notices.firstOrNull { it.message == data.visuals.message }?.tone ?: shownTone
             ExtensionSnack(
                 tone = tone,
                 message = data.visuals.message,
@@ -122,8 +148,8 @@ fun ExtensionUiHost(
         }
 
         ExtensionDialogHost(
-            dialog = state.extensionDialog,
-            backlog = state.extensionDialogBacklog,
+            dialog = hostSlice.extensionDialog,
+            backlog = hostSlice.extensionDialogBacklog,
             onAnswer = { id, answer -> session.answerDialog(id, answer) },
         )
 
@@ -142,7 +168,7 @@ fun ExtensionUiHost(
 
         ExtensionSurfaceHost(
             custom = activeCustom,
-            stackCount = state.ext.customStack.count { !it.hidden && !it.nonCapturing }.coerceAtLeast(if (activeCustom != null) 1 else 0),
+            stackCount = hostSlice.customStack.count { !it.hidden && !it.nonCapturing }.coerceAtLeast(if (activeCustom != null) 1 else 0),
             minimized = activeSurfaceId != null && minimizedSurfaceId == activeSurfaceId,
             minimizedBottomPadding = snackbarBottomPadding + MinimizedSurfaceClearance,
             soundMuted = bellMuted,

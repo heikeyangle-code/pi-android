@@ -293,10 +293,15 @@ internal fun McpServersScreen(
         doc.servers.filter { !project || it.kind != PiMcpConfig.Kind.Override }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = tr("MCP 服务器", "MCP Servers"),
             onBack = onBack,
+            scrolled = scrolled,
             actions = {
                 PiTopBarIcon(
                     onClick = { picking = true },
@@ -306,6 +311,7 @@ internal fun McpServersScreen(
             },
         )
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = 8.dp,

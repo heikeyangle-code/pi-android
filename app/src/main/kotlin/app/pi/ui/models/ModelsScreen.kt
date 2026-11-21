@@ -123,9 +123,13 @@ fun ModelsScreen(
     }
 
     val modelSettings = remember { PiSettingsCatalog.settingsIn(G_MODELS_SCREEN) }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
 
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = tr("模型与供应商", "Models & Providers"), onBack = onBack)
+        PiTopBar(title = tr("模型与供应商", "Models & Providers"), onBack = onBack, scrolled = scrolled)
         val d = data
         if (d == null) {
             if (loaded) {
@@ -142,6 +146,7 @@ fun ModelsScreen(
         val current = d.currentFacts()
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(top = PiSpacing.small * 2, bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             verticalArrangement = Arrangement.spacedBy(PiSettingsMetrics.groupGap),

@@ -66,9 +66,14 @@ fun SettingsHome(
         }.take(40)
     }
     val palette = PiTheme.palette
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
-        PiTopBar(title = tr("设置", "Settings"), onBack = onBack)
+        PiTopBar(title = tr("设置", "Settings"), onBack = onBack, scrolled = scrolled)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = 8.dp,

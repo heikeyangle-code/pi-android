@@ -152,9 +152,14 @@ internal fun PackagesScreen(
         }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize()) {
-        PiTopBar(title = tr("扩展包", "Packages"), onBack = onBack)
+        PiTopBar(title = tr("扩展包", "Packages"), onBack = onBack, scrolled = scrolled)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.inline + PiSpacing.small),

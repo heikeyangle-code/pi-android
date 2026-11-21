@@ -75,10 +75,15 @@ internal fun ResourceTypeScreen(
     val layer = model.effectiveLayer
     val snapshot = model.snapshot
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize()) {
         PiTopBar(
             title = type.label,
             onBack = onBack,
+            scrolled = scrolled,
             actions = {
                 app.pi.ui.PiTopBarIcon(
                     onClick = { model.refresh() },
@@ -97,6 +102,7 @@ internal fun ResourceTypeScreen(
         val sections = if (snapshot == null) emptyList() else sections(type, snapshot, layer, model.loaded, query)
         val diagnostics = diagnosticsFor(type, model.loaded)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + PiSpacing.scrollBottom),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.inline + PiSpacing.small),

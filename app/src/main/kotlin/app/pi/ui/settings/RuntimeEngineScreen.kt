@@ -272,10 +272,15 @@ fun RuntimeEngineScreen(
         }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrolled by remember(listState) {
+        androidx.compose.runtime.derivedStateOf { listState.canScrollBackward }
+    }
     Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = tr("引擎与运行环境", "Engine & Runtime"),
             onBack = onBack,
+            scrolled = scrolled,
             actions = {
                 PiTopBarIcon(
                     icon = Icons.Filled.Refresh,
@@ -289,6 +294,7 @@ fun RuntimeEngineScreen(
         )
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 top = 8.dp,

@@ -101,6 +101,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.PiLocale
 import app.pi.i18n.tr
+import app.pi.protocol.PiResponses
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
@@ -132,7 +133,27 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.tree.SessionTreeView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+
+private data class SessionsOverlaySlice(
+    val sessionFile: String?,
+    val workspaceGuestPath: String,
+    val workspaceHostPath: String?,
+    val tree: PiResponses.SessionTree?,
+    val busy: String?,
+    val streaming: Boolean,
+)
+
+private fun PiSessionViewModel.UiState.toSessionsOverlaySlice(): SessionsOverlaySlice = SessionsOverlaySlice(
+    sessionFile = meta.sessionFile,
+    workspaceGuestPath = workspace.guestPath,
+    workspaceHostPath = workspace.hostPath,
+    tree = tree,
+    busy = busy,
+    streaming = streaming,
+)
 
 /** 覆盖层里的两个视图，嵌入顶栏分段控件直接切换。 */
 enum class SessionsView {
@@ -164,7 +185,10 @@ fun SessionsScreen(
 ) {
     val list by session.sessionList.collectAsState()
     val cwdMissing by session.cwdMissing.collectAsState()
-    val state by session.state.collectAsState()
+    // 仅订阅会话列表/会话树所需字段，避免后台流式生成逐 token 触发整张覆盖层重组。
+    val sessionSlice by remember(session) {
+        session.state.map { it.toSessionsOverlaySlice() }.distinctUntilChanged()
+    }.collectAsState(initial = session.state.value.toSessionsOverlaySlice())
     var treeReselect by remember { mutableStateOf<String?>(null) }
 
     var confirming by remember { mutableStateOf<SessionSummary?>(null) }
@@ -193,7 +217,7 @@ fun SessionsScreen(
     // 读一次、之后秒开：依赖 VM 后台常驻列表与静默刷新。
     LaunchedEffect(Unit) { session.ensureSessionList() }
 
-    val activeFile = state.meta.sessionFile?.substringAfterLast('/')
+    val activeFile = sessionSlice.sessionFile?.substringAfterLast('/')
     val zh = PiLocale.isZh
 
     val forkParentNames = remember(list.rows, zh) {
@@ -214,10 +238,10 @@ fun SessionsScreen(
         value = withContext(Dispatchers.IO) { WorkspaceStore.labels(context) }
     }
     val workspacesRoot = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.ROOT_RELATIVE
-    val currentCwds = remember(state.workspace.guestPath, state.workspace.hostPath) {
+    val currentCwds = remember(sessionSlice.workspaceGuestPath, sessionSlice.workspaceHostPath) {
         buildList {
-            add(state.workspace.guestPath.trimEnd('/'))
-            state.workspace.hostPath?.let { host ->
+            add(sessionSlice.workspaceGuestPath.trimEnd('/'))
+            sessionSlice.workspaceHostPath?.let { host ->
                 val clean = host.trimEnd('/')
                 add(clean)
                 if (clean.startsWith("/storage/") || clean.startsWith("/sdcard/")) {
@@ -244,8 +268,9 @@ fun SessionsScreen(
     val tree = list.query.sort == SessionSort.Threaded && list.query.query.isBlank()
     val listState = rememberLazyListState()
     val listScrolled by remember {
-        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 }
+        derivedStateOf { listState.canScrollBackward }
     }
+    var treeScrolled by remember { mutableStateOf(false) }
     val activeSearchOpen = if (view == SessionsView.List) listSearchOpen else treeSearchOpen
 
     Column(
@@ -255,7 +280,7 @@ fun SessionsScreen(
     ) {
         PiTopBar(
             onBack = onBack,
-            scrolled = view == SessionsView.List && listScrolled,
+            scrolled = if (view == SessionsView.List) listScrolled else treeScrolled,
             titleContent = {
                 PiSeg(
                     options = SessionsView.entries.map { it.label },
@@ -371,11 +396,11 @@ fun SessionsScreen(
         ) { activeView ->
             if (activeView == SessionsView.Tree) {
                 SessionTreeView(
-                    roots = state.tree?.tree.orEmpty(),
-                    leafId = state.tree?.leafId,
-                    loading = state.tree == null,
-                    busy = state.busy?.takeIf { it == NAVIGATE_BUSY_LABEL },
-                    streaming = state.streaming,
+                    roots = sessionSlice.tree?.tree.orEmpty(),
+                    leafId = sessionSlice.tree?.leafId,
+                    loading = sessionSlice.tree == null,
+                    busy = sessionSlice.busy?.takeIf { it == NAVIGATE_BUSY_LABEL },
+                    streaming = sessionSlice.streaming,
                     searchOpen = treeSearchOpen,
                     showStamps = treeShowStamps,
                     jumpCurrentTick = treeJumpCurrentTick,
@@ -396,6 +421,7 @@ fun SessionsScreen(
                     onReplaceInContext = { entryId, text -> session.replaceEntryInContext(entryId, text) },
                     onAbortSummary = { session.abortBranchSummary() },
                     skipSummaryPrompt = { session.branchSummarySkipPrompt() },
+                    onScrolledChange = { treeScrolled = it },
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
