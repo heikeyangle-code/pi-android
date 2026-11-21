@@ -132,7 +132,7 @@ object PiCrashStore {
     internal fun appendBounded(file: File, entry: String, maxBytes: Int) {
         file.parentFile?.mkdirs()
         val entryBytes = entry.toByteArray(Charsets.UTF_8)
-        val existing = if (file.isFile) runCatching { file.readBytes() }.getOrNull().orEmpty() else ByteArray(0)
+        val existing = if (file.isFile) runCatching { file.readBytes() }.getOrNull() ?: ByteArray(0) else ByteArray(0)
         val combined = if (existing.size + entryBytes.size <= maxBytes) {
             existing + entryBytes
         } else {

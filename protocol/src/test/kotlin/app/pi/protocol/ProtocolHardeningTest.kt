@@ -85,7 +85,8 @@ class ProtocolHardeningTest {
             PiEvent.MessageEnd(
                 role = "user",
                 text = "second message",
-                contentBlocks = emptyList(),
+                stopReason = null,
+                usage = null,
             ),
         )
         assertTrue(change is TranscriptChange.Appended)
