@@ -105,7 +105,9 @@ class SecurityAndHostTest {
                 {"type":"message","id":"m2","parentId":"m1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}
                 """.trimIndent() + "\n",
             )
-            val entries = SessionFileReader.readEntries(file)
+            val entries = mutableListOf<JsonObject>()
+            val complete = SessionFileReader.readEntries(file) { entries += it }
+            assertTrue(complete)
             assertEquals(2, entries.size)
         } finally {
             dir.deleteRecursively()
