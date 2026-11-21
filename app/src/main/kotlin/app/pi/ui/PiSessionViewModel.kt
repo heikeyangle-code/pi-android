@@ -4686,7 +4686,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * pi disagree about where sessions live — better to refuse than to hand pi a
      * path it will fail to open.
      */
-    @Volatile private var sessionOpenGeneration = 0L
+    @Volatile internal var sessionOpenGeneration = 0L
 
     internal fun guestSessionPath(file: File): String? {
         val sessionsRoot = runCatching { File(host.paths().agentDir, "sessions").canonicalPath }.getOrNull() ?: return null
