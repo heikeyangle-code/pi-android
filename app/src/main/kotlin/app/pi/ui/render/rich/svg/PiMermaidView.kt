@@ -1,6 +1,9 @@
 package app.pi.ui.render.rich.svg
 
+import android.graphics.Bitmap
+import android.graphics.Paint
 import android.graphics.Picture
+import android.graphics.RectF
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -203,21 +206,26 @@ fun PiMermaidView(
             }
             draw = PiMermaidDraw.Rendering
             val result = try {
-                PiMermaidSvg.renderMermaidSvg(source, widthPx, theme)
+                PiMermaidSvg.renderMermaidDiagram(source, widthPx, theme)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
-                // A throwing engine is a failure like any other: the source stays.
-                PiSvgResult.Failure(error.message ?: error::class.java.simpleName)
+                PiMermaidRendered.Failure(error.message ?: error::class.java.simpleName)
             }
             draw = when (result) {
-                is PiSvgResult.Ok -> withContext(Dispatchers.Default) {
-                    // XML parse + `Picture` recording are off the main thread; the
-                    // `LaunchedEffect` is cancelled if the source changes under us.
-                    piMermaidDrawSvg(result, widthPx)
+                is PiMermaidRendered.Raster -> PiMermaidDraw.Ready(
+                    bitmap = result.bitmap,
+                    picture = null,
+                    baseWidthPx = result.baseWidthPx,
+                    baseHeightPx = result.baseHeightPx,
+                    aspect = result.aspect,
+                )
+
+                is PiMermaidRendered.Vector -> withContext(Dispatchers.Default) {
+                    piMermaidDrawSvg(result.svg, widthPx)
                 }
 
-                is PiSvgResult.Failure -> PiMermaidDraw.Unavailable(result.reason)
+                is PiMermaidRendered.Failure -> PiMermaidDraw.Unavailable(result.reason)
             }
             (draw as? PiMermaidDraw.Ready)?.let {
                 PiMermaidDrawCache.put(PiMermaidDrawKey(source, widthPx, theme), it)
@@ -318,7 +326,17 @@ fun PiMermaidView(
                             -image.baseWidthPx / 2f,
                             -image.baseHeightPx / 2f,
                         )
-                        native.drawPicture(image.picture)
+                        val bmp = image.bitmap
+                        if (bmp != null && !bmp.isRecycled) {
+                            native.drawBitmap(
+                                bmp,
+                                null,
+                                RectF(0f, 0f, image.baseWidthPx.toFloat(), image.baseHeightPx.toFloat()),
+                                PI_MERMAID_BITMAP_PAINT,
+                            )
+                        } else {
+                            image.picture?.let { native.drawPicture(it) }
+                        }
                         native.restore()
                     }
                 }
@@ -381,7 +399,8 @@ private object PiMermaidDrawCache {
     }
 
     @Synchronized
-    fun get(key: PiMermaidDrawKey): PiMermaidDraw.Ready? = entries[key]
+    fun get(key: PiMermaidDrawKey): PiMermaidDraw.Ready? =
+        entries[key]?.takeIf { it.bitmap == null || !it.bitmap.isRecycled }
 
     @Synchronized
     fun put(key: PiMermaidDrawKey, value: PiMermaidDraw.Ready) {
@@ -397,9 +416,10 @@ private sealed interface PiMermaidDraw {
     /** The pipeline was asked and has not answered: source plus `渲染中…`. */
     data object Rendering : PiMermaidDraw
 
-    /** A recorded, drawable diagram. */
+    /** A recorded, drawable diagram (high-DPI Chromium Skia bitmap or AndroidSVG Picture fallback). */
     data class Ready(
-        val picture: Picture,
+        val bitmap: Bitmap?,
+        val picture: Picture?,
         val baseWidthPx: Int,
         val baseHeightPx: Int,
         val aspect: Float,
@@ -461,8 +481,10 @@ private fun piMermaidDrawSvg(result: PiSvgResult.Ok, requestedWidthPx: Int): PiM
     } catch (error: Exception) {
         return PiMermaidDraw.Unavailable(tr("SVG 绘制失败：${error.message ?: error::class.java.simpleName}", "SVG render failed: ${error.message ?: error::class.java.simpleName}"))
     }
-    return PiMermaidDraw.Ready(picture, baseWidth, baseHeight, aspect)
+    return PiMermaidDraw.Ready(bitmap = null, picture = picture, baseWidthPx = baseWidth, baseHeightPx = baseHeight, aspect = aspect)
 }
+
+private val PI_MERMAID_BITMAP_PAINT = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
 /**
  * The document's width/height ratio, preferring what the SVG itself declares.

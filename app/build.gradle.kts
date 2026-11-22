@@ -235,7 +235,7 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.webkit)
     implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.markdown.renderer.m3)
+    implementation(libs.jetbrains.markdown)
 
     // Rich rendering: SVG (Mermaid/MathJax output), safe HTML, safe YAML.
     implementation(libs.androidsvg)
@@ -255,26 +255,4 @@ dependencies {
     implementation(libs.shizuku.provider)
 
     testImplementation(libs.junit)
-}
-
-// The markdown renderer is built by a newer Kotlin than this project's compiler
-// and therefore asks for kotlin-stdlib 2.4.0 (and coroutines 1.11.0). Kotlin
-// 2.2.21 refuses to read 2.4.0 metadata:
-//
-//   kotlin-stdlib-2.4.0.jar!/META-INF/kotlin-stdlib.kotlin_module:
-//     error: module was compiled with an incompatible version of Kotlin.
-//     The binary version of its metadata is 2.4.0, expected version is 2.2.0.
-//
-// — verified by compiling against that jar on this machine. Pinning the
-// standard library back to the compiler's own version is safe because the
-// renderer only refers to long-standing stdlib and coroutines members
-// (Pair/TuplesKt/CollectionsKt/EnumEntries, and Flow/StateFlow/Mutex/
-// CoroutineScope); a scan of every referenced `kotlin/` and `kotlinx/coroutines`
-// class in its 411 class files found nothing newer than Kotlin 1.9.
-configurations.all {
-    resolutionStrategy {
-        force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
-        force("org.jetbrains.kotlinx:kotlinx-coroutines-core:${libs.versions.coroutines.get()}")
-        force("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${libs.versions.coroutines.get()}")
-    }
 }

@@ -5,6 +5,8 @@ import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.res.AssetManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
@@ -197,6 +199,10 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
 
     private const val MAX_CACHE_ENTRIES = 48
     private const val MAX_CACHE_BYTES = 8 * 1024 * 1024
+    private const val MAX_RASTER_ENTRIES = 12
+    private const val MAX_RASTER_BYTES = 24 * 1024 * 1024
+    private const val MAX_BITMAP_SIDE = 2200
+    private const val MAX_BITMAP_PIXELS = 3_600_000L
 
     /** 一次 `mermaid.render()` 的上限。选型文档建议 3–5 s，这里取上界。 */
     private const val RENDER_TIMEOUT_MS = 5_000L
@@ -243,6 +249,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     private val inFlight = HashMap<String, Task>()
 
     private val cache = SvgCache(MAX_CACHE_ENTRIES, MAX_CACHE_BYTES)
+    private val rasterCache = RasterCache(MAX_RASTER_ENTRIES, MAX_RASTER_BYTES)
 
     private var running: Task? = null
 
@@ -276,39 +283,50 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         val key = request.cacheKey.ifBlank {
             PiMermaidSvg.cacheKey(request.source, request.widthPx, request.theme)
         }
-        return withContext(Dispatchers.Main.immediate) { enqueue(key, request) }
+        return when (val rendered = withContext(Dispatchers.Main.immediate) { enqueue(key, request, preferRaster = false) }) {
+            is PiMermaidRendered.Vector -> rendered.svg
+            is PiMermaidRendered.Failure -> PiSvgResult.Failure(rendered.reason)
+            is PiMermaidRendered.Raster -> PiSvgResult.Failure("unexpected raster for svg request")
+        }
+    }
+
+    /**
+     * Primary Mermaid entry point: renders full modern HTML/CSS3 Mermaid diagrams via live
+     * Chromium/Skia high-DPI capture with automatic pure-SVG fallback.
+     */
+    suspend fun renderDiagram(request: PiSvgRequest): PiMermaidRendered {
+        if (request.kind != PiSvgKind.Mermaid) return PiMermaidRendered.Failure("math not wired")
+        if (request.source.isBlank()) return PiMermaidRendered.Failure("Mermaid 源码为空")
+        if (exceedsSourceLimit(request.source)) {
+            return PiMermaidRendered.Failure("Mermaid 源码超过 ${MAX_SOURCE_BYTES / 1024} KiB 上限")
+        }
+        val key = request.cacheKey.ifBlank {
+            PiMermaidSvg.cacheKey(request.source, request.widthPx, request.theme)
+        }
+        return withContext(Dispatchers.Main.immediate) { enqueue(key, request, preferRaster = true) }
     }
 
     // ---------------------------------------------------------------- queue
 
-    /**
-     * 主线程上的入队/合并点。
-     *
-     * 顺序很重要：先查缓存（命中直接返回，连队列都不进），再查 in-flight（同键合并），
-     * 最后才是队列容量检查。反过来会让"同一张图的第二个请求"在队列满时被拒绝，尽管
-     * 它本来可以免费共享第一个请求的结果。
-     */
-    private suspend fun enqueue(key: String, request: PiSvgRequest): PiSvgResult {
+    private suspend fun enqueue(key: String, request: PiSvgRequest, preferRaster: Boolean): PiMermaidRendered {
         assertMainThread()
-        cache.get(key)?.let { return it }
-        inFlight[key]?.let { return awaitTask(it) }
-        if (running != null && pending.size >= MAX_PENDING) {
-            return PiSvgResult.Failure("Mermaid 渲染队列已满（$MAX_PENDING 个等待中）")
+        val cacheKey = if (preferRaster) "r:$key" else "v:$key"
+        if (preferRaster) {
+            rasterCache.get(cacheKey)?.let { return it }
         }
-        val task = Task(key, request)
-        inFlight[key] = task
+        cache.get(key)?.let { if (!preferRaster) return PiMermaidRendered.Vector(it) }
+        inFlight[cacheKey]?.let { return awaitTask(it) }
+        if (running != null && pending.size >= MAX_PENDING) {
+            return PiMermaidRendered.Failure("Mermaid 渲染队列已满（$MAX_PENDING 个等待中）")
+        }
+        val task = Task(cacheKey, key, request, preferRaster)
+        inFlight[cacheKey] = task
         pending.addLast(task)
         pump()
         return awaitTask(task)
     }
 
-    /**
-     * 等一个任务，并在**最后一个等待者离开**时把任务作废。
-     *
-     * `waiters` 必须在 `finally` 里减：调用方取消走的是异常路径，只有 `finally` 两个分支
-     * 都覆盖得到。`task.result.isCompleted` 为真说明任务已经有定论，此时离开不算作废。
-     */
-    private suspend fun awaitTask(task: Task): PiSvgResult {
+    private suspend fun awaitTask(task: Task): PiMermaidRendered {
         task.waiters += 1
         try {
             return task.result.await()
@@ -320,13 +338,12 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
 
     private fun abandon(task: Task) {
         if (task.started) {
-            // 已经在渲染：不打断 JS（会污染共享宿主），只丢弃结果、不写缓存。
             task.abandoned = true
             return
         }
         pending.remove(task)
         if (inFlight[task.key] === task) inFlight.remove(task.key)
-        task.result.complete(PiSvgResult.Failure("Mermaid 渲染已取消"))
+        task.result.complete(PiMermaidRendered.Failure("Mermaid 渲染已取消"))
         pump()
     }
 
@@ -342,13 +359,15 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         }
     }
 
-    private fun finish(task: Task, result: PiSvgResult) {
+    private fun finish(task: Task, result: PiMermaidRendered) {
         if (running === task) running = null
         if (inFlight[task.key] === task) inFlight.remove(task.key)
-        // 只缓存"还有人要"的成功结果：调用方已经走了的那次（abandoned）是过期内容，
-        // 让它进缓存只会把真正要看的图挤出去。
-        if (result is PiSvgResult.Ok && !task.abandoned && task.waiters > 0) {
-            cache.put(task.key, result)
+        if (!task.abandoned && task.waiters > 0) {
+            when (result) {
+                is PiMermaidRendered.Raster -> rasterCache.put(task.key, result)
+                is PiMermaidRendered.Vector -> cache.put(task.rawKey, result.svg)
+                is PiMermaidRendered.Failure -> Unit
+            }
         }
         task.result.complete(result)
         pump()
@@ -357,33 +376,74 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     // ---------------------------------------------------------------- one task
 
     private suspend fun runTask(task: Task) {
-        // 宿主在这次渲染进行中被系统回收（内存紧张时主动释放）或崩了：这不是这条内容的错，
-        // 重建一次宿主再试一次；第二次还失效才报失败。以前直接报「宿主失效」，那一格就
-        // 一直停在源码上，直到滚出去再滚回来。
         var retried = false
-        var result: PiSvgResult
+        var result: PiMermaidRendered
         while (true) {
             var hostLost = false
             result = try {
-            val renderHost = ensureHost()
-            val rawReply = withTimeout(RENDER_TIMEOUT_MS) {
-                renderHost.render { taskId -> renderScript(taskId, task.request) }
+                val renderHost = ensureHost()
+                if (task.preferRaster) {
+                    val rawHtmlReply = withTimeout(RENDER_TIMEOUT_MS) {
+                        renderHost.render { taskId -> renderScript(taskId, task.request, htmlLabels = true) }
+                    }
+                    val stage = parseStageReply(rawHtmlReply)
+                    if (stage != null && stage.stageReady && stage.stageWidth > 0 && stage.stageHeight > 0) {
+                        val bitmap = withTimeoutOrNull(1500L) {
+                            renderHost.captureStageBitmap(stage.stageWidth, stage.stageHeight, density)
+                        }
+                        if (bitmap != null && hasVisiblePixels(bitmap)) {
+                            val aspect = (stage.stageWidth.toFloat() / stage.stageHeight.toFloat()).coerceIn(0.05f, 40f)
+                            PiMermaidRendered.Raster(
+                                bitmap = bitmap,
+                                baseWidthPx = bitmap.width,
+                                baseHeightPx = bitmap.height,
+                                aspect = aspect,
+                            )
+                        } else {
+                            bitmap?.recycle()
+                            // Fallback cleanly to pure-SVG (htmlLabels = false) for AndroidSVG
+                            val fallbackReply = withTimeout(RENDER_TIMEOUT_MS) {
+                                renderHost.render { taskId -> renderScript(taskId, task.request, htmlLabels = false) }
+                            }
+                            when (val svgRes = accept(fallbackReply)) {
+                                is PiSvgResult.Ok -> PiMermaidRendered.Vector(svgRes)
+                                is PiSvgResult.Failure -> PiMermaidRendered.Failure(svgRes.reason)
+                            }
+                        }
+                    } else if (stage != null && !stage.ok) {
+                        PiMermaidRendered.Failure(stage.error.ifBlank { "Mermaid 渲染失败" })
+                    } else {
+                        val fallbackReply = withTimeout(RENDER_TIMEOUT_MS) {
+                            renderHost.render { taskId -> renderScript(taskId, task.request, htmlLabels = false) }
+                        }
+                        when (val svgRes = accept(fallbackReply)) {
+                            is PiSvgResult.Ok -> PiMermaidRendered.Vector(svgRes)
+                            is PiSvgResult.Failure -> PiMermaidRendered.Failure(svgRes.reason)
+                        }
+                    }
+                } else {
+                    val rawReply = withTimeout(RENDER_TIMEOUT_MS) {
+                        renderHost.render { taskId -> renderScript(taskId, task.request, htmlLabels = false) }
+                    }
+                    when (val svgRes = accept(rawReply)) {
+                        is PiSvgResult.Ok -> PiMermaidRendered.Vector(svgRes)
+                        is PiSvgResult.Failure -> PiMermaidRendered.Failure(svgRes.reason)
+                    }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                disposeHost("渲染超时")
+                PiMermaidRendered.Failure("Mermaid 渲染超时（${RENDER_TIMEOUT_MS} ms）")
+            } catch (gone: MermaidHostLostException) {
+                disposeHost("宿主失效：${gone.message}")
+                hostLost = true
+                PiMermaidRendered.Failure("Mermaid 渲染宿主失效：${gone.message ?: "未知原因"}")
+            } catch (unavailable: MermaidHostUnavailableException) {
+                PiMermaidRendered.Failure(unavailable.message ?: "Mermaid 渲染宿主不可用")
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Throwable) {
+                PiMermaidRendered.Failure("Mermaid 渲染失败：${error.message ?: error::class.java.simpleName}")
             }
-            accept(rawReply)
-        } catch (timeout: TimeoutCancellationException) {
-            disposeHost("渲染超时")
-            PiSvgResult.Failure("Mermaid 渲染超时（${RENDER_TIMEOUT_MS} ms）")
-        } catch (gone: MermaidHostLostException) {
-            disposeHost("宿主失效：${gone.message}")
-            hostLost = true
-            PiSvgResult.Failure("Mermaid 渲染宿主失效：${gone.message ?: "未知原因"}")
-        } catch (unavailable: MermaidHostUnavailableException) {
-            PiSvgResult.Failure(unavailable.message ?: "Mermaid 渲染宿主不可用")
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            PiSvgResult.Failure("Mermaid 渲染失败：${error.message ?: error::class.java.simpleName}")
-        }
             if (hostLost && !retried) {
                 retried = true
                 continue
@@ -572,12 +632,16 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
                     // 在那里拆宿主会让用户切回来时看到一次"源码"闪一下，而当时并不缺内存。
                     val pressured = level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW &&
                         level != android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
-                    if (pressured) disposeHost("系统内存紧张（onTrimMemory=$level）")
+                    if (pressured) {
+                        rasterCache.clear()
+                        disposeHost("系统内存紧张（onTrimMemory=$level）")
+                    }
                 }
 
                 override fun onConfigurationChanged(newConfig: android.content.res.Configuration) = Unit
 
                 override fun onLowMemory() {
+                    rasterCache.clear()
                     disposeHost("系统内存不足（onLowMemory）")
                 }
             },
@@ -620,7 +684,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
      * 和 `<` 后紧跟的 `/`，所以模型源码里出现 `"`、换行或 `</script>` 都不会越出字符串
      * （这里不是 HTML 上下文，但少一个可注入面总是好的）。
      */
-    private fun renderScript(taskId: Int, request: PiSvgRequest): String {
+    private fun renderScript(taskId: Int, request: PiSvgRequest, htmlLabels: Boolean = true): String {
         val theme = request.theme
         val themeLiteral = buildString {
             append("{background:").append(quote(theme.background))
@@ -632,7 +696,48 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         }
         val width = layoutWidthCss(request.widthPx)
         return "window.__piRender(" + taskId + "," +
-            quote(stripDirectives(request.source)) + "," + themeLiteral + "," + width + ")"
+            quote(stripDirectives(request.source)) + "," + themeLiteral + "," + width + "," + htmlLabels + ")"
+    }
+
+    private class StageReply(
+        val ok: Boolean,
+        val error: String,
+        val stageReady: Boolean,
+        val stageWidth: Int,
+        val stageHeight: Int,
+    )
+
+    private fun parseStageReply(rawReply: String): StageReply? = try {
+        val json = JSONObject(rawReply)
+        StageReply(
+            ok = json.optBoolean("ok", false),
+            error = json.optString("error", ""),
+            stageReady = json.optBoolean("stageReady", false),
+            stageWidth = json.optInt("stageWidth", 0),
+            stageHeight = json.optInt("stageHeight", 0),
+        )
+    } catch (_: JSONException) {
+        null
+    }
+
+    /** Fast 8×8 strided pixel check verifying Chromium actually drew visible diagram pixels. */
+    private fun hasVisiblePixels(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return false
+        val stepX = (w / 10).coerceAtLeast(1)
+        val stepY = (h / 10).coerceAtLeast(1)
+        var y = stepY / 2
+        while (y < h) {
+            var x = stepX / 2
+            while (x < w) {
+                val alpha = (bitmap.getPixel(x, y) ushr 24) and 0xFF
+                if (alpha > 8) return true
+                x += stepX
+            }
+            y += stepY
+        }
+        return false
     }
 
     /**
@@ -712,8 +817,13 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
 
 // ---------------------------------------------------------------- task / cache
 
-private class Task(val key: String, val request: PiSvgRequest) {
-    val result = CompletableDeferred<PiSvgResult>()
+private class Task(
+    val key: String,
+    val rawKey: String,
+    val request: PiSvgRequest,
+    val preferRaster: Boolean,
+) {
+    val result = CompletableDeferred<PiMermaidRendered>()
 
     /** 当前还有几个调用方在 `await`；最后一个离开时任务作废。 */
     var waiters = 0
@@ -722,6 +832,35 @@ private class Task(val key: String, val request: PiSvgRequest) {
 
     /** 调用方已全部离开：结果回来时丢弃，也不写缓存。 */
     var abandoned = false
+}
+
+private class RasterCache(private val maxEntries: Int, private val maxBytes: Int) {
+    private class Held(val result: PiMermaidRendered.Raster, val bytes: Int)
+
+    private val entries = LinkedHashMap<String, Held>(8, 0.75f, true)
+    private var bytes = 0
+
+    fun get(key: String): PiMermaidRendered.Raster? =
+        entries[key]?.result?.takeIf { !it.bitmap.isRecycled }
+
+    fun put(key: String, result: PiMermaidRendered.Raster) {
+        if (maxEntries <= 0 || maxBytes <= 0 || result.bitmap.isRecycled) return
+        val weight = result.bitmap.allocationByteCount
+        if (weight <= 0 || weight > maxBytes) return
+        entries.remove(key)?.let { bytes -= it.bytes }
+        entries[key] = Held(result, weight)
+        bytes += weight
+        while (entries.size > maxEntries || bytes > maxBytes) {
+            val eldest = entries.keys.firstOrNull() ?: break
+            val evicted = entries.remove(eldest) ?: break
+            bytes -= evicted.bytes
+        }
+    }
+
+    fun clear() {
+        entries.clear()
+        bytes = 0
+    }
 }
 
 /**
@@ -943,6 +1082,90 @@ private class RenderHost(
             if (dead) throw MermaidHostLostException(deadReason ?: "Mermaid 宿主已失效")
             val reply = evaluate(view, "window.__piPoll($taskId)")
             if (reply != null && reply != "null" && reply.isNotEmpty()) return reply
+        }
+    }
+
+    /**
+     * Captures the live `#pi-stage` DOM rendered by Chromium/Skia (`htmlLabels: true`) into a
+     * crisp, bounded high-DPI `ARGB_8888` bitmap, then clears the stage and restores the default
+     * viewport dimensions.
+     */
+    suspend fun captureStageBitmap(stageCssWidth: Int, stageCssHeight: Int, deviceDensity: Float): Bitmap? {
+        if (dead) return null
+        val view = webView ?: return null
+        val safeDensity = deviceDensity.coerceIn(1f, 4f)
+        val desiredDpr = safeDensity.coerceIn(1.5f, 2.5f)
+        var bmpW = (stageCssWidth * desiredDpr).roundToInt().coerceAtLeast(1)
+        var bmpH = (stageCssHeight * desiredDpr).roundToInt().coerceAtLeast(1)
+        val maxSide = maxOf(bmpW, bmpH)
+        if (maxSide > 2200) {
+            val factor = 2200f / maxSide.toFloat()
+            bmpW = (bmpW * factor).roundToInt().coerceAtLeast(1)
+            bmpH = (bmpH * factor).roundToInt().coerceAtLeast(1)
+        }
+        val pixels = bmpW.toLong() * bmpH.toLong()
+        if (pixels > 3_600_000L) {
+            val factor = kotlin.math.sqrt(3_600_000.0 / pixels.toDouble()).toFloat()
+            bmpW = (bmpW * factor).roundToInt().coerceAtLeast(1)
+            bmpH = (bmpH * factor).roundToInt().coerceAtLeast(1)
+        }
+
+        val cssScale = bmpW.toFloat() / (stageCssWidth.toFloat() * safeDensity).coerceAtLeast(1f)
+        return try {
+            resizeStageView(view, bmpW, bmpH)
+            evaluate(view, "window.__piSetStageScale($cssScale)")
+            awaitVisualState(view)
+            delay(16L)
+            if (dead || webView !== view) return null
+            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            view.draw(canvas)
+            bitmap
+        } catch (error: Throwable) {
+            Log.w(TAG, "Mermaid Skia 位图捕获失败，将回退 SVG：${error.message}")
+            null
+        } finally {
+            runCatching { evaluate(view, "window.__piClearStage()") }
+            runCatching { resizeStageView(view, viewWidthPx, viewHeightPx) }
+        }
+    }
+
+    private fun resizeStageView(view: WebView, widthPx: Int, heightPx: Int) {
+        val lp = view.layoutParams
+        if (lp != null) {
+            lp.width = widthPx
+            lp.height = heightPx
+            view.layoutParams = lp
+        }
+        view.translationX = -(widthPx + 1).toFloat()
+        val wSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
+        val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY)
+        view.measure(wSpec, hSpec)
+        view.layout(0, 0, widthPx, heightPx)
+    }
+
+    private suspend fun awaitVisualState(view: WebView) {
+        val requestId = nextTaskId++.toLong()
+        withTimeoutOrNull(350L) {
+            suspendCancellableCoroutine<Unit> { cont ->
+                val done = AtomicBoolean(false)
+                try {
+                    view.postVisualStateCallback(
+                        requestId,
+                        object : WebView.VisualStateCallback() {
+                            override fun onComplete(id: Long) {
+                                if (done.compareAndSet(false, true) && cont.isActive) {
+                                    cont.resume(Unit)
+                                }
+                            }
+                        },
+                    )
+                } catch (_: Throwable) {
+                    if (done.compareAndSet(false, true) && cont.isActive) {
+                        cont.resume(Unit)
+                    }
+                }
+            }
         }
     }
 

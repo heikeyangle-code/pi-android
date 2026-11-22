@@ -35,4 +35,3 @@
 -dontwarn kotlinx.serialization.**
 -dontwarn kotlinx.coroutines.**
 -dontwarn org.jetbrains.markdown.**
--dontwarn com.mikepenz.markdown.**

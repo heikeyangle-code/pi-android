@@ -1,6 +1,27 @@
 package app.pi.ui.render.rich.svg
 
+import android.graphics.Bitmap
 import java.security.MessageDigest
+
+/**
+ * Render result for [PiMermaidView]:
+ *  - [Raster]: High-DPI Chromium Skia bitmap rendered directly with `htmlLabels: true`
+ *    (full HTML/CSS3, crisp CJK text, rounded nodes, arrowheads, zero AndroidSVG limitations).
+ *  - [Vector]: Sanitized pure SVG fallback for devices where live WebView capture is unavailable.
+ *  - [Failure]: Explicit failure reason so the view falls back cleanly to source / ASCII art.
+ */
+sealed interface PiMermaidRendered {
+    data class Raster(
+        val bitmap: Bitmap,
+        val baseWidthPx: Int,
+        val baseHeightPx: Int,
+        val aspect: Float,
+    ) : PiMermaidRendered
+
+    data class Vector(val svg: PiSvgResult.Ok) : PiMermaidRendered
+
+    data class Failure(val reason: String) : PiMermaidRendered
+}
 
 /**
  * ` ```mermaid ` 围栏的**唯一公开入口**（方案 §四、§十三）。
@@ -40,7 +61,25 @@ object PiMermaidSvg {
      *
      * 版本号与 `app/src/main/assets/rich/mermaid/LICENSE` 记录的 12.2.0 对齐。
      */
-    const val ENGINE_VERSION: String = "mermaid-12.2.0"
+    const val ENGINE_VERSION: String = "mermaid-12.2.0-skia-1"
+
+    /**
+     * Renders a Mermaid diagram using Chromium/Skia high-DPI capture (`htmlLabels: true`)
+     * with automatic sanitized pure-SVG fallback.
+     */
+    suspend fun renderMermaidDiagram(
+        source: String,
+        widthPx: Int,
+        theme: PiSvgTheme,
+    ): PiMermaidRendered = PiMermaidRenderEngine.renderDiagram(
+        PiSvgRequest(
+            kind = PiSvgKind.Mermaid,
+            source = source,
+            widthPx = widthPx,
+            theme = theme,
+            cacheKey = cacheKey(source, widthPx, theme),
+        ),
+    )
 
     /**
      * 把一段 Mermaid 源码渲染成经过安全校验的 SVG。

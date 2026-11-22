@@ -1,31 +1,19 @@
 package app.pi.ui.render
 
-import com.mikepenz.markdown.compose.elements.MarkdownParagraph
-import app.pi.ui.render.rich.svg.PiSvgFenceView
-import app.pi.ui.render.rich.svg.PiMermaidView
-import app.pi.ui.render.rich.svg.PiMathView
-import app.pi.ui.render.rich.html.PiHtmlBlockView
-import app.pi.ui.render.rich.PiYamlTreeView
-import app.pi.ui.render.rich.PiStackTraceView
-import app.pi.ui.render.rich.PiLinkPreview
-import app.pi.ui.render.rich.PiLinkCard
-import app.pi.ui.render.rich.PiCsvTableView
-import app.pi.ui.render.rich.PiCsvTable
-import app.pi.ui.render.rich.LinkCardResult
-import androidx.compose.ui.platform.LocalUriHandler
 import android.content.Context
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,12 +23,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Announcement
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,16 +55,16 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.CollectionItemInfo
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.collectionItemInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -77,56 +74,39 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.times
+import app.pi.bridge.PiImageLoader
+import app.pi.bridge.PiNoOpImageLoader
 import app.pi.bridge.rememberPiGuestImageTransformer
-import app.pi.highlight.PiNodeCodeHighlighter
+import app.pi.highlight.PiMermaidMode
+import app.pi.highlight.PiMermaidReply
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.i18n.tr
 import app.pi.protocol.PiImage
-import app.pi.ui.render.rich.FenceInfo
-import app.pi.ui.render.rich.PiJsonTreeView
-import app.pi.ui.render.rich.PiTreeMode
-import app.pi.ui.render.rich.PiXmlTreeView
-import app.pi.ui.render.rich.RichBlock
-import app.pi.ui.render.rich.RichBlockKind
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.settings.PiSettingsFileStore
-import app.pi.settings.readString
+import app.pi.ui.render.rich.FenceInfo
+import app.pi.ui.render.rich.LinkCardResult
+import app.pi.ui.render.rich.PiCsvTable
+import app.pi.ui.render.rich.PiCsvTableView
+import app.pi.ui.render.rich.PiJsonTreeView
+import app.pi.ui.render.rich.PiLinkCard
+import app.pi.ui.render.rich.PiLinkPreview
+import app.pi.ui.render.rich.PiStackTraceView
+import app.pi.ui.render.rich.PiTreeMode
+import app.pi.ui.render.rich.PiXmlTreeView
+import app.pi.ui.render.rich.PiYamlTreeView
+import app.pi.ui.render.rich.RichBlock
+import app.pi.ui.render.rich.RichBlockKind
+import app.pi.ui.render.rich.svg.PiMathView
+import app.pi.ui.render.rich.svg.PiMermaidView
+import app.pi.ui.render.rich.svg.PiSvgFenceView
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
 import java.io.File
-import com.mikepenz.markdown.compose.LocalImageTransformer
-import com.mikepenz.markdown.compose.LocalMarkdownComponents
-import com.mikepenz.markdown.compose.LocalMarkdownDimens
-import com.mikepenz.markdown.compose.LocalMarkdownTypography
-import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
-import com.mikepenz.markdown.compose.MarkdownElement
-import com.mikepenz.markdown.compose.components.MarkdownComponentModel
-import com.mikepenz.markdown.compose.components.MarkdownComponents
-import com.mikepenz.markdown.compose.components.markdownComponents
-import com.mikepenz.markdown.compose.elements.LocalTableRowIndex
-import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
-import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
-import com.mikepenz.markdown.compose.elements.MarkdownDivider
-import com.mikepenz.markdown.compose.elements.MarkdownHeader
-import com.mikepenz.markdown.compose.elements.MarkdownImage
-import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
-import com.mikepenz.markdown.compose.elements.MarkdownTable
-import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
-import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
-import com.mikepenz.markdown.compose.elements.MarkdownTableRow
-import com.mikepenz.markdown.model.DefaultMarkdownTypography
-import com.mikepenz.markdown.model.ImageTransformer
-import com.mikepenz.markdown.model.MarkdownDimens
-import com.mikepenz.markdown.model.MarkdownTypography
-import com.mikepenz.markdown.model.NoOpImageTransformerImpl
-import com.mikepenz.markdown.utils.resolveImageAlt
-import com.mikepenz.markdown.utils.resolveImageLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -138,244 +118,223 @@ import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 
-/**
- * Which highlighter code blocks use. A composition local rather than a parameter
- * because the code components are reached through the renderer's own dispatch,
- * far from the call site that knows whether highlighting is available.
- *
- * The default is the real backend — pi's own highlight.js, served by the guest
- * engine over loopback (`app.pi.highlight.PiNodeCodeHighlighter`). It is safe as
- * a default because it degrades on its own: before [app.pi.highlight.PiNodeCodeHighlighter.attach]
- * runs, and whenever the engine is down, it answers with no spans and
- * `languageKnown = false`, and every block renders in `mdCodeBlock` — which is
- * exactly pi's branch for a fence whose language highlight.js does not know
- * (`theme.ts:1085`). A caller that wants to be sure of that (or to test the
- * renderer without an engine) provides [PiPlainCodeHighlighter] explicitly.
- */
+/** Fallback code highlighter for languages outside [PiFastCodeHighlighter]'s 35+ native grammars. */
 internal val LocalPiCodeHighlighter = staticCompositionLocalOf<PiCodeHighlighter> {
-    PiNodeCodeHighlighter
+    PiPlainCodeHighlighter
 }
 
-/**
- * Images are the renderer's other pluggable seam.
- *
- * The default is upstream's no-op (`NoOpImageTransformerImpl.transform` returns `null`),
- * and it is only reached by a caller that renders this component outside
- * [PiMarkdownText] — a preview, a test. The app's real path installs
- * `bridge/rememberPiGuestImageTransformer()` here (`PiMarkdown.kt`), which is the same
- * instance handed to the library through `Markdown(imageTransformer = …)`. Two
- * composition locals exist because the library reads its own
- * (`com.mikepenz.markdown.compose.LocalImageTransformer`) inside
- * `MarkdownImage`/`MarkdownInlineImage`, while [PiImagePlaceholder] needs the transformer
- * *before* delegating, to keep its text fallback for a link whose bytes are not there.
- */
-internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer> {
-    NoOpImageTransformerImpl()
+/** Active Markdown image loader (installed by [PiMarkdownText] and overridden per-cell by [PiTable]). */
+internal val LocalPiImageTransformer = staticCompositionLocalOf<PiImageLoader> {
+    PiNoOpImageLoader
 }
 
-/**
- * 正文里的一张图被点了一下时，把**交给查看器的那份 wire 值**送去哪里。
- *
- * ## 为什么是一个组合局部，而不是给组件加参数
- *
- * 两个图片槽（[PiImagePlaceholder] / [PiInlineImage]）是**库按节点分派**到的，离"谁知道查看器
- * 在哪"那个调用点很远：宿主是 `ChatScreen` 的 `viewedImage: PiImage?` → `PiImageViewer`
- * （`ui/screens/ChatScreen.kt:2786-2794`），而它只把 `onImageClick` 交给 `BlockRenderer`
- * （`:2260`）。库的组件集是 `PiMarkdown.kt` 里 `val components = remember { piMarkdownComponents() }`
- * 造一次、全程复用的，参数进不去（那个 `remember` 正是这个文件不是 `@Composable` 的原因）；
- * 和 [LocalPiImageTransformer] 用组合局部是同一个理由。
- *
- * ## 默认 `null` = 没有查看器可开
- *
- * 此时两个图片槽**一个修饰符都不多**、直接调库的组件：预览、测试、以及正文之外那几个
- * markdown 表面（`HookMessageBlock` / `CompactionBlock` / `BranchSummaryBlock` /
- * `SkillInvocationBlock` 都没传回调）与这次改动之前逐字节相同 —— 它们的图仍然不可点。
- *
- * ## 为什么是 `compositionLocalOf` 而不是 `staticCompositionLocalOf`
- *
- * 这个值是一个**回调**，身份由调用点决定（`ChatScreen` 的 `{ viewedImage = it }`）。
- * `staticCompositionLocalOf` 的值一变会重组 provider 的**整个**子树，而正文 markdown 恰好是
- * `PiMarkdown.kt` 一直在避免按上层重组次数付代价的地方（那些 `remember` 的注释就是账本）。
- * 动态那个只让**读者**失效，而读者只有两个图片槽。
- */
+/** Tap callback to open an inline or block image in `PiImageViewer`. */
 internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null }
 
-/**
- * The renderer's component set: pi's code-block chrome, pi's math, the
- * image fallback, the four table adjustments, bare block HTML, and the
- * read-only task-list marker.
- *
- * Everything except those keeps the library default, because the default
- * reads its colours and type from the [com.mikepenz.markdown.model.MarkdownColors]
- * and [com.mikepenz.markdown.model.MarkdownTypography] built in
- * `PiMarkdownTheme.kt` — which are pi's tokens. Overriding a component that
- * already renders in pi's colours would only be a chance to get it wrong.
- *
- * Code blocks are the first exception: pi draws a border in `mdCodeBlockBorder`
- * around every fence and prints the fence language above it. The library's
- * default code block has a background but no border, so the border is added.
- *
- * Math is the second, and bare block HTML is the fifth; both arrive through the
- * `custom` slot, and [piCustomComponent] explains why they have to share it and
- * why that slot can only be widened one named node type at a time (the "claims
- * everything" trap). Line HTML is *not* here — it is an inline token, not a
- * dispatched node, so it is claimed in `PiMarkdown.kt`'s annotator instead
- * (`PiHtml.INLINE_TYPE` has the two halves of pi's branch).
- *
- * Images are the third, and they take **two** slots, because the library splits the
- * surface: a block image reaches `image` ([PiImagePlaceholder]), one written inside a
- * paragraph reaches `inlineImage` ([PiInlineImage]). Real bytes arrive through
- * `bridge/PiGuestImageTransformer.kt` (installed by `PiMarkdown.kt`), so both components
- * draw them and both keep saying "an image was here, and here is where it pointed" when
- * the link cannot be resolved — the library's own inline default would draw nothing at
- * all there. See each component's comment for why the decision is made on
- * `transform`'s *result* rather than on the transformer's type.
- *
- * Tables are the fourth, and they claim the `table` slot for four reasons, all of
- * them listed on [PiTable]: the library gives every cell one line, the header has no
- * identity of its own, a table that scrolls sideways says nothing about it, and the
- * GFM alignment row is parsed by the library but never applied. Everything else about
- * a table (the parse, the fitted column width, the horizontal scroll, the corner, the
- * cell padding) stays the library's.
- *
- * Task lists are the sixth: the library's default `checkbox` slot draws the source
- * text `[x] ` in monospace, which is exactly the raw-syntax look the task list is
- * supposed to be upgraded away from. [PiTaskCheckbox] draws a read-only marker
- * instead. It **cannot** go through `custom`: a `CHECK_BOX` is not a dispatched
- * node — it is a marker inside a list item that the library hands to this one slot
- * (`MarkdownList.kt`'s `markdownComponents.checkbox.invoke(model)`), so the
- * `checkbox` slot is the only seam that reaches it.
- *
- * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
- * in the library (`.../compose/components/MarkdownComponents.kt`) whose
- * parameters are `@Composable` lambdas; the library builds its own default set
- * exactly this way from a non-composable `object CurrentComponentsBridge`. This
- * app therefore declares no `@Composable` here either, which is what lets
- * `PiMarkdownText` cache the whole set with `remember { piMarkdownComponents() }`
- * (F32 / RR-P9). Adding the annotation back would make that `remember` illegal
- * again and rebuild the set — and with it every default component's identity —
- * on every token of a streaming block.
- */
-internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
-    codeFence = { model -> PiCodeFence(model) },
-    codeBlock = { model -> PiCodeBlock(model) },
-    blockQuote = { model -> PiBlockQuote(model) },
-    // 标题额外上边距：h1 14dp / h2 12dp / h3 8dp / h4–h6 4dp（经典 0，首块或连续标题不叠）。
-    heading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 14.dp) },
-    heading2 = { model -> PiMarkdownHeading(model, level = 2, extraTop = 12.dp) },
-    heading3 = { model -> PiMarkdownHeading(model, level = 3, extraTop = 8.dp) },
-    heading4 = { model -> PiMarkdownHeading(model, level = 4, extraTop = 4.dp) },
-    heading5 = { model -> PiMarkdownHeading(model, level = 5, extraTop = 4.dp) },
-    heading6 = { model -> PiMarkdownHeading(model, level = 6, extraTop = 4.dp) },
-    setextHeading1 = { model -> PiMarkdownHeading(model, level = 1, extraTop = 14.dp, setext = true) },
-    setextHeading2 = { model -> PiMarkdownHeading(model, level = 2, extraTop = 12.dp, setext = true) },
-    horizontalRule = { model -> PiMarkdownDivider(model) },
-    image = { model -> PiImagePlaceholder(model) },
-    inlineImage = { model -> PiInlineImage(model) },
-    table = { model -> PiTable(model) },
-    checkbox = { model -> PiTaskCheckbox(model) },
-    paragraph = { model -> PiParagraph(model) },
-    custom = { type, model -> piCustomComponent(type, model) },
-)
+// ------------------------------------------------------------------ Document & Block Dispatch
 
 /**
- * 杂志感引用块：柔和微亮底色 + 左侧 2.5dp 圆头竖条 + 真正把引文文字染成 `mdQuote`（修复库 0.45.0
- * 默认 `MarkdownBlockQuote` 只给竖条上色、不给正文上色的问题）。
+ * Renders the top-level children of a parsed `org.jetbrains:markdown` GFM AST with clean
+ * inter-block rhythm (zero leading spacer above the first block, matching Pi's terminal layout).
  */
 @Composable
-private fun PiBlockQuote(model: MarkdownComponentModel) {
-    val palette = PiTheme.palette
-    val components = LocalMarkdownComponents.current
-    val baseTypo = LocalMarkdownTypography.current
-    val quoteColor = palette.mdQuote
-    val railColor = palette.mdQuoteBorder.copy(alpha = 0.78f)
-    val quoteTypo = remember(baseTypo, quoteColor) {
-        DefaultMarkdownTypography(
-            h1 = baseTypo.h1,
-            h2 = baseTypo.h2,
-            h3 = baseTypo.h3,
-            h4 = baseTypo.h4,
-            h5 = baseTypo.h5,
-            h6 = baseTypo.h6,
-            alertTitle = baseTypo.alertTitle,
-            text = baseTypo.text.copy(color = quoteColor),
-            code = baseTypo.code,
-            inlineCode = baseTypo.inlineCode,
-            quote = baseTypo.quote.copy(color = quoteColor),
-            paragraph = baseTypo.paragraph.copy(color = quoteColor),
-            ordered = baseTypo.ordered.copy(color = quoteColor),
-            bullet = baseTypo.bullet,
-            list = baseTypo.list.copy(color = quoteColor),
-            textLink = baseTypo.textLink,
-            table = baseTypo.table,
-        )
-    }
-    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
-    val quoteDesc = tr("引用内容", "Block quote")
-
-    CompositionLocalProvider(LocalMarkdownTypography provides quoteTypo) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.72f))
-                .drawBehind {
-                    val railW = 2.5.dp.toPx()
-                    drawRoundRect(
-                        color = railColor,
-                        topLeft = Offset(0f, 0f),
-                        size = Size(railW, size.height),
-                        cornerRadius = CornerRadius(railW / 2f, railW / 2f),
-                    )
+internal fun PiMarkdownDocument(
+    content: String,
+    root: ASTNode,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        var renderedCount = 0
+        root.children.forEachIndexed { index, child ->
+            if (!isVisibleBlockNode(child)) return@forEachIndexed
+            key(index, child.type, child.startOffset) {
+                if (renderedCount > 0) {
+                    Spacer(Modifier.height(spacing.block))
                 }
-                .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
-                .semantics { contentDescription = quoteDesc },
-        ) {
-            var renderedAny = false
-            model.node.children.forEachIndexed { index, child ->
-                key(index, child.startOffset) {
-                    when (child.type) {
-                        MarkdownTokenTypes.BLOCK_QUOTE,
-                        MarkdownTokenTypes.EOL -> Unit
-                        MarkdownElementTypes.BLOCK_QUOTE -> {
-                            if (renderedAny) Spacer(Modifier.height(6.dp))
-                            PiBlockQuote(
-                                MarkdownComponentModel(
-                                    content = model.content,
-                                    node = child,
-                                    typography = quoteTypo,
-                                ),
-                            )
-                            renderedAny = true
-                        }
-                        else -> {
-                            MarkdownElement(
-                                node = child,
-                                components = components,
-                                content = model.content,
-                                includeSpacer = renderedAny,
-                            )
-                            renderedAny = true
-                        }
-                    }
+                PiMarkdownBlock(
+                    content = content,
+                    node = child,
+                    colors = colors,
+                    typography = typography,
+                    spacing = spacing,
+                    referenceLinks = referenceLinks,
+                    eolAsNewLine = eolAsNewLine,
+                    listDepth = 0,
+                    isFirstBlock = renderedCount == 0,
+                )
+            }
+            renderedCount++
+        }
+    }
+}
+
+private fun isVisibleBlockNode(node: ASTNode): Boolean = when (node.type) {
+    MarkdownTokenTypes.EOL,
+    MarkdownTokenTypes.WHITE_SPACE,
+    MarkdownElementTypes.LINK_DEFINITION -> false
+    else -> true
+}
+
+@Composable
+internal fun PiMarkdownBlock(
+    content: String,
+    node: ASTNode,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+    listDepth: Int,
+    isFirstBlock: Boolean,
+) {
+    when (node.type) {
+        MarkdownElementTypes.ATX_1 -> PiMarkdownHeading(
+            content, node, level = 1, setext = false, extraTop = spacing.headingTopH1,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.ATX_2 -> PiMarkdownHeading(
+            content, node, level = 2, setext = false, extraTop = spacing.headingTopH2,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.ATX_3 -> PiMarkdownHeading(
+            content, node, level = 3, setext = false, extraTop = spacing.headingTopH3,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.ATX_4 -> PiMarkdownHeading(
+            content, node, level = 4, setext = false, extraTop = spacing.headingTopSmall,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.ATX_5 -> PiMarkdownHeading(
+            content, node, level = 5, setext = false, extraTop = spacing.headingTopSmall,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.ATX_6 -> PiMarkdownHeading(
+            content, node, level = 6, setext = false, extraTop = spacing.headingTopSmall,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.SETEXT_1 -> PiMarkdownHeading(
+            content, node, level = 1, setext = true, extraTop = spacing.headingTopH1,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.SETEXT_2 -> PiMarkdownHeading(
+            content, node, level = 2, setext = true, extraTop = spacing.headingTopH2,
+            colors = colors, typography = typography, referenceLinks = referenceLinks, isFirstBlock = isFirstBlock,
+        )
+        MarkdownElementTypes.PARAGRAPH -> PiParagraph(
+            content = content,
+            node = node,
+            colors = colors,
+            typography = typography,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+        )
+        MarkdownElementTypes.BLOCK_QUOTE -> PiBlockQuoteOrAlert(
+            content = content,
+            node = node,
+            colors = colors,
+            typography = typography,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+        )
+        MarkdownElementTypes.UNORDERED_LIST -> PiListBlock(
+            content = content,
+            node = node,
+            ordered = false,
+            colors = colors,
+            typography = typography,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+            depth = listDepth,
+        )
+        MarkdownElementTypes.ORDERED_LIST -> PiListBlock(
+            content = content,
+            node = node,
+            ordered = true,
+            colors = colors,
+            typography = typography,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+            depth = listDepth,
+        )
+        GFMElementTypes.TABLE -> PiTable(
+            content = content,
+            node = node,
+            colors = colors,
+            typography = typography,
+            referenceLinks = referenceLinks,
+        )
+        MarkdownElementTypes.CODE_FENCE -> PiCodeFence(
+            content = content,
+            node = node,
+            typography = typography,
+        )
+        MarkdownElementTypes.CODE_BLOCK -> PiIndentedCodeBlock(
+            content = content,
+            node = node,
+            typography = typography,
+        )
+        MarkdownTokenTypes.HORIZONTAL_RULE -> PiMarkdownDivider(colors = colors)
+        MarkdownElementTypes.HTML_BLOCK -> PiHtmlBlock(content = content, node = node)
+        GFMElementTypes.BLOCK_MATH -> PiFormulaBlock(content = content, node = node, display = true)
+        GFMElementTypes.INLINE_MATH -> PiFormulaBlock(content = content, node = node, display = false)
+        MarkdownElementTypes.IMAGE -> PiBlockImage(
+            content = content,
+            node = node,
+            typography = typography,
+            referenceLinks = referenceLinks,
+        )
+        MarkdownElementTypes.LINK_DEFINITION,
+        MarkdownTokenTypes.EOL,
+        MarkdownTokenTypes.WHITE_SPACE -> Unit
+        else -> {
+            if (node.children.isNotEmpty()) {
+                PiInlineMarkdownText(
+                    content = content,
+                    node = node,
+                    style = typography.text,
+                    colors = colors,
+                    typography = typography,
+                    referenceLinks = referenceLinks,
+                    eolAsNewLine = eolAsNewLine,
+                )
+            } else {
+                val raw = safeSlice(content, node)
+                if (raw.isNotBlank()) {
+                    val table = LocalPiInlineMathTable.current
+                    Text(
+                        text = if (table != null) PiInlineMath.resolveToUnicode(raw, table) else raw,
+                        style = typography.text,
+                    )
                 }
             }
         }
     }
 }
 
-/**
- * 一个 Markdown 标题：库的 [MarkdownHeader] + 克制呼吸感上边距。
- * 去掉旧版 `layout` 负裁剪 hack 以及 h2 下划线，仅在 h1 下保留极细 0.5dp 发丝线，层次干净利落。
- */
+// ------------------------------------------------------------------ Headings
+
 @Composable
 private fun PiMarkdownHeading(
-    model: MarkdownComponentModel,
+    content: String,
+    node: ASTNode,
     level: Int,
+    setext: Boolean,
     extraTop: Dp,
-    setext: Boolean = false,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    referenceLinks: Map<String, String>,
+    isFirstBlock: Boolean,
 ) {
-    val typography = LocalMarkdownTypography.current
+    val palette = PiTheme.palette
+    val classic = PiTheme.typography.isClassic
     val style = when (level) {
         1 -> typography.h1
         2 -> typography.h2
@@ -384,24 +343,27 @@ private fun PiMarkdownHeading(
         5 -> typography.h5
         else -> typography.h6
     }
-    val palette = PiTheme.palette
-    val classic = PiTheme.typography.isClassic
-    val extra = if (classic || headingSkipsExtra(model.node)) 0.dp else extraTop
+    val contentNode = remember(node, setext) {
+        val targetType = if (setext) MarkdownTokenTypes.SETEXT_CONTENT else MarkdownTokenTypes.ATX_CONTENT
+        node.findChildOfType(targetType) ?: node
+    }
+    val skipTop = classic || isFirstBlock || headingFollowsHeading(node)
+    val topPad = if (skipTop) 0.dp else extraTop
     val showRule = !classic && level == 1
+
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(top = extra),
+            .padding(top = topPad)
+            .semantics { heading() },
     ) {
-        MarkdownHeader(
-            content = model.content,
-            node = model.node,
+        PiInlineMarkdownText(
+            content = content,
+            node = contentNode,
             style = style,
-            contentChildType = if (setext) {
-                MarkdownTokenTypes.SETEXT_CONTENT
-            } else {
-                MarkdownTokenTypes.ATX_CONTENT
-            },
+            colors = colors,
+            typography = typography,
+            referenceLinks = referenceLinks,
         )
         if (showRule) {
             Spacer(Modifier.height(6.dp))
@@ -409,21 +371,20 @@ private fun PiMarkdownHeading(
                 Modifier
                     .fillMaxWidth()
                     .height(0.5.dp)
-                    .background(palette.borderMuted.copy(alpha = 0.55f)),
+                    .background(palette.borderMuted.copy(alpha = 0.52f)),
             )
         }
     }
 }
 
-/** 首块 / 前一块是标题 → 不叠额外上边距。 */
-private fun headingSkipsExtra(node: ASTNode): Boolean {
+private fun headingFollowsHeading(node: ASTNode): Boolean {
     if (node.startOffset == 0) return true
     val siblings = node.parent?.children ?: return false
     val index = siblings.indexOfFirst { it === node }
     if (index <= 0) return true
     for (i in index - 1 downTo 0) {
         val type = siblings[i].type
-        if (type == MarkdownTokenTypes.EOL) continue
+        if (type == MarkdownTokenTypes.EOL || type == MarkdownTokenTypes.WHITE_SPACE) continue
         return type in HEADING_TYPES
     }
     return true
@@ -440,454 +401,670 @@ private val HEADING_TYPES = setOf(
     MarkdownElementTypes.SETEXT_2,
 )
 
-/**
- * 分割线：非经典 0.75dp 厚、上下各多 4dp；经典保持 1dp、无额外间距。
- * `block` 仍然由库的 Spacer 提供，所以非经典的实际间距是 8/12/20 + 4 =
- * 12/16/24。
- */
-@Composable
-private fun PiMarkdownDivider(model: MarkdownComponentModel) {
-    val classic = PiTheme.typography.isClassic
-    Box(Modifier.padding(vertical = if (classic) 0.dp else 8.dp)) {
-        MarkdownDivider(thickness = if (classic) 1.dp else 0.5.dp)
-    }
-}
+// ------------------------------------------------------------------ Paragraphs
 
-/**
- * The two things the renderer's dispatch would otherwise drop: pi's math nodes, and
- * **bare block HTML**.
- *
- * **The trap.** The renderer's dispatch (upstream
- * `multiplatform-markdown-renderer`, `compose/MarkdownExtension.kt:92-94`) is
- *
- *     else -> {
- *         handled = components.custom?.invoke(node.type, model) != null
- *     }
- *
- * and the `custom` slot's type is
- * `@Composable (IElementType, MarkdownComponentModel) -> Unit`. `Unit` is never
- * `null`, so the moment a `custom` function is supplied, **every node type that
- * is not one of the renderer's twenty built-in cases is reported as handled**
- * and the fallback that recurses into `node.children` (`MarkdownExtension.kt:97-101`)
- * stops running. Supplying a `custom` therefore changes the rendering of node
- * types it never mentions.
- *
- * There is no return value that can undo that: the `handled` flag is computed
- * from the *call*, not from anything the callee can say. The only way to keep
- * the default behaviour for the other types is to not claim them, which is
- * exactly what this function does — every branch names one node type and there is
- * no `else`. It returns for the node types it was written for and does nothing
- * for everything else, leaving the dispatch's own conclusion alone rather than
- * trying to re-implement the recursion it cannot reach. **That is why the two new
- * branches are added inside this `when` and not by widening the claim**: the set of
- * claimed types is exactly `{INLINE_MATH, BLOCK_MATH, HTML_BLOCK}`, and
- * `PiHtmlCheck` pins the HTML half of that set against every node type name the
- * pinned parser can produce (77 of them).
- *
- * Math. In normal rendering these branches are in fact unreachable, because
- * [piMarkdownSource] rewrites `$...$` / `$$...$$` before the parser runs; see
- * [PiMarkdownText]. They are kept because they are the AST-level statement of what
- * this app supports, and because the renderer's dispatch reaches them for *any*
- * node build it is handed — including a partial document, which is what every
- * streaming token produces — so a math node that survives to a component call
- * must land here rather than silently vanishing. A node that reaches this point is
- * rendered as the formula's own source in `mdCode`, which is the phone's equivalent
- * of pi's pending formula (`packages/tui/src/components/markdown.ts:508`):
- * unmistakably a formula, visibly not typeset.
- *
- * Block HTML. This branch **is** reachable, and before it existed the whole block
- * was dropped: `HTML_BLOCK` is not one of the renderer's built-in cases, so it fell
- * to the `custom` slot, the `when` had no branch for it, and — per the trap above —
- * `handled` was already true, so the node was neither drawn nor recursed into. Not
- * a tag vanished; the text inside it vanished too. pi never renders HTML either: it
- * prints the block's own bytes, trimmed (`PiHtml.BLOCK_TYPE` has the source).
- *
- * (The library also ships a streaming parser that keeps a stable AST prefix and
- * re-parses only its tail — `StreamingMarkdownState`, `model/StreamingMarkdownState.kt`
- * in 0.45.0 — but this app does not use it: it is append-only (`append(chunk)`)
- * while the App's transcript carries the accumulated text, so adopting it needs a
- * delta channel out of the reducer first. See `docs/streaming-review.md` §4.2.)
- */
 @Composable
-private fun piCustomComponent(type: org.intellij.markdown.IElementType, model: MarkdownComponentModel) {
-    when {
-        type === GFMElementTypes.INLINE_MATH -> PiFormulaText(model, block = false)
-        type === GFMElementTypes.BLOCK_MATH -> PiFormulaText(model, block = true)
-        // 走 `PiHtml.handlesBlock` 而不是直接 `type === MarkdownElementTypes.HTML_BLOCK`，
-        // 是为了让"认领哪些类型"这句能被执行、而不是只被读出来：判定在本机跑得动
-        // （`PiHtmlCheck` 对解析器的类型全集逐条断言）。这里多付的只是一次 8 字节
-        // 字符串比较，而且只在"库的二十个内建 case 都不认"的节点上付。
-        PiHtml.handlesBlock(type.name) -> PiHtmlBlock(model)
-    }
-}
-
-/**
- * 裸块级 HTML：**照抄 pi，把原文当文字排出来**，不解析、不转义、不改写。
- *
- * pi 的分支是 `lines.push(this.applyDefaultStyle(token.raw.trim()))`
- * （`packages/tui/src/components/markdown.ts:622`）—— 一个字符都不丢：内部换行原样
- * 保留（`renderToken` 把整串推进 `lines`，由 `wrapTextWithAnsi` 按 `\n` 拆行），所以
- * `<div>\nhello\n</div>` 在终端上是三行。这里用同一个 [PiHtml.blockTextAt]，
- * 期望值由 pi 自己渲染的字节钉住（`app/src/test/resources/pi-html-fixtures/cases.json`）。
- *
- * **为什么用 [Text] 而不是库的段落组件。** `MarkdownParagraph` 拼字符串走的是 annotator
- * （`.../elements/MarkdownParagraph.kt:21-25`），而 annotator 对 `HTML_BLOCK_CONTENT`
- * 这类子节点落进 `else`、什么都不 append，于是它会画出一个**空**段落。这个块要的是
- * "把这一片源文本原样画出来"，那就只有直接 `Text` 一条路。
- *
- * **颜色与字号**：只给 `typography.paragraph`，**不另给 `color`**。库的段落走
- * `MarkdownBasicText`，它的取色顺序是「显式 `color` → `style.color` →
- * `LocalMarkdownColors.current.text`」（`.../elements/material/TextWrapper.kt`），而
- * `piMarkdownTypography` 的 `paragraph` 颜色**总是**指定的（`body` =
- * `textColor ?: palette.text`）。所以不传 `color` 得到的就是"它如果真是一个段落时"的
- * 同一个颜色；传 `palette.text` 反而会在 `textColor` 被覆盖的表面（技能卡片传
- * `customMessageText`）上与相邻段落不一致。不加 `maxLines`：pi 不截断。
- */
-@Composable
-private fun PiHtmlBlock(model: MarkdownComponentModel) {
-    val content = model.content
-    val node = model.node
-    // `remember(content, node)`：切分与 trim 只在节点或源文本变了的时候重做一次，
-    // 重组（同一条消息重新测量、主题变化）不重算。它不在每帧路径上。
-    val text = remember(content, node) {
-        PiHtml.blockTextAt(content, node.startOffset, node.endOffset)
-    }
-    if (text.isEmpty()) return
-    // Phase 4：安全 HTML 子集。`PiHtmlBlockView` 自己决定「能不能画」——流式中的块、
-    // 白名单拒绝的块、超限的块全都会连同一行原因**原样显示 [text]**，与上面那段
-    // 「pi 把原文当文字排出来」的契约在失败路径上完全一致。也就是说这一步只是让
-    // **能安全画出来的** HTML 真的画出来，画不出来时的屏幕与 pi 逐字节相同。
-    // 整块就是一个内联 `<svg>…</svg>`：HTML 策略会把 svg 标签整个剥掉、只剩里面的文字，
-    // 画出来是一堆无意义的字。交给 SVG 渲染器（它有自己的消毒器、尺寸上限和源码回退）。
-    if (isSingleSvgRoot(text)) {
-        PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
-        return
-    }
-    PiHtmlSegments(text = text, settled = !LocalPiMarkdownStreaming.current)
-}
-
-/**
- * 一个普通段落 —— 除非它整段只有一条显示式公式，或者整段只有一个裸 URL。
- *
- * **为什么必须接管段落。** 库的组件分派表里 `PARAGRAPH` 自己就有组件，而且"已处理就不再
- * 递归进子节点"（`compose/MarkdownExtension.kt`），所以 `custom` 槽里那两个
- * `INLINE_MATH`/`BLOCK_MATH` 分支在真实文档里几乎永远收不到节点 —— 这也是 App 当年改用
- * "把公式预先改写成 Unicode"的原因（`docs/known-gaps.md` 的 A2 条目）。`PiMarkdown` 现在只在
- * **整行独立的 `$$…$$`** 时才把节点留给解析器，于是这里看到的 `$$` 一定是一整段。
- *
- * **链接卡片为什么判"整段"而不是"段落里出现链接"。** 一张卡片会吃掉它周围的所有排版
- * 意图：`见 https://… 的那一段` 是一句话，把 URL 抽出来画卡片等于把句子拆了；而模型常见的
- * "八条直链"输出里，每一行正好是一个段落、一个 URL —— 那才是卡片该接管的地方。卡片只显示
- * URL 自己能证明的东西（域名/路径/扩展名推出的类型），不发任何网络请求，也不读 OG 标签。
- *
- * 其余段落交给库的 `MarkdownParagraph(content, node)`：它自己从 `LocalMarkdownTypography`
- * 与 `LocalMarkdownAnnotator` 取排版与颜色，所以结果与该组件作为默认槽时逐字节相同。
- */
-@Composable
-private fun PiParagraph(model: MarkdownComponentModel) {
-    val content = model.content
-    val node = model.node
-    val bounds = remember(content, node) {
-        val start = node.startOffset.coerceIn(0, content.length)
-        val end = node.endOffset.coerceIn(start, content.length)
-        start to content.substring(start, end).trim()
-    }
-    // 整段只是一条显示式公式。判定与 `piDisplayMathIsStandalone` 同源（`PiMarkdown` 只在
-    // 那种形状下才把 `$$…$$` 留进源文本），所以这里看到 `$$` 就意味着它确实是节点。
-    val mathSource = remember(bounds) {
-        val text = bounds.second
-        if (text.length > 4 && text.startsWith("$$") && text.endsWith("$$") &&
-            countDisplayDelimiters(text) == 2
-        ) {
-            text.substring(2, text.length - 2).trim().ifEmpty { null }
-        } else {
-            null
-        }
-    }
-    if (mathSource != null) {
-        val fallback = remember(mathSource) {
-            runCatching { PiLatex.toUnicode(mathSource, display = true) }.getOrNull() ?: mathSource
-        }
-        PiMathView(
-            source = mathSource,
-            display = true,
-            settled = !LocalPiMarkdownStreaming.current,
-            fallbackText = fallback,
-        )
-        return
-    }
-    // 整段只是一条音频/视频链接（裸 URL、[文字](URL)、![](URL)）：画播放卡片。
-    val mediaUrl = remember(bounds) { piMediaFromParagraph(bounds.second) }
-    if (mediaUrl != null && !(LocalPiMarkdownStreaming.current &&
-            content.substring(node.endOffset.coerceIn(0, content.length)).isBlank())
-    ) {
-        PiMediaCard(mediaUrl, piMediaKind(mediaUrl)!!)
-        return
-    }
-    val info = remember(bounds) {
-        val text = bounds.second
-        if (text.length > BARE_URL_MAX_CHARS || text.any { it.isWhitespace() }) {
-            null
-        } else if (!text.startsWith("http://") && !text.startsWith("https://")) {
-            null
-        } else {
-            (PiLinkCard.parse(text) as? LinkCardResult.Info)?.info
-        }
-    }
-    // 含行内 LaTeX 哨兵的已落定段落：交给 [PiInlineMathParagraph] 渲染真矢量 MathJax SVG，
-    // 同时保留段落内所有加粗/斜体/代码/链接等行内 Markdown 样式。
-    val inlineMathTable = LocalPiInlineMathTable.current
-    if (inlineMathTable != null && bounds.second.indexOf(inlineMathTable.markerPrefix) >= 0) {
-        PiInlineMathParagraph(model = model, table = inlineMathTable)
-        return
-    }
-    // 流式中**正在写的那一段**不画卡片：URL 一个字一个字出现，卡片会随着域名逐字变化并反复
-    // 跳高。写完（下一段开始、或整条结束）再换成卡片；前面已写完的段落不受影响。
-    val writingTail = LocalPiMarkdownStreaming.current &&
-        content.substring(node.endOffset.coerceIn(0, content.length)).isBlank()
-    if (info == null || writingTail) {
-        MarkdownParagraph(model.content, model.node)
-        return
-    }
-    // 整段只是一条图片 URL（png/jpg/gif/webp/svg…）：直接画图（点开可全屏），
-    // 还没取到字节 / 取失败时退回链接卡片。
-    if (info.kind == app.pi.ui.render.rich.LinkKind.Image) {
-        val decoded = LocalPiImageTransformer.current.transform(info.url)
-        if (decoded != null) {
-            PiImageViewerTap(info.url) {
-                androidx.compose.foundation.Image(
-                    painter = decoded.painter,
-                    contentDescription = decoded.contentDescription,
-                    contentScale = decoded.contentScale,
-                    modifier = decoded.modifier.padding(vertical = 4.dp),
-                )
-            }
+private fun PiParagraph(
+    content: String,
+    node: ASTNode,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+    skipLeadingPrefixChars: Int = 0,
+) {
+    // 1. Standalone block image paragraph: `![alt](url)` with nothing else
+    if (skipLeadingPrefixChars == 0) {
+        val soloImage = remember(node) { soloImageChild(node) }
+        if (soloImage != null) {
+            PiBlockImage(
+                content = content,
+                node = soloImage,
+                typography = typography,
+                referenceLinks = referenceLinks,
+            )
             return
         }
     }
-    val uriHandler = LocalUriHandler.current
-    PiLinkPreview(
-        url = info.url,
-        onOpen = { url -> runCatching { uriHandler.openUri(url) } },
-    )
-}
 
-/** `$$` 在整段里出现几次；只有正好两次（一条公式）才认。 */
-private fun countDisplayDelimiters(text: String): Int {
-    var count = 0
-    var index = text.indexOf("$$")
-    while (index >= 0) {
-        count++
-        index = text.indexOf("$$", index + 2)
-    }
-    return count
-}
+    val trimmed = remember(content, node) { safeSlice(content, node).trim() }
 
-/** 与 `PiLinkCard.MAX_URL_CHARS` 同一个上限；更长的"URL"不是一条链接。 */
-private const val BARE_URL_MAX_CHARS = 8192
-
-/**
- * 一条公式：Phase 3 起由 MathJax 真正排版，`PiLatex` 的 Unicode 结果是它的**回退**。
- *
- * 为什么不再用 [PiLatex.toUnicode] 画正文：那个转换器的产出是"终端里能看的近似"
- * （`\frac{a}{b}` → `a/b`、上下标用 Unicode 字符、矩阵靠空格对齐），在等宽终端里成立，
- * 在手机上只是"看起来像公式"。MathJax 输出的是真 SVG：分式、根号、求和上下限、矩阵
- * 都是排版过的。
- *
- * **回退不是可选项。** WebView 起不来、MathJax 超时、SVG 被清洗器拒绝、AndroidSVG 解析
- * 失败 —— 任何一条都让这段代码回到升级前的输出（`fallbackText` 就是 [PiLatex.formulaText]
- * 的字符串，逐字相同），所以一条公式永远至少有一个数字或一个符号在屏幕上，不会变成空白。
- */
-@Composable
-private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
-    val content = model.content
-    val node = model.node
-    val raw = remember(content, node) {
-        content.substring(
-            node.startOffset.coerceIn(0, content.length),
-            node.endOffset.coerceIn(node.startOffset.coerceIn(0, content.length), content.length),
-        )
-    }
-    // MathJax 要的是**不含分隔符**的 TeX。节点跨度通常带 `$` / `$$`，先剥掉；`\[` `\]`
-    // 与 `\(` `\)` 也一并处理，因为 GFM 的块级公式两种写法都认。
-    val tex = remember(raw) { piMathTex(raw) }
-    // 升级前的显示文本（`PiLatex` 的 Unicode 近似），只在渲染失败时出现。
-    val fallback = remember(content, node, block) {
-        PiLatex.formulaText(content = content, text = raw, block = block, fallback = tr("（公式）", "(formula)"))
-    }
-    PiMathView(
-        source = tex,
-        display = block,
-        settled = !LocalPiMarkdownStreaming.current,
-        fallbackText = fallback,
-    )
-}
-
-/**
- * 从 math 节点的原文里剥掉分隔符，留下 TeX。
- *
- * 顺序是**先长后短**：`$$x$$` 必须先被当成 `$$`，否则 `removePrefix("$")` 会把它切成
- * `$x$`，再被当成行内。`\[` / `\(` 两种 LaTeX 写法同样处理。
- */
-private fun piMathTex(raw: String): String {
-    var text = raw.trim()
-    for ((open, close) in listOf(
-        "$$" to "$$",
-        "\\[" to "\\]",
-        "\\(" to "\\)",
-        "$" to "$",
-    )) {
-        if (text.length >= open.length + close.length &&
-            text.startsWith(open) && text.endsWith(close)
-        ) {
-            text = text.substring(open.length, text.length - close.length).trim()
-            break
+    // 2. Standalone display math: `$$ ... $$`
+    if (skipLeadingPrefixChars == 0) {
+        val mathSource = remember(trimmed) {
+            if (trimmed.length > 4 && trimmed.startsWith("$$") && trimmed.endsWith("$$") &&
+                countDisplayDelimiters(trimmed) == 2
+            ) {
+                trimmed.substring(2, trimmed.length - 2).trim().ifEmpty { null }
+            } else {
+                null
+            }
+        }
+        if (mathSource != null) {
+            val fallback = remember(mathSource) {
+                runCatching { PiLatex.toUnicode(mathSource, display = true) }.getOrNull() ?: mathSource
+            }
+            PiMathView(
+                source = mathSource,
+                display = true,
+                settled = !LocalPiMarkdownStreaming.current,
+                fallbackText = fallback,
+            )
+            return
         }
     }
-    return text
+
+    val streaming = LocalPiMarkdownStreaming.current
+    val writingTail = streaming && content.substring(node.endOffset.coerceIn(0, content.length)).isBlank()
+
+    // 3. Standalone audio/video link -> media card
+    if (skipLeadingPrefixChars == 0 && !writingTail) {
+        val mediaUrl = remember(trimmed) { piMediaFromParagraph(trimmed) }
+        if (mediaUrl != null) {
+            piMediaKind(mediaUrl)?.let { kind ->
+                PiMediaCard(mediaUrl, kind)
+                return
+            }
+        }
+    }
+
+    // 4. Standalone HTTP(S) URL -> direct image or link preview card
+    if (skipLeadingPrefixChars == 0 && !writingTail) {
+        val linkInfo = remember(trimmed) {
+            if (trimmed.length > BARE_URL_MAX_CHARS || trimmed.any { it.isWhitespace() }) {
+                null
+            } else if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+                null
+            } else {
+                (PiLinkCard.parse(trimmed) as? LinkCardResult.Info)?.info
+            }
+        }
+        if (linkInfo != null) {
+            if (linkInfo.kind == app.pi.ui.render.rich.LinkKind.Image) {
+                val decoded = LocalPiImageTransformer.current.transform(linkInfo.url)
+                if (decoded != null) {
+                    PiImageViewerTap(linkInfo.url) {
+                        val imageShape = RoundedCornerShape(10.dp)
+                        Image(
+                            painter = decoded.painter,
+                            contentDescription = decoded.contentDescription,
+                            contentScale = decoded.contentScale,
+                            modifier = decoded.modifier
+                                .padding(vertical = 4.dp)
+                                .clip(imageShape),
+                        )
+                    }
+                    return
+                }
+            }
+            val uriHandler = LocalUriHandler.current
+            PiLinkPreview(
+                url = linkInfo.url,
+                onOpen = { url -> runCatching { uriHandler.openUri(url) } },
+            )
+            return
+        }
+    }
+
+    // 5. Standard rich paragraph (with inline LaTeX, inline images, formatting, links, safe HTML)
+    PiInlineMarkdownText(
+        content = content,
+        node = node,
+        style = typography.paragraph,
+        colors = colors,
+        typography = typography,
+        referenceLinks = referenceLinks,
+        eolAsNewLine = eolAsNewLine,
+        skipLeadingPrefixChars = skipLeadingPrefixChars,
+    )
 }
 
-/**
- * Markdown images: draw the bytes when they can be reached, otherwise say what was
- * there.
- *
- * **pi has no counterpart here.** Its terminal renderer has no `image` case at all, so
- * a markdown `![]()` falls to its `default` branch and prints the alt text
- * (`packages/tui/src/components/markdown.ts:619-627`) — a markdown image in pi is
- * *text*, never a fetch. Anything visible in this app is therefore an addition, not
- * parity, and `docs/known-gaps.md` A3 records it as such.
- *
- * **Where the bytes come from now.** `bridge/PiGuestImageTransformer.kt` implements the
- * renderer's image seam (`ImageTransformer.transform(link) -> ImageData?`, upstream
- * `model/ImageTransformer.kt:16-29`) on top of `bridge/GuestImageBytes.kt`, which
- * decodes `data:` URIs, maps `file:`/bare paths from the guest's spelling to the host
- * file, and fetches `http(s)` images into a bounded disk cache.
- * `PiMarkdown.kt` installs it through [LocalPiImageTransformer] *and* through
- * `Markdown(imageTransformer = …)`, so both this component and the library's own image
- * components see it.
- *
- * **Why the decision is made on the result, not on the transformer's type.** The
- * library drops the whole node when `transform` returns `null` — `MarkdownImage` reads
- * `LocalImageTransformer.current.transform(link)?.let { … }`
- * (`.../compose/elements/MarkdownImage.kt:17-29`), so a `null` means the image vanishes
- * from the transcript with no trace. Asking *first* and keeping the alt + source text
- * for a `null` is what keeps a link that cannot be resolved — a file that is missing, a
- * body over the size cap, a remote fetch that is offline or times out
- * (`bridge/GuestImageBytes.kt`), and the first frame of any real load, which is still
- * empty — strictly better than the no-op default's silence.
- *
- * `MarkdownImage` calls `transform` again; that second call is a cache read
- * (`PiGuestImageTransformer.transform` seeds `produceState` from its bitmap cache), so
- * the delegation costs no second IO.
- */
+private fun soloImageChild(paragraph: ASTNode): ASTNode? {
+    var found: ASTNode? = null
+    for (child in paragraph.children) {
+        when (child.type) {
+            MarkdownTokenTypes.WHITE_SPACE,
+            MarkdownTokenTypes.EOL -> continue
+            MarkdownElementTypes.IMAGE -> {
+                if (found != null) return null
+                found = child
+            }
+            else -> return null
+        }
+    }
+    return found
+}
+
+// ------------------------------------------------------------------ Blockquotes & GFM Alerts
+
+private enum class PiAlertKind(val marker: String) {
+    Note("[!NOTE]"),
+    Tip("[!TIP]"),
+    Important("[!IMPORTANT]"),
+    Warning("[!WARNING]"),
+    Caution("[!CAUTION]"),
+}
+
+private data class DetectedAlert(
+    val kind: PiAlertKind,
+    val firstParagraph: ASTNode,
+    val skipCharsInFirstParagraph: Int,
+    val firstParagraphHasRemainingBody: Boolean,
+)
+
+private fun detectGfmAlert(content: String, quoteNode: ASTNode): DetectedAlert? {
+    val firstBlock = quoteNode.children.firstOrNull {
+        it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
+            it.type != MarkdownTokenTypes.EOL &&
+            it.type != MarkdownTokenTypes.WHITE_SPACE
+    } ?: return null
+    if (firstBlock.type != MarkdownElementTypes.PARAGRAPH) return null
+
+    val raw = safeSlice(content, firstBlock)
+    val leadWs = raw.indexOfFirst { it != ' ' && it != '\t' }.let { if (it < 0) return null else it }
+    val rest = raw.substring(leadWs)
+    val matchedKind = PiAlertKind.entries.firstOrNull { kind ->
+        rest.startsWith(kind.marker, ignoreCase = true) &&
+            (rest.length == kind.marker.length || rest[kind.marker.length] == '\n' || rest[kind.marker.length] == '\r' || rest[kind.marker.length] == ' ')
+    } ?: return null
+
+    var after = leadWs + matchedKind.marker.length
+    // Only treat as a GFM alert when the marker stands alone on its line (whitespace + optional newline)
+    while (after < raw.length && (raw[after] == ' ' || raw[after] == '\t' || raw[after] == '\r')) after++
+    val hasMore: Boolean
+    if (after == raw.length) {
+        hasMore = false
+    } else if (raw[after] == '\n') {
+        after++
+        hasMore = raw.substring(after).isNotBlank()
+    } else {
+        return null
+    }
+    return DetectedAlert(
+        kind = matchedKind,
+        firstParagraph = firstBlock,
+        skipCharsInFirstParagraph = after,
+        firstParagraphHasRemainingBody = hasMore,
+    )
+}
+
 @Composable
-private fun PiImagePlaceholder(model: MarkdownComponentModel) {
-    val content = model.content
-    val node = model.node
-    val transformer = LocalPiImageTransformer.current
-    val referenceHandler = LocalReferenceLinkHandler.current
-    val link = remember(content, node) { node.resolveImageLink(content, referenceHandler) }
-    piMediaKind(link)?.let { kind -> PiMediaCard(link!!, kind); return }
-    // Ask for the bytes before deciding, for the reason in the doc above: a `null`
-    // result must fall through to the text fallback instead of handing the node to a
-    // component that would draw nothing.
-    val decoded = if (link != null) transformer.transform(link) else null
-    if (decoded != null) {
-        // Bytes in hand; let the library draw them (it reuses the same decoded bitmap),
-        // and put the viewer behind a tap — see [PiImageViewerTap]. The fallback below
-        // deliberately stays inert: a link whose bytes are not there has nothing to open.
-        PiImageViewerTap(link) { MarkdownImage(content, node) }
+private fun PiBlockQuoteOrAlert(
+    content: String,
+    node: ASTNode,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+) {
+    val alert = remember(content, node) { detectGfmAlert(content, node) }
+    if (alert != null) {
+        PiGfmAlertCard(
+            content = content,
+            node = node,
+            alert = alert,
+            colors = colors,
+            typography = typography,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+        )
+    } else {
+        PiBlockQuote(
+            content = content,
+            node = node,
+            colors = colors,
+            typography = typography,
+            spacing = spacing,
+            referenceLinks = referenceLinks,
+            eolAsNewLine = eolAsNewLine,
+        )
+    }
+}
+
+@Composable
+private fun PiGfmAlertCard(
+    content: String,
+    node: ASTNode,
+    alert: DetectedAlert,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+) {
+    val accent: Color
+    val icon: ImageVector
+    val title: String
+    when (alert.kind) {
+        PiAlertKind.Note -> {
+            accent = colors.alertNote
+            icon = Icons.Outlined.Info
+            title = tr("说明", "Note")
+        }
+        PiAlertKind.Tip -> {
+            accent = colors.alertTip
+            icon = Icons.Outlined.Lightbulb
+            title = tr("提示", "Tip")
+        }
+        PiAlertKind.Important -> {
+            accent = colors.alertImportant
+            icon = Icons.Outlined.Announcement
+            title = tr("重要", "Important")
+        }
+        PiAlertKind.Warning -> {
+            accent = colors.alertWarning
+            icon = Icons.Outlined.WarningAmber
+            title = tr("注意", "Warning")
+        }
+        PiAlertKind.Caution -> {
+            accent = colors.alertCaution
+            icon = Icons.Outlined.ErrorOutline
+            title = tr("警告", "Caution")
+        }
+    }
+
+    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 12.dp, bottomEnd = 12.dp)
+    val bgAlpha = if (colors.darkTheme) 0.11f else 0.08f
+    val borderAlpha = if (colors.darkTheme) 0.28f else 0.22f
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(accent.copy(alpha = bgAlpha))
+            .border(0.5.dp, accent.copy(alpha = borderAlpha), shape)
+            .drawBehind {
+                val railW = 3.dp.toPx()
+                drawRoundRect(
+                    color = accent.copy(alpha = 0.88f),
+                    topLeft = Offset.Zero,
+                    size = Size(railW, size.height),
+                    cornerRadius = CornerRadius(railW / 2f, railW / 2f),
+                )
+            }
+            .padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = title,
+                style = typography.alertTitle.copy(color = accent),
+                maxLines = 1,
+            )
+        }
+
+        var renderedAny = false
+        node.children.forEachIndexed { index, child ->
+            if (child.type == MarkdownTokenTypes.BLOCK_QUOTE ||
+                child.type == MarkdownTokenTypes.EOL ||
+                child.type == MarkdownTokenTypes.WHITE_SPACE
+            ) return@forEachIndexed
+            key(index, child.type, child.startOffset) {
+                if (child === alert.firstParagraph) {
+                    if (alert.firstParagraphHasRemainingBody) {
+                        Spacer(Modifier.height(6.dp))
+                        PiParagraph(
+                            content = content,
+                            node = child,
+                            colors = colors,
+                            typography = typography,
+                            referenceLinks = referenceLinks,
+                            eolAsNewLine = eolAsNewLine,
+                            skipLeadingPrefixChars = alert.skipCharsInFirstParagraph,
+                        )
+                        renderedAny = true
+                    }
+                } else {
+                    Spacer(Modifier.height(if (renderedAny) spacing.block else 6.dp))
+                    PiMarkdownBlock(
+                        content = content,
+                        node = child,
+                        colors = colors,
+                        typography = typography,
+                        spacing = spacing,
+                        referenceLinks = referenceLinks,
+                        eolAsNewLine = eolAsNewLine,
+                        listDepth = 0,
+                        isFirstBlock = !renderedAny,
+                    )
+                    renderedAny = true
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PiBlockQuote(
+    content: String,
+    node: ASTNode,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+) {
+    val quoteColor = colors.quoteText
+    val railColor = colors.quoteBorder.copy(alpha = 0.78f)
+    val quoteTypo = remember(typography, quoteColor) {
+        typography.copy(
+            text = typography.text.copy(color = quoteColor),
+            quote = typography.quote.copy(color = quoteColor),
+            paragraph = typography.paragraph.copy(color = quoteColor),
+            ordered = typography.ordered.copy(color = quoteColor),
+            list = typography.list.copy(color = quoteColor),
+        )
+    }
+    val shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+    val quoteDesc = tr("引用内容", "Block quote")
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.72f))
+            .drawBehind {
+                val railW = 2.5.dp.toPx()
+                drawRoundRect(
+                    color = railColor,
+                    topLeft = Offset.Zero,
+                    size = Size(railW, size.height),
+                    cornerRadius = CornerRadius(railW / 2f, railW / 2f),
+                )
+            }
+            .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
+            .semantics { contentDescription = quoteDesc },
+    ) {
+        var renderedAny = false
+        node.children.forEachIndexed { index, child ->
+            if (child.type == MarkdownTokenTypes.BLOCK_QUOTE ||
+                child.type == MarkdownTokenTypes.EOL ||
+                child.type == MarkdownTokenTypes.WHITE_SPACE
+            ) return@forEachIndexed
+            key(index, child.type, child.startOffset) {
+                if (renderedAny) Spacer(Modifier.height(6.dp))
+                PiMarkdownBlock(
+                    content = content,
+                    node = child,
+                    colors = colors,
+                    typography = quoteTypo,
+                    spacing = spacing,
+                    referenceLinks = referenceLinks,
+                    eolAsNewLine = eolAsNewLine,
+                    listDepth = 0,
+                    isFirstBlock = !renderedAny,
+                )
+                renderedAny = true
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ Lists & Task Checkboxes
+
+@Composable
+private fun PiListBlock(
+    content: String,
+    node: ASTNode,
+    ordered: Boolean,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+    depth: Int,
+) {
+    val items = remember(node) {
+        node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = if (depth > 0) spacing.listIndent else 0.dp),
+    ) {
+        items.forEachIndexed { idx, item ->
+            key(idx, item.startOffset) {
+                if (idx > 0) Spacer(Modifier.height(spacing.listItem))
+                PiListItemRow(
+                    content = content,
+                    item = item,
+                    ordered = ordered,
+                    fallbackIndex = idx + 1,
+                    depth = depth,
+                    colors = colors,
+                    typography = typography,
+                    spacing = spacing,
+                    referenceLinks = referenceLinks,
+                    eolAsNewLine = eolAsNewLine,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PiListItemRow(
+    content: String,
+    item: ASTNode,
+    ordered: Boolean,
+    fallbackIndex: Int,
+    depth: Int,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    spacing: PiMarkdownSpacing,
+    referenceLinks: Map<String, String>,
+    eolAsNewLine: Boolean,
+) {
+    val checkboxNode = remember(item) { item.findChildOfType(GFMTokenTypes.CHECK_BOX) }
+    val numberText = remember(content, item, ordered, fallbackIndex) {
+        if (!ordered) {
+            null
+        } else {
+            val numNode = item.findChildOfType(MarkdownTokenTypes.LIST_NUMBER)
+            val raw = numNode?.let { safeSlice(content, it).trim() }.orEmpty()
+            raw.ifEmpty { "$fallbackIndex." }
+        }
+    }
+    val bodyChildren = remember(item) {
+        item.children.filter {
+            it.type != MarkdownTokenTypes.LIST_BULLET &&
+                it.type != MarkdownTokenTypes.LIST_NUMBER &&
+                it.type != GFMTokenTypes.CHECK_BOX &&
+                it.type != MarkdownTokenTypes.EOL &&
+                it.type != MarkdownTokenTypes.WHITE_SPACE
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+    ) {
+        // Leading marker: checkbox, ordered numeral, or optical depth-aware bullet
+        if (checkboxNode != null) {
+            val checked = remember(content, checkboxNode) {
+                piTaskCheckboxChecked(safeSlice(content, checkboxNode))
+            }
+            Box(
+                modifier = Modifier.padding(top = 3.dp, end = TASK_CHECKBOX_END_PADDING),
+                contentAlignment = Alignment.Center,
+            ) {
+                PiTaskCheckboxGraphic(checked = checked)
+            }
+        } else if (ordered) {
+            Text(
+                text = numberText ?: "$fallbackIndex.",
+                style = typography.ordered.copy(
+                    color = typography.bullet.color,
+                    fontWeight = FontWeight.Medium,
+                    fontFeatureSettings = "tnum",
+                ),
+                modifier = Modifier
+                    .widthIn(min = 22.dp)
+                    .padding(end = 6.dp),
+            )
+        } else {
+            val glyph = when (depth % 3) {
+                0 -> "•"
+                1 -> "◦"
+                else -> "▪"
+            }
+            Text(
+                text = glyph,
+                style = typography.bullet,
+                modifier = Modifier
+                    .widthIn(min = 16.dp)
+                    .padding(end = 4.dp),
+            )
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            bodyChildren.forEachIndexed { idx, child ->
+                key(idx, child.type, child.startOffset) {
+                    if (idx > 0) Spacer(Modifier.height(spacing.listItem.coerceAtLeast(4.dp)))
+                    PiMarkdownBlock(
+                        content = content,
+                        node = child,
+                        colors = colors,
+                        typography = typography,
+                        spacing = spacing,
+                        referenceLinks = referenceLinks,
+                        eolAsNewLine = eolAsNewLine,
+                        listDepth = depth + 1,
+                        isFirstBlock = idx == 0,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PiTaskCheckboxGraphic(checked: Boolean) {
+    val palette = PiTheme.palette
+    val desc = if (checked) tr("已完成", "Completed") else tr("未完成", "Not completed")
+    Canvas(
+        modifier = Modifier
+            .size(TASK_CHECKBOX_SIZE)
+            .semantics { contentDescription = desc },
+    ) {
+        val radius = TASK_CHECKBOX_CORNER.toPx()
+        val stroke = TASK_CHECKBOX_STROKE.toPx()
+        if (checked) {
+            drawRoundRect(
+                color = palette.accent,
+                cornerRadius = CornerRadius(radius, radius),
+            )
+            val tick = Path().apply {
+                moveTo(size.width * 0.24f, size.height * 0.52f)
+                lineTo(size.width * 0.43f, size.height * 0.72f)
+                lineTo(size.width * 0.77f, size.height * 0.30f)
+            }
+            drawPath(
+                path = tick,
+                color = palette.pageBg,
+                style = Stroke(width = stroke * 1.35f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+            )
+        } else {
+            drawRoundRect(
+                color = palette.muted.copy(alpha = 0.75f),
+                cornerRadius = CornerRadius(radius, radius),
+                style = Stroke(width = stroke),
+            )
+        }
+    }
+}
+
+internal fun piTaskCheckboxChecked(text: CharSequence): Boolean {
+    val s = text.toString()
+    val open = s.indexOf('[')
+    if (open < 0 || open + 1 >= s.length) return false
+    val mark = s[open + 1]
+    return mark == 'x' || mark == 'X'
+}
+
+private val TASK_CHECKBOX_SIZE = 16.dp
+private val TASK_CHECKBOX_CORNER = 4.dp
+private val TASK_CHECKBOX_STROKE = 1.3.dp
+private val TASK_CHECKBOX_END_PADDING = 7.dp
+
+// ------------------------------------------------------------------ Dividers
+
+@Composable
+private fun PiMarkdownDivider(colors: PiMarkdownColors) {
+    val classic = PiTheme.typography.isClassic
+    Box(Modifier.padding(vertical = if (classic) 0.dp else 8.dp)) {
+        HorizontalDivider(
+            thickness = if (classic) 1.dp else 0.5.dp,
+            color = colors.dividerColor,
+        )
+    }
+}
+
+// ------------------------------------------------------------------ Block Images & Tap Viewer
+
+@Composable
+private fun PiBlockImage(
+    content: String,
+    node: ASTNode,
+    typography: PiMarkdownTypography,
+    referenceLinks: Map<String, String>,
+) {
+    val palette = PiTheme.palette
+    val imageLoader = LocalPiImageTransformer.current
+    val link = remember(content, node, referenceLinks) {
+        resolveAstImageLink(content, node, referenceLinks)
+    }
+    val alt = remember(content, node) { resolveAstImageAlt(content, node) }
+
+    piMediaKind(link)?.let { kind ->
+        PiMediaCard(link!!, kind)
         return
     }
-    // The block component is the only one that can resolve an alt: its `model.content`
-    // is the *whole document* plus the image node, which is what `resolveImageAlt`
-    // needs. The inline slot is not so lucky — see [PiInlineImage].
-    val alt = remember(content, node) { node.resolveImageAlt(content) }
-    PiImageFallback(
+
+    val decoded = if (!link.isNullOrBlank()) imageLoader.transform(link) else null
+    if (decoded != null) {
+        val shape = RoundedCornerShape(10.dp)
+        PiImageViewerTap(link) {
+            val ratioModifier = decoded.widthOverHeight
+                ?.takeIf { it.isFinite() && it in 0.1f..10f }
+                ?.let { Modifier.aspectRatio(it) }
+                ?: Modifier
+            Image(
+                painter = decoded.painter,
+                contentDescription = alt ?: decoded.contentDescription,
+                contentScale = decoded.contentScale,
+                modifier = decoded.modifier
+                    .then(ratioModifier)
+                    .padding(vertical = 4.dp)
+                    .clip(shape)
+                    .border(0.5.dp, palette.borderMuted.copy(alpha = 0.35f), shape),
+            )
+        }
+        return
+    }
+    PiImageFailureCard(
         alt = alt,
         link = link,
-        typography = model.typography,
+        altStyle = typography.text,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 6.dp),
     )
 }
 
-/**
- * An image written *inside* a paragraph (`text ![](…) text`), which the library renders
- * through an `InlineTextContent` placeholder rather than through the `image` slot: its
- * `MarkdownText` builds inline content for every `IMAGE` node and hands each one to
- * `components.inlineImage` (`.../elements/MarkdownText.kt:384`), whose default is
- * `CurrentComponentsBridge.inlineImage` → `MarkdownInlineImage`
- * (`.../compose/components/MarkdownComponents.kt:210-212`).
- *
- * **Why this has to be our own component rather than a configuration.** The library's
- * inline path has no failure branch at all: `MarkdownInlineImage` is
- * `transformer.transform(link)?.let { Image(…) }`
- * (`.../elements/MarkdownInlineImage.kt:13`), so a `null` draws **nothing** while the
- * placeholder box the library already reserved for the link stays on screen as empty
- * space. pi's terminal prints the image token's text instead — the alt text
- * (`packages/tui/src/components/markdown.ts:619-627`) — so this is a real divergence, and
- * the only seam that can fix it is the `inlineImage` slot itself. Nothing else is
- * consulted on this path.
- *
- * **What the model does and does not carry here.** `content` is the resolved **link**
- * (`MarkdownInlineImageWithSize` builds `MarkdownComponentModel(link, node, typography)`,
- * `.../elements/MarkdownText.kt:384-386`), and `node` is the *enclosing text node* whose
- * offsets belong to the full document — which this component never receives. The alt
- * text is therefore unreachable in the inline slot: the annotator only appends
- * `appendInlineContent(tag, imageUrl)` for an image
- * (`.../annotator/AnnotatedStringKtx.kt:280-282`), so neither the alt nor the image node
- * survives. That is why the fallback below passes `alt = null` and renders the same
- * "图片 / 图片地址…" shape the block component uses, through the shared [PiImageFallback];
- * the wording lives in exactly one place.
- *
- * The success path delegates to the library component, which draws
- * `Modifier.fillMaxSize()` inside the box the library sized for this link — the same
- * transformer instance, so `transform` is a cache read.
- */
 @Composable
-private fun PiInlineImage(model: MarkdownComponentModel) {
-    val link = model.content
-    piMediaKind(link)?.let { kind -> PiMediaCard(link, kind); return }
-    val transformer = LocalPiImageTransformer.current
-    val decoded = if (link.isNotBlank()) transformer.transform(link) else null
-    if (decoded != null) {
-        // Same tap as the block slot — one implementation ([PiImageViewerTap]), so the two
-        // surfaces cannot drift into two different "what does a tap do" answers.
-        PiImageViewerTap(link) { MarkdownInlineImage(link, model.node) }
-        return
-    }
-    PiImageFallback(alt = null, link = link, typography = model.typography)
-}
-
-/**
- * 一次点按 = 打开查看器。**只有两件事**：取字节（[piMarkdownImageViewerImage]），把
- * [PiImage] 交给 [LocalPiImageClick]。
- *
- * ## 为什么这一层只在有查看器时才存在
- *
- * `LocalPiImageClick.current` 为 `null` 时直接画 `content()` —— **不多一个 `Box`、不多一个
- * 修饰符**。所以预览、测试、以及正文之外那几个 markdown 表面的渲染与这次改动之前逐字节
- * 相同（见 [LocalPiImageClick]）。
- *
- * ## 为什么整段异步
- *
- * 取字节最坏是一次磁盘读或一次出网（`bridge/GuestImageBytes.kt` 的 5/5/45 s）；点按那一帧
- * 不能等它。所以 `clickable` 只起一个协程，字节到手之后再调回调。
- *
- * 回调拿到的是**已经读出来的字节**，不是 link：查看器要的就是
- * `PiImage(base64, mimeType)`，而 link 到字节的换算（`data:` / guest 路径 / `http(s)`）在
- * 字节通道里已经有一份，不许在这里长第二份。
- *
- * 局部为 `null`、或 link 解析不出来（block 槽的 `resolveImageLink` 可以给 `null`）时，
- * 这一层退化成"没有点按" —— 与改动前一样。
- */
-@Composable
-private fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
+internal fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
     val onImageClick = LocalPiImageClick.current
-    // 两个都是局部 `val`：下面的 lambda 里用它们靠的是**局部不可变变量**的智能转换，而不是
-    // `isNullOrBlank()` 的契约推断 —— 后者在 `||` 里是否传播到 lambda 里不值得赌。
     val openLink = link?.takeIf { it.isNotBlank() }
     if (onImageClick == null || openLink == null) {
         content()
@@ -906,191 +1083,32 @@ private fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
     }
 }
 
-/**
- * The text drawn in place of an image whose bytes are not there: the alt line and the
- * source, so a reader can see that an image was meant to be here and where it pointed.
- *
- * One implementation for both image surfaces — [PiImagePlaceholder] (a block image,
- * which can resolve a real alt) and [PiInlineImage] (an inline one, which cannot) — so
- * the two can never drift into two different wordings for the same situation.
- *
- * @param alt the image's alt text, or `null` when the surface cannot supply one; the
- *   first line falls back to a plain "图片" label rather than inventing text.
- * @param link the resolved source, or `null` when it could not be resolved at all.
- */
-@Composable
-private fun PiImageFallback(
-    alt: String?,
-    link: String?,
-    typography: MarkdownTypography,
-    modifier: Modifier = Modifier,
-) {
-    PiImageFailureCard(alt = alt, link = link, altStyle = typography.text, modifier = modifier)
-}
+// ------------------------------------------------------------------ Tables (Proportional + Inline Math!)
 
-/**
- * GFM 表格：解析、列宽（默认 160 dp）、横向滚动与语义都留给库；这个槽只做四件事
- * —— 把库写死的「每格 1 行」换成 [TABLE_MAX_LINES]、给表头一层极淡底、在**真的要横滑**时
- * 于右缘画一条渐隐、以及**按 GFM 的对齐行给每列设 `TextAlign`**（见 [PiTableHeaderCells]）。
- *
- * 列宽不是这里决定的：库把表格宽度算成 `tableWidth = columnsCount * tableCellWidth`
- * （`compose/elements/MarkdownTable.kt:88`），横滑判据是 `maxWidth <= tableWidth`（`:99`），
- * 而 `tableCellWidth` 仍是 `piMarkdownDimens` 的 160 dp。右缘渐隐的触发条件就是库那条判据的
- * 补集，所以「有没有渐隐」与「库会不会滚」不可能对不上。
- *
- * **2026-10-26 修订：** 列宽不再固定 160dp。下面所有提到 160 的段落是历史；
- * 现在按可用宽均分（1 列全宽、2 列一半），只有均分后低于 120dp 才保持最小列宽
- * 并横滑。表头底色也裁成表格的上圆角，不再用方角盖住 8dp 圆角。
- *
- * ## 理由一：每格只画一行（覆盖这个槽的起因）
- *
- * 库的 `MarkdownComponents.table` 默认是
- * `MarkdownTable(it.content, it.node, style = it.typography.table)`
- * （`compose/components/MarkdownComponents.kt:216-217`，0.45.0 `core` artifact 源码），
- * 而 `MarkdownTable` 给单元格的默认值写死成一行：
- * `MarkdownTableHeader(maxLines: Int = 1, overflow = TextOverflow.Ellipsis, …)`
- * （`compose/elements/MarkdownTable.kt:124-133`）与
- * `MarkdownTableRow(maxLines: Int = 1, …)`（同文件 `:164-175`），两者都把这个值原样交给
- * `MarkdownTableBasicText(maxLines: Int = 1, …)`（同文件 `:217-225`；转交在 `:151-158`、
- * `:192-199`，最终落到 `MarkdownBasicText` 的 `maxLines`，`:258-267`）。
- * `MarkdownTable(content, node, style, annotatorSettings, headerBlock, rowBlock)` 的签名
- * （`:65-81`）**没有** `maxLines` 参数，所以只能从 `headerBlock` / `rowBlock` 两个槽换掉它。
- *
- * 用户看到的是「表格的确很多显示不全，只能显示前几行字，每一格里」：每格只画一行、
- * 其余用「…」截掉，而且没有任何交互能看到被截的部分（表头与数据行都是这样）。
- *
- * ## 理由二：表头一层极淡底
- *
- * `headerBlock` 里把 `MarkdownTableHeader` 包一层
- * `Modifier.background(palette.mdHr.copy(alpha = 0.10f))`：库给表头与数据行的是同一个内边距与
- * 同一个字号，差别只有一句 `style.copy(fontWeight = FontWeight.Bold)`（`:154`），一张四五
- * 行以上的表里「哪一行是表头」就只能靠读文字。0.10 是「看得出有一条带、看不出颜色」的量级；
- * 用的是 `mdHr` 令牌 —— 表头下面那条 1 dp 分隔线（库的 `MarkdownDivider`，
- * `dividerColor = palette.mdHr`）也是这个令牌，两者同源，不新增色相。
- *
- * 外面那个 Box 只是一个包裹：`MarkdownTableHeader` 的 `Row` 自己带
- * `Modifier.widthIn(tableWidth).height(IntrinsicSize.Max)`，Box 把约束原样传下去，
- * 测量结果与不包时相同 —— 这一层只有底色。写了冒号的表格换成 [PiTableHeaderCells]
- * 之后，那一行仍是同一个 `Row`、同一组修饰符（见它的注释），所以这一层仍然只有底色。
- *
- * ## 理由三：右缘渐隐，且只在真的要滑时
- *
- * 360 dp 手机上正文列约 332 dp（左右各留 14 dp），3 列就是 480 dp —— 今天的表格 3 列起就会
- * 横滑，而屏幕上没有任何提示说「右边还有」。触发条件取库自己那条判据的补集：
- * `columns * tableCellWidth > 可用宽`（等号那一侧内容并没有超出，不画）。
- *
- * 画法：最外层 Box 里叠一个 `matchParentSize()` 的 Box（内层 `align(CenterEnd)` +
- * `width(26.dp)` + `fillMaxHeight()`），底色
- * `Brush.horizontalGradient(Color.Transparent → palette.cardBg)`。
- *
- * 为什么要两层 Box：表格在 `LazyColumn` 里拿到的**高度**约束是无界的，直接
- * `fillMaxHeight()` 在无界约束下会退化成 0（Compose 的 `FillNode` 在 `!hasBoundedHeight`
- * 时取 `constraints.minHeight`），叠加层会整条消失。`matchParentSize()` 拿到的才是 Box
- * 测完之后的大小（`Box.kt:180-190`：匹配父尺寸的子节点在父尺寸定了之后按固定约束测一次），
- * 高度才有得填。渐隐层用**表格自己的圆角**（`LocalMarkdownDimens.current.tableCornerSize`，
- * 今天 8 dp）`clip` 一次，否则它会把右上/右下两个圆角用 `cardBg` 填成直角。
- *
- * 纯绘制：不新增文本测量、不改横滑状态、不改语义；可用宽只用来算这一个布尔值。
- *
- * ## 这个数字只有一处：[TABLE_MAX_LINES]
- *
- * 表头与数据行分成两个 lambda 只是因为库的签名如此；两边都引用同一个 [TABLE_MAX_LINES]，
- * 而单元格的 `MarkdownTableBasicText` 拿到的是从这个值转交下去的同一个数 —— 全对齐（`---`）
- * 的表由库的行组件转交，写了冒号的表由 [PiTableCellText] 直接传，两条路用的是同一个常量，
- * 所以表格路径上不存在第二个"每格几行"可以漂移。
- *
- * ## 为什么是 50：不是 1，也不是无限
- *
- * - **不能回到 1。** 1 就是用户报的症状（每格一行 + 省略号），那正是这次要修的。
- * - **不能是 `Int.MAX_VALUE`**（本槽加上时用的值，也是这次要换掉的值）。库确实把
- *   `Int.MAX_VALUE` 当作「不限」（`.../elements/material/TextWrapper.kt` 的
- *   `maxLines: Int = Int.MAX_VALUE`），但表格这条路上「不限」是**按内容计费**的：
- *   单元格的排版行数没有上界，而这张表不是 Lazy（见下），所以一个被模型写成整段话的
- *   单元格可以把成本抬到任意高。
- * - **50 行的理由**是「大到任何真实单元格都碰不到，小到病态单元格有上界」。按
- *   `tableCellWidth = 160.dp` 与正文 ≈14sp 反推：一行约 11 个汉字（或约 22 个拉丁
- *   字符），50 行 ≈ 550 个汉字，比任何人在表格单元格里写的一句话都长。`overflow`
- *   仍是库的 `Ellipsis`，所以万一真有单元格超过 50 行，它是「截断 + …」，而不是
- *   无限高、也不是静默丢字。
- *
- * ## 代价：单元格数 × 每格排版行数（算术，不是真机测量）
- *
- * 表格的横向滚动不是 Lazy：`MarkdownTable` 在
- * `scrollable = maxWidth <= tableWidth` 为真时用
- * `Modifier.horizontalScroll(rememberScrollState()).requiredWidth(tableWidth)`
- * （`:99-103`），它只裁剪**绘制**——表里所有行、所有列的单元格照样全部组合、测量、
- * 提交绘制；列宽是 `columnsCount * LocalMarkdownDimens.current.tableCellWidth`
- * （`:82-88`），我们设的 160 dp 不随屏幕压缩。于是成本是
- *
- *     单元格数 = (数据行数 + 1) × 列数        // 30 行 × 4 列 = 124 格
- *     每格排版行数 ≈ min(内容折行数, TABLE_MAX_LINES)
- *
- * 同一张 30×4 的表：每格 1 行时是 124 行文本布局；`Int.MAX_VALUE` 时这个数由内容决定
- * ——一个 2 千字的单元格在 160 dp 列宽下要折 ≈180 行，124 格都这样就是两万行量级，
- * 而且没有上界可写；现在是 ≤ 124 × 50 = 6200 行，且与内容长度无关。
- *
- * 表头那一行还多付一层：`MarkdownTableHeader` 把 `Modifier.height(IntrinsicSize.Max)`
- * 放在表头 `Row` 上（`:135-137`），于是**每个表头格都会额外付一次本征测量**（≈一次
- * 完整文本布局）——4 列的表就是 4 次额外测量，每次同样被 50 行封顶。单元格自己的
- * `Modifier.onPlaced { containerSize.value = … }`（`:237`、`:260-262`）又是上面
- * `remember(text, …, containerSize.value, …)`（`:241-244`）的键，所以首帧每格还会多
- * 一次重组 + 一次文本重测（之后写等值不再失效，会收敛）；这部分由库决定，与本常量无关。
- *
- * 这一笔**新增**的东西是：每张表多一层 `BoxWithConstraints`（库自己那层旁边）、表头多一个
- * 只有底色的 `Box`、一次列数遍历（表头行的 CELL 个数）与一次乘法比较；真的要滑时才多画一个
- * 渐隐 Box。一个文本都不多量，也没有新增缓存。
- *
- * ## 不做什么，以及为什么
- *
- * **不动横向，也不动列宽。** `horizontalScroll(requiredWidth(tableWidth))` 就是库自己的
- * 实现（`:99-103`），与 `PiCodeSurface` 给代码块用的 `.horizontalScroll(rememberScrollState())`
- * 是同一个惯用法；`tableCellWidth = 160.dp` 是库默认值、不是用户报的症状，没有证据不改数字。
- * 这次只是**在库的滚动之上**加了一条提示，滚动机制、判据与语义都留在原处。
- *
- * **不加上限高度、不加内部纵向滚动。** 单元格会折行，行数多表格就高，由外层列表滚动
- * 接管——和代码块一样（`PiCodeSurface` 对 200 行的围栏也没有高度上限）。加一个
- * `heightIn(max = …)` + 内部 `verticalScroll` 会把超限的行藏进一个要用户自己发现的内层
- * 滚动条里，那正是这次报的「显示不全」换了个方向。
- *
- * ## 第三个理由：格子里的图（后加）
- *
- * 库里"一格里的 `![]()`"走的是**行内**图片那条路（`MarkdownTableBasicText` 读库自己的
- * `LocalImageTransformer`，`MarkdownTable.kt:218-267`），而这条路的两个尺寸都由**容器**决定：
- * 解码宽度取自窗口（与格子无关 → 一张 6×44 的表要解 40 多张 1080 px 的位图，约 50 MB，
- * 远超 32 MiB 位图缓存），占位框的高还取自"这一格自己的高度"（于是框与行高互相追）。
- * `PiTable` 因此在这里换一个**按单元格内容宽构造成**的 transformer 实例 —— 机制、算术与
- * 价钱在 `bridge/PiGuestImageTransformer.kt` 的类注释里，那条也是这次「滑动卡」的修复。
- * 列宽没有变，所以这个内容宽仍是今天的 `tableCellWidth − 2 × tableCellPadding`。
- */
 @Composable
-private fun PiTable(model: MarkdownComponentModel) {
+private fun PiTable(
+    content: String,
+    node: ASTNode,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    referenceLinks: Map<String, String>,
+) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
-    val content = model.content
-    val node = model.node
-
     val headerNode = remember(node) { node.findChildOfType(GFMElementTypes.HEADER) }
     val rowNodes = remember(node) { node.children.filter { it.type == GFMElementTypes.ROW } }
     val columns = remember(headerNode) {
         headerNode?.children?.count { it.type == GFMTokenTypes.CELL } ?: 0
     }
-    if (headerNode == null || columns <= 0) {
-        MarkdownTable(content = content, node = node, style = model.typography.table)
-        return
-    }
+    if (headerNode == null || columns <= 0) return
 
     val alignments = remember(content, node) { piTableAlignments(content, node) }
-    // 按表头 + 前 12 行采样估算每列自然显示宽度，让短列（如 `#` / `状态`）不再白占 120dp，
-    // 长说明列获得更宽松的阅读宽度，减少不必要折行与横滑。
     val columnDisplayChars = remember(content, headerNode, rowNodes, columns) {
         val maxChars = IntArray(columns)
         fun sampleRow(r: ASTNode) {
             val cells = r.children.filter { it.type == GFMTokenTypes.CELL }
             for (c in 0 until minOf(columns, cells.size)) {
-                val cellNode = cells[c]
-                val s = cellNode.startOffset.coerceIn(0, content.length)
-                val e = cellNode.endOffset.coerceIn(s, content.length)
-                val w = estimateTableCellDisplayChars(content.substring(s, e))
+                val w = estimateTableCellDisplayChars(safeSlice(content, cells[c]))
                 if (w > maxChars[c]) maxChars[c] = w
             }
         }
@@ -1100,270 +1118,210 @@ private fun PiTable(model: MarkdownComponentModel) {
         maxChars.toList()
     }
 
-    // 避免在 LazyColumn 内嵌 BoxWithConstraints (SubcomposeLayout) 引发主线程二次测量卡顿。
-    val available = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp - 32.dp)
-        .coerceAtLeast(220.dp)
+    val available = (LocalConfiguration.current.screenWidthDp.dp - 32.dp).coerceAtLeast(220.dp)
     val useIntrinsicRowHeight = rowNodes.size <= 24
-    Box(modifier = Modifier.fillMaxWidth()) {
-        val colWidthsDp = remember(columnDisplayChars, available) {
-            computePiTableColumnWidthsDp(
-                columnDisplayChars = columnDisplayChars,
-                availableDp = available.value,
-                charWidthDp = 8.2f,
-                horizontalPaddingDp = 24f,
-                minColDp = 56f,
-                maxColDp = 240f,
-            ).map { it.dp }
-        }
-        val totalWidth = colWidthsDp.fold(0.dp) { acc, w -> acc + w }.coerceAtLeast(available)
-        val scrolls = totalWidth > available + 1.dp
-        val maxColWidthPx = with(density) {
-            (colWidthsDp.maxOfOrNull { it } ?: 120.dp).roundToPx()
-        }.coerceAtLeast(1)
-        val transformer = rememberPiGuestImageTransformer(maxColWidthPx)
-        val tableShape = RoundedCornerShape(12.dp)
-        val scrollState = rememberScrollState()
-        val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
-        val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
-        val borderStrokeColor = palette.borderMuted.copy(alpha = 0.56f)
-        val rowHairlineColor = palette.borderMuted.copy(alpha = 0.30f)
-        val colHairlineColor = palette.borderMuted.copy(alpha = 0.16f)
-        val surfaceBg = MaterialTheme.colorScheme.surfaceContainerLow
 
-        CompositionLocalProvider(
-            LocalImageTransformer provides transformer,
-            LocalPiImageTransformer provides transformer,
+    val colWidthsDp = remember(columnDisplayChars, available) {
+        computePiTableColumnWidthsDp(
+            columnDisplayChars = columnDisplayChars,
+            availableDp = available.value,
+            charWidthDp = 8.2f,
+            horizontalPaddingDp = 24f,
+            minColDp = 56f,
+            maxColDp = 240f,
+        ).map { it.dp }
+    }
+    val totalWidth = colWidthsDp.fold(0.dp) { acc, w -> acc + w }.coerceAtLeast(available)
+    val scrolls = totalWidth > available + 1.dp
+    val maxColWidthPx = with(density) {
+        (colWidthsDp.maxOfOrNull { it } ?: 120.dp).roundToPx()
+    }.coerceAtLeast(1)
+    val cellImageLoader = rememberPiGuestImageTransformer(maxColWidthPx)
+
+    val tableShape = RoundedCornerShape(12.dp)
+    val scrollState = rememberScrollState()
+    val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
+    val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
+    val borderStrokeColor = palette.borderMuted.copy(alpha = 0.56f)
+    val rowHairlineColor = palette.borderMuted.copy(alpha = 0.30f)
+    val colHairlineColor = palette.borderMuted.copy(alpha = 0.16f)
+    val surfaceBg = MaterialTheme.colorScheme.surfaceContainerLow
+
+    CompositionLocalProvider(LocalPiImageTransformer provides cellImageLoader) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(tableShape)
+                .background(surfaceBg)
+                .border(0.5.dp, borderStrokeColor, tableShape),
         ) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(tableShape)
-                    .background(surfaceBg)
-                    .border(0.5.dp, borderStrokeColor, tableShape),
+                    .horizontalScroll(scrollState)
+                    .width(totalWidth),
             ) {
-                Column(
+                // Header row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(scrollState)
-                        .width(totalWidth),
+                        .height(IntrinsicSize.Max)
+                        .background(headerBg),
                 ) {
-                    // 表头行
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Max)
-                            .background(headerBg),
-                    ) {
-                        val headerCells = headerNode.children.filter { it.type == GFMTokenTypes.CELL }
-                        for (col in 0 until columns) {
-                            val colW = colWidthsDp[col]
-                            val cell = headerCells.getOrNull(col)
-                            Box(
-                                modifier = Modifier
-                                    .width(colW)
-                                    .fillMaxHeight()
-                                    .then(
-                                        if (col > 0) {
-                                            Modifier.drawBehind {
-                                                drawLine(
-                                                    colHairlineColor,
-                                                    Offset(0f, 0f),
-                                                    Offset(0f, size.height),
-                                                    0.5.dp.toPx(),
-                                                )
-                                            }
-                                        } else {
-                                            Modifier
-                                        },
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 9.dp)
-                                    .semantics {
-                                        heading()
-                                        collectionItemInfo = CollectionItemInfo(
-                                            rowIndex = 0, rowSpan = 1,
-                                            columnIndex = col, columnSpan = 1,
-                                        )
-                                    },
-                                contentAlignment = Alignment.CenterStart,
-                            ) {
-                                if (cell != null) {
-                                    PiTableCellText(
-                                        content = content,
-                                        cell = cell,
-                                        style = model.typography.table.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = palette.text,
-                                        ),
-                                        align = alignments.alignAt(col),
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // 表头与数据分隔发丝线
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(0.5.dp)
-                            .background(borderStrokeColor),
-                    )
-
-                    // 数据行
-                    rowNodes.forEachIndexed { rowIdx, rowNode ->
-                        if (rowIdx > 0) {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(0.5.dp)
-                                    .background(rowHairlineColor),
-                            )
-                        }
-                        val rowCells = rowNode.children.filter { it.type == GFMTokenTypes.CELL }
-                        Row(
-                            verticalAlignment = Alignment.Top,
+                    val headerCells = headerNode.children.filter { it.type == GFMTokenTypes.CELL }
+                    for (col in 0 until columns) {
+                        val colW = colWidthsDp[col]
+                        val cell = headerCells.getOrNull(col)
+                        val align = alignments.alignAt(col)
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (useIntrinsicRowHeight) Modifier.height(IntrinsicSize.Max) else Modifier)
-                                .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
+                                .width(colW)
+                                .fillMaxHeight()
+                                .then(columnDividerModifier(col > 0, colHairlineColor))
+                                .padding(horizontal = 12.dp, vertical = 9.dp)
+                                .semantics {
+                                    heading()
+                                    collectionItemInfo = CollectionItemInfo(
+                                        rowIndex = 0, rowSpan = 1,
+                                        columnIndex = col, columnSpan = 1,
+                                    )
+                                },
+                            contentAlignment = align.centerBoxAlignment,
                         ) {
-                            for (col in 0 until columns) {
-                                val colW = colWidthsDp[col]
-                                val cell = rowCells.getOrNull(col)
-                                Box(
-                                    modifier = Modifier
-                                        .width(colW)
-                                        .then(if (useIntrinsicRowHeight) Modifier.fillMaxHeight() else Modifier)
-                                        .then(
-                                            if (col > 0) {
-                                                Modifier.drawBehind {
-                                                    drawLine(
-                                                        colHairlineColor,
-                                                        Offset(0f, 0f),
-                                                        Offset(0f, size.height),
-                                                        0.5.dp.toPx(),
-                                                    )
-                                                }
-                                            } else {
-                                                Modifier
-                                            },
-                                        )
-                                        .padding(horizontal = 12.dp, vertical = 9.dp)
-                                        .semantics {
-                                            collectionItemInfo = CollectionItemInfo(
-                                                rowIndex = rowIdx + 1, rowSpan = 1,
-                                                columnIndex = col, columnSpan = 1,
-                                            )
-                                        },
-                                ) {
-                                    if (cell != null) {
-                                        PiTableCellText(
-                                            content = content,
-                                            cell = cell,
-                                            style = model.typography.table,
-                                            align = alignments.alignAt(col),
-                                        )
-                                    }
-                                }
+                            if (cell != null) {
+                                PiTableCellContent(
+                                    content = content,
+                                    cell = cell,
+                                    style = typography.table.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = palette.text,
+                                    ),
+                                    align = align,
+                                    colors = colors,
+                                    typography = typography,
+                                    referenceLinks = referenceLinks,
+                                    cellContentWidthDp = (colW.value - 24f).coerceAtLeast(32f),
+                                )
                             }
                         }
                     }
                 }
 
-                // 仅在仍可向右滑动时在右缘画一条柔和渐隐提示（不再叠放遮挡表头文字的 `↔` 胶囊）
-                if (scrolls && scrollState.value < scrollState.maxValue) {
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize(),
-                    ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(0.5.dp)
+                        .background(borderStrokeColor),
+                )
+
+                // Data rows
+                rowNodes.forEachIndexed { rowIdx, rowNode ->
+                    if (rowIdx > 0) {
                         Box(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .width(TABLE_FADE_WIDTH)
-                                .fillMaxHeight()
-                                .background(
-                                    Brush.horizontalGradient(listOf(Color.Transparent, surfaceBg)),
-                                ),
+                            Modifier
+                                .fillMaxWidth()
+                                .height(0.5.dp)
+                                .background(rowHairlineColor),
                         )
                     }
+                    val rowCells = rowNode.children.filter { it.type == GFMTokenTypes.CELL }
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (useIntrinsicRowHeight) Modifier.height(IntrinsicSize.Max) else Modifier)
+                            .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
+                    ) {
+                        for (col in 0 until columns) {
+                            val colW = colWidthsDp[col]
+                            val cell = rowCells.getOrNull(col)
+                            val align = alignments.alignAt(col)
+                            Box(
+                                modifier = Modifier
+                                    .width(colW)
+                                    .then(if (useIntrinsicRowHeight) Modifier.fillMaxHeight() else Modifier)
+                                    .then(columnDividerModifier(col > 0, colHairlineColor))
+                                    .padding(horizontal = 12.dp, vertical = 9.dp)
+                                    .semantics {
+                                        collectionItemInfo = CollectionItemInfo(
+                                            rowIndex = rowIdx + 1, rowSpan = 1,
+                                            columnIndex = col, columnSpan = 1,
+                                        )
+                                    },
+                                contentAlignment = align.boxAlignment,
+                            ) {
+                                if (cell != null) {
+                                    PiTableCellContent(
+                                        content = content,
+                                        cell = cell,
+                                        style = typography.table,
+                                        align = align,
+                                        colors = colors,
+                                        typography = typography,
+                                        referenceLinks = referenceLinks,
+                                        cellContentWidthDp = (colW.value - 24f).coerceAtLeast(32f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (scrolls && scrollState.value < scrollState.maxValue) {
+                Box(modifier = Modifier.matchParentSize()) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(TABLE_FADE_WIDTH)
+                            .fillMaxHeight()
+                            .background(Brush.horizontalGradient(listOf(Color.Transparent, surfaceBg))),
+                    )
                 }
             }
         }
     }
 }
 
-/**
- * 一格的内容：库的 [MarkdownTableBasicText]（annotator、行内图片、`maxLines`/`overflow`、
- * `onPlaced` 全都留给它）+ **按列对齐**。
- *
- * `TextAlign` 是 `TextStyle` 的属性，这里把它 `copy` 进样式；[PiTableAlign.Default] 时
- * **不 copy**，调用与库的表头/数据行逐字节相同。
- *
- * ## 为什么中间还要一层 `Box`
- *
- * `BasicText` 的测量宽度是 `maxIntrinsicWidth.coerceIn(minWidth, maxWidth)`
- * （`foundation/text/TextDelegate.kt` 的 `layoutText`），而这一格给的 `minWidth` 是 0 ——
- * 一行短文字量出来就是**它自己的宽度**，`TextAlign` 没有任何余量可对齐。所以：
- *
- *  - 折行的长文字：`maxIntrinsicWidth > 列宽` ⇒ 文本节点宽度 = 列宽，`TextAlign` 直接
- *    对整行生效；
- *  - 不折行的短文字：文本节点宽度 = 自身宽度，由 `Box` 的 `contentAlignment` 把它整体
- *    推到列宽的起始/中间/右侧。
- *
- * 两者叠加在数学上正好等于"按列宽对齐每一行"：折行时块宽 = 列宽（`Box` 不移动），
- * 不折行时块内只有一行（`Box` 定位）。**不折行 + 多行**不可能同时成立。
- *
- * 用 `fillMaxWidth()` 的 `Box` 而不是给 Text 加 `fillMaxWidth`：库的
- * `MarkdownTableBasicText` 没有任何 `modifier` 参数，而它的
- * `Modifier.onPlaced { parentLayoutCoordinates… }`（行内图片用它取容器尺寸）在包一层之后
- * 报告的是这个 `Box` 的尺寸 —— 与原来的父 `Column` 同宽、同高，所以格子里的图不受影响。
- */
+private fun columnDividerModifier(show: Boolean, color: Color): Modifier =
+    if (!show) {
+        Modifier
+    } else {
+        Modifier.drawBehind {
+            drawLine(color, Offset(0f, 0f), Offset(0f, size.height), 0.5.dp.toPx())
+        }
+    }
+
 @Composable
-private fun PiTableCellText(
+private fun PiTableCellContent(
     content: String,
     cell: ASTNode,
     style: TextStyle,
     align: PiTableAlign,
+    colors: PiMarkdownColors,
+    typography: PiMarkdownTypography,
+    referenceLinks: Map<String, String>,
+    cellContentWidthDp: Float,
 ) {
     val textAlign = align.textAlign
-    if (textAlign == null) {
-        MarkdownTableBasicText(
-            content = content,
-            cell = cell,
-            style = style,
-            maxLines = TABLE_MAX_LINES,
-            overflow = TextOverflow.Ellipsis,
-        )
-        return
-    }
-    Box(
+    PiInlineMarkdownText(
+        content = content,
+        node = cell,
+        style = if (textAlign != null) style.copy(textAlign = textAlign) else style,
+        colors = colors,
+        typography = typography,
+        referenceLinks = referenceLinks,
+        maxLines = TABLE_MAX_LINES,
+        overflow = TextOverflow.Ellipsis,
+        cellImageMaxWidthDp = cellContentWidthDp,
         modifier = Modifier.fillMaxWidth(),
-        contentAlignment = align.boxAlignment,
-    ) {
-        MarkdownTableBasicText(
-            content = content,
-            cell = cell,
-            style = style.copy(textAlign = textAlign),
-            maxLines = TABLE_MAX_LINES,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+    )
 }
 
-/** 这条表一共几列是**表头**说了算；对齐列表比它短就按默认处理（缺列容错）。 */
 private fun List<PiTableAlign>.alignAt(column: Int): PiTableAlign =
     getOrElse(column) { PiTableAlign.Default }
 
-/**
- * 对齐 → `TextStyle.textAlign`；[PiTableAlign.Default] 是 `null`（不覆盖库的样式）。
- *
- * 用 `Start`/`End` 而不是 `Left`/`Right`：两者在 LTR 界面里逐像素相同（本 App 的中文/英文
- * 界面都是 LTR），而 `Start`/`End` 与下面的 [boxAlignment] 用的是**同一套方向规则**，所以
- * "折行的长文字走 TextAlign、不折行的短文字走 Box 落点"这两条路不可能在 RTL 下指向相反
- * 的两边。GFM 的 `align="left"` 是物理方向 —— 真要做 RTL 界面时，这里要同时把两条路改成
- * 物理方向（Compose 的 `Alignment` 没有 `TopLeft`，得用 `BiasAlignment`），那是一笔单独的账。
- */
 private val PiTableAlign.textAlign: TextAlign?
     get() = when (this) {
         PiTableAlign.Default -> null
@@ -1372,11 +1330,6 @@ private val PiTableAlign.textAlign: TextAlign?
         PiTableAlign.Right -> TextAlign.End
     }
 
-/**
- * 对齐 → 短文字时那一层 `Box` 的落点，见 [PiTableCellText]。
- *
- * 与 [textAlign] 同一套方向规则（`Start`/`End`），理由写在那里的注释里。
- */
 private val PiTableAlign.boxAlignment: Alignment
     get() = when (this) {
         PiTableAlign.Default, PiTableAlign.Left -> Alignment.TopStart
@@ -1384,242 +1337,135 @@ private val PiTableAlign.boxAlignment: Alignment
         PiTableAlign.Right -> Alignment.TopEnd
     }
 
-/**
- * 一张表的每列对齐方式；没有分隔行（理论上不会发生）时返回空列表 —— 调用方据此退回库的默认行。
- *
- * 取的是**表格节点的直接子节点** `TABLE_SEPARATOR`：整条对齐行是一个 token
- * （`|:--|:-:|--:|---|`）。表头/数据行里那些 `|` 也是 `TABLE_SEPARATOR`，但它们在
- * `HEADER` / `ROW` 的**里面**，不是表格的直接子节点；`findChildOfType` 只看直接子节点
- * （`ast/ASTUtil.kt` 的 `children.firstOrNull`），正好拿到整行那一个。
- *
- * 真正的解析在 `PiTableAlignment.kt` 的纯函数里（那份文件不 import 解析器，所以裸 JVM 的
- * 检查能单独编译它）。这里只做"节点 → 文本"这一步。
- *
- * 偏移量做了 `coerceIn`：这个函数会在**流式**的每一条内容上被调用，而节点来自上一次解析；
- * 宁可给空列表（退回库的默认），也不让一次越界的 `substring` 把整条消息打崩。
- */
+private val PiTableAlign.centerBoxAlignment: Alignment
+    get() = when (this) {
+        PiTableAlign.Default, PiTableAlign.Left -> Alignment.CenterStart
+        PiTableAlign.Center -> Alignment.Center
+        PiTableAlign.Right -> Alignment.CenterEnd
+    }
+
 private fun piTableAlignments(content: String, table: ASTNode): List<PiTableAlign> {
     val separator = table.findChildOfType(GFMTokenTypes.TABLE_SEPARATOR) ?: return emptyList()
-    val start = separator.startOffset.coerceIn(0, content.length)
-    val end = separator.endOffset.coerceIn(start, content.length)
-    return parsePiTableAlignments(content.substring(start, end))
+    return parsePiTableAlignments(safeSlice(content, separator))
 }
 
-/**
- * 一格最多画几行，表格路径上这个数的**唯一**来源。
- *
- * 选 50 的完整理由（为什么不是 1、为什么不是 `Int.MAX_VALUE`，以及它换来的上界是什么）
- * 写在 [PiTable] 的 KDoc 里；这里只留结论：大到任何真实单元格都碰不到，小到病态单元格
- * 有上界。改这个数只改这里，`MarkdownTableHeader`、`MarkdownTableRow` 与它们转交下去的
- * `MarkdownTableBasicText` 会一起变。
- */
+private val TABLE_FADE_WIDTH = 26.dp
 private const val TABLE_MAX_LINES = 50
 
-/**
- * 右缘渐隐的宽度，26 dp —— 表格路径上这个数的**唯一**来源。
- *
- * 26 是「足够把一行字的结尾化开、又不吃掉内容」的量级（正文 14 sp 下约 3 个汉字宽），
- * 而这一层只在真的要横滑时才存在，所以它盖住的本来就是需要滑动才能看到的内容。
- */
-private val TABLE_FADE_WIDTH = 26.dp
+// ------------------------------------------------------------------ HTML & Math Blocks
 
-/**
- * GFM 任务清单（`- [x] done` / `- [ ] open`）的勾选标记，**只读**。
- *
- * ## 为什么需要覆盖 `checkbox` 槽
- *
- * 列表是库的组件（App 没覆盖 `orderedList` / `unorderedList`），它给每个 `LIST_ITEM` 找
- * 第 2 个子节点 `CHECK_BOX`，找到了就把这个节点交给 `components.checkbox`
- * （`MarkdownList.kt` 的 `markdownComponents.checkbox.invoke(model)`）—— 在 0.45.0 里那是
- * `CurrentComponentsBridge.checkbox` → `MarkdownCheckBox`，默认实现画的是**源码文本**
- * `"[x] "`（等宽字体，`elements/MarkdownCheckBox.kt`）。于是模型写好的任务清单在手机上
- * 读起来就是原始语法：`[x]` 没有变成框，勾没勾要用户自己看方括号 —— 这正是这次要换掉的。
- *
- * **不能走 `custom` 槽。** `CHECK_BOX` 不是派发节点（`MarkdownExtension` 的 `when` 里没有它），
- * 库是在列表内部直接调这个槽的；`custom` 那套"认领类型"的陷阱在这里也用不上。
- * `checkbox` 是唯一能到这一格的缝。
- *
- * ## 只读：不伪造可点击状态
- *
- * Markdown 里的勾选状态是**模型写下的文本**，不是 App 的状态。所以这里：
- *
- *  - 不挂 `toggleable` / `clickable`，没有任何"点一下改成已勾"的行为（改了也没有地方存，
- *    下一次重组就会变回去 —— 那才是骗人）；
- *  - 无障碍只描述**事实**：`role = Role.Checkbox` + `stateDescription`（"已完成" / "未完成"），
- *    没有 `onClick` 语义，TalkBack 不会提示可以切换。库的 m3 默认槽给
- *    `Checkbox(onCheckedChange = null)` 的也是这两个语义（只是文案是英文的
- *    "Checked"/"Unchecked"），这里跟随它、并把文案换成本 App 的语言。
- *
- * ## 画法：一个框 + 一个勾，两档
- *
- * - 未勾选：1.2 dp 圆角描边方框（3 dp 圆角，16 dp 见方）；
- * - 已勾选：同样的框，加一层 16% 的同色填充和里面一道圆头勾。
- *
- * 颜色只用 `palette.mdListBullet` —— 也就是**子弹头列表那个 token**。勾选框站在子弹头的
- * 位置上，就该用子弹头的颜色：它回答的是"这里是个列表标记"，而"勾没勾"由字形回答。
- * 不为它新造颜色，也不引入 `success`（完成状态不是"成功事件"，正文里的绿色会读成状态灯）。
- *
- * ## 缩进与行高
- *
- * 标记是个 `Box`，高度 = `typography.text.lineHeight`（模板给的值，23/25/27/28 sp），
- * 这个 16 dp 的图标在框里垂直居中 —— 于是它**正好压在第一行文字的视觉中线上**，而行高仍由
- * 右侧正文决定（标记比行高低，不会把行撑高，嵌套列表的缩进也还是库的 `padding.listIndent * depth`）。
- * `typography.text` 与 `paragraph` 在 `PiMarkdownTheme.kt` 里来自同一个 `base`，行高相同；
- * 空任务项（没有正文）时标记自己撑着这一行，高度等于原来那行 `[x] ` 文本的高度。
- *
- * **一处已知的几何变化**：标记宽度从"`[x] ` 四个等宽字符"（约 34–38 dp）变成
- * 16 + 6 = 22 dp，同一行的正文因此左移约 12–16 dp。这是换掉"用四个字符当图标"这件事本身
- * 的代价；不补一段假的内边距去凑旧宽度，因为那 12 dp 买不到任何东西，只会让框和文字之间
- * 空出一块。列表缩进（深度）与行高都不受影响。
- */
 @Composable
-private fun PiTaskCheckbox(model: MarkdownComponentModel) {
-    val palette = PiTheme.palette
-    val content = model.content
-    val node = model.node
-    // `CHECK_BOX` 节点的文本就是 `[x] ` / `[X] ` / `[ ] `（含尾随空格）。偏移量做 coerceIn：
-    // 这段代码会在流式的每一次内容变化上跑，而节点来自上一次解析，宁可判成未勾选也不崩。
-    val checked = remember(content, node) {
-        val start = node.startOffset.coerceIn(0, content.length)
-        val end = node.endOffset.coerceIn(start, content.length)
-        piTaskCheckboxChecked(content.substring(start, end))
+private fun PiHtmlBlock(content: String, node: ASTNode) {
+    val text = remember(content, node) {
+        PiHtml.blockTextAt(content, node.startOffset, node.endOffset)
     }
-    val lineHeight = model.typography.text.lineHeight
-    val density = LocalDensity.current
-    // 行高是 sp；换成 dp 才能当 Box 的高度用。判据是 `value > 0` 而不是 `TextUnit.isSp`：
-    // 后者在本项目当前的 Compose 产物里解析不到（CI 报过 Unresolved reference，见 c3005e5）。
-    // `value > 0` 同时排除了 `Unspecified`（它的 value 是 NaN）。前提是行高按 sp 写 ——
-    // `PiMarkdownTheme.kt` 的每个排版档都是 sp；若将来有主题改写成 em，`toDp()` 会抛异常。
-    val markerHeight = if (lineHeight.value > 0f) with(density) { lineHeight.toDp() } else TASK_CHECKBOX_SIZE
-    Box(
-        modifier = Modifier
-            .padding(end = TASK_CHECKBOX_END_PADDING)
-            .height(markerHeight)
-            .semantics {
-                role = Role.Checkbox
-                stateDescription = if (checked) tr("已完成", "Completed") else tr("未完成", "Not completed")
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(TASK_CHECKBOX_SIZE)) {
-            val strokeWidth = TASK_CHECKBOX_STROKE.toPx()
-            // 描边以路径为中心，向内缩半个线宽，线才不会在画布边缘被裁掉。
-            val inset = strokeWidth / 2f
-            val boxSize = Size(size.width - strokeWidth, size.height - strokeWidth)
-            val corner = CornerRadius(TASK_CHECKBOX_CORNER.toPx())
-            if (checked) {
-                drawRoundRect(
-                    color = palette.mdListBullet.copy(alpha = TASK_CHECKBOX_FILL_ALPHA),
-                    topLeft = Offset(inset, inset),
-                    size = boxSize,
-                    cornerRadius = corner,
-                )
-            }
-            drawRoundRect(
-                color = palette.mdListBullet,
-                topLeft = Offset(inset, inset),
-                size = boxSize,
-                cornerRadius = corner,
-                style = Stroke(width = strokeWidth),
-            )
-            if (checked) {
-                val w = size.width
-                val h = size.height
-                val check = Path().apply {
-                    moveTo(w * 0.27f, h * 0.52f)
-                    lineTo(w * 0.44f, h * 0.68f)
-                    lineTo(w * 0.74f, h * 0.33f)
-                }
-                drawPath(
-                    path = check,
-                    color = palette.mdListBullet,
-                    style = Stroke(
-                        width = strokeWidth * 1.35f,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round,
-                    ),
-                )
-            }
+    if (text.isEmpty()) return
+    if (isSingleSvgRoot(text)) {
+        PiSvgFenceView(source = text, settled = !LocalPiMarkdownStreaming.current)
+        return
+    }
+    PiHtmlSegments(text = text, settled = !LocalPiMarkdownStreaming.current)
+}
+
+@Composable
+private fun PiFormulaBlock(content: String, node: ASTNode, display: Boolean) {
+    val raw = remember(content, node) { safeSlice(content, node) }
+    val tex = remember(raw) { piMathTex(raw) }
+    val fallback = remember(content, raw, display) {
+        PiLatex.formulaText(content = content, text = raw, block = display, fallback = tr("（公式）", "(formula)"))
+    }
+    PiMathView(
+        source = tex,
+        display = display,
+        settled = !LocalPiMarkdownStreaming.current,
+        fallbackText = fallback,
+    )
+}
+
+private fun piMathTex(raw: String): String {
+    var text = raw.trim()
+    for ((open, close) in listOf("$$" to "$$", "\\[" to "\\]", "\\(" to "\\)", "$" to "$")) {
+        if (text.length >= open.length + close.length && text.startsWith(open) && text.endsWith(close)) {
+            text = text.substring(open.length, text.length - close.length).trim()
+            break
         }
     }
+    return text
 }
 
-/**
- * `CHECK_BOX` token 的文本是不是"已勾选"。
- *
- * GFM 只接受三种写法：`[x]`、`[X]`、`[ ]`（`GFMConstraints.fetchListMarker`），节点文本还带着
- * 列表标记之后的空白（`[x] `）—— 用 `trim()` + 固定下标，比上游 `MarkdownCheckBox` 的
- * `content.contains("[x]")` 多认一个大写 `[X]`（上游那条会把它当未勾选）。
- *
- * 形状不认得就返回 `false`：宁可把一格标成未勾选，也不要凭一个字符猜出"这件事做完了"。
- */
-internal fun piTaskCheckboxChecked(text: CharSequence): Boolean {
-    val trimmed = text.trim()
-    if (trimmed.length < 3) return false
-    if (trimmed[0] != '[' || trimmed[2] != ']') return false
-    val mark = trimmed[1]
-    return mark == 'x' || mark == 'X'
-}
-
-/** 勾选框的边长；见 [PiTaskCheckbox] 的"缩进与行高"。 */
-private val TASK_CHECKBOX_SIZE = 16.dp
-
-/** 勾选框的圆角：方框的 3 dp，与 App 里小圆角的量级一致。 */
-private val TASK_CHECKBOX_CORNER = 3.dp
-
-/** 框线宽度：16 dp 的框上 1.2 dp，缩到屏幕上仍看得出是线而不是色块。 */
-private val TASK_CHECKBOX_STROKE = 1.2.dp
-
-/** 标记与正文之间留的白：4 dp（库默认 `[x] ` 的那个 `padding(end = 4.dp)`）加 2 dp。 */
-private val TASK_CHECKBOX_END_PADDING = 6.dp
-
-/** 已勾选时框内的填充透明度；16% 是"看得出有底、但不会抢正文"的量级。 */
-private const val TASK_CHECKBOX_FILL_ALPHA = 0.16f
+// ------------------------------------------------------------------ Fenced & Indented Code Blocks
 
 @Composable
-private fun PiCodeFence(model: MarkdownComponentModel) {
-    // 结束围栏 token 是“这块结构已经完整”的结构判据；流式中未闭合的围栏必须保持
-    // 代码块，不能把半截 JSON/Mermaid 交给富渲染。`PiMarkdownText` 的 streaming
-    // 只用于“整条消息还在生成”，闭合围栏可以比整条消息更早完成。
-    val settled = model.node.children.lastOrNull()?.type == MarkdownTokenTypes.CODE_FENCE_END
-    MarkdownCodeFence(model.content, model.node, style = model.typography.code) { code, language, style ->
-        PiCodeSurface(code, language, style, settled = settled)
-    }
+private fun PiCodeFence(
+    content: String,
+    node: ASTNode,
+    typography: PiMarkdownTypography,
+) {
+    val streaming = LocalPiMarkdownStreaming.current
+    val extracted = remember(content, node) { extractCodeFence(content, node) }
+    val settled = !streaming || extracted.closed
+    PiCodeSurface(
+        code = extracted.code,
+        language = extracted.language,
+        style = typography.code,
+        settled = settled,
+    )
 }
 
 @Composable
-private fun PiCodeBlock(model: MarkdownComponentModel) {
-    MarkdownCodeBlock(model.content, model.node, style = model.typography.code) { code, language, style ->
-        PiCodeSurface(code, language, style, settled = true)
+private fun PiIndentedCodeBlock(
+    content: String,
+    node: ASTNode,
+    typography: PiMarkdownTypography,
+) {
+    val code = remember(content, node) {
+        safeSlice(content, node)
+            .lines()
+            .joinToString("\n") { line ->
+                when {
+                    line.startsWith("    ") -> line.substring(4)
+                    line.startsWith("\t") -> line.substring(1)
+                    else -> line
+                }
+            }
+            .trimEnd('\n')
     }
+    PiCodeSurface(
+        code = code,
+        language = null,
+        style = typography.code,
+        settled = !LocalPiMarkdownStreaming.current,
+    )
 }
 
-/**
- * One code block: pi's two rendering branches, on a phone.
- *
- * pi decides **once**, from the fence's language, and the decision is
- * highlight.js's own answer (`supportsLanguage`, `theme.ts:1080`) — not "did the
- * fence name something". [PiHighlightedCode.languageKnown] carries that answer and
- * picks the base colour:
- *
- *  - **known** → the engine coloured what it could, and every character it did not
- *    wrap keeps `text`, which is what a terminal's default foreground does for pi
- *    (`theme.ts:1186-1205`; the HTML export says it twice, `template.css:959` and
- *    `:906-909`);
- *  - **not known** → pi paints the body itself in `mdCodeBlock` (`theme.ts:1085`),
- *    which is also this app's answer when the engine cannot be reached at all.
- *
- * The chrome follows pi as far as a phone can: the fence's info string is printed
- * in `mdCodeBlockBorder` (pi prints it as the opening fence line,
- * `packages/tui/src/components/markdown.ts:522-535`), there is **no** background
- * (pi has none — `template.css:900-909`), and the border that replaces pi's fence
- * line keeps that same token.
- *
- * A ` ```mermaid ` fence never reaches any of that: pi replaces it with
- * `grok-mermaid`'s art before the code renderer sees it
- * (`components/mermaid.ts:60-88`), so the art is drawn instead — as inline code,
- * which is why the fence's label and border are gone with it.
- */
+private data class ExtractedCodeFence(
+    val language: String?,
+    val code: String,
+    val closed: Boolean,
+)
+
+private fun extractCodeFence(content: String, node: ASTNode): ExtractedCodeFence {
+    val langNode = node.findChildOfType(MarkdownTokenTypes.FENCE_LANG)
+    val language = langNode?.let { safeSlice(content, it).trim().ifEmpty { null } }
+    val closeNode = node.children.lastOrNull { it.type == MarkdownTokenTypes.CODE_FENCE_END }
+    val firstEol = node.children.firstOrNull { it.type == MarkdownTokenTypes.EOL }
+
+    if (firstEol == null) {
+        return ExtractedCodeFence(language = language, code = "", closed = closeNode != null)
+    }
+    val bodyStart = firstEol.endOffset.coerceIn(0, content.length)
+    val bodyEnd = (closeNode?.startOffset ?: node.endOffset).coerceIn(bodyStart, content.length)
+    val rawBody = content.substring(bodyStart, bodyEnd)
+    val code = if (rawBody.endsWith("\r\n")) {
+        rawBody.dropLast(2)
+    } else if (rawBody.endsWith("\n")) {
+        rawBody.dropLast(1)
+    } else {
+        rawBody
+    }
+    return ExtractedCodeFence(language = language, code = code, closed = closeNode != null)
+}
+
 @Composable
 private fun PiCodeSurface(
     code: String,
@@ -1628,11 +1474,6 @@ private fun PiCodeSurface(
     settled: Boolean = true,
 ) {
     val palette = PiTheme.palette
-    // `FENCE_LANG` 是完整 info string（包含 `title=...`），不是语言名。分类与高亮都
-    // 只拿第一个有效词；`PiCodeLanguage.normalize` 的整串 lowercase 会把属性一起
-    // 当成语言，见 `FenceInfo.kt` 的类注释。
-    // 语言别名（mmd / latex / geojson / rss …）与「没写语言」的内容嗅探：
-    // 这两种情况以前都被当成普通代码，富渲染被围栏标签挡住。
     val info = remember(language, code, settled) {
         val parsed = FenceInfo.parse(language)
         val effective = when {
@@ -1649,21 +1490,13 @@ private fun PiCodeSurface(
     val normalized = info.language.takeIf { it.isNotEmpty() }
     val kind = remember(info, code, settled) { RichBlock.classify(info, code, settled) }
 
-    // `markdown.mermaid = off` 时 pi 把 markdown 原样交出去（`components/mermaid.ts:62`），
-    // 所以这里连 WebView 都不碰：围栏落回下面的代码块，与其它语言完全一样。
     val mermaidMode = rememberPiMermaidMode()
     if (normalized?.lowercase() == MERMAID_LANGUAGE && mermaidMode != PiMermaidMode.Off) {
-        // Phase 2：Mermaid 走 `assets/rich/mermaid/mermaid.min.js` 的离屏 WebView，拿回
-        // SVG 再由 AndroidSVG 画 —— 与旧路径（guest 里 `grok-mermaid` 算好的 ASCII art）
-        // 相比，图是真矢量、可缩放、跟主题。**旧 ASCII 没有删**：它作为 `fallback` 只在
-        // 引擎确实画不出来时接管，见 [PiMermaidAsciiFallback]。
         PiMermaidView(source = code, settled = settled) {
             PiMermaidAsciiFallback(code = code, language = language, style = style)
         }
         return
     }
-    // Phase 5：CSV/TSV 围栏。`formatForLanguage` 只认 `csv` / `tsv`（大小写不敏感），
-    // 其它语言返回 null，所以这一段不会误伤别的代码块。
     val csvFormat = normalized?.let { PiCsvTable.formatForLanguage(it) }
     if (csvFormat != null) {
         PiRichCardFrame(code, info, palette) {
@@ -1676,20 +1509,15 @@ private fun PiCodeSurface(
         }
         return
     }
-    // Phase 5：栈围栏。只认显式标签，**不自动检测**普通文本 —— 一段散文被拆成帧
-    // （或一个真异常被当文本）都是安静的错误，而语言名是模型自己给的判据。
     if (normalized?.lowercase() in STACK_TRACE_LANGUAGES) {
         PiStackTraceView(source = code, settled = settled)
         return
     }
-    // 方案 §八：` ```svg ` 围栏。清洗器先过一遍（脚本、事件属性、外部引用、foreignObject、
-    // 尺寸/节点/深度上限都在那里），再交给 AndroidSVG 画；任何一步失败都回退源码。
     if (normalized?.lowercase() == SVG_LANGUAGE) {
         PiSvgFenceView(source = code, settled = settled)
         return
     }
     if (normalized?.lowercase() == "math" && settled && code.isNotBlank()) {
-        // ```math / ```latex / ```tex：整块显示式公式。
         val src = code.trim().removePrefix("$$").removeSuffix("$$").trim()
         val fallback = remember(src) {
             runCatching { PiLatex.toUnicode(src, display = true) }.getOrNull() ?: src
@@ -1697,9 +1525,6 @@ private fun PiCodeSurface(
         PiMathView(source = src, display = true, settled = true, fallbackText = fallback)
         return
     }
-    // 结构化视图：只在围栏闭合、内容明确标注且完整解析成功时替换代码块。外框
-    // （标题 + 复制）由 `PiRichCardFrame` 提供，树视图自己只有工具栏与树行。
-    // 解析失败/超限时各视图自己回退源码。
     when (kind) {
         RichBlockKind.Json -> {
             PiRichCardFrame(code, info, palette) {
@@ -1722,8 +1547,6 @@ private fun PiCodeSurface(
         else -> Unit
     }
     val highlighted = rememberPiHighlightedCode(code, normalized)
-    // 1 dp 满不透明的灰边是一圈亮框，代码块比它包着的文字还抢眼。边线压到 28%，
-    // 里面铺一层 6% 的同色淡底，块的边界靠明度差而不是线（所有档位一致）。
     val classic = PiTheme.typography.isClassic
     if (settled && code.isNotBlank() && (normalized?.lowercase() == "html" || normalized?.lowercase() == "htm")) {
         PiHtmlFence(code, info, highlighted, style, palette, classic)
@@ -1739,18 +1562,6 @@ private fun PiCodeSurface(
     )
 }
 
-/**
- * 旧 Mermaid 路径：guest 里的 `grok-mermaid` 算好的 ASCII art，作为 [PiMermaidView] 的
- * **运行时回退**保留（方案 §五：新 SVG 稳定之前不删）。
- *
- * 它只在一种情况下被组合：引擎确实拿不到图（WebView 不可用、超时、SVG 被清洗器拒绝、
- * AndroidSVG 解析失败）。此时 pi 的规则仍然有效 —— 图带着 warning 就**不画**，把围栏
- * 原文留下、warning 放下面（`components/mermaid.ts:77-82`），因为一张被交叉检查判过
- * 的残缺图比源码更误导人。
- *
- * 为什么整段搬进回调而不是留在 [PiCodeSurface] 里：`rememberPiMermaidArt` 会给 guest
- * 发一次 RPC。只要新引擎能画出图，这一次 RPC 就不该发生 —— 它现在是懒的。
- */
 @Composable
 private fun PiMermaidAsciiFallback(code: String, language: String?, style: TextStyle) {
     val palette = PiTheme.palette
@@ -1759,8 +1570,6 @@ private fun PiMermaidAsciiFallback(code: String, language: String?, style: TextS
     if (art != null) {
         Text(
             text = piMermaidText(art, palette),
-            // pi hands the art back as inline code, so an unclassed run is
-            // `mdCode`; the class colours sit on top of it — see `PiMermaid.kt`.
             style = style.copy(color = palette.mdCode),
             modifier = Modifier
                 .fillMaxWidth()
@@ -1768,8 +1577,6 @@ private fun PiMermaidAsciiFallback(code: String, language: String?, style: TextS
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         )
     } else {
-        // guest 也给不出 art（老引擎没装、或它自己拒绝了）：把围栏原文留在原处，
-        // 与新视图自己的「失败回退源码」是同一条契约，只是连源码块都没有才会走到。
         Text(
             text = code,
             style = style.copy(color = palette.mdCode),
@@ -1791,66 +1598,39 @@ private fun PiMermaidAsciiFallback(code: String, language: String?, style: TextS
     }
 }
 
-/**
- * A code body ready to draw: the source with the engine's spans applied, plus the
- * engine's answer to the one question that decides the base colour.
- *
- * The two travel together because they come from the same request —
- * [languageKnown] *is* [PiCodeHighlight.languageKnown] out of that request, and the
- * text is that same answer already applied. Splitting them into two pieces of state
- * would let a renderer paint a coloured block with the uncoloured branch's base (or
- * the reverse) for one frame.
- */
+// ------------------------------------------------------------------ Code Highlighting
+
 internal data class PiHighlightedCode(val text: AnnotatedString, val languageKnown: Boolean)
 
 /**
- * Highlighting runs off the main thread and only when the fence named something:
- * pi skips auto-detection entirely (`theme.ts:1078-1086`), so a fence with no info
- * string costs nothing here either.
+ * Instant, flicker-free code highlighting shared by Markdown fences and Tool Cards (`ReadBlock` / `WriteBlock`).
  *
- * Note the question this asks is only "did the fence name a language" — the
- * *answer* to "does highlight.js know it" comes back with the spans, because only
- * the engine can answer it ([PiCodeHighlight.languageKnown]). A named language the
- * engine does not know is a normal, cached, definitive answer, not a failure.
- *
- * **Streaming fences are debounced; finished ones are not.** A fence a model is
- * still writing changes on every token, so its producer waits [STREAM_SETTLE_MS]
- * before asking, and each change cancels the pending wait — only text that has
- * stopped changing is ever highlighted, and a long answer does not fire one
- * request per token. The wait is skipped for the first version a given block
- * shows, which is the case that matters for a transcript scrolled back into
- * view: those blocks are already final and should colour immediately.
- *
- * The spans are computed once per (code, language, highlighter) and the colours
- * applied separately, so switching theme repaints without re-running a
- * highlighter that may be expensive.
- *
- * `internal` rather than private because pi highlights *file* bodies with the same
- * backend, not only fences: `read` and `write` resolve a language from the path
- * (`core/tools/renderers/read.ts:126-127`, `write.ts:111-114`), and the app's
- * `ReadBlock`/`WriteBlock` ask for exactly that text. Those callers pass a settled body
- * (a `read` result arrives whole) and a language from `PiCodeLanguage.forPath`, so they
- * inherit both of this function's obligations rather than duplicating them.
+ * For all 35+ everyday languages owned natively by [PiFastCodeHighlighter], colors are computed
+ * synchronously in <1 ms with zero IPC latency and zero 200 ms repaint flash. For obscure languages
+ * outside the native table, falls back asynchronously to [LocalPiCodeHighlighter] (guest engine).
  */
 @Composable
 internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighlightedCode {
     val palette = PiTheme.palette
     val highlighter = LocalPiCodeHighlighter.current
-    // 0ms 即时原生快扫层：流式输出、冷启动、离线查看历史会话时立刻着官方 syntax* 主题色，彻底告别黑白闪屏；
-    // 随后后台请求 Pi 自带的 191 语言 highlight.js 精确补全并平滑替换。
-    val fastFallback = remember(code, language) {
+    val nativeResult = remember(code, language) {
         if (PiCodeLanguage.isUnspecified(language)) PiCodeHighlight()
         else PiFastCodeHighlighter.highlight(code, language)
     }
     val hasStreamed = remember { booleanArrayOf(false) }
     val answer = produceState(
-        initialValue = fastFallback,
+        initialValue = nativeResult,
         code,
         language,
         highlighter,
+        nativeResult,
     ) {
         if (PiCodeLanguage.isUnspecified(language)) {
             value = PiCodeHighlight()
+        } else if (nativeResult.languageKnown) {
+            // Native 35+ language lexer already produced full semantic tokens on frame 0;
+            // skip cross-process highlight.js 10.7.3 round-trip to prevent latency & color flicker.
+            value = nativeResult
         } else {
             val isUpdate = hasStreamed[0]
             hasStreamed[0] = true
@@ -1869,96 +1649,39 @@ internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighl
     }
 }
 
-/** The one fence language pi's mermaid transformer claims (`components/mermaid.ts:15`). */
-private const val MERMAID_LANGUAGE = "mermaid"
+private fun buildPiCodeText(
+    code: String,
+    spans: List<PiCodeSpan>,
+    palette: PiPalette,
+): AnnotatedString = buildAnnotatedString {
+    append(code)
+    for (span in spans) {
+        val start = span.start.coerceIn(0, code.length)
+        val end = span.end.coerceIn(start, code.length)
+        if (start == end) continue
+        val style = when (span.token) {
+            PiSyntaxToken.Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
+            PiSyntaxToken.Strong -> SpanStyle(fontWeight = FontWeight.Bold)
+            PiSyntaxToken.Link -> SpanStyle(textDecoration = TextDecoration.Underline)
+            else -> span.token.color(palette)?.let { SpanStyle(color = it) } ?: SpanStyle()
+        }
+        addStyle(style, start, end)
+    }
+}
 
-/** 方案 §八的 SVG 围栏语言。**只认显式标签**：一段以 `<svg` 开头的普通代码不是证据。 */
-private const val SVG_LANGUAGE = "svg"
+// ------------------------------------------------------------------ Mermaid Mode & Helpers
 
-/**
- * 会被画成栈卡片的围栏语言。
- *
- * 只有**显式**标签进来：`PiStackTrace` 能识别五种语言，但"这段文字是不是栈"不该由一段
- * 正则去猜 —— 猜错的代价是一段普通输出被拆成帧，比不画更难读。`traceback` 是 Python
- * 自己的叫法，所以它也在表里。
- */
-private val STACK_TRACE_LANGUAGES = setOf("stacktrace", "stack", "stack-trace", "traceback")
-
-private val WHITESPACE = Regex("\\s+")
-
-/**
- * `grok-mermaid`'s art for a ` ```mermaid ` fence, or `null` for everything else —
- * including every case where the art cannot be had.
- *
- * pi runs its mermaid transformer *before* the code-block renderer and only for that
- * one language (`components/mermaid.ts:14-16`, `:60-88`), which is why this returns
- * immediately for any other fence. `null` is pi's own "no art to show": the caller
- * draws the fence's source instead, exactly as pi keeps `token.raw` (`:75-76`).
- *
- * **pi's mode gate is honoured here** ([PiMermaidMode], from `markdown.mermaid`):
- * [PiMermaidMode.Off] never asks, so the fence stays source — pi's
- * `mode === "off"` branch (`components/mermaid.ts:64-65`).
- *
- * **Cold start, and why this retries.** The guest imports `grok-mermaid` — a real
- * layout engine — on the first `/mermaid` request, and that import can outlast the
- * socket's 150 ms read budget. A single-shot producer therefore answered "no art" for
- * the *first* diagram on screen and only drew it once something recycled the row (the
- * reported "画完了不显示，屏幕必须晃动、滑动才画出来": scrolling the `LazyColumn`
- * disposed and rebuilt this component, whose `produceState` then ran again against a
- * warm engine). [PiMermaidReply] tells the two failures apart, so this retries only
- * [PiMermaidReply.Unavailable] — up to [MERMAID_ATTEMPTS] asks, [MERMAID_RETRY_MS]
- * apart — and never retries [PiMermaidReply.NoArt], which is a definitive answer.
- * Cancellation is free: a changed key or a disposed row cancels this coroutine,
- * including the waits. **Worst case per fence**: 3 requests and ≈1.6 s of a background
- * coroutine (3 × 250 ms of socket budget + 2 × 400 ms of waiting), then it stops — no
- * timer survives it, and a transcript with F mermaid fences never exceeds 3·F requests.
- *
- * **缓存（R3）：滚回来不再问 guest。** `PiNodeMermaidRenderer` 现在带着一个进程级的
- * 有界 LRU（键 = `(code, mode)`），所以同一段源码第二次进入组合时这次询问是 map 命中：
- * 不再出网、不再重跑 guest 的布局引擎、也不会「先闪源码再变成图」。命中时
- * `produceState` 的 `initialValue` 直接就是那张图，且 producer 立即返回——连
- * [STREAM_SETTLE_MS] 都不再等：等待是为了「别画半张图」，而命中的意思是这份源码已经被
- * 完整画过，同一个 `(code, mode)` 出的就是同一张图。失败（`Unavailable`）不进缓存，
- * 所以上面那 3 次重试在冷引擎下仍然是 3 次；`NoArt` 是定论，会进缓存。
- *
- * **`Final` waits for the fence even the first time.** pi's gate there is
- * `context.isStreaming` (`:66-67`), which this component cannot see — `PiMarkdownText`
- * receives markdown, not the message's state, and adding a parameter to it is outside
- * this change. So `Final` treats every ask as "possibly still streaming" and settles
- * first; the cost is [STREAM_SETTLE_MS] before a final diagram appears, and the benefit
- * is that a mid-stream partial diagram is not drawn. `Streaming` keeps pi's behaviour
- * of drawing during the stream (as far as a debounced producer can).
- *
- * The language test is pi's, word for word: the **first whitespace-separated token**
- * of the info string, lower-cased. That is not the same rule the highlighter uses —
- * pi hands the whole info string to highlight.js — and the difference is pi's own:
- * ` ```mermaid x ` is drawn as a diagram, ` ```js x ` is not highlighted at all.
- *
- * **pi's `assistant-thinking` gate is satisfied structurally, not by a check.** pi
- * refuses to transform inside a thinking message (`components/mermaid.ts:65`). In this
- * app a thinking body is drawn by `ThinkingBlockBlock` as one plain `Text` of
- * `item.text` in italic prose (`ui/blocks/ThinkingBlockBlock.kt:79-87`) — it never
- * enters the markdown renderer, so no code-fence component runs there and a
- * ` ```mermaid ` fence inside a thinking block stays literal text, which is what pi
- * shows too.
- */
 @Composable
 private fun rememberPiMermaidArt(code: String, language: String?): PiMermaidArt? {
     val mode = rememberPiMermaidMode()
-    // pi: `mode === "off"` returns the markdown untouched, i.e. no transform at all.
     if (mode == PiMermaidMode.Off) return null
     val isMermaid = remember(language) {
         language?.trim()?.split(WHITESPACE)?.firstOrNull()?.lowercase() == MERMAID_LANGUAGE
     }
     if (!isMermaid) return null
     val hasStreamed = remember { booleanArrayOf(false) }
-    // 缓存同步读一次，键 = (code, mode)，与 memo 的键一致。命中时首帧就是图（不再先闪
-    // 一次源码），producer 也不再问 guest —— 这正是「滚出去再滚回来」不再重跑布局引擎的
-    // 那一步。只读、无副作用，所以可以在组合期做。
     val cached = remember(code, mode) { PiNodeMermaidRenderer.cached(code, mode) }
     val art = produceState<PiMermaidArt?>(initialValue = (cached as? PiMermaidReply.Art)?.art, code, language, mode) {
-        // 有定论了（画出图，或 grok-mermaid 明确拒绝）就不再问；null 表示没问过。
-        // 跳过下面的 settle：等待是为了别画半张图，而命中说明这份源码已经完整画过。
         if (cached != null) return@produceState
         val isUpdate = hasStreamed[0]
         hasStreamed[0] = true
@@ -1988,32 +1711,6 @@ private fun rememberPiMermaidArt(code: String, language: String?): PiMermaidArt?
     return art.value
 }
 
-/** How many asks one fence gets while the guest is still importing `grok-mermaid`. */
-private const val MERMAID_ATTEMPTS = 3
-
-/** The pause between those asks; long enough for a cold ESM import to land. */
-private const val MERMAID_RETRY_MS = 400L
-
-/** pi's key, verbatim: `settings.markdown.mermaid` (`settings-manager.ts:66`). */
-private const val MERMAID_SETTING_KEY = "markdown.mermaid"
-
-/**
- * `markdown.mermaid` for this composition.
- *
- * pi reads the mode per markdown render (`components/mermaid.ts:62`) from its own
- * settings object. This app has no settings object in the render tree — the store is
- * passed explicitly to the Settings screens and to the terminal — so the value is read
- * from **the same file-backed store those screens write**
- * (`PiSettingsFileStore.forWorkspace`, exactly as `terminalSettingsStore` builds it:
- * `PiPaths` for the agent dir, `PtyLauncher.workspaceHost` for the workspace), and
- * cached in [PiMermaidModeSource] so that a transcript with twenty code fences does not
- * parse `settings.json` twenty times — once per fence *and again* every time a recycled
- * row recomposes.
- *
- * The cache is invalidated by the settings documents' stamp (mtime + size), which is two
- * `stat` calls per ask: cheap, no timer, and it means flipping the setting is picked up
- * by the next composition instead of needing an app restart.
- */
 @Composable
 private fun rememberPiMermaidMode(): PiMermaidMode {
     val context = LocalContext.current
@@ -2021,14 +1718,7 @@ private fun rememberPiMermaidMode(): PiMermaidMode {
     return remember(context, epoch) { PiMermaidModeSource.mode(context) }
 }
 
-/**
- * The process-wide `markdown.mermaid` cache behind [rememberPiMermaidMode].
- *
- * Exposes a reactive [epoch] bumped by `PiSessionViewModel.onSettingWritten("markdown.mermaid")`
- * so existing rendered chat blocks update immediately without restarting or re-entering chat.
- */
 internal object PiMermaidModeSource {
-
     private class Cached(
         val globalFile: File,
         val projectFile: File,
@@ -2038,7 +1728,7 @@ internal object PiMermaidModeSource {
 
     private val lock = Any()
     private var cached: Cached? = null
-    private val _epoch = androidx.compose.runtime.mutableIntStateOf(0)
+    private val _epoch = mutableIntStateOf(0)
     val epoch: Int get() = _epoch.intValue
 
     fun invalidate() {
@@ -2072,58 +1762,36 @@ internal object PiMermaidModeSource {
         "${globalFile.lastModified()}:${globalFile.length()}|${projectFile.lastModified()}:${projectFile.length()}"
 }
 
-/**
- * pi's accepted values, and pi's default for everything else.
- *
- * `"streaming"` is the documented default (`settings-manager.ts:66`), so an unset key —
- * or a value pi could not have written — resolves to it. Defaulting to [PiMermaidMode.Off]
- * would look safer and would silently disable a feature the user never turned off.
- */
 private fun piMermaidModeOf(raw: String?): PiMermaidMode = when (raw?.trim()?.lowercase()) {
     "off" -> PiMermaidMode.Off
     "final" -> PiMermaidMode.Final
     else -> PiMermaidMode.Streaming
 }
 
-/**
- * How long a fence must stop changing before it is worth highlighting. The eval
- * doc suggests 150–250 ms (§4.3); this is the top of that range because the
- * request itself costs time and a settled block is worth more than a fast colour
- * on a block that is still being rewritten.
- */
-private const val STREAM_SETTLE_MS = 200L
-
-/**
- * Applies spans to the source text. Offsets are clamped rather than trusted: a
- * highlighter that returns a bad range must produce a plain block, not a crash
- * in the middle of a conversation.
- */
-private fun buildPiCodeText(
-    code: String,
-    spans: List<PiCodeSpan>,
-    palette: PiPalette,
-): AnnotatedString = buildAnnotatedString {
-    append(code)
-    for (span in spans) {
-        val start = span.start.coerceIn(0, code.length)
-        val end = span.end.coerceIn(start, code.length)
-        if (start == end) continue
-        val style = when (span.token) {
-            PiSyntaxToken.Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
-            PiSyntaxToken.Strong -> SpanStyle(fontWeight = FontWeight.Bold)
-            PiSyntaxToken.Link -> SpanStyle(textDecoration = TextDecoration.Underline)
-            else -> span.token.color(palette)?.let { SpanStyle(color = it) } ?: SpanStyle()
-        }
-        addStyle(style, start, end)
+private fun countDisplayDelimiters(text: String): Int {
+    var count = 0
+    var index = text.indexOf("$$")
+    while (index >= 0) {
+        count++
+        index = text.indexOf("$$", index + 2)
     }
+    return count
 }
 
-/** 文本以 `<svg` 开头、且只有这一个 svg 根（可以尚未闭合：流式中）。 */
 private fun isSingleSvgRoot(text: String): Boolean {
     val head = text.trimStart()
     if (!head.startsWith("<svg", ignoreCase = true)) return false
     if (head.length > 4 && !(head[4].isWhitespace() || head[4] == '>' || head[4] == '/')) return false
     val close = head.lastIndexOf("</svg>", ignoreCase = true)
-    // 允许嵌套 svg（next>0 且在 close 之前）；不允许根闭合之后还有别的内容。
     return close < 0 || head.substring(close + 6).isBlank()
 }
+
+private const val MERMAID_LANGUAGE = "mermaid"
+private const val SVG_LANGUAGE = "svg"
+private val STACK_TRACE_LANGUAGES = setOf("stacktrace", "stack", "stack-trace", "traceback")
+private val WHITESPACE = Regex("\\s+")
+private const val MERMAID_ATTEMPTS = 3
+private const val MERMAID_RETRY_MS = 400L
+private const val MERMAID_SETTING_KEY = "markdown.mermaid"
+private const val STREAM_SETTLE_MS = 200L
+private const val BARE_URL_MAX_CHARS = 8192

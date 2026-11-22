@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,7 +52,6 @@ import app.pi.i18n.tr
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
-import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import kotlinx.coroutines.delay
 
 /**
@@ -117,7 +117,7 @@ internal fun PiRichCodeBlock(
         }
     }
 
-    MarkdownCodeBackground(
+    Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(
@@ -127,9 +127,6 @@ internal fun PiRichCodeBlock(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = topPadding, bottom = if (classic) 8.dp else 0.dp),
-        showHeader = false,
-        language = info.language,
-        code = code,
     ) {
         Column {
             // 「横向滚动 / 自动换行」「显示行号」「展开/收起」统一收进 ⋮ 菜单，保持代码块头部极简克制。
@@ -290,16 +287,13 @@ internal fun PiRichCardFrame(
     val slot = remember { PiCardMenuSlot() }
     val allMenu = menu + slot.items
     val shownStatus = status ?: slot.status
-    MarkdownCodeBackground(
+    Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.58f)),
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = topPadding, bottom = if (classic) 8.dp else 0.dp),
-        showHeader = false,
-        language = info.language,
-        code = code,
     ) {
         Column {
             PiCardHeader(

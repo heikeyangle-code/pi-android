@@ -1377,9 +1377,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("Kotlin 标准库与 kotlinx 库（coroutines、serialization-json）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin"),
     ("Shizuku API", "13.1.5", "MIT", "编译进 App 代码", "https://github.com/RikkaApps/Shizuku-API"),
     ("Termux Terminal（terminal-emulator 与 terminal-view）", "v0.118.1", "GPL-3.0", "编译进 App 代码", "https://github.com/termux/termux-app"),
-    ("multiplatform-markdown-renderer-m3", "0.45.0", "Apache-2.0", "编译进 App 代码", "https://github.com/mikepenz/multiplatform-markdown-renderer"),
     ("org.jetbrains:markdown", "0.7.9", "Apache-2.0", "编译进 App 代码", "https://github.com/JetBrains/markdown"),
-    ("kotlinx-collections-immutable（随 markdown 渲染器一起分发）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin/kotlinx.collections.immutable"),
     # Rich rendering (Phase 2–5). AndroidSVG draws the Mermaid/MathJax SVG, jsoup parses the
     # safe HTML subset, SnakeYAML parses the YAML fences, and the two JS engines ship inside
     # the APK (`assets/rich/…`) and run in an offscreen WebView with no network access — so

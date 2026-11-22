@@ -166,4 +166,56 @@ class PiRichRenderTest {
         assertTrue(widths.sum() > 360f)
         assertTrue(widths.all { it in 56f..240f })
     }
+
+    @Test
+    fun `native syntax highlighter tokenizes keywords, types, functions, strings, interpolations, operators and punctuation`() {
+        val kotlinSample = """
+            /** Computes total for @param items */
+            @Composable
+            fun computeTotal(items: List<Int>): Int {
+                val msg = "count=${'$'}{items.size}"
+                return items.sum() + 0x10
+            }
+        """.trimIndent()
+        val result = PiFastCodeHighlighter.highlight(kotlinSample, "kotlin")
+        assertTrue(result.languageKnown)
+        val tokens = result.spans.map { it.token }.toSet()
+        assertTrue("Expected Comment", PiSyntaxToken.Comment in tokens)
+        assertTrue("Expected Keyword", PiSyntaxToken.Keyword in tokens)
+        assertTrue("Expected Type", PiSyntaxToken.Type in tokens)
+        assertTrue("Expected Function", PiSyntaxToken.Function in tokens)
+        assertTrue("Expected StringLiteral", PiSyntaxToken.StringLiteral in tokens)
+        assertTrue("Expected Variable (interpolation/member)", PiSyntaxToken.Variable in tokens)
+        assertTrue("Expected Number", PiSyntaxToken.Number in tokens)
+        assertTrue("Expected Operator", PiSyntaxToken.Operator in tokens)
+        assertTrue("Expected Punctuation", PiSyntaxToken.Punctuation in tokens)
+        assertTrue("Expected Muted (@Composable)", PiSyntaxToken.Muted in tokens)
+
+        // Python f-string + Dockerfile + Rust macro + TOML
+        val py = PiFastCodeHighlighter.highlight("x = f\"hello {user.name}\" # note", "python")
+        assertTrue(py.languageKnown)
+        assertTrue(py.spans.any { it.token == PiSyntaxToken.StringLiteral })
+        assertTrue(py.spans.any { it.token == PiSyntaxToken.Variable })
+
+        val rust = PiFastCodeHighlighter.highlight("#[derive(Debug)]\nfn main() { println!(\"hi\"); }", "rust")
+        assertTrue(rust.languageKnown)
+        assertTrue(rust.spans.any { it.token == PiSyntaxToken.Muted })
+        assertTrue(rust.spans.any { it.token == PiSyntaxToken.Function })
+
+        val docker = PiFastCodeHighlighter.highlight("FROM ubuntu:24.04\nRUN apt-get update", "dockerfile")
+        assertTrue(docker.languageKnown)
+        assertTrue(docker.spans.any { it.token == PiSyntaxToken.Keyword })
+    }
+
+    @Test
+    fun `reference link extractor resolves case-insensitive normalized labels`() {
+        val md = """
+            See [Pi Docs][pi  docs] for details.
+
+            [PI DOCS]: https://example.com/pi
+        """.trimIndent()
+        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+        val refs = extractPiReferenceLinks(md, tree)
+        assertEquals("https://example.com/pi", refs["pi docs"])
+    }
 }

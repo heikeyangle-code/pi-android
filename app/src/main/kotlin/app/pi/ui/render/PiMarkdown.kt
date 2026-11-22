@@ -1,287 +1,68 @@
 package app.pi.ui.render
 
-import java.util.WeakHashMap
-import app.pi.ui.theme.PiMonoFamily
-import androidx.compose.ui.text.style.BaselineShift
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.protocol.PiImage
 import app.pi.ui.render.rich.PiFootnoteMarkdown
+import app.pi.ui.theme.PiContrast
 import app.pi.ui.theme.PiTheme
-import com.mikepenz.markdown.compose.Markdown
-import com.mikepenz.markdown.compose.MarkdownElement
-import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
-import com.mikepenz.markdown.model.State
-import com.mikepenz.markdown.model.markdownAnimations
-import com.mikepenz.markdown.model.markdownAnnotator
-import com.mikepenz.markdown.model.markdownAnnotatorConfig
-import com.mikepenz.markdown.model.rememberMarkdownState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
+private class ParsedMarkdownDoc(
+    val content: String,
+    val root: ASTNode,
+    val referenceLinks: Map<String, String>,
+)
+
 /**
- * 行内裸 HTML 的认领钩子（`MarkdownAnnotator.annotate`）。
- *
- * ## 为什么必须走这一条缝
- *
- * 行内 HTML 是**段落里的一个 token**（`MarkdownTokenTypes.HTML_TAG`，见
- * `PiHtml.INLINE_TYPE`），不是一个能被组件分派到的节点：段落有自己的组件
- * （`compose/MarkdownExtension.kt` 的 `PARAGRAPH` 分支），而段落里的粗体、链接、行内代码
- * 都是 annotator 拼进同一个 `AnnotatedString` 的。想从组件层拿到行内 HTML 就得把整个
- * `paragraph` 槽接过来自己解析一遍（`docs/known-gaps.md` A2 的 ①「候选 A 不可行」记着
- * 这次失败：组件层拿不到那个 annotator，自己拆会把同段其它文字的格式丢掉 —— 那一段同时
- * 也是本文件这个钩子只认领一种节点的理由）。
- *
- * 库把 annotator 作为 `Markdown(annotator = …)` 的参数暴露，而它的 `annotate` 钩子
- * **就是** `AnnotatedString.Builder` 的扩展函数
- * （`model/MarkdownAnnotator.kt`：`AnnotatedString.Builder.(content, child) -> Boolean`），
- * 返回 `true` 表示"这个 child 我处理了"、`false` 表示"交回默认处理"。于是这里可以做到
- * **只认领一种节点、别的一个都不碰**：
- *
- *     if (annotate == null || !annotate(content, child)) { …库自己的 switch… }
- *     （`annotator/AnnotatedStringKtx.kt` 的 `buildMarkdownAnnotatedString`）
- *
- * 返回 `false` 时库走的还是原来那一整段 switch，所以**不含 HTML_TAG 的消息，
- * `AnnotatedString` 一个字节都不变**。这一点不是靠样例撑着的：`PiHtml.handlesInline`
- * 只对 `"HTML_TAG"` 为真，而 `PiHtmlCheck` 拿 pin 住的解析器（`org.jetbrains:markdown`
- * 0.7.9 + GFM）**全部 77 个节点类型名**逐个跑过这个判定（夹具的 `typeUniverse`），
- * 所以"其它任何节点都不会被认领"是一条被穷举过的断言。
- *
- * ## 为什么是顶层 `val`
- *
- * 这个 lambda 的**身份**是 `DefaultMarkdownAnnotator.equals` 的一个字段，而 annotator 又是
- * `Markdown(...)` 的参数。顶层 `val` 让它整个进程只有一个实例，`remember` 不会因为
- * lambda 每次重组都新建而失效；它本身**不持有任何状态**，也不做分配（`PiHtml.inlineTextAt`
- * 只在切片里有 `\t`/`\r` 时才新建字符串）。
- *
- * ## 代价（明写，不含糊）
- *
- * 库的那行判定从 `annotate == null` 的短路变成一次虚调用 + 一次字符串比较，
- * 作用范围是"每个被拼接的 inline 节点"，时机是 annotator 生成 `AnnotatedString` 的那条路
- * （每段文本一次，不在重组/绘制的每帧路径上）。pi 自己的 `renderInlineTokens` 也是逐
- * token 一个 switch，这一层的量级与它相同。
+ * Threshold below which Markdown is parsed synchronously on frame 0 (takes <0.6 ms on ARM64),
+ * guaranteeing zero blank-frame flicker for short/medium chat messages while keeping huge
+ * settled transcripts off the main thread.
  */
-private val piInlineHtmlAnnotate: AnnotatedString.Builder.(String, ASTNode) -> Boolean =
-    { content, child ->
-        if (!PiHtml.handlesInline(child.type.name)) {
-            // 不是 HTML_TAG：交回库的默认处理，与今天逐字节相同。
-            false
-        } else {
-            val raw = PiHtml.inlineTextAt(content, child.startOffset, child.endOffset)
-            val tag = piInlineHtmlTagName(raw)
-            when {
-                // 叫不出名字（注释、CDATA、`<!DOCTYPE>` 片段）：原文照排，一个字都不丢。
-                tag == null -> {
-                    append(raw)
-                    true
-                }
-                // `<br>` 是空元素：它没有"闭标签"可等，直接换行。
-                tag == TAG_BREAK -> {
-                    append('\n')
-                    true
-                }
-                else -> {
-                    val span = piInlineHtmlSpan(tag)
-                    if (span == null) {
-                        // 没有 markdown 等价物、也不是安全子集里的标签（例如 `<a>`）：
-                        // 仍然原文照排 —— 标签被吃掉、URL 消失才是更坏的答案。
-                        append(raw)
-                    } else if (raw.startsWith("</")) {
-                        // 闭标签：弹掉本段落里最近压入的那一层。栈空（模型写了孤立的
-                        // `</b>`）时什么都不做，不能因此抛。
-                        // 只弹**我们自己**压进去的那一层：栈空时（模型写了一个孤立的
-                        // `</b>`）绝不 `pop()`，否则会弹掉库为 `**粗体**` 压的样式。
-                        val stack = piInlineHtmlStyles[this]
-                        if (stack != null && stack.isNotEmpty()) {
-                            stack.removeAt(stack.size - 1)
-                            pop()
-                        }
-                    } else {
-                        pushStyle(span)
-                        piInlineHtmlStyles.getOrPut(this) { ArrayList() }.add(span)
-                    }
-                    true
-                }
-            }
-        }
-    }
-
-private const val TAG_BREAK = "br"
+private const val SYNC_PARSE_CHAR_LIMIT = 4096
 
 /**
- * 行内标签的样式表。**只包含"markdown 没有等价物"或"必须由 span 表达"的标签**：
+ * Pi's native Compose Markdown entry point, backed directly by JetBrains `org.jetbrains:markdown`
+ * GFM AST with zero third-party Compose renderer wrappers.
  *
- *  - `b`/`strong`、`i`/`em`、`del`/`s`、`u` 是纯 span 样式，与 `**`/`*`/`~~` 画出来
- *    同一个东西；
- *  - `code`/`kbd` 换成 App 的等宽族（**不**改字号：一行里混三个字号比不换更糟）；
- *  - `sup`/`sub` 用 `BaselineShift`，这是 markdown 根本没有的能力；
- *  - `span` 在安全子集里没有属性可留（`style`/`class` 都被白名单丢掉），认领它只是为
- *    了让标签本身不显示。
- *
- * `a` 故意**不在**表里：行内链接要可点，而 `AnnotatedString` 的链接注解在这套组件里
- * 没有出口（库的 annotator 只拼文本）。保留原文，用户至少能看到 URL。
- */
-private fun piInlineHtmlSpan(tag: String): SpanStyle? = when (tag) {
-    "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold)
-    "i", "em" -> SpanStyle(fontStyle = FontStyle.Italic)
-    "del", "s" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
-    "u" -> SpanStyle(textDecoration = TextDecoration.Underline)
-    "code", "kbd" -> SpanStyle(fontFamily = PiMonoFamily)
-    "sup" -> SpanStyle(baselineShift = BaselineShift.Superscript)
-    "sub" -> SpanStyle(baselineShift = BaselineShift.Subscript)
-    "span" -> SpanStyle()
-    else -> null
-}
-
-/** `</b>` / `< b >` → `b`；叫不出名字返回 `null`。 */
-private fun piInlineHtmlTagName(raw: String): String? {
-    val name = raw.removePrefix("<").removePrefix("/").trimStart()
-    val end = name.indexOfFirst { !it.isLetterOrDigit() }
-    val head = (if (end < 0) name else name.substring(0, end)).lowercase()
-    return head.ifEmpty { null }
-}
-
-/**
- * 样式栈按 `AnnotatedString.Builder` 存：一次 `annotate` 调用只覆盖一个段落，而同一个
- * builder 会连续访问该段落的全部子节点，两个段落是两个 builder。`WeakHashMap` 因此
- * 既不需要"段落结束时清理"，也不会让两条正在同时渲染的消息串味。
- */
-private val piInlineHtmlStyles = WeakHashMap<AnnotatedString.Builder, ArrayList<SpanStyle>>()
-
-/**
- * Renders pi's markdown natively.
- *
- * This is the app's only markdown entry point. Everything above it in the
- * transcript — [app.pi.ui.blocks.AssistantTextBlock], notifications, error
- * bodies — hands a raw markdown string to this function and gets back the same
- * document pi's terminal UI would have drawn, in pi's own colours.
- *
- * Parsing and rendering are third-party (`org.jetbrains:markdown` for the GFM
- * AST, `com.mikepenz:multiplatform-markdown-renderer-m3` for the Compose tree).
- * What lives in this package is only the part no library can know: pi's ten
- * `md*` colour tokens, pi's `syntax*` tokens, and pi's refusal to guess a code
- * language it was not told.
- *
- * Code fences are coloured by the guest engine: the highlighter is installed
- * here so every markdown surface gets it, and attached to this composition's
- * `Context` because that is the only place that knows where the runtime lives.
- * Attaching only computes paths — the request itself happens later, off the main
- * thread, once a fence has settled.
- *
- * A note on the modifier: the library defaults to `Modifier.fillMaxSize()`,
- * which is wrong inside a transcript column — it would make every message claim
- * the whole viewport. The default here is a plain [Modifier] for that reason.
- *
- * LaTeX is handled on the way *in*, through [piMarkdownSource]. pi installs two
- * `marked` tokenizers and renders every math token through `renderLatex`
- * (`packages/tui/src/components/markdown.ts:123`, `:509`, `:649`); this app's
- * parser already produces the matching nodes (`GFMElementTypes.INLINE_MATH` /
- * `BLOCK_MATH`, from its own `MathGeneratingProvider`) but draws them as their
- * literal text, so a formula would reach the screen as `$x^2$`. Rewriting the
- * formula before the parser sees it is the only place the substitution can
- * happen without duplicating the text: the renderer's annotator appends each
- * math node's raw source to the enclosing paragraph's `AnnotatedString`
- * (`com.mikepenz.markdown.annotator.AnnotatedStringKtxKt`), so a math component
- * would sit next to the raw `$x^2$` it was meant to replace.
- *
- * **This function owns the library's parser objects** ([flavour], [parser], [references]
- * below) because the library does not: its `Markdown(content, …)` builds its own on every
- * call, which defeats its `rememberMarkdownState` and re-parses the whole document on
- * every recomposition. The mechanism and its measured cost are in
- * `design/ui-refactor/08-hang-diagnosis.md`; the short version is on the `remember`s.
- *
- * @param markdown the source text, exactly as the engine emitted it. Streaming,
- *   half-finished markdown is expected and handled: the parser is given the
- *   partial document, and an unterminated fence renders as an open code block
- *   rather than as an error — the same thing pi does while a model is typing.
- *   A fence that is still being written is not highlighted until it settles; see
- *   `rememberPiHighlightedCode`.
- * @param textColor pi's base foreground for this surface, or `null` for
- *   `palette.text`. It exists for the one caller whose pi component draws its
- *   markdown in a token that is not `text`: the skill card passes
- *   `customMessageText` (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:43`),
- *   which pi's `Markdown` takes as `defaultTextStyle.color`
- *   (`components/markdown.ts:385`) — a base colour that the token colours for
- *   headings, links and code are then drawn on top of, not a replacement for
- *   them. A hand-written theme may set the two tokens differently, which is why
- *   this is a parameter rather than a constant.
- * @param onImageClick 点正文里的一张图时把它交给谁 —— 宿主是 `ChatScreen` 的
- *   `viewedImage: PiImage?` → `PiImageViewer`，与工具结果/附件那张网格**同一个出口**
- *   （`BlockRenderer` 的 `onImageClick`）。默认 `null`：这个表面没有可打开的查看器，
- *   图片保持不可点，渲染与改动前逐字节相同。这次接线同时管两种图：`![](https://…)`
- *   与本地路径的图走的是同一条字节通道（`bridge/GuestImageBytes.kt`），点开这件事在
- *   出口处没有区别。见 [LocalPiImageClick]。
+ * Features:
+ *  - Zero-flash dual-path parsing: synchronous on frame 0 when [immediate] or `<= 4 KiB`
+ *    (billed to [piMarkdownParseBudget]); off-main-thread on `Dispatchers.Default` for huge
+ *    documents while retaining the previous rendered AST on screen (no blank loading blink).
+ *  - First-class inline & display LaTeX (`$...$`, `\(...\)`, `$$...$$`, `\[...\]`) across
+ *    paragraphs, lists, blockquotes, GFM callout alerts, headings, and table cells.
+ *  - Full rich fence rendering (Chromium Skia Mermaid diagrams, SVG, MathJax, CSV/TSV tables,
+ *    JSON/YAML/XML trees, stack traces, safe HTML previews, diffs, and 35+ language native
+ *    syntax highlighting).
+ *  - 100% theme-driven via [PiTheme.palette] and [PiTheme.typography].
  */
 @Composable
 internal fun PiMarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     textColor: Color? = null,
-    // Defaulted from the composition so the eight block call sites do not have to carry it:
-    // who is allowed to pay for a synchronous parse is a property of the *row* (is this row
-    // entering the viewport from above, has it ever been measured, is its text still
-    // arriving), and the row's owner is `ChatScreen`. See `PiMarkdownImmediate.kt` for the
-    // defect, the bound and the cost.
     immediate: Boolean = LocalPiMarkdownImmediate.current,
-    // 见 [LocalPiImageClick]：一个组合局部而不是参数，因为库的组件集是 `remember` 出来的、
-    // 参数进不去。
     onImageClick: ((PiImage) -> Unit)? = null,
-    /**
-     * 这条消息是否还在流式生成（`AssistantText.streaming`）。默认 `false`：
-     * 工具卡、摘要、用户气泡等已完成的文本保持原渲染路径。富渲染不能只依赖它，
-     * 还要检查围栏/公式/结构是否闭合；见 [LocalPiMarkdownStreaming]。
-     */
     streaming: Boolean = false,
 ) {
     val context = LocalContext.current
-    // `remember(context)`: attach() is idempotent and cheap, but this keeps it to
-    // once per Activity rather than once per composition.
     remember(context) { PiNodeCodeHighlighter.attach(context) }
-    // Keyed on the source: rewriting is a linear scan with a handful of regex
-    // matches, but a streaming block re-parses on every token, so it is cached.
-    // 预处理还要报告"这次有没有写进一块多行网格"：网格靠换行与空格对齐，而库的
-    // annotator 默认把段落内换行压成空格，所以含网格的这条消息要按下一段的两个
-    // 开关渲染 —— 别的消息一个字节都不变（`PiLatex.prepare` 的注释）。
-    // Phase 3：**整行独立的**显示式公式不再在这里被改写成 Unicode —— `PiLatex.prepare`
-    // 的产出是给终端看的近似（`a/b`、Unicode 上下标、空格对齐的矩阵），而 MathJax 的入口
-    // 是 markdown 里的 `BLOCK_MATH` 节点；改写过的源里已经没有节点了。
-    //
-    // 判据是 [piDisplayMathIsStandalone]：只有当每一条含 `$$` 的行都**整行只是公式**
-    // （或多行公式的 `$$` 定界符行）时，才把显示式公式留给排版器。混在句子中间的
-    // `$$…$$` 仍然走旧路径 —— 那种形状下 `PARAGRAPH` 里除了 math 还有文字，段落组件
-    // 不会为它让路，留在源里只会显示成一串 `$$`。
-    //
-    // 行内 `$…$` 始终走旧路径：它要和同段的粗体/链接/行内代码拼进同一个
-    // `AnnotatedString`，而库的 annotator 没有插行内组件的缝（见 `PiLatex` 的 KDoc）。
-    // 流式期间也全走旧路径：一个 token 一次 WebView 排版不值得。
-    //
-    // **不许抛。** `PiLatex.prepare` 本身只走字符串与正则，但它的数学替换会进
-    // `PiLatex.toUnicode`，而那个解析器是按 `{` 直接递归的（见那里的注释）：一条病态的
-    // 公式足以让它抛 `StackOverflowError`。这一段在组合里跑，不接住就是应用直接退出，
-    // 所以退回"没有公式可替换"的那一份 —— 也就是 `prepare` 自己的快路径值。不抛的输入
-    // 拿到的是同一个对象，逐字节相同。
-    // 普通正文不含数学/脚注标记时短路，避免 streaming 从 true→false 落地时无谓重算与重排。
-    // 已落定消息走 [PiInlineMath.extract]：行内 `$...$` / `\(...\)` 用哨兵编码保住原 TeX（供
-    // `PiInlineMathParagraph` 升级为 MathJax 真矢量 SVG），独立 `\[...\]` 同步规范化为块级公式；
-    // 流式期间保持 `PiLatex.prepare` 零延迟 Unicode 路径，60fps 零 WebView 抖动。
+
     val hasMathSyntax = remember(markdown) {
         markdown.contains('$') || markdown.contains("\\(") || markdown.contains("\\[")
     }
@@ -312,47 +93,16 @@ internal fun PiMarkdownText(
             runCatching { PiFootnoteMarkdown.rewrite(prepared.text) }.getOrNull()
         }
     }
-    // **裸 URL 不改写**（用户裁定，撤销，见 `docs/known-gaps.md` §A3 的 R2 末条）：
-    // `![]()` 才是图，链接就是链接 —— 模型给的"八条直链，复制即可"必须还是可复制的一行
-    // 链接文字。这里曾经挂过 `PiImageLinks.rewrite(prepared.text)`（把"整行只有一个图片
-    // 后缀 URL"改成 `![](...)`），那个模块与它的 harness 已删除；不要在没有新裁定的情况下
-    // 把它加回来。
     val content = footnoteSource ?: prepared.text
     val hasGrid = prepared.hasDisplayGrid
-    // 「这条消息里有没有可能出现裸 HTML」—— 就是一次 `contains('<')`，扫一遍字符串（一次
-    // 组合，不是每帧）。这个布尔值买到的是**库那行判定回到 `annotate == null` 的短路**：
-    // 没有 `<` 的消息根本不装钩子，`PiHtml` 的纯函数、trim、块级切分也全都不会被调到。
-    // 装与不装的差别只有一次虚调用 + 一次 8 字节比较，但用户要的是"代价最小"，而这条
-    // 代价是零 —— 一个 `<` 都不可能被漏掉（HTML 标签必然以它开头）。
-    val hasHtmlTagStart = markdown.indexOf('<') >= 0
-    // F32 / RR-P9: everything the five markdown objects depend on is read here,
-    // once per composition, and the objects themselves are built by the pure
-    // functions in `PiMarkdownTheme.kt` — the library's own builders are
-    // `@Composable` and therefore illegal inside `remember`'s calculation lambda
-    // (see that file's header for the failed attempt this replaced). Streaming a
-    // long block recomposes this function per token; without these `remember`s
-    // every token rebuilt all five objects and the component set.
+
     val palette = PiTheme.palette
-    val darkTheme = app.pi.ui.theme.PiContrast.luminance(palette.pageBg) < 0.5
-    // 排版预设（`app.appearance.typography` / `.lineHeight` / `.fontSize`）解析后的那一个值：
-    // 正文/次要角色的字号与字重、标题字号、markdown 段间距与列表缩进都在里面。
-    // 库的 typography 与 padding 由它派生，所以两个 `remember` 都键在它上面 —— 一次组合只算
-    // 一次；`PiMarkdownTheme.kt` 里 padding 因此从顶层 `val` 变成了函数（仍按预设缓存，
-    // 不是每帧新建）。dimens 不随预设动（没有任何圆角变化），所以它还是那个顶层 `val`。
+    val darkTheme = PiContrast.luminance(palette.pageBg) < 0.5
     val profile = PiTheme.typography
     val colors = remember(palette, darkTheme, textColor) {
         piMarkdownColors(palette, darkTheme, textColor)
     }
     val typography = remember(palette, profile, textColor, hasGrid) {
-        // 网格用**空格**对齐（`renderLayout` 逐行补齐），比例字体里空格与字形的宽度
-        // 不同、整块会歪，所以含网格的这条消息把段落样式换成等宽。改写只作用于
-        // `paragraph`：标题/列表/引用的角色保持原样，其它消息完全不受影响。
-        //
-        // 走 `piMarkdownTypography` 的参数而不是对返回值 `copy`：那个类型是库的
-        // `MarkdownTypography`，只有 `DefaultMarkdownTypography` 那个构造器能造它，
-        // **没有 `copy`**（CI 的 `:app:compileReleaseKotlin` 在 `Unresolved reference
-        // 'copy'` 上抓过一次）。段落的三个兄弟角色（`text`/`ordered`/`list`）保持比例，
-        // 所以这不是"整条消息换成代码字体"，是"段落这一档换成等宽"。
         piMarkdownTypography(
             palette = palette,
             profile = profile,
@@ -360,257 +110,75 @@ internal fun PiMarkdownText(
             monoParagraph = hasGrid,
         )
     }
-    val padding = remember(profile) { piMarkdownPadding(profile) }
-    // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
-    // is not composable — so it can be remembered directly. The lambdas it holds
-    // are composable, but only *created* here; the library does the same thing in
-    // its own non-composable `CurrentComponentsBridge` (`.../components/MarkdownComponents.kt`).
-    val components = remember { piMarkdownComponents() }
-    // The library's three parser objects, remembered here because it does **not** remember
-    // them itself. `Markdown(content, …)` declares `flavour = GFMFlavourDescriptor()`,
-    // `parser = MarkdownParser(flavour)` and `referenceLinkHandler = ReferenceLinkHandlerImpl()`
-    // as default parameter values, and Kotlin evaluates a default inside the callee on
-    // *every* call — the bytecode says so (`MarkdownKt.Markdown(String, …)` constructs all
-    // three in its own body, between `Composer.startDefaults()` and `endDefaults()`, so the
-    // Compose compiler wrapped none of them in a `remember`).
-    //
-    // That would be harmless if the library ignored them. It does the opposite: they are
-    // exactly the keys of `rememberMarkdownState`'s
-    // `remember(content, lookupLinks, flavour, parser, referenceLinkHandler, retainState)`
-    // **and** three of the fields `Input.equals` compares, and none of the three overrides
-    // `equals`. A fresh instance per execution therefore defeats that `remember`, builds a
-    // new `Input`, wakes `snapshotFlow { currentInput }`, and calls `updateInput` +
-    // `parse()` again — a whole-document re-parse plus, when the parse lands, a
-    // `MarkdownSuccess` that rebuilds every node of the document in a plain `Column`. On
-    // every recomposition of this composable, even when the text is byte-for-byte the same.
-    //
-    // Measured cost of one such pass (`design/ui-refactor/08-hang-diagnosis.md` §2.2):
-    // 8.95 ms / 1026 AST nodes for a 5 KB document, 22.97 ms / 9976 nodes for 50 KB,
-    // 58.02 ms / 29811 nodes for 150 KB. pi publishes the transcript once per streamed
-    // event, so with a few markdown rows on screen the frame thread never goes idle — the
-    // reported 「卡死 / 没有响应」, and the reason it gets worse the more content a session
-    // holds. Passing stable instances keeps `Input` equal, so unchanged text never
-    // re-parses and never re-renders.
-    //
-    // Three separate `remember`s rather than one shared instance, because
-    // `ReferenceLinkHandlerImpl` is **stateful**: `lookupLinks` defaults to true, and the
-    // parse stores every reference-link definition in the handler. One handler shared by
-    // all rows would let a `[x]: url` written in one message resolve a `[x]` in another.
-    // A per-row `remember` keeps that isolation and is still stable across this row's
-    // recompositions, which is all the fix needs.
+    val spacing = remember(profile) { piMarkdownSpacing(profile) }
+    val imageLoader = rememberPiGuestImageTransformer()
+
     val flavour = remember { GFMFlavourDescriptor() }
     val parser = remember(flavour) { MarkdownParser(flavour) }
-    val references = remember { ReferenceLinkHandlerImpl() }
-    // The library's parse state, built here instead of inside `Markdown(content = …)` for one
-    // reason: **the state is the only place the parse's completion can be seen**, and the
-    // row's height floor has to be released by it (see `LocalPiMarkdownParsed`, and
-    // `TranscriptRowHeight` for the collapse-then-grow the frame-count window it replaces
-    // could produce).
-    //
-    // The arguments are exactly the ones the library's `content` overload would have built
-    // its own state with — `rememberMarkdownState(content, lookupLinks, retainState, flavour,
-    // parser, referenceLinkHandler, immediate)` (renderer 0.45.0 metadata; `lookupLinks`
-    // defaults to `true`, which the parse's reference-link handler relies on, so it is passed
-    // explicitly rather than inherited) — and `retainState = true` / `immediate = immediate`
-    // are the two behavioural switches the KDoc below argues for. Nothing else changes: the
-    // rendering call below is the library's own `Markdown(state = …)` overload, which is what
-    // the `content` overload delegates to anyway.
-    val markdownState = rememberMarkdownState(
-        content = content,
-        lookupLinks = true,
-        retainState = true,
-        flavour = flavour,
-        parser = parser,
-        referenceLinkHandler = references,
-        immediate = immediate,
-    )
-    // The completion signal for the row above. `collectAsState` on the library's own
-    // `StateFlow`; the effect is keyed on the state so it fires once per transition into
-    // `State.Success` (a content change puts the state back to `Loading` — `retainState` only
-    // keeps the *previous content* visible — so this correctly fires again for the new
-    // document).
-    val parsedState by markdownState.state.collectAsState()
-    val onParsed = LocalPiMarkdownParsed.current
-    LaunchedEffect(parsedState, onParsed) {
-        if (onParsed != null && parsedState is State.Success) onParsed()
+
+    // Synchronous fast path for immediate rows or modest documents; retained async path for huge docs.
+    val syncParse = immediate || content.length <= SYNC_PARSE_CHAR_LIMIT
+    val syncDoc = remember(content, syncParse, parser) {
+        if (!syncParse) {
+            null
+        } else {
+            val startedNanos = if (immediate) System.nanoTime() else 0L
+            val parsed = parseDocumentSafely(parser, content)
+            if (immediate) {
+                piMarkdownParseBudget.chargeNanos(
+                    nowNanos = System.nanoTime(),
+                    costNanos = System.nanoTime() - startedNanos,
+                )
+            }
+            parsed
+        }
     }
-    // A3, the image seam — three wiring points, and all three are needed:
-    //
-    //  1. this provider fills **our** local, which is what [PiImagePlaceholder]
-    //     reads to decide whether an image can be drawn at all;
-    //  2. `imageTransformer = imageTransformer` on `Markdown(...)` fills the
-    //     **library's** `LocalImageTransformer`, which is the only seam its own
-    //     components read — `MarkdownImage`/`MarkdownInlineImage` call
-    //     `LocalImageTransformer.current` (`.../elements/MarkdownImage.kt:17`,
-    //     `.../elements/MarkdownInlineImage.kt:12`) and the core `Markdown` provides
-    //     it from this very parameter (`.../compose/Markdown.kt:258`, `:347`).
-    //     Without it, the "decoded fine, now let the library draw it" hand-off in
-    //     [PiImagePlaceholder] would call `MarkdownImage` and get the default no-op
-    //     transformer, i.e. a node that draws nothing — worse than the placeholder
-    //     it replaced;
-    //  3. both come from one `rememberPiGuestImageTransformer()` instance, so the
-    //     decision and the drawing can never disagree about which transformer is
-    //     installed.
-    //
-    // `http(s)` links really load now — `bridge/GuestImageBytes.kt` was changed this round
-    // from "refuse, because the render layer has no network I/O" to "fetch, under a
-    // no-headers / 8 MiB / bounded-timeout / bounded-disk-cache contract". That is the one
-    // behavioural deviation this round takes on, and it is the render layer's first
-    // outbound request; the KDoc there states the price. A link that fails (offline,
-    // timeout, over the cap, non-2xx) still keeps the alt + source fallback, because
-    // `transform` answers `null` for exactly the same reasons it always did.
-    val imageTransformer = rememberPiGuestImageTransformer()
-    // What one eager row actually costs the frame, measured rather than estimated: the parse
-    // (`parseBlocking`, run inside `rememberMarkdownState`) **and** the composition of the
-    // node tree it produces, both of which are inside the `Markdown` call below. It is billed
-    // to the shared frame budget that decided this row was allowed to be eager — see
-    // `MarkdownParseBudget` for the measurements the 4 ms figure rests on and for why the bill
-    // is elapsed time and not a character count.
-    val parseStartedNanos = if (immediate) System.nanoTime() else 0L
+
+    var asyncDoc by remember { mutableStateOf<ParsedMarkdownDoc?>(null) }
+    var parseFailed by remember(content) { mutableStateOf(false) }
+
+    LaunchedEffect(content, syncParse, parser) {
+        if (syncParse) {
+            parseFailed = syncDoc == null
+            return@LaunchedEffect
+        }
+        val parsed = withContext(Dispatchers.Default) { parseDocumentSafely(parser, content) }
+        if (parsed != null) {
+            asyncDoc = parsed
+            parseFailed = false
+        } else {
+            parseFailed = true
+        }
+    }
+
+    val activeDoc = syncDoc ?: asyncDoc
+    val isCurrentParsed = activeDoc != null && activeDoc.content == content
+    val onParsed = LocalPiMarkdownParsed.current
+    LaunchedEffect(isCurrentParsed, content, onParsed) {
+        if (onParsed != null && isCurrentParsed) onParsed()
+    }
+
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
-        LocalPiImageTransformer provides imageTransformer,
-        // 点开一张图的那条缝。`null` 时两个图片槽一个修饰符都不多（见 [LocalPiImageClick]），
-        // 所以正文之外那几个没传回调的 markdown 表面不受影响。
+        LocalPiImageTransformer provides imageLoader,
         LocalPiImageClick provides onImageClick,
         LocalPiMarkdownStreaming provides streaming,
         LocalPiInlineMathTable provides activeInlineMath,
     ) {
-        Markdown(
-            // The state built above, not the `content` overload: the state is what makes the
-            // parse's completion observable to the row. Every other argument is the same one
-            // the content overload would have received.
-            markdownState = markdownState,
-            colors = colors,
-            typography = typography,
-            padding = padding,
-            dimens = piMarkdownDimensRoomy,
-            imageTransformer = imageTransformer,
-            components = components,
-            annotator = remember(hasGrid, hasHtmlTagStart, activeInlineMath) {
-                val hook: (AnnotatedString.Builder.(String, ASTNode) -> Boolean)? = when {
-                    !hasHtmlTagStart && activeInlineMath == null -> null
-                    hasHtmlTagStart && activeInlineMath == null -> piInlineHtmlAnnotate
-                    else -> { src, child ->
-                        if (hasHtmlTagStart && PiHtml.handlesInline(child.type.name)) {
-                            piInlineHtmlAnnotate(src, child)
-                        } else if (activeInlineMath != null && child.children.isEmpty()) {
-                            val start = child.startOffset.coerceIn(0, src.length)
-                            val end = child.endOffset.coerceIn(start, src.length)
-                            val slice = src.substring(start, end)
-                            if (slice.indexOf(activeInlineMath.markerPrefix) >= 0) {
-                                // 非段落表面（标题 / 表格单元格等）安全还原为 Unicode 近似，绝不泄漏哨兵。
-                                append(PiInlineMath.resolveToUnicode(slice, activeInlineMath))
-                                true
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                }
-                markdownAnnotator(
-                    config = markdownAnnotatorConfig(eolAsNewLine = hasGrid),
-                    annotate = hook,
+        when {
+            activeDoc != null -> {
+                PiMarkdownDocument(
+                    content = activeDoc.content,
+                    root = activeDoc.root,
+                    colors = colors,
+                    typography = typography,
+                    spacing = spacing,
+                    referenceLinks = activeDoc.referenceLinks,
+                    eolAsNewLine = hasGrid,
+                    modifier = modifier,
                 )
-            },
-            // Two library defaults this renderer must not inherit. Both are about the
-            // *streaming* case, and both were inherited silently until
-            // `docs/streaming-review.md` §2.3/§2.4 — the streaming row is the one row
-            // that recomposes on every token, so a default is a per-token decision
-            // here whether or not anyone made it.
-            //
-            // 1. `animations`: upstream defaults `MarkdownAnimations.animateTextSize`
-            //    to `Modifier.animateContentSize()` (renderer 0.45.0,
-            //    `model/MarkdownAnimations.kt:40-49`), which every markdown text
-            //    segment is drawn with (`compose/elements/MarkdownText.kt:214`). On a
-            //    growing answer that starts a size animation on *every* token, and what
-            //    it animates is the *measured height* the row reports
-            //    (`androidx.compose.animation:animation-android:1.8.3`,
-            //    `SizeAnimationModifierNode.measure`: the child is placed inside the
-            //    animated bounds, and 1.8.3 has no `clip` parameter). So the row's
-            //    height lags the text it holds: the newest lines overflow into the
-            //    next row, the transcript's own viewport clips them while the row is
-            //    the last one, and the follow's geometry ("are we at the bottom?") is
-            //    computed from the lagging height - the follow chases an animation
-            //    that every token restarts. It is also the only animation anywhere in
-            //    this app's UI (`grep -rn "animate" app/src/main/kotlin/app/pi/ui`
-            //    finds none of our own), which is the trade the user has already
-            //    decided against: it animates a size, carries no information, and
-            //    hides text while it runs. The library documents `{ this }` as the way
-            //    to switch it off (`MarkdownAnimations.kt:44-47`), which is exactly the
-            //    identity.
-            //
-            // 2. `retainState`: with the default `false`, every content change puts the
-            //    row back into `State.Loading` (`model/MarkdownState.kt:186-187`) — and
-            //    the loading slot renders an empty `Box` by default. The parse then
-            //    finishes on `Dispatchers.Default`, so whether a frame is drawn with
-            //    the row blanked is a race between that parse and the next vsync: on a
-            //    quiet frame the row keeps its text, on a slow one it collapses and
-            //    comes back. That is the reported "有时候会乱闪、在底部反复刷新", and
-            //    `retainState = true` is the library's own answer ("the previous content
-            //    remains visible while new content is being parsed"). Nothing else
-            //    changes: with it, a row only ever moves forwards.
-            //
-            // `retainState` is only reachable on the core `content: String` entry
-            // point — the m3 wrapper does not forward it (`markdown-renderer-m3`,
-            // `m3/Markdown.kt:62-104`) — which is why this call is
-            // `com.mikepenz.markdown.compose.Markdown` and not the m3 overload. The m3
-            // wrapper contributed nothing else here: this call already passes its own
-            // colours, typography, dimens, padding, components and image transformer,
-            // which is everything the wrapper would have supplied.
-            // (Now an argument of `rememberMarkdownState` above: it is a property of the
-            // *state*, not of the rendering call.)
-            animations = markdownAnimations(animateTextSize = { this }),
-            // 3. `immediate`: upstream defaults it to `false`, i.e. every first composition
-            //    of a row draws `State.Loading` — an **empty `Box`**, zero height — for one
-            //    frame or more while the parse runs on `Dispatchers.Default`
-            //    (`model/MarkdownState.kt`; the `true` branch is the `parseBlocking()` call
-            //    right after the state is constructed). A row entering the viewport from
-            //    *below* grows under the fold and nobody notices; a row entering from
-            //    *above* — which is what 「加载更早」 hands the reader — pushes every visible
-            //    row down by its own height when it arrives. `RowHeightCache` covers a row
-            //    that has been measured before; this covers the one that has not, and the
-            //    caller decides which rows those are (`PiMarkdownImmediate.kt`, where the
-            //    frame budget that thins a crowd of eager rows is also described).
-            //    (Now an argument of `rememberMarkdownState` above, like `retainState`.)
-            //
-            // 4. `success`: 库的 `MarkdownSuccess` 在**每个块之前**插一段
-            //    `Spacer(Modifier.height(padding.block))` —— 连文档的**第一个块**也插
-            //    (`compose/MarkdownExtension.kt:70`)，而文档末尾没有任何补偿。
-            //
-            //    段落之间看不出来（那里本来就该有一段间距），但它同时给**整段文本**的上面加了
-            //    一段、下面一段都没有 —— 这就是「用户消息气泡里文字偏下」的全部来源：气泡的
-            //    内边距是 12/12 对称的，多出来的正是**排版档的 `block`**（紧凑 8 dp / 舒适 16 /
-            //    宽松 24）。用户截图按屏幕密度 3.0 折算：同一条气泡上 23.4 dp、下 14.3 dp，
-            //    差的 9.1 dp 里 8 dp 是它，剩下 1.1 dp 才是字体自身 ascent/descent 的差。
-            //
-            //    改成库自己的公开参数 `MarkdownElement(..., includeSpacer = index > 0)`：间距
-            //    只落在块**之间**。这也是 pi 的规矩 —— 空行在块与块之间，消息开头没有空行
-            //    (`pi-tui` 的 markdown 渲染逐块 push 行，块间才 push `''`)。块与块之间一个
-            //    像素都不变（第 2..n 块照旧带那段 spacer），少掉的只有文档开头那一段；顺带把
-            //    「以 markdown 开头的行」与「以工具卡开头的行」上方的间距拉齐 —— 在此之前，
-            //    前者比后者正好多出这一个 `block`。
-            success = { successState, successComponents, successModifier ->
-                Column(successModifier) {
-                    successState.node.children.forEachIndexed { index, node ->
-                        MarkdownElement(
-                            node = node,
-                            components = successComponents,
-                            content = successState.content,
-                            includeSpacer = index > 0,
-                        )
-                    }
-                }
-            },
-            // 解析失败时必须给一个**不是空 Box** 的槽。库的默认 `error` 是
-            // `{ Box(modifier) }`（`multiplatform-markdown-renderer` 0.45.0 的
-            // `compose/Markdown.kt:210`），而库自己 `catch (Throwable)` 把解析异常转成
-            // `State.Error`（`model/MarkdownState.kt:220-234`）—— 两者相加就是"任何让
-            // GFM 解析器抛出的正文整条静默消失"，连一个字都不留下。这里画解析器拿到的
-            // 那份源文本。`State.Success` 永远到不了这个槽，所以正常路径一个字节不变。
-            error = { errorModifier ->
+            }
+            parseFailed -> {
                 Text(
                     text = if (activeInlineMath != null) {
                         PiInlineMath.resolveToUnicode(content, activeInlineMath)
@@ -619,43 +187,36 @@ internal fun PiMarkdownText(
                     },
                     style = typography.text,
                     color = colors.text,
-                    modifier = errorModifier,
+                    modifier = modifier,
                 )
-            },
-            modifier = modifier,
-        )
-        if (immediate) {
-            piMarkdownParseBudget.chargeNanos(
-                nowNanos = System.nanoTime(),
-                costNanos = System.nanoTime() - parseStartedNanos,
-            )
+            }
+            else -> {
+                // First frame of a huge non-immediate doc: show clean resolved text immediately
+                // while Dispatchers.Default finishes parsing (never a blank zero-height box).
+                Text(
+                    text = if (activeInlineMath != null) {
+                        PiInlineMath.resolveToUnicode(content, activeInlineMath)
+                    } else {
+                        content
+                    },
+                    style = typography.text,
+                    color = colors.text,
+                    modifier = modifier,
+                )
+            }
         }
     }
 }
 
-/**
- * 数学预处理：**只转发**到 [PiLatex.preprocess]，实现与全部理由都在那里。
- *
- * 为什么实现不在这里：这段逻辑是纯字符串与正则（不碰 Compose），而它恰恰是
- * 数学这一路里最容易悄悄画错的一段 —— 哪种定界符在什么位置算公式、要不要吃掉
- * 收尾的换行。放在 [PiLatex] 里就能被 `tools/run-app-pure-checks.sh` 编译并对着
- * pi 自己的 tokenizer 生成夹具比对（`app/src/test/kotlin/app/pi/ui/render/PiLatexCheck.kt`），
- * 而留在这个文件里（它有 Compose import）一个断言都跑不了。
- *
- * 名字与签名保持原样：`PiMarkdownComponents.kt` 的文档引用着它。
- */
+private fun parseDocumentSafely(parser: MarkdownParser, content: String): ParsedMarkdownDoc? =
+    runCatching {
+        val root = parser.buildMarkdownTreeFromString(content)
+        val refs = extractPiReferenceLinks(content, root)
+        ParsedMarkdownDoc(content = content, root = root, referenceLinks = refs)
+    }.getOrNull()
+
 internal fun piMarkdownSource(markdown: String): String = PiLatex.preprocess(markdown)
 
-/**
- * 这条消息里的显示式公式是不是**各自整行独立**。
- *
- * MathJax 只能接管 `BLOCK_MATH` 节点，而库的 `PARAGRAPH` 组件一旦有文字就不会把
- * 子节点交给 `custom` 槽（`docs/known-gaps.md` 的 A2 条目）。所以只有在"一行要么是
- * `$$`、要么整行就是一个 `$$…$$`"时，那个段落才**只有** math 节点，`PiParagraph` 才
- * 能把它整个换掉。混在句子里的 `$$…$$` 一律交给 [PiLatex] 的近似路径。
- *
- * 这个函数故意保守：宁可少接管，也不要让一个 `$$` 留在正文里当字面量。
- */
 internal fun piDisplayMathIsStandalone(markdown: String): Boolean {
     if (!markdown.contains("$$")) return false
     var seen = false

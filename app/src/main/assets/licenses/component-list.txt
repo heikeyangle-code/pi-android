@@ -164,20 +164,10 @@
       许可证    GPL-3.0
       上游      https://github.com/termux/termux-app
 
-  multiplatform-markdown-renderer-m3
-      版本      0.45.0
-      许可证    Apache-2.0
-      上游      https://github.com/mikepenz/multiplatform-markdown-renderer
-
   org.jetbrains:markdown
       版本      0.7.9
       许可证    Apache-2.0
       上游      https://github.com/JetBrains/markdown
-
-  kotlinx-collections-immutable（随 markdown 渲染器一起分发）
-      版本      见版本目录
-      许可证    Apache-2.0
-      上游      https://github.com/Kotlin/kotlinx.collections.immutable
 
   AndroidSVG（SVG 渲染：Mermaid 图与 MathJax 公式）
       版本      1.4
