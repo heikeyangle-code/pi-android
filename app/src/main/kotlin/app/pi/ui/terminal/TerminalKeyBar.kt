@@ -1,150 +1,100 @@
 package app.pi.ui.terminal
 
-import app.pi.i18n.tr
-
+import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.connectbot.terminal.VTermKey
+import app.pi.ui.theme.PiMonoFamily
+import com.termux.terminal.KeyHandler
 
 /**
- * The terminal's key bar: the keys a soft keyboard cannot produce.
- *
- * ## Where the keys come from
- *
- * The layout and the key set are Termux's, taken from `ExtraKeysView`'s default
- * (`TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS` in termux-app):
- *
- * ```
- * [['ESC','/',{key: '-', popup: '|'},'HOME','UP','END','PGUP'],
- *  ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]
- * ```
- *
- * That is the layout a phone-terminal user already knows, including the
- * long-press `popup` on `-` that yields `|`.
- *
- * ## Why the ExtraKeysView *library* is not a dependency
- *
- * It is a `LinearLayout`-style `View` bound to Termux's own `TerminalView` and
- * `TermuxConstants`, and its output path is `TerminalView.handleKeyCode`, which
- * does not exist in this app. What is worth taking from it is the *key table*,
- * and that is taken. Dispatch goes through the engine this app actually uses:
- * `TerminalEmulator.dispatchKey(modifiers, VTermKey…)` and
- * `TerminalEmulator.dispatchCharacter(modifiers, codepoint)`, which ask libvterm
- * to encode the sequence — including the modes a program can switch on
- * (`DECCKM` for the arrow keys, `DECKPAM` for the keypad) and the
- * `modifyOtherKeys`/Kitty forms pi negotiates for itself. Hard-coding `ESC [ A`
- * for Up, as the previous bar did, is wrong the moment a program asks for
- * application-cursor mode.
- *
- * The modifier bitmask is libvterm's: 1 = Shift, 2 = Alt, 4 = Ctrl.
+ * 终端修饰键状态：单击进入一次生效（Armed），双击锁定（Locked，连续输入 Ctrl+... 无需反复点按），再点取消。
+ */
+enum class ModifierState {
+    Off,
+    Armed,
+    Locked,
+    ;
+
+    val isActive: Boolean get() = this != Off
+}
+
+enum class StickyModifier { Ctrl, Alt }
+
+/**
+ * 终端辅助键描述。直接映射到 Android KeyEvent / Termux `KeyHandler` 修饰位，
+ * 由原生 `TerminalView` 按当前 `DECCKM` / `modifyOtherKeys` 模式准确编码，绝不硬编码转义串。
  */
 data class TerminalBarKey(
-    /** Stable name, also what `app.terminal.keyBar` stores. */
     val id: String,
     val label: String,
-    /** A libvterm key code ([VTermKey]); [VTermKey.NONE] for the other kinds. */
-    val vtermKey: Int = VTermKey.NONE,
-    /** The code point this chip sends, when it is a literal character. */
+    val androidKeyCode: Int = KeyEvent.KEYCODE_UNKNOWN,
     val character: Char? = null,
-    /** Termux's long-press alternative, e.g. `|` on the `-` chip. */
-    val popup: Char? = null,
-    /** Set on the sticky modifier chips; nothing is sent when one is tapped. */
+    val longPressChar: Char? = null,
+    val longPressLabel: String? = null,
     val sticky: StickyModifier? = null,
-    /**
-     * Modifier bits this chip carries by itself, on top of the sticky ones.
-     *
-     * This is what makes a one-tap `Ctrl+C` possible. The sticky `CTRL` chip
-     * already covers every `Ctrl+<letter>` — but only while the soft keyboard is
-     * up, because the letter has to come from the IME: with the keyboard dismissed
-     * (which is how a terminal is normally read) `CTRL` has nothing to combine
-     * with. `^C` and `^D` are the two whose absence is felt immediately, so they
-     * carry the bit themselves. Everything else stays on the sticky path rather
-     * than turning the bar into a keyboard.
-     */
-    val modifiers: Int = 0,
+    val termuxKeyMod: Int = 0,
+    val isPasteAction: Boolean = false,
 ) {
-
-    /** The same chip, sending [value] instead of its face value (the popup path). */
-    fun withCharacter(value: Char): TerminalBarKey = copy(character = value)
+    fun asLongPress(): TerminalBarKey? = longPressChar?.let { ch ->
+        TerminalBarKey(id = "${id}_alt", label = ch.toString(), character = ch)
+    }
 
     companion object {
-
-        val ESC = TerminalBarKey("esc", "ESC", vtermKey = VTermKey.ESCAPE)
-        val TAB = TerminalBarKey("tab", "TAB", vtermKey = VTermKey.TAB)
+        val ESC = TerminalBarKey("esc", "ESC", androidKeyCode = KeyEvent.KEYCODE_ESCAPE, longPressChar = '`', longPressLabel = "`")
+        val TAB = TerminalBarKey("tab", "TAB", androidKeyCode = KeyEvent.KEYCODE_TAB, longPressChar = '~', longPressLabel = "~")
         val CTRL = TerminalBarKey("ctrl", "CTRL", sticky = StickyModifier.Ctrl)
         val ALT = TerminalBarKey("alt", "ALT", sticky = StickyModifier.Alt)
 
-        val UP = TerminalBarKey("up", "\u2191", vtermKey = VTermKey.UP)
-        val DOWN = TerminalBarKey("down", "\u2193", vtermKey = VTermKey.DOWN)
-        val LEFT = TerminalBarKey("left", "\u2190", vtermKey = VTermKey.LEFT)
-        val RIGHT = TerminalBarKey("right", "\u2192", vtermKey = VTermKey.RIGHT)
+        val UP = TerminalBarKey("up", "\u2191", androidKeyCode = KeyEvent.KEYCODE_DPAD_UP)
+        val DOWN = TerminalBarKey("down", "\u2193", androidKeyCode = KeyEvent.KEYCODE_DPAD_DOWN)
+        val LEFT = TerminalBarKey("left", "\u2190", androidKeyCode = KeyEvent.KEYCODE_DPAD_LEFT)
+        val RIGHT = TerminalBarKey("right", "\u2192", androidKeyCode = KeyEvent.KEYCODE_DPAD_RIGHT)
 
-        val HOME = TerminalBarKey("home", "HOME", vtermKey = VTermKey.HOME)
-        val END = TerminalBarKey("end", "END", vtermKey = VTermKey.END)
-        val PGUP = TerminalBarKey("pgup", "PGUP", vtermKey = VTermKey.PAGEUP)
-        val PGDN = TerminalBarKey("pgdn", "PGDN", vtermKey = VTermKey.PAGEDOWN)
+        val HOME = TerminalBarKey("home", "HOME", androidKeyCode = KeyEvent.KEYCODE_MOVE_HOME)
+        val END = TerminalBarKey("end", "END", androidKeyCode = KeyEvent.KEYCODE_MOVE_END)
+        val PGUP = TerminalBarKey("pgup", "PGUP", androidKeyCode = KeyEvent.KEYCODE_PAGE_UP)
+        val PGDN = TerminalBarKey("pgdn", "PGDN", androidKeyCode = KeyEvent.KEYCODE_PAGE_DOWN)
 
-        val SLASH = TerminalBarKey("slash", "/", character = '/')
-        val DASH = TerminalBarKey("dash", "-", character = '-', popup = '|')
+        val SLASH = TerminalBarKey("slash", "/", character = '/', longPressChar = '\\', longPressLabel = "\\")
+        val DASH = TerminalBarKey("dash", "-", character = '-', longPressChar = '|', longPressLabel = "|")
         val PIPE = TerminalBarKey("pipe", "|", character = '|')
         val TILDE = TerminalBarKey("tilde", "~", character = '~')
 
-        /** `Ctrl+C` — the interrupt, and the one key a terminal is unusable without. */
-        val CTRL_C = TerminalBarKey("ctrl_c", "^C", character = 'c', modifiers = MOD_CTRL)
+        val CTRL_C = TerminalBarKey("ctrl_c", "^C", character = 'c', termuxKeyMod = KeyHandler.KEYMOD_CTRL)
+        val CTRL_D = TerminalBarKey("ctrl_d", "^D", character = 'd', termuxKeyMod = KeyHandler.KEYMOD_CTRL)
+        val PASTE = TerminalBarKey("paste", "PASTE", isPasteAction = true)
 
-        /** `Ctrl+D` — end of input, which is how a shell is left. */
-        val CTRL_D = TerminalBarKey("ctrl_d", "^D", character = 'd', modifiers = MOD_CTRL)
-
-        /**
-         * Termux's default two rows, in its order, with the two `Ctrl` chords the
-         * soft keyboard cannot reach appended so the bar scrolls to them.
-         */
+        /** 官方 2×8 满宽均分布局：无需左右滑动，单手拇指覆盖全部高频键，长按支持 `|`, `\`, `~`, `` ` ``。 */
         val defaultRows: List<List<TerminalBarKey>> = listOf(
             listOf(ESC, SLASH, DASH, HOME, UP, END, PGUP, CTRL_C),
-            listOf(TAB, CTRL, ALT, LEFT, DOWN, RIGHT, PGDN, CTRL_D),
+            listOf(TAB, CTRL, ALT, LEFT, DOWN, RIGHT, PGDN, PASTE),
         )
 
-        /**
-         * Every chip a stored `app.terminal.keyBar` list may name.
-         *
-         * It is a superset of [defaultRows] on purpose: `pipe` and `tilde` are
-         * not in Termux's default bar, but a `settings.json` that names them (the
-         * key survives even though 设置 no longer has a row for it) keeps exactly
-         * those chips instead of silently losing two.
-         */
         val catalog: List<TerminalBarKey> = listOf(
             ESC, TAB, CTRL, ALT, UP, DOWN, LEFT, RIGHT,
-            HOME, END, PGUP, PGDN, SLASH, DASH, PIPE, TILDE, CTRL_C, CTRL_D,
+            HOME, END, PGUP, PGDN, SLASH, DASH, PIPE, TILDE, CTRL_C, CTRL_D, PASTE,
         )
 
         private val indexById: Map<String, TerminalBarKey> = catalog.associateBy { it.id }
@@ -154,187 +104,159 @@ data class TerminalBarKey(
 }
 
 /**
- * libvterm's modifier bits, as `dispatchKey`/`dispatchCharacter` take them.
- *
- * `internal` rather than file-private because two files in this package need the
- * same numbers: the bar builds a chip's own [TerminalBarKey.modifiers] from them,
- * and the pane combines them with the sticky state before dispatching.
- */
-internal const val MOD_SHIFT = 1
-internal const val MOD_ALT = 2
-internal const val MOD_CTRL = 4
-
-/** The two sticky modifiers the bar can arm. */
-enum class StickyModifier { Ctrl, Alt }
-
-/**
- * The bar itself. It is deliberately dumb about the guest: a tap is reported to
- * [onKey] and the pane decides what the engine is told, so that a chip press and
- * a hardware key go through one code path and share one modifier state.
+ * 紧贴软键盘上沿的终端辅助键条：
+ * - 两行满宽自适应等分（无需横向滚动找 `^C` 或 `PASTE`）；
+ * - 支持双功能键长按（`-`→`|`、`/`→`\`、`TAB`→`~`、`ESC`→`` ` ``），右上角显示微弱副标提示；
+ * - `CTRL` / `ALT` 支持单击一次生效、双击锁定，配色跟随 Pi 主题强调色。
  */
 @Composable
 fun TerminalKeyBar(
     palette: TerminalPalette,
-    ctrlArmed: Boolean,
-    altArmed: Boolean,
+    ctrlState: ModifierState,
+    altState: ModifierState,
     onKey: (TerminalBarKey) -> Unit,
+    onModifierTap: (StickyModifier) -> Unit,
+    onModifierDoubleTap: (StickyModifier) -> Unit,
+    onPaste: () -> Unit,
     modifier: Modifier = Modifier,
-    statusText: String? = null,
-    /**
-     * The rows to draw. `app.terminal.keyBar` resolves to these through
-     * `TerminalPreferences.keyBar`; the default is Termux's layout.
-     */
     rows: List<List<TerminalBarKey>> = TerminalBarKey.defaultRows,
-    /**
-     * Paste, as one extra chip at the end of the last row.
-     *
-     * `ExtraKeysView` has no paste key because Termux reaches its clipboard
-     * through the long-press menu of its own text selection; this app has no
-     * such menu, and a soft keyboard cannot produce `Ctrl+V`, so pasting needs a
-     * chip of its own. It is deliberately appended next to the keys rather than
-     * hidden in the tab strip: it is terminal *input*, and the user is already
-     * looking here.
-     */
-    onPaste: (() -> Unit)? = null,
-    /**
-     * Restart the guest, as one extra chip beside [onPaste].
-     *
-     * A terminal needs a way out of a shell that is wedged — `Ctrl+C` and `Ctrl+D`
-     * cover the ordinary cases, but a process stuck in an uninterruptible read, or
-     * a `bash` whose prompt was never restored, has nothing else. It replaces the
-     * tab strip's per-tab close button, which was the same action presented as
-     * something else: there is only ever one terminal on this page now, so closing
-     * it and restarting it were indistinguishable.
-     */
-    onRestart: (() -> Unit)? = null,
 ) {
+    val topHairline = palette.border
     Column(
-        modifier
+        modifier = modifier
             .fillMaxWidth()
-            .background(palette.background.copy(alpha = 0.96f))
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+            .background(palette.chromeBg)
+            .drawBehind {
+                drawLine(
+                    color = topHairline,
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, 0f),
+                    strokeWidth = 0.5.dp.toPx(),
+                )
+            }
+            .padding(horizontal = 6.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        rows.forEachIndexed { index, row ->
+        rows.forEach { row ->
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 row.forEach { key ->
-                    KeyChip(
+                    val modState = when (key.sticky) {
+                        StickyModifier.Ctrl -> ctrlState
+                        StickyModifier.Alt -> altState
+                        null -> ModifierState.Off
+                    }
+                    ExtraKeyCap(
                         key = key,
                         palette = palette,
-                        armed = when (key.sticky) {
-                            StickyModifier.Ctrl -> ctrlArmed
-                            StickyModifier.Alt -> altArmed
-                            null -> false
+                        modifierState = modState,
+                        modifier = Modifier.weight(1f),
+                        onTap = {
+                            when {
+                                key.isPasteAction -> onPaste()
+                                key.sticky != null -> onModifierTap(key.sticky)
+                                else -> onKey(key)
+                            }
                         },
-                        onKey = onKey,
+                        onDoubleTap = if (key.sticky != null) {
+                            { onModifierDoubleTap(key.sticky) }
+                        } else {
+                            null
+                        },
+                        onLongPress = key.asLongPress()?.let { alt -> { onKey(alt) } },
                     )
                 }
-                if (index == rows.lastIndex) {
-                    onPaste?.let { ActionChip(label = "PASTE", palette = palette, onClick = it) }
-                    onRestart?.let { ActionChip(label = tr("重开", "Restart"), palette = palette, onClick = it) }
-                }
             }
-        }
-        statusText?.let {
-            Text(
-                text = it,
-                color = palette.foreground.copy(alpha = 0.7f),
-                fontSize = 11.sp,
-                modifier = Modifier.padding(start = 4.dp),
-            )
         }
     }
 }
 
-/** One key chip. [armed] marks a sticky modifier that will apply to the next key. */
 @Composable
-private fun KeyChip(
+private fun ExtraKeyCap(
     key: TerminalBarKey,
     palette: TerminalPalette,
-    armed: Boolean,
-    onKey: (TerminalBarKey) -> Unit,
+    modifierState: ModifierState,
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit,
+    onDoubleTap: (() -> Unit)?,
+    onLongPress: (() -> Unit)?,
 ) {
-    var popupOpen by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(9.dp)
+    val shape = RoundedCornerShape(7.dp)
+    val bg = when (modifierState) {
+        ModifierState.Locked -> palette.chipLocked
+        ModifierState.Armed -> palette.chipArmed
+        ModifierState.Off -> palette.chip
+    }
+    val borderColor = when (modifierState) {
+        ModifierState.Locked -> palette.accent.copy(alpha = 0.85f)
+        ModifierState.Armed -> palette.accent.copy(alpha = 0.55f)
+        ModifierState.Off -> palette.border
+    }
+    val textColor = when {
+        modifierState.isActive -> palette.accent
+        key.id == "ctrl_c" -> ColorFromArgb(palette.ansi16[1])
+        else -> palette.foreground.copy(alpha = 0.92f)
+    }
 
-    Box {
-        Box(
-            Modifier
-                .size(width = 44.dp, height = 36.dp)
-                .clip(shape)
-                .background(if (armed) palette.chipArmed else palette.chip, shape)
-                .border(
-                    width = if (armed) 1.dp else 0.5.dp,
-                    color = palette.foreground.copy(alpha = if (armed) 0.45f else 0.14f),
-                    shape = shape,
-                )
-                .pointerInput(key, onKey) {
-                    detectTapGestures(
-                        onTap = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onKey(key)
-                        },
-                        onLongPress = { if (key.popup != null) popupOpen = true },
-                    )
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = key.label,
-                color = palette.foreground,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = if (armed) FontWeight.Bold else FontWeight.Medium,
-                fontSize = 12.sp,
+    Box(
+        modifier = modifier
+            .height(34.dp)
+            .clip(shape)
+            .background(bg, shape)
+            .border(
+                width = if (modifierState.isActive) 1.dp else 0.5.dp,
+                color = borderColor,
+                shape = shape,
             )
-        }
-
-        val popup = key.popup
-        if (popup != null) {
-            DropdownMenu(expanded = popupOpen, onDismissRequest = { popupOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text(popup.toString(), fontFamily = FontFamily.Monospace) },
-                    onClick = {
-                        popupOpen = false
-                        onKey(key.withCharacter(popup))
+            .pointerInput(key, onTap, onDoubleTap, onLongPress) {
+                detectTapGestures(
+                    onTap = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onTap()
+                    },
+                    onDoubleTap = onDoubleTap?.let { handler ->
+                        {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            handler()
+                        }
+                    },
+                    onLongPress = onLongPress?.let { handler ->
+                        {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            handler()
+                        }
                     },
                 )
-            }
-        }
-    }
-}
-
-/** A labelled action that is not a terminal key (currently only `PASTE` / `重开`). */
-@Composable
-private fun ActionChip(
-    label: String,
-    palette: TerminalPalette,
-    onClick: () -> Unit,
-) {
-    val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(9.dp)
-    Box(
-        Modifier
-            .size(width = 64.dp, height = 36.dp)
-            .clip(shape)
-            .background(palette.chip, shape)
-            .border(0.5.dp, palette.foreground.copy(alpha = 0.16f), shape)
-            .clickable(interactionSource = null, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onClick()
             },
         contentAlignment = Alignment.Center,
     ) {
+        val hint = key.longPressLabel
+        if (hint != null) {
+            Text(
+                text = hint,
+                color = palette.foreground.copy(alpha = 0.38f),
+                fontFamily = PiMonoFamily,
+                fontSize = 8.sp,
+                lineHeight = 8.sp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 2.dp, end = 3.dp),
+            )
+        }
         Text(
-            text = label,
-            color = palette.foreground,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
-            fontSize = 11.sp,
+            text = key.label,
+            color = textColor,
+            fontFamily = PiMonoFamily,
+            fontWeight = if (modifierState.isActive) FontWeight.Bold else FontWeight.Medium,
+            fontSize = if (key.label.length >= 4) 10.sp else 12.sp,
+            maxLines = 1,
         )
     }
 }
+
+private fun ColorFromArgb(argb: Int): androidx.compose.ui.graphics.Color =
+    androidx.compose.ui.graphics.Color(argb)

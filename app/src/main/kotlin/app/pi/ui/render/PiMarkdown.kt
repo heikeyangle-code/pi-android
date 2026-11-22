@@ -612,7 +612,11 @@ internal fun PiMarkdownText(
             // 那份源文本。`State.Success` 永远到不了这个槽，所以正常路径一个字节不变。
             error = { errorModifier ->
                 Text(
-                    text = PiInlineMath.resolveToUnicode(content, inlineMathEntries),
+                    text = if (activeInlineMath != null) {
+                        PiInlineMath.resolveToUnicode(content, activeInlineMath)
+                    } else {
+                        content
+                    },
                     style = typography.text,
                     color = colors.text,
                     modifier = errorModifier,

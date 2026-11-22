@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -652,6 +653,22 @@ fun ProjectScreen(
                 title = tr("项目与文件", "Project & Files"),
                 scrolled = scrolled,
                 actions = {
+                    PiTopBarIcon(
+                        onClick = {
+                            val targetGuestCwd = when {
+                                insideWorkspace -> if (parentRelative.isEmpty()) {
+                                    guestWorkspace
+                                } else {
+                                    guestWorkspace.trimEnd('/') + "/" + parentRelative
+                                }
+                                browseRoot == guestRootfs -> "/" + crumbs.joinToString("/")
+                                else -> currentDir.absolutePath
+                            }
+                            session.requestNav(NavRequest.TerminalAt(targetGuestCwd))
+                        },
+                        contentDescription = tr("在当前目录打开终端", "Open terminal here"),
+                        icon = Icons.Filled.Terminal,
+                    )
                     PiTopBarIcon(
                         onClick = { refreshTick++ },
                         contentDescription = tr("刷新项目文件", "Refresh project files"),

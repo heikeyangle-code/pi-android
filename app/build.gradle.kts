@@ -249,7 +249,10 @@ dependencies {
     // takes an `onKeyboardInput` callback and is fed through `writeInput`, so
     // `PtyLauncher` keeps the PTY. Version 0.0.13 is pinned deliberately; see
     // the ceiling note in gradle/libs.versions.toml before touching it.
-    implementation(libs.termlib.android)
+    // Native terminal engine (Termux terminal-emulator + terminal-view): real kernel
+    // forkpty / TIOCSWINSZ / SIGWINCH via libtermux.so + 60fps native Canvas renderer.
+    implementation(libs.termux.terminal.emulator)
+    implementation(libs.termux.terminal.view)
 
     // The elevated (uid=2000) shell backend. `api` is what ShizukuShellBackend
     // compiles against; `provider` is required at runtime for the binder handoff

@@ -23,6 +23,7 @@ enum class ChatAction {
     Prompt,
 
     OpenSettings,
+    OpenTerminal,
     PickModel,
     /** pi 的 `app.model.cycleForward`（Ctrl+P）：按「作用域模型」顺序切到下一个。 */
     CycleModel,
@@ -162,6 +163,7 @@ class ClientBuiltin(
  */
 val CLIENT_BUILTINS: Map<String, ClientBuiltin> = linkedMapOf(
     "settings" to ClientBuiltin(ChatAction.OpenSettings, "打开设置", "Open settings menu"),
+    "terminal" to ClientBuiltin(ChatAction.OpenTerminal, "打开内置多标签终端", "Open built-in multi-tab terminal"),
     "model" to ClientBuiltin(ChatAction.PickModel, "选择模型", "Select model (opens selector UI)"),
     "tree" to ClientBuiltin(ChatAction.OpenTree, "浏览会话树（切换分支）", "Navigate session tree (switch branches)"),
     "thinking" to ClientBuiltin(ChatAction.PickThinking, "设置思考等级", "Set thinking level"),

@@ -206,6 +206,9 @@ sealed interface NavRequest {
      */
     data object Terminal : NavRequest
 
+    /** Open or focus a terminal tab directly inside a specific guest directory (e.g. from Project & Files). */
+    data class TerminalAt(val guestCwd: String) : NavRequest
+
     data object Settings : NavRequest
 
     /**

@@ -1462,6 +1462,7 @@ internal fun ChatBody(
                     }
                 }
             }
+            ChatAction.OpenTerminal -> session.requestNav(NavRequest.Terminal)
             // `/model <引用>`：精确匹配直接切，否则开选择器并预填（interactive-mode.js handleModelCommand）。
             ChatAction.PickModel -> if (args.isNotBlank()) {
                 session.refreshModels()
@@ -1529,8 +1530,10 @@ internal fun ChatBody(
             searchOpen = searchOpen,
             scrolled = topBarScrolled,
             toolsExpanded = toolsExpanded,
+            terminalRunningCount = app.pi.ui.terminal.PiTerminalManager.runningCount,
             onOpenSessions = onOpenSessions,
             onOpenWorkspace = onOpenWorkspace,
+            onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
             onToggleSearch = { clearOnClose ->
                 searchOpen = !searchOpen
                 if (clearOnClose && !searchOpen) searchQuery = ""

@@ -58,7 +58,7 @@ internal fun OtherSettingsScreen(
                         Icons.Filled.Terminal,
                         palette.accent,
                         tr("终端", "Terminal"),
-                        tr("打开内置全屏终端环境", "Open the built-in full-screen terminal"),
+                        tr("打开内置原生多标签终端（后台常驻）", "Open built-in native multi-tab terminal (persistent)"),
                         onOpenTerminal,
                     ),
                 )

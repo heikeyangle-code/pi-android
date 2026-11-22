@@ -163,6 +163,104 @@ object PtyLauncher {
      * same three-layer fallback the engine (`PiEngineHost`) and the package commands
      * (`GuestCommand.run`) already use, instead of surfacing a raw spawn failure in a tab.
      */
+    /**
+     * Real kernel PTY launch plan for Termux `TerminalSession` (`libtermux.so` `forkpty` +
+     * `TIOCSWINSZ` / `SIGWINCH`).
+     *
+     * Unlike the legacy `script(1)` pipe wrapper:
+     * - No `script(1)` probe or double-process relay overhead;
+     * - Full live `TIOCSWINSZ` / `SIGWINCH` resizing on keyboard toggle, rotation & pinch-zoom;
+     * - `tawcroot`'s `-s` flag is intentionally omitted because `libtermux.so`'s `createSubprocess`
+     *   already runs `setsid()` + `ioctl(pts, TIOCSCTTY, 0)` before `execvp`, so a second `setsid()`
+     *   would detach the shell from its controlling PTY.
+     */
+    class DirectPtyPlan(
+        val executablePath: String,
+        val hostCwd: String,
+        val argv: Array<String>,
+        val env: Array<String>,
+        val guestCwd: String,
+        val engine: GuestEngine,
+        val prorootTmp: File?,
+        val launchToken: String?,
+    )
+
+    fun prepareDirectPty(
+        context: Context,
+        guestCwdOverride: String? = null,
+        command: String = DEFAULT_COMMAND,
+        allowProroot: Boolean = true,
+    ): DirectPtyPlan {
+        val paths = pathsFor(context)
+        val storage = android.os.Environment.getExternalStorageDirectory()
+        val workspace = workspaceHost(context)
+        val projectGuestPath = GuestWorkspacePath.under(
+            paths.workspaceBase.absolutePath,
+            workspace.absolutePath,
+        )
+        val targetGuestCwd = guestCwdOverride
+            ?.trim()
+            ?.takeIf { it.startsWith("/") }
+            ?: projectGuestPath
+
+        workspace.mkdirs()
+        paths.agentDir.mkdirs()
+        val extraBinds = if (GuestWorkspacePath.needsBind(paths.rootfs, workspace, projectGuestPath)) {
+            File(paths.rootfs, projectGuestPath.removePrefix("/")).mkdirs()
+            listOf(workspace.absolutePath to projectGuestPath)
+        } else {
+            emptyList()
+        }
+
+        val inner = command.ifBlank { DEFAULT_COMMAND }
+        val guestCmd = "cd ${Shell.quote(targetGuestCwd)} 2>/dev/null || cd ${Shell.quote(projectGuestPath)} 2>/dev/null || cd /root; exec $inner"
+        val directEnv = buildMap {
+            put("TERM", "xterm-256color")
+            put("COLORTERM", "truecolor")
+            put("LANG", "C.UTF-8")
+            put("LC_ALL", "C.UTF-8")
+            put("PI_CODING_AGENT_DIR", guestAgentDir)
+            put("PI_CODING_AGENT_SESSION_DIR", "$guestAgentDir/sessions")
+            put("PI_TUI_ESC_TIMEOUT", "150")
+            put("PI_HYPERLINKS", "0")
+            put("PI_IMAGE_PROTOCOL", "none")
+            put("PI_SKIP_VERSION_CHECK", "1")
+        }
+
+        val selection = RuntimeSelection.of(context, paths)
+        val plan = selection.plan(
+            guestCommand = guestCmd,
+            cwd = "/root",
+            storage = storage,
+            extraBinds = extraBinds,
+            extraEnv = directEnv,
+            allowProroot = allowProroot,
+        )
+
+        // Strip `-s` from tawcroot's argv because libtermux.so's createSubprocess already called
+        // setsid() + TIOCSCTTY on /dev/pts/N before execvp.
+        val finalArgv = if (plan.engine == GuestEngine.Tawcroot) {
+            val sep = plan.argv.indexOf("--")
+            plan.argv.filterIndexed { idx, arg -> !(arg == "-s" && (sep < 0 || idx < sep)) }
+        } else {
+            plan.argv
+        }
+
+        val hostCwdDir = GuestCommandLine.hostCwd(paths, plan.engine).also { it.mkdirs() }
+        val envArray = plan.environment.entries.map { (k, v) -> "$k=$v" }.toTypedArray()
+
+        return DirectPtyPlan(
+            executablePath = finalArgv.first(),
+            hostCwd = hostCwdDir.absolutePath,
+            argv = finalArgv.toTypedArray(),
+            env = envArray,
+            guestCwd = targetGuestCwd,
+            engine = plan.engine,
+            prorootTmp = if (plan.engine == GuestEngine.Proroot) paths.prorootTmp else null,
+            launchToken = plan.launchToken,
+        )
+    }
+
     fun prepare(context: Context, spec: Spec, allowProroot: Boolean = true): Prepared {
         val paths = pathsFor(context)
         val storage = android.os.Environment.getExternalStorageDirectory()

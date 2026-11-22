@@ -10,9 +10,11 @@
 -keep class app.pi.bridge.DeviceAccessibilityService { *; }
 -keep class app.pi.bridge.PiNotificationListener { *; }
 
-# ConnectBot termlib JNI callbacks (called from libjni_cb_term.so)
--keep class org.connectbot.termlib.** { *; }
--dontwarn org.connectbot.termlib.**
+# Termux native terminal-emulator JNI (libtermux.so) & terminal-view
+-keep class com.termux.terminal.** { *; }
+-keep class com.termux.view.** { *; }
+-dontwarn com.termux.terminal.**
+-dontwarn com.termux.view.**
 
 # Shizuku Binder / AIDL / ContentProvider
 -keep class rikka.shizuku.** { *; }

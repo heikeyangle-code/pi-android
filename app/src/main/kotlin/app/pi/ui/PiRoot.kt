@@ -533,6 +533,7 @@ fun PiRoot() {
         session.state.map { it.models }.distinctUntilChanged()
     }.collectAsState(initial = session.state.value.models)
     val overlayState by session.overlay.collectAsState()
+    var pendingTerminalCwd by remember { mutableStateOf<String?>(null) }
     val (navRequest, navSeq) = navEvent
     LaunchedEffect(navRequest, navSeq) {
         // **先领处理权，再执行。** 请求的身份是 navSeq：关掉覆盖层时
@@ -577,6 +578,11 @@ fun PiRoot() {
             // composer's chip and the overflow entry are gone (the user retired
             // the terminal), so the settings home's row is the one door.
             NavRequest.Terminal -> {
+                pendingTerminalCwd = null
+                session.raiseOverlay(OverlaySlot.Terminal, OverlayView.List)
+            }
+            is NavRequest.TerminalAt -> {
+                pendingTerminalCwd = navRequest.guestCwd
                 session.raiseOverlay(OverlaySlot.Terminal, OverlayView.List)
             }
             null -> Unit
@@ -739,6 +745,7 @@ fun PiRoot() {
                         OverlaySlot.Terminal -> TerminalScreen(
                             contentPadding = padding,
                             onBack = closeOverlay,
+                            initialGuestCwd = pendingTerminalCwd,
                         )
                     }
                 }

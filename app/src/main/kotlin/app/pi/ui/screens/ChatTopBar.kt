@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.UnfoldMore
@@ -87,8 +88,10 @@ internal fun ChatTopBar(
     searchOpen: Boolean,
     scrolled: Boolean,
     toolsExpanded: Boolean,
+    terminalRunningCount: Int = 0,
     onOpenSessions: () -> Unit,
     onOpenWorkspace: () -> Unit,
+    onOpenTerminal: () -> Unit,
     onToggleSearch: (clearOnClose: Boolean) -> Unit,
     onJumpQuestion: (forward: Boolean) -> Unit,
     onToggleTools: () -> Unit,
@@ -96,7 +99,7 @@ internal fun ChatTopBar(
 ) {
     var commandCenterOpen by remember { mutableStateOf(false) }
     val palette = PiTheme.palette
-    val widePhone = LocalConfiguration.current.screenWidthDp >= 360
+    val widePhone = LocalConfiguration.current.screenWidthDp >= 400
 
     val hairlineColor = palette.borderMuted.copy(alpha = 0.55f)
     Column(
@@ -161,7 +164,7 @@ internal fun ChatTopBar(
                 }
             }
 
-            // 右侧高频直达图标：新建对话 + 搜索 + 项目与文件 + 更多
+            // 右侧高频直达图标：新建对话 + 终端（带后台存活状态点）+ 项目与文件 +（宽屏搜索）+ 更多
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -171,6 +174,33 @@ internal fun ChatTopBar(
                     contentDescription = tr("新建会话", "New session"),
                     icon = Icons.Filled.Add,
                 )
+                Box {
+                    PiTopBarIcon(
+                        onClick = onOpenTerminal,
+                        contentDescription = if (terminalRunningCount > 0) {
+                            tr("打开终端（$terminalRunningCount 个运行中）", "Open terminal ($terminalRunningCount running)")
+                        } else {
+                            tr("打开终端", "Open terminal")
+                        },
+                        icon = Icons.Filled.Terminal,
+                        highlighted = terminalRunningCount > 0,
+                    )
+                    if (terminalRunningCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 9.dp, end = 9.dp)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(palette.success),
+                        )
+                    }
+                }
+                PiTopBarIcon(
+                    onClick = onOpenWorkspace,
+                    contentDescription = tr("项目与文件", "Project & Files"),
+                    icon = Icons.Filled.FolderOpen,
+                )
                 if (widePhone) {
                     PiTopBarIcon(
                         onClick = { onToggleSearch(false) },
@@ -179,11 +209,6 @@ internal fun ChatTopBar(
                         highlighted = searchOpen,
                     )
                 }
-                PiTopBarIcon(
-                    onClick = onOpenWorkspace,
-                    contentDescription = tr("项目与文件", "Project & Files"),
-                    icon = Icons.Filled.FolderOpen,
-                )
                 PiTopBarIcon(
                     onClick = { commandCenterOpen = true },
                     contentDescription = tr("更多操作", "More actions"),

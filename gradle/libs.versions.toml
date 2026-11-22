@@ -55,15 +55,11 @@ androidsvg = "1.4"
 jsoup = "1.18.3"
 snakeyaml = "2.4"
 
-# 0.0.13 IS A CEILING, NOT A STARTING POINT. Termlib moved to Kotlin 2.3.x in
-# 0.0.14: `javap -v` on 0.0.14+ reports `kotlin.Metadata(mv=[2,3,0])`, which
-# this project's Kotlin 2.2.21 compiler refuses to read ("The binary version of
-# its metadata is 2.3.0, expected version is 2.2.0") — exactly the failure that
-# already cost a CI round for the markdown renderer above. 0.0.13 is the last
-# release built with Kotlin 2.2.21: its classes are `mv=[2,2,0]` and its POM
-# pins `kotlin-stdlib:2.2.21`. Bumping this line means bumping `kotlin` above
-# to 2.3.x *and* moving the compose compiler plugin with it.
-termlib = "0.0.13"
+# Termux's native Android terminal engine (terminal-emulator + terminal-view):
+# real kernel forkpty / TIOCSWINSZ / SIGWINCH via libtermux.so + 60fps native
+# Android Canvas renderer with CJK/IME, selection handles, pinch-zoom & scrollback.
+# Pure Java + C JNI — no Kotlin metadata ceiling.
+termuxTerminal = "v0.118.1"
 
 [libraries]
 # --- protocol core ---
@@ -107,13 +103,10 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 
 # --- terminal engine ---
-# ConnectBot's terminal component: libvterm (Paul Evans, MIT) behind JNI,
-# presented as a Compose component. Apache-2.0, Maven Central, and the AAR
-# already carries the prebuilt native library — `jni/arm64-v8a/libjni_cb_term.so`
-# — so there is no NDK/CMake step in this build and no source to vendor. Its
-# `aar-metadata.properties` asks for `minCompileSdk=1` and the manifest for
-# minSdk 24, both below this module's.
-termlib-android = { module = "org.connectbot:termlib", version.ref = "termlib" }
+# Termux's official native terminal engine (terminal-emulator with libtermux.so
+# kernel forkpty/TIOCSWINSZ/SIGWINCH + 60fps hardware-accelerated terminal-view).
+termux-terminal-emulator = { module = "com.github.termux.termux-app:terminal-emulator", version.ref = "termuxTerminal" }
+termux-terminal-view = { module = "com.github.termux.termux-app:terminal-view", version.ref = "termuxTerminal" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
