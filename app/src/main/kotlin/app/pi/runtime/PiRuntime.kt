@@ -488,9 +488,6 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
         }
     }
 
-    /** Persistent cache for `PtyLauncher`'s `script(1)` capability probe, invalidated with the runtime tree. */
-    fun ptyScriptProbeCache(): File = File(runtime, ".pty-script-probe")
-
     /** Durable Android uncaught-exception log (outside volatile `runtime/`). */
     fun crashLogFile(): File = File(persist, "android-crashes.log")
 

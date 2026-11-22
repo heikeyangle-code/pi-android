@@ -144,7 +144,7 @@
 
 ■ 编译进 App 代码
 ------------
-  AndroidX / Jetpack Compose（core-ktx、activity-compose、lifecycle、compose-ui、material3、material-icons-extended、foundation、documentfile、webkit、navigation）
+  AndroidX / Jetpack Compose（core-ktx、activity-compose、lifecycle、compose-ui、material3、material-icons-extended、foundation、webkit）
       版本      见版本目录
       许可证    Apache-2.0
       上游      https://developer.android.com/jetpack
@@ -159,15 +159,10 @@
       许可证    MIT
       上游      https://github.com/RikkaApps/Shizuku-API
 
-  termlib
-      版本      0.0.13
-      许可证    Apache-2.0
-      上游      https://github.com/connectbot/termlib
-
-  libvterm（随 termlib 一起分发）
-      版本      见 termlib 内置版本
-      许可证    MIT
-      上游      https://github.com/neovim/libvterm
+  Termux Terminal（terminal-emulator 与 terminal-view）
+      版本      v0.118.1
+      许可证    GPL-3.0
+      上游      https://github.com/termux/termux-app
 
   multiplatform-markdown-renderer-m3
       版本      0.45.0

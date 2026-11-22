@@ -1368,7 +1368,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     # JVM side
     (
         "AndroidX / Jetpack Compose（core-ktx、activity-compose、lifecycle、compose-ui、"
-        "material3、material-icons-extended、foundation、documentfile、webkit、navigation）",
+        "material3、material-icons-extended、foundation、webkit）",
         "见版本目录",
         "Apache-2.0",
         "编译进 App 代码",
@@ -1376,8 +1376,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ),
     ("Kotlin 标准库与 kotlinx 库（coroutines、serialization-json）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin"),
     ("Shizuku API", "13.1.5", "MIT", "编译进 App 代码", "https://github.com/RikkaApps/Shizuku-API"),
-    ("termlib", "0.0.13", "Apache-2.0", "编译进 App 代码", "https://github.com/connectbot/termlib"),
-    ("libvterm（随 termlib 一起分发）", "见 termlib 内置版本", "MIT", "编译进 App 代码", "https://github.com/neovim/libvterm"),
+    ("Termux Terminal（terminal-emulator 与 terminal-view）", "v0.118.1", "GPL-3.0", "编译进 App 代码", "https://github.com/termux/termux-app"),
     ("multiplatform-markdown-renderer-m3", "0.45.0", "Apache-2.0", "编译进 App 代码", "https://github.com/mikepenz/multiplatform-markdown-renderer"),
     ("org.jetbrains:markdown", "0.7.9", "Apache-2.0", "编译进 App 代码", "https://github.com/JetBrains/markdown"),
     ("kotlinx-collections-immutable（随 markdown 渲染器一起分发）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin/kotlinx.collections.immutable"),

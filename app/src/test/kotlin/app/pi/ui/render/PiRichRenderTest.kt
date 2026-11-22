@@ -48,7 +48,7 @@ class PiRichRenderTest {
         """.trimIndent()
 
         val extracted = PiInlineMath.extract(md)
-        assertEquals(8, extracted.entries.size)
+        assertEquals(9, extracted.entries.size)
 
         val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(extracted.markdown)
 
@@ -73,8 +73,8 @@ class PiRichRenderTest {
         }
         walkLeaves(tree)
 
-        // 全部 8 条行内公式都在真实 GFM AST 的单个叶节点内完整命中！
-        assertEquals((0 until 8).toSet(), matchedIndices)
+        // 全部 9 条行内公式都在真实 GFM AST 的单个叶节点内完整命中！
+        assertEquals((0 until 9).toSet(), matchedIndices)
     }
 
     @Test

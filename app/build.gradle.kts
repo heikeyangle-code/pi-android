@@ -242,13 +242,6 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.snakeyaml)
 
-    // The Workbench terminal's engine. Apache-2.0, Maven Central, and — the
-    // reason it is a one-line dependency rather than a vendored source module —
-    // the AAR ships its own prebuilt `libjni_cb_term.so`, so no NDK/CMake step
-    // joins this build. It owns no process: `TerminalEmulatorFactory.create`
-    // takes an `onKeyboardInput` callback and is fed through `writeInput`, so
-    // `PtyLauncher` keeps the PTY. Version 0.0.13 is pinned deliberately; see
-    // the ceiling note in gradle/libs.versions.toml before touching it.
     // Native terminal engine (Termux terminal-emulator + terminal-view): real kernel
     // forkpty / TIOCSWINSZ / SIGWINCH via libtermux.so + 60fps native Canvas renderer.
     implementation(libs.termux.terminal.emulator)
