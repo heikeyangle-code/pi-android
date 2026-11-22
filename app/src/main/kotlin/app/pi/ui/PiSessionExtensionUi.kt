@@ -18,6 +18,7 @@ import app.pi.ui.extension.noticeToneOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 /**
  * Route one `extension_ui_request`.
@@ -87,7 +88,7 @@ private fun PiSessionViewModel.onExtensionChrome(request: PiEvent.ExtensionUiReq
             tone = noticeToneOf(request.notifyType),
         )
 
-        "setTitle" -> _state.value = _state.value.copy(
+        "setTitle" -> _state.update { s -> s.copy(
             // The one chrome surface that *is* stripped, because it has no
             // span host: `windowTitle` becomes the Chat AppBar's `Text`, which
             // lives in `ChatScreen.kt` and takes one string. Stripped before
@@ -95,7 +96,7 @@ private fun PiSessionViewModel.onExtensionChrome(request: PiEvent.ExtensionUiReq
             // back to the screen's own name instead of occupying the bar
             // invisibly.
             windowTitle = request.title?.let { chromeText(it) }?.takeIf { it.isNotBlank() },
-        )
+        ) }
 
         "set_editor_text" -> request.text?.let { text ->
             // Last write wins, mirrored into the composer on the next frame.
@@ -107,13 +108,13 @@ private fun PiSessionViewModel.onExtensionChrome(request: PiEvent.ExtensionUiReq
             // Neither stripped nor painted, for the same reason as `editor`'s
             // prefill: this text is a draft the user may send to the model.
             composerFillSeq += 1
-            _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text))
+            _state.update { s -> s.copy(composerFill = ComposerFill(composerFillSeq, text)) }
         }
 
         // 宿主的 `pasteToEditor`：接在现有草稿后面。
         "paste_editor_text" -> request.text?.let { text ->
             composerFillSeq += 1
-            _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text, append = true))
+            _state.update { s -> s.copy(composerFill = ComposerFill(composerFillSeq, text, append = true)) }
         }
 
         else -> Unit
@@ -197,13 +198,13 @@ private fun PiSessionViewModel.settleDialog(dialog: ExtensionDialog, answer: UiA
 /** Apply one `set_editor_text` to the composer, then forget it. */
 internal fun PiSessionViewModel.consumeComposerFillImpl(seq: Long) {
     if (_state.value.composerFill?.seq == seq) {
-        _state.value = _state.value.copy(composerFill = null)
+        _state.update { s -> s.copy(composerFill = null) }
     }
 }
 
 /** Drop the snackbar that was just shown, promoting the next notice. */
 internal fun PiSessionViewModel.consumeNoticeImpl(seq: Long) {
-    _state.value = _state.value.copy(notices = _state.value.notices.filterNot { it.seq == seq })
+    _state.update { s -> s.copy(notices = s.notices.filterNot { it.seq == seq }) }
 }
 
 // ------------------------------------------------------- extension timers
@@ -216,10 +217,10 @@ internal fun PiSessionViewModel.publishDialogs() {
 }
 
 private fun PiSessionViewModel.publishDialogState() {
-    _state.value = _state.value.copy(
+    _state.update { s -> s.copy(
         extensionDialog = dialogs.active,
         extensionDialogBacklog = dialogs.backlog,
-    )
+    ) }
 }
 
 /**
@@ -322,11 +323,11 @@ internal fun PiSessionViewModel.clearExtensionChrome() {
     entryRenderCache.reset()
     markdownTransformCache.reset()
     _entryRenderable.value = emptySet()
-    _state.value = _state.value.copy(
+    _state.update { s -> s.copy(
         ext = ExtUiState(),
         windowTitle = null,
         composerFill = null,
-    )
+    ) }
 }
 
 private fun PiSessionViewModel.sendExtensionResponse(id: String, answer: UiAnswer) {

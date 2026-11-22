@@ -12,6 +12,7 @@ import app.pi.host.HostSignal
 import app.pi.host.OpenArgs
 import app.pi.host.PiHostClient
 import app.pi.protocol.JsonlFramer
+import app.pi.protocol.MESSAGE_DELTA_THROTTLE_MS
 import app.pi.protocol.PiEvent
 import app.pi.protocol.PiEvents
 import app.pi.protocol.PiImage
@@ -24,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,7 +90,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PiEngineSession(
     private val process: Process,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    initialTranscript: TranscriptReducer = TranscriptReducer(),
+    initialTranscript: TranscriptReducer = TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS),
 ) {
 
     /**
@@ -373,6 +375,7 @@ class PiEngineSession(
     private var stderrJob: Job? = null
     private var waitJob: Job? = null
     private var startHostJob: Job? = null
+    @Volatile private var messageDeltaFlushJob: Job? = null
 
     enum class EngineState { Starting, Ready, Busy, Stopped, Failed }
 
@@ -846,8 +849,43 @@ class PiEngineSession(
         // skipping is just as correct.
         val throttledToolUpdate =
             event is PiEvent.ToolExecutionUpdate && change == TranscriptChange.None
+        val throttledMessageDelta =
+            event is PiEvent.MessageUpdate &&
+                change == TranscriptChange.None &&
+                transcript.hasPendingMessageDeltas()
+        if (throttledMessageDelta) {
+            scheduleMessageDeltaFlushLocked()
+            return
+        }
         if (!throttledToolUpdate && (change != TranscriptChange.None || event !is PiEvent.Response)) {
+            if (!transcript.hasPendingMessageDeltas()) {
+                messageDeltaFlushJob?.cancel()
+                messageDeltaFlushJob = null
+            }
             publish(change)
+        }
+    }
+
+    /**
+     * Schedule a single coalesced flush timer (~30 fps) for throttled assistant text /
+     * thinking deltas so a streaming burst that pauses mid-window still reaches the UI
+     * within [MESSAGE_DELTA_THROTTLE_MS]. Caller holds [transcriptLock].
+     */
+    private fun scheduleMessageDeltaFlushLocked() {
+        if (closing) return
+        val existing = messageDeltaFlushJob
+        if (existing != null && existing.isActive) return
+        messageDeltaFlushJob = scope.launch {
+            delay(MESSAGE_DELTA_THROTTLE_MS)
+            val self = coroutineContext[Job]
+            synchronized(transcriptLock) {
+                if (messageDeltaFlushJob !== self || closing) return@synchronized
+                messageDeltaFlushJob = null
+                val flushed = transcript.flushPendingMessageDeltas()
+                if (flushed != TranscriptChange.None) {
+                    publish(flushed)
+                }
+            }
         }
     }
 
@@ -1148,7 +1186,7 @@ class PiEngineSession(
     suspend fun seedHistory(entries: List<JsonObject>) {
         val attempt = seedAttempts.incrementAndGet()
         val seeded = withContext(Dispatchers.Default) {
-            TranscriptReducer().also { it.seedFromHistory(entries) }
+            TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS).also { it.seedFromHistory(entries) }
         }
         adoptSeededTranscript(seeded, attempt)
     }
@@ -1180,6 +1218,8 @@ class PiEngineSession(
         synchronized(transcriptLock) {
             if (attempt <= adoptedSeedAttempt) return
             adoptedSeedAttempt = attempt
+            messageDeltaFlushJob?.cancel()
+            messageDeltaFlushJob = null
             reducer = seeded
             publish(TranscriptChange.None, replaced = true)
         }
@@ -1304,6 +1344,8 @@ class PiEngineSession(
     fun close() {
         closing = true
         startHostJob?.cancel()
+        messageDeltaFlushJob?.cancel()
+        messageDeltaFlushJob = null
         val drainAndDestroy = {
             runCatching {
                 writeQueue.execute { runCatching { writer.close() } }

@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.coroutines.flow.update
 
 /**
  * Seed the app-side preferences and palette before the engine is up.
@@ -114,7 +115,7 @@ private fun PiSessionViewModel.configuredThemePaths(): List<String> =
 internal fun PiSessionViewModel.refreshPrefsImpl() {
     viewModelScope.launch {
         val prefs = withContext(Dispatchers.IO) { readPrefs() }
-        _state.value = _state.value.copy(prefs = prefs)
+        _state.update { s -> s.copy(prefs = prefs) }
     }
 }
 

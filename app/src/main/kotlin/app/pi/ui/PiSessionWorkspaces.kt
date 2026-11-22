@@ -17,6 +17,7 @@ import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 /**
  * The workspace is app-private for speed; `/sdcard` goes through FUSE. The
@@ -342,7 +343,7 @@ internal fun PiSessionViewModel.publishWorkspaceState(name: String, note: String
     }
     val displayName = entry?.displayName ?: WorkspaceChoice.displayName(name, null)
     val revision = current.revision + if (bumped) 1 else 0
-    _state.value = _state.value.copy(
+    _state.update { s -> s.copy(
         workspace = current.copy(
             name = name,
             displayName = displayName,
@@ -353,7 +354,7 @@ internal fun PiSessionViewModel.publishWorkspaceState(name: String, note: String
             revision = revision,
             note = note,
         ),
-    )
+    ) }
     alignComposerToWorkspace(revision)
     if (note != null) pushNotice(note, Notice.Tone.Warning)
 }
@@ -376,7 +377,7 @@ private suspend fun PiSessionViewModel.rollBackWorkspace(
     engineTransition = true
     val back = try {
         host.boot(workspaceProvider = { oldHost }, launch = launchOptions()) { step ->
-            _state.value = _state.value.copy(boot = Boot.Working(step))
+            _state.update { s -> s.copy(boot = Boot.Working(step)) }
         }
     } finally {
         engineTransition = false
@@ -396,9 +397,9 @@ private suspend fun PiSessionViewModel.rollBackWorkspace(
         else -> {
             val detail = (back as? PiEngineHost.Boot.Failed)?.detail ?: failure.detail
             val why = (back as? PiEngineHost.Boot.Failed)?.message ?: tr("引擎未能重新启动", "Engine failed to restart")
-            _state.value = _state.value.copy(
+            _state.update { s -> s.copy(
                 boot = Boot.Failed(EngineFailureClassify.workspaceSwitch(headline, detail)),
-            )
+            ) }
             syncEngineService(engineAttached = false, bootInProgress = false)
             reportWakeLockNeed()
             val message = tr(

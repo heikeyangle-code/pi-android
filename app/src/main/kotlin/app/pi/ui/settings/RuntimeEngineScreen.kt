@@ -1185,7 +1185,7 @@ private fun RuntimeEngineOptionRow(
         else -> tr("首次需自检", "Untested") to palette.muted
     }
 
-    val fellBack = selected && engine != GuestEngine.Proot && status != null && status.engine != engine
+    val fellBackStatus = status?.takeIf { selected && engine != GuestEngine.Proot && it.engine != engine }
     val probeLines = remember(status) {
         if (status == null || engine == GuestEngine.Proot) {
             emptyList()
@@ -1252,7 +1252,7 @@ private fun RuntimeEngineOptionRow(
             }
         }
 
-        if (fellBack && status != null) {
+        if (fellBackStatus != null) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1261,7 +1261,7 @@ private fun RuntimeEngineOptionRow(
                 color = palette.warning.copy(alpha = 0.10f),
             ) {
                 Text(
-                    tr("已自动回退到 proot：", "Fell back to proot: ") + status.summary,
+                    tr("已自动回退到 proot：", "Fell back to proot: ") + fellBackStatus.summary,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     style = PiTheme.text.meta,
                     color = palette.text,

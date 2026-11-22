@@ -126,6 +126,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -1524,7 +1525,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // after the service would have been. This is the switch's consumer —
             // without it the row wrote a JSON value nothing consulted.
             val prefs = withContext(Dispatchers.IO) { readPrefs() }
-            _state.value = _state.value.copy(prefs = prefs)
+            _state.update { s -> s.copy(prefs = prefs) }
             // Bring the foreground service up first. A pi turn is a model call plus
             // an unbounded sequence of tool calls; with the screen off and no
             // foreground service, Android is free to kill the whole process tree
@@ -1555,7 +1556,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     rebuild = rebuild,
                     repair = repair,
                 ) { step ->
-                    _state.value = _state.value.copy(boot = Boot.Working(step))
+                    _state.update { s -> s.copy(boot = Boot.Working(step)) }
                 }
             } finally {
                 engineTransition = false
@@ -1563,9 +1564,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             when (boot) {
                 is PiEngineHost.Boot.Ready -> attach(boot.session)
                 is PiEngineHost.Boot.Failed -> {
-                    _state.value = _state.value.copy(
+                    _state.update { s -> s.copy(
                         boot = Boot.Failed(EngineFailureClassify.provisioning(boot.message, boot.detail)),
-                    )
+                    ) }
                     // There is no engine and none is coming, so the service has
                     // nothing to protect: leaving it up would keep a notification
                     // saying 「PI 正在运行」 over a process that failed to start.
@@ -1699,7 +1700,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 扩展 UI 的状态直接来自引擎的归并器；换引擎时 [clearExtensionChrome] 已经清空了上一份。
         extUiJob?.cancel()
         extUiJob = viewModelScope.launch {
-            engine.extUi.collect { ext -> _state.value = _state.value.copy(ext = ext) }
+            engine.extUi.collect { ext -> _state.update { s -> s.copy(ext = ext) } }
         }
         // 宿主状态快照（debounced `state` 事件 + 所有变更命令的 `withState` 应答）直接同步上下文用量、
         // 累计 token、费用与消息数，不再等用户点开详情页或靠 `delay(700)` 补读 `session.stats`。
@@ -1710,15 +1711,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 val prev = _state.value.stats
                 val next = hostState.toSessionStats(previousToolResults = prev?.toolResults ?: 0)
                 if (next != prev) {
-                    _state.value = _state.value.copy(stats = next)
+                    _state.update { s -> s.copy(stats = next) }
                 }
             }
         }
         // 官方渲染组件自己要求重绘（`ui.requestRender()`：动画、定时刷新）→ 清缓存、换一版，卡片重取。
-        entryProbeJob?.cancel()
-        entryProbeJob = viewModelScope.launch {
-            _state.map { it.transcript }.distinctUntilChanged().collect { probeEntryTypes(it) }
-        }
+        // 新转写行在 [syncTranscript] 内按 `changedIndices` 增量探测（O(1)），不再每个流式 token 全表扫描。
+        probeEntryTypes(_state.value.transcript)
         renderInvalidateJob?.cancel()
         renderInvalidateJob = viewModelScope.launch {
             engine.hostEvents.collect { ev ->
@@ -1743,6 +1742,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     toolRenderCache.reset()
                     messageRenderCache.reset()
                     entryRenderCache.reset()
+                    probeEntryTypes(_state.value.transcript)
                     markdownTransformCache.reset()
                     _renderRev.value += 1
                     refreshCommands()
@@ -1795,7 +1795,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         //
         // 现在无条件清空：宁可让新会话先空一帧（紧接着 `get_entries` 就把它的内容补上），
         // 也不能让一段已经不属于当前引擎的对话继续显示。
-        _state.value = _state.value.copy(
+        _state.update { s -> s.copy(
             boot = Boot.Ready,
             transcript = emptyList(),
             revision = 0,
@@ -1805,7 +1805,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             nowMs = null,
             lastUsage = null,
             turnUsage = null,
-        )
+        ) }
         appliedRevision = 0
         // The queue counters describe **this engine process's** queues, and the engine in
         // hand is brand new, so its queues are empty. pi sends `queue_update` only when
@@ -1832,12 +1832,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // The texts go with the counts: both are written by the same
             // `queue_update` arm ([onEvent]), so clearing one without the other
             // would leave the pending row drawing a message pi no longer holds.
-            _state.value = _state.value.copy(
+            _state.update { s -> s.copy(
                 queueSteering = 0,
                 queueFollowUp = 0,
                 queueSteeringTexts = emptyList(),
                 queueFollowUpTexts = emptyList(),
-            )
+            ) }
         }
         // Anything typed before this engine attached is deliverable now: replay it in
         // order ([pendingPrompts]). The list is copied and cleared **before** the
@@ -1866,7 +1866,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 if (session !== engine) return@collect
                 val wasEngineState = previousState
                 previousState = engineState
-                _state.value = _state.value.copy(engine = engineState)
+                _state.update { s -> s.copy(engine = engineState) }
                 // 引擎**刚起来**时补一次 `get_session_stats`（`Starting` → `Ready`，以及引擎重启
                 // 之后的第一帧）。
                 //
@@ -1952,13 +1952,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         EngineCrashRecovery.Decision.GiveUp
                     }
                     val autoRestarting = recovery == EngineCrashRecovery.Decision.Restart
-                    _state.value = _state.value.copy(
-                        bash = null,
-                        busy = null,
-                        streaming = false,
-                        boot = if (autoRestarting) {
-                            _state.value.boot
-                        } else Boot.Failed(
+                    val failedBoot = if (autoRestarting) {
+                        null
+                    } else {
+                        Boot.Failed(
                             EngineFailureClassify.exit(
                                 exitCode = engine.lastExitCode,
                                 stderr = capturedStderr,
@@ -1968,8 +1965,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                                     extensionArgsStore.read(),
                                 ),
                             ),
-                        ),
-                    )
+                        )
+                    }
+                    _state.update { s ->
+                        s.copy(
+                            bash = null,
+                            busy = null,
+                            streaming = false,
+                            boot = failedBoot ?: s.boot,
+                        )
+                    }
                     if (autoRestarting) {
                         autoEngineRestarts += 1
                         pushNotice(
@@ -2173,8 +2178,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // An interrupted turn: a tool still pending can never receive its result
         // now.
         val interrupted = !pub.streaming && pub.rows.any { it is ToolCall && it.status == ToolStatus.Pending }
-        val adopt = pub.replaced ||
-            appliedRevision != pub.revision - 1 ||
+        val fullProbe = pub.replaced || appliedRevision != pub.revision - 1
+        val adopt = fullProbe ||
             previous.streaming != pub.streaming ||
             previous.transcript.size < pub.rows.size
 
@@ -2199,7 +2204,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // The marker only moves once the list above is built from this revision:
         // if anything between here and the assignment could throw, the next
         // publication would still be treated as a gap and adopt wholesale.
-        _state.value = _state.value.copy(
+        _state.update { s -> s.copy(
             transcript = transcript,
             revision = pub.revision,
             streaming = pub.streaming,
@@ -2216,8 +2221,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             lastUsage = engine.transcript.lastUsage,
             // The turn's own accounting, on the same publication (see `turnUsage`).
             turnUsage = engine.transcript.turnUsage,
-        )
+        ) }
         appliedRevision = pub.revision
+        if (fullProbe) {
+            probeEntryTypes(transcript)
+        } else if (pub.changedIndices.isNotEmpty()) {
+            probeEntryTypes(transcript, pub.changedIndices)
+        }
         // `streaming` moved, which is one of the two inputs to "does the CPU have to
         // stay awake" (`reportWakeLockNeed`). Change-gated there, so this costs one
         // field comparison per publication — not a notification per streamed token.
@@ -2264,12 +2274,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     internal fun onEvent(event: PiEvent) {
         when (event) {
-            is PiEvent.QueueUpdate -> _state.value = _state.value.copy(
+            is PiEvent.QueueUpdate -> _state.update { s -> s.copy(
                 queueSteering = event.steering.size,
                 queueFollowUp = event.followUp.size,
                 queueSteeringTexts = event.steering,
                 queueFollowUpTexts = event.followUp,
-            )
+            ) }
 
             // The window in which pi refuses a plain `prompt`
             // (`core/agent-session.js:1619`). Kept
@@ -2298,7 +2308,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // Both name the extension from `extensionPath` so a failure is
             // attributable; the reducer and this notice share the wording.
             is PiEvent.ExtensionError -> {
-                _state.value = _state.value.copy(lastError = event.message)
+                _state.update { s -> s.copy(lastError = event.message) }
                 pushNotice(
                     message = extensionErrorHeadline(event.extensionPath) + "：" +
                         (event.message?.takeIf { it.isNotBlank() } ?: tr("pi 没有给出详情", "No details provided by pi")),
@@ -2315,17 +2325,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             is PiEvent.ThinkingLevelChanged -> {
                 val level = event.level
                 if (!level.isNullOrBlank()) {
-                    _state.value = _state.value.copy(
-                        meta = _state.value.meta.copy(thinkingLevel = level),
-                    )
+                    _state.update { s -> s.copy(
+                        meta = s.meta.copy(thinkingLevel = level),
+                    ) }
                 }
             }
 
             // pi's rename path: `set_session_name` emits this, and it also fires
             // when an extension renames the session (`agent-session.ts:159`).
-            is PiEvent.SessionInfoChanged -> _state.value = _state.value.copy(
-                meta = _state.value.meta.copy(sessionName = event.name?.takeIf { it.isNotBlank() }),
-            )
+            is PiEvent.SessionInfoChanged -> _state.update { s -> s.copy(
+                meta = s.meta.copy(sessionName = event.name?.takeIf { it.isNotBlank() }),
+            ) }
 
             // An extension's own entry (`pi.appendEntry`) — the documented way to
             // keep extension state across restarts. Nothing to do here: the engine
@@ -2375,17 +2385,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     return
                 }
                 lastBashPublishAt = now
-                _state.value = _state.value.copy(
-                    bash = current.copy(
-                        output = bashStream.toString(),
-                        // Sticky for this run: once the front has been dropped the panel
-                        // is showing a window, and a later publication that happens not to
-                        // trim must not take the sentence away again. The `bash` response
-                        // replaces the whole run at the end, so pi's own answer (and its
-                        // own `fullOutputPath`) wins then.
-                        truncated = current.truncated || bashStreamTrimmed,
-                    ),
-                )
+                val outputSnapshot = bashStream.toString()
+                val trimmedSnapshot = bashStreamTrimmed
+                _state.update { s ->
+                    val latestBash = s.bash ?: return@update s
+                    s.copy(
+                        bash = latestBash.copy(
+                            output = outputSnapshot,
+                            // Sticky for this run: once the front has been dropped the panel
+                            // is showing a window, and a later publication that happens not to
+                            // trim must not take the sentence away again. The `bash` response
+                            // replaces the whole run at the end, so pi's own answer (and its
+                            // own `fullOutputPath`) wins then.
+                            truncated = latestBash.truncated || trimmedSnapshot,
+                        ),
+                    )
+                }
             }
 
             // The only ground truth for "the model changed behind our back":
@@ -2408,7 +2423,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             is PiEvent.Response -> if (!event.success && event.error != null && event.command != null) {
-                _state.value = _state.value.copy(lastError = "${event.command}: ${event.error}")
+                _state.update { s -> s.copy(lastError = "${event.command}: ${event.error}") }
             }
 
             else -> Unit
@@ -2445,13 +2460,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (message.isBlank()) return
         noticeSeq += 1
         val notice = ExtensionNotice(seq = noticeSeq, message = message, tone = tone)
-        _state.value = _state.value.copy(
+        _state.update { s -> s.copy(
             // The eviction rule lives in `ui/extension/NoticeQueue.kt` and is pinned by a
             // bare-JVM harness: an overflowing queue drops the oldest **pending** notice,
             // never the head — the head is the one `ExtensionUiHost` is showing, and
             // `takeLast` used to delete it out from under the reader.
-            notices = trimNoticeQueue(_state.value.notices + notice, MAX_PENDING_NOTICES),
-        )
+            notices = trimNoticeQueue(s.notices + notice, MAX_PENDING_NOTICES),
+        ) }
     }
 
     /**
@@ -2481,12 +2496,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun setCompacting(value: Boolean) {
         if (_state.value.meta.compacting == value) return
-        _state.value = _state.value.copy(meta = _state.value.meta.copy(compacting = value))
+        _state.update { s -> s.copy(meta = s.meta.copy(compacting = value)) }
     }
 
     /** A user-visible failure: a snackbar plus the AppBar's error line. */
     internal fun fail(message: String) {
-        _state.value = _state.value.copy(lastError = message)
+        _state.update { s -> s.copy(lastError = message) }
         pushNotice(message, Notice.Tone.Error)
     }
 
@@ -2603,7 +2618,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** Take the status line for [label] and return the token [releaseBusy] needs. */
     internal fun claimBusy(label: String): Long {
         val token = statusLine.claim()
-        _state.value = _state.value.copy(busy = label)
+        _state.update { s -> s.copy(busy = label) }
         return token
     }
 
@@ -2627,7 +2642,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     internal fun releaseBusy(token: Long) {
         if (statusLine.release(token) && _state.value.busy != null) {
-            _state.value = _state.value.copy(busy = null)
+            _state.update { s -> s.copy(busy = null) }
         }
     }
 
@@ -2728,12 +2743,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 loadedUntil = until
                 evictedFrom = until
                 evictedEntries = 0
-                _state.value = _state.value.copy(
+                _state.update { s -> s.copy(
                     history = HistoryCursor(
                         startOffset = window.startOffset,
                         reachedStart = window.reachedStart,
                     ),
-                )
+                ) }
                 syncTranscript(engine, engine.publication.value)
                 return
             }
@@ -2823,9 +2838,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // A whole-session replay has nothing above it, so there is nothing for the
         // scroll path to fetch — the cursor says so rather than staying null, which
         // the UI would have to read as "unknown".
-        _state.value = _state.value.copy(
+        _state.update { s -> s.copy(
             history = HistoryCursor(startOffset = 0L, reachedStart = true),
-        )
+        ) }
         // The collector would wake on its own, but not until this coroutine
         // suspends; syncing here makes the rebuilt session visible in the same
         // frame.
@@ -2887,11 +2902,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (cursor.reachedStart || cursor.loading) return
         if (engine.transcript.streaming) return
         if (_state.value.engine != PiEngineSession.EngineState.Ready) return
-        _state.value = _state.value.copy(history = cursor.copy(loading = true, stop = null))
+        _state.update { s -> s.copy(history = cursor.copy(loading = true, stop = null)) }
         viewModelScope.launch {
             val file = resolveSessionFile()
             if (file == null) {
-                _state.value = _state.value.copy(history = _state.value.history?.copy(loading = false))
+                _state.update { s -> s.copy(history = s.history?.copy(loading = false)) }
                 return@launch
             }
             // One IO hop, and **nothing in it touches `_state`**: the window above, the
@@ -2905,13 +2920,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // reason on screen and keeps `reachedStart` false, so the row stays and
                 // the reader can press it again; `AtFileStart` is the only empty-handed
                 // step that may claim the start, and it does so through `cursorAfter`.
-                _state.value = _state.value.copy(
-                    history = _state.value.history?.copy(
+                _state.update { s -> s.copy(
+                    history = s.history?.copy(
                         loading = false,
                         reachedStart = decision.reachedStart,
                         stop = decision.stop,
                     ),
-                )
+                ) }
                 return@launch
             }
             // A rebuild needs the *whole* retained range: the projection is folded from
@@ -2942,12 +2957,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             evictedFrom = loadedUntil
             evictedEntries = 0
             evictRetainedCopy()
-            _state.value = _state.value.copy(
+            _state.update { s -> s.copy(
                 history = HistoryCursor(
                     startOffset = step.window.startOffset,
                     reachedStart = step.window.reachedStart,
                 ),
-            )
+            ) }
             syncTranscript(engine, engine.publication.value)
         }
     }
@@ -3144,27 +3159,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadState(api: HostEngineApi) {
         val remote = api.getState()
-        val current = _state.value.meta
-        val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
-        _state.value = _state.value.copy(
-            meta = current.copy(
-                model = remote.model,
-                thinkingLevel = level,
-                steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
-                followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
-                autoCompaction = remote.autoCompactionEnabled,
-                sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
-                sessionId = remote.sessionId,
-                sessionFile = remote.sessionFile,
-                messageCount = remote.messageCount,
-                // `get_state` is the reconciliation for the event-tracked flag:
-                // if `compaction_end` was dropped, the next attach/settle puts
-                // this back to pi's own answer. `isCompacting` was parsed all
-                // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
-                // teardown ever read it.
-                compacting = remote.isCompacting,
-            ),
-        )
+        _state.update { s ->
+            val current = s.meta
+            val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
+            s.copy(
+                meta = current.copy(
+                    model = remote.model,
+                    thinkingLevel = level,
+                    steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
+                    followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
+                    autoCompaction = remote.autoCompactionEnabled,
+                    sessionName = remote.sessionName?.takeIf { it.isNotBlank() },
+                    sessionId = remote.sessionId,
+                    sessionFile = remote.sessionFile,
+                    messageCount = remote.messageCount,
+                    // `get_state` is the reconciliation for the event-tracked flag:
+                    // if `compaction_end` was dropped, the next attach/settle puts
+                    // this back to pi's own answer. `isCompacting` was parsed all
+                    // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
+                    // teardown ever read it.
+                    compacting = remote.isCompacting,
+                ),
+            )
+        }
         refreshThinkingLevels()
     }
 
@@ -3176,16 +3193,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshThinkingLevels() {
         call(tr("读取思考等级", "Load thinking levels")) { api ->
             val levels = api.getAvailableThinkingLevels()
-            _state.value = _state.value.copy(
-                meta = _state.value.meta.copy(thinkingLevels = levels),
-            )
+            _state.update { s -> s.copy(
+                meta = s.meta.copy(thinkingLevels = levels),
+            ) }
         }
     }
 
     /** `get_available_models`, for the model picker. */
     fun refreshModels() {
         call(tr("读取模型列表", "Load models")) { api ->
-            _state.value = _state.value.copy(models = api.getAvailableModels())
+            val models = api.getAvailableModels()
+            _state.update { s -> s.copy(models = models) }
         }
     }
 
@@ -3204,24 +3222,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         call(tr("读取命令列表", "Load commands")) { api ->
             // pi's own default is true (`settings-manager.ts:1165`).
             val skillCommands = settingsStore.readBoolean("enableSkillCommands") ?: true
-            _state.value = _state.value.copy(
-                commands = api.getCommandCatalog().let { catalog ->
-                    piCommandPalette(
-                        catalog.commands,
-                        builtins = builtinRows(catalog.builtins),
-                        skillCommandsEnabled = skillCommands,
-                        shortcuts = catalog.shortcuts,
-                    )
-                },
-                commandsLoaded = true,
+            val catalog = api.getCommandCatalog()
+            val palette = piCommandPalette(
+                catalog.commands,
+                builtins = builtinRows(catalog.builtins),
+                skillCommandsEnabled = skillCommands,
+                shortcuts = catalog.shortcuts,
             )
+            _state.update { s -> s.copy(commands = palette, commandsLoaded = true) }
         }
     }
 
     /** `get_session_stats`, for the stats sheet and the context-usage line. */
     fun refreshStats() {
         call(tr("读取会话统计", "Load session stats")) { api ->
-            _state.value = _state.value.copy(stats = api.getSessionStats())
+            val stats = api.getSessionStats()
+            _state.update { s -> s.copy(stats = stats) }
         }
     }
 
@@ -3345,7 +3361,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 把引用块接在输入框草稿后面（和扩展的 `pasteToEditor` 同一条通道）。 */
     fun quoteIntoComposer(text: String) {
         composerFillSeq += 1
-        _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text, append = true))
+        _state.update { s -> s.copy(composerFill = ComposerFill(composerFillSeq, text, append = true)) }
     }
 
     /**
@@ -3478,7 +3494,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var renderInvalidateJob: Job? = null
-    private var entryProbeJob: Job? = null
     private val _renderRev = MutableStateFlow(0)
 
     /** 宿主说「渲染结果变了」时加一；聊天页据此换一个 [ToolRenderer] 实例，卡片的 produceState 就重取。 */
@@ -3539,14 +3554,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 转录里新出现的 `custom` 条目类型各问宿主一次「有没有渲染器」，结果驱动 [entryRenderable]。 */
-    private fun probeEntryTypes(transcript: List<TranscriptItem>) {
-        val fresh = transcript.filterIsInstance<ExtensionEntry>()
-            .filter { !entryRenderCache.known(it.customType) }
-            .distinctBy { it.customType }
+    private fun probeEntryTypes(transcript: List<TranscriptItem>, changedIndices: List<Int>? = null) {
+        val fresh = if (changedIndices != null) {
+            var list: MutableList<ExtensionEntry>? = null
+            var seen: HashSet<String>? = null
+            for (idx in changedIndices) {
+                val entry = transcript.getOrNull(idx) as? ExtensionEntry ?: continue
+                if (entryRenderCache.known(entry.customType)) continue
+                val set = seen ?: HashSet<String>().also { seen = it }
+                if (set.add(entry.customType)) {
+                    (list ?: mutableListOf<ExtensionEntry>().also { list = it }).add(entry)
+                }
+            }
+            list ?: return
+        } else {
+            transcript.filterIsInstance<ExtensionEntry>()
+                .filter { !entryRenderCache.known(it.customType) }
+                .distinctBy { it.customType }
+        }
         if (fresh.isEmpty()) return
         viewModelScope.launch {
             for (item in fresh) runCatching { entryRenderCache.render(item, false) }
-            _entryRenderable.value = fresh.map { it.customType }.filter(entryRenderCache::hasRenderer).toSet() + _entryRenderable.value
+            val newlyRenderable = fresh.map { it.customType }.filter(entryRenderCache::hasRenderer)
+            if (newlyRenderable.isNotEmpty()) {
+                _entryRenderable.update { it + newlyRenderable }
+            }
         }
     }
 
@@ -3635,22 +3667,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             answer = { id, value, cancelled ->
                 engine.client.respond(id, value?.let { kotlinx.serialization.json.JsonPrimitive(it) }, cancelled)
             },
-            models = { api.getAvailableModels().also { m -> _state.value = _state.value.copy(models = m) } },
+            models = { api.getAvailableModels().also { m -> _state.update { s -> s.copy(models = m) } } },
             catalog = { provider -> api.getModelCatalog(provider) },
             selectModel = { provider, id, persist ->
                 val applied = api.setModel(provider, id, persist)
-                _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
+                _state.update { s -> s.copy(meta = s.meta.copy(model = applied)) }
             },
             currentModel = { _state.value.meta.model?.let { m -> m.provider?.let { it to m.id } } },
             currentThinking = { _state.value.meta.thinkingLevel },
             thinkingLevels = {
                 api.getAvailableThinkingLevels().also { lv ->
-                    _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevels = lv))
+                    _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevels = lv)) }
                 }
             },
             setThinking = { level ->
                 api.setThinkingLevel(level)
-                _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevel = level))
+                _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevel = level)) }
             },
             setDefaultThinkingLevel = { level ->
                 engine.commands.settingsSet("setDefaultThinkingLevel", listOf(JsonPrimitive(level)))
@@ -3717,7 +3749,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (api == null) {
             // 引擎没跑：照旧走 call() 自己的「引擎未就绪」提示；block 不会执行，
             // 所以这条路不落守卫（否则 flag 永远清不掉）。
-            call(tr("读取会话树", "Load session tree")) { live -> _state.value = _state.value.copy(tree = live.getTree()) }
+            call(tr("读取会话树", "Load session tree")) { live ->
+                val tree = live.getTree()
+                _state.update { s -> s.copy(tree = tree) }
+            }
             return
         }
         treeRefreshInFlight = true
@@ -3729,7 +3764,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             call(tr("读取会话树", "Load session tree")) { live ->
                 started = true
                 try {
-                    _state.value = _state.value.copy(tree = live.getTree())
+                    val tree = live.getTree()
+                    _state.update { s -> s.copy(tree = tree) }
                 } finally {
                     treeRefreshInFlight = false
                     if (treeRefreshQueued) {
@@ -3792,21 +3828,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 refreshEntriesOverRpc()
                 return@call
             }
-            _state.value = _state.value.copy(entries = parsed)
+            _state.update { s -> s.copy(entries = parsed) }
         }
     }
 
     /** `get_entries` for the entry log — see [refreshEntries] for when this is used. */
     private fun refreshEntriesOverRpc() {
         call(tr("读取会话条目", "Load session entries"), NoEngine.Quiet) { api ->
-            _state.value = _state.value.copy(entries = api.getEntries().entries)
+            val entries = api.getEntries().entries
+            _state.update { s -> s.copy(entries = entries) }
         }
     }
 
     /** `get_fork_messages` — the user messages pi will let a fork start from. */
     fun refreshForkMessages() {
         call(tr("读取可分叉消息", "Load forkable messages")) { api ->
-            _state.value = _state.value.copy(forkMessages = api.getForkMessages())
+            val forkMessages = api.getForkMessages()
+            _state.update { s -> s.copy(forkMessages = forkMessages) }
         }
     }
 
@@ -3821,7 +3859,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun seedAutoRetryFromSettings() {
         val value = runCatching { settingsStore.read("retry.enabled") }.getOrNull()
         val enabled = (value as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: return
-        _state.value = _state.value.copy(meta = _state.value.meta.copy(autoRetry = enabled))
+        _state.update { s -> s.copy(meta = s.meta.copy(autoRetry = enabled)) }
     }
 
     // ------------------------------------------------------------------ actions
@@ -4082,7 +4120,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun setThinkingLevel(level: String, persist: Boolean = false) {
         call(tr("切换思考等级", "Change thinking level")) { api ->
             api.setThinkingLevel(level, persist)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(thinkingLevel = level))
+            _state.update { s -> s.copy(meta = s.meta.copy(thinkingLevel = level)) }
             refreshState()
         }
     }
@@ -4097,9 +4135,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             val level = result.level
             if (!level.isNullOrBlank()) {
-                _state.value = _state.value.copy(
-                    meta = _state.value.meta.copy(thinkingLevel = level),
-                )
+                _state.update { s -> s.copy(
+                    meta = s.meta.copy(thinkingLevel = level),
+                ) }
             }
         }
     }
@@ -4116,7 +4154,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 pushNotice(tr("没有其他可切换的模型", "No other models available to cycle"), Notice.Tone.Warning)
                 return@call
             }
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(model = model))
+            _state.update { s -> s.copy(meta = s.meta.copy(model = model)) }
             refreshState()
             refreshStats()
         }
@@ -4143,7 +4181,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@call
             }
             val applied = api.setModel(ref.first, ref.second)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
+            _state.update { s -> s.copy(meta = s.meta.copy(model = applied)) }
             refreshState()
             refreshStats()
         }
@@ -4158,7 +4196,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         call(tr("切换模型", "Switch model")) { api ->
             val applied = api.setModel(provider, model.id, persist = persist)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(model = applied))
+            _state.update { s -> s.copy(meta = s.meta.copy(model = applied)) }
             // Thinking levels are a property of the model, and pi applies a
             // per-model default on a model switch
             // (`_getThinkingLevelForModelSwitch`), so re-read both.
@@ -4179,14 +4217,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun setSteeringMode(mode: QueueMode) {
         call(tr("设置引导模式", "Set steering mode")) { api ->
             api.setSteeringMode(mode)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(steeringMode = mode))
+            _state.update { s -> s.copy(meta = s.meta.copy(steeringMode = mode)) }
         }
     }
 
     fun setFollowUpMode(mode: QueueMode) {
         call(tr("设置后续模式", "Set follow-up mode")) { api ->
             api.setFollowUpMode(mode)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(followUpMode = mode))
+            _state.update { s -> s.copy(meta = s.meta.copy(followUpMode = mode)) }
         }
     }
 
@@ -4216,14 +4254,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun setAutoCompaction(enabled: Boolean) {
         call(tr("设置自动压缩", "Set auto-compaction")) { api ->
             api.setAutoCompaction(enabled)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(autoCompaction = enabled))
+            _state.update { s -> s.copy(meta = s.meta.copy(autoCompaction = enabled)) }
         }
     }
 
     fun setAutoRetry(enabled: Boolean) {
         call(tr("设置自动重试", "Set auto-retry")) { api ->
             api.setAutoRetry(enabled)
-            _state.value = _state.value.copy(meta = _state.value.meta.copy(autoRetry = enabled))
+            _state.update { s -> s.copy(meta = s.meta.copy(autoRetry = enabled)) }
         }
     }
 
@@ -4263,8 +4301,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
                 is MentionLookup.Candidates -> {
                     lastMentionFailure = null
-                    _state.value =
-                        _state.value.copy(mentions = MentionList(query = prefix, items = answer.items))
+                    _state.update { s ->
+                        s.copy(mentions = MentionList(query = prefix, items = answer.items))
+                    }
                 }
 
                 is MentionLookup.Unavailable -> {
@@ -4274,7 +4313,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     // would bury the message the user needs to read. Cleared when a lookup
                     // succeeds, so a later failure of the same shape is reported again.
                     if (_state.value.mentions != null) {
-                        _state.value = _state.value.copy(mentions = null)
+                        _state.update { s -> s.copy(mentions = null) }
                     }
                     if (lastMentionFailure != answer.sentence) {
                         lastMentionFailure = answer.sentence
@@ -4299,14 +4338,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             if (!awaitServing(engine)) return@launch
             val items = runCatching { api.getCommandCompletions(name, prefix) }.getOrNull() ?: return@launch
             if (id != argCompletionId) return@launch
-            _state.value = _state.value.copy(argCompletions = ArgCompletions(name, prefix, items))
+            _state.update { s -> s.copy(argCompletions = ArgCompletions(name, prefix, items)) }
         }
     }
 
     fun dismissArgCompletions() {
         argCompletionId++
         if (_state.value.argCompletions != null) {
-            _state.value = _state.value.copy(argCompletions = null)
+            _state.update { s -> s.copy(argCompletions = null) }
         }
     }
 
@@ -4322,20 +4361,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val cursorCol = lines.lastOrNull()?.length ?: 0
             val reply = runCatching { commands.uiAutocomplete(lines, cursorLine, cursorCol) }.getOrNull() ?: return@launch
             if (id != extCompletionId) return@launch
-            _state.value = _state.value.copy(
+            _state.update { s -> s.copy(
                 extCompletions = if (reply.items.isNotEmpty()) {
                     ExtensionCompletions(draft = draft, prefix = reply.prefix, items = reply.items)
                 } else {
                     null
                 },
-            )
+            ) }
         }
     }
 
     fun dismissExtensionAutocomplete() {
         extCompletionId++
         if (_state.value.extCompletions != null) {
-            _state.value = _state.value.copy(extCompletions = null)
+            _state.update { s -> s.copy(extCompletions = null) }
         }
     }
 
@@ -4343,7 +4382,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissMentions() {
         mentionRequestId++
         if (_state.value.mentions != null) {
-            _state.value = _state.value.copy(mentions = null)
+            _state.update { s -> s.copy(mentions = null) }
         }
     }
 
@@ -4368,12 +4407,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         bashStream.setLength(0)
         lastBashPublishAt = 0L
         bashStreamTrimmed = false
-        _state.value = _state.value.copy(
+        _state.update { s -> s.copy(
             bash = BashRun(command = trimmed, excludeFromContext = excludeFromContext),
-        )
+        ) }
         call(tr("执行命令", "Run command")) { api ->
             val result = api.bash(trimmed, excludeFromContext = excludeFromContext.takeIf { it })
-            _state.value = _state.value.copy(
+            _state.update { s -> s.copy(
                 bash = BashRun(
                     command = trimmed,
                     excludeFromContext = excludeFromContext,
@@ -4386,7 +4425,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     truncated = result.truncated,
                     fullOutputPath = result.fullOutputPath,
                 ),
-            )
+            ) }
         }
     }
 
@@ -4400,7 +4439,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         bashStream.setLength(0)
         lastBashPublishAt = 0L
         bashStreamTrimmed = false
-        _state.value = _state.value.copy(bash = null)
+        _state.update { s -> s.copy(bash = null) }
     }
 
     // --------------------------------------------------------- session actions
@@ -4451,7 +4490,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** Ask `PiRoot` to change destination, raise an overlay, or focus a screen. */
     fun requestNav(request: NavRequest) {
         navIssued += 1
-        _state.value = _state.value.copy(navRequest = request, navSeq = navIssued)
+        _state.update { s -> s.copy(navRequest = request, navSeq = navIssued) }
     }
 
     /**
@@ -4464,7 +4503,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (seq <= navHandled || seq > navIssued) return false
         navHandled = seq
         if (_state.value.navSeq == seq) {
-            _state.value = _state.value.copy(navRequest = null)
+            _state.update { s -> s.copy(navRequest = null) }
         }
         return true
     }
@@ -4507,7 +4546,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun discardPendingNav() {
         navHandled = navIssued
         if (_state.value.navRequest != null) {
-            _state.value = _state.value.copy(navRequest = null)
+            _state.update { s -> s.copy(navRequest = null) }
         }
     }
 
@@ -4625,12 +4664,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 .collectLatest { pending ->
                     if (!pending) {
                         if (_state.value.nowMs != null) {
-                            _state.value = _state.value.copy(nowMs = null)
+                            _state.update { s -> s.copy(nowMs = null) }
                         }
                         return@collectLatest
                     }
                     while (true) {
-                        _state.value = _state.value.copy(nowMs = System.currentTimeMillis())
+                        _state.update { s -> s.copy(nowMs = System.currentTimeMillis()) }
                         delay(TOOL_CLOCK_TICK_MS)
                     }
                 }

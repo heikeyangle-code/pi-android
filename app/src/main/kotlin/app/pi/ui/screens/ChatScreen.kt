@@ -84,6 +84,8 @@ import app.pi.protocol.DateSeparator
 import app.pi.protocol.ErrorText
 import app.pi.protocol.ModelChange
 import app.pi.protocol.ThinkingBlock
+import app.pi.protocol.ToolCall
+import app.pi.protocol.ToolStatus
 import app.pi.protocol.TranscriptItem
 import app.pi.protocol.PiImage
 import app.pi.protocol.UserMessage
@@ -1825,7 +1827,8 @@ internal fun ChatBody(
                             onBranchClick = onBranchClick,
                             onForkFromMessage = onForkFromMessage,
                             onImageClick = onImageClick,
-                            nowMs = nowMs,
+                            // 仅把 1 Hz 粗时钟交给正在运行中的工具卡，避免每秒触发整屏已完成 Markdown/代码卡重组。
+                            nowMs = if (item is ToolCall && item.status == ToolStatus.Pending) nowMs else null,
                         )
                     }
                 }

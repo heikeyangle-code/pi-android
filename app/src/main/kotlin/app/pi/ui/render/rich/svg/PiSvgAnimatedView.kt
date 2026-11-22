@@ -3,13 +3,17 @@ package app.pi.ui.render.rich.svg
 import android.annotation.SuppressLint
 import android.util.Base64
 import android.view.ViewGroup
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.viewinterop.AndroidView
@@ -75,43 +79,70 @@ internal fun PiSvgAnimatedView(svg: String, modifier: Modifier = Modifier) {
             "img{display:block;width:100%;height:100%;object-fit:contain}</style></head>" +
             "<body><img src=\"data:image/svg+xml;base64,$b64\"></body></html>"
     }
-    val holder = remember { arrayOfNulls<WebView>(1) }
-    DisposableEffect(Unit) {
-        onDispose {
-            holder[0]?.let {
-                it.stopLoading()
-                it.loadUrl("about:blank")
-                (it.parent as? ViewGroup)?.removeView(it)
-                it.destroy()
-            }
-            holder[0] = null
-        }
-    }
+    var renderGone by remember(html) { mutableStateOf(false) }
     Box(modifier) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    holder[0] = this
-                    setBackgroundColor(0)
-                    isVerticalScrollBarEnabled = false
-                    isHorizontalScrollBarEnabled = false
-                    overScrollMode = android.view.View.OVER_SCROLL_NEVER
-                    settings.apply {
-                        javaScriptEnabled = false
-                        allowFileAccess = false
-                        allowContentAccess = false
-                        blockNetworkLoads = true
-                        blockNetworkImage = false // data: 图不算网络；该开关只管 http(s)
-                        domStorageEnabled = false
-                        cacheMode = WebSettings.LOAD_NO_CACHE
-                        setSupportZoom(false)
+        if (!renderGone) {
+            // 绑定到当前 AndroidView 实例的生命周期（不随 html 变更重置），确保 factory/update/onRelease 共用同一标记。
+            val destroyed = remember { booleanArrayOf(false) }
+            val lastLoadedHtml = remember { arrayOfNulls<String>(1) }
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        setBackgroundColor(0)
+                        isVerticalScrollBarEnabled = false
+                        isHorizontalScrollBarEnabled = false
+                        overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                        settings.apply {
+                            javaScriptEnabled = false
+                            allowFileAccess = false
+                            allowContentAccess = false
+                            blockNetworkLoads = true
+                            blockNetworkImage = false // data: 图不算网络；该开关只管 http(s)
+                            domStorageEnabled = false
+                            cacheMode = WebSettings.LOAD_NO_CACHE
+                            setSupportZoom(false)
+                        }
+                        webViewClient = object : WebViewClient() {
+                            override fun onRenderProcessGone(
+                                view: WebView,
+                                detail: RenderProcessGoneDetail,
+                            ): Boolean {
+                                if (!destroyed[0]) {
+                                    destroyed[0] = true
+                                    runCatching {
+                                        (view.parent as? ViewGroup)?.removeView(view)
+                                        view.destroy()
+                                    }
+                                }
+                                renderGone = true
+                                return true
+                            }
+                        }
+                        lastLoadedHtml[0] = html
+                        loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
                     }
-                    loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
-                }
-            },
-            update = {},
-        )
+                },
+                update = { view ->
+                    if (!destroyed[0] && lastLoadedHtml[0] != html) {
+                        lastLoadedHtml[0] = html
+                        view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                    }
+                },
+                onRelease = { view ->
+                    if (!destroyed[0]) {
+                        destroyed[0] = true
+                        runCatching {
+                            view.stopLoading()
+                            view.loadUrl("about:blank")
+                            (view.parent as? ViewGroup)?.removeView(view)
+                            view.destroy()
+                        }
+                    }
+                    lastLoadedHtml[0] = null
+                },
+            )
+        }
         // 盖住 WebView 的触摸，让列表的滚动手势照常走；不消费事件。
         Box(Modifier.fillMaxSize().pointerInput(Unit) {})
     }

@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.coroutines.flow.update
 
 /**
  * 新建会话（宿主 `session.new` → SDK `newSession`）。官方 `/new` 不带父会话参数，这里也不带。
@@ -678,7 +679,7 @@ private fun PiSessionViewModel.forkFailureText(error: Throwable): String {
  */
 private fun PiSessionViewModel.fillComposer(text: String) {
     composerFillSeq += 1
-    _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text))
+    _state.update { s -> s.copy(composerFill = ComposerFill(composerFillSeq, text)) }
 }
 
 /** `clone` — duplicate the active branch at the current position. */
@@ -733,9 +734,9 @@ internal fun PiSessionViewModel.navigateToImpl(
             val restored = runCatching { engine.stopAndDrainQueue() }.getOrDefault(emptyList())
             if (restored.isNotEmpty()) {
                 composerFillSeq += 1
-                _state.value = _state.value.copy(
+                _state.update { s -> s.copy(
                     composerFill = ComposerFill(composerFillSeq, restored.joinToString("\n\n"), append = true),
-                )
+                ) }
             }
             syncTranscript(engine, engine.publication.value)
         }
@@ -773,9 +774,9 @@ internal fun PiSessionViewModel.navigateToImpl(
         if (outcome == NavigateOutcome.Moved || editorText != null) {
             if (editorText != null) {
                 composerFillSeq += 1
-                _state.value = _state.value.copy(
+                _state.update { s -> s.copy(
                     composerFill = ComposerFill(composerFillSeq, editorText, onlyIfEmpty = true),
-                )
+                ) }
             }
             requestNav(NavRequest.Chat)
             pushNotice(
@@ -833,10 +834,10 @@ private suspend fun PiSessionViewModel.replayActiveBranch(engine: PiEngineSessio
     evictedFrom = 0L
     loadedUntil = 0L
     evictedEntries = 0
-    _state.value = _state.value.copy(
+    _state.update { s -> s.copy(
         history = HistoryCursor(startOffset = 0L, reachedStart = true),
-        transcriptResetSeq = _state.value.transcriptResetSeq + 1L,
-    )
+        transcriptResetSeq = s.transcriptResetSeq + 1L,
+    ) }
     syncTranscript(engine, engine.publication.value)
 }
 
@@ -896,9 +897,9 @@ private fun PiSessionViewModel.navigateFailureText(error: Throwable): String {
 internal fun PiSessionViewModel.renameSessionImpl(name: String) {
     call(tr("重命名会话", "Rename session")) { api ->
         api.setSessionName(name)
-        _state.value = _state.value.copy(
-            meta = _state.value.meta.copy(sessionName = name.trim()),
-        )
+        _state.update { s -> s.copy(
+            meta = s.meta.copy(sessionName = name.trim()),
+        ) }
     }
 }
 
@@ -1002,7 +1003,7 @@ internal fun PiSessionViewModel.publish(files: List<ExportedFile>) {
         pushNotice(tr("导出没有写出文件，请重试。", "Export wrote no file; please try again."), Notice.Tone.Warning)
         return
     }
-    _state.value = _state.value.copy(exported = ExportedSession(files))
+    _state.update { s -> s.copy(exported = ExportedSession(files)) }
     val withSessionFile = files.any { it.name.endsWith(SessionExportNaming.JSONL_SUFFIX, ignoreCase = true) }
     pushNotice(
         if (withSessionFile) tr("会话已导出：`.jsonl` 那份是会话文件本身，可以导回来。", "Session exported: the .jsonl file can be re-imported later.") else tr("会话已导出。", "Session exported."),
@@ -1041,7 +1042,7 @@ internal suspend fun PiSessionViewModel.exportedSessionFile(name: String? = null
 
 /** The user is done with the export row. */
 internal fun PiSessionViewModel.dismissExportImpl() {
-    _state.value = _state.value.copy(exported = null)
+    _state.update { s -> s.copy(exported = null) }
 }
 
 /**
@@ -1130,10 +1131,10 @@ internal suspend fun PiSessionViewModel.afterSessionReplaced(brandNew: Boolean =
     // 同上：`refreshState` 是 fire-and-forget，replay 会拿着**上一条会话**的 meta 去读
     // 文件（`switch_session`/import 之后屏幕上还是旧对话，直到下一帧 publication）。
     // 清除上一条会话的会话树缓存并自增重建序号，避免切换/新建会话后打开会话树瞬间看到旧会话分支。
-    _state.value = _state.value.copy(
+    _state.update { s -> s.copy(
         tree = null,
-        transcriptResetSeq = _state.value.transcriptResetSeq + 1L,
-    )
+        transcriptResetSeq = s.transcriptResetSeq + 1L,
+    ) }
     api?.let { refreshStateNow(it) }
     replayHistory(engine, brandNew)
     refreshStats()
@@ -1151,17 +1152,17 @@ internal suspend fun PiSessionViewModel.afterSessionReplaced(brandNew: Boolean =
         // The texts go with the counts: both are written by the same
         // `queue_update` arm ([onEvent]), so clearing one without the other
         // would leave the pending row drawing a message pi no longer holds.
-        _state.value = _state.value.copy(
+        _state.update { s -> s.copy(
             queueSteering = 0,
             queueFollowUp = 0,
             queueSteeringTexts = emptyList(),
             queueFollowUpTexts = emptyList(),
-        )
+        ) }
     }
     // A different session's export is no longer the thing on screen: the row
     // would offer to save a file that belongs to the conversation the user just
     // left. The file itself stays on disk — this only drops the handle.
     if (_state.value.exported != null) {
-        _state.value = _state.value.copy(exported = null)
+        _state.update { s -> s.copy(exported = null) }
     }
 }

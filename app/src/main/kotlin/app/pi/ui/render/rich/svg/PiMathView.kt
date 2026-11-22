@@ -16,7 +16,6 @@ import app.pi.i18n.tr
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
@@ -54,6 +53,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiTheme
 import com.caverock.androidsvg.SVG
@@ -323,66 +324,72 @@ fun PiMathView(
                     val mathDesc = tr("数学公式：$source", "Math formula: $source")
                     // 用 MathJax 真实 em 度量排版：短公式（如 `E = mc^2`）居中按自然光学字号绘制，
                     // 不再把 3 个字符拉伸成占满整屏宽度的巨幅标语；超宽长公式按容器宽度等比缩入并可 1×–8× 捏合缩放。
-                    BoxWithConstraints(
+                    // 直接用 Modifier.layout 在单次测量阶段算高，避免 LazyColumn 内嵌套 BoxWithConstraints（SubcomposeLayout）。
+                    Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        val canvasHeight = if (image.emWidth > 0f && image.emHeight > 0f) {
-                            val naturalW = displayEmDp * image.emWidth
-                            val naturalH = displayEmDp * image.emHeight
-                            val fittedH = if (naturalW > maxWidth && naturalW.value > 0f) {
-                                naturalH * (maxWidth.value / naturalW.value)
-                            } else {
-                                naturalH
-                            }
-                            fittedH.coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
-                        } else {
-                            (maxWidth / aspect.coerceIn(0.05f, 60f))
-                                .coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
-                        }
-                        val desiredWidth = if (image.emWidth > 0f && image.emHeight > 0f) {
-                            minOf(displayEmDp * image.emWidth, maxWidth).coerceAtLeast(1.dp)
-                        } else {
-                            maxWidth
-                        }
-                        Canvas(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(canvasHeight)
-                                .clipToBounds()
-                                .pointerInput(image) {
-                                    piMathTransformGestures(
-                                        image = image,
-                                        readScale = { scale },
-                                        readOffset = { offset },
-                                    ) { nextScale, nextOffset ->
-                                        scale = nextScale
-                                        offset = nextOffset
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                            .layout { measurable, constraints ->
+                                val availWidthPx = constraints.maxWidth.coerceAtLeast(1)
+                                val maxWidthDp = availWidthPx.toDp()
+                                val canvasHeightDp = if (image.emWidth > 0f && image.emHeight > 0f) {
+                                    val naturalW = displayEmDp * image.emWidth
+                                    val naturalH = displayEmDp * image.emHeight
+                                    val fittedH = if (naturalW > maxWidthDp && naturalW.value > 0f) {
+                                        naturalH * (maxWidthDp.value / naturalW.value)
+                                    } else {
+                                        naturalH
                                     }
+                                    fittedH.coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
+                                } else {
+                                    (maxWidthDp / aspect.coerceIn(0.05f, 60f))
+                                        .coerceIn(PI_MATH_MIN_IMAGE_HEIGHT, PI_MATH_MAX_IMAGE_HEIGHT)
                                 }
-                                .semantics { contentDescription = mathDesc },
-                        ) {
-                            val baseFit = piMathFitScale(
-                                viewWidth = desiredWidth.toPx().coerceAtMost(size.width),
-                                viewHeight = size.height,
-                                baseWidthPx = image.baseWidthPx,
-                                baseHeightPx = image.baseHeightPx,
-                            ) * scale
-                            drawIntoCanvas { canvas ->
-                                val native = canvas.nativeCanvas
-                                native.save()
-                                native.clipRect(0f, 0f, size.width, size.height)
-                                native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
-                                native.scale(baseFit, baseFit)
-                                native.translate(
-                                    -image.baseWidthPx / 2f,
-                                    -image.baseHeightPx / 2f,
+                                val heightPx = canvasHeightDp.roundToPx()
+                                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                                val placeable = measurable.measure(
+                                    Constraints.fixed(availWidthPx, heightPx),
                                 )
-                                native.drawPicture(image.picture)
-                                native.restore()
+                                layout(placeable.width, placeable.height) {
+                                    placeable.place(0, 0)
+                                }
                             }
+                            .clipToBounds()
+                            .pointerInput(image) {
+                                piMathTransformGestures(
+                                    image = image,
+                                    readScale = { scale },
+                                    readOffset = { offset },
+                                ) { nextScale, nextOffset ->
+                                    scale = nextScale
+                                    offset = nextOffset
+                                }
+                            }
+                            .semantics { contentDescription = mathDesc },
+                    ) {
+                        val desiredWidthPx = if (image.emWidth > 0f && image.emHeight > 0f) {
+                            minOf((displayEmDp * image.emWidth).toPx(), size.width).coerceAtLeast(1f)
+                        } else {
+                            size.width
+                        }
+                        val baseFit = piMathFitScale(
+                            viewWidth = desiredWidthPx,
+                            viewHeight = size.height,
+                            baseWidthPx = image.baseWidthPx,
+                            baseHeightPx = image.baseHeightPx,
+                        ) * scale
+                        drawIntoCanvas { canvas ->
+                            val native = canvas.nativeCanvas
+                            native.save()
+                            native.clipRect(0f, 0f, size.width, size.height)
+                            native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
+                            native.scale(baseFit, baseFit)
+                            native.translate(
+                                -image.baseWidthPx / 2f,
+                                -image.baseHeightPx / 2f,
+                            )
+                            native.drawPicture(image.picture)
+                            native.restore()
                         }
                     }
                 } else if (draw == PiMathDraw.Rendering && pinned != true) {

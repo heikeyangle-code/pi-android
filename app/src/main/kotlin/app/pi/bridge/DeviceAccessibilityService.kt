@@ -26,7 +26,10 @@ class DeviceAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        instance = this
+        synchronized(connectMonitor) {
+            instance = this
+            connectMonitor.notifyAll()
+        }
         DeviceAccessibilitySignals.publish()
     }
 
@@ -62,6 +65,8 @@ class DeviceAccessibilityService : AccessibilityService() {
     enum class State { NOT_ENABLED, ENABLED_NOT_CONNECTED, CONNECTED }
 
     companion object {
+        private val connectMonitor = Object()
+
         @Volatile
         private var instance: DeviceAccessibilityService? = null
 
@@ -94,11 +99,17 @@ class DeviceAccessibilityService : AccessibilityService() {
          */
         fun awaitRunning(attempts: Int = 2, delayMs: Long = 500): DeviceAccessibilityService? {
             instance?.let { return it }
-            repeat(attempts.coerceIn(0, 5)) {
-                runCatching { Thread.sleep(delayMs.coerceIn(0, 2000)) }
-                instance?.let { return it }
+            val totalMs = attempts.coerceIn(0, 5).toLong() * delayMs.coerceIn(0, 2000)
+            if (totalMs <= 0L) return instance
+            val deadlineNs = System.nanoTime() + totalMs * 1_000_000L
+            synchronized(connectMonitor) {
+                while (instance == null) {
+                    val remainingMs = (deadlineNs - System.nanoTime() + 999_999L) / 1_000_000L
+                    if (remainingMs <= 0L) break
+                    runCatching { connectMonitor.wait(remainingMs) }
+                }
+                return instance
             }
-            return instance
         }
 
         /**

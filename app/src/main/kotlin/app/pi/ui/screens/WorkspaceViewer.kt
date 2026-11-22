@@ -3,7 +3,10 @@ package app.pi.ui.screens
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -392,6 +395,9 @@ internal fun WorkspaceViewer(
 
                         mode != ViewerMode.Edit && isHtml -> HtmlPreview(
                             file = target.file,
+                            allowedRoot = remember(target.file.absolutePath, target.relativePath) {
+                                workspaceRootFor(target.file, target.relativePath)
+                            },
                             reloadTick = htmlReload,
                             onRetry = { htmlReload++ },
                         )
@@ -1420,13 +1426,19 @@ private class EditorHistory {
 @Composable
 private fun HtmlPreview(
     file: File,
+    allowedRoot: File,
     reloadTick: Int,
     onRetry: () -> Unit,
 ) {
     var state by remember(file.absolutePath) { mutableStateOf<HtmlState>(HtmlState.Loading) }
-    // `update` 里重新 load 只在重试计数变化时发生：`AndroidView` 的 update 每帧都可能跑，
+    var webViewGeneration by remember(file.absolutePath) { mutableIntStateOf(0) }
+    var renderProcessGone by remember(file.absolutePath) { mutableStateOf(false) }
+    val allowedRootCanonical = remember(allowedRoot.absolutePath) {
+        runCatching { allowedRoot.canonicalPath }.getOrNull()
+    }
+    // `update` 里重新 load 只在重试计数或 WebView 重建代数变化时发生：`AndroidView` 的 update 每帧都可能跑，
     // 无条件 `loadUrl` 会把页面按在加载态里出不来。
-    var lastLoaded by remember(file.absolutePath) { mutableIntStateOf(-1) }
+    var lastLoaded by remember(file.absolutePath, webViewGeneration) { mutableIntStateOf(-1) }
 
     Column(Modifier.fillMaxSize()) {
         when (val current = state) {
@@ -1439,82 +1451,151 @@ private fun HtmlPreview(
             is HtmlState.Failed -> WsErrBlock(
                 title = tr("WebView 没能渲染这个页面", "WebView Failed to Render Page"),
                 message = current.reason,
-                actions = { WsErrAction(tr("重试", "Retry")) { onRetry() } },
+                actions = {
+                    WsErrAction(tr("重试", "Retry")) {
+                        if (renderProcessGone) {
+                            renderProcessGone = false
+                            webViewGeneration++
+                        }
+                        onRetry()
+                    }
+                },
             )
         }
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                WebView(context).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.allowFileAccess = true
-                    settings.allowContentAccess = false
-                    // 明确关掉：页面脚本不能借 file:// 读到工作区之外的文件（新系统默认就是关的，
-                    // 旧系统默认是开的）。
-                    @Suppress("DEPRECATION")
-                    settings.allowFileAccessFromFileURLs = false
-                    @Suppress("DEPRECATION")
-                    settings.allowUniversalAccessFromFileURLs = false
-                    settings.builtInZoomControls = false
-                    settings.displayZoomControls = false
-                    webViewClient = object : WebViewClient() {
-                        // 主框架导航的去向：本地 file:// 页面（相对链接）留在预览里；网页链接交给系统
-                        // 浏览器，不在应用内带着脚本与存储直接打开外站；其余（javascript:、data: …）不放行。
-                        // 子框架（iframe）与子资源不走这里的拦截，about:blank 之类照常。
-                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                            if (!request.isForMainFrame) return false
-                            val uri = request.url
-                            return when (uri.scheme?.lowercase()) {
-                                "file" -> false
-                                "about" -> uri.toString() != "about:blank"
-                                "http", "https", "mailto", "tel" -> {
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                        )
+        if (!renderProcessGone) {
+            key(file.absolutePath, webViewGeneration) {
+                val destroyed = remember { booleanArrayOf(false) }
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { context ->
+                        WebView(context).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.allowFileAccess = true
+                            settings.allowContentAccess = false
+                            // 明确关掉：页面脚本不能借 file:// 读到工作区之外的文件（新系统默认就是关的，
+                            // 旧系统默认是开的）。
+                            @Suppress("DEPRECATION")
+                            settings.allowFileAccessFromFileURLs = false
+                            @Suppress("DEPRECATION")
+                            settings.allowUniversalAccessFromFileURLs = false
+                            settings.builtInZoomControls = false
+                            settings.displayZoomControls = false
+                            webViewClient = object : WebViewClient() {
+                                // 主框架导航的去向：仅允许落在当前工作区根目录内的本地 file:// 页面；
+                                // 禁止经由 file:// 跳转到应用私有数据目录；网页链接交给系统浏览器；
+                                // 其余（javascript:、data: …）一律拦截。
+                                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                                    if (!request.isForMainFrame) return false
+                                    val uri = request.url
+                                    return when (uri.scheme?.lowercase()) {
+                                        "file" -> !isFileUriWithinRoot(uri, allowedRootCanonical)
+                                        "about" -> uri.toString() != "about:blank"
+                                        "http", "https", "mailto", "tel" -> {
+                                            runCatching {
+                                                context.startActivity(
+                                                    Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                                )
+                                            }
+                                            true
+                                        }
+                                        else -> true
                                     }
-                                    true
                                 }
-                                else -> true
+
+                                override fun onPageFinished(view: WebView, url: String) {
+                                    state = HtmlState.Done
+                                }
+
+                                override fun onReceivedError(
+                                    view: WebView,
+                                    request: WebResourceRequest,
+                                    error: WebResourceError,
+                                ) {
+                                    // 只有主文档的失败才是「打不开这个页面」；一张图片加载不到不该
+                                    // 把整页判成失败。
+                                    if (!request.isForMainFrame) return
+                                    state = HtmlState.Failed(
+                                        tr("WebView 报错 ${error.errorCode}：${error.description}", "WebView error ${error.errorCode}: ${error.description}"),
+                                    )
+                                }
+
+                                override fun onRenderProcessGone(
+                                    view: WebView,
+                                    detail: RenderProcessGoneDetail,
+                                ): Boolean {
+                                    // Chromium 渲染进程崩溃或被系统 OOM 回收时接管并销毁旧实例，
+                                    // 避免默认行为直接杀死整个宿主 App 进程。
+                                    if (!destroyed[0]) {
+                                        destroyed[0] = true
+                                        runCatching {
+                                            (view.parent as? ViewGroup)?.removeView(view)
+                                            view.destroy()
+                                        }
+                                    }
+                                    renderProcessGone = true
+                                    state = HtmlState.Failed(
+                                        if (detail.didCrash()) {
+                                            tr("WebView 渲染进程意外崩溃，请点击重试。", "WebView render process crashed. Tap Retry.")
+                                        } else {
+                                            tr("系统内存紧张，已回收 WebView 渲染进程，请点击重试。", "WebView render process was reclaimed by the system. Tap Retry.")
+                                        },
+                                    )
+                                    return true
+                                }
                             }
                         }
-
-                        override fun onPageFinished(view: WebView, url: String) {
-                            state = HtmlState.Done
+                    },
+                    // 离开预览时销毁 WebView：它不会随组合自动释放，每打开一次预览就泄漏一个
+                    // （渲染进程资源 + JS 堆），长期使用会涨内存。
+                    onRelease = { view ->
+                        if (!destroyed[0]) {
+                            destroyed[0] = true
+                            runCatching {
+                                view.stopLoading()
+                                view.loadUrl("about:blank")
+                                view.destroy()
+                            }
                         }
-
-                        override fun onReceivedError(
-                            view: WebView,
-                            request: WebResourceRequest,
-                            error: WebResourceError,
-                        ) {
-                            // 只有主文档的失败才是「打不开这个页面」；一张图片加载不到不该
-                            // 把整页判成失败。
-                            if (!request.isForMainFrame) return
-                            state = HtmlState.Failed(
-                                tr("WebView 报错 ${error.errorCode}：${error.description}", "WebView error ${error.errorCode}: ${error.description}"),
-                            )
+                    },
+                    update = { view ->
+                        if (!destroyed[0] && lastLoaded != reloadTick) {
+                            lastLoaded = reloadTick
+                            state = HtmlState.Loading
+                            view.loadUrl(Uri.fromFile(file).toString())
                         }
-                    }
-                }
-            },
-            // 离开预览时销毁 WebView：它不会随组合自动释放，每打开一次预览就泄漏一个
-            // （渲染进程资源 + JS 堆），长期使用会涨内存。
-            onRelease = { view ->
-                view.stopLoading()
-                view.loadUrl("about:blank")
-                view.destroy()
-            },
-            update = { view ->
-                if (lastLoaded != reloadTick) {
-                    lastLoaded = reloadTick
-                    state = HtmlState.Loading
-                    view.loadUrl("file://${file.absolutePath}")
-                }
-            },
-        )
+                    },
+                )
+            }
+        }
     }
+}
+
+/**
+ * Derive the workspace root directory for [file] from its [relativePath] so HTML
+ * `file://` navigation can follow relative links within the workspace while blocking
+ * traversal into app-private files outside the workspace.
+ */
+private fun workspaceRootFor(file: File, relativePath: String): File {
+    val normalized = relativePath.replace('\\', '/').trim('/')
+    val segments = normalized.split('/').filter { it.isNotEmpty() && it != "." }
+    if (segments.isEmpty() || segments.any { it == ".." }) {
+        return file.parentFile ?: file
+    }
+    var cur: File? = file
+    repeat(segments.size) {
+        val parent = cur?.parentFile ?: return file.parentFile ?: file
+        cur = parent
+    }
+    return cur ?: file.parentFile ?: file
+}
+
+private fun isFileUriWithinRoot(uri: Uri, allowedRootCanonical: String?): Boolean {
+    if (allowedRootCanonical == null) return false
+    val rawPath = uri.path ?: return false
+    val candidate = runCatching { File(rawPath).canonicalPath }.getOrNull() ?: return false
+    return candidate == allowedRootCanonical ||
+        candidate.startsWith(allowedRootCanonical + File.separator)
 }
 
 // ------------------------------------------------------------------ 设备动作 ----

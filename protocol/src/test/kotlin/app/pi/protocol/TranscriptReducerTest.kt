@@ -614,4 +614,103 @@ class TranscriptReducerTest {
         assertEquals(1, r.transcript.size)
         assertEquals("actual thought", (r.transcript[0] as ThinkingBlock).text)
     }
+
+    @Test
+    fun `message delta throttle publishes first token immediately and coalesces within window`() {
+        val r = TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS) { clock }
+        r.onEvent(PiEvents.parse("""{"type":"agent_start"}"""))
+
+        val first = r.onEvent(text("He"))
+        assertEquals(TranscriptChange.Appended(0), first)
+        assertEquals("He", (r.transcript[0] as AssistantText).text)
+        assertFalse(r.hasPendingMessageDeltas())
+
+        clock += 10L
+        assertEquals(TranscriptChange.None, r.onEvent(text("llo")))
+        clock += 10L
+        assertEquals(TranscriptChange.None, r.onEvent(text(", ")))
+        // Still holding the last published snapshot until window elapses or flush runs.
+        assertEquals("He", (r.transcript[0] as AssistantText).text)
+        assertTrue(r.hasPendingMessageDeltas())
+
+        // Crossing 33 ms materialises all coalesced deltas in one publish.
+        clock += 20L
+        assertEquals(TranscriptChange.Updated(0), r.onEvent(text("world")))
+        assertEquals("Hello, world", (r.transcript[0] as AssistantText).text)
+        assertFalse(r.hasPendingMessageDeltas())
+    }
+
+    @Test
+    fun `flushPendingMessageDeltas materialises throttled tail without losing characters`() {
+        val r = TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS) { clock }
+        r.onEvent(text("A"))
+        clock += 5L
+        assertEquals(TranscriptChange.None, r.onEvent(text("B")))
+        clock += 5L
+        assertEquals(TranscriptChange.None, r.onEvent(text("C")))
+        assertTrue(r.hasPendingMessageDeltas())
+
+        clock += 30L
+        assertEquals(TranscriptChange.Updated(0), r.flushPendingMessageDeltas())
+        assertEquals("ABC", (r.transcript[0] as AssistantText).text)
+        assertFalse(r.hasPendingMessageDeltas())
+        assertEquals(TranscriptChange.None, r.flushPendingMessageDeltas())
+    }
+
+    @Test
+    fun `throttled thinking deltas survive empty thinking_end and flush cleanly`() {
+        val r = TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS) { clock }
+        r.onEvent(thinking("step 1"))
+        clock += 5L
+        assertEquals(TranscriptChange.None, r.onEvent(thinking(" -> step 2")))
+        assertTrue(r.hasPendingMessageDeltas())
+
+        clock += 5L
+        val endChange = r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":""}}"""),
+        )
+        assertEquals(TranscriptChange.Updated(0), endChange)
+        val block = r.transcript[0] as ThinkingBlock
+        assertEquals("step 1 -> step 2", block.text)
+        assertFalse(block.streaming)
+        assertFalse(r.hasPendingMessageDeltas())
+    }
+
+    @Test
+    fun `throttled text deltas flush before tool call start and on message_end`() {
+        val r = TranscriptReducer(messageDeltaThrottleMs = MESSAGE_DELTA_THROTTLE_MS) { clock }
+        r.onEvent(text("Let me check"))
+        clock += 5L
+        assertEquals(TranscriptChange.None, r.onEvent(text(" that file.")))
+        assertTrue(r.hasPendingMessageDeltas())
+
+        // Tool call start must flush the preceding assistant text immediately.
+        clock += 5L
+        r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"call_1","name":"read"}}"""),
+        )
+        assertEquals("Let me check that file.", (r.transcript[0] as AssistantText).text)
+        assertFalse(r.hasPendingMessageDeltas())
+
+        // Subsequent block ending directly via message_end (without text_end) also flushes.
+        clock += 100L
+        r.onEvent(
+            PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":2,"delta":"Done"}}"""),
+        )
+        clock += 5L
+        assertEquals(
+            TranscriptChange.None,
+            r.onEvent(
+                PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":2,"delta":"!"}}"""),
+            ),
+        )
+        assertTrue(r.hasPendingMessageDeltas())
+
+        clock += 5L
+        r.onEvent(PiEvents.parse("""{"type":"message_end","message":{"role":"assistant"}}"""))
+        val second = r.transcript[2] as AssistantText
+        assertEquals("Done!", second.text)
+        assertFalse(second.streaming)
+        assertFalse(r.hasPendingMessageDeltas())
+    }
 }
