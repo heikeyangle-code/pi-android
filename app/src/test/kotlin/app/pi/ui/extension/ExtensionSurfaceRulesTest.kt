@@ -1,5 +1,6 @@
 package app.pi.ui.extension
 
+import androidx.compose.ui.Alignment
 import app.pi.host.ExtUiReducer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -91,5 +92,16 @@ class ExtensionSurfaceRulesTest {
         assertEquals(2, terminalCharWidth('中'.code))
         assertEquals(2, terminalCharWidth(0x1F600)) // grinning face emoji
         assertEquals(0, terminalCharWidth(0x0301)) // combining acute accent
+    }
+
+    @Test
+    fun `overlayAnchorAlignment maps official Pi OverlayAnchor values cleanly`() {
+        assertEquals(Alignment.TopStart, overlayAnchorAlignment("top-left"))
+        assertEquals(Alignment.TopCenter, overlayAnchorAlignment("top-center"))
+        assertEquals(Alignment.TopEnd, overlayAnchorAlignment("top-right"))
+        assertEquals(Alignment.Center, overlayAnchorAlignment("center"))
+        assertEquals(Alignment.BottomStart, overlayAnchorAlignment("bottom-left"))
+        assertEquals(Alignment.BottomEnd, overlayAnchorAlignment("bottom-right"))
+        assertEquals(Alignment.BottomEnd, overlayAnchorAlignment(null))
     }
 }

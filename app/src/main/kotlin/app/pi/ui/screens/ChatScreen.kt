@@ -122,7 +122,9 @@ import app.pi.ui.render.gapFor
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.render.transcriptGap
+import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWidgetSurfaceSheet
+import app.pi.ui.extension.PLACEMENT_BELOW
 import app.pi.ui.extension.toExtensionPalette
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -259,8 +261,8 @@ internal fun ChatBody(
     val dockHeightDp = with(density) { dockHeightPx.toDp() }
     val listBottomPad = dockHeightDp + 12.dp
     val listBottomPadPx = dockHeightPx + with(density) { 12.dp.roundToPx() }
-    var pinnedWidgetKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    val pinnedWidgetSet = remember(pinnedWidgetKeys) { pinnedWidgetKeys.toSet() }
+    var hiddenWidgetKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val hiddenWidgetSet = remember(hiddenWidgetKeys) { hiddenWidgetKeys.toSet() }
     var widgetsInspectorOpen by remember { mutableStateOf(false) }
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
@@ -2050,8 +2052,10 @@ internal fun ChatBody(
                     attachments = attachments,
                     onAttachments = { attachments = it },
                     imeVisible = imeVisible,
-                    pinnedWidgetKeys = pinnedWidgetSet,
-                    onUnpinWidget = { key -> pinnedWidgetKeys = pinnedWidgetKeys.filterNot { it == key } },
+                    hiddenWidgetKeys = hiddenWidgetSet,
+                    onHideWidget = { key ->
+                        if (key !in hiddenWidgetKeys) hiddenWidgetKeys = hiddenWidgetKeys + key
+                    },
                     onInteractWidget = { panel -> interactingWidgetKey = panel.key },
                 )
 
@@ -2142,6 +2146,24 @@ internal fun ChatBody(
                     )
                 }
 
+                // 官方 widgetContainerBelow（placement == "belowEditor"）：默认直接显示，支持一键收纳，软键盘弹起时平滑让位。
+                val belowWidgets = remember(state.ext.widgets, hiddenWidgetSet) {
+                    state.ext.widgets.filter { it.placement == PLACEMENT_BELOW && it.key !in hiddenWidgetSet }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !imeVisible && belowWidgets.isNotEmpty(),
+                    enter = androidx.compose.animation.expandVertically(tween(150)) + fadeIn(tween(130)),
+                    exit = androidx.compose.animation.shrinkVertically(tween(130)) + fadeOut(tween(110)),
+                ) {
+                    ExtensionWidgetStack(
+                        widgets = belowWidgets,
+                        onInteract = { panel -> interactingWidgetKey = panel.key },
+                        onHide = { panel ->
+                            if (panel.key !in hiddenWidgetKeys) hiddenWidgetKeys = hiddenWidgetKeys + panel.key
+                        },
+                        maxStackHeight = 96.dp,
+                    )
+                }
             }
         }
     }
@@ -2193,12 +2215,12 @@ internal fun ChatBody(
             onInteract = { panel -> interactingWidgetKey = panel.key },
             onDismiss = { widgetsInspectorOpen = false },
             shortcuts = hubShortcuts,
-            pinnedWidgetKeys = pinnedWidgetSet,
-            onTogglePinWidget = { key ->
-                pinnedWidgetKeys = if (key in pinnedWidgetKeys) {
-                    pinnedWidgetKeys.filterNot { it == key }
+            hiddenWidgetKeys = hiddenWidgetSet,
+            onToggleHideWidget = { key ->
+                hiddenWidgetKeys = if (key in hiddenWidgetKeys) {
+                    hiddenWidgetKeys.filterNot { it == key }
                 } else {
-                    pinnedWidgetKeys + key
+                    hiddenWidgetKeys + key
                 }
             },
             onTriggerShortcut = session::triggerExtensionShortcut,

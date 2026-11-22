@@ -76,7 +76,7 @@ fun ExtensionWidgetStack(
     modifier: Modifier = Modifier,
     onColumns: ((Int) -> Unit)? = null,
     onInteract: ((ExtPanel) -> Unit)? = null,
-    onUnpin: ((ExtPanel) -> Unit)? = null,
+    onHide: ((ExtPanel) -> Unit)? = null,
     maxStackHeight: Dp = DEFAULT_STACK_MAX_HEIGHT,
 ) {
     val density = LocalDensity.current
@@ -118,7 +118,7 @@ fun ExtensionWidgetStack(
                         } else {
                             null
                         },
-                        onUnpin = if (onUnpin != null) { { onUnpin(widget) } } else null,
+                        onHide = if (onHide != null) { { onHide(widget) } } else null,
                     )
                 }
             }
@@ -251,8 +251,8 @@ fun ExtensionWidgetsSheet(
     onInteract: (ExtPanel) -> Unit,
     onDismiss: () -> Unit,
     shortcuts: List<ExtensionHubShortcut> = emptyList(),
-    pinnedWidgetKeys: Set<String> = emptySet(),
-    onTogglePinWidget: ((String) -> Unit)? = null,
+    hiddenWidgetKeys: Set<String> = emptySet(),
+    onToggleHideWidget: ((String) -> Unit)? = null,
     onTriggerShortcut: ((String) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
@@ -397,8 +397,8 @@ fun ExtensionWidgetsSheet(
                     HubSectionHeader(
                         title = tr("扩展面板", "Panels"),
                         count = panelCount,
-                        hint = if (widgets.isNotEmpty() && onTogglePinWidget != null) {
-                            tr("置顶后会常驻在输入框上方", "Pinned widgets stay above the composer")
+                        hint = if (widgets.isNotEmpty() && onToggleHideWidget != null) {
+                            tr("组件默认直接显示，可按需收纳进芯片", "Widgets show by default; hide any to chip")
                         } else {
                             null
                         },
@@ -418,14 +418,16 @@ fun ExtensionWidgetsSheet(
                         }
                         widgets.forEach { w ->
                             key(w.key) {
-                                val isPinned = w.key in pinnedWidgetKeys
+                                val isHidden = w.key in hiddenWidgetKeys
+                                val posTag = if (w.placement == PLACEMENT_BELOW) tr("下方", "Below") else tr("上方", "Above")
+                                val baseCaption = widgetCaption(w.key) ?: w.key
                                 ExtensionPanelCard(
-                                    caption = widgetCaption(w.key) ?: w.key,
+                                    caption = "$baseCaption · $posTag",
                                     lines = w.lines,
                                     collapsedRows = 6,
-                                    pinned = isPinned,
-                                    onTogglePin = if (onTogglePinWidget != null) {
-                                        { onTogglePinWidget(w.key) }
+                                    hiddenInChat = isHidden,
+                                    onToggleHide = if (onToggleHideWidget != null) {
+                                        { onToggleHideWidget(w.key) }
                                     } else {
                                         null
                                     },
@@ -760,9 +762,9 @@ internal fun ExtensionPanelCard(
     lines: List<String>,
     modifier: Modifier = Modifier,
     collapsedRows: Int = COLLAPSED_ROWS,
-    pinned: Boolean = false,
-    onTogglePin: (() -> Unit)? = null,
-    onUnpin: (() -> Unit)? = null,
+    hiddenInChat: Boolean = false,
+    onToggleHide: (() -> Unit)? = null,
+    onHide: (() -> Unit)? = null,
     onInteract: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
@@ -788,7 +790,7 @@ internal fun ExtensionPanelCard(
         shape = RoundedCornerShape(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (caption != null || canExpand || onInteract != null || onTogglePin != null || onUnpin != null) {
+            if (caption != null || canExpand || onInteract != null || onToggleHide != null || onHide != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -808,10 +810,10 @@ internal fun ExtensionPanelCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (onTogglePin != null) {
-                        PinTogglePill(pinned = pinned, onClick = onTogglePin)
-                    } else if (onUnpin != null) {
-                        UnpinPill(onClick = onUnpin)
+                    if (onToggleHide != null) {
+                        VisibilityTogglePill(hidden = hiddenInChat, onClick = onToggleHide)
+                    } else if (onHide != null) {
+                        HideWidgetPill(onClick = onHide)
                     }
                     if (onInteract != null) {
                         InteractPill(onClick = onInteract)
@@ -897,32 +899,32 @@ private fun InteractPill(onClick: () -> Unit) {
 }
 
 @Composable
-private fun PinTogglePill(pinned: Boolean, onClick: () -> Unit) {
+private fun VisibilityTogglePill(hidden: Boolean, onClick: () -> Unit) {
     val palette = PiTheme.palette
     val shape = RoundedCornerShape(999.dp)
     Box(
         modifier = Modifier
             .clip(shape)
-            .background(if (pinned) palette.accent.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(if (!hidden) palette.accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHigh)
             .border(
                 PiSpacing.hairline,
-                if (pinned) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.55f),
+                if (!hidden) palette.accent.copy(alpha = 0.38f) else palette.borderMuted.copy(alpha = 0.55f),
                 shape,
             )
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         Text(
-            text = if (pinned) tr("已置顶", "Pinned") else tr("置顶", "Pin"),
+            text = if (hidden) tr("已收纳 · 恢复", "Hidden · Show") else tr("显示中 · 收纳", "Shown · Hide"),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-            color = if (pinned) palette.accent else palette.muted,
+            color = if (!hidden) palette.accent else palette.muted,
             maxLines = 1,
         )
     }
 }
 
 @Composable
-private fun UnpinPill(onClick: () -> Unit) {
+private fun HideWidgetPill(onClick: () -> Unit) {
     val palette = PiTheme.palette
     val shape = RoundedCornerShape(999.dp)
     Box(

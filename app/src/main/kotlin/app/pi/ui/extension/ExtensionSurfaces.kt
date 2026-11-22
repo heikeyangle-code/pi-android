@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -130,6 +131,7 @@ fun ExtensionSurfaceHost(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .padding(horizontal = 14.dp)
                 .padding(bottom = minimizedBottomPadding),
             contentAlignment = Alignment.BottomEnd,
@@ -214,9 +216,25 @@ fun ExtensionSurfaceHost(
     }
 }
 
+/** 官方 `OverlayAnchor` 映射到手机屏幕安全对齐位（默认右下角）。 */
+internal fun overlayAnchorAlignment(anchor: String?): Alignment = when (anchor?.trim()?.lowercase()) {
+    "top-left" -> Alignment.TopStart
+    "top-center" -> Alignment.TopCenter
+    "top-right" -> Alignment.TopEnd
+    "left-center" -> Alignment.CenterStart
+    "center" -> Alignment.Center
+    "right-center" -> Alignment.CenterEnd
+    "bottom-left" -> Alignment.BottomStart
+    "bottom-center" -> Alignment.BottomCenter
+    "bottom-right" -> Alignment.BottomEnd
+    else -> Alignment.BottomEnd
+}
+
 /**
  * 非拦截型悬浮 HUD（官方 `OverlayOptions.nonCapturing = true`）：
- * 贴在右下角（输入框上方），**绝不铺遮罩、绝不抢占聊天滚动与输入焦点**。
+ *  - 遵循官方 `overlayOptions.anchor` 对齐位，同时避让状态栏与软键盘（`statusBarsPadding()` + `imePadding()`）；
+ *  - **绝不铺遮罩、绝不抢占聊天滚动与输入焦点**；
+ *  - 支持一键「—」临时缩成角落胶囊（不杀死扩展运行），点卡片或「操控」升格为全功能交互表面。
  */
 @Composable
 fun ExtensionFloatingOverlayCard(
@@ -231,15 +249,74 @@ fun ExtensionFloatingOverlayCard(
     val rows = remember(custom.lines) { panelRows(custom.lines) }
     val previewRows = remember(rows) { rows.take(6) }
     val title = remember(rows) { inferSurfaceTitle(rows) ?: tr("扩展悬浮层", "Extension HUD") }
+    val alignment = remember(custom.overlayOptions?.anchor) {
+        overlayAnchorAlignment(custom.overlayOptions?.anchor)
+    }
+    var collapsed by remember(id) { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(14.dp)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .statusBarsPadding()
+            .imePadding()
             .padding(horizontal = 12.dp)
-            .padding(bottom = bottomPadding),
-        contentAlignment = Alignment.BottomEnd,
+            .padding(top = 60.dp, bottom = bottomPadding),
+        contentAlignment = alignment,
     ) {
+        if (collapsed) {
+            val pillShape = RoundedCornerShape(999.dp)
+            Row(
+                modifier = Modifier
+                    .clip(pillShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f))
+                    .border(1.dp, palette.accent.copy(alpha = 0.45f), pillShape)
+                    .clickable(role = Role.Button, onClickLabel = tr("展开扩展悬浮层", "Restore floating HUD")) {
+                        collapsed = false
+                    }
+                    .padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (custom.interactive) palette.accent else palette.muted),
+                )
+                Text(
+                    text = title,
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 140.dp),
+                )
+                Text(
+                    text = tr("展开", "Show"),
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                    color = palette.accent,
+                    maxLines = 1,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮层", "Close overlay")) { onClose(id) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = tr("关闭", "Close"),
+                        tint = palette.dim,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
+            return@Box
+        }
+
         Column(
             modifier = Modifier
                 .widthIn(min = 180.dp, max = 300.dp)
@@ -285,6 +362,22 @@ fun ExtensionFloatingOverlayCard(
                         style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                         color = palette.accent,
                         maxLines = 1,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .clickable(role = Role.Button, onClickLabel = tr("收起悬浮层", "Collapse floating HUD")) {
+                            collapsed = true
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "—",
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Bold),
+                        color = palette.dim,
                     )
                 }
                 Box(

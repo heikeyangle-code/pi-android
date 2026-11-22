@@ -29,16 +29,19 @@ import app.pi.ui.chat.SlashPalette
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWorkingStrip
+import app.pi.ui.extension.PLACEMENT_BELOW
 import app.pi.ui.theme.PiSpacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 底部工作台里输入框上方的持久状态区：
- *  - 压缩中止 / 队列 / 导出交付 / Bash 面板 / 已选附件；
- *  - 扩展流式工作进度条（仅流式运行中显示）与用户手动「置顶」的扩展组件（软键盘弹起时自动隐藏）；
- *  - 所有常驻状态、未置顶组件与顶/底栏全部收敛到输入框角落的「扩展芯片」与扩展中心，零占高、零键盘变形跳动。
+ * 底部工作台里输入框上方的持久状态区（对齐官方 `interactive-mode.js` 容器顺序）：
+ *  - `pendingMessagesContainer`：压缩中止 / 队列 / 导出交付 / Bash 面板 / 已选附件；
+ *  - `statusContainer`：流式工作进度条（`setWorkingMessage` / `setWorkingIndicator`，仅流式运行中显示）；
+ *  - `widgetContainerAbove`：`setWidget`（默认 `aboveEditor`）直接紧凑显示，进度条/Todo/调试组件第一时间可见，
+ *    支持每张卡片一键「收纳」进角落芯片，且软键盘弹起时直接平滑让位（绝不再变形成跳动药丸条）。
+ *  - 常驻状态（`setStatus`）与顶/底栏统一收在输入框角落芯片与扩展中心，零占高。
  */
 @Composable
 internal fun ChatDockStatusAndWidgets(
@@ -49,15 +52,14 @@ internal fun ChatDockStatusAndWidgets(
     attachments: List<PiImage>,
     onAttachments: (List<PiImage>) -> Unit,
     imeVisible: Boolean,
-    pinnedWidgetKeys: Set<String>,
-    onUnpinWidget: (String) -> Unit,
+    hiddenWidgetKeys: Set<String>,
+    onHideWidget: (String) -> Unit,
     onInteractWidget: (ExtPanel) -> Unit,
 ) {
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
-    val pinnedWidgets = remember(state.ext.widgets, pinnedWidgetKeys) {
-        if (pinnedWidgetKeys.isEmpty()) emptyList()
-        else state.ext.widgets.filter { it.key in pinnedWidgetKeys }
+    val aboveWidgets = remember(state.ext.widgets, hiddenWidgetKeys) {
+        state.ext.widgets.filter { it.placement != PLACEMENT_BELOW && it.key !in hiddenWidgetKeys }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -118,17 +120,30 @@ internal fun ChatDockStatusAndWidgets(
             }
         }
 
-        // 流式工作指示器（仅 AI 运行中显示）
+        // 流式工作指示器（官方 statusContainer，仅 AI 运行中显示）
         ExtensionWorkingStrip(working = state.ext.working, streaming = state.streaming)
 
-        // 始终保留 0dp 列宽探测，仅展示用户显式「置顶」的扩展组件（软键盘打开时自动避让）
+        // 0dp 列宽探测常驻（即使软键盘打开或组件为空，也把真实列宽同步给宿主）
         ExtensionWidgetStack(
-            widgets = if (imeVisible) emptyList() else pinnedWidgets,
+            widgets = emptyList(),
             onColumns = session::setPanelColumns,
-            onInteract = onInteractWidget,
-            onUnpin = { panel -> onUnpinWidget(panel.key) },
-            maxStackHeight = 128.dp,
         )
+
+        // 官方 widgetContainerAbove：默认直接显示（进度条/Todo/调试器第一时间可见），软键盘弹起时平滑让位
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !imeVisible && aboveWidgets.isNotEmpty(),
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(150)) +
+                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(130)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(130)) +
+                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(110)),
+        ) {
+            ExtensionWidgetStack(
+                widgets = aboveWidgets,
+                onInteract = onInteractWidget,
+                onHide = { panel -> onHideWidget(panel.key) },
+                maxStackHeight = 132.dp,
+            )
+        }
 
         androidx.compose.animation.AnimatedVisibility(
             visible = state.bash != null,
