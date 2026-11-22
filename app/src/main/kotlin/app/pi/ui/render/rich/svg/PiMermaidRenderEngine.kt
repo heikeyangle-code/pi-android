@@ -259,6 +259,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
 
     private var lifecycleRegistered = false
     private var memoryRegistered = false
+    private val wholeDocDrawEnabled = AtomicBoolean(false)
 
     private var hostFailureReason: String? = null
 
@@ -538,6 +539,9 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         val density = context.resources.displayMetrics.density
         val viewWidthPx = (HOST_VIEWPORT_CSS_WIDTH * density).roundToInt().coerceAtLeast(1)
         val viewHeightPx = (HOST_VIEWPORT_CSS_HEIGHT * density).roundToInt().coerceAtLeast(1)
+        if (wholeDocDrawEnabled.compareAndSet(false, true)) {
+            runCatching { WebView.enableSlowWholeDocumentDraw() }
+        }
         val webView = WebView(context)
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler(ASSET_URL_PREFIX, MermaidAssetHandler(context))
@@ -720,24 +724,36 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         null
     }
 
-    /** Fast 8×8 strided pixel check verifying Chromium actually drew visible diagram pixels. */
+    /** Fast 10×10 strided check verifying Chromium drew real visible non-blank diagram pixels. */
     private fun hasVisiblePixels(bitmap: Bitmap): Boolean {
         val w = bitmap.width
         val h = bitmap.height
         if (w <= 0 || h <= 0) return false
         val stepX = (w / 10).coerceAtLeast(1)
         val stepY = (h / 10).coerceAtLeast(1)
+        var visibleCount = 0
+        var firstVisibleColor = 0
+        var hasContrast = false
         var y = stepY / 2
         while (y < h) {
             var x = stepX / 2
             while (x < w) {
-                val alpha = (bitmap.getPixel(x, y) ushr 24) and 0xFF
-                if (alpha > 8) return true
+                val px = bitmap.getPixel(x, y)
+                val alpha = (px ushr 24) and 0xFF
+                if (alpha > 8) {
+                    if (visibleCount == 0) {
+                        firstVisibleColor = px
+                    } else if (px != firstVisibleColor) {
+                        hasContrast = true
+                    }
+                    visibleCount++
+                    if (visibleCount >= 2 && hasContrast) return true
+                }
                 x += stepX
             }
             y += stepY
         }
-        return false
+        return visibleCount >= 1
     }
 
     /**
@@ -1131,12 +1147,8 @@ private class RenderHost(
     }
 
     private fun resizeStageView(view: WebView, widthPx: Int, heightPx: Int) {
-        val lp = view.layoutParams
-        if (lp != null) {
-            lp.width = widthPx
-            lp.height = heightPx
-            view.layoutParams = lp
-        }
+        // Measure & layout directly without mutating decorView LayoutParams, preventing
+        // full-Activity relayout passes on the live chat UI while capturing diagrams offscreen.
         view.translationX = -(widthPx + 1).toFloat()
         val wSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
         val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY)

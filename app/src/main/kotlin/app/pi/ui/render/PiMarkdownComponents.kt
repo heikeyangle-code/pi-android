@@ -79,8 +79,6 @@ import androidx.compose.ui.unit.dp
 import app.pi.bridge.PiImageLoader
 import app.pi.bridge.PiNoOpImageLoader
 import app.pi.bridge.rememberPiGuestImageTransformer
-import app.pi.highlight.PiMermaidMode
-import app.pi.highlight.PiMermaidReply
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.i18n.tr
 import app.pi.protocol.PiImage
@@ -88,6 +86,7 @@ import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.settings.PiSettingsFileStore
+import app.pi.settings.readString
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.render.rich.LinkCardResult
 import app.pi.ui.render.rich.PiCsvTable
@@ -152,7 +151,7 @@ internal fun PiMarkdownDocument(
         var renderedCount = 0
         root.children.forEachIndexed { index, child ->
             if (!isVisibleBlockNode(child)) return@forEachIndexed
-            key(index, child.type, child.startOffset) {
+            key(index, child.type) {
                 if (renderedCount > 0) {
                     Spacer(Modifier.height(spacing.block))
                 }
@@ -364,6 +363,7 @@ private fun PiMarkdownHeading(
             colors = colors,
             typography = typography,
             referenceLinks = referenceLinks,
+            trimLeadingWhitespace = true,
         )
         if (showRule) {
             Spacer(Modifier.height(6.dp))
@@ -709,7 +709,7 @@ private fun PiGfmAlertCard(
                 child.type == MarkdownTokenTypes.EOL ||
                 child.type == MarkdownTokenTypes.WHITE_SPACE
             ) return@forEachIndexed
-            key(index, child.type, child.startOffset) {
+            key(index, child.type) {
                 if (child === alert.firstParagraph) {
                     if (alert.firstParagraphHasRemainingBody) {
                         Spacer(Modifier.height(6.dp))
@@ -791,7 +791,7 @@ private fun PiBlockQuote(
                 child.type == MarkdownTokenTypes.EOL ||
                 child.type == MarkdownTokenTypes.WHITE_SPACE
             ) return@forEachIndexed
-            key(index, child.type, child.startOffset) {
+            key(index, child.type) {
                 if (renderedAny) Spacer(Modifier.height(6.dp))
                 PiMarkdownBlock(
                     content = content,
@@ -833,7 +833,7 @@ private fun PiListBlock(
             .padding(start = if (depth > 0) spacing.listIndent else 0.dp),
     ) {
         items.forEachIndexed { idx, item ->
-            key(idx, item.startOffset) {
+            key(idx) {
                 if (idx > 0) Spacer(Modifier.height(spacing.listItem))
                 PiListItemRow(
                     content = content,
@@ -929,7 +929,7 @@ private fun PiListItemRow(
 
         Column(modifier = Modifier.weight(1f)) {
             bodyChildren.forEachIndexed { idx, child ->
-                key(idx, child.type, child.startOffset) {
+                key(idx, child.type) {
                     if (idx > 0) Spacer(Modifier.height(spacing.listItem.coerceAtLeast(4.dp)))
                     PiMarkdownBlock(
                         content = content,
@@ -1314,6 +1314,7 @@ private fun PiTableCellContent(
         referenceLinks = referenceLinks,
         maxLines = TABLE_MAX_LINES,
         overflow = TextOverflow.Ellipsis,
+        trimLeadingWhitespace = true,
         cellImageMaxWidthDp = cellContentWidthDp,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -1612,33 +1613,35 @@ internal data class PiHighlightedCode(val text: AnnotatedString, val languageKno
 @Composable
 internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighlightedCode {
     val palette = PiTheme.palette
-    val highlighter = LocalPiCodeHighlighter.current
-    val nativeResult = remember(code, language) {
-        if (PiCodeLanguage.isUnspecified(language)) PiCodeHighlight()
+    val unspecified = PiCodeLanguage.isUnspecified(language)
+    val nativeResult = remember(code, language, unspecified) {
+        if (unspecified) PiCodeHighlight()
         else PiFastCodeHighlighter.highlight(code, language)
     }
+    // Fast zero-coroutine path: all 35+ languages owned natively by PiFastCodeHighlighter finish
+    // synchronously in <1 ms with zero coroutine churn during streaming and zero post-settle flicker.
+    if (unspecified || nativeResult.languageKnown) {
+        return remember(code, nativeResult, palette) {
+            PiHighlightedCode(
+                text = buildPiCodeText(code, nativeResult.spans, palette),
+                languageKnown = nativeResult.languageKnown,
+            )
+        }
+    }
+    val highlighter = LocalPiCodeHighlighter.current
     val hasStreamed = remember { booleanArrayOf(false) }
     val answer = produceState(
         initialValue = nativeResult,
         code,
         language,
         highlighter,
-        nativeResult,
     ) {
-        if (PiCodeLanguage.isUnspecified(language)) {
-            value = PiCodeHighlight()
-        } else if (nativeResult.languageKnown) {
-            // Native 35+ language lexer already produced full semantic tokens on frame 0;
-            // skip cross-process highlight.js 10.7.3 round-trip to prevent latency & color flicker.
-            value = nativeResult
-        } else {
-            val isUpdate = hasStreamed[0]
-            hasStreamed[0] = true
-            if (isUpdate) delay(STREAM_SETTLE_MS)
-            val nodeResult = withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
-            if (nodeResult.languageKnown) {
-                value = nodeResult
-            }
+        val isUpdate = hasStreamed[0]
+        hasStreamed[0] = true
+        if (isUpdate) delay(STREAM_SETTLE_MS)
+        val nodeResult = withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
+        if (nodeResult.languageKnown) {
+            value = nodeResult
         }
     }
     return remember(code, answer.value, palette) {

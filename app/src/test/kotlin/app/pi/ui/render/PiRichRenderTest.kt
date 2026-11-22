@@ -218,4 +218,11 @@ class PiRichRenderTest {
         val refs = extractPiReferenceLinks(md, tree)
         assertEquals("https://example.com/pi", refs["pi docs"])
     }
+
+    @Test
+    fun `commonmark backslash unescaping and HTML entity decoding preserve file paths`() {
+        assertEquals("*bold* and \$100", piUnescapeMarkdownText("\\*bold\\* and \\\$100"))
+        assertEquals("C:\\Users\\pi\\file.txt", piUnescapeMarkdownText("C:\\Users\\pi\\file.txt"))
+        assertEquals("a & b <tag> \"ok\" A B", piUnescapeMarkdownText("a &amp; b &lt;tag&gt; &quot;ok&quot; &#65; &#x42;"))
+    }
 }

@@ -159,12 +159,13 @@ internal fun piMarkdownTypography(
     )
 }
 
-internal fun piMarkdownSpacing(profile: PiTypographyProfile): PiMarkdownSpacing =
-    if (profile.isClassic) {
+internal fun piMarkdownSpacing(profile: PiTypographyProfile): PiMarkdownSpacing {
+    val itemGap = profile.markdownListItemTop + profile.markdownListItemBottom
+    return if (profile.isClassic) {
         PiMarkdownSpacing(
-            block = profile.blockGap,
-            listItem = profile.listItemGap,
-            listIndent = profile.listIndent,
+            block = profile.markdownBlock,
+            listItem = itemGap,
+            listIndent = profile.markdownListIndent,
             headingTopH1 = 0.dp,
             headingTopH2 = 0.dp,
             headingTopH3 = 0.dp,
@@ -172,15 +173,16 @@ internal fun piMarkdownSpacing(profile: PiTypographyProfile): PiMarkdownSpacing 
         )
     } else {
         PiMarkdownSpacing(
-            block = profile.blockGap,
-            listItem = profile.listItemGap,
-            listIndent = profile.listIndent,
+            block = profile.markdownBlock,
+            listItem = itemGap,
+            listIndent = profile.markdownListIndent,
             headingTopH1 = 14.dp,
             headingTopH2 = 10.dp,
             headingTopH3 = 6.dp,
             headingTopSmall = 4.dp,
         )
     }
+}
 
 private fun TextStyle.headingSlot(
     slot: PiHeading,

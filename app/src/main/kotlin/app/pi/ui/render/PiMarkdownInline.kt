@@ -116,6 +116,7 @@ internal fun PiInlineMarkdownText(
     maxLines: Int = Int.MAX_VALUE,
     overflow: TextOverflow = TextOverflow.Clip,
     skipLeadingPrefixChars: Int = 0,
+    trimLeadingWhitespace: Boolean = false,
     cellImageMaxWidthDp: Float? = null,
 ) {
     val palette = PiTheme.palette
@@ -213,6 +214,7 @@ internal fun PiInlineMarkdownText(
         referenceLinks,
         eolAsNewLine,
         skipLeadingPrefixChars,
+        trimLeadingWhitespace,
     ) {
         buildAnnotatedString {
             val ctx = InlineBuildContext(
@@ -225,6 +227,7 @@ internal fun PiInlineMarkdownText(
                 referenceLinks = referenceLinks,
                 eolAsNewLine = eolAsNewLine,
                 skipRemaining = skipLeadingPrefixChars,
+                trimLeading = trimLeadingWhitespace,
             )
             appendInlineChildren(node, ctx)
         }
@@ -387,6 +390,7 @@ private class InlineBuildContext(
     val referenceLinks: Map<String, String>,
     val eolAsNewLine: Boolean,
     var skipRemaining: Int = 0,
+    var trimLeading: Boolean = false,
     val htmlStack: ArrayList<SpanStyle> = ArrayList(),
 )
 
@@ -609,7 +613,9 @@ private fun AnnotatedString.Builder.appendLinkNode(
 
 private fun AnnotatedString.Builder.appendProcessedText(raw: String, ctx: InlineBuildContext) {
     if (raw.isEmpty()) return
-    val text = consumePrefixSkip(raw, ctx)
+    val skipped = consumePrefixSkip(raw, ctx)
+    if (skipped.isEmpty()) return
+    val text = piUnescapeMarkdownText(skipped)
     if (text.isEmpty()) return
     val table = ctx.table
     if (table == null || text.indexOf(table.markerPrefix) < 0) {
@@ -637,14 +643,82 @@ private fun AnnotatedString.Builder.appendConsumeSkip(raw: String, ctx: InlineBu
 }
 
 private fun consumePrefixSkip(raw: String, ctx: InlineBuildContext): String {
-    if (ctx.skipRemaining <= 0) return raw
-    if (raw.length <= ctx.skipRemaining) {
-        ctx.skipRemaining -= raw.length
-        return ""
+    var s = raw
+    if (ctx.skipRemaining > 0) {
+        if (s.length <= ctx.skipRemaining) {
+            ctx.skipRemaining -= s.length
+            return ""
+        }
+        s = s.substring(ctx.skipRemaining)
+        ctx.skipRemaining = 0
     }
-    val sliced = raw.substring(ctx.skipRemaining)
-    ctx.skipRemaining = 0
-    return sliced
+    if (ctx.trimLeading) {
+        val trimmed = s.trimStart(' ', '\t')
+        if (trimmed.isEmpty()) return ""
+        ctx.trimLeading = false
+        s = trimmed
+    }
+    return s
+}
+
+/**
+ * CommonMark §2.4 backslash unescaping (`\*` -> `*`, `\$` -> `$`, `\\` -> `\`, preserving
+ * non-punctuation backslashes like `C:\Users\pi`) plus common HTML entity decoding (`&amp;`,
+ * `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&nbsp;`, numeric `&#65;` / `&#x42;`).
+ */
+internal fun piUnescapeMarkdownText(input: String): String {
+    if (input.indexOf('\\') < 0 && input.indexOf('&') < 0) return input
+    val n = input.length
+    val out = StringBuilder(n)
+    var i = 0
+    while (i < n) {
+        val c = input[i]
+        if (c == '\\' && i + 1 < n && isAsciiPunctuation(input[i + 1])) {
+            out.append(input[i + 1])
+            i += 2
+            continue
+        }
+        if (c == '&') {
+            val semi = input.indexOf(';', i + 2)
+            if (semi in (i + 2)..(i + 10)) {
+                val decoded = decodeHtmlEntity(input.substring(i + 1, semi))
+                if (decoded != null) {
+                    out.append(decoded)
+                    i = semi + 1
+                    continue
+                }
+            }
+        }
+        out.append(c)
+        i++
+    }
+    return out.toString()
+}
+
+private fun isAsciiPunctuation(c: Char): Boolean =
+    c in "!\"#\$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+private fun decodeHtmlEntity(body: String): String? = when (body) {
+    "amp" -> "&"
+    "lt" -> "<"
+    "gt" -> ">"
+    "quot" -> "\""
+    "apos", "#39" -> "'"
+    "nbsp" -> "\u00A0"
+    "ndash" -> "–"
+    "mdash" -> "—"
+    "hellip" -> "…"
+    "copy" -> "©"
+    else -> if (body.startsWith("#")) {
+        val code = if (body.startsWith("#x", ignoreCase = true)) {
+            body.substring(2).toIntOrNull(16)
+        } else {
+            body.substring(1).toIntOrNull(10)
+        }
+        if (code != null && code in 1..0x10FFFF && !Character.isISOControl(code)) {
+            String(Character.toChars(code))
+        } else null
+    } else null
 }
 
 // ------------------------------------------------------------------ Inline Math Box Metrics
