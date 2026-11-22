@@ -12,9 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.rememberPiGuestImageTransformer
-import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.protocol.PiImage
 import app.pi.ui.render.rich.PiFootnoteMarkdown
 import app.pi.ui.theme.PiContrast
@@ -88,8 +86,6 @@ internal fun PiMarkdownText(
     onImageClick: ((PiImage) -> Unit)? = null,
     streaming: Boolean = false,
 ) {
-    val context = LocalContext.current
-    remember(context) { PiNodeCodeHighlighter.attach(context) }
 
     // Synchronous fast path for immediate rows or short content; conflated async worker for
     // large/long streams so BOTH math/footnote preprocessing (PiInlineMath/PiLatex/PiFootnoteMarkdown)
@@ -188,7 +184,6 @@ internal fun PiMarkdownText(
     }
 
     CompositionLocalProvider(
-        LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides imageLoader,
         LocalPiImageClick provides onImageClick,
         LocalPiMarkdownStreaming provides streaming,

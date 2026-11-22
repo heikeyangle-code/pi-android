@@ -429,25 +429,19 @@ export class Controller {
    * `source` 说明结论从哪来，界面据此写「为什么」。
    */
   /**
-   * 预编译的 Android 内置扩展（pi-android-bridge / pi-android-permission-gate / pi-highlight）。
+   * 预编译的 Android 设备桥内置扩展（`pi-android-bridge`）。
    * 以官方 SDK `builtin: true` + `replaceable: true` 注册进 DefaultResourceLoader，
    * 与 codemode / tool-search / mcp 同等地位：
    *  - 零 jiti / 零 Babel 编译开销（直接运行预编译 V8 原生工厂）
-   *  - 在「设置 → 资源 → 扩展」以 `builtin:*` 可见且支持逐项开关（`-builtin:*`）
+   *  - 在「设置 → 资源 → 扩展」以 `builtin:pi-android-bridge` 可见且支持开关（`-builtin:pi-android-bridge`）
    *  - 完整尊重 `--no-extensions`、项目信任与第三方同名扩展替换
    */
   #androidExtensionFactories() {
     if (!this.cfg.androidExtensions) return [];
     const bundled = globalThis.__piAndroidBundledExtensions;
     if (!bundled || typeof bundled !== "object") return [];
-    const entries = [
-      ["pi-android-bridge", bundled.androidBridge],
-      ["pi-android-permission-gate", bundled.permissionGate],
-      ["pi-highlight", bundled.highlight],
-    ];
-    return entries
-      .filter(([, fn]) => typeof fn === "function")
-      .map(([name, factory]) => ({ name, factory, replaceable: true, builtin: true }));
+    if (typeof bundled.androidBridge !== "function") return [];
+    return [{ name: "pi-android-bridge", factory: bundled.androidBridge, replaceable: true, builtin: true }];
   }
 
   #projectTrusted(cwd) {

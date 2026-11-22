@@ -425,19 +425,6 @@ export async function bridgeHealth(): Promise<HealthPayload> {
 	return bridgeGet<HealthPayload>("/app/health", undefined, 5000);
 }
 
-/**
- * Tell the app what the permission gate is currently doing, so the 设备能力 page can
- * show it. Display only: nothing here changes policy, and the gate's own in-process
- * memory is what enforces it. The UI labels the result as extension-reported.
- */
-export async function reportGate(payload: {
-	sessionGrants: string[];
-	counts: Record<string, number>;
-	note: string;
-}): Promise<void> {
-	await bridgePost<unknown>("/app/gate/report", payload, 3000);
-}
-
 /** Diagnostics only: which paths were probed, when credentials were missing. */
 export function lastProbedPaths(): string[] {
 	return cachedFailures;

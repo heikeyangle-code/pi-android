@@ -42,7 +42,7 @@ enum class DeviceCapability(
     Shell(
         id = "shell",
         title = "设备 Shell",
-        summary = "本机命令行（接入 Shizuku 可免电脑提权至 ADB 级；危险命令需审批）",
+        summary = "本机命令行（接入 Shizuku 可免电脑提权至 ADB 级）",
         defaultEnabled = false,
     ),
 

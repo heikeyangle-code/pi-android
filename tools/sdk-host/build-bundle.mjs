@@ -6,7 +6,7 @@
  * Why a single-file bundle:
  *  1. Eliminates 26 separate sdk-host `.mjs` module opens/stats under proot/proroot/tawcroot.
  *  2. Pre-compiles the 3 APK-shipped TypeScript extensions (pi-android-bridge,
- *     pi-android-permission-gate, pi-highlight) into native V8 ESM factories passed to
+ *     pi-android-bridge) into a native V8 ESM factory passed to
  *     official Pi SDK `DefaultResourceLoader({ extensionFactories })`, completely avoiding
  *     `require("jiti")` + ~1.7 MB `babel.cjs` TypeScript transpilation on every cold boot
  *     while preserving 100% official Pi SDK semantics and full V8 NODE_COMPILE_CACHE coverage.
@@ -48,13 +48,9 @@ const nodePaths = [
 
 const entrySource = `
 import androidBridge from ${JSON.stringify(join(extDir, "pi-android-bridge/index.ts"))};
-import permissionGate from ${JSON.stringify(join(extDir, "pi-android-permission-gate.ts"))};
-import highlight from ${JSON.stringify(join(extDir, "pi-highlight/index.ts"))};
 
 globalThis.__piAndroidBundledExtensions = {
   androidBridge,
-  permissionGate,
-  highlight,
 };
 
 await import(${JSON.stringify(join(hostDir, "main.mjs"))});

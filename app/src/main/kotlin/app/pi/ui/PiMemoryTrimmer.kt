@@ -3,8 +3,6 @@ package app.pi.ui
 import android.content.ComponentCallbacks2
 import app.pi.bridge.PiAnimatedImages
 import app.pi.bridge.PiGuestImageTransformer
-import app.pi.highlight.PiNodeCodeHighlighter
-import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.ui.blocks.ParseCaches
 import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.render.RowHeightCache
@@ -28,7 +26,6 @@ internal object PiMemoryTrimmer {
         ParseCaches.clear()
         PiTreeParseCache.clear()
         RowHeightCache.shared.clear()
-        PiNodeCodeHighlighter.clear()
     }
 
     /**
@@ -42,8 +39,6 @@ internal object PiMemoryTrimmer {
             PiAnimatedImages.clear()
             ParseCaches.clear()
             PiTreeParseCache.clear()
-            PiNodeMermaidRenderer.clear()
-            PiNodeCodeHighlighter.clear()
         }
         if (
             level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
@@ -65,8 +60,6 @@ internal object PiMemoryTrimmer {
         PiAnimatedImages.clear()
         ParseCaches.clear()
         PiTreeParseCache.clear()
-        PiNodeMermaidRenderer.clear()
-        PiNodeCodeHighlighter.clear()
         PiImageCache.clear()
         PiGuestImageTransformer.clearBitmapCache()
         clearPiMermaidDrawCache()

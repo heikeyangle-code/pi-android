@@ -52,7 +52,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.bridge.DeviceAccessibilityService
-import app.pi.bridge.DeviceApprovalLedger
 import app.pi.bridge.DeviceCapability
 import app.pi.bridge.DeviceCapabilityState
 import app.pi.bridge.DeviceCapabilityStore
@@ -95,7 +94,6 @@ fun DeviceCapabilityScreen(
     var notification by remember { mutableStateOf(false) }
     var hasLocation by remember { mutableStateOf(false) }
     var hasCamera by remember { mutableStateOf(false) }
-    var ledgerLines by remember { mutableStateOf<List<String>>(emptyList()) }
     var revision by remember { mutableIntStateOf(0) }
 
     val permissionRequester = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -118,7 +116,6 @@ fun DeviceCapabilityScreen(
                     notification = store.hasNotificationPermission(),
                     hasLocation = store.hasLocationPermission(),
                     hasCamera = store.hasCameraPermission(),
-                    ledgerLines = DeviceApprovalLedger.summaryLines(),
                 )
             }
             accessibility = snap.accessibility
@@ -127,7 +124,6 @@ fun DeviceCapabilityScreen(
             notification = snap.notification
             hasLocation = snap.hasLocation
             hasCamera = snap.hasCamera
-            ledgerLines = snap.ledgerLines
             delay(1500L)
         }
     }
@@ -351,7 +347,7 @@ fun DeviceCapabilityScreen(
                             icon = Icons.Filled.Terminal,
                             iconTint = palette.error,
                             title = tr("设备 Shell", "Device Shell"),
-                            description = tr("Shizuku / 本机 Shell（高危 · 危险命令需每次会话审批）", "Shizuku / local shell (high risk · dangerous commands require per-session approval)"),
+                            description = tr("Shizuku / 本机 Shell（高危 · 请按需开启）", "Shizuku / local shell (high risk · enable as needed)"),
                             state = shell,
                             danger = true,
                             onToggle = {
@@ -374,105 +370,7 @@ fun DeviceCapabilityScreen(
                 }
             }
 
-            // 4. 会话审批账本
-            item(key = "approval-ledger") {
-                Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.small)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = PiSettingsMetrics.pageHorizontal + PiSpacing.small),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            tr("会话审批记录", "Session Approval Log"),
-                            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
-                            color = palette.muted,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (ledgerLines.size > 1) {
-                            Text(
-                                tr("清空", "Clear"),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable {
-                                        DeviceApprovalLedger.clear()
-                                        ledgerLines = DeviceApprovalLedger.summaryLines()
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                color = palette.accent,
-                            )
-                        }
-                    }
-                    PiSettingsCard {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                                    vertical = PiSettingsMetrics.rowPaddingVertical,
-                                ),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            ledgerLines.forEach { line ->
-                                Text(
-                                    line,
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
 
-            // 5. 极简折叠说明
-            item(key = "guide") {
-                var guideOpen by remember { mutableStateOf(false) }
-                PiSettingsCard {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { guideOpen = !guideOpen }
-                            .padding(
-                                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                                vertical = PiSettingsMetrics.rowPaddingVertical,
-                            ),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                tr("免 ADB 与 0 Token 说明", "No-ADB & 0-Token Notes"),
-                                style = PiType.rowTitle.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                if (guideOpen) tr("收起", "Collapse") else tr("展开", "Expand"),
-                                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
-                                color = palette.accent,
-                            )
-                        }
-                        if (guideOpen) {
-                            Text(
-                                tr(
-                                    "• 屏幕自动化与通知收发仅需开启对应系统服务，全程免电脑免 ADB。\n" +
-                                        "• 设备文件与 `/sdcard` 已可由模型自带工具直接访问，不再需要 SAF 目录代理。\n" +
-                                        "• 全部关闭后下一条消息自动摘除全部 `android_*` 工具与提示，严格 0 Token。",
-                                    "• Screen automation and notification access only require enabling the corresponding Android services — no PC or ADB needed.\n" +
-                                        "• Device files and `/sdcard` are directly accessible to built-in model tools without SAF directory proxies.\n" +
-                                        "• Turning all groups off removes every `android_*` tool and prompt on the next turn for strictly 0 tokens.",
-                                ),
-                                style = PiTheme.text.meta,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -777,7 +675,6 @@ private data class DeviceCapPollSnapshot(
     val notification: Boolean,
     val hasLocation: Boolean,
     val hasCamera: Boolean,
-    val ledgerLines: List<String>,
 )
 
 private fun openShizukuManager(context: android.content.Context) {

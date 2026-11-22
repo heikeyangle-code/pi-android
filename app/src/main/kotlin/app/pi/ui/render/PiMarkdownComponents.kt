@@ -37,7 +37,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -84,7 +83,6 @@ import app.pi.bridge.PiImageLoadState
 import app.pi.bridge.PiImageLoader
 import app.pi.bridge.PiNoOpImageLoader
 import app.pi.bridge.rememberPiGuestImageTransformer
-import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.i18n.tr
 import app.pi.protocol.PiImage
 import app.pi.runtime.PiPaths
@@ -1748,7 +1746,7 @@ private fun PiCodeSurface(
     val mermaidMode = rememberPiMermaidMode()
     if (normalized?.lowercase() == MERMAID_LANGUAGE && mermaidMode != PiMermaidMode.Off) {
         PiMermaidView(source = code, settled = settled) {
-            PiMermaidAsciiFallback(code = code, language = language, style = style)
+            PiMermaidAsciiFallback(code = code, style = style)
         }
         return
     }
@@ -1818,39 +1816,16 @@ private fun PiCodeSurface(
 }
 
 @Composable
-private fun PiMermaidAsciiFallback(code: String, language: String?, style: TextStyle) {
+private fun PiMermaidAsciiFallback(code: String, style: TextStyle) {
     val palette = PiTheme.palette
-    val mermaid = rememberPiMermaidArt(code, language)
-    val art = mermaid?.takeIf { it.warnings.isEmpty() }
-    if (art != null) {
-        Text(
-            text = piMermaidText(art, palette),
-            style = style.copy(color = palette.mdCode),
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-        )
-    } else {
-        Text(
-            text = code,
-            style = style.copy(color = palette.mdCode),
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-        )
-    }
-    mermaid?.let { drawn ->
-        piMermaidWarning(drawn)?.let { warning ->
-            Text(
-                text = warning,
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.warning,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
-            )
-        }
-    }
+    Text(
+        text = code,
+        style = style.copy(color = palette.mdCode),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    )
 }
 
 // ------------------------------------------------------------------ Code Highlighting
@@ -1872,36 +1847,10 @@ internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighl
         if (unspecified) PiCodeHighlight()
         else PiFastCodeHighlighter.highlight(code, language)
     }
-    // Fast zero-coroutine path: all 35+ languages owned natively by PiFastCodeHighlighter finish
-    // synchronously in <1 ms with zero coroutine churn during streaming and zero post-settle flicker.
-    if (unspecified || nativeResult.languageKnown) {
-        return remember(code, nativeResult, palette) {
-            PiHighlightedCode(
-                text = buildPiCodeText(code, nativeResult.spans, palette),
-                languageKnown = nativeResult.languageKnown,
-            )
-        }
-    }
-    val highlighter = LocalPiCodeHighlighter.current
-    val hasStreamed = remember { booleanArrayOf(false) }
-    val answer = produceState(
-        initialValue = nativeResult,
-        code,
-        language,
-        highlighter,
-    ) {
-        val isUpdate = hasStreamed[0]
-        hasStreamed[0] = true
-        if (isUpdate) delay(STREAM_SETTLE_MS)
-        val nodeResult = withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
-        if (nodeResult.languageKnown) {
-            value = nodeResult
-        }
-    }
-    return remember(code, answer.value, palette) {
+    return remember(code, nativeResult, palette) {
         PiHighlightedCode(
-            text = buildPiCodeText(code, answer.value.spans, palette),
-            languageKnown = answer.value.languageKnown,
+            text = buildPiCodeText(code, nativeResult.spans, palette),
+            languageKnown = nativeResult.languageKnown,
         )
     }
 }
@@ -1927,46 +1876,6 @@ private fun buildPiCodeText(
 }
 
 // ------------------------------------------------------------------ Mermaid Mode & Helpers
-
-@Composable
-private fun rememberPiMermaidArt(code: String, language: String?): PiMermaidArt? {
-    val mode = rememberPiMermaidMode()
-    if (mode == PiMermaidMode.Off) return null
-    val isMermaid = remember(language) {
-        language?.trim()?.split(WHITESPACE)?.firstOrNull()?.lowercase() == MERMAID_LANGUAGE
-    }
-    if (!isMermaid) return null
-    val hasStreamed = remember { booleanArrayOf(false) }
-    val cached = remember(code, mode) { PiNodeMermaidRenderer.cached(code, mode) }
-    val art = produceState<PiMermaidArt?>(initialValue = (cached as? PiMermaidReply.Art)?.art, code, language, mode) {
-        if (cached != null) return@produceState
-        val isUpdate = hasStreamed[0]
-        hasStreamed[0] = true
-        if (isUpdate || mode == PiMermaidMode.Final) delay(STREAM_SETTLE_MS)
-        var attempt = 0
-        while (true) {
-            when (val reply = withContext(Dispatchers.Default) { PiNodeMermaidRenderer.render(code, mode) }) {
-                is PiMermaidReply.Art -> {
-                    value = reply.art
-                    return@produceState
-                }
-                PiMermaidReply.NoArt -> {
-                    value = null
-                    return@produceState
-                }
-                PiMermaidReply.Unavailable -> {
-                    attempt++
-                    if (attempt >= MERMAID_ATTEMPTS) {
-                        value = null
-                        return@produceState
-                    }
-                    delay(MERMAID_RETRY_MS)
-                }
-            }
-        }
-    }
-    return art.value
-}
 
 @Composable
 private fun rememberPiMermaidMode(): PiMermaidMode {
@@ -2047,8 +1956,5 @@ private const val MERMAID_LANGUAGE = "mermaid"
 private const val SVG_LANGUAGE = "svg"
 private val STACK_TRACE_LANGUAGES = setOf("stacktrace", "stack", "stack-trace", "traceback")
 private val WHITESPACE = Regex("\\s+")
-private const val MERMAID_ATTEMPTS = 3
-private const val MERMAID_RETRY_MS = 400L
 private const val MERMAID_SETTING_KEY = "markdown.mermaid"
-private const val STREAM_SETTLE_MS = 200L
 private const val BARE_URL_MAX_CHARS = 8192

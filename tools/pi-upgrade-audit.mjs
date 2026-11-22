@@ -498,7 +498,7 @@ async function main() {
     } else if (!themeJsEq) {
       level = "REVIEW";
       details.push("dark.json / light.json 逐字节相同；theme.js 有改动（例如语法高亮映射或 system 主题规则，建议 diff 复核）");
-      files.push("app/src/main/assets/guest/sdk-host/ui/theme.mjs", "app/src/main/assets/pi-extensions/pi-highlight/");
+      files.push("app/src/main/assets/guest/sdk-host/ui/theme.mjs");
     } else {
       details.push("dark.json / light.json / theme.js 全部逐字节相同");
     }
@@ -709,12 +709,12 @@ async function main() {
     if (mermaidOld !== mermaidNew) {
       level = "ACTION";
       details.push(`Mermaid 渲染库变动: ${mermaidOld} → ${mermaidNew}`);
-      files.push("app/src/main/assets/pi-extensions/pi-highlight/mermaid.ts");
+      files.push("app/src/main/kotlin/app/pi/ui/render/rich/svg/PiMermaidRenderEngine.kt");
     }
     if (hljsOld !== hljsNew) {
       level = "REVIEW";
       details.push(`highlight.js 变动: ${hljsOld} → ${hljsNew}`);
-      files.push("app/src/main/assets/pi-extensions/pi-highlight/hljs.ts");
+      files.push("app/src/main/kotlin/app/pi/ui/render/PiFastCodeHighlighter.kt");
     }
     if (details.length === 0) details.push("pi-tui / pi-mcp / lovely-mermaid / highlight.js 接口均未变");
     addSection(9, "TUI 组件与内置扩展兼容性", level, details[0], details, files);

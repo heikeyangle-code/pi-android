@@ -493,14 +493,6 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                // The pi-side permission gate reports what it has approved. Display
-                // only: nothing here changes policy (the gate's own memory is the
-                // enforcement), and the UI labels it as extension-reported.
-                "/app/gate/report" -> {
-                    DeviceApprovalLedger.report(params.body())
-                    BridgeHttpResponse.okRaw(DeviceApprovalLedger.toJson())
-                }
-
                 else -> BridgeHttpResponse(404, notFound(path).toString())
             }
         } catch (error: DeviceActionException) {
@@ -673,7 +665,6 @@ class DeviceBridgeRouter(
             put("known", DeviceWorkspace.isKnown())
         })
         put("shizuku", DeviceShizuku.status(context))
-        put("gate", DeviceApprovalLedger.toJson())
         // The whole policy, so a model (and the diagnostics page) can see exactly what
         // is permitted instead of inferring it from refusals. It is short now on
         // purpose: there is exactly one rule, and it is empty.
@@ -998,7 +989,6 @@ class DeviceBridgeRouter(
             "POST /app/export",
             "POST /app/import",
             "POST /app/shell",
-            "POST /app/gate/report",
             // 通知监听并入「基础」组（契约规定，不另开开关）
             "GET  /app/notify/status",
             "GET  /app/notify/recent",

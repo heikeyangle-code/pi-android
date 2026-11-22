@@ -6,7 +6,6 @@ import app.pi.runtime.PiPaths
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.security.MessageDigest
 import java.security.SecureRandom
 
 /**
@@ -46,32 +45,6 @@ object DeviceBridgeController {
 
     /** Guest-visible location inside the rootfs. */
     const val GUEST_TOKEN_FILE = "/root/.pi/device-bridge.json"
-
-    /** Assets shipped in the APK that make up the extension. */
-    private const val ASSET_ROOT = "pi-extensions"
-
-    /**
-     * **No longer the install gate.** The stamp written next to the installed
-     * extensions is a content fingerprint of the asset tree ([assetFingerprint]), so
-     * editing anything under `assets/pi-extensions/` no longer needs a version bump
-     * and can no longer be forgotten.
-     *
-     * This constant is the fallback for the one case a fingerprint cannot cover:
-     * when the asset tree cannot be read at all, the marker becomes `v<this value>`
-     * and the installer behaves exactly as it did before the fingerprint existed
-     * (compare, copy, stamp) rather than claiming everything is current.
-     *
-     * It still records what each shipped generation contained, which is why the
-     * history stays: "1" shipped the device bridge; "2" adds `pi-highlight/`; "3"
-     * adds the session-scoped approvals, the workspace-relative shell policy and the
-     * SAF file tools to the device extension; "4" adds the `device-reload` command
-     * (re-scan extensions/skills/prompts without restarting the engine).
-     *
-     * The manual gate this replaced is `docs/known-gaps.md` B12 / E6 — a silent
-     * failure whose symptom was "some feature just does not work", which sends
-     * whoever debugs it to ports, tokens and networks instead of the installer.
-     */
-    const val ASSET_VERSION = "4"
 
     @Volatile
     private var server: DeviceBridgeHttpServer? = null
@@ -287,11 +260,9 @@ object DeviceBridgeController {
             filesDir = context.filesDir,
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
-        // App 的 SDK 引擎（host.bundle.mjs）已将这 3 份 Android 内置扩展预编译为官方
-        // `builtin:*` 工厂，零 jiti / 零 Babel 编译启动；这里把 .ts 副本放到
-        // `/opt/pi/android-extensions` 专供内置终端里手动运行 `pi` CLI 时加载，
-        // 同时清理旧版本留在 `agent/extensions` 里的这 3 份同名副本（绝不触碰用户扩展），
-        // 避免 sdk-host 重复扫描并触发 jiti/Babel 拖慢冷启动。
+        // App 的 SDK 引擎（host.bundle.mjs）已将唯一的 Android 扩展 `pi-android-bridge` 预编译为官方
+        // `builtin:pi-android-bridge` 工厂，零 jiti / 零 Babel 冷启动；不再往磁盘拷 .ts 副本，也不再改写
+        // 终端 `/opt/pi/bin/pi` 包装脚本。这里只做一次性的旧版升级清理（并按 APK stamp 缓存零 I/O 跳过）。
         val legacyRoots = linkedMapOf<String, File>().apply {
             val agentExt = File(paths.agentDir, "extensions")
             put(runCatching { agentExt.canonicalPath }.getOrDefault(agentExt.absolutePath), agentExt)
@@ -300,7 +271,7 @@ object DeviceBridgeController {
                 put(runCatching { rootfsExt.canonicalPath }.getOrDefault(rootfsExt.absolutePath), rootfsExt)
             }
         }.values.toList()
-        val cliExtRoot = if (paths.rootfs.isDirectory) {
+        val legacyCliExtRoot = if (paths.rootfs.isDirectory) {
             File(paths.rootfs, "opt/pi/android-extensions")
         } else {
             null
@@ -313,6 +284,7 @@ object DeviceBridgeController {
             ".pi-android-assets",
             ".pi-android-apk-stamp",
         )
+        val apkMarker = File(paths.agentDir, ".pi-android-apk-stamp")
         return try {
             val apkStamp = runCatching {
                 val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -323,15 +295,11 @@ object DeviceBridgeController {
                 !root.isDirectory || !File(root, "pi-android-bridge").exists() &&
                     !File(root, "pi-android-permission-gate.ts").exists() &&
                     !File(root, "pi-highlight").exists()
-            }
-            if (apkStamp != null && legacyClean && cliExtRoot != null) {
-                val apkMarker = File(cliExtRoot, ".pi-android-apk-stamp")
-                val contentMarker = File(cliExtRoot, ".pi-android-assets")
-                if (contentMarker.isFile && apkMarker.isFile &&
-                    runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
-                ) {
-                    return "已是最新（sdk-host 内置预编译 + 终端 CLI 扩展，APK 缓存命中）"
-                }
+            } && (legacyCliExtRoot == null || !legacyCliExtRoot.exists())
+            if (apkStamp != null && legacyClean && apkMarker.isFile &&
+                runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
+            ) {
+                return "已是最新（builtin:pi-android-bridge 预编译内置，APK 缓存命中）"
             }
             for (root in legacyRoots) {
                 if (!root.isDirectory) continue
@@ -340,45 +308,32 @@ object DeviceBridgeController {
                     if (f.exists()) f.deleteRecursively()
                 }
             }
-            if (cliExtRoot == null) {
-                return "已内嵌于 host.bundle.mjs（rootfs 未就绪）"
+            if (legacyCliExtRoot != null && legacyCliExtRoot.exists()) {
+                legacyCliExtRoot.deleteRecursively()
             }
-            val fingerprint = assetFingerprint(context)
-            val marker = fingerprint ?: "v$ASSET_VERSION"
-            cliExtRoot.mkdirs()
-            val stamp = File(cliExtRoot, ".pi-android-assets")
-            val apkMarker = File(cliExtRoot, ".pi-android-apk-stamp")
-            var copied = 0
-            var bytes = 0L
-            if (!stamp.isFile || stamp.readText().trim() != marker) {
-                bytes = copyAssetTree(context, ASSET_ROOT, cliExtRoot)
-                stamp.writeText(marker)
-                copied = 1
+            restoreVanillaCliPiIfPatched(paths)
+            if (apkStamp != null) {
+                runCatching {
+                    apkMarker.parentFile?.mkdirs()
+                    apkMarker.writeText(apkStamp)
+                }
             }
-            if (apkStamp != null) runCatching { apkMarker.writeText(apkStamp) }
-            syncCliPiWrapper(paths)
-            val how = if (fingerprint == null) {
-                "标记 $marker（资产内容读不出来，退回手工版本号）"
-            } else {
-                "标记 ${marker.take(15)}…（内容指纹）"
-            }
-            if (copied > 0) {
-                "已同步终端 CLI 扩展（$bytes 字节，$how）+ sdk-host 预编译内置"
-            } else {
-                "已是最新（$how）+ sdk-host 预编译内置"
-            }
+            "已清理旧版扩展副本（builtin:pi-android-bridge 预编译内置）"
         } catch (error: Exception) {
-            "失败: ${error::class.java.simpleName}: ${error.message}；包内实际内容：${describeAssets(context)}"
+            "清理旧版扩展失败: ${error::class.java.simpleName}: ${error.message}"
         }
     }
 
     /**
-     * 更新 `<rootfs>/opt/pi/bin/pi` 包装脚本：当用户在内置终端里直接运行 `pi` 交互模式时
-     * 自动附带 `/opt/pi/android-extensions` 里的设备桥与权限门扩展；对 `install`/`remove`/
-     * `update`/`list`/`config`/`--version`/`--help`/`--no-extensions` 原样透传，零副作用。
+     * 升级自旧版 APK 时，若 `<rootfs>/opt/pi/bin/pi` 曾被旧版写入过 `/opt/pi/android-extensions`
+     * 补丁，自动恢复为官方原版直跑 `cli.js` 的 2 行脚本，不保留任何终端私有补丁。
      */
-    private fun syncCliPiWrapper(paths: PiPaths) {
+    private fun restoreVanillaCliPiIfPatched(paths: PiPaths) {
         runCatching {
+            val wrapper = File(paths.rootfs, "opt/pi/bin/pi")
+            if (!wrapper.isFile) return
+            val existing = runCatching { wrapper.readText() }.getOrNull() ?: return
+            if (!existing.contains("opt/pi/android-extensions")) return
             val hostEngineRoot = File(paths.rootfs, "opt/pi/node_modules/@earendil-works/pi-coding-agent")
             if (!File(hostEngineRoot, "dist").isDirectory) return
             val guestEngineRoot = "/opt/pi/node_modules/@earendil-works/pi-coding-agent"
@@ -387,126 +342,13 @@ object DeviceBridgeController {
             } else {
                 "$guestEngineRoot/dist/cli.js"
             }
-            val bin = File(paths.rootfs, "opt/pi/bin").also { it.mkdirs() }
-            val wrapper = File(bin, "pi")
-            val content = buildCliPiWrapperScript(guestCli)
-            if (!wrapper.isFile || runCatching { wrapper.readText() }.getOrNull() != content) {
-                wrapper.writeText(content)
-                wrapper.setExecutable(true, false)
-            }
+            wrapper.writeText(buildVanillaCliPiScript(guestCli))
+            wrapper.setExecutable(true, false)
         }
     }
 
-    internal fun buildCliPiWrapperScript(guestCli: String): String = buildString {
-        append("#!/bin/bash\n")
-        append("ext_args=()\n")
-        append("want_android_ext=1\n")
-        append("case \"\${1:-}\" in\n")
-        append("  install|remove|update|list|config|--version|-v|--help|-h) want_android_ext=0 ;;\n")
-        append("esac\n")
-        append("for a in \"\$@\"; do\n")
-        append("  case \"\$a\" in\n")
-        append("    --no-extensions|--version|-v|--help|-h) want_android_ext=0; break ;;\n")
-        append("  esac\n")
-        append("done\n")
-        append("if [ \"\$want_android_ext\" = \"1\" ] && [ -d /opt/pi/android-extensions ]; then\n")
-        append("  [ -d /opt/pi/android-extensions/pi-android-bridge ] && ext_args+=(-e /opt/pi/android-extensions/pi-android-bridge)\n")
-        append("  [ -f /opt/pi/android-extensions/pi-android-permission-gate.ts ] && ext_args+=(-e /opt/pi/android-extensions/pi-android-permission-gate.ts)\n")
-        append("fi\n")
-        append("exec /opt/node/bin/node ").append(guestCli).append(" \"\${ext_args[@]}\" \"\$@\"\n")
-    }
-
-    /**
-     * Recursive copy of an asset subtree; `AssetManager.list` is the only API.
-     *
-     * One limitation cannot be worked around with this API: `list` returns an empty
-     * array for an empty *directory* exactly as it does for a *file*, so an empty
-     * directory inside `assets/pi-extensions/` would be opened as a file and throw.
-     * None exists today; the failure message names the asset path if one appears.
-     *
-     * @return the number of bytes copied, so `start`'s status line can be checked
-     *   against reality instead of trusted.
-     */
-    private fun copyAssetTree(context: Context, assetPath: String, target: File): Long {
-        val children = context.assets.list(assetPath).orEmpty()
-        if (children.isEmpty()) {
-            target.parentFile?.mkdirs()
-            return context.assets.open(assetPath).use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            }
-        }
-        target.mkdirs()
-        var total = 0L
-        for (child in children) {
-            total += copyAssetTree(context, "$assetPath/$child", File(target, child))
-        }
-        return total
-    }
-
-    /**
-     * A SHA-256 over the whole asset tree, as `sha256:<hex>`: every file's asset path
-     * and its bytes, in sorted path order.
-     *
-     * This is the fix for the manual `ASSET_VERSION` gate in `docs/known-gaps.md`
-     * B12 / E6. That gate failed silently in the worst way — a device that had run an
-     * older build kept the old extension tree forever, and the symptom was "some
-     * feature just does not work", which sends the reader to ports, tokens and
-     * networks instead of the installer.
-     *
-     * `null` means the asset tree could not be read at all (the same condition that
-     * makes `copyAssetTree` throw); the caller then falls back to the constant, so a
-     * broken package produces today's behaviour and never a permanently empty
-     * extension directory.
-     */
-    private fun assetFingerprint(context: Context): String? = runCatching {
-        val names = ArrayList<String>()
-        collectAssetFiles(context, ASSET_ROOT, names)
-        val digest = MessageDigest.getInstance("SHA-256")
-        for (name in names.sorted()) {
-            digest.update(name.toByteArray(Charsets.UTF_8))
-            digest.update(0.toByte())
-            digest.update(context.assets.open(name).use { it.readBytes() })
-            digest.update(0.toByte())
-        }
-        "sha256:" + digest.digest().joinToString("") { byte -> "%02x".format(byte) }
-    }.getOrNull()
-
-    /** Every file (leaf) under [assetPath], by asset path. */
-    private fun collectAssetFiles(context: Context, assetPath: String, into: MutableList<String>) {
-        val children = context.assets.list(assetPath).orEmpty()
-        if (children.isEmpty()) {
-            into.add(assetPath)
-            return
-        }
-        for (child in children) collectAssetFiles(context, "$assetPath/$child", into)
-    }
-
-    /** What the APK's asset tree really contains, for a failure message. */
-    private fun describeAssets(context: Context): String = runCatching {
-        val top = context.assets.list(ASSET_ROOT).orEmpty().toList()
-        if (top.isNotEmpty()) {
-            return@runCatching "assets/$ASSET_ROOT 下有 ${top.size} 项：${top.joinToString("、")}"
-        }
-        val root = context.assets.list("").orEmpty().toList()
-        "assets/$ASSET_ROOT 列不出来；assets 根目录下有 ${root.size} 项：" +
-            (if (root.isEmpty()) "（空）" else root.joinToString("、"))
-    }.getOrElse { "列目录本身失败：${it::class.java.simpleName}: ${it.message}" }
-
-    /**
-     * Where the shipped extensions land inside the guest.
-     *
-     * Derived from the asset tree rather than hardcoded, because the previous literal
-     * list named only `pi-android-bridge/index.ts` and
-     * `pi-android-permission-gate.ts`: it had been stale since `pi-highlight/` was
-     * added (the very thing `ASSET_VERSION` history "2" records). Nothing calls this
-     * yet — it is here because it is the only place that answers "where did the
-     * extension go?" in guest terms.
-     */
-    fun guestExtensionPaths(context: Context): List<String> =
-        runCatching { context.assets.list(ASSET_ROOT).orEmpty().toList() }
-            .getOrDefault(emptyList())
-            .map { name -> "$GUEST_EXTENSIONS_DIR/$name" }
-
-    /** The guest directory the engine binds to `paths.agentDir/extensions`. */
-    private const val GUEST_EXTENSIONS_DIR = "/root/.pi/agent/extensions"
+    internal fun buildVanillaCliPiScript(guestCli: String): String =
+        "#!/bin/bash
+exec /opt/node/bin/node $guestCli "\$@"
+"
 }

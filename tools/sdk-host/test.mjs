@@ -1176,10 +1176,10 @@ try {
       const bLoaded = await b.call("resources.loaded", {}, 15000);
       const loadedPaths = (bLoaded.data?.extensions ?? []).map((e) => e.path);
       expect(
-        "bundle 3 份 Android 扩展以官方 builtin:* 注册且可见",
+        "bundle 仅以官方 builtin:pi-android-bridge 注册设备桥（不再带 permission-gate / highlight）",
         loadedPaths.includes("builtin:pi-android-bridge") &&
-          loadedPaths.includes("builtin:pi-android-permission-gate") &&
-          loadedPaths.includes("builtin:pi-highlight"),
+          !loadedPaths.includes("builtin:pi-android-permission-gate") &&
+          !loadedPaths.includes("builtin:pi-highlight"),
         JSON.stringify(loadedPaths),
       );
       const bCmds = await b.call("catalog.commands", {}, 15000);
@@ -1195,10 +1195,10 @@ try {
         .flatMap((s) => s.items ?? [])
         .map((i) => i.path);
       expect(
-        "bundle resources.list 暴露 builtin:pi-android-bridge / permission-gate / highlight 支持开关",
+        "bundle resources.list 暴露 builtin:pi-android-bridge 支持开关（无已移除扩展）",
         listPaths.includes("builtin:pi-android-bridge") &&
-          listPaths.includes("builtin:pi-android-permission-gate") &&
-          listPaths.includes("builtin:pi-highlight"),
+          !listPaths.includes("builtin:pi-android-permission-gate") &&
+          !listPaths.includes("builtin:pi-highlight"),
         JSON.stringify(listPaths.filter((p) => p.includes("android") || p.includes("highlight"))),
       );
       const auditLines = readFileSync(bundleAuditFile, "utf8").split("\n").filter(Boolean);

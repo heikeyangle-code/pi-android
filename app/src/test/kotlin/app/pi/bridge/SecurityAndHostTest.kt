@@ -208,11 +208,10 @@ class SecurityAndHostTest {
     }
 
     @Test
-    fun `CLI pi wrapper preserves Android extensions for interactive use and skips subcommands`() {
-        val script = DeviceBridgeController.buildCliPiWrapperScript("/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js")
-        assertTrue(script.startsWith("#!/bin/bash\n"))
-        assertTrue(script.contains("/opt/pi/android-extensions/pi-android-bridge"))
-        assertTrue(script.contains("install|remove|update|list|config|--version|-v|--help|-h"))
-        assertTrue(script.contains("--no-extensions"))
+    fun `vanilla CLI pi script runs official cli without injected extension patches`() {
+        val cli = "/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+        val script = DeviceBridgeController.buildVanillaCliPiScript(cli)
+        assertEquals("#!/bin/bash\nexec /opt/node/bin/node $cli \"\$@\"\n", script)
+        assertFalse(script.contains("android-extensions"))
     }
 }
