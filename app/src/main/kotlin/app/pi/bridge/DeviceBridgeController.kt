@@ -348,7 +348,5 @@ object DeviceBridgeController {
     }
 
     internal fun buildVanillaCliPiScript(guestCli: String): String =
-        "#!/bin/bash
-exec /opt/node/bin/node $guestCli "\$@"
-"
+        "#!/bin/bash\nexec /opt/node/bin/node $guestCli \"\$@\"\n"
 }
