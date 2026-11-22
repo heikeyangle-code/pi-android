@@ -367,6 +367,30 @@ object ProrootCommand {
     }
 
     /**
+     * Direct exec variant without `/bin/bash -c`: hands [guestArgv] directly to proroot
+     * after `-w`, avoiding an unnecessary shell process before spawning Node.
+     */
+    fun buildDirect(
+        paths: PiPaths,
+        guestArgv: List<String>,
+        cwd: String,
+        storage: File?,
+        extraBinds: List<Pair<String, String>> = emptyList(),
+    ): List<String> {
+        val binds = boundPairs(paths, storage, extraBinds)
+        ensureWorkdir(paths.rootfs, cwd, binds)
+        val argv = mutableListOf<String>()
+        argv += paths.prorootLauncher().absolutePath
+        argv += "--link2symlink"
+        argv += "-0"
+        argv += listOf("-r", paths.rootfs.path)
+        argv += listOf("-w", cwd)
+        binds.forEach { (host, guest) -> argv += listOf("-b", "$host$BIND_SEPARATOR$guest") }
+        argv += guestArgv
+        return argv
+    }
+
+    /**
      * The launcher process's environment: **exactly** the four `PROROOT_*` variables DSH
      * App exports, and no others (class KDoc is the measurement).
      *

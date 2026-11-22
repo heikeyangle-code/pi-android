@@ -2022,7 +2022,7 @@ class RuntimeProvisioner(
             val bin = File(paths.rootfs, "opt/pi/bin").also { it.mkdirs() }
             val wrapper = File(bin, "pi")
             wrapper.writeText(
-                "#!/bin/bash\nexec /opt/node/bin/node $guestCli \"\$@\"\n",
+                app.pi.bridge.DeviceBridgeController.buildCliPiWrapperScript(guestCli),
             )
             wrapper.setExecutable(true, false)
             guestSymlink("/usr/local/bin/pi", "/opt/pi/bin/pi")

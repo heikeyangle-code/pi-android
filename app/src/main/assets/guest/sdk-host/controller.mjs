@@ -323,7 +323,10 @@ export class Controller {
           // CLI 的内置扩展（pi 的 `extensions/index.js` 里 builtInExtensions）：SDK 会话**默认不带**，
           // 要自己装。同样 `builtin: true` + `replaceable: true`，于是 `pi config` / settings 里的
           // `-builtin:mcp` 这类开关继续有效，第三方 MCP 扩展也能照旧「接管」内置的。
-          extensionFactories: builtinExtensions(sdk, args.builtins),
+          extensionFactories: [
+            ...builtinExtensions(sdk, args.builtins),
+            ...this.#androidExtensionFactories(),
+          ],
           noExtensions: resources.noExtensions,
           noSkills: resources.noSkills,
           noPromptTemplates: resources.noPromptTemplates,
@@ -425,6 +428,28 @@ export class Controller {
    * 官方在 3 与 4 之间还会让扩展的 `project_trust` 事件表态；宿主在会话建好之前没有扩展可问，所以没有这一步。
    * `source` 说明结论从哪来，界面据此写「为什么」。
    */
+  /**
+   * 预编译的 Android 内置扩展（pi-android-bridge / pi-android-permission-gate / pi-highlight）。
+   * 以官方 SDK `builtin: true` + `replaceable: true` 注册进 DefaultResourceLoader，
+   * 与 codemode / tool-search / mcp 同等地位：
+   *  - 零 jiti / 零 Babel 编译开销（直接运行预编译 V8 原生工厂）
+   *  - 在「设置 → 资源 → 扩展」以 `builtin:*` 可见且支持逐项开关（`-builtin:*`）
+   *  - 完整尊重 `--no-extensions`、项目信任与第三方同名扩展替换
+   */
+  #androidExtensionFactories() {
+    if (!this.cfg.androidExtensions) return [];
+    const bundled = globalThis.__piAndroidBundledExtensions;
+    if (!bundled || typeof bundled !== "object") return [];
+    const entries = [
+      ["pi-android-bridge", bundled.androidBridge],
+      ["pi-android-permission-gate", bundled.permissionGate],
+      ["pi-highlight", bundled.highlight],
+    ];
+    return entries
+      .filter(([, fn]) => typeof fn === "function")
+      .map(([name, factory]) => ({ name, factory, replaceable: true, builtin: true }));
+  }
+
   #projectTrusted(cwd) {
     const sdk = this.sdk;
     if (this.trustOverride !== undefined && this.trustOverrideCwd === cwd) {

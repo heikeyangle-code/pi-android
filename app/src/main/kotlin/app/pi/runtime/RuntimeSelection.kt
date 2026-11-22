@@ -191,6 +191,57 @@ class RuntimeSelection(
          * sites pass it explicitly so the boundary is visible where it is drawn.
          */
         allowProroot: Boolean = true,
+    ): Plan = planInternal(
+        cwd = cwd,
+        storage = storage,
+        extraBinds = extraBinds,
+        extraEnv = extraEnv,
+        allowProroot = allowProroot,
+        argvBuilder = { engine ->
+            GuestCommandLine.build(
+                paths = paths,
+                engine = engine,
+                guestCommand = guestCommand,
+                cwd = cwd,
+                storage = storage,
+                extraBinds = extraBinds,
+            )
+        },
+    )
+
+    /** Direct exec plan without `/bin/bash -c` (used by sdk-host cold launch). */
+    fun planDirect(
+        guestArgv: List<String>,
+        cwd: String,
+        storage: File?,
+        extraBinds: List<Pair<String, String>> = emptyList(),
+        extraEnv: Map<String, String> = emptyMap(),
+        allowProroot: Boolean = true,
+    ): Plan = planInternal(
+        cwd = cwd,
+        storage = storage,
+        extraBinds = extraBinds,
+        extraEnv = extraEnv,
+        allowProroot = allowProroot,
+        argvBuilder = { engine ->
+            GuestCommandLine.buildDirect(
+                paths = paths,
+                engine = engine,
+                guestArgv = guestArgv,
+                cwd = cwd,
+                storage = storage,
+                extraBinds = extraBinds,
+            )
+        },
+    )
+
+    private fun planInternal(
+        cwd: String,
+        storage: File?,
+        extraBinds: List<Pair<String, String>>,
+        extraEnv: Map<String, String>,
+        allowProroot: Boolean,
+        argvBuilder: (GuestEngine) -> List<String>,
     ): Plan {
         val selected = if (allowProroot) selectedEngine else GuestEngine.Proot
         val enabled = selected != GuestEngine.Proot
@@ -247,14 +298,7 @@ class RuntimeSelection(
         return Plan(
             engine = decision.engine,
             fallback = decision.fallback,
-            argv = GuestCommandLine.build(
-                paths = paths,
-                engine = decision.engine,
-                guestCommand = guestCommand,
-                cwd = cwd,
-                storage = storage,
-                extraBinds = extraBinds,
-            ),
+            argv = argvBuilder(decision.engine),
             environment = environment,
             notes = notesFor(decision, selected, missing, probe, failures),
             probe = probe,

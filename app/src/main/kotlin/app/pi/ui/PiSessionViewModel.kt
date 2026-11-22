@@ -1507,8 +1507,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *        the only path in the app that may delete the tree; a payload change never
      *        reaches it.
      */
+    private var bootInFlight: Boolean = false
+
     fun boot(rebuild: Boolean = false, forceRepair: Boolean = false) {
-        if (_state.value.boot is Boot.Working) return
+        if (bootInFlight || _state.value.boot is Boot.Working) return
+        if (!rebuild && !forceRepair) {
+            val live = session
+            if (live != null &&
+                live.state.value != PiEngineSession.EngineState.Stopped &&
+                live.state.value != PiEngineSession.EngineState.Failed
+            ) {
+                return
+            }
+        }
+        bootInFlight = true
         // 「重试」不是"再跑一遍同样的东西"：运行环境那类失败第一次重试要走不删数据的修复
         // （重新解包），否则戳记相符的快路径会让它永远返回成功、引擎永远起不来。
         val retryMode = if (rebuild) {
@@ -1520,6 +1532,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val repair = forceRepair || retryMode == RetryMode.Repair
         if (repair) provisioningRepairAttempted = true
         viewModelScope.launch {
+            try {
             // Read the preferences first: `app.runtime.keepAlive` decides whether
             // the foreground service is started at all, so it cannot be read
             // after the service would have been. This is the switch's consumer —
@@ -1579,6 +1592,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     reportWakeLockNeed()
                 }
                 else -> Unit
+            }
+            } finally {
+                bootInFlight = false
             }
         }
     }
@@ -2078,7 +2094,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // **必须 await**：`refreshState` 只是排了一次协程，紧接着的 `replayHistory`
             // 会用**旧 meta** 去挑会话文件 —— 切工作区后重新画出老对话、要发一句消息才切换，
             // 就是这一格。`refreshStateNow` 的 KDoc 是权威版本。
-            api?.let { refreshStateNow(it) }
+            val initialHostState = engine.commands.stateStore.state.value
+            val initialSessionState = initialHostState?.toSessionState()
+            if (initialHostState != null && initialSessionState != null) {
+                applySessionState(initialSessionState, initialHostState.availableThinkingLevels)
+                if (initialHostState.availableThinkingLevels == null) {
+                    refreshThinkingLevels()
+                }
+            } else {
+                api?.let { refreshStateNow(it) }
+            }
             // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是
             // **这一次 replay 的**，所以只有它还握着这行时才允许清掉。
             val replayToken = claimBusy(tr("正在加载会话", "Loading session"))
@@ -3157,8 +3182,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { loadState(api) }
     }
 
-    private suspend fun loadState(api: HostEngineApi) {
-        val remote = api.getState()
+    private fun applySessionState(remote: PiResponses.SessionState, levels: List<String>? = null) {
         _state.update { s ->
             val current = s.meta
             val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
@@ -3166,6 +3190,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 meta = current.copy(
                     model = remote.model,
                     thinkingLevel = level,
+                    thinkingLevels = levels ?: current.thinkingLevels,
                     steeringMode = queueModeOf(remote.steeringMode) ?: current.steeringMode,
                     followUpMode = queueModeOf(remote.followUpMode) ?: current.followUpMode,
                     autoCompaction = remote.autoCompactionEnabled,
@@ -3175,14 +3200,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     messageCount = remote.messageCount,
                     // `get_state` is the reconciliation for the event-tracked flag:
                     // if `compaction_end` was dropped, the next attach/settle puts
-                    // this back to pi's own answer. `isCompacting` was parsed all
-                    // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
-                    // teardown ever read it.
+                    // this back to pi's own answer.
                     compacting = remote.isCompacting,
                 ),
             )
         }
-        refreshThinkingLevels()
+    }
+
+    private suspend fun loadState(api: HostEngineApi) {
+        val remote = api.getState()
+        val cachedLevels = session?.commands?.stateStore?.state?.value?.availableThinkingLevels
+        applySessionState(remote, cachedLevels)
+        if (cachedLevels == null) {
+            refreshThinkingLevels()
+        }
     }
 
     /**
@@ -4843,23 +4874,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     }
 }
-
-/**
- * The extension command that reaches pi's in-session tree navigation.
- *
- * `pi-android-bridge` registers it; see [PiSessionViewModel.navigateTo] for why a command
- * is the only way in. Not a user-facing name: it never appears in the composer, because it
- * is dispatched straight to the session rather than through the prompt path that echoes.
- */
-
-/**
- * What the status line says while a navigation is in flight.
- *
- * It can legitimately last minutes: the leaf move is instant, but a requested branch
- * summary is a full model call (`core/agent-session.ts:3229-3240`). Saying what is being
- * waited on — rather than the generic 读取 — is the difference between "stuck" and
- * "summarizing".
- */
 
 /**
  * [UiState.nowMs] 的节拍：一秒。它不是随手取的数——pi 给同一个读数用的就是这个周期

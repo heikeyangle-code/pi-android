@@ -32,6 +32,8 @@ export function snapshotOf(controller, { messages = false } = {}) {
     sessionName: s.sessionName ?? null,
     model: s.model ? { provider: s.model.provider, id: s.model.id, name: s.model.name ?? null, reasoning: s.model.reasoning ?? null } : null,
     thinkingLevel: s.thinkingLevel,
+    availableThinkingLevels: typeof s.getAvailableThinkingLevels === "function" ? s.getAvailableThinkingLevels() : [],
+    supportsThinking: typeof s.supportsThinking === "function" ? s.supportsThinking() : false,
     // 虚拟模型下，最近一次成功响应实际落到的物理模型（没有虚拟选择时为 null）。
     routedModel: s.routedModel ? { provider: s.routedModel.model.provider, id: s.routedModel.model.id, thinkingLevel: s.routedModel.thinkingLevel ?? null } : null,
     scopedModelCount: s.scopedModels.length,

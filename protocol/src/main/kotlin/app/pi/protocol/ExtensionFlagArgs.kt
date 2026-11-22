@@ -126,9 +126,9 @@ data class ExtensionFlagArgs(
                         Refusal.EndOfOptions,
                         ProtocolLocale.tr(
                             "「--」是命令行里「后面都当作输入文件/消息」的分隔符，不是扩展参数；" +
-                                "在 RPC 模式下它后面的内容会被 pi 当成启动消息，所以这里不接受它。",
+                                "这里只接受扩展开关参数，它后面的位置参数不会被当成启动消息，所以这里不接受它。",
                             "\"--\" separates CLI flags from positional inputs/messages and is not an extension flag; " +
-                                "in RPC mode anything after it would be treated as a startup prompt.",
+                                "only extension flags are accepted here, not positional startup prompts.",
                         ),
                     )
 
@@ -173,9 +173,8 @@ data class ExtensionFlagArgs(
                     token.startsWith("@") -> return refused(
                         Refusal.AtFileArgument,
                         ProtocolLocale.tr(
-                            "「$token」是 pi 的输入文件写法（@ 开头）。RPC 模式不支持输入文件" +
-                                "（pi 会报 “@file arguments are not supported in RPC mode” 并退出）。",
-                            "\"$token\" uses pi's @file syntax, which is not supported in RPC mode.",
+                            "「$token」是 pi CLI 的输入文件写法（@ 开头），扩展启动参数里不支持 @file 写法。",
+                            "\"$token\" uses pi CLI's @file syntax, which is not supported in extension startup flags.",
                         ),
                     )
 

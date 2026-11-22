@@ -82,6 +82,41 @@ export function candidatePaths(): string[] {
 interface TokenFileShape {
 	port?: number;
 	token?: string;
+	/** Initial snapshot of usable capability ids published by DeviceBridgeController.start(). */
+	usableCapabilities?: unknown;
+}
+
+/**
+ * Fast-path cold-start reader for initial usable capability ids embedded in device-bridge.json.
+ * Returns:
+ *  - ReadonlySet<string> when the token file carries an explicit usableCapabilities array (0 ms, no HTTP);
+ *  - null when no token file exists at all (bridge not running);
+ *  - undefined when a token file exists without the snapshot field (caller should fall back to /app/health).
+ */
+export async function loadInitialUsableCapabilities(): Promise<ReadonlySet<string> | null | undefined> {
+	for (const candidate of candidatePaths()) {
+		let raw: string;
+		try {
+			raw = await readFile(candidate, "utf8");
+		} catch {
+			continue;
+		}
+		let parsed: TokenFileShape;
+		try {
+			parsed = JSON.parse(raw) as TokenFileShape;
+		} catch {
+			continue;
+		}
+		if (typeof parsed.token !== "string" || parsed.token.length === 0) continue;
+		const port = typeof parsed.port === "number" && parsed.port > 0 ? parsed.port : DEFAULT_PORT;
+		cached = { port, token: parsed.token, source: candidate };
+		cachedFailures = [];
+		if (Array.isArray(parsed.usableCapabilities)) {
+			return new Set(parsed.usableCapabilities.filter((id): id is string => typeof id === "string"));
+		}
+		return undefined;
+	}
+	return null;
 }
 
 /** Read (and cache) the published credentials. */

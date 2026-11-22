@@ -649,6 +649,30 @@ object ProotCommand {
     }
 
     /**
+     * Direct exec variant without `/bin/bash -c`: hands [guestArgv] directly to proot
+     * after `--cwd`, eliminating an extra bash dynamic-link & exec cycle under ptrace.
+     */
+    fun buildDirect(
+        paths: PiPaths,
+        guestArgv: List<String>,
+        cwd: String,
+        storage: File?,
+        extraBinds: List<Pair<String, String>> = emptyList(),
+    ): List<String> {
+        val argv = mutableListOf<String>()
+        argv += paths.prootBinary().absolutePath
+        argv += "--link2symlink"
+        argv += listOf("-b", "${paths.l2s.path}:${paths.l2s.path}")
+        argv += listOf("-L", "--kill-on-exit", "-0")
+        argv += "--rootfs=${paths.rootfs.path}"
+        argv += "--cwd=$cwd"
+        GuestRecipe.binds(paths, storage).forEach { argv += it }
+        extraBinds.forEach { (host, guest) -> argv += listOf("-b", GuestRecipe.bindValue("$host:$guest")) }
+        argv += guestArgv
+        return argv
+    }
+
+    /**
      * The guest process's environment. This is the **only** place a proot guest env
      * is built: every launch path goes through it, which is what keeps the engine,
      * the terminal, the package commands and the self-check from handing the

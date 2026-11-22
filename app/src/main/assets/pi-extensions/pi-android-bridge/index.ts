@@ -41,7 +41,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Type, type Static, type TSchema, type TUnsafe } from "typebox";
-import { BridgeError, bridgeGet, bridgeHealth, bridgePost, type HealthPayload } from "./client";
+import { BridgeError, bridgeGet, bridgeHealth, bridgePost, loadInitialUsableCapabilities, type HealthPayload } from "./client";
 
 /**
  * `StringEnum`, transcribed from pi-ai (`packages/ai/src/utils/typebox-helpers.ts:14-26`)
@@ -1784,7 +1784,12 @@ function syncActiveDeviceTools(pi: ExtensionAPI, usable: ReadonlySet<string> | n
 }
 
 export default async function (pi: ExtensionAPI) {
-	const initialUsable = await usableCapabilities();
+	// Fast cold-start path: read the usableCapabilities snapshot just written to
+	// device-bridge.json by DeviceBridgeController.start() (0 ms, no loopback HTTP /
+	// undici warm-up on boot). Falls back to /app/health only if the field is absent.
+	const snapshotUsable = await loadInitialUsableCapabilities();
+	const initialUsable = snapshotUsable === undefined ? await usableCapabilities() : snapshotUsable;
+	const initialUsableAt = Date.now();
 	usableGroups = initialUsable ?? new Set<string>();
 
 	if (initialUsable === null || initialUsable.size === 0) {
@@ -1813,162 +1818,6 @@ export default async function (pi: ExtensionAPI) {
 		});
 	}
 
-	// Reload without restarting the engine.
-	//
-	// pi watches no files (its only `fs.watch` is the git-branch footer), so a newly
-	// installed extension / skill / prompt template is invisible until something
-	// re-scans. `ctx.reload()` is the official hook for that: `core/extensions/types.ts`
-	// declares it on the command context, and `rpc-mode.ts` wires it to
-	// `session.reload()`. Exposing it as a slash command is what lets the app do
-	// `prompt("/device-reload")` after an install instead of killing and restarting
-	// the whole engine process.
-	//
-	// The notify happens *before* the await on purpose: reload invalidates this runner
-	// and the context that came with it (`agent-session.ts:889` — "This extension ctx
-	// is stale after ... ctx.reload()"), so there is no fresh ctx to speak through
-	// afterwards. A caller who needs proof that the scan finished can wait for the
-	// `session_start` event with `reason: "reload"`, which pi emits at the end.
-	pi.registerCommand("device-reload", {
-		description: "Re-scan extensions, skills and prompts (no engine restart)",
-		handler: async (_args, ctx) => {
-			ctx.ui.notify("正在重新扫描扩展、技能与提示模板…", "info");
-			await ctx.reload();
-		},
-	});
-
-	// pi's in-session tree navigation, as a command the app can dispatch.
-	//
-	// ## Why a command is the only way in
-	//
-	// `navigateTree` moves the leaf **inside the current session file** — unlike `fork`,
-	// which writes a new one (`core/agent-session.ts:3126-3127`). The RPC protocol has no
-	// command for it (`modes/rpc/rpc-types.ts:20-74`: the whole tree surface is `get_tree`,
-	// `get_entries`, `fork`, `clone`, `switch_session`, `new_session`), but `rpc-mode.ts`
-	// **does** wire it for extensions (`commandContextActions.navigateTree`, `:329-335`),
-	// and `ctx.navigateTree` is declared on the command context
-	// (`core/extensions/types.ts:375-379`).
-	//
-	// The app dispatches it as a `prompt` whose text starts with `/`
-	// (`agent-session.ts:1183-1184` → `_tryExecuteExtensionCommand`), the same shape
-	// `device-reload` above uses. Two properties of that path matter to the caller and are
-	// relied on by `PiSessionViewModel.navigateTo`:
-	//
-	//  - the handler is **awaited before the RPC response is emitted**
-	//    (`agent-session.ts:1184-1188` calls `preflightResult(true)` after the await, and
-	//    `rpc-mode.ts:401-406` outputs the success response from there), so a caller that
-	//    awaits the response knows the navigation is over. There is no event otherwise: pi
-	//    emits the *extension* event `session_tree` (`:3315-3321`) and RPC forwards
-	//    `AgentSessionEvent` only (`rpc-mode.ts:356`);
-	//  - an **unregistered** command name is not an error — `_tryExecuteExtensionCommand`
-	//    returns false (`:1338`) and the text goes to the model as an ordinary user turn
-	//    (`:1198-1218`). The app therefore checks `get_commands` before dispatching.
-	//
-	// ## The argument text
-	//
-	// pi splits the command line on the **first space only** (`:1333-1335`), so everything
-	// after the command name arrives verbatim — including spaces, quotes and newlines. The
-	// app sends one JSON object for that reason (`ui/chat/PiTreeNavigation.kt`
-	// `navigateCommandArgs`), and `JSON.parse` is the whole parser here:
-	// `customInstructions` is text a user typed, so a positional grammar would be ambiguous
-	// the first time it contained a space.
-	//
-	// ## What it does not decide
-	//
-	// Nothing about the *question* ("Summarize branch?") — that is the caller's, and the app
-	// asks it with pi's own three answers, honouring `branchSummary.skipPrompt`
-	// (`interactive-mode.ts:5236-5263`). This handler maps exactly the four options
-	// `navigateTree` takes, reports pi's outcome, and hands back the text pi says belongs in
-	// the editor. The app applies the "only into an empty editor" half of that rule
-	// (`:5313`), because `ctx.ui.getEditorText()` is hardwired to `""` in RPC mode
-	// (`rpc-mode.ts:248-252`) and this handler cannot read the editor at all.
-	pi.registerCommand("pi-android-navigate", {
-		description: "Move the session leaf to a previous point, optionally summarizing the abandoned branch",
-		handler: async (args, ctx) => {
-			const raw = args.trim();
-			if (raw.length === 0) {
-				ctx.ui.notify("pi-android-navigate 需要一段 JSON 参数，但它拿到的是空字符串。", "error");
-				return;
-			}
-
-			let parsed: {
-				targetId?: unknown;
-				summarize?: unknown;
-				customInstructions?: unknown;
-				replaceInstructions?: unknown;
-				label?: unknown;
-			};
-			try {
-				parsed = JSON.parse(raw);
-			} catch (error) {
-				ctx.ui.notify(
-					`pi-android-navigate 的参数不是合法 JSON（${error instanceof Error ? error.message : String(error)}），所以没有跳转。`,
-					"error",
-				);
-				return;
-			}
-
-			const targetId = typeof parsed.targetId === "string" ? parsed.targetId : "";
-			if (targetId.length === 0) {
-				ctx.ui.notify("pi-android-navigate 的参数里没有 targetId，所以没有跳转。", "error");
-				return;
-			}
-			const summarize = parsed.summarize === true;
-			const customInstructions =
-				typeof parsed.customInstructions === "string" ? parsed.customInstructions : undefined;
-			const replaceInstructions =
-				typeof parsed.replaceInstructions === "boolean" ? parsed.replaceInstructions : undefined;
-			const label = typeof parsed.label === "string" ? parsed.label : undefined;
-
-			try {
-				const result = await ctx.navigateTree(targetId, {
-					summarize,
-					customInstructions,
-					replaceInstructions,
-					label,
-				});
-
-				// **Only `cancelled` is readable here**, and that is worth stating precisely
-				// because it is narrower than the feature:
-				//
-				//   - `AgentSession.navigateTree` returns
-				//     `{ editorText?, cancelled, aborted?, summaryEntry? }`
-				//     (`core/agent-session.ts:3139`) and pi's own TUI reads all of it
-				//     (`interactive-mode.ts:5299-5315`, including the "only into an empty
-				//     editor" test at `:5313`);
-				//   - but the extension-facing wiring in RPC mode returns exactly
-				//     `{ cancelled: result.cancelled }` and drops the rest
-				//     (`modes/rpc/rpc-mode.ts:329-335`) — which is also all its declared type
-				//     promises (`core/extensions/types.ts:375-379`).
-				//
-				// So out here an **aborted** summarization is indistinguishable from a
-				// completed navigation, and the target message's text cannot be handed back
-				// for editing. Both are pi's own omissions in RPC mode, not decisions of this
-				// extension, and the app says so where it matters rather than inventing a
-				// substitute.
-				if (result.cancelled) {
-					ctx.ui.notify(
-						"这次跳转被一个扩展取消了（session_before_tree 返回 cancel），会话位置没有改变。",
-						"warning",
-					);
-					return;
-				}
-				ctx.ui.notify("已跳到所选位置。", "info");
-			} catch (error) {
-				// `navigateTree` throws for the states it refuses rather than reporting them:
-				// a turn still streaming (`:3140-3142`), a compaction in progress
-				// (`:3143-3147`), a summary with no model (`:3157-3159`), an unknown entry id
-				// (`:3162-3164`). Each message is pi's own sentence, quoted, because the app
-				// cannot translate a fact it does not own. Catching here also keeps the
-				// refusal off the `extension_error` channel, which the app shows as "an
-				// extension crashed".
-				ctx.ui.notify(
-					`跳转没有完成，pi 说：${error instanceof Error ? error.message : String(error)}`,
-					"error",
-				);
-			}
-		},
-	});
-
 	// 每轮发送前实时探测 `/app/health` 并热同步活跃设备工具：
 	// 关闭全部设备能力时，所有 `android_*` 工具（含 `android_status`）立刻移出活跃工具表，
 	// 不注入任何系统提示词并清理技能目录 —— 严格 0 Token 上下文占用，且无需重启引擎。
@@ -1990,7 +1839,7 @@ export default async function (pi: ExtensionAPI) {
 // 写失败静默：技能没写出来只会让模型少一份参考，不该让扩展加载不了。
 pi.on("resources_discover", async () => {
 	try {
-		const usable = await usableCapabilities();
+		const usable = Date.now() - initialUsableAt < 3_000 ? initialUsable : await usableCapabilities();
 		if (usable === null || usable.size === 0) return {};
 		const { mkdir, rm, writeFile } = await import("node:fs/promises");
 		const { dirname, join } = await import("node:path");
@@ -2025,6 +1874,7 @@ pi.on("resources_discover", async () => {
 	// TUI mode keeps the probe, because in a terminal there is no page to look at
 	// instead — it paints the same information as a footer status.
 	pi.on("session_start", async (_event, ctx) => {
+		if (process.env.PI_SDK_HOST === "1") return;
 		if (!ctx.hasUI || ctx.mode !== "tui") return;
 		void bridgeHealth()
 			.then((health) => {

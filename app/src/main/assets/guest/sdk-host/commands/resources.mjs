@@ -21,12 +21,25 @@ async function importDist(controller, rel) {
   return import(pathToFileURL(join(controller.cfg.piDir, "dist", rel)).href);
 }
 
+function androidBuiltinNames(controller) {
+  if (!controller?.cfg?.androidExtensions) return [];
+  const bundled = globalThis.__piAndroidBundledExtensions;
+  if (!bundled || typeof bundled !== "object") return [];
+  const names = [];
+  if (typeof bundled.androidBridge === "function") names.push("pi-android-bridge");
+  if (typeof bundled.permissionGate === "function") names.push("pi-android-permission-gate");
+  if (typeof bundled.highlight === "function") names.push("pi-highlight");
+  return names;
+}
+
 async function builtinNames(controller) {
+  const extra = androidBuiltinNames(controller);
   try {
     const { builtInExtensions } = await importDist(controller, "extensions/index.js");
-    return builtInExtensions.filter((e) => e.builtin === true).map((e) => e.name);
+    const core = builtInExtensions.filter((e) => e.builtin === true).map((e) => e.name);
+    return [...new Set([...core, ...extra])];
   } catch {
-    return FALLBACK_BUILTINS; // 取不到就用 1.5.0 的名单；取到的始终以引擎为准
+    return [...new Set([...FALLBACK_BUILTINS, ...extra])]; // 取不到就用兜底名单；取到的始终以引擎为准
   }
 }
 

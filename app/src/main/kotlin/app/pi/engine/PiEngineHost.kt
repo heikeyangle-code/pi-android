@@ -21,6 +21,8 @@ import app.pi.protocol.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -510,24 +512,28 @@ class PiEngineHost(private val appContext: Context) {
             //    is re-published on every boot, which is the documented recovery path
             //    after a rootfs re-extract. Idempotent and non-fatal by design — a
             //    device-bridge failure must not cost the user their agent.
-            runCatching { DeviceBridgeController.start(appContext) }
-                .onFailure { lastBridgeError = it.message }
-
-            // 3b. The `scandir(3)` fallback module, which is what makes proroot usable at
-            //     all (see `PiPaths.scandirFix()`): proroot's `scandir` returns ENOENT for
-            //     the paths it rewrites, and Node's `fs.readdir*` goes through `scandir`, so
-            //     every directory listing inside pi — `ls`, extensions, skills, themes,
-            //     prompts, sessions — fails on a bound path while `bash`'s `ls` keeps
-            //     working. `ProrootCommand` injects it through `NODE_OPTIONS` **only when
-            //     this file is present**, so the write has to happen before the spawn and
-            //     its failure must be visible rather than silent: a missing module is not a
-            //     degraded proroot, it is the same broken proroot as before.
-            lastScandirFix = installScandirFix(revision)
-
-            // 3c. sdk-host（docs/sdk-host/）：新协议的宿主。与 APK 版本 + 运行时 revision 对账，
-            //     版本未变且入口存在时跳过全目录 60+ 次 AssetManager / 磁盘比对。
-            lastSdkHostInstall = installSdkHost(revision)
-            if (lastSdkHostInstall != null && !File(paths.rootfs, "${SdkHostLaunch.GUEST_DIR.removePrefix("/")}/main.mjs").isFile) {
+            val preSpawnExternalEntries = coroutineScope {
+                val bridgeJob = async(Dispatchers.IO) {
+                    runCatching { DeviceBridgeController.start(appContext) }
+                        .onFailure { lastBridgeError = it.message }
+                }
+                val scandirJob = async(Dispatchers.IO) { installScandirFix(revision) }
+                val sdkHostJob = async(Dispatchers.IO) { installSdkHost(revision) }
+                val workspacesJob = async(Dispatchers.IO) {
+                    runCatching { WorkspaceStore.list(appContext) }.getOrDefault(emptyList())
+                }
+                bridgeJob.await()
+                lastScandirFix = scandirJob.await()
+                lastSdkHostInstall = sdkHostJob.await()
+                workspacesJob.await()
+            }
+            val sdkHostDir = File(paths.rootfs, SdkHostLaunch.GUEST_DIR.removePrefix("/"))
+            val sdkHostEntryFile = when {
+                File(sdkHostDir, SdkHostLaunch.BUNDLE_FILE).isFile -> SdkHostLaunch.GUEST_ENTRY
+                File(sdkHostDir, "main.mjs").isFile -> "${SdkHostLaunch.GUEST_DIR}/main.mjs"
+                else -> null
+            }
+            if (lastSdkHostInstall != null && sdkHostEntryFile == null) {
                 return@withContext Boot.Failed("sdk-host 安装失败", lastSdkHostInstall)
             }
 
@@ -570,11 +576,13 @@ class PiEngineHost(private val appContext: Context) {
             // 以结构化参数交给 `session.open`（见下面的 `startHost`、`PiLaunchOptions.toOpenArgs`）。
             // `entry`（打包版/解包版）只用来确认引擎已安装：宿主自己的 `loadSdk` 优先用 bundle、
             // 缺了回退 dist（`sdkVia`），不需要 App 再替它挑。
-            val guestCommand = SdkHostLaunch.command(
+            val guestArgv = SdkHostLaunch.argv(
                 cwd = guestWorkspace,
                 agentDir = guestAgentDir,
                 sessionDir = "$guestAgentDir/sessions",
                 piDir = engineRoot,
+                entry = sdkHostEntryFile ?: SdkHostLaunch.GUEST_ENTRY,
+                androidExtensions = true,
             )
 
             // The engine is the largest and most latency-sensitive guest process —
@@ -599,7 +607,7 @@ class PiEngineHost(private val appContext: Context) {
             // 挂载点必须先在 rootfs 里存在：proot/proroot 不会替我们创建 `-b` 的目标。
             // 内部项目和 `/storage/emulated/0`（`GuestRecipe.binds` 已在启动时挂好）都无需额外 bind；
             // 只有真正未挂载的外部卷（例如可移除 SD 卡）才需要加 `-b` 挂载。
-            val externalEntries = runCatching { WorkspaceStore.list(appContext) }.getOrDefault(emptyList())
+            val externalEntries = preSpawnExternalEntries
                 .filter { it.external && it.available && it.host.isDirectory }
             val extraBinds = buildList {
                 if (GuestWorkspacePath.needsBind(paths.rootfs, workspace, guestWorkspace)) {
@@ -641,8 +649,8 @@ class PiEngineHost(private val appContext: Context) {
             // pi works relative to its cwd and stores sessions per cwd, so the guest
             // must start in the workspace rather than at /.
             val storage = android.os.Environment.getExternalStorageDirectory()
-            val firstPlan = selection.plan(
-                guestCommand = guestCommand,
+            val firstPlan = selection.planDirect(
+                guestArgv = guestArgv,
                 cwd = guestWorkspace,
                 storage = storage,
                 extraBinds = extraBinds,
@@ -672,8 +680,8 @@ class PiEngineHost(private val appContext: Context) {
                 // Clear handle on fallback to proot so we never stall 1.5 s polling for a dead launcher PID.
                 engineHandle = null
                 selection.recordEngineFailure("${error::class.java.simpleName}: ${error.message}")
-                val retry = selection.plan(
-                    guestCommand = guestCommand,
+                val retry = selection.planDirect(
+                    guestArgv = guestArgv,
                     cwd = guestWorkspace,
                     storage = storage,
                     extraBinds = extraBinds,
@@ -921,7 +929,7 @@ class PiEngineHost(private val appContext: Context) {
     /** 把 `assets/guest/sdk-host/` 同步进 `<rootfs>/opt/pi/sdk-host/`；返回 `null` 或一句失败原因。 */
     private fun installSdkHost(revision: String): String? = runCatching {
         val target = File(paths.rootfs, SdkHostLaunch.GUEST_DIR.removePrefix("/"))
-        val entry = File(target, "main.mjs")
+        val entry = File(target, SdkHostLaunch.BUNDLE_FILE)
         val stampFile = File(paths.runtime, ".sdk-host.stamp")
         val expectedStamp = "${apkStamp()}\n$revision"
         if (entry.isFile && stampFile.isFile && runCatching { stampFile.readText().trim() == expectedStamp }.getOrDefault(false)) {

@@ -150,6 +150,30 @@ object TawcrootCommand {
         return argv
     }
 
+    /**
+     * Direct exec variant without `/bin/bash -c`. Requires the target executable
+     * (e.g. sdk-host `main.mjs` / `host.bundle.mjs`) to `chdir(cwd)` itself on startup,
+     * since tawcroot does not provide a `-w` flag.
+     */
+    fun buildDirect(
+        paths: PiPaths,
+        guestArgv: List<String>,
+        cwd: String,
+        storage: File?,
+        extraBinds: List<Pair<String, String>> = emptyList(),
+    ): List<String> {
+        val devView = ensureDevView(paths)
+        val binds = boundPairs(paths, storage, extraBinds, devView = devView)
+        ProrootCommand.ensureWorkdir(paths.rootfs, cwd, binds)
+        val argv = mutableListOf<String>()
+        argv += paths.tawcrootBinary().absolutePath
+        argv += listOf("-s", "-r", paths.rootfs.path)
+        binds.forEach { (host, guest) -> argv += listOf("-b", "$host${ProrootCommand.BIND_SEPARATOR}$guest") }
+        argv += "--"
+        argv += guestArgv
+        return argv
+    }
+
     fun environment(paths: PiPaths, extra: Map<String, String> = emptyMap()): Map<String, String> = buildMap {
         // **故意不带 proroot 的 `NODE_OPTIONS=--import=scandir-fix.mjs`。**
         //

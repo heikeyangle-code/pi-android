@@ -222,6 +222,9 @@ object DeviceBridgeController {
      * description of what was written, for the status line.
      */
     private fun publishTokenFile(context: Context, paths: PiPaths, token: String): String {
+        val usableCaps = runCatching {
+            DeviceCapabilityStore.get(context).states().filter { it.usable }.map { it.capability.id }
+        }.getOrDefault(emptyList())
         val payload = JSONObject().apply {
             put("service", "pi-android-device-bridge")
             put("version", DeviceBridgeRouter.BRIDGE_VERSION)
@@ -229,6 +232,7 @@ object DeviceBridgeController {
             put("token", token)
             put("packageName", context.packageName)
             put("createdAt", System.currentTimeMillis())
+            put("usableCapabilities", JSONArray(usableCaps))
             put("endpoints", JSONArray(DeviceBridgeRouter.ENDPOINTS))
         }.toString(2)
 
@@ -283,7 +287,12 @@ object DeviceBridgeController {
             filesDir = context.filesDir,
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
-        val roots = linkedMapOf<String, File>().apply {
+        // App 的 SDK 引擎（host.bundle.mjs）已将这 3 份 Android 内置扩展预编译为官方
+        // `builtin:*` 工厂，零 jiti / 零 Babel 编译启动；这里把 .ts 副本放到
+        // `/opt/pi/android-extensions` 专供内置终端里手动运行 `pi` CLI 时加载，
+        // 同时清理旧版本留在 `agent/extensions` 里的这 3 份同名副本（绝不触碰用户扩展），
+        // 避免 sdk-host 重复扫描并触发 jiti/Babel 拖慢冷启动。
+        val legacyRoots = linkedMapOf<String, File>().apply {
             val agentExt = File(paths.agentDir, "extensions")
             put(runCatching { agentExt.canonicalPath }.getOrDefault(agentExt.absolutePath), agentExt)
             if (paths.rootfs.isDirectory) {
@@ -291,58 +300,120 @@ object DeviceBridgeController {
                 put(runCatching { rootfsExt.canonicalPath }.getOrDefault(rootfsExt.absolutePath), rootfsExt)
             }
         }.values.toList()
+        val cliExtRoot = if (paths.rootfs.isDirectory) {
+            File(paths.rootfs, "opt/pi/android-extensions")
+        } else {
+            null
+        }
+        val legacyEntries = listOf(
+            "pi-android-bridge",
+            "pi-android-permission-gate.ts",
+            "pi-highlight",
+            "README.md",
+            ".pi-android-assets",
+            ".pi-android-apk-stamp",
+        )
         return try {
-            // 快路径：同一 APK 安装（lastUpdateTime + versionCode 未变）且所有目标目录已存在校验戳时，
-            // 直接跳过 20+ 次 AssetManager 递归列举与 SHA-256 哈希，显著加快冷启动。
             val apkStamp = runCatching {
                 val info = context.packageManager.getPackageInfo(context.packageName, 0)
                 val code = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)
                 "${info.lastUpdateTime}-$code"
             }.getOrNull()
-            if (apkStamp != null && roots.all { root ->
-                    val apkMarker = File(root, ".pi-android-apk-stamp")
-                    val contentMarker = File(root, ".pi-android-assets")
-                    contentMarker.isFile && apkMarker.isFile &&
-                        runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
+            val legacyClean = legacyRoots.all { root ->
+                !root.isDirectory || !File(root, "pi-android-bridge").exists() &&
+                    !File(root, "pi-android-permission-gate.ts").exists() &&
+                    !File(root, "pi-highlight").exists()
+            }
+            if (apkStamp != null && legacyClean && cliExtRoot != null) {
+                val apkMarker = File(cliExtRoot, ".pi-android-apk-stamp")
+                val contentMarker = File(cliExtRoot, ".pi-android-assets")
+                if (contentMarker.isFile && apkMarker.isFile &&
+                    runCatching { apkMarker.readText().trim() == apkStamp }.getOrDefault(false)
+                ) {
+                    return "已是最新（sdk-host 内置预编译 + 终端 CLI 扩展，APK 缓存命中）"
                 }
-            ) {
-                return "已是最新（${roots.size} 个位置，APK 缓存命中）"
+            }
+            for (root in legacyRoots) {
+                if (!root.isDirectory) continue
+                for (name in legacyEntries) {
+                    val f = File(root, name)
+                    if (f.exists()) f.deleteRecursively()
+                }
+            }
+            if (cliExtRoot == null) {
+                return "已内嵌于 host.bundle.mjs（rootfs 未就绪）"
             }
             val fingerprint = assetFingerprint(context)
             val marker = fingerprint ?: "v$ASSET_VERSION"
+            cliExtRoot.mkdirs()
+            val stamp = File(cliExtRoot, ".pi-android-assets")
+            val apkMarker = File(cliExtRoot, ".pi-android-apk-stamp")
             var copied = 0
-            var skipped = 0
             var bytes = 0L
-            for (root in roots) {
-                root.mkdirs()
-                val stamp = File(root, ".pi-android-assets")
-                val apkMarker = File(root, ".pi-android-apk-stamp")
-                if (stamp.isFile && stamp.readText().trim() == marker) {
-                    if (apkStamp != null) runCatching { apkMarker.writeText(apkStamp) }
-                    skipped++
-                    continue
-                }
-                bytes += copyAssetTree(context, ASSET_ROOT, root)
+            if (!stamp.isFile || stamp.readText().trim() != marker) {
+                bytes = copyAssetTree(context, ASSET_ROOT, cliExtRoot)
                 stamp.writeText(marker)
-                if (apkStamp != null) runCatching { apkMarker.writeText(apkStamp) }
-                copied++
+                copied = 1
             }
+            if (apkStamp != null) runCatching { apkMarker.writeText(apkStamp) }
+            syncCliPiWrapper(paths)
             val how = if (fingerprint == null) {
                 "标记 $marker（资产内容读不出来，退回手工版本号）"
             } else {
                 "标记 ${marker.take(15)}…（内容指纹）"
             }
-            when {
-                copied > 0 -> "已安装到 $copied 个位置，$bytes 字节，$how"
-                skipped > 0 -> "已是最新（$skipped 个位置，$how）"
-                else -> "未安装"
+            if (copied > 0) {
+                "已同步终端 CLI 扩展（$bytes 字节，$how）+ sdk-host 预编译内置"
+            } else {
+                "已是最新（$how）+ sdk-host 预编译内置"
             }
         } catch (error: Exception) {
-            // Name what the package actually contains: a FileNotFoundException from
-            // `assets.open` cannot distinguish "asset missing" from "asset packaging
-            // is broken", and the reader has no other way to tell.
             "失败: ${error::class.java.simpleName}: ${error.message}；包内实际内容：${describeAssets(context)}"
         }
+    }
+
+    /**
+     * 更新 `<rootfs>/opt/pi/bin/pi` 包装脚本：当用户在内置终端里直接运行 `pi` 交互模式时
+     * 自动附带 `/opt/pi/android-extensions` 里的设备桥与权限门扩展；对 `install`/`remove`/
+     * `update`/`list`/`config`/`--version`/`--help`/`--no-extensions` 原样透传，零副作用。
+     */
+    private fun syncCliPiWrapper(paths: PiPaths) {
+        runCatching {
+            val hostEngineRoot = File(paths.rootfs, "opt/pi/node_modules/@earendil-works/pi-coding-agent")
+            if (!File(hostEngineRoot, "dist").isDirectory) return
+            val guestEngineRoot = "/opt/pi/node_modules/@earendil-works/pi-coding-agent"
+            val guestCli = if (File(hostEngineRoot, "dist/bundle/cli.js").isFile) {
+                "$guestEngineRoot/dist/bundle/cli.js"
+            } else {
+                "$guestEngineRoot/dist/cli.js"
+            }
+            val bin = File(paths.rootfs, "opt/pi/bin").also { it.mkdirs() }
+            val wrapper = File(bin, "pi")
+            val content = buildCliPiWrapperScript(guestCli)
+            if (!wrapper.isFile || runCatching { wrapper.readText() }.getOrNull() != content) {
+                wrapper.writeText(content)
+                wrapper.setExecutable(true, false)
+            }
+        }
+    }
+
+    internal fun buildCliPiWrapperScript(guestCli: String): String = buildString {
+        append("#!/bin/bash\n")
+        append("ext_args=()\n")
+        append("want_android_ext=1\n")
+        append("case \"\${1:-}\" in\n")
+        append("  install|remove|update|list|config|--version|-v|--help|-h) want_android_ext=0 ;;\n")
+        append("esac\n")
+        append("for a in \"\$@\"; do\n")
+        append("  case \"\$a\" in\n")
+        append("    --no-extensions|--version|-v|--help|-h) want_android_ext=0; break ;;\n")
+        append("  esac\n")
+        append("done\n")
+        append("if [ \"\$want_android_ext\" = \"1\" ] && [ -d /opt/pi/android-extensions ]; then\n")
+        append("  [ -d /opt/pi/android-extensions/pi-android-bridge ] && ext_args+=(-e /opt/pi/android-extensions/pi-android-bridge)\n")
+        append("  [ -f /opt/pi/android-extensions/pi-android-permission-gate.ts ] && ext_args+=(-e /opt/pi/android-extensions/pi-android-permission-gate.ts)\n")
+        append("fi\n")
+        append("exec /opt/node/bin/node ").append(guestCli).append(" \"\${ext_args[@]}\" \"\$@\"\n")
     }
 
     /**

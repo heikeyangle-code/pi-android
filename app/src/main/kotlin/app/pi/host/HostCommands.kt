@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /** `host.hello` 的应答。[capabilities] 决定哪些入口亮起，不要硬编码「有没有」。 */
 data class HostHello(
@@ -13,7 +14,32 @@ data class HostHello(
     val node: String?,
     val commands: Set<String>,
     val capabilities: Set<String>,
-)
+) {
+    companion object {
+        /** 解析 `host.hello` 应答或 `host.ready` 内嵌握手载荷；缺少协议号或命令表时返回 null。 */
+        fun fromJsonOrNull(d: JsonObject): HostHello? {
+            val protocol = (d["protocol"] as? JsonPrimitive)?.longOrNull?.toInt() ?: return null
+            val commands = (d["commands"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                ?.toSet()
+                .orEmpty()
+            if (protocol <= 0 || commands.isEmpty()) return null
+            val engine = (d["engine"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: "coding-agent"
+            val node = (d["node"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            val capabilities = (d["capabilities"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                ?.toSet()
+                .orEmpty()
+            return HostHello(
+                protocol = protocol,
+                engine = engine,
+                node = node,
+                commands = commands,
+                capabilities = capabilities,
+            )
+        }
+    }
+}
 
 /** `chat.send` / `session.prompt` 的预检结果：started 开了新一轮 / queued 进了队列 / handled 被扩展命令吃掉。 */
 enum class SendDisposition { Started, Queued, Handled, Unknown }

@@ -15,7 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import app.pi.i18n.LocalPiResources
@@ -43,6 +43,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        // 在 Compose 首次组合前即触发引擎冷启动（`boot()` 有幂等守卫，PiRoot 重复调用为零开销），
+        // 让引擎进程拉起与首帧 UI 布局完全并行。
+        val session = ViewModelProvider(this)[PiSessionViewModel::class.java]
+        session.boot()
+
         setContent {
             // isSystemInDarkTheme() is @Composable, so it has to be read in the
             // composition. It is only an input to the theme resolution: pi's
@@ -51,7 +56,6 @@ class MainActivity : ComponentActivity() {
             // against this value — the same job `resolveThemeSetting` does for
             // pi's own terminal background detection (`theme.ts:597-608`).
             val systemDark = isSystemInDarkTheme()
-            val session: PiSessionViewModel = viewModel()
             val theme by session.theme.collectAsState()
             // 仅订阅 typographyProfile：避免流式输出每 token / 1Hz 工具计时都触发整个 MainActivity 根重组。
             val typographyProfile by remember(session) {

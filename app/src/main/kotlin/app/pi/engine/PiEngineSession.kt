@@ -21,6 +21,7 @@ import app.pi.protocol.TranscriptChange
 import app.pi.protocol.TranscriptItem
 import app.pi.protocol.TranscriptReducer
 import app.pi.protocol.Utf8StreamDecoder
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -508,6 +509,7 @@ class PiEngineSession(
                 val tail = stderrTail()
                 if (tail.isNotEmpty()) append("；stderr：").append(tail)
             }
+            readyHello.complete(null)
             client.close(reason)
         }
     }
@@ -526,9 +528,19 @@ class PiEngineSession(
         startHostJob = scope.launch {
             val startedAt = System.nanoTime()
             try {
-                // Honor the caller's full cold-start timeout budget on hello as well as open,
-                // instead of timing out at DEFAULT_TIMEOUT_MS (30 s) and leaving the engine wedged in Starting.
-                val hello = commands.hello(timeoutMs)
+                // 优先直接消费 `host.ready` 内嵌握手载荷（0 额外 RTT）；若收到的是旧宿主无内嵌字段的
+                // `host.ready`，再退回显式 `host.hello` 请求，保持向后兼容。
+                val hello = if (readyHello.isCompleted) {
+                    readyHello.await() ?: commands.hello(timeoutMs)
+                } else {
+                    val readyTimed = withTimeoutOrNull(timeoutMs) {
+                        Pair(true, readyHello.await())
+                    } ?: throw HostException(HostException.TIMEOUT, "等待宿主 host.ready 超时（${timeoutMs}ms）")
+                    readyTimed.second ?: run {
+                        val used = (System.nanoTime() - startedAt) / 1_000_000
+                        commands.hello((timeoutMs - used).coerceAtLeast(30_000L))
+                    }
+                }
                 if (hello.protocol != SUPPORTED_PROTOCOL) {
                     throw HostException("protocol", "宿主协议 v${hello.protocol}，App 只认 v$SUPPORTED_PROTOCOL（App 与 guest 里的宿主版本不一致）")
                 }
@@ -552,6 +564,12 @@ class PiEngineSession(
             }
         }
     }
+
+    /**
+     * `host.ready` 事件内嵌的握手载荷（或旧宿主发来不带握手字段的 `host.ready` / 进程退出时的 null）。
+     * 使冷启动免去一次串行 `host.hello` 往返，收到 `host.ready` 立刻发 `session.open`。
+     */
+    private val readyHello = CompletableDeferred<app.pi.host.HostHello?>()
 
     /** 握手结果（命令表与能力表）；`startHost` 成功前为 null。界面按能力点亮入口，不判断引擎版本。 */
     @Volatile
@@ -692,6 +710,11 @@ class PiEngineSession(
                         } else {
                             signal.data?.let { handleAgent(PiEvents.parse(it.toString())) }
                         }
+                    }
+                    "host.ready" -> {
+                        val embedded = (signal.data as? JsonObject)?.let(app.pi.host.HostHello::fromJsonOrNull)
+                        readyHello.complete(embedded)
+                        _hostEvents.tryEmit(signal)
                     }
                     "state" -> {
                         _hostEvents.tryEmit(signal)
@@ -1364,6 +1387,7 @@ class PiEngineSession(
         } else {
             drainAndDestroy()
         }
+        readyHello.complete(null)
         client.close("会话已关闭")
         readerJob?.cancel()
         signalJob?.cancel()

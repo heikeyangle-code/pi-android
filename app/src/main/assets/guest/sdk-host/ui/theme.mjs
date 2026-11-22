@@ -4,7 +4,7 @@
  * pi-tui 组件写的是 `theme.fg("accent", text)` 这种语义色调用，最后得到带 ANSI 转义的字符串。
  * 原型版的 `themeStub` 对任何调用都返回空串，于是**所有带颜色的文本都变成空的**。
  * 这里做一个真能出色的实现：语义名 → RGB（App 可用 `ui.palette` 命令整体替换，随 App 主题走），
- * 输出 24 位 ANSI，App 的 ANSI 渲染器（`app.pi.rpc.Ansi`）本来就认。
+ * 输出 24 位 ANSI，App 的 ANSI 渲染器（`app.pi.protocol.Ansi`）本来就认。
  *
  * 不认识的方法不抛错：返回最后一个字符串参数（组件宁可没颜色，也不能崩）。
  */

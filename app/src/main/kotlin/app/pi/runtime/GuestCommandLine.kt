@@ -35,6 +35,20 @@ object GuestCommandLine {
         GuestEngine.Tawcroot -> TawcrootCommand.build(paths, guestCommand, cwd, storage, extraBinds)
     }
 
+    /** Direct exec without `/bin/bash -c` for static argv targets like sdk-host. */
+    fun buildDirect(
+        paths: PiPaths,
+        engine: GuestEngine,
+        guestArgv: List<String>,
+        cwd: String,
+        storage: File?,
+        extraBinds: List<Pair<String, String>> = emptyList(),
+    ): List<String> = when (engine) {
+        GuestEngine.Proot -> ProotCommand.buildDirect(paths, guestArgv, cwd, storage, extraBinds)
+        GuestEngine.Proroot -> ProrootCommand.buildDirect(paths, guestArgv, cwd, storage, extraBinds)
+        GuestEngine.Tawcroot -> TawcrootCommand.buildDirect(paths, guestArgv, cwd, storage, extraBinds)
+    }
+
     /**
      * 宿主进程的 cwd。tawcroot 必须在 rootfs 里：它的 `getcwd` 是把内核 cwd 反向翻译回
      * guest 路径，cwd 在 rootfs 外时 guest 的每条相对路径都从 ENOENT 开始（上游 TAWC 也把

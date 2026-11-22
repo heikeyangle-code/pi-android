@@ -333,7 +333,7 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
         flag = "--verbose",
         envVar = null,
         piReader = "cli/args.ts:217-218; main.ts:946",
-        reason = "only reaches pi's interactive TUI startup; nothing in RPC mode reads it.",
+        reason = "only reaches pi's interactive TUI startup; not applicable in SDK host mode.",
     ),
     PiPreSpawnSkipped(
         flag = "--tui-mode",

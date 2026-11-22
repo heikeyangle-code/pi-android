@@ -1,6 +1,12 @@
 package app.pi.bridge
 
+import app.pi.engine.SdkHostLaunch
 import app.pi.host.ExtUiReducer
+import app.pi.host.HostHello
+import app.pi.host.HostState
+import app.pi.runtime.GuestCommandLine
+import app.pi.runtime.GuestEngine
+import app.pi.runtime.PiPaths
 import app.pi.packages.PiConfigFiles
 import app.pi.session.SessionFileReader
 import kotlinx.serialization.json.JsonArray
@@ -112,5 +118,101 @@ class SecurityAndHostTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `SdkHostLaunch argv and direct builders exec node directly without bash`() {
+        val dir = Files.createTempDirectory("pi-direct-exec-test").toFile()
+        try {
+            val nativeLib = File(dir, "lib").apply { mkdirs() }
+            val paths = PiPaths(filesDir = dir, nativeLibDir = nativeLib)
+            paths.rootfs.mkdirs()
+            val guestArgv = SdkHostLaunch.argv(
+                cwd = "/workspace/pi/workspaces/default",
+                agentDir = "/root/.pi/agent",
+                sessionDir = "/root/.pi/agent/sessions",
+                piDir = "/opt/pi/node_modules/@earendil-works/pi-coding-agent",
+            )
+            assertEquals("/opt/node/bin/node", guestArgv.first())
+            assertTrue(guestArgv.contains(SdkHostLaunch.GUEST_ENTRY))
+            assertTrue(guestArgv.contains("--android-extensions"))
+            assertFalse(guestArgv.contains("--mode"))
+
+            for (engine in listOf(GuestEngine.Proot, GuestEngine.Proroot, GuestEngine.Tawcroot)) {
+                val built = GuestCommandLine.buildDirect(
+                    paths = paths,
+                    engine = engine,
+                    guestArgv = guestArgv,
+                    cwd = "/workspace/pi/workspaces/default",
+                    storage = null,
+                )
+                assertFalse("Direct argv for $engine must not spawn /bin/bash: $built", built.contains("/bin/bash"))
+                assertTrue("Direct argv for $engine must exec /opt/node/bin/node: $built", built.contains("/opt/node/bin/node"))
+                if (engine == GuestEngine.Tawcroot) {
+                    assertTrue("Tawcroot direct argv must keep -s: $built", built.contains("-s"))
+                    assertTrue("Tawcroot direct argv must keep -- separator: $built", built.contains("--"))
+                }
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `HostHello fromJsonOrNull parses embedded host ready payload and rejects legacy empty ready`() {
+        val embedded = JsonObject(
+            mapOf(
+                "protocol" to JsonPrimitive(1),
+                "engine" to JsonPrimitive("coding-agent"),
+                "node" to JsonPrimitive("v24.0.0"),
+                "commands" to JsonArray(listOf(JsonPrimitive("session.open"), JsonPrimitive("chat.send"))),
+                "capabilities" to JsonArray(listOf(JsonPrimitive("stream"))),
+            ),
+        )
+        val parsed = HostHello.fromJsonOrNull(embedded)
+        assertNotNull(parsed)
+        assertEquals(1, parsed!!.protocol)
+        assertEquals(setOf("session.open", "chat.send"), parsed.commands)
+        assertEquals(setOf("stream"), parsed.capabilities)
+
+        val legacyReady = JsonObject(mapOf("pid" to JsonPrimitive(1234), "cwd" to JsonPrimitive("/workspace")))
+        assertNull(HostHello.fromJsonOrNull(legacyReady))
+    }
+
+    @Test
+    fun `HostState projects availableThinkingLevels and toSessionState for zero-RTT attach`() {
+        val raw = JsonObject(
+            mapOf(
+                "epoch" to JsonPrimitive(1),
+                "seq" to JsonPrimitive(1),
+                "sessionId" to JsonPrimitive("sess-1"),
+                "sessionFile" to JsonPrimitive("/root/.pi/agent/sessions/s1.jsonl"),
+                "thinkingLevel" to JsonPrimitive("medium"),
+                "availableThinkingLevels" to JsonArray(listOf(JsonPrimitive("off"), JsonPrimitive("low"), JsonPrimitive("medium"))),
+                "supportsThinking" to JsonPrimitive(true),
+                "isStreaming" to JsonPrimitive(false),
+                "isCompacting" to JsonPrimitive(false),
+                "autoCompactionEnabled" to JsonPrimitive(true),
+                "pendingMessageCount" to JsonPrimitive(0),
+                "messageCounts" to JsonObject(mapOf("total" to JsonPrimitive(4))),
+            ),
+        )
+        val hs = HostState(raw)
+        assertEquals(listOf("off", "low", "medium"), hs.availableThinkingLevels)
+        assertEquals(true, hs.supportsThinking)
+        val ss = hs.toSessionState()
+        assertNotNull(ss)
+        assertEquals("sess-1", ss!!.sessionId)
+        assertEquals("medium", ss.thinkingLevel)
+        assertEquals(4, ss.messageCount)
+    }
+
+    @Test
+    fun `CLI pi wrapper preserves Android extensions for interactive use and skips subcommands`() {
+        val script = DeviceBridgeController.buildCliPiWrapperScript("/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js")
+        assertTrue(script.startsWith("#!/bin/bash\n"))
+        assertTrue(script.contains("/opt/pi/android-extensions/pi-android-bridge"))
+        assertTrue(script.contains("install|remove|update|list|config|--version|-v|--help|-h"))
+        assertTrue(script.contains("--no-extensions"))
     }
 }

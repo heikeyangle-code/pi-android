@@ -97,6 +97,15 @@ try {
   const t0 = Date.now();
   const ready = await h.waitFor(h.evt("host.ready"), 5000);
   expect("host.ready 先于 SDK 加载", ready.data.pid > 0 && Date.now() - t0 < 2000, `${Date.now() - t0}ms`);
+  expect(
+    "host.ready 内嵌握手载荷（protocol/commands/capabilities/cwd）",
+    ready.data.protocol === 1 &&
+      Array.isArray(ready.data.commands) &&
+      ready.data.commands.includes("session.open") &&
+      Array.isArray(ready.data.capabilities) &&
+      typeof ready.data.cwd === "string",
+    JSON.stringify({ protocol: ready.data.protocol, cmds: ready.data.commands?.length, cwd: ready.data.cwd }),
+  );
 
   const hello = await h.call("host.hello");
   expect("host.hello 协议版本与命令表", hello.ok && hello.data.protocol === 1 && hello.data.engine === "coding-agent" && hello.data.commands.includes("session.prompt"));
@@ -1092,10 +1101,113 @@ try {
     expect("session.reload 清空 toolComponents 缓存（避免旧渲染器与内存泄漏）", n1 >= 1 && n2 > n1 && nAfter === n1, `n1=${n1} n2=${n2} after=${nAfter}`);
   }
 
+  // ---- 7b. state 快照内嵌 availableThinkingLevels / supportsThinking ----
+  {
+    const snap = await h.call("session.snapshot");
+    expect(
+      "session.snapshot 内嵌 availableThinkingLevels 与 supportsThinking",
+      snap.ok &&
+        Array.isArray(snap.data?.availableThinkingLevels) &&
+        snap.data.availableThinkingLevels.length > 0 &&
+        typeof snap.data?.supportsThinking === "boolean",
+      JSON.stringify({ levels: snap.data?.availableThinkingLevels, supports: snap.data?.supportsThinking }),
+    );
+  }
+
   // ---- 8. 退出 ----------------------------------------------------------
   await h.call("host.shutdown");
   const code = await new Promise((r) => (h.child.exitCode !== null ? r(h.child.exitCode) : h.child.once("exit", r)));
   expect("host.shutdown 干净退出", code === 0, `exit=${code}`);
+
+  // ---- 9. 预编译单文件 host.bundle.mjs --android-extensions 零 jiti 冷启动验真 ----
+  {
+    const bundleEntry = join(hostDir, "host.bundle.mjs");
+    expect("host.bundle.mjs 存在", existsSync(bundleEntry));
+    const bundleAuditFile = join(repo, "build", `.bundle-audit-${process.pid}.log`);
+    writeFileSync(bundleAuditFile, "");
+    const b = startHost({
+      hostEntry: bundleEntry,
+      nodeArgs: ["--import", join(here, "fixtures/import-audit.mjs")],
+      env: {
+        PI_IMPORT_AUDIT_FILE: bundleAuditFile,
+        ...(flag("no-bundle") ? { PI_HOST_NO_BUNDLE: "1" } : {}),
+      },
+      extraArgs: ["--pi-dir", pi, "--android-extensions"],
+    });
+    try {
+      // 模拟 DeviceBridgeController 写入带 usableCapabilities 快照的 device-bridge.json（无 HTTP 桥运行，验证 0 HTTP 冷启动）
+      writeFileSync(
+        join(b.agentDir, "device-bridge.json"),
+        JSON.stringify({
+          service: "pi-android-device-bridge",
+          port: 1,
+          token: "test-token",
+          usableCapabilities: ["basic", "accessibility"],
+        }),
+      );
+      const bReady = await b.waitFor(b.evt("host.ready"), 5000);
+      expect(
+        "bundle host.ready 内嵌握手载荷且包含完整命令表",
+        bReady.data?.protocol === 1 && Array.isArray(bReady.data?.commands) && bReady.data.commands.length >= 100,
+        JSON.stringify({ protocol: bReady.data?.protocol, cmds: bReady.data?.commands?.length }),
+      );
+      const bOpen = await b.call("session.open", { session: { mode: "new" } }, 60000);
+      expect("bundle session.open 成功", bOpen.ok === true, JSON.stringify(bOpen.error));
+      const bBound = await b.waitFor(b.evt("ext.bound"), 15000).catch(() => null);
+      expect("bundle ext.bound 成功送达", !!bBound && bBound.data?.ok === true, JSON.stringify(bBound?.data));
+      const activeTools = bOpen.data?.state?.tools?.active ?? [];
+      expect(
+        "bundle 从 device-bridge.json 快照零 HTTP 激活对应 android_* 工具（排除未授权 shell）",
+        activeTools.includes("android_status") &&
+          activeTools.includes("android_screen") &&
+          activeTools.includes("android_app") &&
+          !activeTools.includes("android_shell"),
+        JSON.stringify(activeTools),
+      );
+      const bLoaded = await b.call("resources.loaded", {}, 15000);
+      const loadedPaths = (bLoaded.data?.extensions ?? []).map((e) => e.path);
+      expect(
+        "bundle 3 份 Android 扩展以官方 builtin:* 注册且可见",
+        loadedPaths.includes("builtin:pi-android-bridge") &&
+          loadedPaths.includes("builtin:pi-android-permission-gate") &&
+          loadedPaths.includes("builtin:pi-highlight"),
+        JSON.stringify(loadedPaths),
+      );
+      const bCmds = await b.call("catalog.commands", {}, 15000);
+      const cmdNames = (bCmds.data?.commands ?? []).map((c) => c.name);
+      expect(
+        "bundle 不再注册已废弃的 RPC 补丁命令 /device-reload 与 /pi-android-navigate",
+        !cmdNames.includes("device-reload") && !cmdNames.includes("pi-android-navigate"),
+        JSON.stringify(cmdNames.filter((n) => n.includes("device") || n.includes("navigate"))),
+      );
+      const bList = await b.call("resources.list", {}, 15000);
+      const listPaths = (bList.data?.global ?? [])
+        .flatMap((g) => g.subgroups ?? [])
+        .flatMap((s) => s.items ?? [])
+        .map((i) => i.path);
+      expect(
+        "bundle resources.list 暴露 builtin:pi-android-bridge / permission-gate / highlight 支持开关",
+        listPaths.includes("builtin:pi-android-bridge") &&
+          listPaths.includes("builtin:pi-android-permission-gate") &&
+          listPaths.includes("builtin:pi-highlight"),
+        JSON.stringify(listPaths.filter((p) => p.includes("android") || p.includes("highlight"))),
+      );
+      const auditLines = readFileSync(bundleAuditFile, "utf8").split("\n").filter(Boolean);
+      const forbidden = auditLines.filter(
+        (u) => u.includes("jiti") || u.includes("babel") || u.includes("http-dispatcher") || u.includes("undici"),
+      );
+      expect(
+        "bundle 冷启动零 jiti / Babel / undici / http-dispatcher 导入",
+        forbidden.length === 0,
+        forbidden.slice(0, 5).join(", "),
+      );
+      await b.call("host.shutdown");
+    } finally {
+      b.stop();
+      rmSync(b.root, { recursive: true, force: true });
+      rmSync(bundleAuditFile, { force: true });
+    }
+  }
 } catch (error) {
   expect("测试过程没有异常", false, error?.stack ?? String(error));
   console.log("--- stderr tail ---\n" + h.stderrLines.join("").split("\n").slice(-15).join("\n"));

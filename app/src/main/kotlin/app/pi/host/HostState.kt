@@ -43,6 +43,20 @@ class HostState(val raw: JsonObject) {
     val activeTools: List<String>
         get() = ((raw["tools"] as? JsonObject)?.get("active") as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty()
+    val availableThinkingLevels: List<String>?
+        get() = (raw["availableThinkingLevels"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+    val supportsThinking: Boolean? get() = raw.bool("supportsThinking")
+
+    /**
+     * 把宿主随 `session.open` / `state` 推送来的状态快照直接投影成 [PiResponses.SessionState]，
+     * 供冷启动 `attach()` 零额外往返复用，免去重复的 `session.snapshot` 请求。
+     */
+    fun toSessionState(): PiResponses.SessionState? {
+        val total = (raw["messageCounts"] as? JsonObject)?.get("total")
+        val shaped = JsonObject(raw + ("messageCount" to (total ?: JsonPrimitive(0))))
+        return PiResponses.sessionState(shaped)
+    }
 
     /** 上下文占用；宿主没给（模型未知等）为 null。 */
     val contextUsage: JsonObject? get() = raw["contextUsage"] as? JsonObject

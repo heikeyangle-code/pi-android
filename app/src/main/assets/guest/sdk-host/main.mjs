@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 /**
- * Pi SDK Host —— App 与 pi 引擎之间的宿主进程。入口只做「装配」，逻辑在各模块里。
+ * Pi SDK Host —— App 与官方 pi SDK 之间的宿主进程。入口只做「装配」，逻辑在各模块里。
  *
  *   node main.mjs --cwd <工作区> --agent-dir <agentDir> --pi-dir <引擎包目录> [--session-dir <dir>]
- *                 [--extension <path>]... [--mode tui|rpc]
+ *                 [--extension <path>]... [--android-extensions]
  *
- * 启动顺序是有讲究的（改之前先读 docs/sdk-host/architecture.md §启动）：
+ * 启动顺序（改之前先读 docs/sdk-host/architecture.md §启动）：
  *   1. 接管 stdout            —— 之后任何 console.log 都去 stderr，协议流不会被污染
- *   2. 发 `host.ready` 帧     —— 不等 SDK：SDK 加载是秒级，App 要立刻知道进程活着
- *   3. 装配命令表、开始读 stdin
- *   4. SDK 在 `session.open` 时才 dynamic import（见 sdk.mjs）
+ *   2. chdir 到工作区          —— 三个运行时（含无 -w 的 tawcroot）可直接 exec node，免起 /bin/bash
+ *   3. 装配命令表、发 host.ready（内嵌 hello 能力表，省去一次串行握手 RTT）
+ *   4. 立刻后台预热官方 SDK，同时开始读 stdin —— SDK 加载与 App 侧 session.open 投递完全并行
  */
-
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Transport, readLines, setStdoutHook, takeOverStdout } from "./io.mjs";
@@ -22,6 +21,7 @@ import { Surfaces } from "./ui/surfaces.mjs";
 import { createTheme } from "./ui/theme.mjs";
 import { createUiContext } from "./ui/context.mjs";
 import { Controller } from "./controller.mjs";
+import { loadSdk } from "./sdk.mjs";
 import * as hostCmds from "./commands/host.mjs";
 import * as sessionCmds from "./commands/session.mjs";
 import * as libraryCmds from "./commands/library.mjs";
@@ -40,13 +40,11 @@ import * as settingsCmds from "./commands/settings.mjs";
 import * as genericCmds from "./commands/generic.mjs";
 
 const rawWrite = takeOverStdout();
-
-// pi 的打包入口（`dist/bundle/rpc-entry.js`）在 `main()` 之前做的三件事，宿主必须照做：
 // 扩展靠 PI_CODING_AGENT 判断「在 pi 里」，AI_AGENT 给子进程（git 等）识别，
-// 去掉 Node 的 ExperimentalWarning 刷屏。`configureHttpDispatcher()`（HTTP 代理 / 空闲超时）不在 SDK
-// 公共导出里，宿主做不到，记在 docs/sdk-host/capabilities.md 的「已知缺口」。
+// PI_SDK_HOST 标识运行在 Android SDK 宿主内，同时去掉 Node 的 ExperimentalWarning 刷屏。
 process.title = "pi-sdk-host";
 process.env.PI_CODING_AGENT = "true";
+process.env.PI_SDK_HOST = "1";
 process.env.AI_AGENT ??= "pi";
 process.emitWarning = () => {};
 
@@ -63,16 +61,32 @@ const cfg = {
   // 引擎包目录（含 dist/）。必须由启动方给，见 sdk.mjs。
   piDir: arg("pi-dir", undefined),
   extensions: multi("extension"),
-  // "tui"：扩展以为自己在终端里，会走组件路径（我们能接住）；"rpc"：扩展走纯文本降级。
-  // 默认 tui，因为宿主存在的意义就是让组件能画出来。
-  mode: arg("mode", "tui"),
+  androidExtensions: process.argv.includes("--android-extensions"),
 };
+
+if (cfg.agentDir && !process.env.PI_CODING_AGENT_DIR) {
+  process.env.PI_CODING_AGENT_DIR = cfg.agentDir;
+}
+if (cfg.piDir && !process.env.PI_PACKAGE_DIR) {
+  process.env.PI_PACKAGE_DIR = cfg.piDir;
+}
 
 const transport = new Transport(rawWrite);
 const hub = new Hub(transport);
 
 if (!existsSync(cfg.cwd)) {
   hub.emit("host.fatal", { code: "cwd_missing", message: `cwd 不存在：${cfg.cwd}` });
+  await transport.flush();
+  process.exit(2);
+}
+
+// 直接切到工作区目录：让 tawcroot / proot / proroot 都可直接 execve("/opt/node/bin/node", ...)，
+// 彻底省掉外层 /bin/bash -c "cd ... && exec node ..." 的二次进程启动开销。
+try {
+  if (process.cwd() !== cfg.cwd) process.chdir(cfg.cwd);
+  process.env.PWD = cfg.cwd;
+} catch (error) {
+  hub.emit("host.fatal", { code: "cwd_chdir_failed", message: `无法切换到工作区 ${cfg.cwd}：${error?.message ?? error}` });
   await transport.flush();
   process.exit(2);
 }
@@ -88,7 +102,18 @@ const reg = new Registry();
 const deps = { controller, hub, surfaces, ui, themeHandle, reg, bus: () => controller.bus };
 for (const mod of [hostCmds, sessionCmds, libraryCmds, sessionListCmds, agentCmds, modelConfigCmds, modelCmds, catalogCmds, uiCmds, serviceCmds, authCmds, resourceCmds, resourceFileCmds, mcpCmds, settingsCmds, genericCmds]) mod.register(reg, deps);
 
-hub.emit("host.ready", { pid: process.pid, node: process.version, cwd: cfg.cwd });
+hub.emit("host.ready", {
+  ...hostCmds.buildHelloPayload(reg),
+  cwd: cfg.cwd,
+});
+
+// host.ready 帧已发出后立刻在下一轮事件循环开始加载官方 SDK，
+// 与 App 侧收帧、校验协议和发送 session.open 彻底重叠，不阻塞 host.ready 响应时间。
+if (cfg.piDir && process.env.PI_HOST_NO_PRELOAD !== "1") {
+  setImmediate(() => {
+    void loadSdk(cfg.piDir).catch(() => {});
+  });
+}
 
 readLines(
   process.stdin,

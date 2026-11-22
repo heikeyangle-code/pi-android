@@ -49,7 +49,15 @@ class SdkHostInstaller(
      */
     fun install(target: File): Result {
         val wanted = LinkedHashMap<String, String>() // 相对路径 → asset 路径
-        collect("", wanted)
+        // 优先仅部署单文件预打包入口 host.bundle.mjs（1 次写盘、免去 proot 下 27 个 .mjs 模块解析）；
+        // 若资产树里不含 bundle（如旧构建/测试替身），回退整棵目录同步。
+        val bundleAsset = "$assetRoot/${SdkHostLaunch.BUNDLE_FILE}"
+        val hasBundle = runCatching { assets.read(bundleAsset).isNotEmpty() }.getOrDefault(false)
+        if (hasBundle) {
+            wanted[SdkHostLaunch.BUNDLE_FILE] = bundleAsset
+        } else {
+            collect("", wanted)
+        }
         if (wanted.isEmpty()) throw IOException("APK 里没有 $assetRoot（assets 没打进去？）")
 
         val written = mutableListOf<String>()
