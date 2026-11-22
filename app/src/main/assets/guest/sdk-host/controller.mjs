@@ -566,7 +566,9 @@ export class Controller {
 
     const bindings = {
       uiContext: this.ui.context,
-      mode: this.cfg.mode,
+      // 官方交互模式固定传 "tui"（modes/interactive/interactive-mode.js）。不传时 SDK 回落到 "print"，
+      // 扩展里的 `ctx.mode !== "tui"` 守卫会把本宿主当成非交互环境而拒绝运行（"… requires interactive mode"）。
+      mode: "tui",
       commandContextActions: this.#commandActions(),
       shutdownHandler: () => {
         this.shutdownRequested = true;

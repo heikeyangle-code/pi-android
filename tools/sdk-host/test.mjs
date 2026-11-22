@@ -845,6 +845,15 @@ try {
     const teRes = await h.call("ui.setToolsExpanded", { expanded: true });
     expect("ui.setToolsExpanded 同步工具展开状态并广播事件", teRes.ok && teRes.data.expanded === true && !!(await teEv.catch(() => null)));
 
+    // 扩展看到的 ctx.mode 必须是 "tui"（官方 interactive-mode 的取值）。未传 mode 时 SDK 回落到 "print"，
+    // 所有按 `ctx.mode !== "tui"` 守卫的扩展（官方示例里的游戏等）会提示 "requires interactive mode" 而拒绝运行。
+    const mCtx = h.frames.length;
+    await h.call("session.prompt", { message: "/probe-ctx" });
+    const ctxNote = await h
+      .waitFor((f) => h.frames.indexOf(f) >= mCtx && h.evt("ui.notify", (d) => String(d.message).startsWith("ctx-mode="))(f), 5000)
+      .catch(() => null);
+    expect('扩展 ctx.mode === "tui" 且 ctx.hasUI === true', ctxNote?.data?.message === "ctx-mode=tui hasUI=true", ctxNote?.data?.message ?? "(无 ui.notify)");
+
     // 真实 FooterDataProvider（含可用供应商数与扩展状态）
     await h.call("auth.setApiKey", { providerId: "openai", apiKey: "sk-footer-probe" });
     const mFooter = h.frames.length;
@@ -1132,6 +1141,12 @@ try {
   {
     const bundleEntry = join(hostDir, "host.bundle.mjs");
     expect("host.bundle.mjs 存在", existsSync(bundleEntry));
+    const bundleText = existsSync(bundleEntry) ? readFileSync(bundleEntry, "utf8") : "";
+    expect(
+      'host.bundle.mjs 以 mode:"tui" 绑定扩展（与官方 interactive-mode 一致，且不再读取已删除的 cfg.mode）',
+      bundleText.includes('mode:"tui"') && !bundleText.includes("cfg.mode"),
+      "bundle 里 bindExtensions 的 mode 不是 \"tui\"",
+    );
     const bundleAuditFile = join(repo, "build", `.bundle-audit-${process.pid}.log`);
     writeFileSync(bundleAuditFile, "");
     const b = startHost({

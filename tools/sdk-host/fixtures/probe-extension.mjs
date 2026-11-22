@@ -86,6 +86,13 @@ export default function probe(pi) {
     handler: async (_args, ctx) => ctx.ui.notify("pong"),
   });
 
+  // 官方交互模式以 mode:"tui" 绑定扩展（modes/interactive/interactive-mode.js 的 bindExtensions）；
+  // 官方示例（snake、tic-tac-toe、todo、qna…）用 `ctx.mode !== "tui"` 拒绝运行。
+  pi.registerCommand?.("probe-ctx", {
+    description: "report ctx.mode / ctx.hasUI",
+    handler: async (_args, ctx) => ctx.ui.notify(`ctx-mode=${ctx.mode} hasUI=${ctx.hasUI}`),
+  });
+
   pi.registerShortcut?.("ctrl+shift+p", {
     description: "probe shortcut",
     handler: async (ctx) => ctx.ui.notify("shortcut-fired:ctrl+shift+p"),
