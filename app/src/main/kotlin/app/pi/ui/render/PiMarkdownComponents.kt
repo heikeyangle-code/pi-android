@@ -315,7 +315,6 @@ internal fun PiMarkdownBlock(
                     typography = typography,
                     referenceLinks = referenceLinks,
                     eolAsNewLine = eolAsNewLine,
-                    quoteDepth = quoteDepth,
                 )
             } else {
                 val raw = safeSlice(content, node)
@@ -903,6 +902,7 @@ private fun PiListBlock(
                     spacing = spacing,
                     referenceLinks = referenceLinks,
                     eolAsNewLine = eolAsNewLine,
+                    quoteDepth = quoteDepth,
                 )
             }
         }
@@ -1137,7 +1137,7 @@ private fun PiBlockImageSurface(
             }
         }
         is PiImageLoadState.Loading -> {
-            val aspectWOverH = loadState.rememberedHeightOverWidth
+            val aspectWOverH = loadState.heightOverWidth
                 ?.takeIf { it.isFinite() && it in 0.1f..10f }
                 ?.let { (1f / it).coerceIn(0.4f, 4f) }
                 ?: 1.6f

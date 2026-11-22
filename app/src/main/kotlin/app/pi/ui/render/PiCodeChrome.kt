@@ -213,8 +213,7 @@ internal fun PiRichCodeBlock(
                             val lineNumbersText = remember(shownLineCount) {
                                 buildString(shownLineCount * (digits + 1)) {
                                     for (ln in 1..shownLineCount) {
-                                        if (ln > 1) append('
-')
+                                        if (ln > 1) append('\n')
                                         append(ln)
                                     }
                                 }

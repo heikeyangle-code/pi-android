@@ -332,7 +332,7 @@ internal fun PiInlineMarkdownText(
                     if (woh != null && woh > 0f) (1f / woh).coerceIn(0.15f, 4f) else 0.65f
                 }
                 is PiImageLoadState.Loading ->
-                    (loadState.rememberedHeightOverWidth ?: 0.62f).coerceIn(0.25f, 2.5f)
+                    (loadState.heightOverWidth ?: 0.62f).coerceIn(0.25f, 2.5f)
                 PiImageLoadState.Failed -> 0.35f
             }
             val boxW = when {
