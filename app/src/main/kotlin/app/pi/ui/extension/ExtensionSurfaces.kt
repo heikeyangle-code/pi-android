@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -57,6 +59,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -64,15 +68,20 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.host.ExtCustom
+import app.pi.host.ExtOverlayOptions
 import app.pi.host.ExtPanel
 import app.pi.i18n.tr
+import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.components.PiSheet
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -84,18 +93,16 @@ import kotlin.math.abs
 private enum class SurfaceControlMode { Gamepad, Keyboard }
 
 /**
- * 扩展自绘的整块界面（`ctx.ui.custom()` / `tui.showOverlay()`）——手机全屏与手柄触屏适配版。
+ * 扩展自绘交互表面（`ctx.ui.custom()` / `tui.showOverlay()`）——手机端全能力适配版：
  *
- * 针对手机上的展示完整度与操作手感做了四项系统优化：
- *  1. **吃满可用屏高，不再白白空出下半屏**：交互式表面与长表面统一使用 `fullHeight = true`，
- *     视口占满 `Column` 的 `weight(1f)`，按实测像素高度精确换算并回传 `ui.resize(cols, rows)`；
- *  2. **浮点精确字宽 + 真正适配整行宽度，告别左右裁切**：以 10 字符均值浮点测宽消除小字号整型截断误差，
- *     默认将 `max(80, 实际最长行)` 完整缩进视口（下限 0.48×），同时可一键切回「标准字号」；
- *  3. **双手拇指十字手柄 + 长按连发 + 视口手势**：默认「手柄」模式提供真正的十字方向键（支持长按连发与触觉反馈）
- *     与右侧拇指动作键区（确认 / 空格 / Esc / Tab / 更多），画面未溢出时也可直接在视口上滑动触发方向键；
- *     一键切「键盘」模式即可输入文本发给组件；
- *  4. **终端提示音开关**：联动 `ui.bell`（`tui.terminal.write("\x07")` / `process.stdout.write("\x07")` / OSC 通知），
- *     顶部可随时一键静音。
+ *  1. **真终端 Cell Grid 渲染（`TerminalGridRow`）**：严格按等宽单元格坐标铺背景与居中绘字，
+ *     棋盘/表格/框线 100% 笔直齐整，24-bit 前景/背景原样保留，触控坐标像素级精确；
+ *  2. **智能视口尺寸 & 零黑洞**：不再强按 80 列缩成小块，也不再给 20 行浮层强撑 71 行黑空洞；
+ *     按内容宽度与官方 `OverlayOptions` 自适应，且通过 `surfaceId` 独立同步 `ui.resize`；
+ *  3. **系统输入法无缝直通**：自动识别官方 `CURSOR_MARKER`/`FAKE_CURSOR`（`hasTextCursor`）切入键盘模式、
+ *     自动弹起系统输入法并遵循 `imePadding()`；支持「直通打字（含中文 IME 组合保护与退格直达）」与「整句发送」；
+ *  4. **触屏鼠标 + 连续滑屏 + 自动快捷条**：支持 `handleMouse` 的组件直发 `press`/`click`/`release`/`wheel`；
+ *     纯键盘组件支持连续滑屏移动多格、十字手柄与自动从底部图例提取的一键快捷芯片（如 Chess 的 F/N/G/Q）。
  */
 @Composable
 fun ExtensionSurfaceHost(
@@ -108,55 +115,61 @@ fun ExtensionSurfaceHost(
     onMinimize: () -> Unit = {},
     onRestore: () -> Unit = {},
     onInput: (surfaceId: String, data: String) -> Unit,
-    onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int) -> Unit = { _, _, _, _, _ -> },
-    onResize: (columns: Int, rows: Int) -> Unit = { _, _ -> },
+    onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int, type: String, wheelDelta: Int?) -> Unit = { _, _, _, _, _, _, _ -> },
+    onResize: (surfaceId: String, columns: Int, rows: Int) -> Unit = { _, _, _ -> },
     onClose: (surfaceId: String) -> Unit,
 ) {
     if (custom == null) return
     val id = custom.surfaceId
-    val inferred = remember(custom.lines) { inferSurfaceTitle(custom.lines) }
-    val title = inferred ?: tr("扩展交互面板", "Extension Panel")
+    val title = remember(custom.lines, custom.overlay) {
+        inferSurfaceTitle(custom.lines)
+            ?: if (custom.overlay) tr("扩展浮层", "Extension Overlay") else tr("扩展界面", "Extension Surface")
+    }
     if (minimized) {
-        // 最小化态：贴边低调半透明小胶囊，不挡对话与输入；点一下秒回原界面，点 ✕ 才真正关闭。
+        val palette = PiTheme.palette
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(end = 12.dp, bottom = minimizedBottomPadding),
+                .padding(horizontal = 14.dp)
+                .padding(bottom = minimizedBottomPadding),
             contentAlignment = Alignment.BottomEnd,
         ) {
-            val palette = PiTheme.palette
-            val shape = RoundedCornerShape(999.dp)
+            val pillShape = RoundedCornerShape(999.dp)
             Row(
                 modifier = Modifier
-                    .clip(shape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
-                    .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.7f), shape)
-                    .clickable(role = Role.Button, onClickLabel = tr("恢复扩展面板", "Restore extension panel"), onClick = onRestore)
-                    .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                    .clip(pillShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .border(1.dp, palette.accent.copy(alpha = 0.55f), pillShape)
+                    .clickable(role = Role.Button, onClickLabel = tr("恢复扩展界面", "Restore extension surface"), onClick = onRestore)
+                    .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(
                     modifier = Modifier
-                        .size(7.dp)
+                        .size(8.dp)
                         .clip(CircleShape)
                         .background(palette.accent),
                 )
                 Text(
                     text = title,
-                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
                     color = palette.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 150.dp),
+                    modifier = Modifier.widthIn(max = 170.dp),
                 )
-                if (stackCount > 1) {
-                    SurfaceMetaBadge(text = "$stackCount", tint = palette.accent)
-                }
+                Text(
+                    text = tr("继续", "Resume"),
+                    style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                    color = palette.accent,
+                    maxLines = 1,
+                )
                 Box(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
                         .clickable(role = Role.Button, onClickLabel = tr("关闭扩展面板", "Close extension panel")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -171,8 +184,13 @@ fun ExtensionSurfaceHost(
         }
         return
     }
-    val useFullHeight = custom.interactive || !custom.overlay || custom.lines.size > FULL_HEIGHT_LINE_THRESHOLD
-    // 下滑把手 / 点遮罩 = 最小化（后台保留扩展运行状态，不杀死进程/游戏）；点右上角 ✕ 才真正关闭。
+
+    val useFullHeight = shouldUseFullHeight(
+        overlay = custom.overlay,
+        rowCount = panelRows(custom.lines).size,
+        overlayOptions = custom.overlayOptions,
+    )
+    // 下滑把手 / 点遮罩 = 最小化（后台保留扩展运行状态，方便随时回聊天框和 AI 对话）；点右上角 ✕ 才真正关闭。
     PiSheet(onDismiss = onMinimize, fullHeight = useFullHeight) {
         SurfaceSheetBody(
             surfaceId = id,
@@ -180,6 +198,9 @@ fun ExtensionSurfaceHost(
             stackCount = stackCount,
             lines = custom.lines,
             interactive = custom.interactive,
+            supportsMouse = custom.supportsMouse,
+            hasTextCursor = custom.hasTextCursor,
+            overlayOptions = custom.overlayOptions,
             blocked = custom.blocked,
             useFullHeight = useFullHeight,
             soundMuted = soundMuted,
@@ -196,7 +217,6 @@ fun ExtensionSurfaceHost(
 /**
  * 非拦截型悬浮 HUD（官方 `OverlayOptions.nonCapturing = true`）：
  * 贴在右下角（输入框上方），**绝不铺遮罩、绝不抢占聊天滚动与输入焦点**。
- * 最多展示 6 行紧凑 ANSI 输出；若组件支持交互，点卡身可一键展开完整操控面板，点 ✕ 直接关闭。
  */
 @Composable
 fun ExtensionFloatingOverlayCard(
@@ -208,32 +228,37 @@ fun ExtensionFloatingOverlayCard(
     if (custom == null) return
     val palette = PiTheme.palette
     val id = custom.surfaceId
-    val rows = remember(custom.lines) { trimEmptyEdgeLines(panelRows(custom.lines)) }
-    val title = remember(custom.lines) { inferSurfaceTitle(custom.lines) } ?: tr("悬浮信息", "Floating Overlay")
-    val previewRows = if (rows.size > 6) rows.take(6) else rows
-    val shape = RoundedCornerShape(14.dp)
+    val rows = remember(custom.lines) { panelRows(custom.lines) }
+    val previewRows = remember(rows) { rows.take(6) }
+    val title = remember(rows) { inferSurfaceTitle(rows) ?: tr("扩展悬浮层", "Extension HUD") }
+    val cardShape = RoundedCornerShape(14.dp)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = 16.dp, end = 12.dp, bottom = bottomPadding),
+            .padding(horizontal = 12.dp)
+            .padding(bottom = bottomPadding),
         contentAlignment = Alignment.BottomEnd,
     ) {
         Column(
             modifier = Modifier
-                .widthIn(min = 180.dp, max = 320.dp)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f))
-                .border(PiSpacing.hairline, palette.borderAccent.copy(alpha = 0.45f), shape)
+                .widthIn(min = 180.dp, max = 300.dp)
+                .clip(cardShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f))
+                .border(1.dp, palette.accent.copy(alpha = 0.42f), cardShape)
                 .then(
                     if (onExpand != null) {
-                        Modifier.clickable(role = Role.Button, onClickLabel = tr("展开悬浮面板", "Expand floating overlay"), onClick = onExpand)
+                        Modifier.clickable(
+                            role = Role.Button,
+                            onClickLabel = tr("展开扩展悬浮层", "Expand extension overlay"),
+                            onClick = onExpand,
+                        )
                     } else {
                         Modifier
                     },
                 )
                 .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -244,7 +269,7 @@ fun ExtensionFloatingOverlayCard(
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(palette.accent),
+                        .background(if (custom.interactive) palette.accent else palette.muted),
                 )
                 Text(
                     text = title,
@@ -254,26 +279,27 @@ fun ExtensionFloatingOverlayCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (onExpand != null && custom.interactive) {
+                if (onExpand != null) {
                     Text(
-                        text = tr("操控", "Interact"),
-                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+                        text = if (custom.interactive) tr("操控", "Open") else tr("展开", "Expand"),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
                         color = palette.accent,
                         maxLines = 1,
                     )
                 }
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(20.dp)
                         .clip(CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮面板", "Close floating overlay")) { onClose(id) },
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .clickable(role = Role.Button, onClickLabel = tr("关闭悬浮层", "Close overlay")) { onClose(id) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = tr("关闭", "Close"),
                         tint = palette.dim,
-                        modifier = Modifier.size(13.dp),
+                        modifier = Modifier.size(12.dp),
                     )
                 }
             }
@@ -303,14 +329,14 @@ fun ExtensionFloatingOverlayCard(
 }
 
 /**
- * 可交互工厂组件（`ctx.ui.setWidget(key, factory)`、`setHeader`、`setFooter` 带 `handleInput` / `handleMouse`）的交互面板。
+ * 可交互工厂组件（`ctx.ui.setWidget(key, factory)`、`setHeader`、`setFooter`）的交互面板。
  */
 @Composable
 fun ExtensionWidgetSurfaceSheet(
     panel: ExtPanel,
     onInput: (surfaceId: String, data: String) -> Unit,
-    onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int) -> Unit,
-    onResize: (columns: Int, rows: Int) -> Unit,
+    onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int, type: String, wheelDelta: Int?) -> Unit,
+    onResize: (surfaceId: String, columns: Int, rows: Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val id = panel.surfaceId ?: return
@@ -319,7 +345,7 @@ fun ExtensionWidgetSurfaceSheet(
         "footer" -> tr("扩展底栏", "Extension Footer")
         else -> widgetCaption(panel.key) ?: tr("扩展组件", "Extension Widget")
     }
-    val useFullHeight = panel.interactive || panel.lines.size > FULL_HEIGHT_LINE_THRESHOLD
+    val useFullHeight = panelRows(panel.lines).size > COMPACT_OVERLAY_MAX_ROWS
     PiSheet(onDismiss = onDismiss, fullHeight = useFullHeight) {
         SurfaceSheetBody(
             surfaceId = id,
@@ -327,6 +353,9 @@ fun ExtensionWidgetSurfaceSheet(
             stackCount = 1,
             lines = panel.lines,
             interactive = panel.interactive,
+            supportsMouse = panel.supportsMouse,
+            hasTextCursor = panel.hasTextCursor,
+            overlayOptions = null,
             blocked = null,
             useFullHeight = useFullHeight,
             soundMuted = false,
@@ -340,6 +369,26 @@ fun ExtensionWidgetSurfaceSheet(
     }
 }
 
+private fun shouldUseFullHeight(
+    overlay: Boolean,
+    rowCount: Int,
+    overlayOptions: ExtOverlayOptions?,
+): Boolean {
+    if (!overlay) return true
+    if (rowCount > COMPACT_OVERLAY_MAX_ROWS) return true
+    val maxH = overlayOptions?.maxHeightSpec?.trim()
+    if (maxH != null) {
+        if (maxH.endsWith("%")) {
+            val pct = maxH.removeSuffix("%").toIntOrNull()
+            if (pct != null && pct >= 80) return true
+        } else {
+            val rows = maxH.toIntOrNull()
+            if (rows != null && rows > COMPACT_OVERLAY_MAX_ROWS) return true
+        }
+    }
+    return false
+}
+
 @Composable
 private fun SurfaceSheetBody(
     surfaceId: String,
@@ -347,40 +396,76 @@ private fun SurfaceSheetBody(
     stackCount: Int,
     lines: List<String>,
     interactive: Boolean,
+    supportsMouse: Boolean,
+    hasTextCursor: Boolean,
+    overlayOptions: ExtOverlayOptions?,
     blocked: String?,
     useFullHeight: Boolean,
     soundMuted: Boolean,
     onToggleSound: () -> Unit,
     onMinimize: (() -> Unit)?,
     onInput: (surfaceId: String, data: String) -> Unit,
-    onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int) -> Unit,
-    onResize: (columns: Int, rows: Int) -> Unit,
+    onMouse: (surfaceId: String, x: Int, y: Int, width: Int, height: Int, type: String, wheelDelta: Int?) -> Unit,
+    onResize: (surfaceId: String, columns: Int, rows: Int) -> Unit,
     onClose: () -> Unit,
 ) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
     val measurer = rememberTextMeasurer()
 
     var fitWidth by remember(surfaceId) { mutableStateOf(true) }
-    var controlMode by remember(surfaceId) { mutableStateOf(SurfaceControlMode.Gamepad) }
+    var userPinnedMode by remember(surfaceId) { mutableStateOf(false) }
+    var controlMode by remember(surfaceId) {
+        mutableStateOf(if (hasTextCursor) SurfaceControlMode.Keyboard else SurfaceControlMode.Gamepad)
+    }
+    // 支持鼠标触屏的组件允许折叠底部大手柄，留出最大画布视野
+    var padHidden by remember(surfaceId) { mutableStateOf(false) }
     var viewportWidthPx by remember { mutableIntStateOf(0) }
     var viewportHeightPx by remember { mutableIntStateOf(0) }
 
+    // 组件渲染出官方 CURSOR_MARKER / FAKE_CURSOR（等待文本输入）时自动切到键盘模式并拉起系统输入法
+    LaunchedEffect(surfaceId, hasTextCursor) {
+        if (hasTextCursor && !userPinnedMode) {
+            controlMode = SurfaceControlMode.Keyboard
+            padHidden = false
+        }
+    }
+
     val rows = remember(lines) { panelRows(lines) }
     val maxContentCols = remember(rows) {
-        rows.maxOfOrNull { visibleColumns(it) } ?: STANDARD_TERMINAL_COLS
+        rows.maxOfOrNull { visibleColumns(it) } ?: 0
+    }
+    val quickShortcuts = remember(rows, interactive) {
+        if (interactive) extractSurfaceShortcuts(rows) else emptyList()
     }
 
     val viewportPadHPx = with(density) { (ViewportPadH * 2).roundToPx() }
     val viewportPadVPx = with(density) { (ViewportPadV * 2).roundToPx() }
     val baseMono = PiTheme.text.monoSmall
-    // 用 10 字符求平均浮点宽度，避免单字取整带来的 5%–15% 误差（小字号下最容易把右侧裁掉几列）。
     val baseCharWidthPx = remember(measurer, baseMono) {
         (measurer.measure("0123456789", baseMono).size.width / 10f).coerceAtLeast(1f)
     }
-    val targetCols = maxOf(STANDARD_TERMINAL_COLS, maxContentCols.coerceAtMost(MAX_AUTO_FIT_COLS))
-    val fitScale = if (fitWidth && viewportWidthPx > viewportPadHPx) {
-        val usablePx = (viewportWidthPx - viewportPadHPx - 2).coerceAtLeast(1).toFloat()
+    val usablePx = (viewportWidthPx - viewportPadHPx - 2).coerceAtLeast(1).toFloat()
+    val naturalCols = if (viewportWidthPx > viewportPadHPx) {
+        kotlin.math.floor(usablePx / baseCharWidthPx).toInt().coerceIn(MIN_COLUMNS, STANDARD_TERMINAL_COLS)
+    } else {
+        56
+    }
+
+    // 仅当内容确实超过手机自然列数（或官方 overlayOptions 指定了更宽列数）时才缩小字号；
+    // 棋盘（~56 列）这类适中画面保持 1:1 清晰大字号，不再硬逼 80 列缩成小块。
+    val requestedOverlayCols = remember(overlayOptions) {
+        val raw = overlayOptions?.widthSpec?.trim()
+        val parsed = raw?.takeIf { !it.endsWith("%") }?.toIntOrNull()
+        val minW = overlayOptions?.minWidth
+        listOfNotNull(parsed, minW).maxOrNull()?.coerceIn(MIN_COLUMNS, MAX_AUTO_FIT_COLS)
+    }
+    val targetCols = when {
+        rows.isEmpty() -> requestedOverlayCols ?: maxOf(naturalCols, 56)
+        else -> maxOf(naturalCols, maxContentCols.coerceAtMost(MAX_AUTO_FIT_COLS))
+    }
+    val fitScale = if (fitWidth && viewportWidthPx > viewportPadHPx && targetCols > naturalCols) {
         (usablePx / (targetCols * baseCharWidthPx)).coerceIn(MIN_FIT_SCALE, 1f)
     } else {
         1f
@@ -391,34 +476,53 @@ private fun SurfaceSheetBody(
     }
     val cellMetrics = remember(measurer, monoStyle) {
         val m = measurer.measure("0123456789", monoStyle).size
-        (m.width / 10f).coerceAtLeast(1f) to m.height.coerceAtLeast(1)
+        (m.width / 10f).coerceAtLeast(1f) to m.height.coerceAtLeast(1).toFloat()
     }
     val charWidthPx = cellMetrics.first
     val lineHeightPx = cellMetrics.second
 
-    var measuredCols by remember { mutableIntStateOf(STANDARD_TERMINAL_COLS) }
-    var measuredRows by remember { mutableIntStateOf(24) }
+    var measuredCols by remember(surfaceId) { mutableIntStateOf(0) }
+    var measuredRows by remember(surfaceId) { mutableIntStateOf(0) }
 
-    LaunchedEffect(viewportWidthPx, viewportHeightPx, charWidthPx, lineHeightPx) {
+    LaunchedEffect(surfaceId, viewportWidthPx, viewportHeightPx, charWidthPx, lineHeightPx, useFullHeight) {
         if (viewportWidthPx <= viewportPadHPx) return@LaunchedEffect
         val cols = columnsForFloat(viewportWidthPx, chromePx = viewportPadHPx + 2, charPx = charWidthPx)
-        val usableHeight = (viewportHeightPx - viewportPadVPx).coerceAtLeast(lineHeightPx * 8)
-        val rowCount = (usableHeight / lineHeightPx).coerceIn(8, 100)
+        val rowCount = if (useFullHeight && viewportHeightPx > viewportPadVPx) {
+            val usableH = (viewportHeightPx - viewportPadVPx).coerceAtLeast((lineHeightPx * 10).toInt())
+            (usableH / lineHeightPx).toInt().coerceIn(10, 100)
+        } else {
+            // 紧凑浮层：按内容或合理高度报告，不再虚报 71 行导致空出半屏
+            maxOf(24, rows.size + 2).coerceAtMost(42)
+        }
         if (cols != measuredCols || rowCount != measuredRows) {
             measuredCols = cols
             measuredRows = rowCount
-            onResize(cols, rowCount)
+            onResize(surfaceId, cols, rowCount)
         }
     }
 
-    val needsHorizontalScroll = remember(maxContentCols, measuredCols) { maxContentCols > measuredCols }
-    val needsVerticalScroll = remember(rows.size, measuredRows) { rows.size > measuredRows }
-    val swipeToArrowsEnabled = interactive && controlMode == SurfaceControlMode.Gamepad && !needsHorizontalScroll && !needsVerticalScroll
+    val effectiveCols = if (measuredCols > 0) measuredCols else naturalCols
+    val effectiveRows = if (measuredRows > 0) measuredRows else 24
+    val needsHorizontalScroll = remember(maxContentCols, effectiveCols) { maxContentCols > effectiveCols }
+    val needsVerticalScroll = remember(rows.size, effectiveRows, useFullHeight) {
+        if (useFullHeight) rows.size > effectiveRows else rows.size > COMPACT_VIEWPORT_SCROLL_ROWS
+    }
+    // 纯键盘组件在视口未溢出时开启「连续滑屏走格」；支持鼠标的组件优先保留触控直点与滚轮
+    val swipeToArrowsEnabled = interactive &&
+        !supportsMouse &&
+        controlMode == SurfaceControlMode.Gamepad &&
+        !needsHorizontalScroll &&
+        !needsVerticalScroll
+    val wheelEnabled = interactive && supportsMouse && !needsVerticalScroll
+
     val latestOnInput by rememberUpdatedState(onInput)
+    val latestOnMouse by rememberUpdatedState(onMouse)
 
     val outerModifier = Modifier
         .fillMaxWidth()
         .then(if (useFullHeight) Modifier.fillMaxHeight() else Modifier)
+        .navigationBarsPadding()
+        .imePadding()
         .padding(horizontal = SurfaceSidePadding)
 
     Column(
@@ -429,7 +533,7 @@ private fun SurfaceSheetBody(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Box(
                 modifier = Modifier
@@ -451,22 +555,18 @@ private fun SurfaceSheetBody(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     if (stackCount > 1) {
-                        SurfaceMetaBadge(text = tr("${stackCount}层", "${stackCount} layers"), tint = palette.accent)
+                        SurfaceMetaBadge(text = tr("${stackCount}层", "${stackCount}L"), tint = palette.accent)
                     }
                 }
                 Text(
                     text = buildString {
-                        append("${measuredCols}×${measuredRows}")
-                        if (interactive) {
-                            append(
-                                if (swipeToArrowsEnabled) {
-                                    tr(" · 可滑动/点按/手柄", " · Swipe / Tap / Pad")
-                                } else {
-                                    tr(" · 点击或用下方操控区", " · Tap or use controls below")
-                                },
-                            )
-                        } else {
-                            append(tr(" · 只读视图", " · Read-only"))
+                        append("${effectiveCols}×${rows.size.coerceAtLeast(1)}")
+                        when {
+                            !interactive -> append(tr(" · 只读视图", " · Read-only"))
+                            supportsMouse -> append(tr(" · 触屏直控", " · Touch"))
+                            hasTextCursor -> append(tr(" · 文本输入", " · Text input"))
+                            swipeToArrowsEnabled -> append(tr(" · 滑屏/手柄", " · Swipe / Pad"))
+                            else -> append(tr(" · 键盘/手柄", " · Keys / Pad"))
                         }
                     },
                     style = PiTheme.text.meta,
@@ -480,6 +580,8 @@ private fun SurfaceSheetBody(
                     label = if (controlMode == SurfaceControlMode.Gamepad) tr("键盘", "Keys") else tr("手柄", "Pad"),
                     active = controlMode == SurfaceControlMode.Keyboard,
                     onClick = {
+                        userPinnedMode = true
+                        padHidden = false
                         controlMode = if (controlMode == SurfaceControlMode.Gamepad) {
                             SurfaceControlMode.Keyboard
                         } else {
@@ -488,13 +590,15 @@ private fun SurfaceSheetBody(
                     },
                 )
             }
+            if (maxContentCols > naturalCols) {
+                SurfaceToolbarPill(
+                    label = if (fitWidth) tr("原字号", "1:1") else tr("适配", "Fit"),
+                    active = !fitWidth,
+                    onClick = { fitWidth = !fitWidth },
+                )
+            }
             SurfaceToolbarPill(
-                label = if (fitWidth) tr("原字号", "1:1") else tr("适配屏", "Fit"),
-                active = !fitWidth,
-                onClick = { fitWidth = !fitWidth },
-            )
-            SurfaceToolbarPill(
-                label = if (soundMuted) tr("静音", "Muted") else tr("音效", "Sound"),
+                label = if (soundMuted) tr("静音", "Mute") else tr("音效", "Bell"),
                 active = !soundMuted,
                 onClick = onToggleSound,
             )
@@ -505,7 +609,7 @@ private fun SurfaceSheetBody(
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .border(PiSpacing.hairline, palette.borderMuted, CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = tr("最小化", "Minimize"), onClick = onMinimize),
+                        .clickable(role = Role.Button, onClickLabel = tr("最小化去对话", "Minimize to chat"), onClick = onMinimize),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -562,15 +666,16 @@ private fun SurfaceSheetBody(
             }
         }
 
-        // ---- 沉降式终端内容视口（全高模式下 weight(1f) 完整利用屏幕剩余空间） ----
-        val swipeThresholdPx = with(density) { 32.dp.toPx() }
+        // ---- 沉降式终端 Cell Grid 视口 ----
+        val swipeStepPx = with(density) { 28.dp.toPx() }
+        val wheelStepPx = with(density) { 26.dp.toPx() }
         val viewportModifier = Modifier
             .fillMaxWidth()
             .then(
                 if (useFullHeight) {
                     Modifier.weight(1f, fill = true)
                 } else {
-                    Modifier.heightIn(min = 120.dp, max = 380.dp)
+                    Modifier.heightIn(min = 120.dp, max = 440.dp)
                 },
             )
             .clip(PiShapes.card)
@@ -581,51 +686,67 @@ private fun SurfaceSheetBody(
                 viewportHeightPx = size.height
             }
             .then(
-                if (swipeToArrowsEnabled) {
-                    Modifier.pointerInput(surfaceId, swipeThresholdPx) {
+                when {
+                    swipeToArrowsEnabled -> Modifier.pointerInput(surfaceId, swipeStepPx) {
                         var accX = 0f
                         var accY = 0f
-                        var fired = false
                         detectDragGestures(
-                            onDragStart = {
-                                accX = 0f
-                                accY = 0f
-                                fired = false
-                            },
-                            onDragEnd = {
-                                accX = 0f
-                                accY = 0f
-                                fired = false
-                            },
-                            onDragCancel = {
-                                accX = 0f
-                                accY = 0f
-                                fired = false
-                            },
+                            onDragStart = { accX = 0f; accY = 0f },
+                            onDragEnd = { accX = 0f; accY = 0f },
+                            onDragCancel = { accX = 0f; accY = 0f },
                         ) { change, dragAmount ->
                             change.consume()
                             accX += dragAmount.x
                             accY += dragAmount.y
-                            if (!fired && (abs(accX) >= swipeThresholdPx || abs(accY) >= swipeThresholdPx)) {
-                                fired = true
-                                val key = if (abs(accX) >= abs(accY)) {
-                                    if (accX > 0) SurfaceKeys.RIGHT else SurfaceKeys.LEFT
+                            // 连续滑屏走格：每滑过一个步距即发出一次方向键 + 轻触觉，单手滑动即可连移多格
+                            while (abs(accX) >= swipeStepPx || abs(accY) >= swipeStepPx) {
+                                if (abs(accX) >= abs(accY)) {
+                                    val key = if (accX > 0f) SurfaceKeys.RIGHT else SurfaceKeys.LEFT
+                                    accX += if (accX > 0f) -swipeStepPx else swipeStepPx
+                                    accY *= 0.35f
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    latestOnInput(surfaceId, key)
                                 } else {
-                                    if (accY > 0) SurfaceKeys.DOWN else SurfaceKeys.UP
+                                    val key = if (accY > 0f) SurfaceKeys.DOWN else SurfaceKeys.UP
+                                    accY += if (accY > 0f) -swipeStepPx else swipeStepPx
+                                    accX *= 0.35f
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    latestOnInput(surfaceId, key)
                                 }
-                                latestOnInput(surfaceId, key)
                             }
                         }
                     }
-                } else {
-                    Modifier
+                    wheelEnabled -> Modifier.pointerInput(surfaceId, wheelStepPx, effectiveCols, rows.size) {
+                        var accY = 0f
+                        detectDragGestures(
+                            onDragStart = { accY = 0f },
+                            onDragEnd = { accY = 0f },
+                            onDragCancel = { accY = 0f },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            accY += dragAmount.y
+                            while (abs(accY) >= wheelStepPx) {
+                                val delta = if (accY > 0f) -1 else 1
+                                accY += if (accY > 0f) -wheelStepPx else wheelStepPx
+                                val col = (change.position.x / charWidthPx).toInt().coerceIn(0, (effectiveCols - 1).coerceAtLeast(0))
+                                val row = (change.position.y / lineHeightPx).toInt().coerceIn(0, (rows.size - 1).coerceAtLeast(0))
+                                latestOnMouse(surfaceId, col, row, effectiveCols, rows.size.coerceAtLeast(1), "wheel", delta)
+                            }
+                        }
+                    }
+                    else -> Modifier
                 },
             )
             .padding(horizontal = ViewportPadH, vertical = ViewportPadV)
 
-        Box(modifier = viewportModifier) {
+        // 当全高视口内容明显短于可用高度且不需要滚动时，内容居中展示而非在下方留出大片空洞感
+        val centerShortContent = useFullHeight && !needsVerticalScroll && rows.isNotEmpty() && rows.size < effectiveRows - 6
+        Box(
+            modifier = viewportModifier,
+            contentAlignment = if (centerShortContent) Alignment.Center else Alignment.TopStart,
+        ) {
             if (rows.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
                     Text(
                         text = tr("等待扩展输出…", "Waiting for extension output…"),
                         style = PiTheme.text.meta,
@@ -635,16 +756,18 @@ private fun SurfaceSheetBody(
             } else if (rows.size > LAZY_SURFACE_THRESHOLD && !needsHorizontalScroll) {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     itemsIndexed(rows) { rowIndex, line ->
-                        SurfaceRowItem(
+                        SurfaceGridRowItem(
                             line = line,
                             rowIndex = rowIndex,
                             totalRows = rows.size,
-                            measuredCols = measuredCols,
+                            measuredCols = effectiveCols,
                             charWidthPx = charWidthPx,
+                            lineHeightPx = lineHeightPx,
                             monoStyle = monoStyle,
                             interactive = interactive,
-                            onTapCell = { col, row ->
-                                onMouse(surfaceId, col, row, measuredCols, rows.size.coerceAtLeast(1))
+                            supportsMouse = supportsMouse,
+                            onMouseCell = { col, row, type ->
+                                latestOnMouse(surfaceId, col, row, effectiveCols, rows.size.coerceAtLeast(1), type, null)
                             },
                         )
                     }
@@ -658,16 +781,18 @@ private fun SurfaceSheetBody(
                     .then(if (needsHorizontalScroll) Modifier.horizontalScroll(hScroll) else Modifier)
                 Column(modifier = innerModifier) {
                     rows.forEachIndexed { rowIndex, line ->
-                        SurfaceRowItem(
+                        SurfaceGridRowItem(
                             line = line,
                             rowIndex = rowIndex,
                             totalRows = rows.size,
-                            measuredCols = measuredCols,
+                            measuredCols = effectiveCols,
                             charWidthPx = charWidthPx,
+                            lineHeightPx = lineHeightPx,
                             monoStyle = monoStyle,
                             interactive = interactive,
-                            onTapCell = { col, row ->
-                                onMouse(surfaceId, col, row, measuredCols, rows.size.coerceAtLeast(1))
+                            supportsMouse = supportsMouse,
+                            onMouseCell = { col, row, type ->
+                                latestOnMouse(surfaceId, col, row, effectiveCols, rows.size.coerceAtLeast(1), type, null)
                             },
                         )
                     }
@@ -675,12 +800,51 @@ private fun SurfaceSheetBody(
             }
         }
 
-        // ---- 手机端操控坞（手柄模式 / 键盘模式） ----
+        // ---- 自动提取的组件快捷单键条（如 Chess 的 F flip / N new / G games / Q quit） ----
+        if (quickShortcuts.isNotEmpty() && !padHidden) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                quickShortcuts.forEach { sc ->
+                    QuickLegendChip(
+                        shortcut = sc,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onInput(surfaceId, sc.sendData)
+                        },
+                    )
+                }
+            }
+        }
+
+        // ---- 手机端操控坞（手柄模式 / 直通键盘模式） ----
         if (interactive) {
-            SurfaceControlDock(
-                mode = controlMode,
-                onKey = { onInput(surfaceId, it) },
-            )
+            if (supportsMouse && padHidden) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = PiSpacing.small),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    SurfaceToolbarPill(
+                        label = tr("展开操控区", "Show controls"),
+                        active = false,
+                        onClick = { padHidden = false },
+                    )
+                }
+            } else {
+                SurfaceControlDock(
+                    surfaceId = surfaceId,
+                    mode = controlMode,
+                    canHidePad = supportsMouse,
+                    onHidePad = { padHidden = true },
+                    onKey = { onInput(surfaceId, it) },
+                )
+            }
         } else {
             Spacer(Modifier.height(6.dp))
         }
@@ -688,37 +852,92 @@ private fun SurfaceSheetBody(
 }
 
 @Composable
-private fun SurfaceRowItem(
+private fun SurfaceGridRowItem(
     line: String,
     rowIndex: Int,
     totalRows: Int,
     measuredCols: Int,
     charWidthPx: Float,
+    lineHeightPx: Float,
     monoStyle: androidx.compose.ui.text.TextStyle,
     interactive: Boolean,
-    onTapCell: (col: Int, row: Int) -> Unit,
+    supportsMouse: Boolean,
+    onMouseCell: (col: Int, row: Int, type: String) -> Unit,
 ) {
-    val tapModifier = if (interactive) {
+    val tapModifier = if (interactive && supportsMouse) {
+        Modifier
+            .fillMaxWidth()
+            .pointerInput(rowIndex, measuredCols, charWidthPx, totalRows) {
+                detectTapGestures(
+                    onPress = { offset ->
+                        val col = (offset.x / charWidthPx).toInt().coerceIn(0, (measuredCols - 1).coerceAtLeast(0))
+                        onMouseCell(col, rowIndex, "press")
+                        val released = tryAwaitRelease()
+                        if (released) {
+                            onMouseCell(col, rowIndex, "click")
+                        }
+                        onMouseCell(col, rowIndex, "release")
+                    },
+                )
+            }
+    } else if (interactive) {
         Modifier
             .fillMaxWidth()
             .pointerInput(rowIndex, measuredCols, charWidthPx, totalRows) {
                 detectTapGestures { offset ->
                     val col = (offset.x / charWidthPx).toInt().coerceIn(0, (measuredCols - 1).coerceAtLeast(0))
-                    onTapCell(col, rowIndex)
+                    onMouseCell(col, rowIndex, "click")
                 }
             }
     } else {
         Modifier.fillMaxWidth()
     }
     Box(modifier = tapModifier) {
-        val spans = remember(line) { chromeSpans(line) }
-        ExtensionSpans(
-            spans = if (spans.all { it.text.isEmpty() }) listOf(app.pi.protocol.Ansi.Span(" ")) else spans,
-            defaultColor = PiTheme.palette.text,
-            style = monoStyle,
+        TerminalGridRow(
+            line = line,
+            cellWidthPx = charWidthPx,
+            cellHeightPx = lineHeightPx,
+            monoStyle = monoStyle,
+            minCols = measuredCols,
+        )
+    }
+}
+
+@Composable
+private fun QuickLegendChip(
+    shortcut: SurfaceQuickShortcut,
+    onClick: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(9.dp)
+    Row(
+        modifier = Modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(PiSpacing.hairline, palette.borderMuted, shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(5.dp))
+                .background(palette.accent.copy(alpha = 0.16f))
+                .padding(horizontal = 5.dp, vertical = 1.dp),
+        ) {
+            Text(
+                text = shortcut.keyLabel,
+                style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = palette.accent,
+                maxLines = 1,
+            )
+        }
+        Text(
+            text = shortcut.description,
+            style = PiTheme.text.meta,
+            color = palette.text,
             maxLines = 1,
-            overflow = TextOverflow.Clip,
-            richStyle = true,
         )
     }
 }
@@ -726,12 +945,21 @@ private fun SurfaceRowItem(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SurfaceControlDock(
+    surfaceId: String,
     mode: SurfaceControlMode,
+    canHidePad: Boolean,
+    onHidePad: () -> Unit,
     onKey: (String) -> Unit,
 ) {
     val palette = PiTheme.palette
-    var text by remember { mutableStateOf("") }
-    var showMoreKeys by remember { mutableStateOf(false) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var liveTyping by remember(surfaceId) { mutableStateOf(true) }
+    var batchText by remember(surfaceId) { mutableStateOf("") }
+    // 直通模式使用零宽哨兵，使系统软键盘在空框按退格也能立刻向组件发送 BACKSPACE（\u007f）
+    var liveField by remember(surfaceId) {
+        mutableStateOf(TextFieldValue(text = LIVE_SENTINEL, selection = TextRange(1)))
+    }
+    var showMoreKeys by remember(surfaceId) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -740,7 +968,6 @@ private fun SurfaceControlDock(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (mode == SurfaceControlMode.Gamepad) {
-            // ---- 双手拇指人体工学手柄：左侧真正十字方向键（长按连发 + 触觉反馈）+ 右侧动作键群 ----
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -801,11 +1028,14 @@ private fun SurfaceControlDock(
                 }
             }
         } else {
-            // ---- 键盘与快捷输入模式：紧凑方向胶囊 + 确认/Esc/Tab + 文本输入框 ----
+            // ---- 键盘与系统 IME 直通模式：切换即自动拉起系统输入法 ----
+            val focusRequester = remember(surfaceId) { FocusRequester() }
+            PiAutoFocus(focusRequester)
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 Row(
                     modifier = Modifier
@@ -835,75 +1065,158 @@ private fun SurfaceControlDock(
                 )
             }
 
-            // 快捷输入胶囊
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                    .border(PiSpacing.hairline, palette.borderMuted, RoundedCornerShape(10.dp))
-                    .padding(start = 10.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                    .border(1.dp, palette.accent.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                    .padding(start = 8.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    textStyle = PiTheme.text.mono.copy(color = palette.text),
-                    cursorBrush = SolidColor(palette.accent),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            if (text.isNotEmpty()) {
-                                onKey(text)
-                                text = ""
-                            } else {
-                                onKey(SurfaceKeys.ENTER)
+                // 直通 / 整句 切换胶囊
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(if (liveTyping) palette.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable(role = Role.Button) {
+                            liveTyping = !liveTyping
+                            liveField = TextFieldValue(LIVE_SENTINEL, TextRange(1))
+                            keyboard?.show()
+                        }
+                        .padding(horizontal = 7.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = if (liveTyping) tr("直通", "Live") else tr("整句", "Line"),
+                        style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+                        color = if (liveTyping) palette.accent else palette.muted,
+                        maxLines = 1,
+                    )
+                }
+
+                if (liveTyping) {
+                    BasicTextField(
+                        value = liveField,
+                        onValueChange = { updated ->
+                            // 中文 / 日文 IME 组合输入期间暂存，不把未确认拼音发给终端组件
+                            if (updated.composition != null) {
+                                liveField = updated
+                                return@BasicTextField
+                            }
+                            val raw = updated.text
+                            val cleaned = raw.replace(LIVE_SENTINEL, "")
+                            when {
+                                raw.isEmpty() -> {
+                                    // 用户按了系统键盘退格键
+                                    onKey(SurfaceKeys.BACKSPACE)
+                                    liveField = TextFieldValue(LIVE_SENTINEL, TextRange(1))
+                                }
+                                cleaned.isNotEmpty() -> {
+                                    // 换行转为终端回车 \r，其余文字立刻直通发给组件
+                                    val normalized = cleaned.replace("\r\n", "\r").replace("\n", "\r")
+                                    onKey(normalized)
+                                    liveField = TextFieldValue(LIVE_SENTINEL, TextRange(1))
+                                }
+                                else -> {
+                                    liveField = TextFieldValue(LIVE_SENTINEL, TextRange(1))
+                                }
                             }
                         },
-                    ),
-                    decorationBox = { inner ->
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.CenterStart,
-                        ) {
-                            if (text.isEmpty()) {
-                                Text(
-                                    text = tr("输入文字发给组件…", "Send text to component…"),
-                                    style = PiTheme.text.meta,
-                                    color = palette.dim,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester),
+                        singleLine = true,
+                        textStyle = PiTheme.text.mono.copy(color = palette.text),
+                        cursorBrush = SolidColor(palette.accent),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = { onKey(SurfaceKeys.ENTER) },
+                        ),
+                        decorationBox = { inner ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (liveField.text == LIVE_SENTINEL) {
+                                    Text(
+                                        text = tr("实时键入直达组件（退格/回车即发）…", "Type live to component (Bksp/Enter instant)…"),
+                                        style = PiTheme.text.meta,
+                                        color = palette.dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                inner()
                             }
-                            inner()
-                        }
-                    },
-                )
-                MiniInputButton(label = "⌫", enabled = true, onClick = { onKey(SurfaceKeys.BACKSPACE) })
-                MiniInputButton(
-                    label = tr("发送", "Send"),
-                    enabled = text.isNotEmpty(),
-                    onClick = {
-                        onKey(text)
-                        text = ""
-                    },
-                )
-                MiniInputButton(
-                    label = tr("发+⏎", "Send+⏎"),
-                    enabled = text.isNotEmpty(),
-                    primary = true,
-                    onClick = {
-                        val payload = text
-                        text = ""
-                        onKey(payload)
-                        onKey(SurfaceKeys.ENTER)
-                    },
-                )
+                        },
+                    )
+                    MiniInputButton(label = "⌫", enabled = true, onClick = { onKey(SurfaceKeys.BACKSPACE) })
+                    MiniInputButton(label = tr("收键盘", "Hide"), enabled = true, onClick = { keyboard?.hide() })
+                } else {
+                    BasicTextField(
+                        value = batchText,
+                        onValueChange = { batchText = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester),
+                        singleLine = true,
+                        textStyle = PiTheme.text.mono.copy(color = palette.text),
+                        cursorBrush = SolidColor(palette.accent),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if (batchText.isNotEmpty()) {
+                                    onKey(batchText)
+                                    batchText = ""
+                                } else {
+                                    onKey(SurfaceKeys.ENTER)
+                                }
+                            },
+                        ),
+                        decorationBox = { inner ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (batchText.isEmpty()) {
+                                    Text(
+                                        text = tr("输入整句后发送给组件…", "Compose text and send…"),
+                                        style = PiTheme.text.meta,
+                                        color = palette.dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                    MiniInputButton(label = "⌫", enabled = true, onClick = { onKey(SurfaceKeys.BACKSPACE) })
+                    MiniInputButton(
+                        label = tr("发送", "Send"),
+                        enabled = batchText.isNotEmpty(),
+                        onClick = {
+                            onKey(batchText)
+                            batchText = ""
+                        },
+                    )
+                    MiniInputButton(
+                        label = tr("发+⏎", "Send+⏎"),
+                        enabled = batchText.isNotEmpty(),
+                        primary = true,
+                        onClick = {
+                            val payload = batchText
+                            batchText = ""
+                            onKey(payload)
+                            onKey(SurfaceKeys.ENTER)
+                        },
+                    )
+                }
             }
         }
 
@@ -936,6 +1249,9 @@ private fun SurfaceControlDock(
                 SecondaryKeyChip("n") { onKey("n") }
                 SecondaryKeyChip("Ctrl+C", danger = true) { onKey(SurfaceKeys.CTRL_C) }
                 SecondaryKeyChip("Ctrl+D", danger = true) { onKey(SurfaceKeys.CTRL_D) }
+                if (canHidePad) {
+                    SecondaryKeyChip(tr("隐藏手柄", "Hide pad")) { onHidePad() }
+                }
             }
         }
     }
@@ -1022,7 +1338,6 @@ private fun RepeatableKeySurface(
         else -> MaterialTheme.colorScheme.surfaceContainerHigh
     }
     val border = if (pressed) palette.accent.copy(alpha = 0.7f) else palette.borderMuted
-
     Box(
         modifier = Modifier
             .size(width = width, height = height)
@@ -1165,7 +1480,7 @@ private fun CompactRepeatKey(glyph: String, label: String, onClick: () -> Unit) 
                     try {
                         waitForUpOrCancellation()
                     } finally {
-                        repeatJob.cancel()
+                        repeatJob?.cancel()
                         pressed = false
                     }
                 }
@@ -1221,7 +1536,7 @@ private fun DockActionButton(
             .background(bg)
             .border(PiSpacing.hairline, border, shape)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -1283,7 +1598,7 @@ private fun MiniInputButton(
             .clip(shape)
             .background(bg)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -1348,13 +1663,15 @@ private fun inferSurfaceTitle(lines: List<String>): String? {
     return null
 }
 
+private const val LIVE_SENTINEL = "\u200B"
 private val SurfaceSidePadding = 12.dp
 private val ViewportPadH = 8.dp
 private val ViewportPadV = 6.dp
 private const val STANDARD_TERMINAL_COLS = 80
 private const val MAX_AUTO_FIT_COLS = 120
 private const val MIN_FIT_SCALE = 0.48f
-private const val FULL_HEIGHT_LINE_THRESHOLD = 10
+private const val COMPACT_OVERLAY_MAX_ROWS = 28
+private const val COMPACT_VIEWPORT_SCROLL_ROWS = 24
 private const val LAZY_SURFACE_THRESHOLD = 48
 private const val KEY_REPEAT_INITIAL_MS = 220L
 private const val KEY_REPEAT_INTERVAL_MS = 65L

@@ -1,13 +1,10 @@
 package app.pi.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.exclude
@@ -21,7 +18,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.onSizeChanged
 import app.pi.engine.PiEngineSession
 import app.pi.i18n.tr
+import app.pi.ui.extension.ExtensionHubShortcut
 import app.pi.ui.extension.ExtensionWidgetsSheet
+import app.pi.ui.extension.stripAnsiControls
+import app.pi.ui.extension.widgetCaption
 import kotlinx.coroutines.flow.conflate
 import androidx.compose.ui.semantics.semantics
 import app.pi.settings.readBoolean
@@ -101,6 +101,7 @@ import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ChatAction
 import app.pi.ui.chat.argumentContextOf
 import app.pi.ui.chat.PiFileMentions
+import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TailFollow
 import app.pi.ui.chat.TailSnapshot
@@ -121,13 +122,8 @@ import app.pi.ui.render.gapFor
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.render.transcriptGap
-import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWidgetSurfaceSheet
 import app.pi.ui.extension.toExtensionPalette
-import app.pi.ui.extension.ExtensionChromeBanner
-import app.pi.ui.extension.FOOTER_COLLAPSED_ROWS
-import app.pi.ui.extension.HEADER_COLLAPSED_ROWS
-import app.pi.ui.extension.PLACEMENT_BELOW
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -263,7 +259,8 @@ internal fun ChatBody(
     val dockHeightDp = with(density) { dockHeightPx.toDp() }
     val listBottomPad = dockHeightDp + 12.dp
     val listBottomPadPx = dockHeightPx + with(density) { 12.dp.roundToPx() }
-    var widgetsCollapsedByUser by rememberSaveable { mutableStateOf(false) }
+    var pinnedWidgetKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val pinnedWidgetSet = remember(pinnedWidgetKeys) { pinnedWidgetKeys.toSet() }
     var widgetsInspectorOpen by remember { mutableStateOf(false) }
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
@@ -1604,26 +1601,6 @@ internal fun ChatBody(
         // deleted; the detail sheet draws the same figures in its own layout.
         val emptyTranscript = state.transcript.isEmpty() && state.busy == null
 
-        // 扩展的 header（`ctx.ui.setHeader`）：软键盘关闭且未手动收起时平滑展开，避免软键盘弹起首帧瞬间跳变。
-        val extHeader = state.ext.header
-        AnimatedVisibility(
-            visible = !imeVisible && !widgetsCollapsedByUser && extHeader != null,
-            enter = expandVertically(tween(150)) + fadeIn(tween(130)),
-            exit = shrinkVertically(tween(130)) + fadeOut(tween(110)),
-        ) {
-            extHeader?.let { header ->
-                ExtensionChromeBanner(
-                    lines = header.lines,
-                    collapsedRows = HEADER_COLLAPSED_ROWS,
-                    onInteract = if (header.interactive && header.surfaceId != null) {
-                        { interactingWidgetKey = header.key }
-                    } else {
-                        null
-                    },
-                    modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
-                )
-            }
-        }
 
         // 全高聊天视口：一路铺到屏幕最底端（含底部手势条区域），悬浮工作台叠于柔和渐隐羽化层之上。
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
@@ -2008,6 +1985,63 @@ internal fun ChatBody(
                     }
                     .windowInsetsPadding(navOnlyInsets),
             ) {
+                val hubShortcuts = remember(state.commands) {
+                    state.commands.mapNotNull { cmd ->
+                        val key = cmd.shortcutKey?.takeIf {
+                            cmd.source == PiCommandSource.Shortcut && it.isNotBlank()
+                        } ?: return@mapNotNull null
+                        ExtensionHubShortcut(key = key, label = cmd.name, description = cmd.description)
+                    }
+                }
+                val firstInteractivePanel = remember(state.ext.widgets, state.ext.header, state.ext.footer) {
+                    (state.ext.widgets + listOfNotNull(state.ext.header, state.ext.footer))
+                        .firstOrNull { it.interactive && it.surfaceId != null }
+                }
+                val extDefaultLabel = tr("扩展", "Ext")
+                val keysDefaultLabel = tr("快捷", "Keys")
+                val extensionChip = remember(
+                    state.ext.statuses,
+                    state.ext.widgets,
+                    state.ext.header,
+                    state.ext.footer,
+                    state.ext.editorTakeover,
+                    hubShortcuts,
+                    firstInteractivePanel,
+                    extDefaultLabel,
+                    keysDefaultLabel,
+                ) {
+                    val statusCount = state.ext.statuses.size
+                    val panelCount = state.ext.widgets.size +
+                        (if (state.ext.header != null) 1 else 0) +
+                        (if (state.ext.footer != null) 1 else 0)
+                    val totalCount = statusCount + panelCount + (if (state.ext.editorTakeover) 1 else 0)
+                    when {
+                        totalCount > 0 -> {
+                            val firstStatus = state.ext.statuses.firstOrNull()?.let { st ->
+                                stripAnsiControls(st.text).trim().ifEmpty { widgetCaption(st.key) ?: st.key }
+                            }
+                            val firstPanel = (state.ext.widgets + listOfNotNull(state.ext.header, state.ext.footer))
+                                .firstOrNull()?.let { panel -> widgetCaption(panel.key) ?: panel.key }
+                            val label = when {
+                                firstStatus != null -> firstStatus.take(18)
+                                firstPanel != null -> firstPanel.take(18)
+                                else -> extDefaultLabel
+                            }
+                            ComposerExtensionChipState(
+                                label = label,
+                                count = totalCount,
+                                hasInteractive = firstInteractivePanel != null,
+                            )
+                        }
+                        hubShortcuts.isNotEmpty() -> ComposerExtensionChipState(
+                            label = keysDefaultLabel,
+                            count = hubShortcuts.size,
+                            hasInteractive = false,
+                        )
+                        else -> null
+                    }
+                }
+
                 ChatDockStatusAndWidgets(
                     state = state,
                     session = session,
@@ -2016,9 +2050,8 @@ internal fun ChatBody(
                     attachments = attachments,
                     onAttachments = { attachments = it },
                     imeVisible = imeVisible,
-                    widgetsCollapsedByUser = widgetsCollapsedByUser,
-                    onToggleWidgetsCollapse = { widgetsCollapsedByUser = !widgetsCollapsedByUser },
-                    onOpenWidgetsInspector = { widgetsInspectorOpen = true },
+                    pinnedWidgetKeys = pinnedWidgetSet,
+                    onUnpinWidget = { key -> pinnedWidgetKeys = pinnedWidgetKeys.filterNot { it == key } },
                     onInteractWidget = { panel -> interactingWidgetKey = panel.key },
                 )
 
@@ -2096,41 +2129,19 @@ internal fun ChatBody(
                         onStop = {
                             session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
                         },
+                        extensionChip = extensionChip,
+                        onOpenExtensions = { widgetsInspectorOpen = true },
+                        onQuickInteractExtension = firstInteractivePanel?.let { panel ->
+                            { interactingWidgetKey = panel.key }
+                        },
+                        onTerminalInputKey = if (state.ext.terminalInputCount > 0) {
+                            session::sendTerminalInput
+                        } else {
+                            null
+                        },
                     )
                 }
 
-                // 输入框下方的扩展组件与底栏：软键盘打开或用户折叠时平滑收起，绝不突兀跳闪。
-                val belowWidgets = remember(state.ext.widgets) {
-                    state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
-                }
-                val extFooter = state.ext.footer
-                AnimatedVisibility(
-                    visible = !imeVisible && !widgetsCollapsedByUser && (belowWidgets.isNotEmpty() || extFooter != null),
-                    enter = expandVertically(tween(150)) + fadeIn(tween(130)),
-                    exit = shrinkVertically(tween(130)) + fadeOut(tween(110)),
-                ) {
-                    Column(Modifier.fillMaxWidth()) {
-                        if (belowWidgets.isNotEmpty()) {
-                            ExtensionWidgetStack(
-                                widgets = belowWidgets,
-                                onInteract = { panel -> interactingWidgetKey = panel.key },
-                                maxStackHeight = 112.dp,
-                            )
-                        }
-                        extFooter?.let { footer ->
-                            ExtensionChromeBanner(
-                                lines = footer.lines,
-                                collapsedRows = FOOTER_COLLAPSED_ROWS,
-                                onInteract = if (footer.interactive && footer.surfaceId != null) {
-                                    { interactingWidgetKey = footer.key }
-                                } else {
-                                    null
-                                },
-                                modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 3.dp),
-                            )
-                        }
-                    }
-                }
             }
         }
     }
@@ -2165,6 +2176,14 @@ internal fun ChatBody(
     }
 
     if (widgetsInspectorOpen) {
+        val hubShortcuts = remember(state.commands) {
+            state.commands.mapNotNull { cmd ->
+                val key = cmd.shortcutKey?.takeIf {
+                    cmd.source == PiCommandSource.Shortcut && it.isNotBlank()
+                } ?: return@mapNotNull null
+                ExtensionHubShortcut(key = key, label = cmd.name, description = cmd.description)
+            }
+        }
         ExtensionWidgetsSheet(
             header = state.ext.header,
             footer = state.ext.footer,
@@ -2173,6 +2192,16 @@ internal fun ChatBody(
             editorTakeover = state.ext.editorTakeover,
             onInteract = { panel -> interactingWidgetKey = panel.key },
             onDismiss = { widgetsInspectorOpen = false },
+            shortcuts = hubShortcuts,
+            pinnedWidgetKeys = pinnedWidgetSet,
+            onTogglePinWidget = { key ->
+                pinnedWidgetKeys = if (key in pinnedWidgetKeys) {
+                    pinnedWidgetKeys.filterNot { it == key }
+                } else {
+                    pinnedWidgetKeys + key
+                }
+            },
+            onTriggerShortcut = session::triggerExtensionShortcut,
         )
     }
 

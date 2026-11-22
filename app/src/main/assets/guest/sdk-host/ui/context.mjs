@@ -377,12 +377,44 @@ export function createUiContext({ hub, surfaces, theme, flags }) {
     }
   }
 
+  /** 调用扩展补全链的官方 `applyCompletion`，精确计算替换后的文本与光标位置。 */
+  function applyAutocomplete({ lines, cursorLine, cursorCol, item, prefix }) {
+    const provider = getAutocompleteChain();
+    const safeLines = Array.isArray(lines) && lines.length > 0 ? lines.map(String) : [""];
+    const safeLine = Math.max(0, Math.min(safeLines.length - 1, Math.floor(Number(cursorLine) || 0)));
+    const safeCol = Math.max(0, Math.min(safeLines[safeLine].length, Math.floor(Number(cursorCol) || 0)));
+    if (provider && typeof provider.applyCompletion === "function") {
+      try {
+        const applied = provider.applyCompletion(safeLines, safeLine, safeCol, item, String(prefix ?? ""));
+        if (applied && Array.isArray(applied.lines)) {
+          return {
+            lines: applied.lines.map(String),
+            cursorLine: Number.isFinite(Number(applied.cursorLine)) ? Math.max(0, Math.floor(Number(applied.cursorLine))) : safeLine,
+            cursorCol: Number.isFinite(Number(applied.cursorCol)) ? Math.max(0, Math.floor(Number(applied.cursorCol))) : safeCol,
+          };
+        }
+      } catch {
+        // fallback below
+      }
+    }
+    const cur = safeLines[safeLine];
+    const pfx = String(prefix ?? "");
+    const before = cur.slice(0, safeCol);
+    const after = cur.slice(safeCol);
+    const val = String(item?.value ?? "");
+    const replacedBefore = pfx && before.endsWith(pfx) ? before.slice(0, before.length - pfx.length) + val : before + val;
+    const nextLines = [...safeLines];
+    nextLines[safeLine] = replacedBefore + after;
+    return { lines: nextLines, cursorLine: safeLine, cursorCol: replacedBefore.length };
+  }
+
   return {
     context,
     state,
     keybindings,
     dispatchTerminalInput,
     queryAutocomplete,
+    applyAutocomplete,
     setLazyLoaders(loaders) {
       lazyLoaders = loaders ?? {};
     },

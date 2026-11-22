@@ -865,6 +865,15 @@ try {
     const sid = tuiSurf.data.surfaceId;
     expect("custom overlay 自动赋予 Focusable.focused=true 且带 overlayOptions", tuiSurf.data.focused === true && tuiSurf.data.lines[0].includes("focused=true") && tuiSurf.data.overlayOptions?.anchor === "center", JSON.stringify(tuiSurf.data));
     expect("CURSOR_MARKER 已剥离，FAKE_CURSOR 转为反显 SGR（无泄露 APC 控制符）", !tuiSurf.data.lines[1].includes("\x1b_pi:") && tuiSurf.data.lines[1].includes("\x1b[7mc\x1b[27m"), JSON.stringify(tuiSurf.data.lines[1]));
+    expect("ui.surface 透传 supportsMouse 与 hasTextCursor 能力标记", tuiSurf.data.supportsMouse === true && tuiSurf.data.hasTextCursor === true, JSON.stringify({ supportsMouse: tuiSurf.data.supportsMouse, hasTextCursor: tuiSurf.data.hasTextCursor }));
+
+    // 按 surfaceId 独立调整尺寸：全局 ui.resize（来自聊天区 widget 栏）不覆盖全屏 custom 表面宽度
+    await h.call("ui.resize", { surfaceId: sid, width: 64, height: 30 });
+    const afterSurfResize = await h.waitFor((f) => h.frames.indexOf(f) >= mTui && h.evt("ui.surface", (d) => d.surfaceId === sid && d.width === 64)(f), 5000).catch(() => null);
+    await h.call("ui.resize", { width: 42 });
+    await new Promise((r) => setTimeout(r, 40));
+    const clobbered = h.frames.slice(mTui).some(h.evt("ui.surface", (d) => d.surfaceId === sid && d.width === 42));
+    expect("ui.resize(surfaceId) 独立生效且不被全局 widget 列宽覆盖", !!afterSurfResize && !clobbered, JSON.stringify({ resized: !!afterSurfResize, clobbered }));
 
     // 方向键走真实 KeybindingsManager（kb.matches(data, "tui.select.down")）
     await h.call("ui.input", { surfaceId: sid, data: "\x1b[B" });

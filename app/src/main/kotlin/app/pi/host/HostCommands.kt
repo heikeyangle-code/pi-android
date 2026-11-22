@@ -385,6 +385,7 @@ class HostCommands(
         type: String = "click",
         width: Int? = null,
         height: Int? = null,
+        wheelDelta: Int? = null,
     ): Boolean {
         val res = client.callObject("ui.mouse", obj {
             put("surfaceId", JsonPrimitive(surfaceId))
@@ -393,12 +394,17 @@ class HostCommands(
             put("type", JsonPrimitive(type))
             width?.let { put("width", JsonPrimitive(it)) }
             height?.let { put("height", JsonPrimitive(it)) }
+            wheelDelta?.let { put("wheelDelta", JsonPrimitive(it)) }
         })
         return (res["handled"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
     }
 
-    suspend fun uiResize(width: Int, height: Int? = null) {
-        client.call("ui.resize", obj { put("width", JsonPrimitive(width)); height?.let { put("height", JsonPrimitive(it)) } })
+    suspend fun uiResize(width: Int, height: Int? = null, surfaceId: String? = null) {
+        client.call("ui.resize", obj {
+            put("width", JsonPrimitive(width))
+            height?.let { put("height", JsonPrimitive(it)) }
+            surfaceId?.let { put("surfaceId", JsonPrimitive(it)) }
+        })
     }
 
     suspend fun uiClose(surfaceId: String) { client.call("ui.close", obj { put("surfaceId", JsonPrimitive(surfaceId)) }) }
@@ -438,6 +444,32 @@ class HostCommands(
             )
         }.orEmpty()
         return AutocompleteReply(prefix = prefix, items = items)
+    }
+
+    data class AutocompleteApplyResult(val lines: List<String>, val cursorLine: Int, val cursorCol: Int)
+
+    suspend fun uiAutocompleteApply(
+        lines: List<String>,
+        cursorLine: Int,
+        cursorCol: Int,
+        item: ExtensionCompletion,
+        prefix: String,
+    ): AutocompleteApplyResult {
+        val res = client.callObject("ui.autocompleteApply", obj {
+            put("lines", JsonArray(lines.map(::JsonPrimitive)))
+            put("cursorLine", JsonPrimitive(cursorLine))
+            put("cursorCol", JsonPrimitive(cursorCol))
+            put("prefix", JsonPrimitive(prefix))
+            put("item", obj {
+                put("value", JsonPrimitive(item.value))
+                put("label", JsonPrimitive(item.label))
+                item.description?.let { put("description", JsonPrimitive(it)) }
+            })
+        })
+        val nextLines = (res["lines"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: lines
+        val nextLine = (res["cursorLine"] as? JsonPrimitive)?.content?.toIntOrNull() ?: cursorLine
+        val nextCol = (res["cursorCol"] as? JsonPrimitive)?.content?.toIntOrNull() ?: cursorCol
+        return AutocompleteApplyResult(lines = nextLines, cursorLine = nextLine, cursorCol = nextCol)
     }
 
     suspend fun uiPalette(palette: Map<String, String>) {

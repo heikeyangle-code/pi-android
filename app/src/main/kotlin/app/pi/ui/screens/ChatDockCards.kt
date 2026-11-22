@@ -1,6 +1,5 @@
 package app.pi.ui.screens
 
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,11 +27,8 @@ import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.SessionExportDelivery
 import app.pi.ui.chat.SlashPalette
 import app.pi.ui.chat.mergeRestoredQueue
-import app.pi.ui.extension.ExtensionDockSummaryBar
-import app.pi.ui.extension.ExtensionStatusStrip
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.ExtensionWorkingStrip
-import app.pi.ui.extension.PLACEMENT_BELOW
 import app.pi.ui.theme.PiSpacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,8 +37,8 @@ import kotlinx.coroutines.withContext
 /**
  * 底部工作台里输入框上方的持久状态区：
  *  - 压缩中止 / 队列 / 导出交付 / Bash 面板 / 已选附件；
- *  - 键盘感知的扩展状态与组件区：软键盘弹起或用户主动收起时自动折叠为紧凑单行摘要条，
- *    彻底杜绝扩展组件堆积后挤占聊天视口与输入区。
+ *  - 扩展流式工作进度条（仅流式运行中显示）与用户手动「置顶」的扩展组件（软键盘弹起时自动隐藏）；
+ *  - 所有常驻状态、未置顶组件与顶/底栏全部收敛到输入框角落的「扩展芯片」与扩展中心，零占高、零键盘变形跳动。
  */
 @Composable
 internal fun ChatDockStatusAndWidgets(
@@ -53,33 +49,16 @@ internal fun ChatDockStatusAndWidgets(
     attachments: List<PiImage>,
     onAttachments: (List<PiImage>) -> Unit,
     imeVisible: Boolean,
-    widgetsCollapsedByUser: Boolean,
-    onToggleWidgetsCollapse: () -> Unit,
-    onOpenWidgetsInspector: () -> Unit,
+    pinnedWidgetKeys: Set<String>,
+    onUnpinWidget: (String) -> Unit,
     onInteractWidget: (ExtPanel) -> Unit,
 ) {
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
-
-    val aboveWidgets = remember(state.ext.widgets) {
-        state.ext.widgets.filter { it.placement != PLACEMENT_BELOW }
+    val pinnedWidgets = remember(state.ext.widgets, pinnedWidgetKeys) {
+        if (pinnedWidgetKeys.isEmpty()) emptyList()
+        else state.ext.widgets.filter { it.key in pinnedWidgetKeys }
     }
-    val belowWidgets = remember(state.ext.widgets) {
-        state.ext.widgets.filter { it.placement == PLACEMENT_BELOW }
-    }
-    val totalWidgetCount = state.ext.widgets.size
-    val hasChrome = state.ext.header != null || state.ext.footer != null
-    val hasAnyExtDockContent = totalWidgetCount > 0 ||
-        state.ext.statuses.isNotEmpty() ||
-        state.ext.editorTakeover ||
-        hasChrome ||
-        (state.streaming && state.ext.working.visible && !state.ext.working.message.isNullOrBlank())
-    val firstInteractive = remember(state.ext.widgets, state.ext.header, state.ext.footer) {
-        (state.ext.widgets + listOfNotNull(state.ext.header, state.ext.footer))
-            .firstOrNull { it.interactive && it.surfaceId != null }
-    }
-    // 软键盘弹出时或用户手动折叠时，自动用紧凑单行摘要条替代大块扩展组件，保证聊天和输入始终通畅
-    val compactExtMode = imeVisible || widgetsCollapsedByUser
 
     Column(modifier = Modifier.fillMaxWidth()) {
         androidx.compose.animation.AnimatedVisibility(
@@ -139,70 +118,17 @@ internal fun ChatDockStatusAndWidgets(
             }
         }
 
-        // 始终保留列宽探测（即使收起也把最新列数同步给宿主）
-        if (hasAnyExtDockContent) {
-            if (compactExtMode) {
-                ExtensionWidgetStack(
-                    widgets = emptyList(),
-                    onColumns = session::setPanelColumns,
-                )
-            }
-            androidx.compose.animation.AnimatedContent(
-                targetState = compactExtMode,
-                transitionSpec = {
-                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140)))
-                        .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(110)))
-                },
-                label = "ext-dock-mode",
-            ) { compact ->
-                Column(Modifier.fillMaxWidth()) {
-                    if (compact) {
-                        ExtensionDockSummaryBar(
-                            working = state.ext.working,
-                            streaming = state.streaming,
-                            statusCount = state.ext.statuses.size,
-                            widgetCount = totalWidgetCount,
-                            hasChrome = hasChrome,
-                            interactivePanel = firstInteractive,
-                            collapsedByUser = widgetsCollapsedByUser,
-                            imeVisible = imeVisible,
-                            onToggleCollapse = onToggleWidgetsCollapse,
-                            onOpenInspector = onOpenWidgetsInspector,
-                            onInteract = onInteractWidget,
-                        )
-                    } else {
-                        if (totalWidgetCount >= 2 || (totalWidgetCount >= 1 && (belowWidgets.isNotEmpty() || state.ext.footer != null))) {
-                            ExtensionDockSummaryBar(
-                                working = state.ext.working,
-                                streaming = state.streaming,
-                                statusCount = state.ext.statuses.size,
-                                widgetCount = totalWidgetCount,
-                                hasChrome = hasChrome,
-                                interactivePanel = null,
-                                collapsedByUser = false,
-                                imeVisible = false,
-                                onToggleCollapse = onToggleWidgetsCollapse,
-                                onOpenInspector = onOpenWidgetsInspector,
-                                onInteract = onInteractWidget,
-                            )
-                        }
-                        ExtensionWorkingStrip(working = state.ext.working, streaming = state.streaming)
-                        ExtensionStatusStrip(statuses = state.ext.statuses, editorTakeover = state.ext.editorTakeover)
-                        ExtensionWidgetStack(
-                            widgets = aboveWidgets,
-                            onColumns = session::setPanelColumns,
-                            onInteract = onInteractWidget,
-                            maxStackHeight = 132.dp,
-                        )
-                    }
-                }
-            }
-        } else {
-            ExtensionWidgetStack(
-                widgets = emptyList(),
-                onColumns = session::setPanelColumns,
-            )
-        }
+        // 流式工作指示器（仅 AI 运行中显示）
+        ExtensionWorkingStrip(working = state.ext.working, streaming = state.streaming)
+
+        // 始终保留 0dp 列宽探测，仅展示用户显式「置顶」的扩展组件（软键盘打开时自动避让）
+        ExtensionWidgetStack(
+            widgets = if (imeVisible) emptyList() else pinnedWidgets,
+            onColumns = session::setPanelColumns,
+            onInteract = onInteractWidget,
+            onUnpin = { panel -> onUnpinWidget(panel.key) },
+            maxStackHeight = 128.dp,
+        )
 
         androidx.compose.animation.AnimatedVisibility(
             visible = state.bash != null,
@@ -313,13 +239,12 @@ internal fun ChatTransientPalettes(
             ExtensionAutocompletePalette(
                 items = extComp.items,
                 onPick = { item ->
-                    val replaced = if (extComp.prefix.isNotEmpty() && draft.endsWith(extComp.prefix)) {
-                        draft.removeSuffix(extComp.prefix) + item.value
-                    } else {
-                        draft + item.value
-                    }
-                    onDraft(replaced)
-                    session.dismissExtensionAutocomplete()
+                    session.applyExtensionCompletion(
+                        draft = draft,
+                        item = item,
+                        prefix = extComp.prefix,
+                        onApplied = onDraft,
+                    )
                 },
                 modifier = Modifier.padding(horizontal = PiSpacing.composerPageMargin, vertical = 4.dp),
             )

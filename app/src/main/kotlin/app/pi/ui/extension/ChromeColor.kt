@@ -115,6 +115,16 @@ fun tokenColorFor(span: Ansi.Span, tokens: IntArray): Color? =
     span.foreground?.let { nearestTokenColor(it, tokens) }
 
 /**
+ * Resolve [Ansi.Span.foreground] for rich TUI surfaces (`richStyle = true`).
+ * 优先匹配主题令牌（保证跟用户主题一致）；若扩展自己选了特定 24-bit 前景色（棋子、状态高亮、游戏角色等），
+ * 则保留原 24-bit 色彩，不再静默丢失回退成灰字。
+ */
+fun richTokenColorFor(span: Ansi.Span, tokens: IntArray): Color? {
+    val fg = span.foreground ?: return null
+    return nearestTokenColor(fg, tokens) ?: Color(0xFF000000.toInt() or fg)
+}
+
+/**
  * Resolve [Ansi.Span.background] for TUI surfaces (`selectedBg`、反显高亮、搜索命中等)。
  * 优先匹配主题令牌（保证跟用户主题一致）；若扩展自己选了特定背景色，则保留原 24-bit 色彩。
  */

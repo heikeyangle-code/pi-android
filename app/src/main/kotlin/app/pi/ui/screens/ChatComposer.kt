@@ -65,6 +65,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
@@ -102,6 +111,12 @@ private const val COMPOSER_MAX_LINES = 7
  *  - 底部操作行：左侧 `/` 命令 · `@` 文件 · `!` 终端（长按 `!!`）· 📎 附件，
  *    右侧：空闲时主发送圆钮（空草稿置淡态，Bash 模式切换终端绿箭头）；流式时「⇢ 引导」「⇣ 后续」清晰胶囊 + 醒目红色停止钮。
  */
+internal data class ComposerExtensionChipState(
+    val label: String,
+    val count: Int,
+    val hasInteractive: Boolean,
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun Composer(
@@ -129,6 +144,10 @@ internal fun Composer(
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    extensionChip: ComposerExtensionChipState? = null,
+    onOpenExtensions: (() -> Unit)? = null,
+    onQuickInteractExtension: (() -> Unit)? = null,
+    onTerminalInputKey: ((String) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val isBash = bashModeOf(draft)
@@ -273,6 +292,13 @@ internal fun Composer(
                 usage = contextUsage,
                 onClick = onOpenContext,
             )
+            if (extensionChip != null && onOpenExtensions != null) {
+                ComposerExtensionChip(
+                    chip = extensionChip,
+                    onClick = onOpenExtensions,
+                    onLongClick = onQuickInteractExtension,
+                )
+            }
         }
 
         // 3) 文本输入区 + 右侧快捷清空
@@ -301,7 +327,18 @@ internal fun Composer(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = lineHeightDp, max = fieldMaxHeight)
-                    .onFocusChanged { focused = it.isFocused },
+                    .onFocusChanged { focused = it.isFocused }
+                    .then(
+                        if (onTerminalInputKey != null) {
+                            Modifier.onPreviewKeyEvent { event ->
+                                val seq = terminalSequenceOf(event)
+                                if (seq != null) onTerminalInputKey(seq)
+                                false
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ),
                 textStyle = composerTextStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                 maxLines = COMPOSER_MAX_LINES,
                 cursorBrush = SolidColor(if (isBash) palette.bashMode else palette.accent),
@@ -591,6 +628,86 @@ private fun ContextUsagePill(
             )
         }
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ComposerExtensionChip(
+    chip: ComposerExtensionChipState,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(999.dp)
+    val bgAlpha = if (chip.hasInteractive) 0.16f else 0.11f
+    val borderAlpha = if (chip.hasInteractive) 0.42f else 0.25f
+    Row(
+        modifier = Modifier
+            .height(30.dp)
+            .widthIn(max = 152.dp)
+            .clip(shape)
+            .background(palette.accent.copy(alpha = bgAlpha))
+            .border(PiSpacing.hairline, palette.accent.copy(alpha = borderAlpha), shape)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(color = palette.accent),
+                onClickLabel = tr("打开扩展中心", "Open extensions"),
+                onClick = onClick,
+                onLongClickLabel = if (onLongClick != null) tr("直接操控扩展面板", "Interact with extension panel") else null,
+                onLongClick = onLongClick,
+            )
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(palette.accent),
+        )
+        Text(
+            text = chip.label,
+            modifier = Modifier.weight(1f, fill = false),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = palette.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (chip.count > 1) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(palette.accent.copy(alpha = 0.22f))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    text = chip.count.toString(),
+                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 10.sp),
+                    color = palette.accent,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** 将外接实体键盘的非剪贴板控制键映射为终端 ANSI 序列，供扩展 `ctx.ui.onTerminalInput` 监听（绝不干扰软键盘与复制粘贴）。 */
+private fun terminalSequenceOf(event: KeyEvent): String? {
+    if (event.type != KeyEventType.KeyDown) return null
+    if (event.key == Key.Escape) return "\u001b"
+    if (event.key == Key.Tab) return "\t"
+    val cp = event.utf16CodePoint
+    if (event.isCtrlPressed && !event.isAltPressed && cp in 32..126) {
+        val lower = cp.toChar().lowercaseChar()
+        if (lower in 'a'..'z' && lower !in charArrayOf('a', 'c', 'v', 'x', 'z')) {
+            return (lower.code - 'a'.code + 1).toChar().toString()
+        }
+    }
+    if (event.isAltPressed && !event.isCtrlPressed && cp in 32..126) {
+        return "\u001b" + cp.toChar()
+    }
+    return null
 }
 
 @OptIn(ExperimentalFoundationApi::class)

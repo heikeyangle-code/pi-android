@@ -20,6 +20,17 @@ data class ExtPanel(
     val placement: String? = null,
     val surfaceId: String? = null,
     val interactive: Boolean = false,
+    val supportsMouse: Boolean = false,
+    val hasTextCursor: Boolean = false,
+)
+
+/** 官方 `OverlayOptions` 的手机端投影（尺寸/锚点/非拦截标记）。 */
+data class ExtOverlayOptions(
+    val widthSpec: String? = null,
+    val minWidth: Int? = null,
+    val maxHeightSpec: String? = null,
+    val anchor: String? = null,
+    val nonCapturing: Boolean = false,
 )
 
 /** `ctx.ui.custom()` 弹出的组件：浮层（[overlay]）或整页；[interactive] 时 App 要给按键条与触控点击。 */
@@ -33,6 +44,12 @@ data class ExtCustom(
     val focused: Boolean = true,
     /** 官方 `OverlayOptions.nonCapturing`：非拦截型悬浮层，不抢占聊天视口和输入焦点。 */
     val nonCapturing: Boolean = false,
+    /** 组件是否真正实现了官方 `Component.handleMouse`（未实现时以手势/手柄/快捷键驱动，避免误导点按）。 */
+    val supportsMouse: Boolean = false,
+    /** 组件渲染帧里是否包含官方 `CURSOR_MARKER` / `FAKE_CURSOR`（代表正在等待用户输入文本）。 */
+    val hasTextCursor: Boolean = false,
+    /** 官方 `OverlayOptions` 尺寸与定位选项。 */
+    val overlayOptions: ExtOverlayOptions? = null,
 )
 
 data class ExtWorking(
@@ -91,6 +108,9 @@ class ExtUiReducer {
         val hidden: Boolean = false,
         val focused: Boolean = true,
         val nonCapturing: Boolean = false,
+        val supportsMouse: Boolean = false,
+        val hasTextCursor: Boolean = false,
+        val overlayOptions: ExtOverlayOptions? = null,
     )
 
     private val frames = HashMap<String, Frame>()
@@ -179,7 +199,15 @@ class ExtUiReducer {
             }
             widgetSurface[key] = sid
             widgetPlacement[key] = placement
-            frames[sid]?.let { setWidget(key, it.lines, placement, surfaceId = sid, interactive = it.interactive) }
+            frames[sid]?.let {
+                setWidget(
+                    key, it.lines, placement,
+                    surfaceId = sid,
+                    interactive = it.interactive,
+                    supportsMouse = it.supportsMouse,
+                    hasTextCursor = it.hasTextCursor,
+                )
+            }
             return
         }
         widgetSurface.remove(key)?.let { oldId ->
@@ -196,9 +224,17 @@ class ExtUiReducer {
         placement: String?,
         surfaceId: String?,
         interactive: Boolean,
+        supportsMouse: Boolean = false,
+        hasTextCursor: Boolean = false,
     ) {
         val current = state.widgets
-        val next = ExtPanel(key, lines, placement, surfaceId = surfaceId, interactive = interactive)
+        val next = ExtPanel(
+            key, lines, placement,
+            surfaceId = surfaceId,
+            interactive = interactive,
+            supportsMouse = supportsMouse,
+            hasTextCursor = hasTextCursor,
+        )
         state = state.copy(
             widgets = when {
                 lines.isEmpty() -> current.filterNot { it.key == key }
@@ -227,7 +263,18 @@ class ExtUiReducer {
                         markClosed(oldId)
                     }
                     slotSurface[slot] = sid
-                    frames[sid]?.let { setSlot(slot, ExtPanel(slot, it.lines, surfaceId = sid, interactive = it.interactive)) }
+                    frames[sid]?.let {
+                        setSlot(
+                            slot,
+                            ExtPanel(
+                                slot, it.lines,
+                                surfaceId = sid,
+                                interactive = it.interactive,
+                                supportsMouse = it.supportsMouse,
+                                hasTextCursor = it.hasTextCursor,
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -245,6 +292,15 @@ class ExtUiReducer {
         val rev = (d["rev"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
         if ((frames[id]?.rev ?: -1L) >= rev) return
         val overlayOpts = d["overlayOptions"] as? JsonObject
+        val parsedOverlayOpts = overlayOpts?.let { o ->
+            ExtOverlayOptions(
+                widthSpec = (o["width"] as? JsonPrimitive)?.content,
+                minWidth = (o["minWidth"] as? JsonPrimitive)?.content?.toIntOrNull(),
+                maxHeightSpec = (o["maxHeight"] as? JsonPrimitive)?.content,
+                anchor = str(o["anchor"]),
+                nonCapturing = bool(o["nonCapturing"], false),
+            )
+        }
         val frame = Frame(
             rev = rev,
             lines = linesOf(d["lines"]),
@@ -253,18 +309,36 @@ class ExtUiReducer {
             blocked = str(d["blocked"]),
             hidden = bool(d["hidden"], false),
             focused = bool(d["focused"], true),
-            nonCapturing = bool(overlayOpts?.get("nonCapturing"), false),
+            nonCapturing = parsedOverlayOpts?.nonCapturing ?: false,
+            supportsMouse = bool(d["supportsMouse"], false),
+            hasTextCursor = bool(d["hasTextCursor"], false),
+            overlayOptions = parsedOverlayOpts,
         )
         frames[id] = frame
         when (mode) {
             "widget" -> {
                 val key = (str(d["key"]) ?: return).removePrefix("widget:")
                 if (widgetSurface[key] == id) {
-                    setWidget(key, frame.lines, widgetPlacement[key], surfaceId = id, interactive = frame.interactive)
+                    setWidget(
+                        key, frame.lines, widgetPlacement[key],
+                        surfaceId = id,
+                        interactive = frame.interactive,
+                        supportsMouse = frame.supportsMouse,
+                        hasTextCursor = frame.hasTextCursor,
+                    )
                 }
             }
             "header", "footer" -> if (slotSurface[mode] == id) {
-                setSlot(mode, ExtPanel(mode, frame.lines, surfaceId = id, interactive = frame.interactive))
+                setSlot(
+                    mode,
+                    ExtPanel(
+                        mode, frame.lines,
+                        surfaceId = id,
+                        interactive = frame.interactive,
+                        supportsMouse = frame.supportsMouse,
+                        hasTextCursor = frame.hasTextCursor,
+                    ),
+                )
             }
             "custom" -> {
                 val item = ExtCustom(
@@ -276,6 +350,9 @@ class ExtUiReducer {
                     hidden = frame.hidden,
                     focused = frame.focused,
                     nonCapturing = frame.nonCapturing,
+                    supportsMouse = frame.supportsMouse,
+                    hasTextCursor = frame.hasTextCursor,
+                    overlayOptions = frame.overlayOptions,
                 )
                 val stack = state.customStack
                 val updated = if (stack.any { it.surfaceId == id }) {

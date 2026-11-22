@@ -182,7 +182,9 @@ fun ExtensionUiHost(
             },
             onRestore = { minimizedSurfaceId = null },
             onInput = session::sendSurfaceInput,
-            onMouse = session::sendSurfaceMouse,
+            onMouse = { id, x, y, w, h, type, wheel ->
+                session.sendSurfaceMouse(id, x, y, w, h, type = type, wheelDelta = wheel)
+            },
             onResize = session::resizeSurface,
             onClose = { id ->
                 if (minimizedSurfaceId == id) minimizedSurfaceId = null

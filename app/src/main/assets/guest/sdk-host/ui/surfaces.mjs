@@ -66,9 +66,13 @@ function stripStandaloneBell(s) {
   return { text: out, bellCount };
 }
 
-export function sanitizeRenderedLine(raw, onBell) {
+export function sanitizeRenderedLineWithMeta(raw, onBell) {
   let s = String(raw);
+  let hasCursor = false;
   if (s.includes("\x1b_pi:")) {
+    if (s.includes("\x1b_pi:c\x07") || s.includes("\x1b_pi:fc\x07")) {
+      hasCursor = true;
+    }
     s = s
       .replace(CURSOR_MARKER_RE, "")
       .replace(FAKE_CURSOR_RE, (_m, inner) => `\x1b[7m${inner || " "}\x1b[27m`);
@@ -78,7 +82,11 @@ export function sanitizeRenderedLine(raw, onBell) {
     if (bellCount > 0) onBell?.("render");
     s = text;
   }
-  return s;
+  return { text: s, hasCursor };
+}
+
+export function sanitizeRenderedLine(raw, onBell) {
+  return sanitizeRenderedLineWithMeta(raw, onBell).text;
 }
 
 /**
@@ -247,6 +255,8 @@ export class Surfaces {
       fullRedraws: 0,
       showHardwareCursor: false,
       clearOnShrink: false,
+      overrideWidth: null,
+      overrideHeight: null,
     };
     const surfaces = this;
 
@@ -283,18 +293,18 @@ export class Surfaces {
       getBounds: () => ({
         row: 0,
         col: 0,
-        width: surfaces.width,
-        height: surface.lastLineCount || surfaces.height,
+        width: surface.overrideWidth ?? surfaces.width,
+        height: surface.lastLineCount || (surface.overrideHeight ?? surfaces.height),
       }),
     };
     surface.handle = handle;
 
     const terminal = {
       get columns() {
-        return surfaces.width;
+        return surface.overrideWidth ?? surfaces.width;
       },
       get rows() {
-        return surfaces.height;
+        return surface.overrideHeight ?? surfaces.height;
       },
       get kittyProtocolActive() {
         return false;
@@ -409,10 +419,10 @@ export class Surfaces {
         return terminal;
       },
       get columns() {
-        return surfaces.width;
+        return surface.overrideWidth ?? surfaces.width;
       },
       get rows() {
-        return surfaces.height;
+        return surface.overrideHeight ?? surfaces.height;
       },
     };
 
@@ -467,18 +477,30 @@ export class Surfaces {
 
   paint(surface) {
     if (surface.closed) return;
+    const effectiveWidth = surface.overrideWidth ?? this.width;
+    const effectiveHeight = surface.overrideHeight ?? this.height;
     let lines;
+    let hasTextCursor = false;
     const onBell = (src) => this.emitBell(src);
     try {
-      const raw = surface.component.render(this.width) ?? [];
-      lines = Array.isArray(raw) ? raw.map((line) => sanitizeRenderedLine(line, onBell)) : [];
+      const raw = surface.component.render(effectiveWidth) ?? [];
+      if (Array.isArray(raw)) {
+        lines = raw.map((line) => {
+          const sanitized = sanitizeRenderedLineWithMeta(line, onBell);
+          if (sanitized.hasCursor) hasTextCursor = true;
+          return sanitized.text;
+        });
+      } else {
+        lines = [];
+      }
     } catch (error) {
       lines = [`[render failed] ${error?.message ?? error}`];
     }
     surface.lastLineCount = lines.length;
-    const { options: overlayOptions, visible } = resolveOverlayOptions(surface.overlayOptions, this.width, this.height);
+    const { options: overlayOptions, visible } = resolveOverlayOptions(surface.overlayOptions, effectiveWidth, effectiveHeight);
     const effectiveHidden = surface.hidden || !visible;
-    const interactive = typeof surface.component.handleInput === "function" || typeof surface.component.handleMouse === "function";
+    const supportsMouse = typeof surface.component.handleMouse === "function";
+    const interactive = typeof surface.component.handleInput === "function" || supportsMouse;
     const frameKey = JSON.stringify([
       surface.overlay,
       overlayOptions,
@@ -486,7 +508,9 @@ export class Surfaces {
       surface.focused,
       surface.blocked ?? null,
       interactive,
-      this.width,
+      supportsMouse,
+      hasTextCursor,
+      effectiveWidth,
       lines,
     ]);
     if (surface.lastFrameKey === frameKey) return;
@@ -503,7 +527,9 @@ export class Surfaces {
       blocked: surface.blocked ?? null,
       rev: ++surface.rev,
       interactive,
-      width: this.width,
+      supportsMouse,
+      hasTextCursor,
+      width: effectiveWidth,
       lines,
     });
   }
@@ -609,8 +635,8 @@ export class Surfaces {
       y,
       screenX: x,
       screenY: y,
-      width: Math.max(1, Math.floor(Number(rawEvent?.width ?? this.width))),
-      height: Math.max(1, Math.floor(Number(rawEvent?.height ?? this.height))),
+      width: Math.max(1, Math.floor(Number(rawEvent?.width ?? surface.overrideWidth ?? this.width))),
+      height: Math.max(1, Math.floor(Number(rawEvent?.height ?? surface.overrideHeight ?? this.height))),
       shift: Boolean(rawEvent?.shift),
       alt: Boolean(rawEvent?.alt),
       ctrl: Boolean(rawEvent?.ctrl),
@@ -630,10 +656,28 @@ export class Surfaces {
     return handled;
   }
 
-  /** App 旋转 / 改字号。全部表面按新宽度重绘。 */
-  resize(width, height) {
+  /** App 旋转 / 改字号。若传入 surfaceId，仅更新该表面独立尺寸，避免聊天区 widget 栏宽度覆盖全屏 custom 表面。 */
+  resize(width, height, surfaceId = null) {
+    if (surfaceId) {
+      const surface = this.byId.get(surfaceId);
+      if (!surface || surface.closed) return;
+      if (Number.isFinite(width) && width > 0) surface.overrideWidth = Math.floor(width);
+      if (Number.isFinite(height) && height > 0) surface.overrideHeight = Math.floor(height);
+      surface.component?.invalidate?.();
+      this.paint(surface);
+      return;
+    }
     if (Number.isFinite(width) && width > 0) this.width = Math.floor(width);
     if (Number.isFinite(height) && height > 0) this.height = Math.floor(height);
+    for (const surface of this.byId.values()) {
+      if (surface.overrideWidth !== null && surface.mode === "custom") continue;
+      surface.component?.invalidate?.();
+      this.paint(surface);
+    }
+  }
+
+  /** 主题切换等全局事件：强制重绘所有表面（包括持有独立尺寸的 custom 表面）。 */
+  repaintAll() {
     for (const surface of this.byId.values()) {
       surface.component?.invalidate?.();
       this.paint(surface);

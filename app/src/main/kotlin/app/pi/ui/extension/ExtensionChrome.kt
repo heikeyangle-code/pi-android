@@ -69,7 +69,8 @@ fun ExtensionSpans(
     val text: AnnotatedString = remember(spans, tokens, defaultColor, surfaceBg, richStyle) {
         buildAnnotatedString {
             spans.forEach { span ->
-                val resolvedFg = tokenColorFor(span, tokens) ?: if (span.link != null) palette.mdLink else defaultColor
+                val resolvedFg = (if (richStyle) richTokenColorFor(span, tokens) else tokenColorFor(span, tokens))
+                    ?: if (span.link != null) palette.mdLink else defaultColor
                 val safeUrl = span.link?.trim()?.takeIf {
                     it.startsWith("https://", ignoreCase = true) ||
                         it.startsWith("http://", ignoreCase = true) ||

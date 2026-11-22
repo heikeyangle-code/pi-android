@@ -164,6 +164,9 @@ internal fun stripAnsiControls(raw: String): String {
     return clean.toString()
 }
 
+/** Column width of one code point — shared by [visibleColumns] and the terminal cell-grid renderer. */
+internal fun terminalCharWidth(cp: Int): Int = codePointWidth(cp)
+
 /** Column width of one code point — see [visibleColumns] for the mapping. */
 private fun codePointWidth(cp: Int): Int = when {
     cp == 9 -> 4 // tab
@@ -197,4 +200,66 @@ private fun isWideCodePoint(cp: Int): Boolean = when {
     cp in 0x1FA70..0x1FAFF -> true // symbols and pictographs ext A
     cp in 0x20000..0x3FFFD -> true // CJK ext B and beyond (astral planes)
     else -> false
+}
+
+/** 从扩展组件底部提示栏提取出的快捷单键动作（例如 Chess 的 `F flip`、`N new`、`G games`、`Q/ESC quit`）。 */
+internal data class SurfaceQuickShortcut(
+    val keyLabel: String,
+    val description: String,
+    val sendData: String,
+)
+
+private val PIPE_SHORTCUT_RE = Regex("^([A-Za-z0-9?])(?:/[A-Za-z]+)?\s+([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\s\-/]{0,14})$")
+private val BRACKET_SHORTCUT_RE = Regex("\[([A-Za-z0-9?])\]\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-/]{0,12})")
+
+/**
+ * 扫描 TUI 表面最后若干非空行，自动识别扩展自带的快捷键图例（`| F flip | N new |` 或 `[r] restart`），
+ * 排除已经存在于手柄主区的方向/回车/Esc/Tab/Space，最多返回 6 个可一键点按的快捷芯片。
+ * 纯函数、零硬编码，任何遵循 Pi TUI 惯例的扩展都会自动获得专属快捷操作条。
+ */
+internal fun extractSurfaceShortcuts(rows: List<String>, maxCount: Int = 6): List<SurfaceQuickShortcut> {
+    if (rows.isEmpty()) return emptyList()
+    val tail = rows
+        .map { stripAnsiControls(it).trim() }
+        .filter { it.isNotEmpty() }
+        .takeLast(4)
+    val out = ArrayList<SurfaceQuickShortcut>()
+    val seenKeys = HashSet<String>()
+
+    fun addCandidate(rawKey: String, rawDesc: String) {
+        if (out.size >= maxCount) return
+        val k = rawKey.trim()
+        if (k.length != 1) return
+        val lower = k.lowercase()
+        if (lower in seenKeys) return
+        val desc = rawDesc.trim()
+        if (desc.isEmpty()) return
+        seenKeys += lower
+        out += SurfaceQuickShortcut(
+            keyLabel = k.uppercase(),
+            description = desc,
+            // 终端 TUI 单键快捷键通常监听小写字母（Chess 等组件常做 key.toLowerCase() 或直接比对小写）。
+            sendData = lower,
+        )
+    }
+
+    for (line in tail) {
+        // 1) 竖线 / 圆点分隔：`↑↓←→ move | ENTER select | F flip | N new | G games | Q/ESC quit`
+        if (line.contains('|') || line.contains('·') || line.contains('•')) {
+            val segments = line.split('|', '·', '•')
+            for (seg in segments) {
+                val trimmed = seg.trim()
+                if (trimmed.isEmpty() || trimmed == "..." || trimmed == "…") continue
+                val m = PIPE_SHORTCUT_RE.matchEntire(trimmed) ?: continue
+                addCandidate(m.groupValues[1], m.groupValues[2])
+            }
+        }
+        // 2) 方括号风格：`[r] restart  [p] pause  [q] quit`
+        if (line.contains('[')) {
+            for (m in BRACKET_SHORTCUT_RE.findAll(line)) {
+                addCandidate(m.groupValues[1], m.groupValues[2])
+            }
+        }
+    }
+    return out
 }

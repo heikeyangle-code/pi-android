@@ -19,14 +19,21 @@ export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
     return { matched: hit };
   });
 
-  reg.add("ui.input", (args) => ({ handled: surfaces.input(str(args, "surfaceId"), args.data ?? "") }));
+  reg.add("ui.input", (args) => {
+    const surfaceId = str(args, "surfaceId");
+    const raw = args.data ?? "";
+    const intercepted = ui.dispatchTerminalInput(raw);
+    if (intercepted.consumed) return { handled: true, consumed: true };
+    return { handled: surfaces.input(surfaceId, intercepted.data), consumed: false };
+  });
 
   reg.add("ui.mouse", (args) => ({ handled: surfaces.mouse(str(args, "surfaceId"), args) }));
 
   reg.add("ui.resize", (args) => {
     const width = Number(args.width);
     if (!Number.isFinite(width) || width < 1) throw new HostError(ERR.BAD_ARGS, "width 必须是正数（字符列数）");
-    surfaces.resize(width, Number(args.height));
+    const surfaceId = typeof args.surfaceId === "string" && args.surfaceId.trim() ? args.surfaceId.trim() : null;
+    surfaces.resize(width, Number(args.height), surfaceId);
   });
 
   reg.add("ui.close", (args) => ({ closed: surfaces.close(str(args, "surfaceId")) }));
@@ -49,6 +56,15 @@ export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
     return await ui.queryAutocomplete({ lines, cursorLine, cursorCol, force: bool(args, "force", false) });
   });
 
+  reg.add("ui.autocompleteApply", (args) => {
+    const lines = Array.isArray(args.lines) ? args.lines.map(String) : [String(args.text ?? ui.state.editorText ?? "")];
+    const cursorLine = Number.isFinite(Number(args.cursorLine)) ? Math.max(0, Math.min(lines.length - 1, Math.floor(Number(args.cursorLine)))) : lines.length - 1;
+    const lineLen = (lines[cursorLine] ?? "").length;
+    const cursorCol = Number.isFinite(Number(args.cursorCol)) ? Math.max(0, Math.min(lineLen, Math.floor(Number(args.cursorCol)))) : lineLen;
+    const item = typeof args.item === "object" && args.item !== null ? args.item : { value: String(args.value ?? ""), label: String(args.label ?? args.value ?? "") };
+    return ui.applyAutocomplete({ lines, cursorLine, cursorCol, item, prefix: String(args.prefix ?? "") });
+  });
+
   // 同步 App 侧的工具展开状态（双向一致）。
   reg.add("ui.setToolsExpanded", (args) => {
     ui.context.setToolsExpanded(bool(args, "expanded", false));
@@ -63,6 +79,6 @@ export function register(reg, { controller, hub, surfaces, ui, themeHandle }) {
     if (typeof bgHex === "string") {
       controller.syncOfficialTheme?.(isLightHex(bgHex) ? "light" : "dark");
     }
-    surfaces.resize(surfaces.width, surfaces.height);
+    surfaces.repaintAll();
   });
 }

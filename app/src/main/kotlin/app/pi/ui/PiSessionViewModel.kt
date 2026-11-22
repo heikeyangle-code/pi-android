@@ -3625,20 +3625,40 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { runCatching { commands.uiInput(surfaceId, data) } }
     }
 
-    /** 触控点击 → 组件 `handleMouse`（`ui.mouse`）。 */
-    fun sendSurfaceMouse(surfaceId: String, x: Int, y: Int, width: Int, height: Int) {
+    /** 触控事件 → 组件 `handleMouse`（`ui.mouse`，支持 press / click / release / wheel）。 */
+    fun sendSurfaceMouse(
+        surfaceId: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        type: String = "click",
+        wheelDelta: Int? = null,
+    ) {
         val commands = session?.commands ?: return
-        viewModelScope.launch { runCatching { commands.uiMouse(surfaceId, x, y, width = width, height = height) } }
+        viewModelScope.launch {
+            runCatching {
+                commands.uiMouse(
+                    surfaceId = surfaceId,
+                    x = x,
+                    y = y,
+                    type = type,
+                    width = width,
+                    height = height,
+                    wheelDelta = wheelDelta,
+                )
+            }
+        }
     }
 
-    /** 表面面板尺寸变化 → 同步列数与行数到宿主（`ui.resize`）。 */
-    fun resizeSurface(columns: Int, rows: Int) {
-        if (columns == panelColumns && rows <= 0) return
-        panelColumns = columns
-        panelResizeJob?.cancel()
-        panelResizeJob = viewModelScope.launch {
+    private var surfaceResizeJob: Job? = null
+
+    /** 全屏/浮层表面独立尺寸同步（带 `surfaceId`），不与聊天区 widget 栏列宽互相覆盖。 */
+    fun resizeSurface(surfaceId: String, columns: Int, rows: Int) {
+        surfaceResizeJob?.cancel()
+        surfaceResizeJob = viewModelScope.launch {
             delay(PANEL_RESIZE_DEBOUNCE_MS)
-            runCatching { session?.commands?.uiResize(columns, rows.takeIf { it > 0 }) }
+            runCatching { session?.commands?.uiResize(columns, rows.takeIf { it > 0 }, surfaceId = surfaceId) }
         }
     }
 
@@ -4383,13 +4403,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var extCompletionId = 0
 
     /** 查询扩展通过 `ctx.ui.addAutocompleteProvider` 注册的补全候选（`ui.autocomplete`）。 */
-    fun requestExtensionAutocomplete(draft: String) {
+    fun requestExtensionAutocomplete(draft: String, cursorOffset: Int = draft.length) {
         val id = ++extCompletionId
         val commands = session?.commands ?: return
         viewModelScope.launch {
-            val lines = draft.split('\n')
-            val cursorLine = (lines.size - 1).coerceAtLeast(0)
-            val cursorCol = lines.lastOrNull()?.length ?: 0
+            val (lines, cursorLine, cursorCol) = lineColOf(draft, cursorOffset)
             val reply = runCatching { commands.uiAutocomplete(lines, cursorLine, cursorCol) }.getOrNull() ?: return@launch
             if (id != extCompletionId) return@launch
             _state.update { s -> s.copy(
@@ -4400,6 +4418,53 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 },
             ) }
         }
+    }
+
+    /** 调官方 `AutocompleteProvider.applyCompletion` 精确应用补全，失败时安全回退前缀替换。 */
+    fun applyExtensionCompletion(
+        draft: String,
+        item: app.pi.host.HostCommands.ExtensionCompletion,
+        prefix: String,
+        cursorOffset: Int = draft.length,
+        onApplied: (String) -> Unit,
+    ) {
+        val commands = session?.commands
+        dismissExtensionAutocomplete()
+        if (commands == null) {
+            val fallback = if (prefix.isNotEmpty() && draft.endsWith(prefix)) {
+                draft.removeSuffix(prefix) + item.value
+            } else {
+                draft + item.value
+            }
+            onApplied(fallback)
+            return
+        }
+        viewModelScope.launch {
+            val (lines, cursorLine, cursorCol) = lineColOf(draft, cursorOffset)
+            val applied = runCatching {
+                commands.uiAutocompleteApply(lines, cursorLine, cursorCol, item, prefix)
+            }.getOrNull()
+            val nextDraft = applied?.lines?.joinToString("\n")
+                ?: if (prefix.isNotEmpty() && draft.endsWith(prefix)) {
+                    draft.removeSuffix(prefix) + item.value
+                } else {
+                    draft + item.value
+                }
+            onApplied(nextDraft)
+        }
+    }
+
+    private fun lineColOf(text: String, rawOffset: Int): Triple<List<String>, Int, Int> {
+        val lines = text.split('\n')
+        val offset = rawOffset.coerceIn(0, text.length)
+        var acc = 0
+        for (i in lines.indices) {
+            val len = lines[i].length
+            if (offset <= acc + len) return Triple(lines, i, (offset - acc).coerceIn(0, len))
+            acc += len + 1
+        }
+        val last = (lines.size - 1).coerceAtLeast(0)
+        return Triple(lines, last, lines.getOrNull(last)?.length ?: 0)
     }
 
     fun dismissExtensionAutocomplete() {

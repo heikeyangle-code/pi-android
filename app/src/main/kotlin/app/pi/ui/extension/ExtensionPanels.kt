@@ -76,6 +76,7 @@ fun ExtensionWidgetStack(
     modifier: Modifier = Modifier,
     onColumns: ((Int) -> Unit)? = null,
     onInteract: ((ExtPanel) -> Unit)? = null,
+    onUnpin: ((ExtPanel) -> Unit)? = null,
     maxStackHeight: Dp = DEFAULT_STACK_MAX_HEIGHT,
 ) {
     val density = LocalDensity.current
@@ -117,6 +118,7 @@ fun ExtensionWidgetStack(
                         } else {
                             null
                         },
+                        onUnpin = if (onUnpin != null) { { onUnpin(widget) } } else null,
                     )
                 }
             }
@@ -226,9 +228,19 @@ fun ExtensionDockSummaryBar(
     }
 }
 
+/** 扩展中心内展示的一键扩展快捷键条目（来自 `pi.registerShortcut`）。 */
+data class ExtensionHubShortcut(
+    val key: String,
+    val label: String,
+    val description: String?,
+)
+
 /**
- * 扩展面板完整检视抽屉：软键盘开启或面板过多时一键查看全部 header / status / widgets / footer。
+ * 扩展中心（Extension Hub）：
+ *  - 收纳实时状态（`setStatus`，完整多行不截断）、扩展面板（`setHeader`/`setWidget`/`setFooter`，
+ *    支持一键「置顶」常驻输入框上方或「操控」打开交互表面）以及扩展快捷键（`registerShortcut`）。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExtensionWidgetsSheet(
     header: ExtPanel?,
@@ -238,26 +250,49 @@ fun ExtensionWidgetsSheet(
     editorTakeover: Boolean,
     onInteract: (ExtPanel) -> Unit,
     onDismiss: () -> Unit,
+    shortcuts: List<ExtensionHubShortcut> = emptyList(),
+    pinnedWidgetKeys: Set<String> = emptySet(),
+    onTogglePinWidget: ((String) -> Unit)? = null,
+    onTriggerShortcut: ((String) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val statusEntries = remember(statuses) { statusRows(statuses.map { it.key to it.text }) }
+    val panelCount = widgets.size + (if (header != null) 1 else 0) + (if (footer != null) 1 else 0)
+    val subtitle = buildList {
+        if (statusEntries.isNotEmpty()) add(tr("${statusEntries.size} 状态", "${statusEntries.size} status"))
+        if (panelCount > 0) add(tr("$panelCount 面板", "$panelCount panel(s)"))
+        if (shortcuts.isNotEmpty()) add(tr("${shortcuts.size} 快捷键", "${shortcuts.size} shortcut(s)"))
+    }.joinToString(" · ")
+
     PiSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = PiSpacing.pageHorizontal)
                 .padding(bottom = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = tr("扩展面板", "Extension Panels"),
-                    modifier = Modifier.weight(1f),
-                    style = PiType.title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = tr("扩展中心", "Extensions"),
+                        style = PiType.title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (subtitle.isNotEmpty()) {
+                        Text(
+                            text = subtitle,
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 val closeLabel = tr("关闭", "Close")
                 Box(
                     modifier = Modifier
@@ -274,55 +309,239 @@ fun ExtensionWidgetsSheet(
                     )
                 }
             }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 480.dp)
+                    .heightIn(max = 520.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (statuses.isNotEmpty() || editorTakeover) {
-                    ExtensionStatusStrip(statuses = statuses, editorTakeover = editorTakeover)
-                }
-                header?.let { h ->
-                    ExtensionPanelCard(
-                        caption = tr("顶栏", "Header") + " · ${widgetCaption(h.key) ?: h.key}",
-                        lines = h.lines,
-                        collapsedRows = 6,
-                        onInteract = if (h.interactive && h.surfaceId != null) {
-                            { onDismiss(); onInteract(h) }
-                        } else {
-                            null
-                        },
-                    )
-                }
-                widgets.forEach { w ->
-                    key(w.key) {
-                        ExtensionPanelCard(
-                            caption = widgetCaption(w.key) ?: w.key,
-                            lines = w.lines,
-                            collapsedRows = 6,
-                            onInteract = if (w.interactive && w.surfaceId != null) {
-                                { onDismiss(); onInteract(w) }
-                            } else {
-                                null
-                            },
+                if (editorTakeover) {
+                    val noticeShape = RoundedCornerShape(10.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(noticeShape)
+                            .background(palette.infoBg)
+                            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), noticeShape)
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(palette.accent),
+                        )
+                        Text(
+                            text = tr("扩展编辑器已由原生输入框接管", "Extension editor is handled by the native composer"),
+                            style = PiTheme.text.meta,
+                            color = palette.muted,
                         )
                     }
                 }
-                footer?.let { f ->
-                    ExtensionPanelCard(
-                        caption = tr("底栏", "Footer") + " · ${widgetCaption(f.key) ?: f.key}",
-                        lines = f.lines,
-                        collapsedRows = 6,
-                        onInteract = if (f.interactive && f.surfaceId != null) {
-                            { onDismiss(); onInteract(f) }
+
+                if (statusEntries.isNotEmpty()) {
+                    HubSectionHeader(
+                        title = tr("实时状态", "Live Status"),
+                        count = statusEntries.size,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        statusEntries.forEach { entry ->
+                            val rowShape = RoundedCornerShape(11.dp)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(rowShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                    .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.45f), rowShape)
+                                    .padding(horizontal = 11.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                if (entry.key.isNotEmpty()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(palette.accent),
+                                        )
+                                        Text(
+                                            text = entry.key,
+                                            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Medium),
+                                            color = palette.dim,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                ExtensionSpans(
+                                    spans = remember(entry.text) { chromeSpans(entry.text) },
+                                    defaultColor = palette.text,
+                                    style = PiTheme.text.monoSmall,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                    richStyle = true,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (panelCount > 0) {
+                    HubSectionHeader(
+                        title = tr("扩展面板", "Panels"),
+                        count = panelCount,
+                        hint = if (widgets.isNotEmpty() && onTogglePinWidget != null) {
+                            tr("置顶后会常驻在输入框上方", "Pinned widgets stay above the composer")
                         } else {
                             null
                         },
                     )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        header?.let { h ->
+                            ExtensionPanelCard(
+                                caption = tr("顶栏", "Header") + " · ${widgetCaption(h.key) ?: h.key}",
+                                lines = h.lines,
+                                collapsedRows = 6,
+                                onInteract = if (h.interactive && h.surfaceId != null) {
+                                    { onDismiss(); onInteract(h) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        widgets.forEach { w ->
+                            key(w.key) {
+                                val isPinned = w.key in pinnedWidgetKeys
+                                ExtensionPanelCard(
+                                    caption = widgetCaption(w.key) ?: w.key,
+                                    lines = w.lines,
+                                    collapsedRows = 6,
+                                    pinned = isPinned,
+                                    onTogglePin = if (onTogglePinWidget != null) {
+                                        { onTogglePinWidget(w.key) }
+                                    } else {
+                                        null
+                                    },
+                                    onInteract = if (w.interactive && w.surfaceId != null) {
+                                        { onDismiss(); onInteract(w) }
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
+                        }
+                        footer?.let { f ->
+                            ExtensionPanelCard(
+                                caption = tr("底栏", "Footer") + " · ${widgetCaption(f.key) ?: f.key}",
+                                lines = f.lines,
+                                collapsedRows = 6,
+                                onInteract = if (f.interactive && f.surfaceId != null) {
+                                    { onDismiss(); onInteract(f) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
+                }
+
+                if (shortcuts.isNotEmpty() && onTriggerShortcut != null) {
+                    HubSectionHeader(
+                        title = tr("扩展快捷键", "Shortcuts"),
+                        count = shortcuts.size,
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        shortcuts.forEach { sc ->
+                            val chipShape = RoundedCornerShape(10.dp)
+                            Row(
+                                modifier = Modifier
+                                    .clip(chipShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                                    .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.55f), chipShape)
+                                    .clickable(role = Role.Button) {
+                                        onDismiss()
+                                        onTriggerShortcut(sc.key)
+                                    }
+                                    .padding(horizontal = 9.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = sc.label,
+                                    style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = palette.accent,
+                                    maxLines = 1,
+                                )
+                                val desc = sc.description?.takeIf { it.isNotBlank() }
+                                if (desc != null) {
+                                    Text(
+                                        text = desc,
+                                        style = PiTheme.text.meta,
+                                        color = palette.text,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (statusEntries.isEmpty() && panelCount == 0 && shortcuts.isEmpty() && !editorTakeover) {
+                    Text(
+                        text = tr("当前会话暂无活跃的扩展状态或面板。", "No active extension status or panels in this session."),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HubSectionHeader(
+    title: String,
+    count: Int,
+    hint: String? = null,
+) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = title,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
+            color = palette.muted,
+        )
+        Text(
+            text = count.toString(),
+            style = PiTheme.text.monoSmall,
+            color = palette.dim,
+        )
+        if (hint != null) {
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = hint,
+                style = PiTheme.text.meta,
+                color = palette.dim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -337,6 +556,7 @@ fun ExtensionWorkingStrip(
     modifier: Modifier = Modifier,
 ) {
     if (!streaming || !working.visible) return
+    val explicitEmptyFrames = working.frames != null && working.frames.isEmpty()
     val frames = working.frames?.filter { it.isNotEmpty() }.orEmpty()
     val message = working.message?.takeIf { it.isNotBlank() }
     if (frames.isEmpty() && message == null) return
@@ -352,7 +572,11 @@ fun ExtensionWorkingStrip(
     }
 
     val palette = PiTheme.palette
-    val glyph = if (frames.isNotEmpty()) frames[frameIndex % frames.size] else "◌"
+    val glyph: String? = when {
+        frames.isNotEmpty() -> frames[frameIndex % frames.size]
+        explicitEmptyFrames -> null
+        else -> "◌"
+    }
     val pillShape = RoundedCornerShape(10.dp)
     Row(
         modifier = modifier
@@ -365,13 +589,15 @@ fun ExtensionWorkingStrip(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ExtensionSpans(
-            spans = remember(glyph) { chromeSpans(glyph) },
-            defaultColor = palette.accent,
-            style = PiTheme.text.monoSmall,
-            maxLines = 1,
-            richStyle = true,
-        )
+        if (glyph != null) {
+            ExtensionSpans(
+                spans = remember(glyph) { chromeSpans(glyph) },
+                defaultColor = palette.accent,
+                style = PiTheme.text.monoSmall,
+                maxLines = 1,
+                richStyle = true,
+            )
+        }
         if (message != null) {
             ExtensionSpans(
                 spans = remember(message) { chromeSpans(message) },
@@ -534,6 +760,9 @@ internal fun ExtensionPanelCard(
     lines: List<String>,
     modifier: Modifier = Modifier,
     collapsedRows: Int = COLLAPSED_ROWS,
+    pinned: Boolean = false,
+    onTogglePin: (() -> Unit)? = null,
+    onUnpin: (() -> Unit)? = null,
     onInteract: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
@@ -559,7 +788,7 @@ internal fun ExtensionPanelCard(
         shape = RoundedCornerShape(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (caption != null || canExpand || onInteract != null) {
+            if (caption != null || canExpand || onInteract != null || onTogglePin != null || onUnpin != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -579,6 +808,11 @@ internal fun ExtensionPanelCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (onTogglePin != null) {
+                        PinTogglePill(pinned = pinned, onClick = onTogglePin)
+                    } else if (onUnpin != null) {
+                        UnpinPill(onClick = onUnpin)
+                    }
                     if (onInteract != null) {
                         InteractPill(onClick = onInteract)
                     }
@@ -657,6 +891,52 @@ private fun InteractPill(onClick: () -> Unit) {
             text = tr("操控", "Interact"),
             style = PiTheme.text.meta.copy(fontWeight = FontWeight.SemiBold),
             color = palette.accent,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun PinTogglePill(pinned: Boolean, onClick: () -> Unit) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(if (pinned) palette.accent.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                PiSpacing.hairline,
+                if (pinned) palette.accent.copy(alpha = 0.45f) else palette.borderMuted.copy(alpha = 0.55f),
+                shape,
+            )
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = if (pinned) tr("已置顶", "Pinned") else tr("置顶", "Pin"),
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = if (pinned) palette.accent else palette.muted,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun UnpinPill(onClick: () -> Unit) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f))
+            .border(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f), shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = tr("收纳", "Hide"),
+            style = PiTheme.text.meta,
+            color = palette.muted,
             maxLines = 1,
         )
     }
