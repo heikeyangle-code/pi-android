@@ -440,6 +440,11 @@ internal object PiMathDrawCache {
     fun put(key: PiMathDrawKey, value: PiMathDraw.Ready) {
         entries[key] = value
     }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+    }
 }
 
 /** 一次请求目前产出的东西。永远不持有"解析到一半"的文档。 */

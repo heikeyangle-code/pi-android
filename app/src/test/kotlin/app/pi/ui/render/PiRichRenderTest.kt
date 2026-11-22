@@ -225,4 +225,133 @@ class PiRichRenderTest {
         assertEquals("C:\\Users\\pi\\file.txt", piUnescapeMarkdownText("C:\\Users\\pi\\file.txt"))
         assertEquals("a & b <tag> \"ok\" A B", piUnescapeMarkdownText("a &amp; b &lt;tag&gt; &quot;ok&quot; &#65; &#x42;"))
     }
+
+    @Test
+    fun `multi-line blockquotes and nested quoted code fences strip blockquote markers cleanly`() {
+        val md = """
+            > First line of quote
+            > Second line of quote
+            >
+            > ```kotlin
+            > val answer = 42
+            > println(answer)
+            > ```
+        """.trimIndent()
+        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+        val quote = tree.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
+        val paragraph = quote.children.first { it.type == MarkdownElementTypes.PARAGRAPH }
+        val plain = extractInlinePlainTextForTest(md, paragraph)
+        assertFalse("Multi-line blockquote leaked '>': $plain", plain.contains(">"))
+        assertTrue(plain.contains("First line of quote"))
+        assertTrue(plain.contains("Second line of quote"))
+
+        val fence = quote.children.first { it.type == MarkdownElementTypes.CODE_FENCE }
+        val extracted = extractCodeFence(md, fence)
+        assertEquals("kotlin", extracted.language)
+        assertTrue(extracted.closed)
+        assertFalse("Quoted code fence leaked '>': ${extracted.code}", extracted.code.contains(">"))
+        assertEquals("val answer = 42\nprintln(answer)", extracted.code)
+    }
+
+    @Test
+    fun `collapsed and shortcut reference links and images resolve cleanly`() {
+        val md = """
+            Full [Label][pi-ref], collapsed [Pi Ref][], shortcut [Pi Ref], image ![Logo][].
+
+            [pi-ref]: https://example.com/full
+            [pi ref]: https://example.com/collapsed
+            [logo]: https://example.com/logo.png
+        """.trimIndent()
+        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+        val refs = extractPiReferenceLinks(md, tree)
+        assertEquals("https://example.com/full", refs["pi-ref"])
+        assertEquals("https://example.com/collapsed", refs["pi ref"])
+
+        val paragraph = tree.children.first { it.type == MarkdownElementTypes.PARAGRAPH }
+        val refLinks = paragraph.children.filter {
+            it.type == MarkdownElementTypes.FULL_REFERENCE_LINK ||
+                it.type == MarkdownElementTypes.SHORT_REFERENCE_LINK
+        }
+        assertEquals(3, refLinks.size)
+        val resolvedUrls = refLinks.map { link ->
+            resolveReferenceDestination(
+                md,
+                link.children.firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL },
+                link.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT },
+                refs,
+            )
+        }
+        assertEquals(
+            listOf("https://example.com/full", "https://example.com/collapsed", "https://example.com/collapsed"),
+            resolvedUrls,
+        )
+
+        val img = paragraph.children.first { it.type == MarkdownElementTypes.IMAGE }
+        assertEquals("https://example.com/logo.png", resolveAstImageLink(md, img, refs))
+    }
+
+    @Test
+    fun `GFM alert detector matches all five callout types and ignores inline prose markers`() {
+        val cases = listOf(
+            "> [!NOTE]\n> Details here" to PiAlertKind.Note,
+            "> [!tip]\n> Helpful hint" to PiAlertKind.Tip,
+            "> [!IMPORTANT]\n> Must read" to PiAlertKind.Important,
+            "> [!WARNING]\n> Watch out" to PiAlertKind.Warning,
+            "> [!CAUTION]\n> Dangerous" to PiAlertKind.Caution,
+        )
+        for ((md, expected) in cases) {
+            val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+            val quote = tree.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
+            val alert = detectGfmAlert(md, quote)
+            assertTrue("Expected alert for $md", alert != null)
+            assertEquals(expected, alert!!.kind)
+            assertTrue(alert.firstParagraphHasRemainingBody)
+        }
+        val inlineNotAlert = "> [!NOTE] same-line text is a normal quote"
+        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(inlineNotAlert)
+        val quote = tree.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
+        assertEquals(null, detectGfmAlert(inlineNotAlert, quote))
+    }
+
+    @Test
+    fun `syntax highlighter handles pathological inputs and 32 KiB file within strict latency budget`() {
+        val pathological = listOf(
+            "\"unterminated string with \\",
+            "/* unterminated block comment @param x",
+            "\"\"\"unterminated triple \${nested { brace",
+            "f\"unterminated {python",
+            "<<<<<>>>>><!-- unclosed",
+            "🚀🎉 中文变量 = \"表情🔥\${x}\" + 0xDEADBEEF",
+        )
+        for (lang in listOf("kotlin", "python", "typescript", "rust", "html", "json", "yaml", "toml", "css", "sql", "markdown", "diff")) {
+            for (input in pathological) {
+                val res = PiFastCodeHighlighter.highlight(input, lang)
+                assertTrue(res.languageKnown)
+                for (span in res.spans) {
+                    assertTrue("Invalid span $span for $lang", span.start >= 0 && span.end <= input.length && span.start <= span.end)
+                }
+            }
+        }
+
+        // 32 KiB realistic Kotlin benchmark: must finish well under 50 ms on JVM
+        val snippet = """
+            /** Doc for @param items */
+            @Composable
+            fun renderBlock(items: List<String>, count: Int): Boolean {
+                val msg = "size=${'$'}{items.size} count=${'$'}count"
+                return items.isNotEmpty() && count >= 0x10
+            }
+        """.trimIndent() + "\n"
+        val bigCode = buildString(34 * 1024) {
+            while (length < 32 * 1024) append(snippet)
+        }
+        // Warmup
+        PiFastCodeHighlighter.highlight(snippet, "kotlin")
+        val started = System.nanoTime()
+        val bigResult = PiFastCodeHighlighter.highlight(bigCode, "kotlin")
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000.0
+        assertTrue(bigResult.languageKnown)
+        assertTrue(bigResult.spans.size > 500)
+        assertTrue("32 KiB highlight took ${elapsedMs}ms (> 150ms)", elapsedMs < 150.0)
+    }
 }

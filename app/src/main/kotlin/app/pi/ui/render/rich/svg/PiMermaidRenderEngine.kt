@@ -307,6 +307,15 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
         return withContext(Dispatchers.Main.immediate) { enqueue(key, request, preferRaster = true) }
     }
 
+    /** Thread-safe cache eviction hook for [app.pi.ui.PiMemoryTrimmer]. */
+    fun clearCaches() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            rasterCache.clear()
+        } else {
+            mainHandler.post { rasterCache.clear() }
+        }
+    }
+
     // ---------------------------------------------------------------- queue
 
     private suspend fun enqueue(key: String, request: PiSvgRequest, preferRaster: Boolean): PiMermaidRendered {

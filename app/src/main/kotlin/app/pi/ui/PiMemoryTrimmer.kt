@@ -8,6 +8,9 @@ import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.ui.blocks.ParseCaches
 import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.render.RowHeightCache
+import app.pi.ui.render.rich.svg.PiMathDrawCache
+import app.pi.ui.render.rich.svg.PiMermaidRenderEngine
+import app.pi.ui.render.rich.svg.clearPiMermaidDrawCache
 
 /**
  * 进程级统一内存裁剪器：接入 `MainActivity.onTrimMemory` / `onLowMemory` 与会话切换。
@@ -44,6 +47,9 @@ internal object PiMemoryTrimmer {
         ) {
             PiImageCache.clear()
             PiGuestImageTransformer.clearBitmapCache()
+            clearPiMermaidDrawCache()
+            PiMermaidRenderEngine.clearCaches()
+            PiMathDrawCache.clear()
             RowHeightCache.shared.clear()
         }
     }
@@ -55,6 +61,9 @@ internal object PiMemoryTrimmer {
         PiNodeCodeHighlighter.clear()
         PiImageCache.clear()
         PiGuestImageTransformer.clearBitmapCache()
+        clearPiMermaidDrawCache()
+        PiMermaidRenderEngine.clearCaches()
+        PiMathDrawCache.clear()
         RowHeightCache.shared.clear()
     }
 }

@@ -423,6 +423,7 @@ private fun isPlainLeafTextNode(node: ASTNode): Boolean {
         MarkdownTokenTypes.HARD_LINE_BREAK,
         MarkdownTokenTypes.EOL,
         MarkdownTokenTypes.BACKTICK,
+        MarkdownTokenTypes.BLOCK_QUOTE,
         MarkdownTokenTypes.HTML_TAG,
         GFMTokenTypes.GFM_AUTOLINK -> false
         else -> true
@@ -484,7 +485,7 @@ private fun AnnotatedString.Builder.appendInlineNode(
         MarkdownElementTypes.SHORT_REFERENCE_LINK -> {
             val labelNode = child.children.firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL }
             val textNode = child.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT } ?: labelNode
-            val dest = labelNode?.let { ctx.referenceLinks[normalizeReferenceLabel(safeSlice(ctx.content, it))] }
+            val dest = resolveReferenceDestination(ctx.content, labelNode, textNode, ctx.referenceLinks)
             appendLinkNode(dest, textNode, ctx)
         }
 
@@ -517,6 +518,7 @@ private fun AnnotatedString.Builder.appendInlineNode(
         }
 
         MarkdownTokenTypes.BACKTICK -> appendConsumeSkip("`", ctx)
+        MarkdownTokenTypes.BLOCK_QUOTE -> Unit
 
         MarkdownTokenTypes.HTML_TAG -> {
             val raw = PiHtml.inlineTextAt(
@@ -793,6 +795,38 @@ internal fun safeSlice(content: String, node: ASTNode): String {
     return content.substring(start, end)
 }
 
+internal fun resolveReferenceDestination(
+    content: String,
+    labelNode: ASTNode?,
+    textNode: ASTNode?,
+    referenceLinks: Map<String, String>,
+): String? {
+    val labelKey = labelNode?.let { normalizeReferenceLabel(safeSlice(content, it)) }.orEmpty()
+    if (labelKey.isNotEmpty()) return referenceLinks[labelKey]
+    val fallbackKey = textNode?.let { normalizeReferenceLabel(safeSlice(content, it)) }.orEmpty()
+    return if (fallbackKey.isNotEmpty()) referenceLinks[fallbackKey] else null
+}
+
+/**
+ * Pure helper (JVM-testable) that flattens a paragraph/inline AST node the same way
+ * [appendInlineChildren] strips blockquote markers and decodes escapes/entities.
+ */
+internal fun extractInlinePlainTextForTest(content: String, node: ASTNode): String = buildString {
+    fun walk(n: ASTNode) {
+        if (n.children.isEmpty()) {
+            when (n.type) {
+                MarkdownTokenTypes.BLOCK_QUOTE -> Unit
+                MarkdownTokenTypes.EOL -> append(' ')
+                MarkdownTokenTypes.HARD_LINE_BREAK -> append('\n')
+                else -> append(piUnescapeMarkdownText(safeSlice(content, n)))
+            }
+        } else {
+            for (c in n.children) walk(c)
+        }
+    }
+    walk(node)
+}
+
 internal fun resolveAstImageLink(
     content: String,
     imageNode: ASTNode,
@@ -808,10 +842,12 @@ internal fun resolveAstImageLink(
             .firstOrNull { it.type == MarkdownElementTypes.LINK_DESTINATION }
             ?.let { safeSlice(content, it).trim().removePrefix("<").removeSuffix(">") }
             ?.takeIf { it.isNotEmpty() }
-        else -> linkNode.children
-            .firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL }
-            ?.let { referenceLinks[normalizeReferenceLabel(safeSlice(content, it))] }
-            ?.takeIf { it.isNotEmpty() }
+        else -> {
+            val labelNode = linkNode.children.firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL }
+            val textNode = linkNode.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT } ?: labelNode
+            resolveReferenceDestination(content, labelNode, textNode, referenceLinks)
+                ?.takeIf { it.isNotEmpty() }
+        }
     }
 }
 

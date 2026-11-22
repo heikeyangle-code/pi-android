@@ -427,7 +427,9 @@ private fun PiParagraph(
         }
     }
 
-    val trimmed = remember(content, node) { safeSlice(content, node).trim() }
+    val trimmed = remember(content, node) {
+        stripBlockQuotePrefixes(safeSlice(content, node)).trim()
+    }
 
     // 2. Standalone display math: `$$ ... $$`
     if (skipLeadingPrefixChars == 0) {
@@ -537,7 +539,7 @@ private fun soloImageChild(paragraph: ASTNode): ASTNode? {
 
 // ------------------------------------------------------------------ Blockquotes & GFM Alerts
 
-private enum class PiAlertKind(val marker: String) {
+internal enum class PiAlertKind(val marker: String) {
     Note("[!NOTE]"),
     Tip("[!TIP]"),
     Important("[!IMPORTANT]"),
@@ -545,14 +547,14 @@ private enum class PiAlertKind(val marker: String) {
     Caution("[!CAUTION]"),
 }
 
-private data class DetectedAlert(
+internal data class DetectedAlert(
     val kind: PiAlertKind,
     val firstParagraph: ASTNode,
     val skipCharsInFirstParagraph: Int,
     val firstParagraphHasRemainingBody: Boolean,
 )
 
-private fun detectGfmAlert(content: String, quoteNode: ASTNode): DetectedAlert? {
+internal fun detectGfmAlert(content: String, quoteNode: ASTNode): DetectedAlert? {
     val firstBlock = quoteNode.children.firstOrNull {
         it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
             it.type != MarkdownTokenTypes.EOL &&
@@ -1419,18 +1421,7 @@ private fun PiIndentedCodeBlock(
     node: ASTNode,
     typography: PiMarkdownTypography,
 ) {
-    val code = remember(content, node) {
-        safeSlice(content, node)
-            .lines()
-            .joinToString("\n") { line ->
-                when {
-                    line.startsWith("    ") -> line.substring(4)
-                    line.startsWith("\t") -> line.substring(1)
-                    else -> line
-                }
-            }
-            .trimEnd('\n')
-    }
+    val code = remember(content, node) { extractIndentedCodeBlock(content, node) }
     PiCodeSurface(
         code = code,
         language = null,
@@ -1439,32 +1430,88 @@ private fun PiIndentedCodeBlock(
     )
 }
 
-private data class ExtractedCodeFence(
+internal data class ExtractedCodeFence(
     val language: String?,
     val code: String,
     val closed: Boolean,
 )
 
-private fun extractCodeFence(content: String, node: ASTNode): ExtractedCodeFence {
+/**
+ * Extracts fenced code body strictly from `CODE_FENCE_CONTENT` and `EOL` AST tokens so fences
+ * nested inside blockquotes (`> ```kotlin`) or lists never leak leading `> ` prefixes into code.
+ */
+internal fun extractCodeFence(content: String, node: ASTNode): ExtractedCodeFence {
     val langNode = node.findChildOfType(MarkdownTokenTypes.FENCE_LANG)
     val language = langNode?.let { safeSlice(content, it).trim().ifEmpty { null } }
     val closeNode = node.children.lastOrNull { it.type == MarkdownTokenTypes.CODE_FENCE_END }
-    val firstEol = node.children.firstOrNull { it.type == MarkdownTokenTypes.EOL }
 
-    if (firstEol == null) {
-        return ExtractedCodeFence(language = language, code = "", closed = closeNode != null)
+    var seenFirstEol = false
+    val sb = StringBuilder()
+    for (child in node.children) {
+        when (child.type) {
+            MarkdownTokenTypes.CODE_FENCE_START,
+            MarkdownTokenTypes.FENCE_LANG,
+            MarkdownTokenTypes.BLOCK_QUOTE,
+            MarkdownTokenTypes.WHITE_SPACE -> Unit
+            MarkdownTokenTypes.CODE_FENCE_END -> break
+            MarkdownTokenTypes.EOL -> {
+                if (!seenFirstEol) {
+                    seenFirstEol = true
+                } else {
+                    sb.append('\n')
+                }
+            }
+            MarkdownTokenTypes.CODE_FENCE_CONTENT -> {
+                seenFirstEol = true
+                sb.append(safeSlice(content, child))
+            }
+            else -> if (seenFirstEol) sb.append(safeSlice(content, child))
+        }
     }
-    val bodyStart = firstEol.endOffset.coerceIn(0, content.length)
-    val bodyEnd = (closeNode?.startOffset ?: node.endOffset).coerceIn(bodyStart, content.length)
-    val rawBody = content.substring(bodyStart, bodyEnd)
-    val code = if (rawBody.endsWith("\r\n")) {
-        rawBody.dropLast(2)
-    } else if (rawBody.endsWith("\n")) {
-        rawBody.dropLast(1)
-    } else {
-        rawBody
-    }
+    // Strip the single trailing newline immediately preceding the closing fence marker.
+    val raw = sb.toString()
+    val code = if (closeNode != null && raw.endsWith('\n')) raw.dropLast(1) else raw
     return ExtractedCodeFence(language = language, code = code, closed = closeNode != null)
+}
+
+internal fun extractIndentedCodeBlock(content: String, node: ASTNode): String {
+    val sb = StringBuilder()
+    for (child in node.children) {
+        when (child.type) {
+            MarkdownTokenTypes.BLOCK_QUOTE -> Unit
+            MarkdownTokenTypes.EOL -> sb.append('\n')
+            MarkdownTokenTypes.CODE_LINE -> {
+                val line = safeSlice(content, child)
+                sb.append(
+                    when {
+                        line.startsWith("    ") -> line.substring(4)
+                        line.startsWith("\t") -> line.substring(1)
+                        else -> line
+                    },
+                )
+            }
+            else -> sb.append(safeSlice(content, child))
+        }
+    }
+    return sb.toString().trimEnd('\n')
+}
+
+private fun stripBlockQuotePrefixes(text: String): String {
+    if (!text.contains('>')) return text
+    return text.lineSequence().joinToString("\n") { line ->
+        var p = 0
+        while (p < line.length) {
+            var q = p
+            while (q < line.length && q - p < 3 && line[q] == ' ') q++
+            if (q < line.length && line[q] == '>') {
+                p = q + 1
+                if (p < line.length && line[p] == ' ') p++
+            } else {
+                break
+            }
+        }
+        line.substring(p)
+    }
 }
 
 @Composable

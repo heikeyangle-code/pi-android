@@ -390,13 +390,11 @@ private val PI_MERMAID_PLACEHOLDER_HEIGHT = 120.dp
 /** 缓存键：源码、基准宽度、主题，缺一不可。 */
 private data class PiMermaidDrawKey(val source: String, val widthPx: Int, val theme: PiSvgTheme)
 
-/** 最近渲染成功的图（`Picture` 是录制好的矢量）：16 条 LRU，只缓存成功结果。 */
+/** 最近渲染成功的图：条数（12）与位图字节（16 MiB）双上限 LRU，并接入 PiMemoryTrimmer。 */
 private object PiMermaidDrawCache {
-    private const val CAPACITY = 16
-    private val entries = object : LinkedHashMap<PiMermaidDrawKey, PiMermaidDraw.Ready>(CAPACITY, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PiMermaidDrawKey, PiMermaidDraw.Ready>): Boolean =
-            size > CAPACITY
-    }
+    private const val CAPACITY = 12
+    private const val MAX_BITMAP_BYTES = 16L * 1024 * 1024
+    private val entries = LinkedHashMap<PiMermaidDrawKey, PiMermaidDraw.Ready>(CAPACITY, 0.75f, true)
 
     @Synchronized
     fun get(key: PiMermaidDrawKey): PiMermaidDraw.Ready? =
@@ -405,7 +403,28 @@ private object PiMermaidDrawCache {
     @Synchronized
     fun put(key: PiMermaidDrawKey, value: PiMermaidDraw.Ready) {
         entries[key] = value
+        var totalBytes = entries.values.sumOf { readyBytes(it) }
+        val iterator = entries.entries.iterator()
+        while ((entries.size > CAPACITY || totalBytes > MAX_BITMAP_BYTES) && iterator.hasNext()) {
+            val evicted = iterator.next()
+            totalBytes -= readyBytes(evicted.value)
+            iterator.remove()
+        }
     }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+    }
+
+    private fun readyBytes(ready: PiMermaidDraw.Ready): Long {
+        val bmp = ready.bitmap ?: return 0L
+        return if (bmp.isRecycled) 0L else bmp.allocationByteCount.toLong()
+    }
+}
+
+internal fun clearPiMermaidDrawCache() {
+    PiMermaidDrawCache.clear()
 }
 
 /** What the render request has produced so far. Never holds a half-parsed document. */
