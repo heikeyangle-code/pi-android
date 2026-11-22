@@ -107,14 +107,16 @@
     var wrap = Math.max(160, Math.min(480, (width | 0) || 280));
     var ganttWidth = Math.max(320, Math.min(2000, (width | 0) || 480));
 
-    // Derive elevated, theme-harmonized card/cluster/edge tones cleanly from Pi's active palette.
-    var nodeFill = mixHex(background, foreground, 0.065);
-    var secondaryFill = mixHex(background, accent, 0.11);
-    var tertiaryFill = mixHex(background, foreground, 0.04);
-    var clusterFill = mixHex(background, foreground, 0.03);
-    var borderSoft = mixHex(background, accent, 0.68);
-    var edgeLabelBg = mixHex(background, foreground, 0.05);
-    var noteFill = mixHex(background, accent, 0.13);
+    // Derive crisp, luminance-aware node/cluster/edge tones harmonized with Pi's active palette.
+    var bgRgb = hexToRgb(background);
+    var isLight = (0.299 * bgRgb[0] + 0.587 * bgRgb[1] + 0.114 * bgRgb[2]) > 140;
+    var nodeFill = isLight ? mixHex(background, "#ffffff", 0.72) : mixHex(background, foreground, 0.075);
+    var secondaryFill = isLight ? mixHex(background, accent, 0.09) : mixHex(background, accent, 0.13);
+    var tertiaryFill = isLight ? mixHex(background, foreground, 0.03) : mixHex(background, foreground, 0.045);
+    var clusterFill = isLight ? mixHex(background, foreground, 0.035) : mixHex(background, foreground, 0.035);
+    var borderSoft = mixHex(background, accent, isLight ? 0.74 : 0.70);
+    var edgeLabelBg = isLight ? mixHex(background, "#ffffff", 0.85) : mixHex(background, foreground, 0.06);
+    var noteFill = isLight ? mixHex(background, accent, 0.10) : mixHex(background, accent, 0.14);
 
     return {
       startOnLoad: false,
@@ -198,17 +200,23 @@
     var viewBox = /viewBox\s*=\s*["']([^"']*)["']/i.exec(svg);
     if (viewBox) {
       var parts = viewBox[1].trim().split(/[\s,]+/).map(Number);
-      if (parts.length === 4 && isFinite(parts[2]) && isFinite(parts[3]) &&
+      if (parts.length === 4 && isFinite(parts[0]) && isFinite(parts[1]) &&
+          isFinite(parts[2]) && isFinite(parts[3]) &&
           parts[2] > 0 && parts[3] > 0) {
-        return { width: Math.ceil(parts[2]), height: Math.ceil(parts[3]) };
+        return {
+          minX: parts[0],
+          minY: parts[1],
+          width: Math.ceil(parts[2]),
+          height: Math.ceil(parts[3])
+        };
       }
     }
     var width = /<svg[^>]*\bwidth\s*=\s*["']([0-9.]+)/i.exec(svg);
     var height = /<svg[^>]*\bheight\s*=\s*["']([0-9.]+)/i.exec(svg);
     if (width && height) {
-      return { width: Math.ceil(Number(width[1])), height: Math.ceil(Number(height[1])) };
+      return { minX: 0, minY: 0, width: Math.ceil(Number(width[1])), height: Math.ceil(Number(height[1])) };
     }
-    return { width: 0, height: 0 };
+    return { minX: 0, minY: 0, width: 0, height: 0 };
   }
 
   function cleanup(taskId) {
@@ -262,12 +270,36 @@
       var h = size.height;
       if (svgEl) {
         if (w > 0 && h > 0) {
+          if (!svgEl.getAttribute("viewBox")) {
+            svgEl.setAttribute("viewBox", size.minX + " " + size.minY + " " + w + " " + h);
+          }
           svgEl.setAttribute("width", String(w));
           svgEl.setAttribute("height", String(h));
           svgEl.style.maxWidth = "none";
           svgEl.style.width = w + "px";
           svgEl.style.height = h + "px";
         }
+        try {
+          var bbox = svgEl.getBBox();
+          if (bbox && isFinite(bbox.width) && isFinite(bbox.height) && bbox.width > 1 && bbox.height > 1) {
+            var pad = 8;
+            var bx = Math.min(size.minX || 0, bbox.x - pad);
+            var by = Math.min(size.minY || 0, bbox.y - pad);
+            var br = Math.max((size.minX || 0) + w, bbox.x + bbox.width + pad);
+            var bb = Math.max((size.minY || 0) + h, bbox.y + bbox.height + pad);
+            var fullW = Math.ceil(br - bx);
+            var fullH = Math.ceil(bb - by);
+            if (fullW > w + 2 || fullH > h + 2 || bx < (size.minX || 0) - 2 || by < (size.minY || 0) - 2) {
+              w = fullW;
+              h = fullH;
+              svgEl.setAttribute("viewBox", bx + " " + by + " " + w + " " + h);
+              svgEl.setAttribute("width", String(w));
+              svgEl.setAttribute("height", String(h));
+              svgEl.style.width = w + "px";
+              svgEl.style.height = h + "px";
+            }
+          }
+        } catch (ignored) {}
         var rect = svgEl.getBoundingClientRect();
         if (rect && rect.width > 1 && rect.height > 1) {
           w = Math.ceil(Math.max(w, rect.width));

@@ -66,7 +66,7 @@ internal fun PiImageFailureCard(
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(palette.cardBg)
             .border(BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.58f)), shape)
             .then(
                 if (full != null) {

@@ -70,7 +70,10 @@ internal object PiFastCodeHighlighter {
         "java", "scala", "groovy", "gradle" -> JAVA_KW
         "ts", "typescript", "tsx", "js", "javascript", "jsx", "mjs", "cjs" -> JS_KW
         "py", "python", "python3" -> PY_KW
-        "rb", "ruby", "ex", "elixir", "exs", "perl", "pl", "r" -> RUBY_KW
+        "rb", "ruby" -> RUBY_KW
+        "ex", "elixir", "exs" -> ELIXIR_KW
+        "perl", "pl" -> PERL_KW
+        "r" -> R_KW
         "lua" -> LUA_KW
         "rs", "rust" -> RUST_KW
         "go", "golang" -> GO_KW
@@ -82,7 +85,9 @@ internal object PiFastCodeHighlighter {
         "php" -> PHP_KW
         "graphql", "gql" -> GRAPHQL_KW
         "proto", "protobuf" -> PROTO_KW
-        "sh", "bash", "zsh", "shell", "console", "fish", "ps1", "powershell", "bat", "cmd" -> SHELL_KW
+        "sh", "bash", "zsh", "shell", "console", "fish" -> SHELL_KW
+        "ps1", "powershell" -> POWERSHELL_KW
+        "bat", "cmd" -> BATCH_KW
         "sql", "sqlite", "postgres", "postgresql", "mysql", "plsql" -> SQL_KW
         else -> COMMON_KW
     }
@@ -102,9 +107,11 @@ internal object PiFastCodeHighlighter {
     fun supports(language: String?): Boolean = familyOf(language) != null
 
     fun highlight(code: String, language: String?): PiCodeHighlight {
-        if (code.isEmpty() || code.length > MAX_FAST_CHARS) return PiCodeHighlight()
+        if (code.isEmpty()) return PiCodeHighlight()
         val lang = language?.trim()?.lowercase() ?: return PiCodeHighlight()
         val family = familyOf(lang) ?: return PiCodeHighlight()
+        // For huge files in a known language, keep languageKnown=true so callers skip slow IPC fallback.
+        if (code.length > MAX_FAST_CHARS) return PiCodeHighlight(spans = emptyList(), languageKnown = true)
         val spans = ArrayList<PiCodeSpan>((code.length / 8).coerceIn(32, 4096))
         when (family) {
             Family.Diff -> scanDiff(code, spans)
@@ -178,14 +185,15 @@ internal object PiFastCodeHighlighter {
                 out = spans,
                 keywords = keywordsFor(lang),
                 builtinTypes = emptySet(),
-                hashComment = true,
+                hashComment = lang != "bat" && lang != "cmd",
                 dashComment = false,
                 slashComment = false,
                 backtickString = true,
                 dollarInterpolation = true,
+                backtickDollarInterpolation = true,
                 hashInterpolation = false,
                 preprocessor = false,
-                caseInsensitive = false,
+                caseInsensitive = lang == "bat" || lang == "cmd" || lang == "ps1" || lang == "powershell",
             )
             Family.CLike -> scanCode(
                 code = code,
@@ -196,11 +204,15 @@ internal object PiFastCodeHighlighter {
                 dashComment = false,
                 slashComment = true,
                 backtickString = true,
-                dollarInterpolation = lang in DOLLAR_INTERP_LANGS,
+                dollarInterpolation = lang in DOUBLE_QUOTE_DOLLAR_INTERP_LANGS,
+                backtickDollarInterpolation = lang in BACKTICK_DOLLAR_INTERP_LANGS,
                 hashInterpolation = false,
                 preprocessor = lang in PREPROCESSOR_LANGS,
                 caseInsensitive = false,
                 rustAttributes = lang == "rs" || lang == "rust",
+                rustLifetimes = lang == "rs" || lang == "rust",
+                nestedBlockComments = lang in NESTED_COMMENT_LANGS,
+                regexLiterals = lang in JS_REGEX_LANGS,
             )
         }
         return PiCodeHighlight(spans = spans, languageKnown = true)
@@ -287,11 +299,29 @@ internal object PiFastCodeHighlighter {
     private fun scanYaml(code: String, out: MutableList<PiCodeSpan>) {
         var i = 0
         val n = code.length
+        var blockScalarParentIndent = -1
         while (i < n) {
             val nl = code.indexOf('\n', i)
             val end = if (nl < 0) n else nl
             var p = i
             while (p < end && (code[p] == ' ' || code[p] == '\t')) p++
+            val indent = p - i
+
+            // Inside a YAML block scalar (`|` / `>`), every blank line or line indented deeper than
+            // the parent key belongs to the literal string payload, not nested key: value mappings.
+            if (blockScalarParentIndent >= 0) {
+                if (p >= end) {
+                    i = if (nl < 0) n else nl + 1
+                    continue
+                }
+                if (indent > blockScalarParentIndent) {
+                    out.add(PiCodeSpan(p, end, PiSyntaxToken.StringLiteral))
+                    i = if (nl < 0) n else nl + 1
+                    continue
+                }
+                blockScalarParentIndent = -1
+            }
+
             when {
                 p >= end -> Unit
                 code[p] == '#' -> out.add(PiCodeSpan(p, end, PiSyntaxToken.Comment))
@@ -309,9 +339,13 @@ internal object PiFastCodeHighlighter {
                         if (colon > keyStart) out.add(PiCodeSpan(keyStart, colon, PiSyntaxToken.Variable))
                         out.add(PiCodeSpan(colon, colon + 1, PiSyntaxToken.Punctuation))
                         val vStart = skipSpaces(code, colon + 1, end)
-                        if (vStart < end) scanYamlScalar(code, vStart, end, out)
+                        if (vStart < end && scanYamlScalar(code, vStart, end, out)) {
+                            blockScalarParentIndent = indent
+                        }
                     } else if (keyStart < end) {
-                        scanYamlScalar(code, keyStart, end, out)
+                        if (scanYamlScalar(code, keyStart, end, out)) {
+                            blockScalarParentIndent = indent
+                        }
                     }
                 }
             }
@@ -339,13 +373,15 @@ internal object PiFastCodeHighlighter {
         return -1
     }
 
-    private fun scanYamlScalar(code: String, v: Int, end: Int, out: MutableList<PiCodeSpan>) {
+    /** Returns true when this scalar header opens a YAML block scalar (`|` / `>`). */
+    private fun scanYamlScalar(code: String, v: Int, end: Int, out: MutableList<PiCodeSpan>): Boolean {
         val hash = findYamlComment(code, v, end)
         val vEnd = if (hash in v until end) hash else end
         val raw = code.substring(v, vEnd).trim()
+        val isBlockHeader = isYamlBlockScalarHeader(raw)
         when {
             raw.isEmpty() -> Unit
-            raw == "|" || raw == ">" || raw == "|-" || raw == ">-" || raw == "|+" || raw == ">+" ->
+            isBlockHeader ->
                 out.add(PiCodeSpan(v, vEnd, PiSyntaxToken.Operator))
             raw.startsWith("&") || raw.startsWith("*") ->
                 out.add(PiCodeSpan(v, vEnd, PiSyntaxToken.Type))
@@ -357,6 +393,16 @@ internal object PiFastCodeHighlighter {
             else -> out.add(PiCodeSpan(v, vEnd, PiSyntaxToken.StringLiteral))
         }
         if (hash in v until end) out.add(PiCodeSpan(hash, end, PiSyntaxToken.Comment))
+        return isBlockHeader
+    }
+
+    private fun isYamlBlockScalarHeader(raw: String): Boolean {
+        if (raw.isEmpty() || (raw[0] != '|' && raw[0] != '>')) return false
+        for (idx in 1 until raw.length) {
+            val c = raw[idx]
+            if (c != '-' && c != '+' && c !in '1'..'9') return false
+        }
+        return raw.length <= 3
     }
 
     private fun findYamlComment(code: String, start: Int, end: Int): Int {
@@ -431,7 +477,8 @@ internal object PiFastCodeHighlighter {
                 out.add(PiCodeSpan(openStart, p, PiSyntaxToken.Punctuation))
                 val tagStart = p
                 while (p < n && (code[p].isLetterOrDigit() || code[p] == '-' || code[p] == ':' || code[p] == '_')) p++
-                if (p > tagStart) out.add(PiCodeSpan(tagStart, p, PiSyntaxToken.Keyword))
+                val tagEnd = p
+                if (tagEnd > tagStart) out.add(PiCodeSpan(tagStart, tagEnd, PiSyntaxToken.Keyword))
                 while (p < n && code[p] != '>') {
                     when {
                         code[p] == '"' || code[p] == '\'' -> {
@@ -457,9 +504,43 @@ internal object PiFastCodeHighlighter {
                         else -> p++
                     }
                 }
+                val isClosingTag = openStart + 1 < n && code[openStart + 1] == '/'
+                val isSelfClosing = p > openStart + 1 && code[p - 1] == '/'
+                val tagName = if (tagEnd > tagStart) code.substring(tagStart, tagEnd).lowercase() else ""
                 if (p < n && code[p] == '>') {
                     out.add(PiCodeSpan(p, p + 1, PiSyntaxToken.Punctuation))
                     p++
+                }
+                if (!isClosingTag && !isSelfClosing && (tagName == "script" || tagName == "style")) {
+                    val closeToken = if (tagName == "script") "</script" else "</style"
+                    val closeIdx = code.indexOf(closeToken, p, ignoreCase = true)
+                    val bodyEnd = if (closeIdx < 0) n else closeIdx
+                    if (bodyEnd > p) {
+                        val sub = code.substring(p, bodyEnd)
+                        val collector = OffsetSpanCollector(out, p)
+                        if (tagName == "script") {
+                            scanCode(
+                                code = sub,
+                                out = collector,
+                                keywords = JS_KW,
+                                builtinTypes = TS_TYPES,
+                                hashComment = false,
+                                dashComment = false,
+                                slashComment = true,
+                                backtickString = true,
+                                dollarInterpolation = false,
+                                backtickDollarInterpolation = true,
+                                hashInterpolation = false,
+                                preprocessor = false,
+                                caseInsensitive = false,
+                                regexLiterals = true,
+                            )
+                        } else {
+                            scanCss(sub, collector)
+                        }
+                    }
+                    i = bodyEnd
+                    continue
                 }
                 i = p
                 continue
@@ -675,13 +756,22 @@ internal object PiFastCodeHighlighter {
         caseInsensitive: Boolean,
         pythonFStrings: Boolean = false,
         rustAttributes: Boolean = false,
+        rustLifetimes: Boolean = false,
+        nestedBlockComments: Boolean = false,
+        regexLiterals: Boolean = false,
+        backtickDollarInterpolation: Boolean = dollarInterpolation,
     ) {
         var i = 0
         val n = code.length
+        var regexAllowed = true
         while (i < n) {
             val ch = code[i]
+            if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') {
+                i++
+                continue
+            }
 
-            // 1. Slash comments (`//` and `/* ... */` including doc-comment `@tag` highlighting)
+            // 1. Slash comments (line comments and block comments, with nesting support for Kotlin/Rust/Swift)
             if (slashComment && ch == '/' && i + 1 < n) {
                 if (code[i + 1] == '/') {
                     val end = code.indexOf('\n', i).let { if (it < 0) n else it }
@@ -690,13 +780,23 @@ internal object PiFastCodeHighlighter {
                     continue
                 }
                 if (code[i + 1] == '*') {
-                    val close = code.indexOf("*/", i + 2)
-                    val end = if (close < 0) n else close + 2
+                    val end = findBlockCommentEnd(code, i, nestedBlockComments)
                     out.add(PiCodeSpan(i, end, PiSyntaxToken.Comment))
                     if (i + 2 < end && code[i + 2] == '*') {
                         scanDocTags(code, i + 3, end, out)
                     }
                     i = end
+                    continue
+                }
+            }
+
+            // 1b. JS/TS regex literals (`/pattern/flags`) when `/` appears in value position
+            if (regexLiterals && regexAllowed && ch == '/' && i + 1 < n && code[i + 1] != '/' && code[i + 1] != '*') {
+                val regexEnd = scanJsRegexEnd(code, i)
+                if (regexEnd > i) {
+                    out.add(PiCodeSpan(i, regexEnd, PiSyntaxToken.StringLiteral))
+                    i = regexEnd
+                    regexAllowed = false
                     continue
                 }
             }
@@ -758,6 +858,27 @@ internal object PiFastCodeHighlighter {
                     out.add(PiCodeSpan(i, end, PiSyntaxToken.StringLiteral))
                     if (isFormat) scanBraceInterpolations(code, contentStart, (end - if (isTriple) 3 else 1).coerceAtLeast(contentStart), out)
                     i = end
+                    regexAllowed = false
+                    continue
+                }
+            }
+
+            // 6b. Rust lifetimes (`'a`, `'static`, `'_`) vs char literals (`'x'`, `'\n'`, `'\u{1F600}'`)
+            if (rustLifetimes && ch == '\'' && i + 1 < n) {
+                val charEnd = matchRustCharLiteralEnd(code, i)
+                if (charEnd > i) {
+                    out.add(PiCodeSpan(i, charEnd, PiSyntaxToken.StringLiteral))
+                    i = charEnd
+                    regexAllowed = false
+                    continue
+                }
+                val next = code[i + 1]
+                if (next.isLetter() || next == '_') {
+                    var end = i + 2
+                    while (end < n && (code[end].isLetterOrDigit() || code[end] == '_')) end++
+                    out.add(PiCodeSpan(i, end, PiSyntaxToken.Type))
+                    i = end
+                    regexAllowed = false
                     continue
                 }
             }
@@ -771,21 +892,23 @@ internal object PiFastCodeHighlighter {
                     scanDollarInterpolations(code, contentStart, (end - 3).coerceAtLeast(contentStart), out)
                 }
                 i = end
+                regexAllowed = false
                 continue
             }
 
-            // 8. Single / double / backtick strings (with template interpolation)
+            // 8. Single / double / backtick strings (with language-accurate template interpolation)
             if (ch == '"' || ch == '\'' || (backtickString && ch == '`')) {
                 val contentStart = i + 1
                 val end = scanStringEnd(code, contentStart, ch, triple = false)
                 out.add(PiCodeSpan(i, end, PiSyntaxToken.StringLiteral))
                 val bodyEnd = (end - 1).coerceAtLeast(contentStart)
-                if (dollarInterpolation && (ch == '"' || ch == '`')) {
+                if ((ch == '"' && dollarInterpolation) || (ch == '`' && backtickDollarInterpolation)) {
                     scanDollarInterpolations(code, contentStart, bodyEnd, out)
                 } else if (hashInterpolation && ch == '"') {
                     scanHashInterpolations(code, contentStart, bodyEnd, out)
                 }
                 i = end
+                regexAllowed = false
                 continue
             }
 
@@ -828,31 +951,37 @@ internal object PiFastCodeHighlighter {
                     }
                 }
                 out.add(PiCodeSpan(s, i, PiSyntaxToken.Number))
+                regexAllowed = false
                 continue
             }
 
-            // 12. Identifiers, keywords, built-in types, functions, macros, PascalCase types, member properties
+            // 12. Identifiers, keywords, built-in types, functions (incl. generic calls), PascalCase/type params, members
             if (ch.isLetter() || ch == '_') {
                 val s = i++
                 while (i < n && (code[i].isLetterOrDigit() || code[i] == '_')) i++
                 val word = code.substring(s, i)
                 val lookup = if (caseInsensitive) word.lowercase() else word
                 val precededByDot = s > 0 && code[s - 1] == '.'
+                val isKeyword = !precededByDot && lookup in keywords
                 when {
-                    !precededByDot && lookup in keywords -> out.add(PiCodeSpan(s, i, PiSyntaxToken.Keyword))
+                    isKeyword -> out.add(PiCodeSpan(s, i, PiSyntaxToken.Keyword))
                     !precededByDot && lookup in LITERALS -> out.add(PiCodeSpan(s, i, PiSyntaxToken.Number))
                     !caseInsensitive && i < n && code[i] == '!' && rustAttributes -> {
                         i++
                         out.add(PiCodeSpan(s, i, PiSyntaxToken.Function))
                     }
-                    !caseInsensitive && i < n && code[i] == '(' -> out.add(PiCodeSpan(s, i, PiSyntaxToken.Function))
+                    !caseInsensitive && (i < n && code[i] == '(' || isGenericCallAhead(code, i)) ->
+                        out.add(PiCodeSpan(s, i, PiSyntaxToken.Function))
                     lookup in builtinTypes -> out.add(PiCodeSpan(s, i, PiSyntaxToken.Type))
                     !caseInsensitive && word[0].isUpperCase() && word.any { it.isLowerCase() } ->
+                        out.add(PiCodeSpan(s, i, PiSyntaxToken.Type))
+                    !caseInsensitive && word.length == 1 && word[0] in 'A'..'Z' && isTypeParameterContext(code, s, i) ->
                         out.add(PiCodeSpan(s, i, PiSyntaxToken.Type))
                     !caseInsensitive && word.length >= 2 && word.all { it.isUpperCase() || it.isDigit() || it == '_' } ->
                         out.add(PiCodeSpan(s, i, PiSyntaxToken.Number))
                     precededByDot -> out.add(PiCodeSpan(s, i, PiSyntaxToken.Variable))
                 }
+                regexAllowed = isKeyword && lookup in REGEX_PREFIX_KEYWORDS
                 continue
             }
 
@@ -860,6 +989,7 @@ internal object PiFastCodeHighlighter {
             val opLen = matchOperatorLength(code, i)
             if (opLen > 0) {
                 out.add(PiCodeSpan(i, i + opLen, PiSyntaxToken.Operator))
+                regexAllowed = !(opLen == 2 && (code[i] == '+' && code[i + 1] == '+' || code[i] == '-' && code[i + 1] == '-'))
                 i += opLen
                 continue
             }
@@ -867,6 +997,7 @@ internal object PiFastCodeHighlighter {
             // 14. Structural punctuation
             if (ch in "{}[](),;.") {
                 out.add(PiCodeSpan(i, i + 1, PiSyntaxToken.Punctuation))
+                regexAllowed = ch in "{[(,;"
                 i++
                 continue
             }
@@ -878,9 +1009,18 @@ internal object PiFastCodeHighlighter {
     private fun scanStringEnd(code: String, from: Int, quote: Char, triple: Boolean): Int {
         val n = code.length
         if (triple) {
-            val delim = if (quote == '"') "\"\"\"" else "'''"
-            val close = code.indexOf(delim, from)
-            return if (close < 0) n else close + 3
+            var p = from
+            while (p + 2 < n) {
+                if (code[p] == '\\') {
+                    p += 2
+                    continue
+                }
+                if (code[p] == quote && code[p + 1] == quote && code[p + 2] == quote) {
+                    return p + 3
+                }
+                p++
+            }
+            return n
         }
         var p = from
         while (p < n) {
@@ -894,6 +1034,125 @@ internal object PiFastCodeHighlighter {
             p++
         }
         return n
+    }
+
+    private fun findBlockCommentEnd(code: String, start: Int, nested: Boolean): Int {
+        val n = code.length
+        if (!nested) {
+            val close = code.indexOf("*/", start + 2)
+            return if (close < 0) n else close + 2
+        }
+        var depth = 1
+        var p = start + 2
+        while (p + 1 < n && depth > 0) {
+            if (code[p] == '/' && code[p + 1] == '*') {
+                depth++
+                p += 2
+            } else if (code[p] == '*' && code[p + 1] == '/') {
+                depth--
+                p += 2
+            } else {
+                p++
+            }
+        }
+        return if (depth == 0) p else n
+    }
+
+    private fun matchRustCharLiteralEnd(code: String, open: Int): Int {
+        val n = code.length
+        if (open + 2 >= n) return -1
+        var p = open + 1
+        if (code[p] == '\n' || code[p] == '\'') return -1
+        if (code[p] == '\\') {
+            p++
+            if (p >= n) return -1
+            when (code[p]) {
+                'x' -> p += 3
+                'u' -> {
+                    if (p + 1 < n && code[p + 1] == '{') {
+                        val closeBrace = code.indexOf('}', p + 2)
+                        if (closeBrace < 0 || closeBrace - p > 9) return -1
+                        p = closeBrace + 1
+                    } else {
+                        return -1
+                    }
+                }
+                else -> p++
+            }
+        } else {
+            p++
+        }
+        return if (p < n && code[p] == '\'') p + 1 else -1
+    }
+
+    private fun scanJsRegexEnd(code: String, open: Int): Int {
+        val n = code.length
+        var p = open + 1
+        var inCharClass = false
+        while (p < n) {
+            val c = code[p]
+            if (c == '\n' || c == '\r') return -1
+            if (c == '\\') {
+                p += 2
+                continue
+            }
+            if (c == '[' && !inCharClass) {
+                inCharClass = true
+                p++
+                continue
+            }
+            if (c == ']' && inCharClass) {
+                inCharClass = false
+                p++
+                continue
+            }
+            if (c == '/' && !inCharClass) {
+                p++
+                while (p < n && code[p] in "gimsuydv") p++
+                return p
+            }
+            p++
+        }
+        return -1
+    }
+
+    /** Matches generic function calls such as `remember<State>(...)` or `parse<List<Int>>(...)`. */
+    private fun isGenericCallAhead(code: String, afterIdent: Int): Boolean {
+        val n = code.length
+        if (afterIdent >= n || code[afterIdent] != '<') return false
+        var depth = 0
+        var p = afterIdent
+        val limit = (afterIdent + 64).coerceAtMost(n)
+        while (p < limit) {
+            val c = code[p]
+            when {
+                c == '<' -> depth++
+                c == '>' -> {
+                    depth--
+                    if (depth == 0) {
+                        var next = p + 1
+                        while (next < n && (code[next] == ' ' || code[next] == '\t')) next++
+                        return next < n && code[next] == '('
+                    }
+                }
+                c == '\n' || c == ';' || c == '{' || c == '}' -> return false
+            }
+            p++
+        }
+        return false
+    }
+
+    /** Matches single-letter uppercase generic type parameters such as `<T>`, `: T`, `, K>`. */
+    private fun isTypeParameterContext(code: String, start: Int, end: Int): Boolean {
+        var prev = start - 1
+        while (prev >= 0 && (code[prev] == ' ' || code[prev] == '\t')) prev--
+        var next = end
+        while (next < code.length && (code[next] == ' ' || code[next] == '\t')) next++
+        val prevChar = if (prev >= 0) code[prev] else ' '
+        val nextChar = if (next < code.length) code[next] else ' '
+        if (prevChar == '<' && (nextChar == '>' || nextChar == ',' || nextChar == ':' || nextChar == '?')) return true
+        if ((prevChar == ':' || prevChar == ',') && (nextChar == '>' || nextChar == ',' || nextChar == '?' || nextChar == ')' || nextChar == '{' || nextChar == '\n')) return true
+        return false
     }
 
     private fun scanDocTags(code: String, start: Int, end: Int, out: MutableList<PiCodeSpan>) {
@@ -1041,9 +1300,24 @@ internal object PiFastCodeHighlighter {
 
     // ------------------------------------------------------------------ Language tables
 
-    private val DOLLAR_INTERP_LANGS = setOf(
-        "kt", "kotlin", "ts", "typescript", "tsx", "js", "javascript", "jsx", "mjs", "cjs",
-        "dart", "groovy", "gradle", "php",
+    private val DOUBLE_QUOTE_DOLLAR_INTERP_LANGS = setOf(
+        "kt", "kotlin", "dart", "groovy", "gradle", "php",
+    )
+
+    private val BACKTICK_DOLLAR_INTERP_LANGS = setOf(
+        "ts", "typescript", "tsx", "js", "javascript", "jsx", "mjs", "cjs",
+    )
+
+    private val NESTED_COMMENT_LANGS = setOf(
+        "kt", "kotlin", "rs", "rust", "swift",
+    )
+
+    private val JS_REGEX_LANGS = setOf(
+        "ts", "typescript", "tsx", "js", "javascript", "jsx", "mjs", "cjs",
+    )
+
+    private val REGEX_PREFIX_KEYWORDS = setOf(
+        "return", "case", "throw", "typeof", "void", "delete", "in", "of", "yield", "await", "new",
     )
 
     private val PREPROCESSOR_LANGS = setOf(
@@ -1214,10 +1488,39 @@ internal object PiFastCodeHighlighter {
         "Array", "Dictionary", "Optional", "Future", "Stream", "Task", "Result",
     )
 
+    private val ELIXIR_KW = setOf(
+        "def", "defp", "defmodule", "defstruct", "defprotocol", "defimpl", "defmacro", "defmacrop",
+        "do", "end", "fn", "if", "unless", "else", "case", "cond", "with", "for", "try", "rescue",
+        "catch", "after", "raise", "receive", "import", "alias", "require", "use", "when", "in",
+        "and", "or", "not", "quote", "unquote",
+    )
+
+    private val PERL_KW = setOf(
+        "sub", "my", "our", "local", "state", "use", "require", "package", "if", "elsif", "else",
+        "unless", "while", "until", "for", "foreach", "next", "last", "redo", "return", "die",
+        "warn", "print", "say", "eval", "begin", "end", "and", "or", "not", "eq", "ne", "gt", "lt",
+    )
+
+    private val R_KW = setOf(
+        "function", "if", "else", "repeat", "while", "for", "in", "next", "break", "return",
+        "library", "require", "source", "NA", "NaN", "Inf", "NULL", "TRUE", "FALSE",
+    )
+
     private val SHELL_KW = setOf(
         "if", "then", "else", "elif", "fi", "for", "in", "do", "done", "while", "until", "case",
         "esac", "function", "return", "exit", "local", "export", "readonly", "set", "unset",
         "shift", "trap", "exec", "eval", "source", "echo", "printf", "cd", "pwd", "test",
+    )
+
+    private val POWERSHELL_KW = setOf(
+        "function", "param", "begin", "process", "end", "if", "elseif", "else", "switch", "for",
+        "foreach", "while", "do", "until", "break", "continue", "return", "try", "catch", "finally",
+        "throw", "class", "enum", "using", "filter", "in", "not", "and", "or", "eq", "ne", "gt", "lt",
+    )
+
+    private val BATCH_KW = setOf(
+        "echo", "set", "setlocal", "endlocal", "if", "else", "not", "exist", "defined", "for", "in",
+        "do", "call", "goto", "exit", "rem", "pause", "shift", "start", "cd", "dir", "copy", "del",
     )
 
     private val SQL_KW = setOf(

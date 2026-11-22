@@ -15,11 +15,17 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import android.util.Base64
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberCoroutineScope
 import app.pi.i18n.tr
+import app.pi.protocol.PiImage
+import app.pi.ui.render.LocalPiImageClick
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
-import androidx.compose.foundation.layout.BoxWithConstraints
+import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.heightIn
@@ -143,7 +149,7 @@ fun PiMermaidView(
     val palette = PiTheme.palette
     val density = LocalDensity.current
 
-    val cardBg = MaterialTheme.colorScheme.surfaceContainerLow
+    val cardBg = palette.cardBg
     val theme = remember(palette, cardBg) {
         PiSvgTheme(
             // 与 PiRichCardFrame 正文底色完全一致，杜绝节点底色与卡片背景之间出现色差接缝。
@@ -242,6 +248,8 @@ fun PiMermaidView(
             PiMermaidDraw.Streaming -> tr("生成中…", "Streaming…")
             else -> null
         }
+        val onImageClick = LocalPiImageClick.current
+        val scope = rememberCoroutineScope()
 
         PiRichCardFrame(
             code = source,
@@ -249,6 +257,18 @@ fun PiMermaidView(
             palette = palette,
             status = status,
             menu = buildList {
+                if (image != null && onImageClick != null) {
+                    add(
+                        PiCardMenuItem(tr("全屏查看", "View fullscreen")) {
+                            scope.launch {
+                                val exported = withContext(Dispatchers.Default) {
+                                    encodeMermaidReadyToPiImage(image, palette.cardBg.toArgb())
+                                }
+                                if (exported != null) onImageClick(exported)
+                            }
+                        },
+                    )
+                }
                 if (image != null) {
                     add(
                         PiCardMenuItem(tr("适应屏幕", "Fit to screen")) {
@@ -270,76 +290,90 @@ fun PiMermaidView(
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_MERMAID_FALLBACK_ASPECT
                 val diagramDesc = tr("Mermaid 渲染图：$source", "Mermaid diagram: $source")
-                // 画布高度在这里一次算死：宽 ÷ 宽高比，夹进 [最小, 最大]。以前是
-                // `heightIn + fillMaxWidth + aspectRatio` 三个约束互相较劲，高度被夹住时
-                // 画布比图矮，图的位置和卡片边线就对不上。
-                BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
-                    // 上限跟着屏幕走（屏高的 70%，不低于固定上限）：竖长的流程图以前被固定的
-                    // 460dp 压成窄窄一条，字小得看不清；现在在大屏上能画得更高。
-                    val heightCap = maxOf(
-                        PI_MERMAID_MAX_IMAGE_HEIGHT,
-                        (configuration.screenHeightDp * 0.7f).dp,
-                    )
-                    val canvasHeight = (maxWidth / aspect.coerceIn(0.05f, 60f))
-                        .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(canvasHeight)
-                        // 画布自己是一层**离屏图层**：图画在这块缓冲里，超出画布边界的部分根本
-                        // 不会被合成到卡片上。以前只有 `clipRect`——`Picture` 回放在部分机型的
-                        // 硬件画布上不守当前裁剪，放大的图会盖住卡片标题、画到边线外面。
-                        .graphicsLayer {
-                            clip = true
-                            compositingStrategy = CompositingStrategy.Offscreen
-                        }
-                        .pointerInput(image) {
-                            piMermaidTransformGestures(
-                                image = image,
-                                readScale = { scale },
-                                readOffset = { offset },
-                            ) { nextScale, nextOffset ->
-                                scale = nextScale
-                                offset = nextOffset
+                // Deterministic canvas height without SubcomposeLayout/BoxWithConstraints inside LazyColumn,
+                // eliminating mid-scroll height jumps while keeping tall diagrams readable on large screens.
+                val estimatedWidthDp = (configuration.screenWidthDp - 48).coerceAtLeast(220).dp
+                val heightCap = maxOf(
+                    PI_MERMAID_MAX_IMAGE_HEIGHT,
+                    (configuration.screenHeightDp * 0.7f).dp,
+                )
+                val canvasHeight = (estimatedWidthDp / aspect.coerceIn(0.05f, 60f))
+                    .coerceIn(PI_MERMAID_MIN_IMAGE_HEIGHT, heightCap)
+                Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(canvasHeight)
+                            .graphicsLayer {
+                                clip = true
+                                compositingStrategy = CompositingStrategy.Offscreen
                             }
-                        }
-                        .semantics { contentDescription = diagramDesc },
-                ) {
-                    val fit = piMermaidFitScale(
-                        viewWidth = size.width,
-                        viewHeight = size.height,
-                        baseWidthPx = image.baseWidthPx,
-                        baseHeightPx = image.baseHeightPx,
-                    ) * scale
-                    drawIntoCanvas { canvas ->
-                        val native = canvas.nativeCanvas
-                        // The transform lives on the native canvas, not on a
-                        // `graphicsLayer`: a layer would scale the recorded raster
-                        // and blur the labels, whereas this replays the vector ops
-                        // at the final matrix.
-                        native.save()
-                        // 显式裁到画布：放大后图不许画进标题栏/卡片边缘（只靠 clipToBounds 不够稳）。
-                        native.clipRect(0f, 0f, size.width, size.height)
-                        native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
-                        native.scale(fit, fit)
-                        native.translate(
-                            -image.baseWidthPx / 2f,
-                            -image.baseHeightPx / 2f,
-                        )
-                        val bmp = image.bitmap
-                        if (bmp != null && !bmp.isRecycled) {
-                            native.drawBitmap(
-                                bmp,
-                                null,
-                                RectF(0f, 0f, image.baseWidthPx.toFloat(), image.baseHeightPx.toFloat()),
-                                PI_MERMAID_BITMAP_PAINT,
+                            .pointerInput(image) {
+                                detectTapGestures(
+                                    onDoubleTap = { tap ->
+                                        if (scale > PI_MERMAID_FIT_ZOOM + 0.05f) {
+                                            scale = PI_MERMAID_FIT_ZOOM
+                                            offset = Offset.Zero
+                                        } else {
+                                            val targetScale = 2.2f.coerceAtMost(PI_MERMAID_MAX_ZOOM)
+                                            val cx = tap.x - size.width / 2f
+                                            val cy = tap.y - size.height / 2f
+                                            val wanted = Offset(-cx * (targetScale - 1f), -cy * (targetScale - 1f))
+                                            scale = targetScale
+                                            offset = piMermaidClampOffset(
+                                                wanted = wanted,
+                                                scaleScale = targetScale,
+                                                viewWidth = size.width.toFloat(),
+                                                viewHeight = size.height.toFloat(),
+                                                baseWidthPx = image.baseWidthPx,
+                                                baseHeightPx = image.baseHeightPx,
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                            .pointerInput(image) {
+                                piMermaidTransformGestures(
+                                    image = image,
+                                    readScale = { scale },
+                                    readOffset = { offset },
+                                ) { nextScale, nextOffset ->
+                                    scale = nextScale
+                                    offset = nextOffset
+                                }
+                            }
+                            .semantics { contentDescription = diagramDesc },
+                    ) {
+                        val fit = piMermaidFitScale(
+                            viewWidth = size.width,
+                            viewHeight = size.height,
+                            baseWidthPx = image.baseWidthPx,
+                            baseHeightPx = image.baseHeightPx,
+                        ) * scale
+                        drawIntoCanvas { canvas ->
+                            val native = canvas.nativeCanvas
+                            native.save()
+                            native.clipRect(0f, 0f, size.width, size.height)
+                            native.translate(size.width / 2f + offset.x, size.height / 2f + offset.y)
+                            native.scale(fit, fit)
+                            native.translate(
+                                -image.baseWidthPx / 2f,
+                                -image.baseHeightPx / 2f,
                             )
-                        } else {
-                            image.picture?.let { native.drawPicture(it) }
+                            val bmp = image.bitmap
+                            if (bmp != null && !bmp.isRecycled) {
+                                native.drawBitmap(
+                                    bmp,
+                                    null,
+                                    RectF(0f, 0f, image.baseWidthPx.toFloat(), image.baseHeightPx.toFloat()),
+                                    PI_MERMAID_BITMAP_PAINT,
+                                )
+                            } else {
+                                image.picture?.let { native.drawPicture(it) }
+                            }
+                            native.restore()
                         }
-                        native.restore()
                     }
-                }
                 }
             } else if (draw == PiMermaidDraw.Rendering && pinned != true) {
                 // 已问管线、还没回答：固定高度的占位，而不是先摊一整块源码再缩成图 —— 后者让行高
@@ -788,3 +822,34 @@ private const val PI_MERMAID_FEEDBACK_MS = 1500L
 
 /** A failed render's source is displayed up to this many lines; copy is unaffected. */
 private const val PI_MERMAID_MAX_VISIBLE_SOURCE_LINES = 200
+
+/** Encodes a rendered Mermaid bitmap or vector picture to a PNG [PiImage] for fullscreen viewing. */
+private fun encodeMermaidReadyToPiImage(ready: PiMermaidDraw.Ready, bgColorArgb: Int): PiImage? {
+    return runCatching {
+        val sourceBmp = ready.bitmap?.takeIf { !it.isRecycled }
+        val targetW = (sourceBmp?.width ?: ready.baseWidthPx).coerceIn(1, 2800)
+        val targetH = (sourceBmp?.height ?: ready.baseHeightPx).coerceIn(1, 2800)
+        val out = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        try {
+            val c = android.graphics.Canvas(out)
+            c.drawColor(bgColorArgb)
+            if (sourceBmp != null) {
+                c.drawBitmap(sourceBmp, null, RectF(0f, 0f, targetW.toFloat(), targetH.toFloat()), PI_MERMAID_BITMAP_PAINT)
+            } else {
+                val pic = ready.picture ?: return null
+                val sx = targetW.toFloat() / ready.baseWidthPx.coerceAtLeast(1)
+                val sy = targetH.toFloat() / ready.baseHeightPx.coerceAtLeast(1)
+                c.scale(sx, sy)
+                c.drawPicture(pic)
+            }
+            val bytes = ByteArrayOutputStream()
+            if (!out.compress(Bitmap.CompressFormat.PNG, 100, bytes)) return null
+            PiImage(
+                base64 = Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP),
+                mimeType = "image/png",
+            )
+        } finally {
+            out.recycle()
+        }
+    }.getOrNull()
+}

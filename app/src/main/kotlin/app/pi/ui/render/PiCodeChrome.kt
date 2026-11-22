@@ -18,7 +18,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import app.pi.ui.theme.PiContrast
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -92,15 +101,18 @@ internal fun PiRichCodeBlock(
     var expanded by rememberSaveable { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
 
-    val allLines = remember(code) { code.split('\n') }
-    val lineCount = allLines.size
+    val lineCount = remember(code) { countCodeLines(code) }
     val truncated = lineCount > MAX_COLLAPSED_LINES && !expanded
     val shownLineCount = if (truncated) MAX_COLLAPSED_LINES else lineCount
-    val shownCode = remember(code, truncated) {
-        if (!truncated) code else code.lineSequence().take(MAX_COLLAPSED_LINES).joinToString("\n")
+    val shownCharEnd = remember(code, truncated) {
+        if (!truncated) code.length else indexAfterNthCodeLine(code, MAX_COLLAPSED_LINES)
     }
-    val shownHighlighted = remember(highlighted.text, truncated, shownCode) {
-        if (!truncated) highlighted.text else highlighted.text.subSequence(0, shownCode.length.coerceAtMost(highlighted.text.length))
+    val shownHighlighted = remember(highlighted.text, truncated, shownCharEnd) {
+        if (!truncated) {
+            highlighted.text
+        } else {
+            highlighted.text.subSequence(0, shownCharEnd.coerceAtMost(highlighted.text.length))
+        }
     }
 
     // diff / patch：整行底色（加 = 绿、删 = 红、@@ = 强调色），不只是字符着色。
@@ -117,8 +129,14 @@ internal fun PiRichCodeBlock(
         }
     }
 
+    val darkTheme = remember(palette) { PiContrast.luminance(palette.pageBg) < 0.5 }
+    val cardSurface = palette.cardBg
+    val footerTint = remember(palette, darkTheme) {
+        lerp(palette.cardBg, palette.text, if (darkTheme) 0.055f else 0.038f)
+    }
+
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = cardSurface,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(
             0.5.dp,
@@ -171,38 +189,101 @@ internal fun PiRichCodeBlock(
             PiCardDivider(palette)
 
             val codeColor = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock
-            if (wrap) {
-                Text(
-                    text = displayText,
-                    style = style.copy(color = codeColor),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                )
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    if (showLineNumbers) {
-                        val gutterColor = palette.borderMuted.copy(alpha = 0.35f)
-                        Text(
-                            text = (1..shownLineCount).joinToString("\n"),
-                            style = style.copy(color = palette.dim.copy(alpha = 0.78f), textAlign = TextAlign.End),
-                            modifier = Modifier
-                                .padding(end = 10.dp)
-                                .drawBehind {
-                                    val x = size.width + 4.dp.toPx()
-                                    drawLine(gutterColor, Offset(x, 0f), Offset(x, size.height), 0.5.dp.toPx())
-                                }
-                                .width((shownLineCount.coerceAtLeast(1).toString().length * 8 + 6).dp),
-                        )
-                    }
+            val codeScrollState = rememberScrollState()
+            Box(modifier = Modifier.fillMaxWidth()) {
+                if (wrap) {
                     Text(
                         text = displayText,
                         style = style.copy(color = codeColor),
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        if (showLineNumbers) {
+                            val gutterColor = palette.borderMuted.copy(alpha = 0.35f)
+                            val fontSp = style.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 13f
+                            val digits = shownLineCount.coerceAtLeast(1).toString().length
+                            val gutterWidthDp = (digits * fontSp * 0.66f + 8f).dp
+                            val lineNumbersText = remember(shownLineCount) {
+                                buildString(shownLineCount * (digits + 1)) {
+                                    for (ln in 1..shownLineCount) {
+                                        if (ln > 1) append('
+')
+                                        append(ln)
+                                    }
+                                }
+                            }
+                            Text(
+                                text = lineNumbersText,
+                                style = style.copy(color = palette.dim.copy(alpha = 0.78f), textAlign = TextAlign.End),
+                                modifier = Modifier
+                                    .padding(end = 10.dp)
+                                    .drawBehind {
+                                        val x = size.width + 4.dp.toPx()
+                                        drawLine(gutterColor, Offset(x, 0f), Offset(x, size.height), 0.5.dp.toPx())
+                                    }
+                                    .width(gutterWidthDp),
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                                .drawWithContent {
+                                    drawContent()
+                                    val fadePx = 18.dp.toPx().coerceAtMost(size.width * 0.25f)
+                                    if (fadePx > 1f && codeScrollState.value > 0) {
+                                        drawRect(
+                                            brush = Brush.horizontalGradient(
+                                                colors = listOf(Color.Transparent, Color.Black),
+                                                startX = 0f,
+                                                endX = fadePx,
+                                            ),
+                                            topLeft = Offset.Zero,
+                                            size = Size(fadePx, size.height),
+                                            blendMode = BlendMode.DstIn,
+                                        )
+                                    }
+                                    if (fadePx > 1f && codeScrollState.value < codeScrollState.maxValue) {
+                                        drawRect(
+                                            brush = Brush.horizontalGradient(
+                                                colors = listOf(Color.Black, Color.Transparent),
+                                                startX = size.width - fadePx,
+                                                endX = size.width,
+                                            ),
+                                            topLeft = Offset(size.width - fadePx, 0f),
+                                            size = Size(fadePx, size.height),
+                                            blendMode = BlendMode.DstIn,
+                                        )
+                                    }
+                                },
+                        ) {
+                            Text(
+                                text = displayText,
+                                style = style.copy(color = codeColor),
+                                modifier = Modifier.horizontalScroll(codeScrollState),
+                            )
+                        }
+                    }
+                }
+
+                if (truncated) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(28.dp)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, cardSurface.copy(alpha = 0.92f)),
+                                ),
+                            ),
                     )
                 }
             }
@@ -216,7 +297,7 @@ internal fun PiRichCodeBlock(
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.42f))
+                        .background(footerTint)
                         .clickable { expanded = !expanded }
                         .padding(vertical = 8.dp),
                 )
@@ -231,6 +312,31 @@ internal fun PiRichCodeBlock(
  * 复制始终是全文。
  */
 private const val MAX_COLLAPSED_LINES = 24
+
+private fun countCodeLines(code: String): Int {
+    if (code.isEmpty()) return 1
+    var lines = 1
+    var i = code.indexOf('\n')
+    while (i >= 0) {
+        lines++
+        i = code.indexOf('\n', i + 1)
+    }
+    return lines
+}
+
+private fun indexAfterNthCodeLine(code: String, maxLines: Int): Int {
+    if (maxLines <= 0) return 0
+    var seen = 0
+    var i = 0
+    while (i < code.length) {
+        val nl = code.indexOf('\n', i)
+        if (nl < 0) return code.length
+        seen++
+        if (seen >= maxLines) return nl
+        i = nl + 1
+    }
+    return code.length
+}
 
 /** 给 diff 的每一行铺底色：`+`（不含 `+++`）绿、`-`（不含 `---`）红、`@@` 强调色。 */
 private fun piDiffTinted(text: AnnotatedString, palette: PiPalette): AnnotatedString {
@@ -288,7 +394,7 @@ internal fun PiRichCardFrame(
     val allMenu = menu + slot.items
     val shownStatus = status ?: slot.status
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = palette.cardBg,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(0.5.dp, palette.borderMuted.copy(alpha = 0.58f)),
         modifier = Modifier
@@ -326,11 +432,15 @@ internal fun PiCardHeader(
     status: String? = null,
     menu: (@Composable () -> Unit)? = null,
 ) {
+    val darkTheme = remember(palette) { PiContrast.luminance(palette.pageBg) < 0.5 }
+    val headerBg = remember(palette, darkTheme) {
+        lerp(palette.cardBg, palette.text, if (darkTheme) 0.055f else 0.038f)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 36.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.48f))
+            .background(headerBg)
             .padding(start = 14.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -2,8 +2,7 @@ package app.pi.ui.render
 
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
-import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
-import org.intellij.markdown.parser.MarkdownParser
+import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -50,7 +49,7 @@ class PiRichRenderTest {
         val extracted = PiInlineMath.extract(md)
         assertEquals(9, extracted.entries.size)
 
-        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(extracted.markdown)
+        val tree = parseGfm(extracted.markdown)
 
         // 逐个叶节点检查：每一个叶节点经 resolveToUnicode 后必须零哨兵泄漏（证明 GFMLexer 没有把哨兵切碎！）
         val matchedIndices = mutableSetOf<Int>()
@@ -111,7 +110,7 @@ class PiRichRenderTest {
         assertTrue(extracted.markdown.contains("`${'$'}a + b${'$'}`"))
 
         // 真实 GFM 解析器下，规范化后的块级公式必须落在单个 PARAGRAPH 里且首尾是 $$
-        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(extracted.markdown)
+        val tree = parseGfm(extracted.markdown)
         val paragraphs = tree.children.filter { it.type == MarkdownElementTypes.PARAGRAPH }
         val mathParagraph = paragraphs.firstOrNull { p ->
             val t = extracted.markdown.substring(p.startOffset, p.endOffset).trim()
@@ -214,7 +213,7 @@ class PiRichRenderTest {
 
             [PI DOCS]: https://example.com/pi
         """.trimIndent()
-        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+        val tree = parseGfm(md)
         val refs = extractPiReferenceLinks(md, tree)
         assertEquals("https://example.com/pi", refs["pi docs"])
     }
@@ -237,7 +236,7 @@ class PiRichRenderTest {
             > println(answer)
             > ```
         """.trimIndent()
-        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+        val tree = parseGfm(md)
         val quote = tree.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
         val paragraph = quote.children.first { it.type == MarkdownElementTypes.PARAGRAPH }
         val plain = extractInlinePlainTextForTest(md, paragraph)
@@ -262,7 +261,7 @@ class PiRichRenderTest {
             [pi ref]: https://example.com/collapsed
             [logo]: https://example.com/logo.png
         """.trimIndent()
-        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
+        val tree = parseGfm(md)
         val refs = extractPiReferenceLinks(md, tree)
         assertEquals("https://example.com/full", refs["pi-ref"])
         assertEquals("https://example.com/collapsed", refs["pi ref"])
@@ -300,15 +299,18 @@ class PiRichRenderTest {
             "> [!CAUTION]\n> Dangerous" to PiAlertKind.Caution,
         )
         for ((md, expected) in cases) {
-            val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(md)
-            val quote = tree.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
-            val alert = detectGfmAlert(md, quote)
+            val tree = parseGfm(md)
+            val alertOrQuote = tree.children.first {
+                it.type == GFMElementTypes.ALERT || it.type == MarkdownElementTypes.BLOCK_QUOTE
+            }
+            assertEquals("Expected native GFM ALERT node for $md", GFMElementTypes.ALERT, alertOrQuote.type)
+            val alert = detectGfmAlert(md, alertOrQuote)
             assertTrue("Expected alert for $md", alert != null)
             assertEquals(expected, alert!!.kind)
             assertTrue(alert.firstParagraphHasRemainingBody)
         }
         val inlineNotAlert = "> [!NOTE] same-line text is a normal quote"
-        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(inlineNotAlert)
+        val tree = parseGfm(inlineNotAlert)
         val quote = tree.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
         assertEquals(null, detectGfmAlert(inlineNotAlert, quote))
     }
@@ -354,4 +356,129 @@ class PiRichRenderTest {
         assertTrue(bigResult.spans.size > 500)
         assertTrue("32 KiB highlight took ${elapsedMs}ms (> 150ms)", elapsedMs < 150.0)
     }
+
+    @Test
+    fun `inline math skips blockquote fences, list-nested fences, and indented code blocks while keeping quoted display math`() {
+        val md = """
+            > ```bash
+            > echo ${'$'}HOME ${'$'}USER
+            > ```
+
+            1. Run command:
+
+               ```sh
+               printf "%s %s\n" "${'$'}A" "${'$'}B"
+               ```
+
+            Indented code:
+
+                val cost = "${'$'}x + ${'$'}y"
+
+            - List item
+
+              Continuation paragraph with ${'$'}a + b = c${'$'}.
+
+            > ${'$'}${'$'}
+            > E = mc^2
+            > ${'$'}${'$'}
+        """.trimIndent()
+        val extracted = PiInlineMath.extract(md)
+
+        // Only the list continuation paragraph's `$a + b = c$` should be extracted as inline math.
+        assertEquals(1, extracted.entries.size)
+        assertEquals("a + b = c", extracted.entries[0].tex)
+        assertTrue(extracted.hasBlockMath)
+        assertTrue(extracted.markdown.contains("echo \$HOME \$USER"))
+        assertTrue(extracted.markdown.contains("\"\$A\" \"\$B\""))
+        assertTrue(extracted.markdown.contains("val cost = \"\$x + \$y\""))
+        assertTrue(extracted.markdown.contains("> \$\$\n> E = mc^2\n> \$\$"))
+    }
+
+    @Test
+    fun `syntax highlighter handles Rust lifetimes, JS regexes, JS double-quote dollars, nested comments, YAML block scalars, HTML script, and oversized files`() {
+        // 1. Rust lifetimes `'a` / `'static` must NOT be treated as unterminated strings
+        val rust = "fn longest<'a>(x: &'a str, ch: 'z') -> &'static str { x }"
+        val rustRes = PiFastCodeHighlighter.highlight(rust, "rust")
+        assertTrue(rustRes.languageKnown)
+        val lifetimeSpans = rustRes.spans.filter { rust.substring(it.start, it.end) == "'a" }
+        assertTrue("Expected 'a highlighted as Type", lifetimeSpans.isNotEmpty() && lifetimeSpans.all { it.token == PiSyntaxToken.Type })
+        val charSpans = rustRes.spans.filter { rust.substring(it.start, it.end) == "'z'" }
+        assertTrue("Expected 'z' highlighted as StringLiteral", charSpans.any { it.token == PiSyntaxToken.StringLiteral })
+
+        // 2. JS regex literal with `//` inside must NOT be split as line comment
+        val js = "const re = /https?:\\/\\/[^\\s]+/gi;\nconst s = \"price \$100 \${notInterp}\";\nconst t = `ok \${realInterp}`;"
+        val jsRes = PiFastCodeHighlighter.highlight(js, "javascript")
+        assertTrue(jsRes.spans.none { it.token == PiSyntaxToken.Comment })
+        val regexStart = js.indexOf("/https")
+        val regexEnd = js.indexOf("/gi") + 3
+        assertTrue(jsRes.spans.any { it.start == regexStart && it.end == regexEnd && it.token == PiSyntaxToken.StringLiteral })
+        // Double-quoted `$100` / `${notInterp}` must NOT produce Variable interpolation spans in JS
+        val dqStart = js.indexOf("\"price")
+        val dqEnd = js.indexOf(";\nconst t")
+        assertTrue(jsRes.spans.none { it.token == PiSyntaxToken.Variable && it.start in dqStart until dqEnd })
+        // Backtick `${realInterp}` MUST produce Variable interpolation span
+        val btStart = js.indexOf("`ok")
+        assertTrue(jsRes.spans.any { it.token == PiSyntaxToken.Variable && it.start > btStart })
+
+        // 3. Kotlin nested block comments must not terminate at the inner closer
+        val nestedComment = "val a = 1 " + "/" + "* outer " + "/" + "* inner *" + "/ still comment *" + "/ + 2"
+        val ktRes = PiFastCodeHighlighter.highlight(nestedComment, "kotlin")
+        val commentSpan = ktRes.spans.firstOrNull { it.token == PiSyntaxToken.Comment }
+        assertTrue(commentSpan != null && commentSpan.end == nestedComment.indexOf(" + 2"))
+
+        // 4. YAML block scalar lines with `: ` must stay StringLiteral, not Variable keys
+        val yaml = "script: |\n  echo http://example.com:80\n  key: not-a-yaml-key\nnext_key: 42"
+        val yamlRes = PiFastCodeHighlighter.highlight(yaml, "yaml")
+        val blockLineStart = yaml.indexOf("key: not-a-yaml-key")
+        val blockLineEnd = blockLineStart + "key: not-a-yaml-key".length
+        assertTrue(yamlRes.spans.any { it.start == blockLineStart && it.end == blockLineEnd && it.token == PiSyntaxToken.StringLiteral })
+        val nextKeyStart = yaml.indexOf("next_key")
+        assertTrue(yamlRes.spans.any { it.start == nextKeyStart && it.token == PiSyntaxToken.Variable })
+
+        // 5. HTML embedded <script> and <style> delegate to JS and CSS lexers
+        val html = "<style>.card { color: #ff00aa; }</style><script>const ok = a < b;</script>"
+        val htmlRes = PiFastCodeHighlighter.highlight(html, "html")
+        val constIdx = html.indexOf("const")
+        assertTrue(htmlRes.spans.any { it.start == constIdx && it.token == PiSyntaxToken.Keyword })
+        val hexIdx = html.indexOf("#ff00aa")
+        assertTrue(htmlRes.spans.any { it.start == hexIdx && it.token == PiSyntaxToken.Number })
+
+        // 6. Oversized >64 KiB file in known language returns languageKnown = true (avoids slow IPC fallback)
+        val huge = "val x = 1\n".repeat(7000)
+        val hugeRes = PiFastCodeHighlighter.highlight(huge, "kotlin")
+        assertTrue(hugeRes.languageKnown)
+        assertTrue(hugeRes.spans.isEmpty())
+    }
+
+    @Test
+    fun `table cell width strips link URLs and resolves inline math sentinels`() {
+        val rawLink = "[API Docs](https://very-long-domain.example.com/v2/reference/endpoints/users?token=abcdef123456)"
+        val wLink = estimateTableCellDisplayChars(rawLink)
+        assertEquals("API Docs".length, wLink)
+
+        val extracted = PiInlineMath.extract("Value \$x_1 + x_2\$")
+        val wMath = estimateTableCellDisplayChars(extracted.markdown, extracted)
+        // Must count readable Unicode fallback length, NOT raw `PiMathTok0EndTok` sentinel length
+        assertTrue("Expected compact display width, got $wMath", wMath < extracted.markdown.length)
+    }
+
+    @Test
+    fun `streaming cursor does not corrupt GFM alerts or quoted code fences`() {
+        val alert = "> [!NOTE]"
+        assertEquals(alert, appendStreamingCursor(alert, "\u258D"))
+        val quotedFence = "> ```kotlin"
+        assertEquals(quotedFence, appendStreamingCursor(quotedFence, "\u258D"))
+        val prose = "Hello world"
+        assertEquals("Hello world\u258D", appendStreamingCursor(prose, "\u258D"))
+    }
+
+    @Test
+    fun `code span normalization follows CommonMark line-ending and blockquote rules`() {
+        assertEquals("foo bar", normalizeCodeSpanContent("`foo\nbar`"))
+        assertEquals("foo bar", normalizeCodeSpanContent("`foo\n> bar`"))
+        assertEquals("`a`", normalizeCodeSpanContent("`` `a` ``"))
+    }
+
+    private fun parseGfm(markdown: String): ASTNode =
+        PiSharedMarkdownParser.buildMarkdownTreeFromString(markdown as CharSequence)
 }

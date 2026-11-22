@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -46,15 +45,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -76,6 +80,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pi.bridge.PiImageLoadState
 import app.pi.bridge.PiImageLoader
 import app.pi.bridge.PiNoOpImageLoader
 import app.pi.bridge.rememberPiGuestImageTransformer
@@ -190,6 +195,7 @@ internal fun PiMarkdownBlock(
     eolAsNewLine: Boolean,
     listDepth: Int,
     isFirstBlock: Boolean,
+    quoteDepth: Int = 0,
 ) {
     when (node.type) {
         MarkdownElementTypes.ATX_1 -> PiMarkdownHeading(
@@ -232,7 +238,8 @@ internal fun PiMarkdownBlock(
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
         )
-        MarkdownElementTypes.BLOCK_QUOTE -> PiBlockQuoteOrAlert(
+        MarkdownElementTypes.BLOCK_QUOTE,
+        GFMElementTypes.ALERT -> PiBlockQuoteOrAlert(
             content = content,
             node = node,
             colors = colors,
@@ -240,6 +247,7 @@ internal fun PiMarkdownBlock(
             spacing = spacing,
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
+            quoteDepth = quoteDepth,
         )
         MarkdownElementTypes.UNORDERED_LIST -> PiListBlock(
             content = content,
@@ -251,6 +259,7 @@ internal fun PiMarkdownBlock(
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
             depth = listDepth,
+            quoteDepth = quoteDepth,
         )
         MarkdownElementTypes.ORDERED_LIST -> PiListBlock(
             content = content,
@@ -262,6 +271,7 @@ internal fun PiMarkdownBlock(
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
             depth = listDepth,
+            quoteDepth = quoteDepth,
         )
         GFMElementTypes.TABLE -> PiTable(
             content = content,
@@ -269,6 +279,8 @@ internal fun PiMarkdownBlock(
             colors = colors,
             typography = typography,
             referenceLinks = referenceLinks,
+            quoteDepth = quoteDepth,
+            listDepth = listDepth,
         )
         MarkdownElementTypes.CODE_FENCE -> PiCodeFence(
             content = content,
@@ -303,6 +315,7 @@ internal fun PiMarkdownBlock(
                     typography = typography,
                     referenceLinks = referenceLinks,
                     eolAsNewLine = eolAsNewLine,
+                    quoteDepth = quoteDepth,
                 )
             } else {
                 val raw = safeSlice(content, node)
@@ -427,8 +440,9 @@ private fun PiParagraph(
         }
     }
 
-    val trimmed = remember(content, node) {
-        stripBlockQuotePrefixes(safeSlice(content, node)).trim()
+    val rawSlice = safeSlice(content, node)
+    val trimmed = remember(rawSlice) {
+        stripBlockQuotePrefixes(rawSlice).trim()
     }
 
     // 2. Standalone display math: `$$ ... $$`
@@ -483,19 +497,13 @@ private fun PiParagraph(
         }
         if (linkInfo != null) {
             if (linkInfo.kind == app.pi.ui.render.rich.LinkKind.Image) {
-                val decoded = LocalPiImageTransformer.current.transform(linkInfo.url)
-                if (decoded != null) {
-                    PiImageViewerTap(linkInfo.url) {
-                        val imageShape = RoundedCornerShape(10.dp)
-                        Image(
-                            painter = decoded.painter,
-                            contentDescription = decoded.contentDescription,
-                            contentScale = decoded.contentScale,
-                            modifier = decoded.modifier
-                                .padding(vertical = 4.dp)
-                                .clip(imageShape),
-                        )
-                    }
+                val loadState = LocalPiImageTransformer.current.loadState(linkInfo.url)
+                if (loadState !is PiImageLoadState.Failed) {
+                    PiBlockImageSurface(
+                        link = linkInfo.url,
+                        alt = null,
+                        loadState = loadState,
+                    )
                     return
                 }
             }
@@ -549,12 +557,38 @@ internal enum class PiAlertKind(val marker: String) {
 
 internal data class DetectedAlert(
     val kind: PiAlertKind,
-    val firstParagraph: ASTNode,
+    val firstParagraph: ASTNode?,
     val skipCharsInFirstParagraph: Int,
     val firstParagraphHasRemainingBody: Boolean,
 )
 
+/**
+ * Detects GitHub Flavored Markdown alert callouts (`> [!NOTE]` / `TIP` / `IMPORTANT` / `WARNING` /
+ * `CAUTION`). Supports both native `GFMElementTypes.ALERT` nodes emitted by
+ * `org.jetbrains:markdown:0.7.9+` and fallback `MarkdownElementTypes.BLOCK_QUOTE` nodes.
+ */
 internal fun detectGfmAlert(content: String, quoteNode: ASTNode): DetectedAlert? {
+    if (quoteNode.type == GFMElementTypes.ALERT) {
+        val titleNode = quoteNode.children.firstOrNull { it.type == GFMTokenTypes.ALERT_TITLE }
+            ?: return null
+        val markerText = safeSlice(content, titleNode).trim()
+        val matchedKind = PiAlertKind.entries.firstOrNull {
+            markerText.equals(it.marker, ignoreCase = true)
+        } ?: return null
+        val firstBody = quoteNode.children.firstOrNull {
+            it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
+                it.type != GFMTokenTypes.ALERT_TITLE &&
+                it.type != MarkdownTokenTypes.EOL &&
+                it.type != MarkdownTokenTypes.WHITE_SPACE
+        }
+        return DetectedAlert(
+            kind = matchedKind,
+            firstParagraph = null,
+            skipCharsInFirstParagraph = 0,
+            firstParagraphHasRemainingBody = firstBody != null,
+        )
+    }
+
     val firstBlock = quoteNode.children.firstOrNull {
         it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
             it.type != MarkdownTokenTypes.EOL &&
@@ -578,7 +612,7 @@ internal fun detectGfmAlert(content: String, quoteNode: ASTNode): DetectedAlert?
         hasMore = false
     } else if (raw[after] == '\n') {
         after++
-        hasMore = raw.substring(after).isNotBlank()
+        hasMore = stripBlockQuotePrefixes(raw.substring(after)).isNotBlank()
     } else {
         return null
     }
@@ -599,8 +633,10 @@ private fun PiBlockQuoteOrAlert(
     spacing: PiMarkdownSpacing,
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
+    quoteDepth: Int,
 ) {
-    val alert = remember(content, node) { detectGfmAlert(content, node) }
+    val quoteSlice = safeSlice(content, node)
+    val alert = remember(quoteSlice, node.type) { detectGfmAlert(content, node) }
     if (alert != null) {
         PiGfmAlertCard(
             content = content,
@@ -611,6 +647,7 @@ private fun PiBlockQuoteOrAlert(
             spacing = spacing,
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
+            quoteDepth = quoteDepth,
         )
     } else {
         PiBlockQuote(
@@ -621,6 +658,7 @@ private fun PiBlockQuoteOrAlert(
             spacing = spacing,
             referenceLinks = referenceLinks,
             eolAsNewLine = eolAsNewLine,
+            quoteDepth = quoteDepth,
         )
     }
 }
@@ -635,6 +673,7 @@ private fun PiGfmAlertCard(
     spacing: PiMarkdownSpacing,
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
+    quoteDepth: Int,
 ) {
     val accent: Color
     val icon: ImageVector
@@ -708,11 +747,12 @@ private fun PiGfmAlertCard(
         var renderedAny = false
         node.children.forEachIndexed { index, child ->
             if (child.type == MarkdownTokenTypes.BLOCK_QUOTE ||
+                child.type == GFMTokenTypes.ALERT_TITLE ||
                 child.type == MarkdownTokenTypes.EOL ||
                 child.type == MarkdownTokenTypes.WHITE_SPACE
             ) return@forEachIndexed
             key(index, child.type) {
-                if (child === alert.firstParagraph) {
+                if (alert.firstParagraph != null && child === alert.firstParagraph) {
                     if (alert.firstParagraphHasRemainingBody) {
                         Spacer(Modifier.height(6.dp))
                         PiParagraph(
@@ -738,6 +778,7 @@ private fun PiGfmAlertCard(
                         eolAsNewLine = eolAsNewLine,
                         listDepth = 0,
                         isFirstBlock = !renderedAny,
+                        quoteDepth = quoteDepth + 1,
                     )
                     renderedAny = true
                 }
@@ -755,9 +796,17 @@ private fun PiBlockQuote(
     spacing: PiMarkdownSpacing,
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
+    quoteDepth: Int,
 ) {
+    val palette = PiTheme.palette
     val quoteColor = colors.quoteText
-    val railColor = colors.quoteBorder.copy(alpha = 0.78f)
+    val nested = quoteDepth > 0
+    val railColor = colors.quoteBorder.copy(alpha = if (nested) 0.50f else 0.78f)
+    val bgColor = if (nested) {
+        Color.Transparent
+    } else {
+        lerp(palette.cardBg, palette.pageBg, 0.25f)
+    }
     val quoteTypo = remember(typography, quoteColor) {
         typography.copy(
             text = typography.text.copy(color = quoteColor),
@@ -773,10 +822,9 @@ private fun PiBlockQuote(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.72f))
+            .then(if (nested) Modifier else Modifier.clip(shape).background(bgColor))
             .drawBehind {
-                val railW = 2.5.dp.toPx()
+                val railW = (if (nested) 2.dp else 2.5.dp).toPx()
                 drawRoundRect(
                     color = railColor,
                     topLeft = Offset.Zero,
@@ -784,7 +832,12 @@ private fun PiBlockQuote(
                     cornerRadius = CornerRadius(railW / 2f, railW / 2f),
                 )
             }
-            .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
+            .padding(
+                start = if (nested) 12.dp else 14.dp,
+                end = if (nested) 0.dp else 12.dp,
+                top = if (nested) 2.dp else 8.dp,
+                bottom = if (nested) 2.dp else 8.dp,
+            )
             .semantics { contentDescription = quoteDesc },
     ) {
         var renderedAny = false
@@ -805,6 +858,7 @@ private fun PiBlockQuote(
                     eolAsNewLine = eolAsNewLine,
                     listDepth = 0,
                     isFirstBlock = !renderedAny,
+                    quoteDepth = quoteDepth + 1,
                 )
                 renderedAny = true
             }
@@ -825,6 +879,7 @@ private fun PiListBlock(
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
     depth: Int,
+    quoteDepth: Int,
 ) {
     val items = remember(node) {
         node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }
@@ -866,38 +921,37 @@ private fun PiListItemRow(
     spacing: PiMarkdownSpacing,
     referenceLinks: Map<String, String>,
     eolAsNewLine: Boolean,
+    quoteDepth: Int,
 ) {
-    val checkboxNode = remember(item) { item.findChildOfType(GFMTokenTypes.CHECK_BOX) }
-    val numberText = remember(content, item, ordered, fallbackIndex) {
-        if (!ordered) {
-            null
-        } else {
-            val numNode = item.findChildOfType(MarkdownTokenTypes.LIST_NUMBER)
-            val raw = numNode?.let { safeSlice(content, it).trim() }.orEmpty()
-            raw.ifEmpty { "$fallbackIndex." }
-        }
+    val checkboxNode = item.findChildOfType(GFMTokenTypes.CHECK_BOX)
+    val numberText = if (!ordered) {
+        null
+    } else {
+        val numNode = item.findChildOfType(MarkdownTokenTypes.LIST_NUMBER)
+        val raw = numNode?.let { safeSlice(content, it).trim() }.orEmpty()
+        raw.ifEmpty { "$fallbackIndex." }
     }
-    val bodyChildren = remember(item) {
-        item.children.filter {
-            it.type != MarkdownTokenTypes.LIST_BULLET &&
-                it.type != MarkdownTokenTypes.LIST_NUMBER &&
-                it.type != GFMTokenTypes.CHECK_BOX &&
-                it.type != MarkdownTokenTypes.EOL &&
-                it.type != MarkdownTokenTypes.WHITE_SPACE
-        }
+    val bodyChildren = item.children.filter {
+        it.type != MarkdownTokenTypes.LIST_BULLET &&
+            it.type != MarkdownTokenTypes.LIST_NUMBER &&
+            it.type != GFMTokenTypes.CHECK_BOX &&
+            it.type != MarkdownTokenTypes.EOL &&
+            it.type != MarkdownTokenTypes.WHITE_SPACE
     }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
-        // Leading marker: checkbox, ordered numeral, or optical depth-aware bullet
+        // Leading marker: checkbox (dynamically centered to list lineHeight), right-aligned numeral, or depth bullet
         if (checkboxNode != null) {
-            val checked = remember(content, checkboxNode) {
-                piTaskCheckboxChecked(safeSlice(content, checkboxNode))
-            }
+            val checked = piTaskCheckboxChecked(safeSlice(content, checkboxNode))
+            val lineHeightSp = typography.list.lineHeight.value
+                .takeIf { it.isFinite() && it > 0f }
+                ?: ((typography.list.fontSize.value.takeIf { it.isFinite() && it > 0f } ?: 15f) * 1.45f)
+            val checkboxTopDp = ((lineHeightSp - TASK_CHECKBOX_SIZE.value) / 2f).coerceIn(1f, 8f).dp
             Box(
-                modifier = Modifier.padding(top = 3.dp, end = TASK_CHECKBOX_END_PADDING),
+                modifier = Modifier.padding(top = checkboxTopDp, end = TASK_CHECKBOX_END_PADDING),
                 contentAlignment = Alignment.Center,
             ) {
                 PiTaskCheckboxGraphic(checked = checked)
@@ -909,9 +963,10 @@ private fun PiListItemRow(
                     color = typography.bullet.color,
                     fontWeight = FontWeight.Medium,
                     fontFeatureSettings = "tnum",
+                    textAlign = TextAlign.End,
                 ),
                 modifier = Modifier
-                    .widthIn(min = 22.dp)
+                    .widthIn(min = 24.dp)
                     .padding(end = 6.dp),
             )
         } else {
@@ -943,6 +998,7 @@ private fun PiListItemRow(
                         eolAsNewLine = eolAsNewLine,
                         listDepth = depth + 1,
                         isFirstBlock = idx == 0,
+                        quoteDepth = quoteDepth,
                     )
                 }
             }
@@ -1021,47 +1077,82 @@ private fun PiBlockImage(
     typography: PiMarkdownTypography,
     referenceLinks: Map<String, String>,
 ) {
-    val palette = PiTheme.palette
     val imageLoader = LocalPiImageTransformer.current
-    val link = remember(content, node, referenceLinks) {
+    val imgSlice = safeSlice(content, node)
+    val link = remember(imgSlice, referenceLinks) {
         resolveAstImageLink(content, node, referenceLinks)
     }
-    val alt = remember(content, node) { resolveAstImageAlt(content, node) }
+    val alt = remember(imgSlice) { resolveAstImageAlt(content, node) }
 
     piMediaKind(link)?.let { kind ->
         PiMediaCard(link!!, kind)
         return
     }
 
-    val decoded = if (!link.isNullOrBlank()) imageLoader.transform(link) else null
-    if (decoded != null) {
-        val shape = RoundedCornerShape(10.dp)
-        PiImageViewerTap(link) {
-            val ratioModifier = decoded.widthOverHeight
-                ?.takeIf { it.isFinite() && it in 0.1f..10f }
-                ?.let { Modifier.aspectRatio(it) }
-                ?: Modifier
-            Image(
-                painter = decoded.painter,
-                contentDescription = alt ?: decoded.contentDescription,
-                contentScale = decoded.contentScale,
-                modifier = decoded.modifier
-                    .then(ratioModifier)
-                    .padding(vertical = 4.dp)
-                    .clip(shape)
-                    .border(0.5.dp, palette.borderMuted.copy(alpha = 0.35f), shape),
-            )
-        }
+    val loadState = if (!link.isNullOrBlank()) imageLoader.loadState(link) else PiImageLoadState.Failed
+    if (loadState is PiImageLoadState.Failed) {
+        PiImageFailureCard(
+            alt = alt,
+            link = link,
+            altStyle = typography.text,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        )
         return
     }
-    PiImageFailureCard(
-        alt = alt,
+    PiBlockImageSurface(
         link = link,
-        altStyle = typography.text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
+        alt = alt,
+        loadState = loadState,
     )
+}
+
+@Composable
+private fun PiBlockImageSurface(
+    link: String?,
+    alt: String?,
+    loadState: PiImageLoadState,
+) {
+    val palette = PiTheme.palette
+    val shape = RoundedCornerShape(10.dp)
+    when (loadState) {
+        is PiImageLoadState.Ready -> {
+            val decoded = loadState.data
+            PiImageViewerTap(link) {
+                val ratioModifier = decoded.widthOverHeight
+                    ?.takeIf { it.isFinite() && it in 0.1f..10f }
+                    ?.let { Modifier.aspectRatio(it) }
+                    ?: Modifier
+                Image(
+                    painter = decoded.painter,
+                    contentDescription = alt ?: decoded.contentDescription,
+                    contentScale = decoded.contentScale,
+                    modifier = decoded.modifier
+                        .padding(vertical = 4.dp)
+                        .then(ratioModifier)
+                        .clip(shape)
+                        .border(0.5.dp, palette.borderMuted.copy(alpha = 0.35f), shape),
+                )
+            }
+        }
+        is PiImageLoadState.Loading -> {
+            val aspectWOverH = loadState.rememberedHeightOverWidth
+                ?.takeIf { it.isFinite() && it in 0.1f..10f }
+                ?.let { (1f / it).coerceIn(0.4f, 4f) }
+                ?: 1.6f
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .aspectRatio(aspectWOverH)
+                    .clip(shape)
+                    .background(palette.cardBg)
+                    .border(0.5.dp, palette.borderMuted.copy(alpha = 0.25f), shape),
+            )
+        }
+        PiImageLoadState.Failed -> Unit
+    }
 }
 
 @Composable
@@ -1094,23 +1185,25 @@ private fun PiTable(
     colors: PiMarkdownColors,
     typography: PiMarkdownTypography,
     referenceLinks: Map<String, String>,
+    quoteDepth: Int = 0,
+    listDepth: Int = 0,
 ) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
-    val headerNode = remember(node) { node.findChildOfType(GFMElementTypes.HEADER) }
-    val rowNodes = remember(node) { node.children.filter { it.type == GFMElementTypes.ROW } }
-    val columns = remember(headerNode) {
-        headerNode?.children?.count { it.type == GFMTokenTypes.CELL } ?: 0
-    }
-    if (headerNode == null || columns <= 0) return
+    val inlineMath = LocalPiInlineMathTable.current
+    val tableSlice = safeSlice(content, node)
+    val headerNode = node.findChildOfType(GFMElementTypes.HEADER) ?: return
+    val rowNodes = node.children.filter { it.type == GFMElementTypes.ROW }
+    val columns = headerNode.children.count { it.type == GFMTokenTypes.CELL }
+    if (columns <= 0) return
 
-    val alignments = remember(content, node) { piTableAlignments(content, node) }
-    val columnDisplayChars = remember(content, headerNode, rowNodes, columns) {
+    val alignments = remember(tableSlice) { piTableAlignments(content, node) }
+    val columnDisplayChars = remember(tableSlice, columns, inlineMath) {
         val maxChars = IntArray(columns)
         fun sampleRow(r: ASTNode) {
             val cells = r.children.filter { it.type == GFMTokenTypes.CELL }
             for (c in 0 until minOf(columns, cells.size)) {
-                val w = estimateTableCellDisplayChars(safeSlice(content, cells[c]))
+                val w = estimateTableCellDisplayChars(safeSlice(content, cells[c]), inlineMath)
                 if (w > maxChars[c]) maxChars[c] = w
             }
         }
@@ -1120,8 +1213,8 @@ private fun PiTable(
         maxChars.toList()
     }
 
-    val available = (LocalConfiguration.current.screenWidthDp.dp - 32.dp).coerceAtLeast(220.dp)
-    val useIntrinsicRowHeight = rowNodes.size <= 24
+    val nestedInsetDp = (quoteDepth * 26 + listDepth * 22).dp
+    val available = (LocalConfiguration.current.screenWidthDp.dp - 32.dp - nestedInsetDp).coerceAtLeast(180.dp)
 
     val colWidthsDp = remember(columnDisplayChars, available) {
         computePiTableColumnWidthsDp(
@@ -1134,7 +1227,6 @@ private fun PiTable(
         ).map { it.dp }
     }
     val totalWidth = colWidthsDp.fold(0.dp) { acc, w -> acc + w }.coerceAtLeast(available)
-    val scrolls = totalWidth > available + 1.dp
     val maxColWidthPx = with(density) {
         (colWidthsDp.maxOfOrNull { it } ?: 120.dp).roundToPx()
     }.coerceAtLeast(1)
@@ -1142,12 +1234,16 @@ private fun PiTable(
 
     val tableShape = RoundedCornerShape(12.dp)
     val scrollState = rememberScrollState()
-    val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
-    val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
+    val surfaceBg = colors.tableBackground
+    val headerBg = remember(palette, colors.darkTheme) {
+        lerp(palette.cardBg, palette.text, if (colors.darkTheme) 0.08f else 0.055f)
+    }
+    val zebraBg = remember(palette, colors.darkTheme) {
+        lerp(palette.cardBg, palette.text, if (colors.darkTheme) 0.032f else 0.025f)
+    }
     val borderStrokeColor = palette.borderMuted.copy(alpha = 0.56f)
     val rowHairlineColor = palette.borderMuted.copy(alpha = 0.30f)
-    val colHairlineColor = palette.borderMuted.copy(alpha = 0.16f)
-    val surfaceBg = MaterialTheme.colorScheme.surfaceContainerLow
+    val colHairlineColor = palette.borderMuted.copy(alpha = 0.18f)
 
     CompositionLocalProvider(LocalPiImageTransformer provides cellImageLoader) {
         Box(
@@ -1157,107 +1253,96 @@ private fun PiTable(
                 .background(surfaceBg)
                 .border(0.5.dp, borderStrokeColor, tableShape),
         ) {
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(scrollState)
-                    .width(totalWidth),
+                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                    .drawWithContent {
+                        drawContent()
+                        val fadePx = TABLE_FADE_WIDTH.toPx().coerceAtMost(size.width * 0.2f)
+                        if (fadePx > 1f && scrollState.value > 0) {
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black),
+                                    startX = 0f,
+                                    endX = fadePx,
+                                ),
+                                topLeft = Offset.Zero,
+                                size = Size(fadePx, size.height),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
+                        if (fadePx > 1f && scrollState.value < scrollState.maxValue) {
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(Color.Black, Color.Transparent),
+                                    startX = size.width - fadePx,
+                                    endX = size.width,
+                                ),
+                                topLeft = Offset(size.width - fadePx, 0f),
+                                size = Size(fadePx, size.height),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
+                    },
             ) {
-                // Header row
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(IntrinsicSize.Max)
-                        .background(headerBg),
-                ) {
-                    val headerCells = headerNode.children.filter { it.type == GFMTokenTypes.CELL }
-                    for (col in 0 until columns) {
-                        val colW = colWidthsDp[col]
-                        val cell = headerCells.getOrNull(col)
-                        val align = alignments.alignAt(col)
-                        Box(
-                            modifier = Modifier
-                                .width(colW)
-                                .fillMaxHeight()
-                                .then(columnDividerModifier(col > 0, colHairlineColor))
-                                .padding(horizontal = 12.dp, vertical = 9.dp)
-                                .semantics {
-                                    heading()
-                                    collectionItemInfo = CollectionItemInfo(
-                                        rowIndex = 0, rowSpan = 1,
-                                        columnIndex = col, columnSpan = 1,
+                        .horizontalScroll(scrollState)
+                        .width(totalWidth)
+                        // Draw all vertical column hairlines in a single pass across the full table height:
+                        // eliminates IntrinsicSize.Max double-measurement AND keeps gridlines continuous on 100+ row tables.
+                        .drawWithContent {
+                            drawContent()
+                            if (colWidthsDp.size > 1) {
+                                val strokePx = 0.5.dp.toPx()
+                                var xPx = 0f
+                                for (col in 0 until colWidthsDp.size - 1) {
+                                    xPx += colWidthsDp[col].toPx()
+                                    drawLine(
+                                        color = colHairlineColor,
+                                        start = Offset(xPx, 0f),
+                                        end = Offset(xPx, size.height),
+                                        strokeWidth = strokePx,
                                     )
-                                },
-                            contentAlignment = align.centerBoxAlignment,
-                        ) {
-                            if (cell != null) {
-                                PiTableCellContent(
-                                    content = content,
-                                    cell = cell,
-                                    style = typography.table.copy(
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = palette.text,
-                                    ),
-                                    align = align,
-                                    colors = colors,
-                                    typography = typography,
-                                    referenceLinks = referenceLinks,
-                                    cellContentWidthDp = (colW.value - 24f).coerceAtLeast(32f),
-                                )
+                                }
                             }
-                        }
-                    }
-                }
-
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(0.5.dp)
-                        .background(borderStrokeColor),
-                )
-
-                // Data rows
-                rowNodes.forEachIndexed { rowIdx, rowNode ->
-                    if (rowIdx > 0) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(0.5.dp)
-                                .background(rowHairlineColor),
-                        )
-                    }
-                    val rowCells = rowNode.children.filter { it.type == GFMTokenTypes.CELL }
+                        },
+                ) {
+                    // Header row
                     Row(
-                        verticalAlignment = Alignment.Top,
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (useIntrinsicRowHeight) Modifier.height(IntrinsicSize.Max) else Modifier)
-                            .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
+                            .background(headerBg),
                     ) {
+                        val headerCells = headerNode.children.filter { it.type == GFMTokenTypes.CELL }
                         for (col in 0 until columns) {
                             val colW = colWidthsDp[col]
-                            val cell = rowCells.getOrNull(col)
+                            val cell = headerCells.getOrNull(col)
                             val align = alignments.alignAt(col)
                             Box(
                                 modifier = Modifier
                                     .width(colW)
-                                    .then(if (useIntrinsicRowHeight) Modifier.fillMaxHeight() else Modifier)
-                                    .then(columnDividerModifier(col > 0, colHairlineColor))
                                     .padding(horizontal = 12.dp, vertical = 9.dp)
                                     .semantics {
+                                        heading()
                                         collectionItemInfo = CollectionItemInfo(
-                                            rowIndex = rowIdx + 1, rowSpan = 1,
+                                            rowIndex = 0, rowSpan = 1,
                                             columnIndex = col, columnSpan = 1,
                                         )
                                     },
-                                contentAlignment = align.boxAlignment,
+                                contentAlignment = align.centerBoxAlignment,
                             ) {
                                 if (cell != null) {
                                     PiTableCellContent(
                                         content = content,
                                         cell = cell,
-                                        style = typography.table,
+                                        style = typography.table.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = palette.text,
+                                        ),
                                         align = align,
                                         colors = colors,
                                         typography = typography,
@@ -1268,32 +1353,68 @@ private fun PiTable(
                             }
                         }
                     }
-                }
-            }
 
-            if (scrolls && scrollState.value < scrollState.maxValue) {
-                Box(modifier = Modifier.matchParentSize()) {
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .width(TABLE_FADE_WIDTH)
-                            .fillMaxHeight()
-                            .background(Brush.horizontalGradient(listOf(Color.Transparent, surfaceBg))),
+                        Modifier
+                            .fillMaxWidth()
+                            .height(0.5.dp)
+                            .background(borderStrokeColor),
                     )
+
+                    // Data rows
+                    rowNodes.forEachIndexed { rowIdx, rowNode ->
+                        if (rowIdx > 0) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(0.5.dp)
+                                    .background(rowHairlineColor),
+                            )
+                        }
+                        val rowCells = rowNode.children.filter { it.type == GFMTokenTypes.CELL }
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (rowIdx % 2 == 1) zebraBg else Color.Transparent),
+                        ) {
+                            for (col in 0 until columns) {
+                                val colW = colWidthsDp[col]
+                                val cell = rowCells.getOrNull(col)
+                                val align = alignments.alignAt(col)
+                                Box(
+                                    modifier = Modifier
+                                        .width(colW)
+                                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                                        .semantics {
+                                            collectionItemInfo = CollectionItemInfo(
+                                                rowIndex = rowIdx + 1, rowSpan = 1,
+                                                columnIndex = col, columnSpan = 1,
+                                            )
+                                        },
+                                    contentAlignment = align.boxAlignment,
+                                ) {
+                                    if (cell != null) {
+                                        PiTableCellContent(
+                                            content = content,
+                                            cell = cell,
+                                            style = typography.table,
+                                            align = align,
+                                            colors = colors,
+                                            typography = typography,
+                                            referenceLinks = referenceLinks,
+                                            cellContentWidthDp = (colW.value - 24f).coerceAtLeast(32f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
-
-private fun columnDividerModifier(show: Boolean, color: Color): Modifier =
-    if (!show) {
-        Modifier
-    } else {
-        Modifier.drawBehind {
-            drawLine(color, Offset(0f, 0f), Offset(0f, size.height), 0.5.dp.toPx())
-        }
-    }
 
 @Composable
 private fun PiTableCellContent(
@@ -1405,7 +1526,8 @@ private fun PiCodeFence(
     typography: PiMarkdownTypography,
 ) {
     val streaming = LocalPiMarkdownStreaming.current
-    val extracted = remember(content, node) { extractCodeFence(content, node) }
+    val fenceSlice = safeSlice(content, node)
+    val extracted = remember(fenceSlice) { extractCodeFence(content, node) }
     val settled = !streaming || extracted.closed
     PiCodeSurface(
         code = extracted.code,
@@ -1421,7 +1543,8 @@ private fun PiIndentedCodeBlock(
     node: ASTNode,
     typography: PiMarkdownTypography,
 ) {
-    val code = remember(content, node) { extractIndentedCodeBlock(content, node) }
+    val blockSlice = safeSlice(content, node)
+    val code = remember(blockSlice) { extractIndentedCodeBlock(content, node) }
     PiCodeSurface(
         code = code,
         language = null,

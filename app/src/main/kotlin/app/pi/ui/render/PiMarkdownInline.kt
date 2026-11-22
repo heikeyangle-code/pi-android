@@ -2,8 +2,10 @@ package app.pi.ui.render
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
@@ -11,10 +13,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalConfiguration
@@ -26,6 +35,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -37,7 +47,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.pi.i18n.tr
+import app.pi.bridge.PiImageLoadState
 import app.pi.ui.render.rich.svg.PiMathDraw
 import app.pi.ui.render.rich.svg.piMathInlineCached
 import app.pi.ui.render.rich.svg.piMathRenderInline
@@ -49,11 +59,17 @@ import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Active inline LaTeX lookup table for the current settled Markdown document (null while streaming). */
 internal val LocalPiInlineMathTable = staticCompositionLocalOf<PiInlineMath.Extracted?> { null }
+
+private const val INLINE_CODE_PILL_TAG = "pi_inline_code_pill"
+private const val INLINE_CODE_KIND_CODE = "code"
+private const val INLINE_CODE_KIND_KBD = "kbd"
+private const val INLINE_MATH_BATCH_MS = 240L
 
 /**
  * Extracts all CommonMark `[label]: url` link definitions from a parsed document AST into an
@@ -90,18 +106,23 @@ internal fun normalizeReferenceLabel(raw: String): String =
         .lowercase()
 
 private val REF_WS_REGEX = Regex("\\s+")
+private val HTML_HREF_REGEX = Regex("""(?i)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""")
+private val CODE_SPAN_QUOTE_BREAK_REGEX = Regex("""\r?\n[ ]{0,3}(?:>[ ]?)+""")
 
 /**
  * Unified native inline Markdown renderer for paragraphs, headings, lists, blockquotes,
  * callouts, and table cells.
  *
  * Supports:
- *  - Bold, italic, strikethrough, inline code pills, links (inline, reference, autolink)
+ *  - Bold, italic, strikethrough, rounded inline code & kbd pills (zero copy-text pollution),
+ *    links (inline, reference, autolink, and safe HTML `<a href="...">`)
  *  - First-class inline LaTeX (`$...$` / `\(...\)`) rendered as vector MathJax SVGs with
  *    exact optical scaling & baseline alignment (with instant `PiLatex.toUnicode` pre-render)
- *  - Inline images (`![alt](url)`) decoded via [LocalPiImageTransformer] with tap-to-viewer
- *  - Safe inline HTML (`b`, `strong`, `i`, `em`, `del`, `s`, `u`, `code`, `kbd`, `mark`, `sup`, `sub`, `br`, `span`)
- *  - Optional prefix skip (e.g. stripping `[!NOTE]` marker from GFM alert first paragraphs)
+ *  - Inline images (`![alt](url)`) decoded via 3-state [LocalPiImageTransformer] (smooth loading
+ *    tonal placeholder -> crisp image with tap-to-viewer -> failure card)
+ *  - Safe inline HTML (`a`, `b`, `strong`, `i`, `em`, `del`, `s`, `u`, `code`, `kbd`, `mark`,
+ *    `sup`, `sub`, `small`, `br`, `span`, comments stripped, mismatched/unclosed tags never crash)
+ *  - Content-slice keyed caching so completed blocks above a streaming tail skip rebuilds in O(1)
  */
 @Composable
 internal fun PiInlineMarkdownText(
@@ -128,7 +149,10 @@ internal fun PiInlineMarkdownText(
     val fgColor = if (style.color.alpha > 0f) style.color else colors.text
     val resolvedStyle = if (style.color.alpha > 0f) style else style.copy(color = fgColor)
 
-    val rawSlice = remember(content, node) { safeSlice(content, node) }
+    // Key inline work on the block's exact source slice instead of full document `content` + `node`,
+    // so settled paragraphs above a streaming tail achieve 100% cache hits on every token.
+    val rawSlice = safeSlice(content, node)
+    val nodeType = node.type
 
     // Inline math indices present inside this AST subtree.
     val neededMathIndices = remember(rawSlice, inlineMath) {
@@ -159,7 +183,7 @@ internal fun PiInlineMarkdownText(
     LaunchedEffect(neededMathIndices, widthPx, mathTheme, inlineMath) {
         val entries = inlineMath?.entries ?: return@LaunchedEffect
         if (neededMathIndices.isEmpty()) return@LaunchedEffect
-        var lastBumpMs = 0L
+        var lastBumpMs = android.os.SystemClock.uptimeMillis()
         var dirty = false
         for (idx in neededMathIndices) {
             val entry = entries.getOrNull(idx) ?: continue
@@ -168,7 +192,7 @@ internal fun PiInlineMarkdownText(
             if (rendered != null) {
                 dirty = true
                 val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastBumpMs >= 90L) {
+                if (now - lastBumpMs >= INLINE_MATH_BATCH_MS) {
                     mathEpoch++
                     lastBumpMs = now
                     dirty = false
@@ -192,8 +216,8 @@ internal fun PiInlineMarkdownText(
         }
     }
 
-    // Collect inline images inside this subtree (if any).
-    val inlineImages = remember(content, node, referenceLinks) {
+    // Collect inline images inside this subtree using slice-relative offsets for stable caching.
+    val inlineImages = remember(rawSlice, nodeType, referenceLinks) {
         collectInlineImages(content, node, referenceLinks)
     }
 
@@ -204,8 +228,8 @@ internal fun PiInlineMarkdownText(
     }
 
     val annotated = remember(
-        content,
-        node,
+        rawSlice,
+        nodeType,
         inlineMath,
         readyMathByIndex,
         inlineImages,
@@ -219,6 +243,7 @@ internal fun PiInlineMarkdownText(
         buildAnnotatedString {
             val ctx = InlineBuildContext(
                 content = content,
+                rootStartOffset = node.startOffset,
                 table = inlineMath,
                 readyMathIndices = readyMathByIndex.keys,
                 imageSlots = inlineImages,
@@ -233,23 +258,24 @@ internal fun PiInlineMarkdownText(
         }
     }
 
-    // Build unified InlineTextContent map (math vector slots + inline image slots).
+    // Extract inline code / kbd pill spans once per rebuilt AnnotatedString (zero work on prose-only blocks).
+    val codePillRanges = remember(annotated) {
+        annotated.getStringAnnotations(INLINE_CODE_PILL_TAG, 0, annotated.length)
+    }
+
+    // Build unified InlineTextContent map (math vector slots + 3-state inline image slots).
     val inlineContent: Map<String, InlineTextContent> = if (readyMathByIndex.isEmpty() && inlineImages.isEmpty()) {
         emptyMap()
     } else {
         val map = HashMap<String, InlineTextContent>(readyMathByIndex.size + inlineImages.size)
 
-        // 1. Inline MathJax SVG slots
-        val mathEntries = inlineMath?.entries
-        if (mathEntries != null && readyMathByIndex.isNotEmpty()) {
+        // 1. Inline MathJax vector slots
+        val entries = inlineMath?.entries
+        if (entries != null) {
             for ((idx, ready) in readyMathByIndex) {
-                val entry = mathEntries.getOrNull(idx) ?: continue
-                val metrics = computeInlineMathBoxSp(
-                    ready = ready,
-                    bodyFontSizeSp = bodyFontSizeSp,
-                    maxWidthSp = maxInlineWidthSp,
-                )
-                val desc = tr("行内公式：${entry.tex}", "Inline formula: ${entry.tex}")
+                val entry = entries.getOrNull(idx) ?: continue
+                val metrics = computeInlineMathBoxSp(ready, bodyFontSizeSp, maxInlineWidthSp)
+                val desc = entry.unicodeFallback.ifBlank { entry.tex }
                 map[inlineMathSlotId(idx)] = InlineTextContent(
                     placeholder = Placeholder(
                         width = metrics.widthSp.sp,
@@ -289,18 +315,37 @@ internal fun PiInlineMarkdownText(
             }
         }
 
-        // 2. Inline image slots
+        // 2. Inline image slots (3-state: Loading skeleton -> Ready image -> Failure card)
         for (img in inlineImages) {
-            val decoded = if (img.url.isNotBlank()) imageLoader.transform(img.url) else null
+            val mediaKind = piMediaKind(img.url)
+            val loadState = if (mediaKind == null && img.url.isNotBlank()) {
+                imageLoader.loadState(img.url)
+            } else {
+                PiImageLoadState.Failed
+            }
             val targetWSp = cellImageMaxWidthDp?.let { with(density) { it.dp.toSp().value } }
                 ?: min(maxInlineWidthSp, bodyFontSizeSp * 12f)
-            val aspectHOverW = when {
-                decoded?.widthOverHeight != null && decoded.widthOverHeight > 0f ->
-                    (1f / decoded.widthOverHeight).coerceIn(0.15f, 4f)
-                else -> imageLoader.rememberedHeightOverWidth(img.url)?.coerceIn(0.15f, 4f) ?: 0.65f
+            val readyData = (loadState as? PiImageLoadState.Ready)?.data
+            val aspectHOverW = when (loadState) {
+                is PiImageLoadState.Ready -> {
+                    val woh = loadState.data.widthOverHeight
+                    if (woh != null && woh > 0f) (1f / woh).coerceIn(0.15f, 4f) else 0.65f
+                }
+                is PiImageLoadState.Loading ->
+                    (loadState.rememberedHeightOverWidth ?: 0.62f).coerceIn(0.25f, 2.5f)
+                PiImageLoadState.Failed -> 0.35f
             }
-            val boxW = if (decoded != null) targetWSp else min(targetWSp, bodyFontSizeSp * 10f)
-            val boxH = if (decoded != null) (boxW * aspectHOverW).coerceIn(bodyFontSizeSp * 1.1f, bodyFontSizeSp * 18f) else (bodyFontSizeSp * 2.2f)
+            val boxW = when {
+                mediaKind != null -> targetWSp
+                loadState is PiImageLoadState.Ready || loadState is PiImageLoadState.Loading -> targetWSp
+                else -> min(targetWSp, bodyFontSizeSp * 10f)
+            }
+            val boxH = when {
+                mediaKind != null -> bodyFontSizeSp * 3.4f
+                loadState is PiImageLoadState.Ready || loadState is PiImageLoadState.Loading ->
+                    (boxW * aspectHOverW).coerceIn(bodyFontSizeSp * 1.2f, bodyFontSizeSp * 18f)
+                else -> bodyFontSizeSp * 2.2f
+            }
 
             map[img.slotId] = InlineTextContent(
                 placeholder = Placeholder(
@@ -309,25 +354,36 @@ internal fun PiInlineMarkdownText(
                     placeholderVerticalAlign = PlaceholderVerticalAlign.Center,
                 ),
             ) {
-                val mediaKind = piMediaKind(img.url)
-                if (mediaKind != null) {
-                    PiMediaCard(img.url, mediaKind)
-                } else if (decoded != null) {
-                    PiImageViewerTap(img.url) {
-                        Image(
-                            painter = decoded.painter,
-                            contentDescription = img.alt.ifBlank { decoded.contentDescription },
-                            contentScale = decoded.contentScale,
-                            modifier = Modifier.fillMaxSize(),
+                when {
+                    mediaKind != null -> PiMediaCard(img.url, mediaKind)
+                    readyData != null -> {
+                        PiImageViewerTap(img.url) {
+                            Image(
+                                painter = readyData.painter,
+                                contentDescription = img.alt.ifBlank { readyData.contentDescription },
+                                contentScale = readyData.contentScale,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(6.dp)),
+                            )
+                        }
+                    }
+                    loadState is PiImageLoadState.Loading -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(palette.cardBg),
                         )
                     }
-                } else {
-                    Box(Modifier.fillMaxSize()) {
-                        PiImageFailureCard(
-                            alt = img.alt.ifBlank { null },
-                            link = img.url.ifBlank { null },
-                            altStyle = typography.text,
-                        )
+                    else -> {
+                        Box(Modifier.fillMaxSize()) {
+                            PiImageFailureCard(
+                                alt = img.alt.ifBlank { null },
+                                link = img.url.ifBlank { null },
+                                altStyle = typography.text,
+                            )
+                        }
                     }
                 }
             }
@@ -335,21 +391,85 @@ internal fun PiInlineMarkdownText(
         map
     }
 
-    Text(
-        text = annotated,
-        style = resolvedStyle,
-        inlineContent = inlineContent,
-        maxLines = maxLines,
-        overflow = overflow,
-        modifier = modifier,
-    )
+    if (codePillRanges.isEmpty()) {
+        Text(
+            text = annotated,
+            style = resolvedStyle,
+            inlineContent = inlineContent,
+            maxLines = maxLines,
+            overflow = overflow,
+            modifier = modifier,
+        )
+    } else {
+        var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+        val pillBg = colors.inlineCodeBackground
+        val kbdBorder = colors.dividerColor.copy(alpha = 0.85f)
+        Text(
+            text = annotated,
+            style = resolvedStyle,
+            inlineContent = inlineContent,
+            maxLines = maxLines,
+            overflow = overflow,
+            onTextLayout = { textLayout = it },
+            modifier = modifier.drawBehind {
+                val layout = textLayout ?: return@drawBehind
+                val textLen = layout.layoutInput.text.length
+                val padX = 2.dp.toPx()
+                val padY = 0.75.dp.toPx()
+                val radius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                val kbdStroke = Stroke(width = 0.75.dp.toPx())
+
+                for (ann in codePillRanges) {
+                    val start = ann.start.coerceIn(0, textLen)
+                    val end = ann.end.coerceIn(start, textLen)
+                    if (start >= end) continue
+                    val startLine = layout.getLineForOffset(start)
+                    val endLine = layout.getLineForOffset(end - 1)
+                    val isKbd = ann.item == INLINE_CODE_KIND_KBD
+
+                    for (line in startLine..endLine) {
+                        val segStart = if (line == startLine) start else layout.getLineStart(line)
+                        val lineVisibleEnd = layout.getLineEnd(line, visibleEnd = true)
+                        val segEnd = min(if (line == endLine) end else lineVisibleEnd, textLen)
+                        if (segStart >= segEnd) continue
+                        val firstBox = layout.getBoundingBox(segStart)
+                        val lastBox = layout.getBoundingBox(segEnd - 1)
+                        val left = (min(firstBox.left, lastBox.left) - padX).coerceAtLeast(0f)
+                        val right = (max(firstBox.right, lastBox.right) + padX).coerceAtMost(size.width)
+                        val top = layout.getLineTop(line) + padY
+                        val bottom = layout.getLineBottom(line) - padY
+                        val w = right - left
+                        val h = bottom - top
+                        if (w <= 0f || h <= 0f) continue
+                        val topLeft = Offset(left, top)
+                        val pillSize = Size(w, h)
+                        drawRoundRect(
+                            color = pillBg,
+                            topLeft = topLeft,
+                            size = pillSize,
+                            cornerRadius = radius,
+                        )
+                        if (isKbd) {
+                            drawRoundRect(
+                                color = kbdBorder,
+                                topLeft = topLeft,
+                                size = pillSize,
+                                cornerRadius = radius,
+                                style = kbdStroke,
+                            )
+                        }
+                    }
+                }
+            },
+        )
+    }
 }
 
 // ------------------------------------------------------------------ Inline AST builder
 
 private data class InlineImageSlot(
     val slotId: String,
-    val nodeStart: Int,
+    val relativeStart: Int,
     val url: String,
     val alt: String,
 )
@@ -360,14 +480,16 @@ private fun collectInlineImages(
     referenceLinks: Map<String, String>,
 ): List<InlineImageSlot> {
     val result = ArrayList<InlineImageSlot>()
+    val base = root.startOffset
     fun walk(node: ASTNode) {
         if (node.type == MarkdownElementTypes.IMAGE) {
             val url = resolveAstImageLink(content, node, referenceLinks).orEmpty()
             val alt = resolveAstImageAlt(content, node).orEmpty()
+            val rel = node.startOffset - base
             result.add(
                 InlineImageSlot(
-                    slotId = "pi_img_${result.size}_${node.startOffset}",
-                    nodeStart = node.startOffset,
+                    slotId = "pi_img_${result.size}_$rel",
+                    relativeStart = rel,
                     url = url,
                     alt = alt,
                 ),
@@ -380,8 +502,15 @@ private fun collectInlineImages(
     return result
 }
 
+private class HtmlTagEntry(
+    val tag: String,
+    val style: SpanStyle,
+    val pillKind: String? = null,
+)
+
 private class InlineBuildContext(
     val content: String,
+    val rootStartOffset: Int,
     val table: PiInlineMath.Extracted?,
     val readyMathIndices: Set<Int>,
     val imageSlots: List<InlineImageSlot>,
@@ -391,7 +520,8 @@ private class InlineBuildContext(
     val eolAsNewLine: Boolean,
     var skipRemaining: Int = 0,
     var trimLeading: Boolean = false,
-    val htmlStack: ArrayList<SpanStyle> = ArrayList(),
+    val htmlTagStack: ArrayList<HtmlTagEntry> = ArrayList(),
+    var activeHtmlLinkUrl: String? = null,
 )
 
 private fun AnnotatedString.Builder.appendInlineChildren(
@@ -455,21 +585,22 @@ private fun AnnotatedString.Builder.appendInlineNode(
 
         MarkdownElementTypes.CODE_SPAN -> {
             val raw = safeSlice(ctx.content, child)
-            val trimmed = stripCodeSpanBackticks(raw)
-            val display = if (ctx.table != null) PiInlineMath.resolveToUnicode(trimmed, ctx.table) else trimmed
+            val normalized = normalizeCodeSpanContent(raw)
+            val display = if (ctx.table != null) PiInlineMath.resolveToUnicode(normalized, ctx.table) else normalized
             val codeStyle = ctx.typography.inlineCode
             val pillSpan = SpanStyle(
                 fontFamily = codeStyle.fontFamily ?: PiMonoFamily,
                 fontSize = codeStyle.fontSize,
                 fontWeight = codeStyle.fontWeight,
                 color = codeStyle.color,
-                background = ctx.colors.inlineCodeBackground,
             )
-            // Subtle thin non-breaking space padding on both ends gives inline code a refined pill look.
-            withStyle(pillSpan) {
-                append("\u2009")
-                appendConsumeSkip(display, ctx)
-                append("\u2009")
+            val text = consumePrefixSkip(display, ctx)
+            if (text.isNotEmpty()) {
+                withHtmlDecorations(ctx) {
+                    pushStringAnnotation(INLINE_CODE_PILL_TAG, INLINE_CODE_KIND_CODE)
+                    withStyle(pillSpan) { append(text) }
+                    pop()
+                }
             }
         }
 
@@ -490,7 +621,8 @@ private fun AnnotatedString.Builder.appendInlineNode(
         }
 
         MarkdownElementTypes.IMAGE -> {
-            val slot = ctx.imageSlots.firstOrNull { it.nodeStart == child.startOffset }
+            val rel = child.startOffset - ctx.rootStartOffset
+            val slot = ctx.imageSlots.firstOrNull { it.relativeStart == rel }
             if (slot != null) {
                 appendInlineContent(slot.slotId, slot.alt.ifBlank { "[image]" })
             }
@@ -511,7 +643,8 @@ private fun AnnotatedString.Builder.appendInlineNode(
 
         MarkdownTokenTypes.EOL -> {
             if (ctx.skipRemaining > 0) {
-                ctx.skipRemaining = (ctx.skipRemaining - 1).coerceAtLeast(0)
+                val eolLen = (child.endOffset - child.startOffset).coerceAtLeast(1)
+                ctx.skipRemaining = (ctx.skipRemaining - eolLen).coerceAtLeast(0)
             } else {
                 append(if (ctx.eolAsNewLine) '\n' else ' ')
             }
@@ -521,34 +654,7 @@ private fun AnnotatedString.Builder.appendInlineNode(
         MarkdownTokenTypes.BLOCK_QUOTE -> Unit
 
         MarkdownTokenTypes.HTML_TAG -> {
-            val raw = PiHtml.inlineTextAt(
-                ctx.content,
-                child.startOffset.coerceIn(0, ctx.content.length),
-                child.endOffset.coerceIn(0, ctx.content.length),
-            )
-            val trimmedRaw = raw.trim()
-            val selfClosing = trimmedRaw.endsWith("/>")
-            val tag = trimmedRaw.removePrefix("<").removePrefix("/").trimStart()
-                .takeWhile { it.isLetterOrDigit() }.lowercase()
-            when {
-                tag == "br" -> append('\n')
-                selfClosing -> Unit
-                tag.isEmpty() -> appendConsumeSkip(raw, ctx)
-                else -> {
-                    val span = inlineHtmlSpanStyle(tag, ctx.colors, ctx.typography)
-                    if (span == null) {
-                        appendConsumeSkip(raw, ctx)
-                    } else if (trimmedRaw.startsWith("</")) {
-                        if (ctx.htmlStack.isNotEmpty()) {
-                            ctx.htmlStack.removeAt(ctx.htmlStack.lastIndex)
-                            runCatching { pop() }
-                        }
-                    } else {
-                        pushStyle(span)
-                        ctx.htmlStack.add(span)
-                    }
-                }
-            }
+            handleInlineHtmlTag(child, ctx)
         }
 
         else -> {
@@ -561,35 +667,167 @@ private fun AnnotatedString.Builder.appendInlineNode(
     }
 }
 
-private fun inlineHtmlSpanStyle(
+private fun AnnotatedString.Builder.handleInlineHtmlTag(
+    child: ASTNode,
+    ctx: InlineBuildContext,
+) {
+    val raw = PiHtml.inlineTextAt(
+        ctx.content,
+        child.startOffset.coerceIn(0, ctx.content.length),
+        child.endOffset.coerceIn(0, ctx.content.length),
+    )
+    val trimmed = raw.trim()
+    // Strip HTML comments (`<!-- ... -->`) silently so they never leak into rendered prose.
+    if (trimmed.startsWith("<!--")) return
+
+    val isClosing = trimmed.startsWith("</")
+    val selfClosing = trimmed.endsWith("/>")
+    val tag = trimmed.removePrefix("<").removePrefix("/").trimStart()
+        .takeWhile { it.isLetterOrDigit() }.lowercase()
+
+    when {
+        tag == "br" -> append('\n')
+        selfClosing -> Unit
+        tag.isEmpty() -> appendConsumeSkip(raw, ctx)
+        tag == "a" -> {
+            if (isClosing) {
+                ctx.activeHtmlLinkUrl = null
+            } else {
+                extractSafeHtmlHref(trimmed)?.let { ctx.activeHtmlLinkUrl = it }
+            }
+        }
+        else -> {
+            val entry = inlineHtmlTagEntry(tag, ctx.colors, ctx.typography)
+            if (entry != null) {
+                if (isClosing) {
+                    // Remove the nearest matching open tag from our independent stack;
+                    // mismatched or unclosed tags never throw or corrupt outer Markdown styles.
+                    for (idx in ctx.htmlTagStack.lastIndex downTo 0) {
+                        if (ctx.htmlTagStack[idx].tag == tag) {
+                            ctx.htmlTagStack.removeAt(idx)
+                            break
+                        }
+                    }
+                } else {
+                    ctx.htmlTagStack.add(entry)
+                }
+            } else if (isClosing || tag in IGNORED_HTML_TAGS) {
+                // Silently drop unknown/layout closing tags (`</div>`, `</p>`, `</font>`, etc.).
+                Unit
+            } else {
+                // Preserve unrecognized angle-bracketed tokens (e.g. `<T>`, `<String>`) as text.
+                appendConsumeSkip(raw, ctx)
+            }
+        }
+    }
+}
+
+private val IGNORED_HTML_TAGS = setOf(
+    "div", "p", "font", "center", "section", "article", "header", "footer",
+    "details", "summary", "figure", "figcaption", "picture", "source", "abbr",
+    "cite", "q", "var", "samp", "time", "ins",
+)
+
+private fun extractSafeHtmlHref(openTag: String): String? {
+    val match = HTML_HREF_REGEX.find(openTag) ?: return null
+    val rawUrl = (match.groupValues[1].ifEmpty { match.groupValues[2].ifEmpty { match.groupValues[3] } }).trim()
+    if (rawUrl.isEmpty()) return null
+    val lower = rawUrl.lowercase()
+    return if (lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("mailto:")) {
+        rawUrl
+    } else {
+        null
+    }
+}
+
+private fun inlineHtmlTagEntry(
     tag: String,
     colors: PiMarkdownColors,
     typography: PiMarkdownTypography,
-): SpanStyle? = when (tag) {
-    "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold)
-    "i", "em" -> SpanStyle(fontStyle = FontStyle.Italic)
-    "del", "s" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
-    "u" -> SpanStyle(textDecoration = TextDecoration.Underline)
-    "code" -> SpanStyle(
-        fontFamily = PiMonoFamily,
-        fontSize = typography.inlineCode.fontSize,
-        color = typography.inlineCode.color,
-        background = colors.inlineCodeBackground,
+): HtmlTagEntry? = when (tag) {
+    "b", "strong" -> HtmlTagEntry(tag, SpanStyle(fontWeight = FontWeight.Bold))
+    "i", "em" -> HtmlTagEntry(tag, SpanStyle(fontStyle = FontStyle.Italic))
+    "del", "s" -> HtmlTagEntry(tag, SpanStyle(textDecoration = TextDecoration.LineThrough))
+    "u" -> HtmlTagEntry(tag, SpanStyle(textDecoration = TextDecoration.Underline))
+    "code" -> HtmlTagEntry(
+        tag = tag,
+        style = SpanStyle(
+            fontFamily = PiMonoFamily,
+            fontSize = typography.inlineCode.fontSize,
+            color = typography.inlineCode.color,
+        ),
+        pillKind = INLINE_CODE_KIND_CODE,
     )
-    "kbd" -> SpanStyle(
-        fontFamily = PiMonoFamily,
-        fontSize = typography.inlineCode.fontSize,
-        fontWeight = FontWeight.Medium,
-        color = colors.text,
-        background = colors.inlineCodeBackground,
+    "kbd" -> HtmlTagEntry(
+        tag = tag,
+        style = SpanStyle(
+            fontFamily = PiMonoFamily,
+            fontSize = typography.inlineCode.fontSize,
+            fontWeight = FontWeight.Medium,
+            color = colors.text,
+        ),
+        pillKind = INLINE_CODE_KIND_KBD,
     )
-    "mark" -> SpanStyle(
-        background = colors.alertWarning.copy(alpha = if (colors.darkTheme) 0.26f else 0.22f),
+    "mark" -> HtmlTagEntry(
+        tag = tag,
+        style = SpanStyle(
+            background = colors.alertWarning.copy(alpha = if (colors.darkTheme) 0.26f else 0.22f),
+        ),
     )
-    "sup" -> SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = (typography.text.fontSize.value * 0.78f).sp)
-    "sub" -> SpanStyle(baselineShift = BaselineShift.Subscript, fontSize = (typography.text.fontSize.value * 0.78f).sp)
-    "span" -> SpanStyle()
+    "sup" -> HtmlTagEntry(
+        tag = tag,
+        style = SpanStyle(
+            baselineShift = BaselineShift.Superscript,
+            fontSize = (typography.text.fontSize.value * 0.78f).sp,
+        ),
+    )
+    "sub" -> HtmlTagEntry(
+        tag = tag,
+        style = SpanStyle(
+            baselineShift = BaselineShift.Subscript,
+            fontSize = (typography.text.fontSize.value * 0.78f).sp,
+        ),
+    )
+    "small" -> HtmlTagEntry(
+        tag = tag,
+        style = SpanStyle(fontSize = (typography.text.fontSize.value * 0.86f).sp),
+    )
+    "span" -> HtmlTagEntry(tag, SpanStyle())
     else -> null
+}
+
+private inline fun AnnotatedString.Builder.withHtmlDecorations(
+    ctx: InlineBuildContext,
+    crossinline block: AnnotatedString.Builder.() -> Unit,
+) {
+    val stack = ctx.htmlTagStack
+    val linkUrl = ctx.activeHtmlLinkUrl
+    if (stack.isEmpty() && linkUrl == null) {
+        block()
+        return
+    }
+    var mergedStyle = SpanStyle()
+    var pillKind: String? = null
+    for (entry in stack) {
+        mergedStyle = mergedStyle.merge(entry.style)
+        if (entry.pillKind != null) pillKind = entry.pillKind
+    }
+    val inner: AnnotatedString.Builder.() -> Unit = {
+        if (pillKind != null) {
+            pushStringAnnotation(INLINE_CODE_PILL_TAG, pillKind)
+            withStyle(mergedStyle) { block() }
+            pop()
+        } else if (stack.isNotEmpty()) {
+            withStyle(mergedStyle) { block() }
+        } else {
+            block()
+        }
+    }
+    if (linkUrl != null) {
+        withLink(LinkAnnotation.Url(linkUrl, styles = ctx.typography.textLink)) { inner() }
+    } else {
+        inner()
+    }
 }
 
 private fun AnnotatedString.Builder.appendLinkNode(
@@ -620,19 +858,21 @@ private fun AnnotatedString.Builder.appendProcessedText(raw: String, ctx: Inline
     val text = piUnescapeMarkdownText(skipped)
     if (text.isEmpty()) return
     val table = ctx.table
-    if (table == null || text.indexOf(table.markerPrefix) < 0) {
-        append(text)
-        return
-    }
-    for (seg in PiInlineMath.splitSegments(text, table.markerPrefix, table.markerSuffix)) {
-        when (seg) {
-            is PiInlineMath.Segment.Text -> append(seg.text)
-            is PiInlineMath.Segment.MathRef -> {
-                val entry = table.entries.getOrNull(seg.index) ?: continue
-                if (seg.index in ctx.readyMathIndices) {
-                    appendInlineContent(inlineMathSlotId(seg.index), entry.unicodeFallback)
-                } else {
-                    append(entry.unicodeFallback)
+    withHtmlDecorations(ctx) {
+        if (table == null || text.indexOf(table.markerPrefix) < 0) {
+            append(text)
+            return@withHtmlDecorations
+        }
+        for (seg in PiInlineMath.splitSegments(text, table.markerPrefix, table.markerSuffix)) {
+            when (seg) {
+                is PiInlineMath.Segment.Text -> append(seg.text)
+                is PiInlineMath.Segment.MathRef -> {
+                    val entry = table.entries.getOrNull(seg.index) ?: continue
+                    if (seg.index in ctx.readyMathIndices) {
+                        appendInlineContent(inlineMathSlotId(seg.index), entry.unicodeFallback)
+                    } else {
+                        append(entry.unicodeFallback)
+                    }
                 }
             }
         }
@@ -641,7 +881,9 @@ private fun AnnotatedString.Builder.appendProcessedText(raw: String, ctx: Inline
 
 private fun AnnotatedString.Builder.appendConsumeSkip(raw: String, ctx: InlineBuildContext) {
     val text = consumePrefixSkip(raw, ctx)
-    if (text.isNotEmpty()) append(text)
+    if (text.isNotEmpty()) {
+        withHtmlDecorations(ctx) { append(text) }
+    }
 }
 
 private fun consumePrefixSkip(raw: String, ctx: InlineBuildContext): String {
@@ -863,12 +1105,25 @@ internal fun resolveAstImageAlt(content: String, imageNode: ASTNode): String? {
         ?.takeIf { it.isNotEmpty() }
 }
 
-private fun stripCodeSpanBackticks(raw: String): String {
+/**
+ * CommonMark §6.1 code span normalization:
+ *  1. Strip matching opening & closing backtick runs.
+ *  2. Strip any blockquote `> ` continuation markers inside multi-line code spans.
+ *  3. Convert all line endings (`\r\n`, `\r`, `\n`) to single ASCII spaces.
+ *  4. If the result starts and ends with a space and is not all spaces, trim one space from each end.
+ */
+internal fun normalizeCodeSpanContent(raw: String): String {
     var open = 0
     while (open < raw.length && raw[open] == '`') open++
     var close = 0
     while (close < raw.length - open && raw[raw.length - 1 - close] == '`') close++
-    val inner = raw.substring(open, (raw.length - close).coerceAtLeast(open))
+    var inner = raw.substring(open, (raw.length - close).coerceAtLeast(open))
+    if (inner.indexOf('\n') >= 0 || inner.indexOf('\r') >= 0) {
+        inner = inner.replace(CODE_SPAN_QUOTE_BREAK_REGEX, "\n")
+            .replace("\r\n", " ")
+            .replace('\r', ' ')
+            .replace('\n', ' ')
+    }
     return if (inner.length >= 2 && inner.startsWith(' ') && inner.endsWith(' ') && inner.any { it != ' ' }) {
         inner.substring(1, inner.length - 1)
     } else {

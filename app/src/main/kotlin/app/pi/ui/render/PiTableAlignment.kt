@@ -81,21 +81,89 @@ private fun alignmentOf(cell: String): PiTableAlign {
 }
 
 /**
- * 估算一格文本的显示宽度（按半角字符计：CJK / 全角记 2，ASCII 记 1），忽略常见 Markdown 标记符号。
+ * 估算一格文本的显示宽度（按半角字符计：CJK / 全角记 2，ASCII 记 1）：
+ * - 还原行内数学公式哨兵为可读 Unicode 宽度，避免 `PiMathTok0X` 虚增列宽；
+ * - 剥离 Markdown 链接 URL（`[文案](https://...)` 只计 `文案`）与行内图片 URL（`![alt](url)` 按缩略图计宽）；
+ * - 忽略常见行内 HTML 标签与 Markdown 强调/转义标记。
  */
-internal fun estimateTableCellDisplayChars(raw: String): Int {
-    val trimmed = raw.trim()
+internal fun estimateTableCellDisplayChars(
+    raw: String,
+    inlineMath: PiInlineMath.Extracted? = null,
+): Int {
+    val resolved = if (inlineMath != null && raw.indexOf(inlineMath.markerPrefix) >= 0) {
+        PiInlineMath.resolveToUnicode(raw, inlineMath)
+    } else {
+        raw
+    }
+    val trimmed = resolved.trim()
     if (trimmed.isEmpty()) return 0
     var units = 0
     var i = 0
-    val limit = minOf(trimmed.length, 160)
-    while (i < limit) {
+    val n = trimmed.length
+    var scanned = 0
+    while (i < n && scanned < 180) {
         val c = trimmed[i]
-        if (c == '`' || c == '*' || c == '_') {
+        // 行内图片 `![alt](url)` -> 按紧凑缩略图估算宽度
+        if (c == '!' && i + 1 < n && trimmed[i + 1] == '[') {
+            val closeBracket = trimmed.indexOf("](", i + 2)
+            if (closeBracket >= 0) {
+                val closeParen = trimmed.indexOf(')', closeBracket + 2)
+                if (closeParen >= 0) {
+                    units += 8
+                    scanned += 8
+                    i = closeParen + 1
+                    continue
+                }
+            }
+        }
+        // Markdown 链接 `[label](url)` -> 仅计 label 宽度，忽略 URL
+        if (c == '[') {
+            val closeBracket = trimmed.indexOf("](", i + 1)
+            if (closeBracket >= 0) {
+                val closeParen = trimmed.indexOf(')', closeBracket + 2)
+                if (closeParen >= 0) {
+                    units += estimatePlainDisplayUnits(trimmed, i + 1, closeBracket)
+                    scanned += (closeBracket - i)
+                    i = closeParen + 1
+                    continue
+                }
+            }
+        }
+        // 行内 HTML 标签 `<...>` -> 跳过标签本身
+        if (c == '<') {
+            val closeAngle = trimmed.indexOf('>', i + 1)
+            if (closeAngle in (i + 1)..(i + 64)) {
+                i = closeAngle + 1
+                continue
+            }
+        }
+        // CommonMark 反斜杠转义 `\*` -> 只计被转义的字符
+        if (c == '\\' && i + 1 < n) {
+            val next = trimmed[i + 1]
+            units += if (next.code >= 0x2E80) 2 else 1
+            scanned++
+            i += 2
+            continue
+        }
+        if (c == '`' || c == '*' || c == '_' || c == '~') {
             i++
             continue
         }
         units += if (c.code >= 0x2E80) 2 else 1
+        scanned++
+        i++
+    }
+    return units
+}
+
+private fun estimatePlainDisplayUnits(text: String, start: Int, end: Int): Int {
+    var units = 0
+    var i = start
+    while (i < end) {
+        val c = text[i]
+        if (c != '`' && c != '*' && c != '_' && c != '~') {
+            units += if (c.code >= 0x2E80) 2 else 1
+        }
         i++
     }
     return units

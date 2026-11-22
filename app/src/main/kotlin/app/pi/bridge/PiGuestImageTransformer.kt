@@ -32,12 +32,26 @@ internal data class PiImageData(
 )
 
 /**
+ * Three-state image load lifecycle so Markdown blocks and inline slots distinguish
+ * in-flight loading (smooth tonal placeholder) from definitive failure (broken-image card).
+ */
+internal sealed interface PiImageLoadState {
+    data class Loading(val heightOverWidth: Float?) : PiImageLoadState
+    data class Ready(val data: PiImageData) : PiImageLoadState
+    data object Failed : PiImageLoadState
+}
+
+/**
  * Decoupled image loader contract for Pi's native Markdown renderer (zero third-party
  * markdown library types).
  */
 internal interface PiImageLoader {
     @Composable
-    fun transform(link: String): PiImageData?
+    fun loadState(link: String): PiImageLoadState
+
+    @Composable
+    fun transform(link: String): PiImageData? =
+        (loadState(link) as? PiImageLoadState.Ready)?.data
 
     /** Remembered `height / width` ratio for stable table/inline placeholder sizing. */
     fun rememberedHeightOverWidth(link: String): Float? = null
@@ -45,13 +59,20 @@ internal interface PiImageLoader {
 
 internal object PiNoOpImageLoader : PiImageLoader {
     @Composable
-    override fun transform(link: String): PiImageData? = null
+    override fun loadState(link: String): PiImageLoadState = PiImageLoadState.Failed
+}
+
+private sealed interface BitmapOutcome {
+    data object Loading : BitmapOutcome
+    data class Ready(val bitmap: Bitmap) : BitmapOutcome
+    data object Failed : BitmapOutcome
 }
 
 /**
  * Resolves markdown image links (`data:`, guest paths, `http(s)`) into viewport-sampled
  * bitmaps (or animated painters for GIF/WebP) with bounded 32 MiB process-wide LRU caching,
- * request deduplication, 45 s negative-cache backoff, and remembered aspect ratios.
+ * 64 px width bucket quantization, request deduplication, 45 s negative-cache backoff, and
+ * remembered aspect ratios.
  */
 internal class PiGuestImageTransformer(
     private val context: Context,
@@ -59,25 +80,40 @@ internal class PiGuestImageTransformer(
 ) : PiImageLoader {
 
     @Composable
-    override fun transform(link: String): PiImageData? {
-        val widthPx = boxWidthPx ?: LocalWindowInfo.current.containerSize.width
-        val bitmap by produceState<Bitmap?>(initialValue = cached(link, widthPx), link, widthPx) {
-            if (value == null) value = load(link, widthPx)
+    override fun loadState(link: String): PiImageLoadState {
+        if (link.isBlank()) return PiImageLoadState.Failed
+        val rawWidthPx = boxWidthPx ?: LocalWindowInfo.current.containerSize.width
+        val widthPx = quantizeWidthPx(rawWidthPx)
+        val initial = remember(link, widthPx) {
+            cached(link, widthPx)?.let { BitmapOutcome.Ready(it) } ?: BitmapOutcome.Loading
         }
-        val image = bitmap ?: return null
-        val animated = rememberAnimatedPainter(link, widthPx)
-        val ratio = if (image.width > 0 && image.height > 0) {
-            image.width.toFloat() / image.height.toFloat()
-        } else {
-            null
+        val outcome by produceState<BitmapOutcome>(initialValue = initial, link, widthPx) {
+            if (value is BitmapOutcome.Ready) return@produceState
+            val loaded = load(link, widthPx)
+            value = if (loaded != null) BitmapOutcome.Ready(loaded) else BitmapOutcome.Failed
         }
-        return PiImageData(
-            painter = animated ?: BitmapPainter(image.asImageBitmap()),
-            modifier = fillWidthModifier,
-            contentScale = ContentScale.Fit,
-            contentDescription = link,
-            widthOverHeight = ratio,
-        )
+        return when (val current = outcome) {
+            BitmapOutcome.Loading -> PiImageLoadState.Loading(rememberAspect(link))
+            BitmapOutcome.Failed -> PiImageLoadState.Failed
+            is BitmapOutcome.Ready -> {
+                val image = current.bitmap
+                val animated = rememberAnimatedPainter(link, widthPx)
+                val ratio = if (image.width > 0 && image.height > 0) {
+                    image.width.toFloat() / image.height.toFloat()
+                } else {
+                    null
+                }
+                PiImageLoadState.Ready(
+                    PiImageData(
+                        painter = animated ?: BitmapPainter(image.asImageBitmap()),
+                        modifier = fillWidthModifier,
+                        contentScale = ContentScale.Fit,
+                        contentDescription = link,
+                        widthOverHeight = ratio,
+                    ),
+                )
+            }
+        }
     }
 
     override fun rememberedHeightOverWidth(link: String): Float? = rememberAspect(link)
@@ -155,7 +191,13 @@ internal class PiGuestImageTransformer(
             synchronized(cache) { cache.clear() }
         }
 
+        private fun quantizeWidthPx(widthPx: Int): Int {
+            if (widthPx <= 0) return 0
+            return ((widthPx + WIDTH_BUCKET_PX - 1) / WIDTH_BUCKET_PX) * WIDTH_BUCKET_PX
+        }
+
         private val fillWidthModifier = Modifier.fillMaxWidth()
+        private const val WIDTH_BUCKET_PX = 64
         private const val MAX_ENTRIES = 64
         private const val MAX_TOTAL_BYTES = 32L * 1024 * 1024
         private const val MAX_ASPECT_ENTRIES = 128
@@ -205,5 +247,6 @@ internal fun rememberPiGuestImageTransformer(): PiImageLoader {
 @Composable
 internal fun rememberPiGuestImageTransformer(widthPx: Int): PiImageLoader {
     val context = LocalContext.current.applicationContext
-    return remember(context, widthPx) { PiGuestImageTransformer(context, widthPx) }
+    val bucket = ((widthPx.coerceAtLeast(1) + 63) / 64) * 64
+    return remember(context, bucket) { PiGuestImageTransformer(context, bucket) }
 }

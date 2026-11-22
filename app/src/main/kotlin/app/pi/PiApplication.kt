@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
+import android.webkit.WebView
 import app.pi.i18n.PiLocale
 import app.pi.i18n.PiStrings
 import app.pi.runtime.PiCrashStore
@@ -23,6 +24,9 @@ class PiApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Must be called before any WebView is constructed in the process so Chromium/Skia
+        // offscreen Mermaid captures are never clipped to the viewport tile.
+        runCatching { WebView.enableSlowWholeDocumentDraw() }
         PiCrashStore.installUncaughtExceptionHandler(this)
         // PiLocale.init() invokes the callback once synchronously when ready.
         PiLocale.init(this) { createNotificationChannels() }

@@ -20,9 +20,11 @@ import app.pi.ui.render.rich.PiFootnoteMarkdown
 import app.pi.ui.theme.PiContrast
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.CancellationToken
 import org.intellij.markdown.parser.MarkdownParser
 
 private class ParsedMarkdownDoc(
@@ -32,11 +34,23 @@ private class ParsedMarkdownDoc(
 )
 
 /**
+ * Shared stateless GFM flavour & parser instance.
+ * `MarkdownParser.doParse` keeps all parse state in call-local variables, so sharing one instance
+ * across every chat message avoids allocating fresh lexer tables and marker-block factories per row.
+ */
+internal val PiSharedGfmFlavour: GFMFlavourDescriptor = GFMFlavourDescriptor()
+internal val PiSharedMarkdownParser: MarkdownParser = MarkdownParser(
+    flavour = PiSharedGfmFlavour,
+    assertionsEnabled = false,
+    cancellationToken = CancellationToken.NonCancellable,
+)
+
+/**
  * Thresholds for synchronous frame-0 AST parsing:
  *  - Settled messages (`!streaming`): <= 2 KiB parses in <0.4 ms on ARM64, avoiding async latency.
  *  - Streaming messages (`streaming`): <= 1.5 KiB parses synchronously so initial tokens render on
- *    frame 0; longer streaming messages switch seamlessly to `Dispatchers.Default` while retaining
- *    [retainedDoc] on screen (zero raw-markdown flash, zero main-thread jank, smooth tail-follow).
+ *    frame 0; longer streaming messages switch seamlessly to a conflated `Dispatchers.Default`
+ *    worker while retaining [retainedDoc] on screen (zero raw-markdown flash, zero starvation).
  */
 private const val SYNC_PARSE_SETTLED_LIMIT = 2048
 private const val SYNC_PARSE_STREAMING_LIMIT = 1500
@@ -46,11 +60,11 @@ private const val SYNC_PARSE_STREAMING_LIMIT = 1500
  * GFM AST with zero third-party Compose renderer wrappers.
  *
  * Features:
- *  - Zero-flash dual-path parsing: synchronous on frame 0 when [immediate] or `<= 4 KiB`
- *    (billed to [piMarkdownParseBudget]); off-main-thread on `Dispatchers.Default` for huge
- *    documents while retaining the previous rendered AST on screen (no blank loading blink).
- *  - First-class inline & display LaTeX (`$...$`, `\(...\)`, `$$...$$`, `\[...\]`) across
- *    paragraphs, lists, blockquotes, GFM callout alerts, headings, and table cells.
+ *  - Zero-flash dual-path parsing: synchronous on frame 0 when [immediate] or under threshold
+ *    (billed to [piMarkdownParseBudget]); conflated off-main-thread worker on `Dispatchers.Default`
+ *    for large/streaming documents so rapid tokens never starve or cancel in-flight parses.
+ *  - First-class inline & display LaTeX (`$...$`, `\(...\)`, `$$...$$`, `\[...\]`, `\begin{...}`)
+ *    across paragraphs, lists, blockquotes, GFM callout alerts, headings, and table cells.
  *  - Full rich fence rendering (Chromium Skia Mermaid diagrams, SVG, MathJax, CSV/TSV tables,
  *    JSON/YAML/XML trees, stack traces, safe HTML previews, diffs, and 35+ language native
  *    syntax highlighting).
@@ -69,7 +83,10 @@ internal fun PiMarkdownText(
     remember(context) { PiNodeCodeHighlighter.attach(context) }
 
     val hasMathSyntax = remember(markdown) {
-        markdown.contains('$') || markdown.contains("\\(") || markdown.contains("\\[")
+        markdown.contains('$') ||
+            markdown.contains("\\(") ||
+            markdown.contains("\\[") ||
+            markdown.contains("\\begin{")
     }
     val inlineExtracted = remember(markdown, streaming, hasMathSyntax) {
         if (streaming || !hasMathSyntax) {
@@ -82,7 +99,8 @@ internal fun PiMarkdownText(
     val prepared = remember(markdown, streaming && hasMathSyntax, hasMathSyntax, inlineExtracted) {
         when {
             !hasMathSyntax -> PiLatex.PreparedMath(markdown, false)
-            inlineExtracted != null -> PiLatex.PreparedMath(inlineExtracted.markdown, false)
+            inlineExtracted != null && (inlineExtracted.hasInlineMath || inlineExtracted.hasBlockMath) ->
+                PiLatex.PreparedMath(inlineExtracted.markdown, false)
             else -> {
                 val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
                 runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
@@ -118,21 +136,19 @@ internal fun PiMarkdownText(
     val spacing = remember(profile) { piMarkdownSpacing(profile) }
     val imageLoader = rememberPiGuestImageTransformer()
 
-    val flavour = remember { GFMFlavourDescriptor() }
-    val parser = remember(flavour) { MarkdownParser(flavour) }
-
-    // Synchronous fast path for immediate rows or short content; retained async path for large/long streams.
+    // Synchronous fast path for immediate rows or short content; conflated async worker for
+    // large/long streams so rapid token bursts never cancel and starve an in-flight AST parse.
     val syncParse = if (streaming) {
         content.length <= SYNC_PARSE_STREAMING_LIMIT
     } else {
         immediate || content.length <= SYNC_PARSE_SETTLED_LIMIT
     }
-    val syncDoc = remember(content, syncParse, parser) {
+    val syncDoc = remember(content, syncParse) {
         if (!syncParse) {
             null
         } else {
             val startedNanos = if (immediate) System.nanoTime() else 0L
-            val parsed = parseDocumentSafely(parser, content)
+            val parsed = parseDocumentSafely(PiSharedMarkdownParser, content)
             if (immediate) {
                 piMarkdownParseBudget.chargeNanos(
                     nowNanos = System.nanoTime(),
@@ -146,24 +162,37 @@ internal fun PiMarkdownText(
     // Always retain the most recent valid AST across sync -> async transitions (e.g. a streaming
     // reply crossing 1.5 KiB) so the row never flashes raw Markdown or collapses to zero height.
     var retainedDoc by remember { mutableStateOf<ParsedMarkdownDoc?>(null) }
-    var parseFailed by remember(content) { mutableStateOf(false) }
+    var parseFailed by remember { mutableStateOf(false) }
 
-    if (syncDoc != null && retainedDoc !== syncDoc) {
-        SideEffect { retainedDoc = syncDoc }
+    // Conflated channel decouples incoming streaming tokens from the background parse loop:
+    // the worker finishes its current parse uninterrupted and immediately grabs the latest snapshot.
+    val asyncQueue = remember { Channel<String>(Channel.CONFLATED) }
+
+    SideEffect {
+        if (syncParse) {
+            if (syncDoc != null && retainedDoc !== syncDoc) {
+                retainedDoc = syncDoc
+                parseFailed = false
+            } else if (syncDoc == null) {
+                parseFailed = true
+            }
+        } else if (retainedDoc?.content != content) {
+            asyncQueue.trySend(content)
+        }
     }
 
-    LaunchedEffect(content, syncParse, parser) {
-        if (syncParse) {
-            parseFailed = syncDoc == null
-            if (syncDoc != null) retainedDoc = syncDoc
-            return@LaunchedEffect
-        }
-        val parsed = withContext(Dispatchers.Default) { parseDocumentSafely(parser, content) }
-        if (parsed != null) {
-            retainedDoc = parsed
-            parseFailed = false
-        } else {
-            parseFailed = true
+    LaunchedEffect(asyncQueue) {
+        for (snapshot in asyncQueue) {
+            if (retainedDoc?.content == snapshot) continue
+            val parsed = withContext(Dispatchers.Default) {
+                parseDocumentSafely(PiSharedMarkdownParser, snapshot)
+            }
+            if (parsed != null) {
+                retainedDoc = parsed
+                parseFailed = false
+            } else {
+                parseFailed = true
+            }
         }
     }
 
@@ -218,7 +247,7 @@ internal fun PiMarkdownText(
 
 private fun parseDocumentSafely(parser: MarkdownParser, content: String): ParsedMarkdownDoc? =
     runCatching {
-        val root = parser.buildMarkdownTreeFromString(content)
+        val root = parser.buildMarkdownTreeFromString(content as CharSequence)
         val refs = extractPiReferenceLinks(content, root)
         ParsedMarkdownDoc(content = content, root = root, referenceLinks = refs)
     }.getOrNull()

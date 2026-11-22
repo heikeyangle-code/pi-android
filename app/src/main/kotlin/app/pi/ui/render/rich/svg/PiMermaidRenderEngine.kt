@@ -201,8 +201,8 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     private const val MAX_CACHE_BYTES = 8 * 1024 * 1024
     private const val MAX_RASTER_ENTRIES = 12
     private const val MAX_RASTER_BYTES = 24 * 1024 * 1024
-    private const val MAX_BITMAP_SIDE = 2200
-    private const val MAX_BITMAP_PIXELS = 3_600_000L
+    internal const val MAX_BITMAP_SIDE = 2800
+    internal const val MAX_BITMAP_PIXELS = 6_000_000L
 
     /** 一次 `mermaid.render()` 的上限。选型文档建议 3–5 s，这里取上界。 */
     private const val RENDER_TIMEOUT_MS = 5_000L
@@ -310,9 +310,13 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
     /** Thread-safe cache eviction hook for [app.pi.ui.PiMemoryTrimmer]. */
     fun clearCaches() {
         if (Looper.myLooper() == Looper.getMainLooper()) {
+            cache.clear()
             rasterCache.clear()
         } else {
-            mainHandler.post { rasterCache.clear() }
+            mainHandler.post {
+                cache.clear()
+                rasterCache.clear()
+            }
         }
     }
 
@@ -762,7 +766,7 @@ internal object PiMermaidRenderEngine : PiSvgEngine {
             }
             y += stepY
         }
-        return visibleCount >= 1
+        return visibleCount >= 2 && hasContrast
     }
 
     /**
@@ -919,6 +923,11 @@ private class SvgCache(private val maxEntries: Int, private val maxBytes: Int) {
             bytes -= evicted.bytes
         }
     }
+
+    fun clear() {
+        entries.clear()
+        bytes = 0
+    }
 }
 
 // ---------------------------------------------------------------- host
@@ -946,6 +955,7 @@ private class RenderHost(
 ) {
 
     private var webView: WebView? = initialWebView
+    private var stageContainer: OffscreenStageContainer? = null
 
     private var loaded = false
     private var loadFailure: String? = null
@@ -991,9 +1001,12 @@ private class RenderHost(
             val parent = owner.window?.decorView as? ViewGroup
             if (parent != null) {
                 try {
-                    parent.addView(view, FrameLayout.LayoutParams(viewWidthPx, viewHeightPx))
-                    view.translationX = -(viewWidthPx + 1).toFloat()
-                    layoutNow(view)
+                    val container = OffscreenStageContainer(owner, viewWidthPx, viewHeightPx)
+                    container.addView(view, FrameLayout.LayoutParams(viewWidthPx, viewHeightPx))
+                    parent.addView(container, FrameLayout.LayoutParams(1, 1))
+                    container.translationX = -10000f
+                    stageContainer = container
+                    container.setStageSize(view, viewWidthPx, viewHeightPx)
                     return
                 } catch (error: RuntimeException) {
                     Log.w(TAG, "mermaid 宿主无法挂到 Activity 窗口，退化为离屏布局", error)
@@ -1123,14 +1136,16 @@ private class RenderHost(
         var bmpW = (stageCssWidth * desiredDpr).roundToInt().coerceAtLeast(1)
         var bmpH = (stageCssHeight * desiredDpr).roundToInt().coerceAtLeast(1)
         val maxSide = maxOf(bmpW, bmpH)
-        if (maxSide > 2200) {
-            val factor = 2200f / maxSide.toFloat()
+        val sideLimit = PiMermaidRenderEngine.MAX_BITMAP_SIDE
+        if (maxSide > sideLimit) {
+            val factor = sideLimit.toFloat() / maxSide.toFloat()
             bmpW = (bmpW * factor).roundToInt().coerceAtLeast(1)
             bmpH = (bmpH * factor).roundToInt().coerceAtLeast(1)
         }
         val pixels = bmpW.toLong() * bmpH.toLong()
-        if (pixels > 3_600_000L) {
-            val factor = kotlin.math.sqrt(3_600_000.0 / pixels.toDouble()).toFloat()
+        val pixelLimit = PiMermaidRenderEngine.MAX_BITMAP_PIXELS
+        if (pixels > pixelLimit) {
+            val factor = kotlin.math.sqrt(pixelLimit.toDouble() / pixels.toDouble()).toFloat()
             bmpW = (bmpW * factor).roundToInt().coerceAtLeast(1)
             bmpH = (bmpH * factor).roundToInt().coerceAtLeast(1)
         }
@@ -1156,13 +1171,16 @@ private class RenderHost(
     }
 
     private fun resizeStageView(view: WebView, widthPx: Int, heightPx: Int) {
-        // Measure & layout directly without mutating decorView LayoutParams, preventing
-        // full-Activity relayout passes on the live chat UI while capturing diagrams offscreen.
-        view.translationX = -(widthPx + 1).toFloat()
-        val wSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
-        val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY)
-        view.measure(wSpec, hSpec)
-        view.layout(0, 0, widthPx, heightPx)
+        val container = stageContainer
+        if (container != null) {
+            container.setStageSize(view, widthPx, heightPx)
+        } else {
+            view.translationX = -(widthPx + 1).toFloat()
+            val wSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
+            val hSpec = View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY)
+            view.measure(wSpec, hSpec)
+            view.layout(0, 0, widthPx, heightPx)
+        }
     }
 
     private suspend fun awaitVisualState(view: WebView) {
@@ -1214,9 +1232,16 @@ private class RenderHost(
         dead = true
         val view = webView
         webView = null
+        val container = stageContainer
+        stageContainer = null
         resumeWaiter(MermaidHostLostException("Mermaid 宿主已释放"))
+        if (view != null) {
+            (view.parent as? ViewGroup)?.removeView(view)
+        }
+        if (container != null) {
+            (container.parent as? ViewGroup)?.removeView(container)
+        }
         if (view == null) return
-        (view.parent as? ViewGroup)?.removeView(view)
         try {
             view.stopLoading()
         } catch (error: RuntimeException) {
@@ -1405,3 +1430,51 @@ private fun absoluteLength(tag: String, pattern: Regex): Int? {
 
 private fun clampDimension(value: Double): Int =
     value.roundToInt().coerceIn(1, PiSvgSanitizer.MAX_DIMENSION)
+
+/**
+ * Isolated 1x1 offscreen stage host attached once to `decorView` off-screen (`translationX = -10000f`).
+ * Locks its child [WebView] to the requested `(stageW, stageH)` even when unrelated Activity relayouts
+ * (keyboard open/close, chat scroll, inset changes) re-measure `decorView`, and resizes the stage
+ * directly without calling `requestLayout()` on `decorView`.
+ */
+private class OffscreenStageContainer(
+    context: Context,
+    initialWidthPx: Int,
+    initialHeightPx: Int,
+) : FrameLayout(context) {
+    private var stageW: Int = initialWidthPx.coerceAtLeast(1)
+    private var stageH: Int = initialHeightPx.coerceAtLeast(1)
+
+    init {
+        clipChildren = false
+        clipToPadding = false
+        isFocusable = false
+        isFocusableInTouchMode = false
+        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+    }
+
+    fun setStageSize(child: View, widthPx: Int, heightPx: Int) {
+        stageW = widthPx.coerceAtLeast(1)
+        stageH = heightPx.coerceAtLeast(1)
+        val wSpec = MeasureSpec.makeMeasureSpec(stageW, MeasureSpec.EXACTLY)
+        val hSpec = MeasureSpec.makeMeasureSpec(stageH, MeasureSpec.EXACTLY)
+        child.measure(wSpec, hSpec)
+        child.layout(0, 0, stageW, stageH)
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(1, 1)
+        val wSpec = MeasureSpec.makeMeasureSpec(stageW, MeasureSpec.EXACTLY)
+        val hSpec = MeasureSpec.makeMeasureSpec(stageH, MeasureSpec.EXACTLY)
+        for (i in 0 until childCount) {
+            getChildAt(i).measure(wSpec, hSpec)
+        }
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        for (i in 0 until childCount) {
+            getChildAt(i).layout(0, 0, stageW, stageH)
+        }
+    }
+}
