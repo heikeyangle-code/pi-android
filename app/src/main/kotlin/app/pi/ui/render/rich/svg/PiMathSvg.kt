@@ -57,7 +57,7 @@ object PiMathSvg {
      * 版本号与 `docs/plans/rich-rendering-engine-eval.md` §3 记录并实测的 4.1.3 对齐
      * （npm `mathjax@4.1.3`，Apache-2.0）。
      */
-    const val ENGINE_VERSION: String = "mathjax-4.1.3"
+    const val ENGINE_VERSION: String = "mathjax-4.1.3-fonts-1"
 
     /**
      * 把一段 TeX 渲染成经过安全校验的 SVG。

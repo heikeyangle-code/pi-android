@@ -1,5 +1,9 @@
 package app.pi.ui.render
 
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkdownParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,23 +20,84 @@ class PiRichRenderTest {
         assertEquals(2, extracted.entries.size)
         assertEquals("x_1 + x_2 = \\frac{a}{b}", extracted.entries[0].tex)
         assertEquals("\\alpha + \\beta", extracted.entries[1].tex)
-        // Markdown 下划线被哨兵保护，不暴露给 GFM 解析器
+        // Markdown 下划线被纯 ASCII 哨兵保护，不暴露给 GFM 解析器
         assertFalse(extracted.markdown.contains("x_1"))
         assertTrue(extracted.markdown.contains("**加粗**"))
 
-        // 任何非段落表面调用 resolveToUnicode 绝不泄漏私有区哨兵
-        val resolved = PiInlineMath.resolveToUnicode(extracted.markdown, extracted.entries)
-        assertFalse(resolved.contains(PiInlineMath.SENTINEL_START))
-        assertFalse(resolved.contains(PiInlineMath.SENTINEL_END))
+        // 任何非段落表面调用 resolveToUnicode 绝不泄漏哨兵
+        val resolved = PiInlineMath.resolveToUnicode(extracted.markdown, extracted)
+        assertFalse(resolved.contains(extracted.markerPrefix))
         assertTrue(resolved.contains("α + β"))
     }
 
     @Test
-    fun `normalizes standalone bracket display math and preserves code fences and inline code`() {
+    fun `real GFM MarkdownParser keeps every inline math sentinel intact inside a single leaf AST token`() {
+        val md = """
+            当${'$'}x_1 + x_2 \in \mathbb{R}${'$'}时，**${'$'}E = mc^2${'$'}**、*${'$'}\alpha + \beta${'$'}*与[${'$'}f(x)${'$'}](https://example.com)都正常。
+
+            - 列表项里的行内公式：${'$'}\mathcal{L}(\theta) = \mathbb{E}[X]${'$'}
+            1. 有序列表里的行内公式：\(\frac{1}{2}\)
+
+            > 引用块里的行内公式：${'$'}\mathfrak{g}${'$'}
+
+            ## 标题里的公式 ${'$'}a^2 + b^2 = c^2${'$'}
+
+            | 符号 | 含义 |
+            | --- | --- |
+            | ${'$'}\mathbb{N}${'$'} | 自然数 |
+        """.trimIndent()
+
+        val extracted = PiInlineMath.extract(md)
+        assertEquals(8, extracted.entries.size)
+
+        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(extracted.markdown)
+
+        // 逐个叶节点检查：每一个叶节点经 resolveToUnicode 后必须零哨兵泄漏（证明 GFMLexer 没有把哨兵切碎！）
+        val matchedIndices = mutableSetOf<Int>()
+        fun walkLeaves(node: ASTNode) {
+            if (node.children.isEmpty()) {
+                val slice = extracted.markdown.substring(node.startOffset, node.endOffset)
+                for (seg in PiInlineMath.splitSegments(slice, extracted.markerPrefix, extracted.markerSuffix)) {
+                    if (seg is PiInlineMath.Segment.MathRef) {
+                        matchedIndices.add(seg.index)
+                    }
+                }
+                val resolved = PiInlineMath.resolveToUnicode(slice, extracted)
+                assertFalse(
+                    "Leaf token leaked sentinel: '$slice' -> '$resolved'",
+                    resolved.contains(extracted.markerPrefix),
+                )
+            } else {
+                for (child in node.children) walkLeaves(child)
+            }
+        }
+        walkLeaves(tree)
+
+        // 全部 8 条行内公式都在真实 GFM AST 的单个叶节点内完整命中！
+        assertEquals((0 until 8).toSet(), matchedIndices)
+    }
+
+    @Test
+    fun `avoids sentinel collision when source markdown literally contains default marker prefix`() {
+        val md = "Literal ${PiInlineMath.DEFAULT_MARKER_PREFIX}0${PiInlineMath.DEFAULT_MARKER_SUFFIX} and \$x^2\$."
+        val extracted = PiInlineMath.extract(md)
+
+        assertTrue(extracted.hasInlineMath)
+        assertFalse(extracted.markerPrefix == PiInlineMath.DEFAULT_MARKER_PREFIX)
+        val resolved = PiInlineMath.resolveToUnicode(extracted.markdown, extracted)
+        assertTrue(resolved.contains("${PiInlineMath.DEFAULT_MARKER_PREFIX}0${PiInlineMath.DEFAULT_MARKER_SUFFIX}"))
+        assertTrue(resolved.contains("x²"))
+        assertFalse(resolved.contains(extracted.markerPrefix))
+    }
+
+    @Test
+    fun `normalizes standalone bracket display math and collapses blank lines inside block math`() {
         val md = """
             先看公式：
             \[
             \int_0^1 x^2 \, dx = \frac{1}{3}
+
+            \forall x \in \mathbb{R}
             \]
             行内代码 `${'$'}a + b${'$'}` 不该被提取。
             ```kotlin
@@ -43,8 +108,16 @@ class PiRichRenderTest {
 
         assertTrue(extracted.hasBlockMath)
         assertEquals(0, extracted.entries.size)
-        assertTrue(extracted.markdown.contains("\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n\n"))
         assertTrue(extracted.markdown.contains("`${'$'}a + b${'$'}`"))
+
+        // 真实 GFM 解析器下，规范化后的块级公式必须落在单个 PARAGRAPH 里且首尾是 $$
+        val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(extracted.markdown)
+        val paragraphs = tree.children.filter { it.type == MarkdownElementTypes.PARAGRAPH }
+        val mathParagraph = paragraphs.firstOrNull { p ->
+            val t = extracted.markdown.substring(p.startOffset, p.endOffset).trim()
+            t.startsWith("$$") && t.endsWith("$$")
+        }
+        assertTrue("Block math must stay a single PARAGRAPH in GFM AST", mathParagraph != null)
     }
 
     @Test

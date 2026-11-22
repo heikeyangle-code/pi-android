@@ -71,6 +71,12 @@
 -->
 <script>
   window.MathJax = {
+    loader: {
+      paths: {
+        "mathjax-newcm": "[mathjax]"
+      },
+      versionWarnings: false
+    },
     tex: {
       inlineMath: [["\\(", "\\)"]],
       displayMath: [["$$", "$$"]],
@@ -78,7 +84,8 @@
     },
     svg: {
       fontCache: "local",
-      linebreaks: { inline: false }
+      linebreaks: { inline: false },
+      dynamicPrefix: "[mathjax]/svg/dynamic"
     },
     startup: { typeset: false },
     options: {
@@ -92,7 +99,7 @@
     }
   };
 </script>
-<script src="tex-svg.js"></script>
+<script id="MathJax-script" src="tex-svg.js"></script>
 <script>
 /*
  * Kotlin ↔ MathJax 的桥，供 PiMathRenderEngine 使用。
@@ -142,6 +149,57 @@
     return (startup && startup.promise) || Promise.resolve();
   }
 
+  /* 本地已随包打包的 MathJax 4 newcm 动态 SVG 字形分片（16 个核心数学/符号/变体分片）。
+     列表之外的冷僻文字分片（如盲文、切罗基文、天城文等）绝不发起外部请求，而是原地优雅降级为
+     MathJax 内置的 unknown `<text>` 回退，杜绝 `dynamic file '...' failed to load` 整式失败。 */
+  var BUNDLED_DYNAMIC_FILES = {
+    "variants": true,
+    "calligraphic": true,
+    "marrows": true,
+    "double-struck": true,
+    "mshapes": true,
+    "accents": true,
+    "script": true,
+    "fraktur": true,
+    "monospace": true,
+    "shapes": true,
+    "symbols-b-i": true,
+    "accents-b-i": true,
+    "symbols": true,
+    "math": true,
+    "sans-serif": true,
+    "arrows": true
+  };
+
+  function installDynamicFontGuard(doc) {
+    try {
+      if (window.MathJax && window.MathJax.config && window.MathJax.config.loader && window.MathJax.config.loader.paths) {
+        window.MathJax.config.loader.paths["mathjax-newcm"] = "[mathjax]";
+      }
+      var font = doc && doc.outputJax && doc.outputJax.font;
+      if (!font || font.__piDynamicGuarded || typeof font.loadDynamicFile !== "function") return;
+      if (font.options) {
+        font.options.dynamicPrefix = "[mathjax]/svg/dynamic";
+      }
+      var origLoad = font.loadDynamicFile;
+      font.loadDynamicFile = function (fileObj) {
+        var name = String((fileObj && fileObj.file) || "").replace(/\.js$/, "");
+        if (!BUNDLED_DYNAMIC_FILES[name]) {
+          // 未打包的冷僻分片直接返回已完成的 Promise：getChar 已经移除了占位引用，
+          // 重试时会干净地走到 getVariantChar 的 `{ unknown: true }` `<text>` 兜底，不崩整条公式。
+          return Promise.resolve();
+        }
+        try {
+          var p = origLoad.call(this, fileObj);
+          return Promise.resolve(p).catch(function () { return undefined; });
+        } catch (ignored) {
+          return Promise.resolve();
+        }
+      };
+      font.__piDynamicGuarded = true;
+    } catch (ignored) { /* 兜底保护失败不影响已打包字形 */ }
+  }
+
   /* MathJax 4 的朗读 / 盲文 / 语义增强默认全开，且 config.options 里关掉它们**不会**落到文档对象上
      （实测 document.options.enableEnrichment 仍为 true）。开着的话每次排版都会起一个 Web Worker
      去拉 sre 数据；这里 CSP 禁了 worker，排版 Promise 就永远不返回。直接改文档选项。 */
@@ -154,6 +212,7 @@
       doc.options.enableBraille = false;
       doc.options.enableComplexity = false;
       doc.options.enableExplorer = false;
+      installDynamicFontGuard(doc);
     } catch (ignored) { /* 关不掉就让排版自己报错 */ }
   }
   function hasApi() {

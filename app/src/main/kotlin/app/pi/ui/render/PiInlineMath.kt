@@ -6,10 +6,13 @@ package app.pi.ui.render
  * ## 为什么需要哨兵编码（Sentinel Encoding）
  *
  * 如果把 `$x_1 + x_2$` 原样交给 GFM 解析器，解析器会把 `_` / `*` / `\` 解析成斜体或转义，
- * 破坏原始 TeX；而在送进解析器之前先替换成私有区数字哨兵 `\uE100<idx>\uE101`，可以同时做到：
+ * 破坏原始 TeX；而在送进解析器之前先替换成**纯 ASCII 字母数字哨兵**（如 `PiMathTok0EndTok`），可以同时做到：
  * 1. 保留段落内所有普通 Markdown 语法（`**粗体**`、`*斜体*`、`` `代码` ``、`[链接](url)`）；
  * 2. 保护公式内部的 `_` / `*` / `^` / `\` 不被 Markdown 吃掉；
- * 3. 段落渲染层（`PiInlineMathParagraph`）通过 `InlineTextContent` 把哨兵升级成真 MathJax 矢量 SVG，
+ * 3. **绝不被 `org.intellij.markdown` 的 `GFMLexer` 切碎**：`gfm.flex` 把 `{ALPHANUM}+` 合并为单个
+ *    `TEXT` 叶节点，而私有区字符（如 `\uE100`）会触发 `{ANY_CHAR}` 被切成 3 个独立叶节点，导致单叶匹配全部失效！
+ *    纯 ASCII `[A-Za-z0-9]+` 哨兵从词法层彻底保证完整落在同一叶节点内，并在提取前自动避开原文已出现的串；
+ * 4. 段落渲染层（`PiInlineMathParagraph`）通过 `InlineTextContent` 把哨兵升级成真 MathJax 矢量 SVG，
  *    而标题/表格/错误兜底等非段落表面通过 `annotator` 把哨兵安全还原为 `PiLatex.toUnicode` 近似文本，
  *    **保证屏幕上永远不会泄漏原始哨兵字符**。
  *
@@ -18,9 +21,9 @@ package app.pi.ui.render
  */
 internal object PiInlineMath {
 
-    /** 哨兵起止码位（BMP 私有区，与 PiLatex 的 E000..E002 不冲突）。 */
-    const val SENTINEL_START: Char = '\uE100'
-    const val SENTINEL_END: Char = '\uE101'
+    /** 默认纯 ASCII 字母数字哨兵前缀与后缀（保证被 GFM 词法器整块识别为单个 `{ALPHANUM}+` TEXT 叶节点）。 */
+    const val DEFAULT_MARKER_PREFIX: String = "PiMathTok"
+    const val DEFAULT_MARKER_SUFFIX: String = "EndTok"
 
     data class Entry(
         val tex: String,
@@ -32,6 +35,8 @@ internal object PiInlineMath {
         val markdown: String,
         val entries: List<Entry>,
         val hasBlockMath: Boolean,
+        val markerPrefix: String = DEFAULT_MARKER_PREFIX,
+        val markerSuffix: String = DEFAULT_MARKER_SUFFIX,
     ) {
         val hasInlineMath: Boolean get() = entries.isNotEmpty()
     }
@@ -51,9 +56,11 @@ internal object PiInlineMath {
         if (!markdown.contains('$') && !markdown.contains("\\(") && !markdown.contains("\\[")) {
             return Extracted(markdown, emptyList(), false)
         }
+        val markerPrefix = chooseCollisionFreePrefix(markdown)
+        val markerSuffix = DEFAULT_MARKER_SUFFIX
         val entries = ArrayList<Entry>()
         var hasBlockMath = false
-        val out = StringBuilder(markdown.length + 16)
+        val out = StringBuilder(markdown.length + 32)
         val n = markdown.length
         var i = 0
 
@@ -123,7 +130,7 @@ internal object PiInlineMath {
                         if (tex.isNotEmpty()) {
                             val raw = markdown.substring(i, close + 2)
                             val idx = addEntry(entries, tex, raw)
-                            out.append(SENTINEL_START).append(idx).append(SENTINEL_END)
+                            out.append(markerPrefix).append(idx).append(markerSuffix)
                             i = close + 2
                             continue
                         }
@@ -145,7 +152,7 @@ internal object PiInlineMath {
                         if (tex.isNotEmpty()) {
                             val raw = markdown.substring(i, close + 2)
                             val idx = addEntry(entries, tex, raw)
-                            out.append(SENTINEL_START).append(idx).append(SENTINEL_END)
+                            out.append(markerPrefix).append(idx).append(markerSuffix)
                             i = close + 2
                             continue
                         }
@@ -157,7 +164,7 @@ internal object PiInlineMath {
                 val match = matchInlineDollar(markdown, i)
                 if (match != null) {
                     val idx = addEntry(entries, match.tex, match.raw)
-                    out.append(SENTINEL_START).append(idx).append(SENTINEL_END)
+                    out.append(markerPrefix).append(idx).append(markerSuffix)
                     i = match.end
                     continue
                 }
@@ -171,17 +178,23 @@ internal object PiInlineMath {
             markdown = out.toString(),
             entries = entries,
             hasBlockMath = hasBlockMath,
+            markerPrefix = markerPrefix,
+            markerSuffix = markerSuffix,
         )
     }
 
     /** 把一段可能包含哨兵的文本拆分为普通文本与数学引用片段。 */
-    fun splitSegments(text: String): List<Segment> {
-        if (text.indexOf(SENTINEL_START) < 0) return listOf(Segment.Text(text))
+    fun splitSegments(
+        text: String,
+        markerPrefix: String = DEFAULT_MARKER_PREFIX,
+        markerSuffix: String = DEFAULT_MARKER_SUFFIX,
+    ): List<Segment> {
+        if (markerPrefix.isEmpty() || text.indexOf(markerPrefix) < 0) return listOf(Segment.Text(text))
         val result = ArrayList<Segment>(4)
         var cursor = 0
         val n = text.length
         while (cursor < n) {
-            val start = text.indexOf(SENTINEL_START, cursor)
+            val start = text.indexOf(markerPrefix, cursor)
             if (start < 0) {
                 result.add(Segment.Text(text.substring(cursor)))
                 break
@@ -189,26 +202,36 @@ internal object PiInlineMath {
             if (start > cursor) {
                 result.add(Segment.Text(text.substring(cursor, start)))
             }
-            val end = text.indexOf(SENTINEL_END, start + 1)
-            if (end < 0) {
-                result.add(Segment.Text(text.substring(start)))
-                break
+            val digitsStart = start + markerPrefix.length
+            var digitsEnd = digitsStart
+            while (digitsEnd < n && text[digitsEnd] in '0'..'9') digitsEnd++
+            if (digitsEnd > digitsStart && text.startsWith(markerSuffix, digitsEnd)) {
+                val idx = text.substring(digitsStart, digitsEnd).toIntOrNull()
+                if (idx != null && idx >= 0) {
+                    result.add(Segment.MathRef(idx))
+                    cursor = digitsEnd + markerSuffix.length
+                    continue
+                }
             }
-            val idx = text.substring(start + 1, end).toIntOrNull()
-            if (idx != null && idx >= 0) {
-                result.add(Segment.MathRef(idx))
-            } else {
-                result.add(Segment.Text(text.substring(start, end + 1)))
-            }
-            cursor = end + 1
+            // 未完整匹配时消费前缀首字符继续向前扫描，避免死循环
+            result.add(Segment.Text(text.substring(start, digitsStart)))
+            cursor = digitsStart
         }
         return result
     }
 
     /** 把任意含哨兵的字符串安全替换成可读 Unicode 文本（用于错误兜底/标题/表格等）。 */
-    fun resolveToUnicode(text: String, entries: List<Entry>): String {
-        if (entries.isEmpty() || text.indexOf(SENTINEL_START) < 0) return text
-        val segments = splitSegments(text)
+    fun resolveToUnicode(text: String, extracted: Extracted): String =
+        resolveToUnicode(text, extracted.entries, extracted.markerPrefix, extracted.markerSuffix)
+
+    fun resolveToUnicode(
+        text: String,
+        entries: List<Entry>,
+        markerPrefix: String = DEFAULT_MARKER_PREFIX,
+        markerSuffix: String = DEFAULT_MARKER_SUFFIX,
+    ): String {
+        if (entries.isEmpty() || text.indexOf(markerPrefix) < 0) return text
+        val segments = splitSegments(text, markerPrefix, markerSuffix)
         return buildString(text.length) {
             for (seg in segments) {
                 when (seg) {
@@ -220,6 +243,16 @@ internal object PiInlineMath {
                 }
             }
         }
+    }
+
+    private fun chooseCollisionFreePrefix(markdown: String): String {
+        var candidate = DEFAULT_MARKER_PREFIX
+        var nonce = 1
+        while (markdown.contains(candidate)) {
+            candidate = "PiMath${nonce}Tok"
+            nonce++
+        }
+        return candidate
     }
 
     private fun countTrailingNewlines(sb: StringBuilder): Int {
@@ -368,8 +401,11 @@ internal object PiInlineMath {
                 if (body.isEmpty() || looksLikeMarkdownTable(body)) return null
                 return BlockMathMatch(body, nextEnd)
             }
-            if (bodyBuilder.isNotEmpty()) bodyBuilder.append('\n')
-            bodyBuilder.append(line)
+            // 过滤多行块级公式内部的纯空行：TeX 数学模式本就忽略空行，保留空行会被 GFM 拆成两个段落导致卡片失效
+            if (trimmed.isNotEmpty()) {
+                if (bodyBuilder.isNotEmpty()) bodyBuilder.append('\n')
+                bodyBuilder.append(line)
+            }
             cursor = if (nextEnd < n) nextEnd + 1 else n
         }
         return null

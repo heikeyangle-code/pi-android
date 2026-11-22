@@ -56,8 +56,8 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** 当前 Markdown 文档提取出的行内 LaTeX 查找表（流式期间为空列表）。 */
-internal val LocalPiInlineMathTable = staticCompositionLocalOf<List<PiInlineMath.Entry>> { emptyList() }
+/** 当前 Markdown 文档提取出的行内 LaTeX 查找表（流式期间或无行内公式时为 null）。 */
+internal val LocalPiInlineMathTable = staticCompositionLocalOf<PiInlineMath.Extracted?> { null }
 
 /**
  * 含行内 LaTeX（`$...$` / `\(...\)`）的段落渲染器：
@@ -69,8 +69,11 @@ internal val LocalPiInlineMathTable = staticCompositionLocalOf<List<PiInlineMath
 @Composable
 internal fun PiInlineMathParagraph(
     model: MarkdownComponentModel,
-    entries: List<PiInlineMath.Entry>,
+    table: PiInlineMath.Extracted,
 ) {
+    val entries = table.entries
+    val markerPrefix = table.markerPrefix
+    val markerSuffix = table.markerSuffix
     val palette = PiTheme.palette
     val colors = LocalMarkdownColors.current
     val typography = LocalMarkdownTypography.current
@@ -99,8 +102,8 @@ internal fun PiInlineMathParagraph(
         val end = model.node.endOffset.coerceIn(start, model.content.length)
         model.content.substring(start, end)
     }
-    val neededIndices = remember(paragraphRaw) {
-        PiInlineMath.splitSegments(paragraphRaw)
+    val neededIndices = remember(paragraphRaw, markerPrefix, markerSuffix) {
+        PiInlineMath.splitSegments(paragraphRaw, markerPrefix, markerSuffix)
             .mapNotNull { (it as? PiInlineMath.Segment.MathRef)?.index }
             .distinct()
     }
@@ -142,12 +145,12 @@ internal fun PiInlineMathParagraph(
         with(density) { (configuration.screenWidthDp - 36).coerceAtLeast(160).dp.toSp().value }
     }
 
-    val annotated = remember(model.content, model.node, entries, readyByIndex, typography, colors, referenceLinks) {
+    val annotated = remember(model.content, model.node, table, readyByIndex, typography, colors, referenceLinks) {
         buildAnnotatedString {
             appendInlineMathAst(
                 content = model.content,
                 node = model.node,
-                entries = entries,
+                table = table,
                 readyIndices = readyByIndex.keys,
                 typography = typography,
                 colors = colors,
@@ -184,7 +187,7 @@ internal fun PiInlineMathParagraph(
                     ) {
                         val padX = metrics.horizontalPadFraction * size.width
                         val drawAreaW = (size.width - padX * 2f).coerceAtLeast(1f)
-                        val drawAreaH = size.height
+                        val drawAreaH = (size.height * metrics.contentHeightFraction).coerceAtLeast(1f)
                         val fit = min(
                             drawAreaW / ready.baseWidthPx.coerceAtLeast(1),
                             drawAreaH / ready.baseHeightPx.coerceAtLeast(1),
@@ -214,7 +217,7 @@ internal fun PiInlineMathParagraph(
 
     Text(
         text = annotated,
-        style = style,
+        style = if (style.color.alpha > 0f) style else style.copy(color = fgColor),
         inlineContent = inlineContent,
     )
 }
@@ -225,6 +228,7 @@ private class InlineBoxMetrics(
     val widthSp: Float,
     val heightSp: Float,
     val horizontalPadFraction: Float,
+    val contentHeightFraction: Float,
     val baselineOffsetFromCenterFraction: Float,
 )
 
@@ -260,49 +264,80 @@ private fun computeInlineBoxSp(
 
     val finalW: Float
     val finalH: Float
+    val scaledRawH: Float
     if (paddedW > maxWidthSp && paddedW > 0f) {
         val ratio = maxWidthSp / paddedW
         finalW = maxWidthSp
         finalH = (symmetricH * ratio).coerceAtLeast(bodyFontSizeSp * 0.95f)
+        scaledRawH = rawH * ratio
     } else {
         finalW = paddedW.coerceAtLeast(bodyFontSizeSp * 0.45f)
         finalH = symmetricH.coerceAtLeast(bodyFontSizeSp * 0.95f)
+        scaledRawH = rawH
     }
     val baselineOffsetFraction = (textCenterAboveBaseline / finalH).coerceIn(0f, 0.45f)
     val padFraction = (padSp / finalW).coerceIn(0f, 0.12f)
+    val contentHeightFraction = (scaledRawH / finalH).coerceIn(0.25f, 1f)
     return InlineBoxMetrics(
         widthSp = finalW,
         heightSp = finalH,
         horizontalPadFraction = padFraction,
+        contentHeightFraction = contentHeightFraction,
         baselineOffsetFromCenterFraction = baselineOffsetFraction,
     )
 }
 
 /**
- * 递归遍历 `PARAGRAPH` AST，保留所有行内 Markdown 格式，并将哨兵 `\uE100i\uE101` 替换为
+ * 递归遍历 `PARAGRAPH` AST，保留所有行内 Markdown 格式，并将哨兵替换为
  * 已就绪的 `appendInlineContent` 或 Unicode 近似回退。
+ *
+ * 连续的普通文本叶节点会先合并进缓冲区再解析哨兵，作为词法器单叶保证之外的双重兜底。
  */
 private fun AnnotatedString.Builder.appendInlineMathAst(
     content: String,
     node: ASTNode,
-    entries: List<PiInlineMath.Entry>,
+    table: PiInlineMath.Extracted,
     readyIndices: Set<Int>,
     typography: MarkdownTypography,
     colors: MarkdownColors,
     referenceLinks: ReferenceLinkHandler,
     htmlStack: ArrayList<SpanStyle>,
 ) {
+    val textRun = StringBuilder()
     for (child in node.children) {
-        appendInlineMathNode(
-            content, child, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
-        )
+        if (isPlainLeafTextNode(child)) {
+            textRun.append(safeSlice(content, child))
+        } else {
+            if (textRun.isNotEmpty()) {
+                appendTextWithMathSentinels(textRun.toString(), table, readyIndices)
+                textRun.setLength(0)
+            }
+            appendInlineMathNode(
+                content, child, table, readyIndices, typography, colors, referenceLinks, htmlStack,
+            )
+        }
+    }
+    if (textRun.isNotEmpty()) {
+        appendTextWithMathSentinels(textRun.toString(), table, readyIndices)
+    }
+}
+
+private fun isPlainLeafTextNode(node: ASTNode): Boolean {
+    if (node.children.isNotEmpty()) return false
+    return when (node.type) {
+        MarkdownTokenTypes.HARD_LINE_BREAK,
+        MarkdownTokenTypes.EOL,
+        MarkdownTokenTypes.BACKTICK,
+        MarkdownTokenTypes.HTML_TAG,
+        GFMTokenTypes.GFM_AUTOLINK -> false
+        else -> true
     }
 }
 
 private fun AnnotatedString.Builder.appendInlineMathNode(
     content: String,
     child: ASTNode,
-    entries: List<PiInlineMath.Entry>,
+    table: PiInlineMath.Extracted,
     readyIndices: Set<Int>,
     typography: MarkdownTypography,
     colors: MarkdownColors,
@@ -313,7 +348,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
             MarkdownElementTypes.STRONG -> {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
                     appendInlineChildrenSkippingDelimiters(
-                        content, child, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
+                        content, child, table, readyIndices, typography, colors, referenceLinks, htmlStack,
                         skipPredicate = { it.type == MarkdownTokenTypes.EMPH },
                     )
                 }
@@ -322,7 +357,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
             MarkdownElementTypes.EMPH -> {
                 withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                     appendInlineChildrenSkippingDelimiters(
-                        content, child, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
+                        content, child, table, readyIndices, typography, colors, referenceLinks, htmlStack,
                         skipPredicate = { it.type == MarkdownTokenTypes.EMPH },
                     )
                 }
@@ -331,7 +366,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
             GFMElementTypes.STRIKETHROUGH -> {
                 withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
                     appendInlineChildrenSkippingDelimiters(
-                        content, child, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
+                        content, child, table, readyIndices, typography, colors, referenceLinks, htmlStack,
                         skipPredicate = { it.type.name == "~" },
                     )
                 }
@@ -350,7 +385,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
                         background = colors.inlineCodeBackground,
                     ),
                 ) {
-                    append(PiInlineMath.resolveToUnicode(trimmed, entries))
+                    append(PiInlineMath.resolveToUnicode(trimmed, table))
                 }
             }
 
@@ -359,7 +394,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
                     .firstOrNull { it.type == MarkdownElementTypes.LINK_DESTINATION }
                     ?.let { safeSlice(content, it).trim().removePrefix("<").removeSuffix(">") }
                 val labelNode = child.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
-                appendInlineLink(dest, labelNode, content, entries, readyIndices, typography, colors, referenceLinks, htmlStack)
+                appendInlineLink(dest, labelNode, content, table, readyIndices, typography, colors, referenceLinks, htmlStack)
             }
 
             MarkdownElementTypes.FULL_REFERENCE_LINK,
@@ -368,7 +403,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
                 val textNode = child.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT } ?: labelNode
                 val labelText = labelNode?.let { safeSlice(content, it) }
                 val dest = labelText?.let { referenceLinks.find(it) }
-                appendInlineLink(dest, textNode, content, entries, readyIndices, typography, colors, referenceLinks, htmlStack)
+                appendInlineLink(dest, textNode, content, table, readyIndices, typography, colors, referenceLinks, htmlStack)
             }
 
             MarkdownElementTypes.IMAGE -> {
@@ -382,7 +417,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
                     ?.let { safeSlice(content, it).removePrefix("[").removeSuffix("]").trim() }
                     .orEmpty()
                 if (altText.isNotEmpty()) {
-                    append(PiInlineMath.resolveToUnicode(altText, entries))
+                    append(PiInlineMath.resolveToUnicode(altText, table))
                 }
             }
 
@@ -440,11 +475,11 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
             else -> {
                 if (child.children.isNotEmpty()) {
                     appendInlineMathAst(
-                        content, child, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
+                        content, child, table, readyIndices, typography, colors, referenceLinks, htmlStack,
                     )
                 } else {
                     val raw = safeSlice(content, child)
-                    appendTextWithMathSentinels(raw, entries, readyIndices)
+                    appendTextWithMathSentinels(raw, table, readyIndices)
                 }
             }
     }
@@ -453,7 +488,7 @@ private fun AnnotatedString.Builder.appendInlineMathNode(
 private fun AnnotatedString.Builder.appendInlineChildrenSkippingDelimiters(
     content: String,
     node: ASTNode,
-    entries: List<PiInlineMath.Entry>,
+    table: PiInlineMath.Extracted,
     readyIndices: Set<Int>,
     typography: MarkdownTypography,
     colors: MarkdownColors,
@@ -461,11 +496,23 @@ private fun AnnotatedString.Builder.appendInlineChildrenSkippingDelimiters(
     htmlStack: ArrayList<SpanStyle>,
     skipPredicate: (ASTNode) -> Boolean,
 ) {
+    val textRun = StringBuilder()
     for (child in node.children) {
         if (skipPredicate(child)) continue
-        appendInlineMathNode(
-            content, child, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
-        )
+        if (isPlainLeafTextNode(child)) {
+            textRun.append(safeSlice(content, child))
+        } else {
+            if (textRun.isNotEmpty()) {
+                appendTextWithMathSentinels(textRun.toString(), table, readyIndices)
+                textRun.setLength(0)
+            }
+            appendInlineMathNode(
+                content, child, table, readyIndices, typography, colors, referenceLinks, htmlStack,
+            )
+        }
+    }
+    if (textRun.isNotEmpty()) {
+        appendTextWithMathSentinels(textRun.toString(), table, readyIndices)
     }
 }
 
@@ -473,7 +520,7 @@ private fun AnnotatedString.Builder.appendInlineLink(
     dest: String?,
     labelNode: ASTNode?,
     content: String,
-    entries: List<PiInlineMath.Entry>,
+    table: PiInlineMath.Extracted,
     readyIndices: Set<Int>,
     typography: MarkdownTypography,
     colors: MarkdownColors,
@@ -482,12 +529,10 @@ private fun AnnotatedString.Builder.appendInlineLink(
 ) {
     val body: AnnotatedString.Builder.() -> Unit = {
         if (labelNode != null) {
-            for (c in labelNode.children) {
-                if (c.type == MarkdownTokenTypes.LBRACKET || c.type == MarkdownTokenTypes.RBRACKET) continue
-                appendInlineMathNode(
-                    content, c, entries, readyIndices, typography, colors, referenceLinks, htmlStack,
-                )
-            }
+            appendInlineChildrenSkippingDelimiters(
+                content, labelNode, table, readyIndices, typography, colors, referenceLinks, htmlStack,
+                skipPredicate = { it.type == MarkdownTokenTypes.LBRACKET || it.type == MarkdownTokenTypes.RBRACKET },
+            )
         } else if (!dest.isNullOrEmpty()) {
             append(dest)
         }
@@ -501,19 +546,19 @@ private fun AnnotatedString.Builder.appendInlineLink(
 
 private fun AnnotatedString.Builder.appendTextWithMathSentinels(
     raw: String,
-    entries: List<PiInlineMath.Entry>,
+    table: PiInlineMath.Extracted,
     readyIndices: Set<Int>,
 ) {
     if (raw.isEmpty()) return
-    if (raw.indexOf(PiInlineMath.SENTINEL_START) < 0) {
+    if (raw.indexOf(table.markerPrefix) < 0) {
         append(raw)
         return
     }
-    for (seg in PiInlineMath.splitSegments(raw)) {
+    for (seg in PiInlineMath.splitSegments(raw, table.markerPrefix, table.markerSuffix)) {
         when (seg) {
             is PiInlineMath.Segment.Text -> append(seg.text)
             is PiInlineMath.Segment.MathRef -> {
-                val entry = entries.getOrNull(seg.index) ?: continue
+                val entry = table.entries.getOrNull(seg.index) ?: continue
                 if (seg.index in readyIndices) {
                     appendInlineContent(inlineMathSlotId(seg.index), entry.unicodeFallback)
                 } else {

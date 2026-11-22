@@ -292,7 +292,7 @@ internal fun PiMarkdownText(
             runCatching { PiInlineMath.extract(markdown) }.getOrNull()
         }
     }
-    val inlineMathEntries = inlineExtracted?.entries ?: emptyList()
+    val activeInlineMath = inlineExtracted?.takeIf { it.hasInlineMath }
     val prepared = remember(markdown, streaming && hasMathSyntax, hasMathSyntax, inlineExtracted) {
         when {
             !hasMathSyntax -> PiLatex.PreparedMath(markdown, false)
@@ -467,7 +467,6 @@ internal fun PiMarkdownText(
     // `MarkdownParseBudget` for the measurements the 4 ms figure rests on and for why the bill
     // is elapsed time and not a character count.
     val parseStartedNanos = if (immediate) System.nanoTime() else 0L
-    val hasInlineMathSentinels = inlineMathEntries.isNotEmpty()
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides imageTransformer,
@@ -475,7 +474,7 @@ internal fun PiMarkdownText(
         // 所以正文之外那几个没传回调的 markdown 表面不受影响。
         LocalPiImageClick provides onImageClick,
         LocalPiMarkdownStreaming provides streaming,
-        LocalPiInlineMathTable provides inlineMathEntries,
+        LocalPiInlineMathTable provides activeInlineMath,
     ) {
         Markdown(
             // The state built above, not the `content` overload: the state is what makes the
@@ -488,20 +487,20 @@ internal fun PiMarkdownText(
             dimens = piMarkdownDimensRoomy,
             imageTransformer = imageTransformer,
             components = components,
-            annotator = remember(hasGrid, hasHtmlTagStart, hasInlineMathSentinels, inlineMathEntries) {
+            annotator = remember(hasGrid, hasHtmlTagStart, activeInlineMath) {
                 val hook: (AnnotatedString.Builder.(String, ASTNode) -> Boolean)? = when {
-                    !hasHtmlTagStart && !hasInlineMathSentinels -> null
-                    hasHtmlTagStart && !hasInlineMathSentinels -> piInlineHtmlAnnotate
+                    !hasHtmlTagStart && activeInlineMath == null -> null
+                    hasHtmlTagStart && activeInlineMath == null -> piInlineHtmlAnnotate
                     else -> { src, child ->
                         if (hasHtmlTagStart && PiHtml.handlesInline(child.type.name)) {
                             piInlineHtmlAnnotate(src, child)
-                        } else if (child.children.isEmpty()) {
+                        } else if (activeInlineMath != null && child.children.isEmpty()) {
                             val start = child.startOffset.coerceIn(0, src.length)
                             val end = child.endOffset.coerceIn(start, src.length)
                             val slice = src.substring(start, end)
-                            if (slice.indexOf(PiInlineMath.SENTINEL_START) >= 0) {
-                                // 非段落表面（标题 / 表格单元格 / 紧密列表等）安全还原为 Unicode 近似，绝不泄漏哨兵。
-                                append(PiInlineMath.resolveToUnicode(slice, inlineMathEntries))
+                            if (slice.indexOf(activeInlineMath.markerPrefix) >= 0) {
+                                // 非段落表面（标题 / 表格单元格等）安全还原为 Unicode 近似，绝不泄漏哨兵。
+                                append(PiInlineMath.resolveToUnicode(slice, activeInlineMath))
                                 true
                             } else {
                                 false

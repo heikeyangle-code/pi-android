@@ -64,7 +64,28 @@ private const val ASSET_URL_PREFIX = "/rich-mathjax/"
 private const val ASSET_DIRECTORY = "rich/mathjax/"
 private const val HOST_PAGE = "host.html"
 private const val HOST_PAGE_URL = "https://appassets.androidplatform.net" + ASSET_URL_PREFIX + HOST_PAGE
-private val MATH_ASSET_FILES = setOf(HOST_PAGE, "tex-svg.js")
+private val MATH_ASSET_FILES = setOf(
+    HOST_PAGE,
+    "tex-svg.js",
+    // MathJax 4.1.3 newcm 动态 SVG 字形分片（\mathbb, \mathcal, \mathscr, \mathfrak, \mathsf,
+    // \mathtt, 扩展箭头/重音/符号/运算符/变体等），100% 本地离线提供，杜绝 dynamic file failed to load。
+    "svg/dynamic/variants.js",
+    "svg/dynamic/calligraphic.js",
+    "svg/dynamic/marrows.js",
+    "svg/dynamic/double-struck.js",
+    "svg/dynamic/mshapes.js",
+    "svg/dynamic/accents.js",
+    "svg/dynamic/script.js",
+    "svg/dynamic/fraktur.js",
+    "svg/dynamic/monospace.js",
+    "svg/dynamic/shapes.js",
+    "svg/dynamic/symbols-b-i.js",
+    "svg/dynamic/accents-b-i.js",
+    "svg/dynamic/symbols.js",
+    "svg/dynamic/math.js",
+    "svg/dynamic/sans-serif.js",
+    "svg/dynamic/arrows.js",
+)
 
 /** 轮询间隔。只在有任务在飞的时候才发生，一次排版通常 1–10 次。 */
 private const val POLL_INTERVAL_MS = 16L
@@ -196,11 +217,11 @@ internal object PiMathRenderEngine : PiSvgEngine {
     /** 单个输出上限；与 [PiSvgSanitizer.MAX_BYTES] 一致，超了不送进 sanitizer。 */
     private const val MAX_SVG_BYTES = PiSvgSanitizer.MAX_BYTES
 
-    /** 等待位（不含正在渲染的那个）。 */
-    private const val MAX_PENDING = 64
+    /** 等待位（不含正在渲染的那个）；放大容量以承载单条消息内数十条行内+块级公式。 */
+    private const val MAX_PENDING = 160
 
-    private const val MAX_CACHE_ENTRIES = 48
-    private const val MAX_CACHE_BYTES = 4 * 1024 * 1024
+    private const val MAX_CACHE_ENTRIES = 160
+    private const val MAX_CACHE_BYTES = 8 * 1024 * 1024
 
     /** 一次 `typesetPromise` 的上限。MathJax 单式实测 1–30 ms，给足宿主抖动余量。 */
     private const val RENDER_TIMEOUT_MS = 5_000L

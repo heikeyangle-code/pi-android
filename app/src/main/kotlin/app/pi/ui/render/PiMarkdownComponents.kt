@@ -636,9 +636,9 @@ private fun PiParagraph(model: MarkdownComponentModel) {
     }
     // 含行内 LaTeX 哨兵的已落定段落：交给 [PiInlineMathParagraph] 渲染真矢量 MathJax SVG，
     // 同时保留段落内所有加粗/斜体/代码/链接等行内 Markdown 样式。
-    val inlineMathEntries = LocalPiInlineMathTable.current
-    if (inlineMathEntries.isNotEmpty() && bounds.second.indexOf(PiInlineMath.SENTINEL_START) >= 0) {
-        PiInlineMathParagraph(model = model, entries = inlineMathEntries)
+    val inlineMathTable = LocalPiInlineMathTable.current
+    if (inlineMathTable != null && bounds.second.indexOf(inlineMathTable.markerPrefix) >= 0) {
+        PiInlineMathParagraph(model = model, table = inlineMathTable)
         return
     }
     // 流式中**正在写的那一段**不画卡片：URL 一个字一个字出现，卡片会随着域名逐字变化并反复

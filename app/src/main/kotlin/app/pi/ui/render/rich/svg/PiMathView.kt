@@ -18,8 +18,6 @@ import app.pi.ui.render.PiRichCardFrame
 import app.pi.ui.render.rich.FenceInfo
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -353,10 +351,7 @@ fun PiMathView(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(canvasHeight)
-                                .graphicsLayer {
-                                    clip = true
-                                    compositingStrategy = CompositingStrategy.Offscreen
-                                }
+                                .clipToBounds()
                                 .pointerInput(image) {
                                     piMathTransformGestures(
                                         image = image,
@@ -432,7 +427,7 @@ internal data class PiMathDrawKey(
  * 行滚出屏幕再回来同步命中它，不再重走「渲染中 → 公式」，也就不会让行高变两次。只缓存成功结果。
  */
 internal object PiMathDrawCache {
-    private const val CAPACITY = 128
+    private const val CAPACITY = 256
     private val entries = object : LinkedHashMap<PiMathDrawKey, PiMathDraw.Ready>(CAPACITY, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PiMathDrawKey, PiMathDraw.Ready>): Boolean =
             size > CAPACITY
