@@ -16,8 +16,8 @@ import java.util.Locale
  * does [ToolOutputParse]. Everything here is a pure function over
  * `toolName`/`args`/`details`/result text — the three fields `tool_execution_start` and
  * `tool_execution_end` carry (`packages/coding-agent/src/core/agent-session.ts:819-844`;
- * the App keeps them at `rpc/src/main/kotlin/app/pi/rpc/Events.kt:478-500` and
- * `.../Transcript.kt:1279-1402`).
+ * the App keeps them in `protocol/src/main/kotlin/app/pi/protocol/Events.kt`
+ * (`ToolExecution*`) and `.../Transcript.kt`).
  *
  * **No second source of truth.** Nothing here reads a file, runs a command or asks the
  * engine anything: every string a block shows is either pi's own text or a count derived
@@ -33,7 +33,7 @@ import java.util.Locale
  * (empty, control characters, an unterminated bracket, megabytes of one line).
  *
  * **Bounded work.** These run inside `remember`, keyed on the value they read, but a
- * `bash` row republishes every 200 ms while it streams (`rpc/.../Transcript.kt:618`) and a
+ * `bash` row republishes every 200 ms while it streams (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`) and a
  * result can be megabytes, so the scan stops at [TOOL_SCAN_MAX_CHARS], lines are capped at
  * [TOOL_LINE_MAX_CHARS] (pi's own grep limit, `core/tools/truncate.ts:13`) and every list at
  * [TOOL_LIST_MAX_ENTRIES] / [TOOL_BODY_MAX_LINES]. A cap is always reported to the user,
@@ -547,7 +547,7 @@ private val lsFiles: String get() = tr("文件", "Files")
  *
  * pi carries the whole `TruncationResult` in `details.truncation` (`core/tools/bash.ts:321`;
  * shape `core/tools/truncate.ts:15-38`), and our projection keeps `details` whole
- * (`rpc/.../Transcript.kt:1223`), so every number below is pi's own. Nothing here is computed
+ * (`protocol/.../Transcript.kt`), so every number below is pi's own. Nothing here is computed
  * from our rendering, which is why a missing field stays null instead of being filled in.
  */
 internal data class ToolTruncation(
@@ -1140,7 +1140,7 @@ private fun replaceTabs(text: String): String = text.replace("\t", "   ")
  * (`dist/extensions/codemode/execute.js:394`, `:406-425`), and pi's codemode renderer draws
  * one line per call (`dist/extensions/codemode/renderer.js:26-56`). The App's reducer drops a
  * nested `tool_execution_*` lifecycle on purpose — its own row would be a phantom
- * (`rpc/.../Transcript.kt:1575-1589`) — so `details.calls` is the **only** place these calls
+ * (`protocol/.../Transcript.kt`) — so `details.calls` is the **only** place these calls
  * survive. Until now nothing read it, which is why a codemode script's tool calls, their
  * failures and their cost were invisible.
  */

@@ -19,7 +19,7 @@ import java.util.UUID
  *
  * ## Which callers get which answer
  *
- * The division of labour is DSH App's (`docs/proroot-research.md` §7.1, §9.2 item 3)
+ * The division of labour is DSH App's
  * and the reason a closed-source runtime is shippable at all: **everything on the
  * daily interactive path runs proroot when it is available** — the pi engine process
  * itself (Node and pi, the largest single cost and the one the user waits for), the

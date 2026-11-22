@@ -818,7 +818,7 @@ private val TURN_FAILURE_REASONS = setOf("length", "aborted", "error")
  * `PiSessionViewModel`'s `BASH_UPDATE_THROTTLE_MS`, documented there as "the same number
  * and the same rule as the transcript's tool-output throttle". A copy cannot be kept in
  * step by a comment, so that constant is gone and the panel imports **this** one
- * (`PiSessionViewModel`'s `import app.pi.protocol.TOOL_UPDATE_THROTTLE_MS`). `:rpc` is a
+ * (`PiSessionViewModel`'s `import app.pi.protocol.TOOL_UPDATE_THROTTLE_MS`). `:protocol` is a
  * separate Gradle module, which is why this has to be public rather than `internal`.
  */
 const val TOOL_UPDATE_THROTTLE_MS = 200L
@@ -881,7 +881,7 @@ sealed interface TranscriptChange {
  * Folds pi's event stream into an ordered list of [TranscriptItem]s.
  *
  * This is a pure state machine over events — no Android, no coroutines, no
- * clock of its own ([now] is injected) — which is why it lives in the `:rpc`
+ * clock of its own ([now] is injected) — which is why it lives in the `:protocol`
  * module and is covered by unit tests without a device.
  *
  * pi remains the single source of truth for a session; this projection exists
@@ -1326,7 +1326,7 @@ class TranscriptReducer(
         is PiEvent.CompactionEnd -> onCompactionEnd(event)
 
         // A turn ended; if the clock crossed midnight while running, the stream
-        // needs a day boundary (docs/pi-android-ui-spec.md §4.3).
+        // needs a day boundary.
         is PiEvent.TurnEnd -> if (maybeDaySeparator(now())) {
             TranscriptChange.Appended(items.lastIndex)
         } else {
@@ -1482,7 +1482,7 @@ class TranscriptReducer(
             event.type in NON_WIRE_EVENT_TYPES -> TranscriptChange.None
 
             else -> {
-                // F25 (docs/rendering-review.md): a genuinely unknown event kind is
+                // F25: a genuinely unknown event kind is
                 // made visible, exactly like an unknown assistant delta below — the
                 // two must not disagree about whether an engine upgrade degrades the
                 // UI or silently blanks it. The renderer's own
@@ -1768,7 +1768,7 @@ class TranscriptReducer(
      *  1. `parentToolCallId` —— pi 在嵌套事件的三个形状上都把它标成**必填**
      *     （`core/nested-tool-calls.ts:112-128`），而 `modes/json-event.ts:49-51` 对非
      *     `message_update` 的事件一律**原样透传**，所以它确实到达解析层
-     *     （`rpc/.../Events.kt` 的三个 `ToolExecution*` 类）。这一层不需要任何形状假设。
+     *     （`protocol/.../Events.kt` 的三个 `ToolExecution*` 类）。这一层不需要任何形状假设。
      *  2. id 形状 `<父调用 id>/<n>`（`nested-tool-calls.ts:186-190` 的
      *     `id: ${callerId}/${scope.nextId++}`）—— 只在字段缺席时才用。匹配故意收得很紧：
      *     前缀必须是本 reducer 已经见过的工具调用（[toolIndexByCallId]，只在 [reset] 里清空、

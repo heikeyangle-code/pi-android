@@ -68,7 +68,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * Nothing here parses, formats or counts. The one thing all callers must get right is that
  * their *body* is computed outside composition and remembered: a tool row recomposes on
- * every 200 ms publication (`rpc/.../Transcript.kt:618`), so nothing here may scan a result
+ * every 200 ms publication (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`), so nothing here may scan a result
  * (F31/F8 in `docs/rendering-review.md`).
  */
 
@@ -78,8 +78,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * pi's wire carries three ([ToolStatus]). The fourth is what a call a **policy or
  * approval layer stopped before it ran** looks like: pi has no "rejected" axis at
  * all, and reports the blocker's own sentence as an *error* result with no execution
- * behind it (`packages/agent/src/agent-loop.ts:644-655`; the app's own gate is the
- * blocker in this build, `app/src/main/assets/pi-extensions/pi-android-permission-gate.ts`).
+ * behind it (`packages/agent/src/agent-loop.ts:644-655`; this build ships no app-side
+ * blocker any more, so it can only come from an extension the user installed).
  * `06 §4` gives that case its own word, glyph and colour because it is not a
  * failure — nothing ran — and `docs/extension-compatibility.md` §6.2 already asks the
  * app to render it as policy rather than error. This is the rendering half of that
@@ -88,7 +88,7 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 internal enum class ToolState { Running, Success, Failed, Rejected }
 
-/** Status is a word, never only a colour (docs/pi-android-ui-spec.md §9). */
+/** Status is a word, never only a colour. */
 internal fun toolStateLabel(state: ToolState): String = when (state) {
     ToolState.Running -> tr("运行中", "Running")
     ToolState.Success -> tr("成功", "Done")
@@ -740,9 +740,9 @@ internal fun toolFooterText(item: ToolCall, state: ToolState): String? {
  * The images a tool returned, painted **after the card's body and before its footer**, and
  * **independently of whether the card is expanded**.
  *
- * F16 (`docs/rendering-review.md`): the images a tool returned were parsed into
+ * F16: the images a tool returned were parsed into
  * `ToolCall.images` and then never painted, so the row showed only the `[image]` marker
- * `rpc/Events.kt`'s `contentText` substitutes. pi paints them — `components/
+ * `protocol/.../Events.kt`'s `contentText` substitutes. pi paints them — `components/
  * tool-execution.js:266-292` builds an image component for every `content[type=image]`
  * block, appends it after the renderer's own output (`:158`, `:166-173`), and gates the
  * whole thing on the terminal's image capability rather than on `expanded`; where the

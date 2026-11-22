@@ -387,7 +387,7 @@ internal val piImageDecodeGate = ImageDecodeGate(MAX_CONCURRENT_IMAGE_DECODES)
  *
  *  - **It never hashes a key.** The keys are transcript image payloads: base64 strings
  *    of megabytes. `String.hashCode()` is O(payload) and was measured at 22.8 ms for a
- *    fresh 4 MiB string on the phone (`docs/scroll-perf-items.md` §2.2), which is the
+ *    fresh 4 MiB string on the phone, which is the
  *    reason `ImageSize.kt`'s `naturalImageAspect` KDoc already refuses to key anything
  *    on a payload hash. A `LinkedHashMap` — the shape the markdown image cache uses —
  *    hashes on every `get`, so it cannot be used here. This map scans a handful of
@@ -726,7 +726,7 @@ internal class TextMemo(maxBytes: Long) {
  * Line count of a growing blob, without re-counting the part that did not change.
  *
  * pi republishes a streaming tool row on every `tool_execution_update`, throttled to
- * 200 ms (`rpc/.../Transcript.kt:618`), and the footer's 「N 行」 reading is
+ * 200 ms (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`), and the footer's 「N 行」 reading is
  * `1 + count('\n')` over the whole result — 0.3 ms for a 2000-line result, 4.1 ms for a
  * 200 KB one, per publication, on the frame thread. A tool result only ever **grows**
  * (`output` is appended to), so the count can be carried forward: the new text starts

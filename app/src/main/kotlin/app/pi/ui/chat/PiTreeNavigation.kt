@@ -94,7 +94,7 @@ internal fun navigateOutcome(leafBefore: String?, leafAfter: String?, refused: B
  * This is the app's rebuilt conversation after a navigation, and it is the reason a
  * navigation cannot reuse the ordinary replay: `SessionFileReader.readTail` returns the
  * file's **physical** tail and `TranscriptReducer.seedFromHistory` folds whatever list it
- * is given in order (`rpc/Transcript.kt:2051-2068`). After `navigateTree` the file still
+ * is given in order (`protocol/.../Transcript.kt`). After `navigateTree` the file still
  * contains the abandoned path — `branch()`/`branchWithSummary()` never delete entries
  * (`session-manager.ts:1579-1584`、`:1600-1625`) — so a physical read would show messages
  * that are **not** in pi's active context. Filtering to the branch is what makes the rebuilt

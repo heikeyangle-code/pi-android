@@ -285,8 +285,7 @@ internal object GuestImageBytes {
     private val remoteFetchGate = Semaphore(MAX_CONCURRENT_REMOTE_FETCHES)
 
     /**
-     * 上一次取字节为什么失败，供诊断用。成功后是 `null`。与
-     * `PiHighlightClient.lastFailure` 同形，两条字节通道可以用同一种方式报告。
+     * 上一次取字节为什么失败，供诊断用。成功后是 `null`。
      */
     @Volatile
     var lastFailure: String? = null

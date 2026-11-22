@@ -14,8 +14,8 @@ import app.pi.protocol.Notice
  *    `extension_ui_request` and *block the extension* until the client answers
  *    with `extension_ui_response` carrying the same `id`. These are the reason
  *    this package exists: without an answer, `ctx.ui.confirm()` never returns and
- *    the whole pi turn is wedged (the shipped `pi-android-permission-gate.ts`
- *    calls exactly that, without a timeout, on every dangerous device action).
+ *    the whole pi turn is wedged (an extension that awaits `ctx.ui.confirm()` as a
+ *    permission gate, say, never gets past it).
  *  - **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`,
  *    `set_editor_text`) emit the same event but expect no reply; `docs/rpc.md`
  *    says the client "can display the information or ignore it".

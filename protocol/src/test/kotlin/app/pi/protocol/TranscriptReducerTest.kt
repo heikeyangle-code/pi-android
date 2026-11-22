@@ -470,7 +470,7 @@ class TranscriptReducerTest {
         r.onUserPrompt("/skill:demo")
         // Built as a raw JSON record rather than through `userEnd`, and in the
         // exact shape pi's `_expandSkillCommand` writes — `parsePiSkillBlock` is
-        // anchored on the real form (`rpc/SkillBlock.kt`).
+        // anchored on the real form (`protocol/.../SkillBlock.kt`).
         r.onEvent(
             PiEvents.parse(
                 """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"demo\" location=\"/skills/demo/SKILL.md\">\nReferences are relative to /skills/demo.\n\nthe body\n</skill>"}]}}""",

@@ -1837,7 +1837,7 @@ internal data class PiHighlightedCode(val text: AnnotatedString, val languageKno
  *
  * For all 35+ everyday languages owned natively by [PiFastCodeHighlighter], colors are computed
  * synchronously in <1 ms with zero IPC latency and zero 200 ms repaint flash. For obscure languages
- * outside the native table, falls back asynchronously to [LocalPiCodeHighlighter] (guest engine).
+ * outside the native table, falls back asynchronously to [LocalPiCodeHighlighter] (plain, uncoloured by default).
  */
 @Composable
 internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighlightedCode {

@@ -330,7 +330,7 @@ private fun SearchNavButton(
  * How often the transcript's search may re-scan while a turn is streaming.
  *
  * The same number, and the same **shape** of argument, as the transcript's tool-output
- * throttle (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`): a costly per-token
+ * throttle (`protocol/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`): a costly per-token
  * operation is bound to a repaint-sized window instead of being paid per event. It is
  * deliberately **not** that constant though — this number is sized by the scan below
  * (110 ms for 800 rows), not by the tool cadence, so sharing the value must not make one

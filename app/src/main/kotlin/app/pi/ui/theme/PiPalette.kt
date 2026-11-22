@@ -111,7 +111,7 @@ data class PiPalette(
 
     // ------------------------------------------------------- corrected tokens
     //
-    // F13 / F14 (`docs/rendering-review.md`). pi's own values are kept verbatim
+    // F13 / F14. pi's own values are kept verbatim
     // above; these five are the *only* deviations, each one the spec's own
     // "修正档" (`docs/pi-android-ui-spec.md:98` and §9's floor at `:831`), each
     // lifted only as far as the floor requires and computed once per palette.

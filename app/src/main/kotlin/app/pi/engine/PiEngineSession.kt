@@ -60,7 +60,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * pi runs inside `sdk-host`, speaking LF-delimited JSONL over stdin/stdout. The
  * process is a child of the foreground service, not of an Activity, so a turn
  * keeps running when the user leaves the screen
- * (docs/pi-android-app-design.md §7.1).
+ *.
  *
  * Five properties this class is responsible for:
  *
@@ -77,7 +77,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *     [echoUserPrompt], [seedHistory]) — goes through [publish], which hands the
  *     UI the rows that actually changed ([TranscriptPublication]). Rebuilding the
  *     whole row list per event is what made a long streaming session progressively
- *     laggier (docs/rendering-review.md F7 / RR-P7).
+ *     laggier.
  *  5. **Ownership.** the reducer and the published snapshot have one owner at a
  *     time, guarded by [transcriptLock]: the reader thread folds events under it
  *     ([handle]), the app's mutations do too ([prompt], [echoUserPrompt]), and
@@ -360,7 +360,7 @@ class PiEngineSession(
      * the ViewModel drops its reference to this session the moment it publishes
      * `Boot.Failed`. That left the diagnostic report saying the exit code was
      * "not recorded" — for the one failure the whole report exists to explain
-     * (`docs/engine-exit-review.md` §0.4).
+     *.
      *
      * `@Volatile` because [waitJob] writes it on the host's IO scope while the UI
      * thread may read it from the state collector in the same moment the state
@@ -390,7 +390,7 @@ class PiEngineSession(
      * list" (the `TranscriptChange` KDoc), but `PiEngineSession` used to throw that
      * index away and only bump a counter — so the only thing the app could do on
      * each of pi's streamed deltas was copy the whole list into a fresh `UiState`
-     * and recompose the entire screen (docs/rendering-review.md F7 / RR-P7).
+     * and recompose the entire screen.
      *
      * ## Why [change] alone is not enough
      *
@@ -636,7 +636,7 @@ class PiEngineSession(
      * A record larger than [JsonlFramer]'s cap was thrown away by the framer.
      *
      * **Why this is not silent.** The framer counts the loss (`droppedRecords`) but
-     * nothing outside `:rpc`'s own unit test reads that number, so before this the
+     * nothing outside `:protocol`'s own unit test reads that number, so before this the
      * drop was invisible: the reader simply had one fewer record and every caller went
      * on waiting. For a *response* that is the worst possible failure mode, because the
      * wait is bounded only by the request's own timeout — 120 s by default
@@ -1079,7 +1079,7 @@ class PiEngineSession(
      * for `assistant` (the `PiEvent.MessageStart` arm of `TranscriptReducer.onEvent`).
      * Without the echo the bubble the
      * user just sent would not exist until the session was reopened and replayed
-     * (docs/rendering-review.md F1).
+     *.
      *
      * ## Why [queued] suppresses the echo
      *
@@ -1157,8 +1157,8 @@ class PiEngineSession(
      * `follow_up` commands, which carry no echo, and called this by hand. They no
      * longer do — a second echo on top of [prompt]'s would render the row twice and
      * leave a stale entry in the reducer's pending-echo queue
-     * (`rpc/.../Transcript.kt:845` declares it, `:1036` records one, `:1065-1068`
-     * consumes it by matching text) — so this is now [prompt]'s publisher and
+     * (`PendingUserEcho` in `protocol/.../Transcript.kt` declares it; the reducer
+     * records one and consumes it by matching text) — so this is now [prompt]'s publisher and
      * nothing else's.
      *
      * [prompt] is the only caller, and since the queue fix it calls this only for a
@@ -1282,7 +1282,7 @@ class PiEngineSession(
     /**
      * pi's Escape: [drainQueue], then abort — and the queue contents come back to
      * the caller so the composer can restore them
-     * (docs/pi-android-ui-spec.md §7.2).
+     *.
      *
      * The abort is unconditional and comes **after** the drain, exactly as
      * `restoreQueuedMessagesToEditor({ abort: true })` orders it — the queue is

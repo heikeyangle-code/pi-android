@@ -58,7 +58,7 @@ import java.io.File
  * its CLI, and no `models.json` editor. They are branches of this stack rather
  * than groups in the catalog because the catalog is a transcription of pi's own
  * settings documents, and mixing app-only state into it would make the two
- * indistinguishable (`docs/pi-android-app-design.md` §21).
+ * indistinguishable.
  */
 @Composable
 fun PiSettingsStack(
@@ -164,13 +164,13 @@ fun PiSettingsStack(
     // destination is hosted in a `SaveableStateProvider`, so rotation and process
     // recreation used to drop the user back on 设置首页 with the search text and the open
     // group gone — while the whole point of that provider is that this screen survives
-    // (`docs/settings-audit-impl.md` §B15). All of these are String?/Boolean, so they save
+    //. All of these are String?/Boolean, so they save
     // as they are; editor state that holds a `PiSetting` deliberately does not.
     var groupId by rememberSaveable { mutableStateOf<String?>(null) }
     var highlightKey by rememberSaveable { mutableStateOf<String?>(null) }
     // The device capability screen is the one branch of this stack that is not a
     // group in pi's settings catalog — the switches grant the *phone's* abilities
-    // to the agent, and pi has no such settings (docs/pi-android-app-design.md §21).
+    // to the agent, and pi has no such settings.
     // 设置首页的「其他」一屏：终端 / Pi 文件 / 设备能力 / 扩展包 / 安全与隐私 / 开源许可。
     var other by rememberSaveable { mutableStateOf(false) }
     var deviceCapabilities by rememberSaveable { mutableStateOf(false) }

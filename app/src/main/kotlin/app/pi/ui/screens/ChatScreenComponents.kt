@@ -209,7 +209,7 @@ internal const val ARG_COMPLETION_DEBOUNCE_MS: Long = 120L
 
 
 /**
- * F34 (`docs/rendering-review.md`) / spec §4.5: how many transcript rows are rendered
+ * F34 / spec §4.5: how many transcript rows are rendered
  * at once, and how many more each "load earlier" step (or a scroll to the top) reveals.
  * The spec's number is 50 for the first paint; the same step is used for the batches,
  * so the window grows in the units the spec describes.

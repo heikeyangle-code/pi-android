@@ -12,7 +12,7 @@ import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.render.withStreamingCursor
 
 /**
- * `assistant-text` (docs/pi-android-ui-spec.md §7.4): no container at all — the
+ * `assistant-text`: no container at all — the
  * prose lands straight on the canvas, which is the whole point of "input vs
  * content" being a container difference rather than a bubble.
  *

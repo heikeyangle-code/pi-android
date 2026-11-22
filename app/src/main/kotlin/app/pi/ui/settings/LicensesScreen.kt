@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
  * This screen is **not** a transcription of a pi screen: pi has no licence
  * surface, and it has no obligation to publish one. The obligation is the
  * distributor's, so the screen, the component list and the licence texts are all
- * this app's own (`docs/known-gaps.md` §L).
+ * this app's own.
  *
  * ## Where the content comes from
  *

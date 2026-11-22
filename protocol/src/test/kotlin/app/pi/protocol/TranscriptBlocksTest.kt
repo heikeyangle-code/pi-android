@@ -14,7 +14,7 @@ import org.junit.Test
  * diff, compaction, branch summary, hook message, model change, skill, system
  * prompt, error and date separator — plus the history projection that rebuilds
  * the same stream when a session is reopened
- * (docs/pi-android-ui-spec.md §4.2 / §7.4).
+ *.
  */
 class TranscriptBlocksTest {
 

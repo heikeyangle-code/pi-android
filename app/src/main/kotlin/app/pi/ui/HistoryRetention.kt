@@ -277,7 +277,7 @@ internal fun cursorAfter(read: BackwardRead): CursorDecision = when (read) {
  * The 「加载更早」 row's label — the one place the four readings become words — or null
  * when there is no row to draw at all.
  *
- * The row is an overlay, not list item 0 (`docs/scroll-diagnosis.md` §3.4, D51), but its
+ * The row is an overlay, not list item 0, but its
  * text is unchanged by that: it still owns the `hiddenCount > 0` case, where the rows
  * above are already in memory and no file read is involved.
  *

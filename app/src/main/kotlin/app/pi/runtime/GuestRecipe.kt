@@ -11,7 +11,7 @@ import java.io.File
  * ## Why this is a separate object and not a copy
  *
  * `ProotCommand` and `ProrootCommand` differ in a short, exact list of flags and
- * variables (`docs/pi-android-app-design.md` §2.3.1 is the table). Everything the
+ * variables. Everything the
  * two recipes *agree* on is in this file, so a change to a bind reaches both
  * runtimes or neither. A second, copy-pasted bind list is the defect this exists
  * to prevent: the two would drift silently, and the symptom would be a guest that
@@ -42,7 +42,7 @@ object GuestRecipe {
      * So `ProrootCommand` respells each entry through `ProrootCommand.bindArgument` while
      * proot takes this list verbatim. That asymmetry is deliberate and is the *only* thing
      * the two builders are allowed to disagree about beyond the documented flag table
-     * (`docs/pi-android-app-design.md` §2.3.1) — the entries, their order and which flag
+     * — the entries, their order and which flag
      * carries them still come from here, so a bind added once still reaches both runtimes.
      * Guessing the convention at the call site instead would put the same bug back one
      * layer up.

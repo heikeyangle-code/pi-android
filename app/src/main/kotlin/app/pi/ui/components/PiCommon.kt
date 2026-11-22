@@ -450,7 +450,7 @@ fun PiBilledCostLine(
  * One line, **two voices**: the app's own wording in the UI face and the machine value it
  * carries in the machine face.
  *
- * Rule #7 (`docs/pi-android-ui-spec.md` §1) splits text by *who wrote it*, and a line like
+ * Rule #7 splits text by *who wrote it*, and a line like
  * `审计日志：/data/user/0/app.pi/files/audit.log` has both authors on it: the four Chinese
  * characters are ours and the path is the engine's. One face for the whole line is wrong
  * whichever face is picked — the UI face puts a path in the reading font, the machine face
@@ -507,7 +507,7 @@ fun PiMixedLine(
 
 /**
  * Empty states never say "no data". They say what the screen is for and offer
- * the one action that fills it (docs/pi-android-ui-spec.md §7.3).
+ * the one action that fills it.
  *
  * The glyph is **always the screen's own icon** — v2's prototype had a second
  * spelling here (the app's π mark for the chat's two engine states); it went away

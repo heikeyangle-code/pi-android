@@ -92,16 +92,17 @@ internal data class PiCodeSpan(val start: Int, val end: Int, val token: PiSyntax
 /**
  * The seam between the transcript and whatever actually colours code.
  *
- * It is deliberately synchronous and dependency-free: the winning backend is a
- * Node service reached over loopback (`app.pi.highlight.PiNodeCodeHighlighter`),
- * but it must stay callable from a background dispatcher with no Compose
- * involvement, so a code block can be highlighted once and cached as plain spans.
+ * It is deliberately synchronous and dependency-free, so it stays callable from a
+ * background dispatcher with no Compose involvement and a code block can be
+ * highlighted once and cached as plain spans. Languages with a native grammar are
+ * coloured by [PiFastCodeHighlighter] before this seam is consulted; the only
+ * implementation behind the seam today is [PiPlainCodeHighlighter]. The Node
+ * highlight service that used to sit behind it has been removed.
  *
- * Two obligations on callers, both learned from the backend's cost model:
+ * Two obligations on callers:
  *
  *  - **call it off the main thread** (`rememberPiHighlightedCode` uses
- *    `Dispatchers.Default`); the implementation may wait up to a few hundred
- *    milliseconds for the engine;
+ *    `Dispatchers.Default`), so an implementation is free to do real work;
  *  - **pass settled text, never a streaming prefix.** A fence that still changes
  *    on every token would make every intermediate version a cache miss and a
  *    request, which is why the caller debounces the block before asking.

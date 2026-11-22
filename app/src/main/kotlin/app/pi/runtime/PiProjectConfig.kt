@@ -11,7 +11,7 @@ import java.io.File
  * `docs/pi-sourced-lists.md`'s rule is that the app may keep a table of its own only
  * when it can say why the fact cannot be asked for. This is one of those facts: pi
  * never reports its config directory over RPC, and the RPC settings surface is
- * "files, not schema" (`docs/settings-review.md`). So the name is **transcribed**
+ * "files, not schema". So the name is **transcribed**
  * from the pinned engine:
  *
  *     CONFIG_DIR_NAME = pkg.piConfig?.configDir || ".pi"      (pi/config.ts:504)
@@ -27,7 +27,7 @@ import java.io.File
  * Transcribed **once** here, because before this file the literal appeared at seven
  * call sites, and the moment any one of them disagreed with the engine the app would
  * read or write a directory pi never looks at — the silent, confident failure shape
- * this repository keeps paying for (`docs/known-gaps.md` §M11/§M12). The value is
+ * this repository keeps paying for. The value is
  * pinned against the pinned engine by `tools/pi-contract.mjs`, next to the other
  * "the app reproduces a fact about pi" assertions.
  *

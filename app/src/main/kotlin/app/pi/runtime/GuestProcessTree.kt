@@ -8,7 +8,7 @@ package app.pi.runtime
  *
  * The proot recipe carries `--kill-on-exit`, so killing the proot process takes the
  * whole guest tree with it. proroot rejects that option outright
- * (`docs/proroot-research.md` §4.2), and its launcher is a **long-lived parent** of
+ *, and its launcher is a **long-lived parent** of
  * every guest process (`libproroot.so → bash → node`, §1.3). The app's stop sites
  * only ever called `destroyForcibly()` on the direct child, so on proroot a stop
  * would leave the entire guest tree running — one leaked Node engine per restart,

@@ -27,7 +27,7 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * `tool-execution` (docs/pi-android-ui-spec.md §7.4): the **generic** tool card, used for
+ * `tool-execution`: the **generic** tool card, used for
  * every tool pi itself has no renderer for — the extensions' tools, and anything a newer pi
  * adds (`dist/core/tools/renderers/index.js:35-46` is pi's own fallback
  * of the same shape). The eight built-ins each have their own block; see `BlockRenderer`'s
@@ -61,12 +61,12 @@ fun ToolCallBlock(
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
     // row, exactly as pi re-applies expansion to all of its children.
     var expanded by rememberSaveable(defaultExpanded) { mutableStateOf(defaultExpanded) }
-    // F17 (`docs/rendering-review.md`): the card's own toggle and the spec's
+    // F17: the card's own toggle and the spec's
     // 「展开全部」 are two different questions — the first asks "show the output at
     // all", the second "stop cutting it at 200 lines". Collapsing the card resets
     // nothing: the user asked to see the tail once and it stays visible.
     var fullOutput by rememberSaveable { mutableStateOf(false) }
-    // F31 (`docs/rendering-review.md`): these are O(output) scans on a row that
+    // F31: these are O(output) scans on a row that
     // recomposes for every streamed chunk (F8's 200 ms throttle bounds how often),
     // so they are keyed on the value they scan rather than re-run per composition.
     //
@@ -95,8 +95,8 @@ fun ToolCallBlock(
     // (`packages/coding-agent/src/core/tools/bash.ts:321`) and as the sentence it
     // appends to the text itself (`:326`, `:328`, and
     // `packages/coding-agent/src/core/messages.ts:94-95` for the message form).
-    // Both already reach this row — `rpc/Events.kt:468` copies pi's text block
-    // verbatim through `contentText` and `rpc/Transcript.kt:1223` keeps `details`
+    // Both already reach this row — `protocol/.../Events.kt` copies pi's text block
+    // verbatim through `contentText` and `protocol/.../Transcript.kt` keeps `details`
     // whole — so the only place the path could be lost is this file.
     val fullOutputPath = remember(item.details, item.output) { fullOutputPathOf(item.details, item.output) }
     val notice = remember(fullOutputPath, truncation, PiLocale.isZh) { truncationNotice(fullOutputPath, truncation) }
@@ -132,7 +132,7 @@ fun ToolCallBlock(
             else -> headLines(bodyText, COLLAPSED_OUTPUT_LINES)
         }
     }
-    // F31 (`docs/rendering-review.md`): the footer's parts list + `joinToString`
+    // F31: the footer's parts list + `joinToString`
     // used to be rebuilt on every composition, and its `lineCount` scanned the
     // whole output each time. It depends only on the row's scalar fields, so it is
     // built once per output change.
@@ -494,7 +494,7 @@ fun ToolCallBlock(
 
 /**
  * Spec §4.2's collapsed budget for a long tool result, and its hard ceiling for
- * the inline surface. F17 (`docs/rendering-review.md`): this used to be 400 with
+ * the inline surface. F17: this used to be 400 with
  * no path to the remainder — a `bash` log past the cap was silently incomplete.
  * The card's toggle now shows these lines and 「展开全部」 shows the rest; past
  * [MAX_OUTPUT_BYTES] the block no longer paints the body, but it *does* keep pi's

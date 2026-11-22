@@ -224,7 +224,7 @@ fun SettingsGroupScreen(
             setting = openEditor,
             store = store,
             // The sheet must start from the value the row showed: the 运行时 rows render a
-            // `RuntimeFacts` override, not the store value (`docs/settings-audit-impl.md` §B4).
+            // `RuntimeFacts` override, not the store value.
             valueOverrides = valueOverrides,
             knownThemes = knownThemes,
             themeNotes = themeNotes,

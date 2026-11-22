@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * Event parsing must be total: anything pi can say — including things this
  * build has never heard of — has to land on a typed case or [PiEvent.Unknown].
- * A parse failure may never propagate (docs/pi-android-ui-spec.md §1, principle 7).
+ * A parse failure may never propagate.
  */
 class EventsTest {
 

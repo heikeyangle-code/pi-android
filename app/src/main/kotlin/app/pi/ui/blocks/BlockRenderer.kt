@@ -38,13 +38,13 @@ import app.pi.protocol.UserMessage
  * `else -> NoticeBlock("暂不支持的内容块")` this used to carry was unreachable: an
  * unknown *item* cannot exist, and the case that can — a newer pi's *event* —
  * never reaches this function, it is dropped in the reducer (`PiEvent.Unknown`,
- * `rpc/Transcript.kt:961-965`). The honest place for the "upgrade the app" row is
+ * `protocol/.../Transcript.kt`). The honest place for the "upgrade the app" row is
  * therefore that reducer branch, not here; leaving the branch in place only made
  * a newer item subtype compile silently instead of failing the build. A future
  * kind must be added to this `when` (and the `else` kept absent) so the compiler
  * names every place that needs it.
  *
- * F19 (`docs/rendering-review.md`): this function used to declare five optional
+ * F19: this function used to declare five optional
  * callbacks and its only caller supplied none of them, so five affordances were
  * unreachable while the blocks kept rendering labels for them. One has a target in
  * the app and is supplied (`onBranchClick`); the others had no target at all — no
@@ -82,7 +82,7 @@ fun BlockRenderer(
      * picture, a tool's screenshot, or an image written in a message's own markdown
      * (the assistant's body and the user's own bubble both render through
      * [app.pi.ui.render.PiMarkdownText]). It is the target F19
-     * (`docs/rendering-review.md`) said was missing when it deleted the old
+     * said was missing when it deleted the old
      * `onImageClick`; now that [PiImageViewer] exists, the callback has somewhere to
      * go and is supplied by `ChatScreen`. Null keeps every image inert.
      */
@@ -119,7 +119,7 @@ fun BlockRenderer(
             ThinkingBlockBlock(item, modifier, thinkingDefaultExpanded)
         }
 
-        // P2-1 (`docs/capability-gap.md` §4.9): pi gives every built-in tool its own
+        // P2-1: pi gives every built-in tool its own
         // renderer pair (`core/tools/renderers/index.ts:34-44` — read, bash, powershell,
         // edit, write, grep, find, ls), so each one gets its own block here rather than one
         // generic card. Every other tool goes to the generic card, which is exactly the set

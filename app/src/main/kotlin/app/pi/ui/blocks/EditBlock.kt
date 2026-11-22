@@ -21,7 +21,7 @@ import app.pi.ui.theme.PiTheme
  * carried (`:108-111`: `result.details.diff` → `renderDiff`), or by the error text on
  * failure (`:97-106`). In this app the diff is already its own transcript row — the reducer
  * lifts `details.diff` out of the call and appends a [app.pi.protocol.ToolDiff] behind the card
- * (`rpc/.../Transcript.kt:1405-1442`), which `BlockRenderer` draws with `DiffBlock`. So this
+ * (`protocol/.../Transcript.kt`), which `BlockRenderer` draws with `DiffBlock`. So this
  * block is exactly the half pi's renderer draws from the call: the title, and the error when
  * there is one.
  *

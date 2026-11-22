@@ -244,16 +244,13 @@ object DeviceBridgeController {
     }
 
     /**
-     * Copy the shipped extension next to pi's other extensions, in both the host
-     * agent dir and the rootfs copy. Without this the tools simply do not exist for
-     * the agent, so it is part of "start", not a separate chore for the app.
+     * Nothing is copied any more: the only Android extension, `pi-android-bridge`, is
+     * precompiled into `host.bundle.mjs` as the official `builtin:pi-android-bridge`
+     * factory. What is left is a one-time upgrade cleanup of the copies older builds
+     * wrote (`agent/extensions`, the rootfs copy, `opt/pi/android-extensions`, and the
+     * patched terminal `pi` wrapper), skipped in O(1) while the APK stamp is unchanged.
      *
-     * The stamp is a **content fingerprint** of the asset tree ([assetFingerprint]),
-     * not a hand-bumped constant. `ASSET_VERSION` remains only as the fallback for
-     * the case where the package's assets cannot be read at all, which is strictly
-     * the old behaviour rather than a new failure.
-     *
-     * @return a short description, e.g. `已安装` / `已是最新` / `失败: …`
+     * @return a short description, e.g. `已是最新…` / `已清理旧版扩展副本…` / `清理旧版扩展失败: …`
      */
     fun installExtensionAssets(context: Context): String {
         val paths = PiPaths(

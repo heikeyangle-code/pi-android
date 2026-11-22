@@ -5,7 +5,7 @@ package app.pi.runtime
  *
  * `Proot` is the app's pinned Termux proot recipe and the **only** one that is ever
  * used by the install/maintenance path. `Proroot` is the opt-in, closed-source,
- * faster runtime (`docs/proroot-research.md`).
+ * faster runtime.
  */
 enum class GuestEngine {
     Proot,

@@ -23,7 +23,7 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 
 /**
- * `skill-invocation` (docs/pi-android-ui-spec.md §7.4): a card headed
+ * `skill-invocation`: a card headed
  * 技能 /skill:name with an expand arrow; expanding shows the SKILL.md body as
  * markdown — pi's expanded branch is a `Markdown`
  * (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:36-45`)

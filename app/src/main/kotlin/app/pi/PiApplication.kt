@@ -17,7 +17,7 @@ import app.pi.runtime.PiCrashStore
  * Deliberately thin: the engine is *not* started here. Starting a Node runtime
  * inside `Application.onCreate` would stall the first frame, and on Android the
  * engine belongs to a foreground service, not to whichever process happens to
- * be alive (docs/pi-android-app-design.md §10).
+ * be alive.
  */
 class PiApplication : Application() {
 

@@ -476,7 +476,7 @@ fun PiNumberEditorSheet(
     // only moved when the text parsed, so typing `abc` (or a number too large for `Int`) and
     // tapping 保存 wrote the **previous** value with no message at all, and typing an
     // out-of-range number showed one value while saving a clamped one
-    // (`docs/settings-audit-impl.md` §B6).
+    //.
     var typed by remember(initial) { mutableStateOf(initial?.toString() ?: "") }
     var problem by remember(initial) { mutableStateOf<String?>(null) }
     val parsed = parseEditedInt(typed)
@@ -638,7 +638,7 @@ fun PiNumberEditorSheet(
                         // "Restore the default" is a **deletion** (`PiSettingsStore.remove`), which
                         // is pi's own "unset": the file must not end up with `"key": null`, because
                         // pi's `parseTimeoutSetting` throws on `null` and `pi --mode rpc` then fails
-                        // to start (`docs/settings-audit-impl.md` §B1).
+                        // to start.
                         onSet(null)
                         onDismiss()
                     },
@@ -835,7 +835,7 @@ fun PiListEditorSheet(
      * acceptable. Supplied by the host from `PiSetting.validateEntries`, which applies pi's
      * own rules for the object-valued rows: a `compaction.modelOverrides` entry that pi cannot
      * read makes pi throw on every turn's compaction check, and a line without `=` was silently
-     * dropped by our own parser (`docs/settings-audit-impl.md` §B5).
+     * dropped by our own parser.
      */
     validate: (List<String>) -> String? = { null },
 ) {

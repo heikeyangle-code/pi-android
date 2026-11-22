@@ -14,7 +14,7 @@ import kotlin.math.roundToInt
  * Unpacks the bundled runtime on first launch, and keeps it in step with the
  * packaged payloads afterwards **without deleting anything the user owns**.
  *
- * Two trees, deliberately separated (docs/pi-android-app-design.md §19.1):
+ * Two trees, deliberately separated:
  *  - `<files>/pi` holds user data — sessions, settings, extensions, credentials,
  *    workspaces — and must survive an app update untouched.
  *  - `<files>/pi/runtime` is volatile: it is what a payload change may rewrite.
@@ -1557,7 +1557,7 @@ class RuntimeProvisioner(
      * is worse than one that ships. Both binaries are static musl builds, so
      * they run in the guest regardless of libc.
      *
-     * ## git: installed, and exactly how far it reaches (`docs/known-gaps.md` K2)
+     * ## git: installed, and exactly how far it reaches
      *
      * pi's package manager supports four source kinds — npm, git, an explicit URL
      * and a path — and the git one shells out to a bare `git`:

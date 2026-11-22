@@ -278,7 +278,7 @@ sealed interface PiEvent {
          * pi renders every `content` block of type `image`
          * (`components/tool-execution.ts`), so a screenshot tool or a `read` of a
          * PNG is a picture there. The bytes cannot be decoded without an image
-         * loader (`docs/known-gaps.md` A3), but the payload is preserved here so
+         * loader, but the payload is preserved here so
          * the transcript can at least list what came back.
          */
         val resultImages: List<PiImage> = emptyList(),

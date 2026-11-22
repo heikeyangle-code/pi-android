@@ -62,7 +62,7 @@ import app.pi.ui.theme.PiSpacing
  * is the sheet's 「选择文字」. The attachment grid that opens the full-screen viewer
  * ([onImageClick]) is unchanged.
  *
- * F15 (`docs/rendering-review.md`): pi sends the user's own text through
+ * F15: pi sends the user's own text through
  * `Markdown` with `userMessageText` as `defaultTextStyle.color`
  * (`components/user-message.ts:40-56`), so a pasted fence or `**bold**` used to
  * reach the screen as source here and as prose in every assistant message.

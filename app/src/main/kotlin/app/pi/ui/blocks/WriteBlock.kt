@@ -32,7 +32,7 @@ import app.pi.ui.theme.PiTheme
  * call in that state says so in this app's words.
  *
  * Everything is parsed once per `args` — a tool row recomposes every 200 ms while anything
- * streams (`rpc/.../Transcript.kt:618`).
+ * streams (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`).
  */
 @Composable
 internal fun WriteBlock(

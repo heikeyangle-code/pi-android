@@ -1,10 +1,10 @@
 package app.pi.protocol
 
 /**
- * Pure-JVM locale switch for `:rpc` user-facing strings (date separators,
+ * Pure-JVM locale switch for `:protocol` user-facing strings (date separators,
  * error/compaction/branch notices, session entry summaries, flag errors).
  *
- * Defaults to Chinese (`true`) so bare-JVM `:rpc:test` assertions stay unchanged;
+ * Defaults to Chinese (`true`) so bare-JVM `:protocol:test` assertions stay unchanged;
  * `:app` syncs this flag immediately inside `PiLocale.init()` and whenever the
  * user switches language in Settings → Appearance → Language.
  */

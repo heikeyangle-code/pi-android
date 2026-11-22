@@ -42,7 +42,7 @@ package app.pi.engine
  *       clearing/editing the row, does) - which is why "reinstall the app" is the
  *       wrong answer for this branch;
  *    2. a packaged engine whose extension set no longer matches the App's launch
- *       flags, i.e. a payload change nobody reconciled (`docs/pi-contract.md`).
+ *       flags, i.e. a payload change nobody reconciled.
  *  - `not found` / `@file arguments are not supported` - the launch arguments
  *    themselves are wrong. Not reachable today (the App passes neither `--model`
  *    nor positional files), which is exactly why it is worth naming if it ever

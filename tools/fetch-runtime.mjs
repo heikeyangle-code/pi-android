@@ -568,7 +568,7 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *     把结尾不完整的转义序列留到下一块。App 有自己的 SGR 解析器（`rpc/…/Ansi.kt`，按
  *     `ansi-to-html.ts` 写的），它作用在**完整结果 / 整行**上、不走分片流，所以不适用。
  *  5. **App 够不着的其余变化**：`syntax-highlight.ts` 改成按行调用 formatter（1.0.4 修"多行字符串
- *     与注释只有第一行有颜色"；那是 pi 自己的 TUI 高亮器，App 的高亮走 `pi-highlight` 扩展 +
+ *     与注释只有第一行有颜色"；那是 pi 自己的 TUI 高亮器，App 的高亮走原生 `PiFastCodeHighlighter` +
  *     自己的作用域映射）、`renderers/edit.ts` 与 `outputPad`（TUI 内边距）、`read.ts` 的
  *     `outputSchema` / `structuredContent`（codemode 拿图片块）、`image-resize*.ts` 给 worker 回包
  *     打标签（`node --watch` 下 Node 自己往同一通道发消息；App 不跑 `--watch`，且

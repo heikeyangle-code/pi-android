@@ -8,7 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * Editing a pi settings document as a JSON tree.
  *
- * This lives in the protocol module for one reason: `:rpc` has no Android
+ * This lives in the protocol module for one reason: `:protocol` has no Android
  * dependency, so this logic — the part that can silently corrupt a user's
  * configuration — is covered by unit tests that run on any JDK. The same
  * functions on the Android side could only be tested through a full Gradle
@@ -120,7 +120,7 @@ object SettingsDocument {
      * read/bash/edit/write.
      *
      * Pure and public so the rule can be pinned by a JVM test without a
-     * filesystem, which is why this object lives in `:rpc` at all.
+     * filesystem, which is why this object lives in `:protocol` at all.
      *
      * Null mirrors pi's `undefined`: an absent override keeps the base. An
      * empty override list is *not* special-cased, faithfully to pi — in

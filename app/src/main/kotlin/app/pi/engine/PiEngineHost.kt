@@ -92,7 +92,7 @@ class PiEngineHost(private val appContext: Context) {
      * The proroot launch behind the engine currently attached, when there is one.
      *
      * Kept so that stopping the engine can stop **its guest tree**: proroot rejects
-     * `--kill-on-exit` (`docs/proroot-research.md` §4.2) and `PiEngineSession.close()`
+     * `--kill-on-exit` and `PiEngineSession.close()`
      * destroys only the direct child, so without this every restart or exit would
      * orphan `bash` and a Node engine, each still holding the session file and the
      * agent directory. Null on proot, where the launcher takes its children with it.
@@ -596,7 +596,7 @@ class PiEngineHost(private val appContext: Context) {
             // 就是它们在 rootfs 里的宿主目录，靠根前缀就能到，不需要挂载。那两个 bind
             // 正是让 `git` 在 proroot 下不可用的东西：`scandir`/`mkstemp`/`mkdtemp` 在
             // 任何"宿主源是本应用私有目录"的 bind 下都返回 `ENOENT`
-            // (`docs/proroot-scandir-defect.md`)，而 `.git/tXXXXXX` 就创建在工作区里。
+            //，而 `.git/tXXXXXX` 就创建在工作区里。
             //
             // **外部工作区（用户在手机上选的 `/storage/...` 目录）相反：必须有 bind。**
             // `GuestWorkspacePath.under` 把它们映射成 `/workspace/storage/emulated/0/Foo`，

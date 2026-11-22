@@ -124,7 +124,7 @@ class GuestCommand(private val layout: AgentLayout) {
      *        and writes the trust key from `process.cwd()`.
      * @param timeoutMs hard cap. On expiry the process tree is stopped —
      *        `--kill-on-exit` on proot, [GuestTreeReaper] on proroot, because
-     *        proroot rejects that option (`docs/proroot-research.md` §4.2) — and
+     *        proroot rejects that option — and
      *        [Outcome.timedOut] is set. The app never reports a timeout as success.
      *
      * ## The runtime, and the one retry
@@ -247,7 +247,7 @@ class GuestCommand(private val layout: AgentLayout) {
         handle?.resolveLauncherPid(process = process)
 
         // proroot's launcher refuses a bad argument set **immediately** and exits with
-        // its usage line (`docs/proroot-research.md` §4.2). Sampling a short grace
+        // its usage line. Sampling a short grace
         // window is what turns that into a fallback instead of a failed install: a
         // real command that is still running after the grace costs nothing extra,
         // because the long wait below then starts where this one left off.
@@ -385,7 +385,7 @@ class GuestCommand(private val layout: AgentLayout) {
      * 0, and writing the `packages` entry where the engine would never look. Binding would
      * fix that too — but it would put a bind mountpoint exactly where `npm install` writes,
      * and proroot's `scandir`/`mkstemp`/`mkdtemp` fail anywhere under such a bind
-     * (`docs/proroot-scandir-defect.md`). [PiAgentDirContract.misleadingAgentDirBinds] is
+     *. [PiAgentDirContract.misleadingAgentDirBinds] is
      * the replacement check: with the directory itself correct, the only thing left worth
      * asserting is that nothing redirects that guest path.
      */

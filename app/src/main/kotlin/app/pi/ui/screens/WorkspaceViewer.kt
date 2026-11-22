@@ -788,18 +788,18 @@ private fun EmptyFileBody(fileName: String) {
  * ## 语法着色（稿子的 `CodeView` 是逐段上色的，`workspace-final.html:1025-1046`）
  *
  * 用的是**现成**的那条高亮通道 —— `blocks/ToolBodyText.SourceLines` 与 markdown 码块
- * 共用的 `rememberPiHighlightedCode`（引擎里的 highlight.js）。没有任何新的服务、客户端、
- * 线程池或端口，也没有新的请求节奏：
+ * 共用的 `rememberPiHighlightedCode`（原生 `PiFastCodeHighlighter`）。没有任何新的服务、
+ * 客户端、线程池或端口，也没有新的请求节奏：
  *
  *  - **整份正文问一次**。请求的文本就是行号切片的那份文本，所以字符偏移天然对齐；**不是**
  *    每行一次 —— 多行结构（注释块、字符串）会因此错色，而且请求数会变成行数量级。
  *  - **按行惰性切片**。整块结果是一段 `AnnotatedString`，只有**可见行**才做一次
  *    `subSequence`；行首偏移预先算成一个 `IntArray`（一个对象、每行一个 int），所以 5000 行
  *    不会预生成 5000 个对象，`LazyColumn` 的结构一行没动。
- *  - **高亮服务自己的上限照旧**（>64 KiB 或 >400 行不上色，见 `PiNodeCodeHighlighter`），
+ *  - **高亮器自己的上限照旧**（>64 KiB 不上色，见 `PiFastCodeHighlighter.MAX_FAST_CHARS`），
  *    这一屏不为查看器抬预算；超限就是原来的单色。
- *  - **引擎没起来 → 空 spans → 单色**，与这一屏原来**完全一样**：不提示、不重试、不占位
- *    （`PiCodeLanguage.isUnspecified` 时那条路连请求都不发）。
+ *  - **语言不在原生语法表 → 空 spans → 单色**，与这一屏原来**完全一样**：不提示、不重试、
+ *    不占位（`PiCodeLanguage.isUnspecified` 时那条路连请求都不发）。
  *  - **编辑态不上色**：`EditBody` 走自己的 `BasicTextField`，这里根本不会被调用。
  */
 @Composable
@@ -825,8 +825,8 @@ private fun CodeBody(lines: List<String>, totalLines: Int?, truncated: Boolean, 
         }
         out
     }
-    // 引擎知道这门语言时，它没包进 span 的字符按 pi 的规矩保持正文色；不知道（或引擎不在）
-    // 时就是这一屏原来那一个颜色。
+    // 高亮器知道这门语言时，它没包进 span 的字符按 pi 的规矩保持正文色；不知道（或没有
+    // 原生语法）时就是这一屏原来那一个颜色。
     val baseColor = if (highlighted.languageKnown) palette.text else MaterialTheme.colorScheme.onSurface
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

@@ -529,7 +529,7 @@ internal fun PiSessionViewModel.forkFromImpl(entryId: String) = forkAt(entryId, 
  * **Why this needs its own resolver.** The block-action menu only knows the
  * row's *transcript key* (`UserMessage.key`), and that key is pi's entry id
  * only on the replay path: `TranscriptReducer.seedFromHistory` keys a
- * projected block off the entry it came from (`rpc/Transcript.kt:2020-2029`),
+ * projected block off the entry it came from (`protocol/.../Transcript.kt`),
  * but the live path that draws the bubble the instant the user hits send
  * mints a synthetic one — `nextKey("user")` = `user-<epochMillis>-<n>`
  * (`Transcript.kt:982`, `:1010`). pi's `fork` looks the id up in the session
@@ -800,7 +800,7 @@ internal fun PiSessionViewModel.navigateToImpl(
  * entries they are given in order, and neither walks `parentId`:
  * [SessionFileReader.readTail] returns the file's *physical* tail, and
  * `TranscriptReducer.seedFromHistory` folds whatever list it receives
- * (`rpc/Transcript.kt:2051-2068`). After `navigateTree` the file still holds the
+ * (`protocol/.../Transcript.kt`). After `navigateTree` the file still holds the
  * abandoned path — `branch()`/`branchWithSummary()` never delete entries
  * (`session-manager.ts:1374-1416`) — so either path would paint messages that are **not**
  * in pi's context, which is exactly the "half a screen of old data" this refetch exists

@@ -364,8 +364,7 @@ internal fun ChatBody(
     // Picker: `ActivityResultContracts.GetContent()` (the SAF document picker) with
     // `*/*`. Chosen over the Android 13 Photo Picker because (a) it needs no storage
     // or media permission at all — the system grants a per-URI read to this app for
-    // exactly the file the user picked, which is the same model the app already uses
-    // for directory grants (`DeviceSafStore`), and (b) it is available on every API
+    // exactly the file the user picked, and (b) it is available on every API
     // level this app supports without a backport dependency, and covers file
     // providers as well as the gallery.
 
@@ -636,7 +635,7 @@ internal fun ChatBody(
     // while a command runs, and its absence of change at rest is why it costs nothing then:
     // the value is null and never moves.
     val nowMs = state.nowMs
-    // F34 (`docs/rendering-review.md`) / spec §4.5: a long session opens on its last
+    // F34 / spec §4.5: a long session opens on its last
     // [TRANSCRIPT_WINDOW_STEP] rows and grows that window upwards in the same steps.
     // This is a **rendering** window only — the reducer keeps every row, which is the
     // whole reason "load earlier" can be local. pi cannot answer the question this
@@ -836,7 +835,7 @@ internal fun ChatBody(
     // **The trigger is the part that has to be right.** It used to be a long-lived
     // `snapshotFlow { listState.layoutInfo … }`, chosen so the effect could not be
     // starved per token the way `LaunchedEffect(state.revision, …)` with a suspending
-    // `scrollToItem` could (`docs/streaming-review.md` §2.1/§2.2). But an effect that
+    // `scrollToItem` could. But an effect that
     // *observes the layout* and then *requests a scroll* is an effect whose own output
     // can write its input: `requestScrollToItem` ends in a measure pass, a measure pass
     // writes `LazyListLayoutInfo`, and that write is what the observation was watching.
@@ -1665,7 +1664,7 @@ internal fun ChatBody(
                 // Compose animate the row that changed while streaming instead of
                 // recomposing the list.
                 //
-                // F33 (`docs/rendering-review.md`): without a `contentType` the
+                // F33: without a `contentType` the
                 // `LazyColumn` cannot reuse a slot when the block kind changes, so
                 // scrolling a long mixed session re-inflates every row it passes.
                 // The item types are already distinct sealed subtypes, which is

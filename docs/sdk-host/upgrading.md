@@ -35,7 +35,7 @@ node tools/pi-upgrade-audit.mjs --report build/pi-upgrade-report.md
 | 4. 主题令牌与配色 | `dark.json` / `light.json` 逐键逐值 diff + `theme.js` 变更 | `PiPalette.kt`, `PiThemeFiles.kt`, `colors.xml`, `ui/theme.mjs` |
 | 5. 内建命令与 CLI Flags | `BUILTIN_SLASH_COMMANDS` + `cli/args.js` `--flag` 集合 diff | `PiSlashCommands.kt`, `commands/catalog.mjs`, `PiPreSpawnConfig.kt`, `OpenArgsFactory.kt` |
 | 6. 工具、渲染器、图片预算、信任 | `core/tools/*`, `renderers/*`, `image-resize-core.js`, `project-trust.js` | `ReadBlock.kt` 等 8 张工具卡、`ToolOutputParse.kt`, `AttachmentBudget.kt`, `ChatAttachments.kt`, `controller.mjs` |
-| 7. Runtime / Session / 事件面 | `AgentSessionRuntime`/`AgentSession`/`SessionManager`/`rpc-types` `.d.ts` 与实现 diff | `controller.mjs`, `commands/session.mjs`, `rpc/Events.kt`, `rpc/Transcript.kt` |
+| 7. Runtime / Session / 事件面 | `AgentSessionRuntime`/`AgentSession`/`SessionManager`/`rpc-types` `.d.ts` 与实现 diff | `controller.mjs`, `commands/session.mjs`, `protocol/.../Events.kt`, `protocol/.../Transcript.kt` |
 | 8. 官方模型目录与 Provider | `pi-ai/dist/providers/data` `schemaVersion`、provider 增删、`env-api-keys.js` | `commands/model.mjs`, `ui/models/*` |
 | 9. TUI 与内置扩展兼容 | `pi-tui/dist/tui.d.ts`, `pi-mcp`, `lovely-mermaid`, `highlight.js` | `ui/surfaces.mjs`, `commands/mcp.mjs`, `app/src/main/assets/pi-extensions/*` |
 
@@ -67,11 +67,11 @@ node tools/pi-upgrade-audit.mjs --report build/pi-upgrade-report.md
   - 若上游新增 SDK 宿主专用能力（如 1.6.0 的 `AgentSessionRuntime.takeUnreportedDiagnostics()`、`packageCommandOutput: "capture"`），在 `controller.mjs` / `commands/*` 接入，并在 `docs/sdk-host/protocol.md` 登记新增事件/字段。
   - 若 `sdk-host` 新引入了任何上游 `dist/` 内部路径，**必须**同步加入 `tools/sdk-host/contract.mjs` 的 `internals` 表。
 - **内置扩展**（`app/src/main/assets/pi-extensions/`）：
-  - 重点核查 `pi-android-bridge`（工具注册/生命周期）、`pi-android-permission-gate.ts`、`pi-highlight`（`highlight.js` / `lovely-mermaid` 兼容）。
+  - 重点核查 `pi-android-bridge`（工具注册/生命周期）；它是唯一的内置扩展，随 `host.bundle.mjs` 预编译为 `builtin:pi-android-bridge`。
 
 ---
 
-### 第 4 步：适配协议层（`rpc/`）与 Android App 层（`app/`）
+### 第 4 步：适配协议层（`protocol/`）与 Android App 层（`app/`）
 
 按审计报告第 3、4、5、6、7、8 项逐条落地：
 
@@ -110,7 +110,7 @@ python3 tools/check-nested-comments.py
 
 推送到 `main` 后，等待 GitHub Actions **全部 6 个 Job 绿色通过**：
 
-1. `Protocol core (JVM unit tests)`（`:rpc:test`）
+1. `JVM unit tests (:protocol & :app)`（`:protocol:test` 与 `:app` 单测）
 2. `SDK Host (real Pi SDK contract & tests)`（`contract.mjs` + `test.mjs` ×3）
 3. `Static safety guards (Kotlin & Android APIs)`
 4. `tawcroot`

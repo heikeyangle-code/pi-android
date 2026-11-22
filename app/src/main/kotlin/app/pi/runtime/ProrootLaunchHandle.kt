@@ -34,7 +34,7 @@ import java.io.File
  * readable by its owner and is set before it runs, so the match is exact and
  * independent of timing; `/proc/<pid>/environ` was already the documented way the
  * reference implementation's launcher environment is inspected
- * (`docs/proroot-research.md` §8.1). The token reaches the guest too, which is
+ *. The token reaches the guest too, which is
  * harmless — nothing reads it but this class.
  *
  * The resolved pid is also paired with the process's `starttime`

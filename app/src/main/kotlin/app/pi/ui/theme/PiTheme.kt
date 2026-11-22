@@ -149,7 +149,7 @@ object PiSpacing {
 
     // ------------------------------------------------- the block-interior scale
     //
-    // F29 (`docs/rendering-review.md`): the blocks under `ui/blocks/**` carried 60
+    // F29: the blocks under `ui/blocks/**` carried 60
     // raw `dp` literals, so two rows that should read as the same component
     // differed by 2dp for no stated reason. These are *the app's own* names for
     // the values those literals already had — no number changes, no spec row is
@@ -218,7 +218,7 @@ object PiSpacing {
      * their header row (spec §7.4 gives those rows no height; 20dp is the row the
      * three of them already drew).
      *
-     * F28 (`docs/rendering-review.md`): the error card passed 36dp for the same
+     * F28: the error card passed 36dp for the same
      * element and the thinking block passes its own 32dp (spec §7.4: 「收起：一行
      * 32dp」). The 36dp matched nothing (pi draws no stripe at all, so there is no
      * upstream value to copy) and was therefore unified onto this token.
@@ -426,7 +426,7 @@ internal fun TextStyle.piPrecise(): TextStyle = copy(
  * wrote uses the system font — except the transcript's Markdown body, whose
  * family the renderer overrides with the bundled serif at the consumption site
  * (`render/PiMarkdownTheme.kt`) — and everything a *machine* emitted uses
- * monospace; that split is the app's rule #7 (docs/pi-android-ui-spec.md §1).
+ * monospace; that split is the app's rule #7.
  *
  * ## The five sizes, and why they are these five (`06 §2` 字号 5 档)
  *

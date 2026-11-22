@@ -52,7 +52,7 @@ object Ansi {
      * the exception in captured tool output, so the runs are long and the per-character
      * `append` was the whole cost. Measured on the transcript's own case — a 2000-line
      * shell result with colour on a fifth of its lines, 68 KB — this is the difference
-     * between 2.4 ms and roughly half that on the phone (`docs/scroll-perf-items.md` §2);
+     * between 2.4 ms and roughly half that on the phone;
      * the input is still scanned once for the escape character itself
      * ([containsEscapes]) and once for the runs, and a string with no escapes at all is
      * returned as-is, exactly as before.

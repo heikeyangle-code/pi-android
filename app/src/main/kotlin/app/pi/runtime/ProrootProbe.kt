@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
  * ## Why a gate exists
  *
  * proroot is closed source and cannot be audited, and its failure mode is silent
- * rather than loud (`docs/proroot-research.md` §5.P0-2). "The files are present" says
+ * rather than loud. "The files are present" says
  * nothing about whether path translation works on *this* device with *these* guest
  * binaries, so the switch does not mean "prefer proroot": it means "use proroot **if a
  * real invocation proves it works here**" (§6.2 step 5, and §9.6 step 1, which is the

@@ -80,7 +80,7 @@ class AgentLayout(
     // is pi's. There is nothing to bind any more — `paths.agentDir` *is* the guest's
     // `/root/.pi/agent`, a rootfs path — and emitting it would put a bind mountpoint
     // exactly where `npm install` writes, which is where proroot's
-    // `scandir`/`mkstemp`/`mkdtemp` fail (`docs/proroot-scandir-defect.md`).
+    // `scandir`/`mkstemp`/`mkdtemp` fail.
     // [app.pi.packages.PiAgentDirContract.misleadingAgentDirBinds] is the replacement
     // check: the agreement is now structural, so the only thing worth asserting is that
     // nothing redirects that guest path somewhere else.

@@ -27,7 +27,7 @@ import kotlinx.serialization.json.JsonElement
  * (`core/settings-manager.ts:632-661`). A `null` in the file is *present* — and for
  * `httpIdleTimeoutMs`/`websocketConnectTimeoutMs`/`compaction.reserveTokens` its parser
  * throws on it (`:186-196`, `:854-880`), which is how the settings UI used to stop
- * `pi --mode rpc` from starting at all (`docs/settings-audit-impl.md` §B1). So every
+ * `pi --mode rpc` from starting at all. So every
  * "restore the default" / "clear" path in the UI goes through [remove]; none of them
  * may write `JsonNull`.
  *

@@ -23,7 +23,7 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * `compaction` (docs/pi-android-ui-spec.md §7.4): a full-width `customMessageBg` card whose
+ * `compaction`: a full-width `customMessageBg` card whose
  * label row states what happened. The summary is collapsed to a two-line plain-text preview
  * and expands to the full markdown document in place — the split pi's own
  * `compaction-summary-message.ts:40-57` makes, for the same reason.

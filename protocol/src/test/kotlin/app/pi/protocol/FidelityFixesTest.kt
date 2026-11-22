@@ -13,7 +13,7 @@ import org.junit.Test
 
 /**
  * Pins the fidelity fixes found by the adversarial review
- * (`docs/fidelity-review.md`), each against the pi source that justifies it.
+ *, each against the pi source that justifies it.
  *
  * These are all cases where the wire carries something the projection used to
  * throw away, so the tests assert the *projected row*, not just the parse.

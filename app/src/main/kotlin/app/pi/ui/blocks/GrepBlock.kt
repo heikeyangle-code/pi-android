@@ -41,7 +41,7 @@ import app.pi.ui.theme.numeric
  * answers `null` so the caller draws the generic card instead.
  *
  * Parsed once per result (`remember`), because a tool row recomposes every 200 ms while
- * anything streams (`rpc/.../Transcript.kt:618`); the painted list is capped at
+ * anything streams (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`); the painted list is capped at
  * [TOOL_LIST_MAX_ENTRIES] and says how many matches it left out.
  */
 @Composable

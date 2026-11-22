@@ -33,7 +33,7 @@ internal enum class TranscriptGap {
  * ## 为什么按"顺序"判定，而不是按行 key 的前缀
  *
  * 任务书建议用 key（"助手那一组行共用同一个前缀，例如 `a1` / `a1-1`"）。那个形状
- * **只存在于历史重放那一条路**：`rpc/Transcript.kt` 的 `onHistoryMessage` 让一个
+ * **只存在于历史重放那一条路**：`protocol/.../Transcript.kt` 的 `onHistoryMessage` 让一个
  * pi 条目的多个块共用 `entryId`，所以是 `a1`、`a1-1`、`a1-2`。实时那条路给**每个块
  * 一个新 key**（`Transcript.kt:987` 的 `nextKey`：前缀 + 当前毫秒 + 自增序号，
  * `AssistantText` / `ThinkingBlock` 都在 `:1379`、`:1398` 用它），同一个助手回合的

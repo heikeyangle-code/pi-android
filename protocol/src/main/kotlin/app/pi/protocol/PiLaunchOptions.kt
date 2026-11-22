@@ -33,7 +33,7 @@ package app.pi.protocol
  *  - [noContextFiles] → `--no-context-files` (`src/cli/args.ts:194`), which turns
  *    off pi's discovery of `AGENTS.md` / `CLAUDE.md`. pi has no `settings.json`
  *    key for it, so it is one of the few pre-spawn switches with no duplicate
- *    source of truth (`docs/pre-spawn-config.md`).
+ *    source of truth.
  *  - [noExtensions] / [noSkills] / [noPromptTemplates] / [noThemes] →
  *    `--no-extensions` / `--no-skills` / `--no-prompt-templates` / `--no-themes`
  *    (`src/cli/args.ts:169`, `:188`, `:190`, `:192`), the four resource-discovery
@@ -43,7 +43,7 @@ package app.pi.protocol
  *    what the switch means (`core/resource-loader.ts:452`/`:556`: only
  *    `cliEnabledExtensions` survive, and the app passes none). The App's own
  *    "keep the shipped ones, drop the rest" wish is a different app-side feature;
- *    it does not belong in this flag (`docs/pre-spawn-config.md` §2.2).
+ *    it does not belong in this flag.
  *
  *  - [continueSessionId] → `--session-id <id>`: which conversation this **process**
  *    starts on. pi's own semantics are exactly the ones this app needs — *"Use exact
@@ -117,7 +117,7 @@ data class PiLaunchOptions(
      * switch turns **all** of them off, device layer included. That is deliberate:
      * the flag is exposed 1:1, and "keep the app's own extensions while hiding the
      * user's" is a separate app-side feature that must not be smuggled in through
-     * `-e` (`docs/pre-spawn-config.md` §2.2).
+     * `-e`.
      *
      * **0.99.0 changed what "all of them" covers.** pi's own built-in extensions —
      * `mcp`, `codemode`, `tool-search` and `llama.cpp` — used to sit outside this

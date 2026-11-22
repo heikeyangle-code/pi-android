@@ -43,7 +43,7 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 
 /**
- * `tool-diff` (docs/pi-android-ui-spec.md §7.4): path plus `+N −N` up top, then
+ * `tool-diff`: path plus `+N −N` up top, then
  * the hunks. Every line carries a 16dp symbol column (`+`, `-`, space) in
  * addition to its colour, and the two **changed** kinds carry an 8% wash — the
  * spec requires the symbol because colour alone must never be the only signal.
@@ -407,7 +407,7 @@ private fun diffPlan(hunks: List<DiffHunk>, maxLines: Int): List<DiffRow> {
     for (hunk in hunks) {
         if (budget <= 0) break
         // A file-level header hunk is recognised by its **lines**, not by its blank
-        // header: `parsePiDiff` (`rpc/.../Transcript.kt`) also returns a blank-headed
+        // header: `parsePiDiff` (`protocol/.../Transcript.kt`) also returns a blank-headed
         // hunk, but that one carries real `+`/`-` lines — pi's readable diff has no
         // `@@` to name a hunk with. `DiffHunk.isFileHeader` cannot tell the two
         // apart, so the kind test does.

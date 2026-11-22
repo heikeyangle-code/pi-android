@@ -893,7 +893,7 @@ private class RasterCache(private val maxEntries: Int, private val maxBytes: Int
 }
 
 /**
- * 条数 + 字节双上限的访问序 LRU（形状同 `PiMermaidMemo`）。
+ * 条数 + 字节双上限的访问序 LRU。
  *
  * 只在主线程访问。`LinkedHashMap(accessOrder = true)` 连 `get` 都会改结构，所以这个类
  * 不声明线程安全，也不假装线程安全。

@@ -9,9 +9,7 @@ package app.pi.protocol
  * pi's parser has a small, exact table for the flags it does not know
  * (`cli/args.ts:227-241`), and the app has to reproduce it rather than approximate
  * it: the user writes a string, and "what pi would have done with `pi <that
- * string>`" is the whole contract. Every rule below cites the line it copies, and
- * `app/src/test/kotlin/app/pi/rpc/ExtensionFlagArgsCheck.kt` pins each one on a
- * bare JVM (registered as `extension-flags`).
+ * string>`" is the whole contract. Every rule below cites the line it copies.
  *
  * ## The table, line by line
  *

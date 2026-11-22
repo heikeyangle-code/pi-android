@@ -39,8 +39,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * No new data class, no parse branch, no schema knowledge: everything here reads the
  * `Unknown` entry's raw JSON. A `context_edit` the app later decides to model can delete
  * the special case and keep the generic body; a *different* new type needs no code at all.
- * Android-free (stdlib + kotlinx.serialization through `PiJson`), which is what lets
- * `app/src/test/kotlin/app/pi/rpc/SessionEntryDetailCheck.kt` compile it on a bare JVM.
+ * Android-free (stdlib + kotlinx.serialization through `PiJson`), so it compiles on a bare JVM.
  */
 object SessionEntrySummary {
 

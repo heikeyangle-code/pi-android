@@ -20,7 +20,7 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * `hook-message` (docs/pi-android-ui-spec.md §7.4): an extension-injected
+ * `hook-message`: an extension-injected
  * custom message. It must be unmistakably *not* the user and *not* the model, so
  * it gets the `customMessageBg` surface, a `customMessageLabel` stripe and the
  * mono `customType` label — three channels at once.

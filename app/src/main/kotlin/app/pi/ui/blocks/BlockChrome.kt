@@ -55,7 +55,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Shared chrome for the 14 conversation blocks (docs/pi-android-ui-spec.md §7.4).
+ * Shared chrome for the 14 conversation blocks.
  *
  * The page margin and the block rhythm belong to the `LazyColumn` that renders
  * the stream (spec §7.4: `assistant-text` 左右内边距 0): it supplies both the
@@ -360,7 +360,7 @@ internal fun AccentStripe(
 
 /**
  * The one expand affordance: a word plus a state glyph. Text is required —
- * colour alone never carries the state (docs/pi-android-ui-spec.md §9).
+ * colour alone never carries the state.
  *
  * This is a **label**, not a hit target: pi's toggle is the content region (see
  * [ToggleContent]), so leaving this inert keeps one gesture per block instead of
@@ -625,7 +625,7 @@ internal fun ToggleContent(
  */
 private val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
 
-/** Clock shown once per turn (docs/pi-android-ui-spec.md §4.6). */
+/** Clock shown once per turn. */
 internal fun formatClock(ts: Long): String =
     Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(CLOCK_FORMAT)
 
@@ -656,7 +656,7 @@ internal fun lineCount(text: String): Int =
  *
  * The allocation is the whole point of this function. [ToolCallBlock] asks that
  * question about a tool result on every composition whose `output` changed, and a
- * `bash` row changes every 200 ms while it streams (`rpc/.../Transcript.kt:618`);
+ * `bash` row changes every 200 ms while it streams (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`);
  * the old spelling therefore encoded the whole result — up to pi's own 50 KiB /
  * 2000-line cap, and up to our 200 KiB rendering budget — into a throwaway byte
  * array on the frame thread, once per publication, to answer a boolean.

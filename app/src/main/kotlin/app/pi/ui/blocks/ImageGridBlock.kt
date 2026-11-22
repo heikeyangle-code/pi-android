@@ -43,12 +43,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * `message-images` (docs/pi-android-ui-spec.md §7.4): one image fills the width,
+ * `message-images`: one image fills the width,
  * two to four make a 2x2 grid, more than four show a grid with a `+N` badge.
  * 12dp radius.
  *
  * **Every cell is a tap target that opens the picture.** The viewer
- * ([PiImageViewer]) is the surface F19 (`docs/rendering-review.md`) recorded as
+ * ([PiImageViewer]) is the surface F19 recorded as
  * missing — the `onImageClick` parameter it deleted is back because the thing it
  * promised now exists. The tap is handled *here*, on the cell, not by any ancestor:
  * Compose hit-tests the deepest node first, so a cell's `clickable` claims the tap
@@ -112,7 +112,7 @@ import kotlinx.coroutines.withContext
  * decode, that height never changes either.
  *
  * The bytes are already here: `PiImage` carries base64 inline
- * (`rpc/Commands.kt:13`), so the cell decodes them with the platform codec and
+ * (`protocol/.../Messages.kt`), so the cell decodes them with the platform codec and
  * only falls back to a labelled placeholder when the payload is not decodable.
  * Decoding runs on [Dispatchers.IO] — a base64 image is not composition work — under
  * [piImageDecodeGate], so a fling cannot start a dozen screenshot decodes at once, and is

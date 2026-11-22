@@ -27,7 +27,7 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 
 /**
- * `branch-summary` (docs/pi-android-ui-spec.md §7.4): a `customMessageBg` card
+ * `branch-summary`: a `customMessageBg` card
  * labelled 分支摘要 with the branch id. Clicking either jumps to that branch
  * (when the host provides [onClick]) or expands the summary in place.
  *
@@ -93,7 +93,7 @@ fun BranchSummaryBlock(
                         Text(
                             text = branchId,
                             style = PiTheme.text.monoSmall,
-                            // F12 (`docs/rendering-review.md`): `dim` is 2.89:1 on
+                            // F12: `dim` is 2.89:1 on
                             // this card's `customMessageBg`, under spec §9's 3:1
                             // metadata floor. `muted` is 4.20:1 on a card surface,
                             // and the token stays pi's own.
@@ -103,7 +103,7 @@ fun BranchSummaryBlock(
                         )
                     }
                 }
-                // F19 (`docs/rendering-review.md`): now that the host supplies
+                // F19: now that the host supplies
                 // `onClick`, the row itself jumps to the session tree (spec §7.4
                 // branch-summary 点击跳转), so the label has to carry the expand —
                 // otherwise the summary body would become unreachable. A nested

@@ -336,13 +336,13 @@ object ProrootCommand {
         val argv = mutableListOf<String>()
         argv += paths.prorootLauncher().absolutePath
         // Kept from the proot recipe: without it a guest `link()` is EACCES
-        // (`docs/proroot-research.md` §5.P1-3). proroot grants a real hard link
+        //. proroot grants a real hard link
         // where proot emulates one, so this flag means "allow the guest to link at
         // all" under both runtimes, not "emulate it".
         argv += "--link2symlink"
         argv += "-0"
         // `-r` / `-w`: the long spellings `--rootfs=` / `--cwd=` are proot-only and
-        // make proroot exit with its usage line (`docs/proroot-research.md` §4.2).
+        // make proroot exit with its usage line.
         //
         // **`-r` keeps `PiPaths.rootfs`'s own spelling — this is a reverted change, and the
         // revert has its own evidence.** It was briefly canonicalised here on the theory that

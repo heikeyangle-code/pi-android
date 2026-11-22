@@ -35,7 +35,7 @@ import app.pi.ui.theme.PiTheme
  *    text in pi, the report is its warning line.
  *
  * The body is parsed once per (args, output) — a tool row recomposes on every 200 ms
- * publication while anything streams (`rpc/.../Transcript.kt:618`), so nothing in here may
+ * publication while anything streams (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`), so nothing in here may
  * scan a result (F31/F8 in `docs/rendering-review.md`).
  */
 @Composable

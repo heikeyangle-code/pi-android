@@ -8,7 +8,7 @@ import java.io.File
 
 /**
  * Reaps a guest process tree after the launcher is gone — the replacement for
- * proot's `--kill-on-exit`, which proroot rejects (`docs/proroot-research.md` §4.2).
+ * proot's `--kill-on-exit`, which proroot rejects.
  *
  * ## What was wrong before
  *

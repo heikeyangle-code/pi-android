@@ -84,7 +84,7 @@ package app.pi.runtime
  * header ([LAUNCH_FAILURE_HEADER]), so the failure sentence quotes proroot instead of
  * guessing about it. Everything else keeps the readings above.
  *
- * ## Why perl and not python3 (`docs/proroot-research.md` §6.5 ②)
+ * ## Why perl and not python3
  *
  * That section's probe uses `python3` + `ctypes`. `python3` is **not** in the
  * shipped payload: `tools/fetch-runtime.mjs`'s payload list has no python artefact,

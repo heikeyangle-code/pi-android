@@ -51,7 +51,7 @@ import java.util.concurrent.atomic.AtomicLong
  *  3. **A write is a read-modify-write inside pi's lock.** [update] re-reads the
  *     document under `<file>.lock` before applying one key, which is what pi itself
  *     does; without it, a whole stale document was written back and a concurrent
- *     writer's key disappeared with no error (`docs/settings-audit-impl.md` §B2/§B3).
+ *     writer's key disappeared with no error.
  *
  * ## One document per file, process-wide
  *
@@ -154,7 +154,7 @@ class PiSettingsFileStore(
      * scope shows through (`settings-manager.ts:632-661`). Writing `null` instead is not the
      * same thing: pi's `parseTimeoutSetting` treats `null` as "present and unparseable" and
      * throws (`:186-196`), which is how the settings UI used to make `pi --mode rpc` fail to
-     * start (`docs/settings-audit-impl.md` §B1). `SettingsDocument.removePath` prunes the
+     * start. `SettingsDocument.removePath` prunes the
      * parents it empties, so `compaction.reserveTokens` does not leave `"compaction": {}`.
      */
     override fun remove(key: String) {
@@ -262,7 +262,7 @@ class PiSettingsFileStore(
     /** Pi SDK `SettingsManager` 明确只读全局 `settings.json` 的键（项目层覆盖会被 SDK 忽略）。 */
     private fun isGlobalOnlyKey(key: String): Boolean = key in GLOBAL_ONLY_KEYS
 
-    // Delegated to `:rpc`'s SettingsDocument, which is unit-tested on a bare JDK.
+    // Delegated to `:protocol`'s SettingsDocument, which is unit-tested on a bare JDK.
     // Keeping one implementation matters: a second copy of merge/lookup/set here
     // would be free to drift, and drift in this code corrupts user config.
     private fun lookup(document: JsonObject, key: String): JsonElement? =
@@ -284,7 +284,7 @@ class PiSettingsFileStore(
      * The lock is per **canonical file path**, so two store instances over one file share it.
      * That is the whole point: `WorkspaceStore` builds its own instance for the global
      * document, and before this it could write the document it had cached before a settings
-     * change and erase that change (`docs/settings-audit-impl.md` §B2).
+     * change and erase that change.
      */
     private class Document(val file: File) {
         val lock = Any()

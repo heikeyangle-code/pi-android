@@ -127,7 +127,7 @@ internal data class RunningCommand(
     /**
      * 行开始的那一刻，用来算**流式中的**读数。
      *
-     * `ToolCall.elapsedMs` 是 `endedAt - ts`（`rpc/.../Transcript.kt:89`），调用还在跑时
+     * `ToolCall.elapsedMs` 是 `endedAt - ts`（`protocol/.../Transcript.kt`），调用还在跑时
      * `endedAt` 为 null，所以它**在流式中恒为 null** —— 稿子那种 running 态一定要有点阵与
      * 刻度，不能只靠它。转录里的 `bash` / `powershell` 调用带着自己的 `ts`，于是耗时按
      * **ViewModel 推来的那个粗时钟**算（`UiState.nowMs - ts`，见 [RunningCommandRow]）。
@@ -535,7 +535,7 @@ private fun changedDirectory(path: String): String? =
 /**
  * 这次会话为某个路径留下的 diff，或 null。
  *
- * `edit` 卡与 `diff` 卡在转录里是**两条** item（`rpc/Transcript.kt:1405-1440`），所以这里
+ * `edit` 卡与 `diff` 卡在转录里是**两条** item（`protocol/.../Transcript.kt`），所以这里
  * 按路径把后者找回来；取最后一条：同一路径被改过两次时，用户要看的是最新那次。
  */
 internal fun diffFor(items: List<TranscriptItem>, path: String): ToolDiff? =

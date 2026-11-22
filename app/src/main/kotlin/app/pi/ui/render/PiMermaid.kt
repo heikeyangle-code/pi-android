@@ -13,11 +13,11 @@ import app.pi.ui.theme.PiPalette
  *
  * pi does not hand mermaid to highlight.js: it renders the diagram to box-drawing
  * art with `grok-mermaid` and then colours each run by its **semantic class**
- * (`modes/interactive/components/mermaid.ts:38-56`). Producing the art is a layout
- * job, so it stays in the guest next to pi's own `grok-mermaid` (the `/mermaid`
- * route in `pi-extensions/pi-highlight/service.ts`); deciding what each class
- * *looks like* is this app's, exactly as the hljs scope table is
- * ([app.pi.highlight.PiHighlightScopes]).
+ * (`modes/interactive/components/mermaid.ts:38-56`). The app no longer asks the guest
+ * for that art: ` ```mermaid ` is drawn as SVG by
+ * [app.pi.ui.render.rich.svg.PiMermaidRenderEngine]. What still has callers here is
+ * [PiMermaidMode] (pi's `markdown.mermaid` setting); the box-art model below
+ * ([PiMermaidArt] and friends) currently has none.
  *
  * The classes are `grok-mermaid`'s (`dist/types.d.ts`):
  *

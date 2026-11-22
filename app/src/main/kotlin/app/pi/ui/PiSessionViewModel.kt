@@ -138,7 +138,7 @@ import java.io.IOException
  * Owns the engine for the life of the UI and projects it into renderable state.
  *
  * The app has no "connect" concept and no connection UI: opening the app starts
- * the local engine (docs/pi-android-app-design.md §7). Booting is multi-stage —
+ * the local engine. Booting is multi-stage —
  * unpack the runtime the first time, verify it can execute, then spawn pi — and
  * each stage is surfaced rather than hidden behind a spinner, because the first
  * one takes tens of seconds and the second one can legitimately fail.
@@ -396,7 +396,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * 没有工具卡的纯文本回答也会命中了，而那时屏幕上没有任何读数在走。
          *
          * **安静跑着的 bash 掉不出去。** 一条命令的 `ToolCall` 行会一直停在 Pending，直到
-         * `tool_execution_end` 把它翻成成功/失败（`rpc/.../Transcript.kt:1650` →
+         * `tool_execution_end` 把它翻成成功/失败（`protocol/.../Transcript.kt` →
          * `finalizeTool`，`:1685`）；`tool_execution_update` 的 200 ms 节流省掉的是**发布**，
          * 不是行的状态，而一条什么都不打印的命令更是一条发布都没有——这正是时钟必须按自己的
          * 节拍重新问这个问题、而不是等某次发布顺手把答案带过来的原因。
@@ -1316,8 +1316,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * the *keys* are ours and the *values* are pi's, handed over in [PiLaunchOptions]
      * because that is the only moment pi reads them. The authoritative table —
      * including which CLI knobs pi already covers with a settings key, and which are
-     * meaningless on a phone — is `rpc/PiPreSpawnConfig.kt`
-     * (`docs/pre-spawn-config.md`).
+     * meaningless on a phone — is `protocol/.../PiPreSpawnConfig.kt`
+     *.
      *
      * **The two prompt rows are not here.** They were `--system-prompt` /
      * `--append-system-prompt` once; pi reads the same two values from
@@ -1331,7 +1331,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * The four `--no-*` are passed 1:1 with pi and nothing else: opening
      * 「停用扩展发现」 also turns off the app's own shipped extensions, because pi's
      * `--no-extensions` stops discovery and the app deliberately passes no `-e`
-     * (`rpc/PiLaunchOptions.kt` KDoc, `docs/pre-spawn-config.md` §2.2). Since pi
+     * (`protocol/.../PiLaunchOptions.kt` KDoc, `docs/pre-spawn-config.md` §2.2). Since pi
      * 0.99.0 it also turns off pi's **own built-in** extensions (`mcp`, `codemode`,
      * `tool-search`, `llama.cpp`), which used to sit outside that gate — see
      * [PiLaunchOptions.noExtensions] for the two measured releases.
@@ -2328,7 +2328,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // An extension that throws is otherwise invisible: pi reports it as
             // this event and nothing else, so a broken extension looks exactly
             // like an extension that chose to do nothing. The transcript reducer
-            // already turns it into an `ErrorText` row (rpc/Transcript.kt), which
+            // already turns it into an `ErrorText` row (protocol/.../Transcript.kt), which
             // is only visible on the Chat destination — hence the snackbar too.
             // Both name the extension from `extensionPath` so a failure is
             // attributable; the reducer and this notice share the wording.
@@ -2386,7 +2386,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             //  - every chunk published a new `UiState`, so the panel's single `Text` was
             //    re-laid out over the whole output per chunk. `TranscriptReducer` already
             //    has this exact rule for tool output (F8,
-            //    `rpc/.../Transcript.kt:811` `TOOL_UPDATE_THROTTLE_MS`); bash had none.
+            //    `protocol/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`); bash had none.
             //
             // Nothing is lost by waiting: the deltas all land in the builder, and the
             // `bash` response replaces the whole output when the command ends
@@ -2707,7 +2707,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * Both failure paths used to `return` silently, which is what "tapping an old
      * conversation does nothing" looked like from the user's seat
-     * (`docs/hang-and-crash-review.md` §A1). The transcript is still not cleared on
+     *. The transcript is still not cleared on
      * failure: a rebuild that cannot repopulate its rows must not destroy them.
      */
     /**
@@ -3970,7 +3970,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // The echo is `PiEngineSession.prompt`'s own, and it is no longer done here:
         // it publishes the row *and* registers it in the reducer's pending-echo
         // queue, which is what makes pi's later `message_end(role="user")` a
-        // confirmation instead of a second bubble (`rpc/.../Transcript.kt:1036`
+        // confirmation instead of a second bubble (`protocol/.../Transcript.kt`
         // records the echo, `:1065-1068` matches it by text). Echoing here as well
         // would render the row twice and leave a stale pending echo behind — the same
         // failure the queue fix removes for queued messages.
@@ -4672,7 +4672,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * spawned, and this one ends when pi has answered its first command — under
      * proot on a phone the second is by far the longer of the two. Both say 启动中
      * because that is what the user is waiting for; the difference is what the chat's
-     * empty state explains (docs/known-gaps.md §M1).
+     * empty state explains.
      */
     fun engineLabel(current: UiState = _state.value): String = when {
         current.busy != null -> current.busy

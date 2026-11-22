@@ -32,7 +32,7 @@ import app.pi.ui.theme.PiTheme
  *
  * Drawn as **one** `Text`, not one composable per line: a 200-line body would otherwise be
  * 200 layout nodes inside a row that recomposes on every 200 ms publication
- * (`rpc/.../Transcript.kt:618`). The gutter is part of the same string, padded to the width
+ * (`TOOL_UPDATE_THROTTLE_MS` in `protocol/.../Transcript.kt`). The gutter is part of the same string, padded to the width
  * of the largest number, which is what lines up in a monospace face.
  *
  * @param lines the body to paint, already capped by the caller (pi's preview count when the

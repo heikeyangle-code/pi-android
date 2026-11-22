@@ -13,7 +13,7 @@ import java.io.File
  * [workspaceBase] for why that spelling had to stay), so nothing in the guest changes.
  * They used to live under `<files>/pi` and be **bound** into the guest. They are not any
  * more, because proroot's `scandir`/`mkstemp`/`mkdtemp` return `ENOENT` inside a bind whose
- * host source is an app-private directory (`docs/proroot-scandir-defect.md`) — which made
+ * host source is an app-private directory — which made
  * `git`, `gcc` and `sed -i` unusable there. A rootfs path is an ordinary path.
  *
  * So the split is no longer "durable vs volatile", it is "protected vs unprotected", and
@@ -31,7 +31,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * `<files>/pi` — this app's own side of the durable area.
      *
      * It used to hold pi's home as well; what is left is [persist]. Kept as a directory so
-     * the app-private layout stays legible (`docs/pi-android-app-design.md` §19.1).
+     * the app-private layout stays legible.
      */
     val home: File = File(filesDir, "pi")
 
@@ -67,7 +67,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * therefore resolves through the rootfs with **no bind at all**, and that is what makes
      * `git` work inside a workspace again: `.git/tXXXXXX` is created in the workspace, and
      * proroot's `scandir`/`mkstemp`/`mkdtemp` fail anywhere under a bind whose host source
-     * is an app-private directory (`docs/proroot-scandir-defect.md`).
+     * is an app-private directory.
      *
      * The terminal keeps a second, shorter spelling of *one* workspace — `/workspace`
      * ([GuestWorkspacePath.TERMINAL_GUEST_PATH]) — and that one is still a bind
@@ -229,7 +229,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      *
      * **Inside the rootfs** (`<rootfs>/dev-shm`), not under `<files>/pi/runtime` as it was
      * until 2026-09-23. An app-private bind source is exactly what proroot's
-     * `scandir`/`mkstemp`/`mkdtemp` fail on (`docs/proroot-scandir-defect.md`); nothing
+     * `scandir`/`mkstemp`/`mkdtemp` fail on; nothing
      * needs those calls here today, but leaving one app-private bind in the table would
      * make "this app binds no app-private directory" false for every reader of
      * [GuestRecipe.binds] and every future probe. It is scratch either way: `wipe()`
@@ -316,7 +316,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     // ------------------------------------------------------------------ proroot
     // The five proroot binaries, spelled exactly as `tools/fetch-runtime.mjs`
     // installs them and `runtime.lock.json` pins them. The names are upstream's and
-    // are load-bearing in two independent ways (`docs/proroot-research.md` §5.P1-4):
+    // are load-bearing in two independent ways:
     // Android's native-library extractor only unpacks `lib*.so`, and proroot's own
     // component discovery looks for these names in the directory of
     // `/proc/self/exe`. `ProrootCommand` also passes them explicitly, so a rename
@@ -389,7 +389,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * cannot leave a stale one behind. It is a **host** path — the launcher is a
      * host-side process before proroot's hook is installed, so a guest spelling here
      * fails with `[proroot] open config file: No such file or directory`
-     * (`docs/proroot-research.md` §4.3).
+     *.
      */
     fun prorootTmpDir(): File = File(runtime, "proroot-tmp")
 
