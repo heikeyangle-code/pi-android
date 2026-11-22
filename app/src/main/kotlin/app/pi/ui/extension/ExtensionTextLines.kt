@@ -209,8 +209,8 @@ internal data class SurfaceQuickShortcut(
     val sendData: String,
 )
 
-private val PIPE_SHORTCUT_RE = Regex("^([A-Za-z0-9?])(?:/[A-Za-z]+)?\s+([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\s\-/]{0,14})$")
-private val BRACKET_SHORTCUT_RE = Regex("\[([A-Za-z0-9?])\]\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-/]{0,12})")
+private val PIPE_SHORTCUT_RE = Regex("^([A-Za-z0-9?])(?:/[A-Za-z]+)?\\s+([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\\s\\-/]{0,14})$")
+private val BRACKET_SHORTCUT_RE = Regex("\\[([A-Za-z0-9?])\\]\\s*([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\\-/]{0,12})")
 
 /**
  * 扫描 TUI 表面最后若干非空行，自动识别扩展自带的快捷键图例（`| F flip | N new |` 或 `[r] restart`），

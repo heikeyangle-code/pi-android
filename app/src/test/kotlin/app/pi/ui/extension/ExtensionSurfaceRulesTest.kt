@@ -69,9 +69,9 @@ class ExtensionSurfaceRulesTest {
             " ↑↓←→ move  |  ENTER select  |  F flip  |  N new  |  G games  |  Q/ESC quit ",
         )
         val shortcuts = extractSurfaceShortcuts(rows)
-        assertEquals(listOf("f", "n", "g"), shortcuts.map { it.data })
-        assertEquals(listOf("F", "N", "G"), shortcuts.map { it.keyLabel })
-        assertEquals(listOf("flip", "new", "games"), shortcuts.map { it.actionLabel })
+        assertEquals(listOf("f", "n", "g", "q"), shortcuts.map { it.sendData })
+        assertEquals(listOf("F", "N", "G", "Q"), shortcuts.map { it.keyLabel })
+        assertEquals(listOf("flip", "new", "games", "quit"), shortcuts.map { it.description })
     }
 
     @Test
@@ -80,7 +80,7 @@ class ExtensionSurfaceRulesTest {
             " [r] restart   [h] hint   [u] undo   [s] save   [?] help ",
         )
         val shortcuts = extractSurfaceShortcuts(rows, maxCount = 3)
-        assertEquals(listOf("r", "h", "u"), shortcuts.map { it.data })
+        assertEquals(listOf("r", "h", "u"), shortcuts.map { it.sendData })
     }
 
     @Test
