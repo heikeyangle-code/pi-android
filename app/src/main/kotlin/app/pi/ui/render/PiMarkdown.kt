@@ -28,9 +28,18 @@ import org.intellij.markdown.parser.CancellationToken
 import org.intellij.markdown.parser.MarkdownParser
 
 private class ParsedMarkdownDoc(
+    val rawMarkdown: String,
+    val streaming: Boolean,
     val content: String,
     val root: ASTNode,
     val referenceLinks: Map<String, String>,
+    val inlineMath: PiInlineMath.Extracted?,
+    val hasDisplayGrid: Boolean,
+)
+
+private data class MarkdownParseRequest(
+    val markdown: String,
+    val streaming: Boolean,
 )
 
 /**
@@ -82,42 +91,76 @@ internal fun PiMarkdownText(
     val context = LocalContext.current
     remember(context) { PiNodeCodeHighlighter.attach(context) }
 
-    val hasMathSyntax = remember(markdown) {
-        markdown.contains('$') ||
-            markdown.contains("\\(") ||
-            markdown.contains("\\[") ||
-            markdown.contains("\\begin{")
+    // Synchronous fast path for immediate rows or short content; conflated async worker for
+    // large/long streams so BOTH math/footnote preprocessing (PiInlineMath/PiLatex/PiFootnoteMarkdown)
+    // and GFM AST parsing run completely off the main thread without cancelling in-flight work.
+    val syncParse = if (streaming) {
+        markdown.length <= SYNC_PARSE_STREAMING_LIMIT
+    } else {
+        immediate || markdown.length <= SYNC_PARSE_SETTLED_LIMIT
     }
-    val inlineExtracted = remember(markdown, streaming, hasMathSyntax) {
-        if (streaming || !hasMathSyntax) {
+    val syncDoc = remember(markdown, streaming, syncParse) {
+        if (!syncParse) {
             null
         } else {
-            runCatching { PiInlineMath.extract(markdown) }.getOrNull()
+            val startedNanos = if (immediate) System.nanoTime() else 0L
+            val parsed = prepareAndParseDocument(markdown, streaming)
+            if (immediate) {
+                piMarkdownParseBudget.chargeNanos(
+                    nowNanos = System.nanoTime(),
+                    costNanos = System.nanoTime() - startedNanos,
+                )
+            }
+            parsed
         }
     }
-    val activeInlineMath = inlineExtracted?.takeIf { it.hasInlineMath }
-    val prepared = remember(markdown, streaming && hasMathSyntax, hasMathSyntax, inlineExtracted) {
-        when {
-            !hasMathSyntax -> PiLatex.PreparedMath(markdown, false)
-            inlineExtracted != null && (inlineExtracted.hasInlineMath || inlineExtracted.hasBlockMath) ->
-                PiLatex.PreparedMath(inlineExtracted.markdown, false)
-            else -> {
-                val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
-                runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
-                    .getOrElse { PiLatex.PreparedMath(markdown, false) }
+
+    // Always retain the most recent valid AST across sync -> async transitions (e.g. a streaming
+    // reply crossing 1.5 KiB) so the row never flashes raw Markdown or collapses to zero height.
+    var retainedDoc by remember { mutableStateOf<ParsedMarkdownDoc?>(null) }
+    var parseFailed by remember { mutableStateOf(false) }
+
+    // Conflated channel decouples incoming streaming tokens from the background parse loop:
+    // the worker finishes its current parse uninterrupted and immediately grabs the latest snapshot.
+    val asyncQueue = remember { Channel<MarkdownParseRequest>(Channel.CONFLATED) }
+
+    SideEffect {
+        if (syncParse) {
+            if (syncDoc != null && retainedDoc !== syncDoc) {
+                retainedDoc = syncDoc
+                parseFailed = false
+            } else if (syncDoc == null) {
+                parseFailed = true
+            }
+        } else {
+            val current = retainedDoc
+            if (current == null || current.rawMarkdown != markdown || current.streaming != streaming) {
+                asyncQueue.trySend(MarkdownParseRequest(markdown = markdown, streaming = streaming))
             }
         }
     }
-    val hasFootnoteSyntax = remember(prepared.text) { prepared.text.contains("[^") }
-    val footnoteSource = remember(prepared.text, streaming && hasFootnoteSyntax, hasFootnoteSyntax) {
-        if (streaming || !hasFootnoteSyntax) {
-            null
-        } else {
-            runCatching { PiFootnoteMarkdown.rewrite(prepared.text) }.getOrNull()
+
+    LaunchedEffect(asyncQueue) {
+        for (req in asyncQueue) {
+            val current = retainedDoc
+            if (current != null && current.rawMarkdown == req.markdown && current.streaming == req.streaming) {
+                continue
+            }
+            val parsed = withContext(Dispatchers.Default) {
+                prepareAndParseDocument(req.markdown, req.streaming)
+            }
+            if (parsed != null) {
+                retainedDoc = parsed
+                parseFailed = false
+            } else {
+                parseFailed = true
+            }
         }
     }
-    val content = footnoteSource ?: prepared.text
-    val hasGrid = prepared.hasDisplayGrid
+
+    val activeDoc = syncDoc ?: retainedDoc
+    val hasGrid = activeDoc?.hasDisplayGrid == true
+    val activeInlineMath = activeDoc?.inlineMath
 
     val palette = PiTheme.palette
     val darkTheme = PiContrast.luminance(palette.pageBg) < 0.5
@@ -136,70 +179,11 @@ internal fun PiMarkdownText(
     val spacing = remember(profile) { piMarkdownSpacing(profile) }
     val imageLoader = rememberPiGuestImageTransformer()
 
-    // Synchronous fast path for immediate rows or short content; conflated async worker for
-    // large/long streams so rapid token bursts never cancel and starve an in-flight AST parse.
-    val syncParse = if (streaming) {
-        content.length <= SYNC_PARSE_STREAMING_LIMIT
-    } else {
-        immediate || content.length <= SYNC_PARSE_SETTLED_LIMIT
-    }
-    val syncDoc = remember(content, syncParse) {
-        if (!syncParse) {
-            null
-        } else {
-            val startedNanos = if (immediate) System.nanoTime() else 0L
-            val parsed = parseDocumentSafely(PiSharedMarkdownParser, content)
-            if (immediate) {
-                piMarkdownParseBudget.chargeNanos(
-                    nowNanos = System.nanoTime(),
-                    costNanos = System.nanoTime() - startedNanos,
-                )
-            }
-            parsed
-        }
-    }
-
-    // Always retain the most recent valid AST across sync -> async transitions (e.g. a streaming
-    // reply crossing 1.5 KiB) so the row never flashes raw Markdown or collapses to zero height.
-    var retainedDoc by remember { mutableStateOf<ParsedMarkdownDoc?>(null) }
-    var parseFailed by remember { mutableStateOf(false) }
-
-    // Conflated channel decouples incoming streaming tokens from the background parse loop:
-    // the worker finishes its current parse uninterrupted and immediately grabs the latest snapshot.
-    val asyncQueue = remember { Channel<String>(Channel.CONFLATED) }
-
-    SideEffect {
-        if (syncParse) {
-            if (syncDoc != null && retainedDoc !== syncDoc) {
-                retainedDoc = syncDoc
-                parseFailed = false
-            } else if (syncDoc == null) {
-                parseFailed = true
-            }
-        } else if (retainedDoc?.content != content) {
-            asyncQueue.trySend(content)
-        }
-    }
-
-    LaunchedEffect(asyncQueue) {
-        for (snapshot in asyncQueue) {
-            if (retainedDoc?.content == snapshot) continue
-            val parsed = withContext(Dispatchers.Default) {
-                parseDocumentSafely(PiSharedMarkdownParser, snapshot)
-            }
-            if (parsed != null) {
-                retainedDoc = parsed
-                parseFailed = false
-            } else {
-                parseFailed = true
-            }
-        }
-    }
-
-    val activeDoc = syncDoc ?: retainedDoc
-    val isCurrentParsed = activeDoc != null && activeDoc.content == content
+    val isCurrentParsed = activeDoc != null &&
+        activeDoc.rawMarkdown == markdown &&
+        activeDoc.streaming == streaming
     val onParsed = LocalPiMarkdownParsed.current
-    LaunchedEffect(isCurrentParsed, content, onParsed) {
+    LaunchedEffect(isCurrentParsed, markdown, streaming, onParsed) {
         if (onParsed != null && isCurrentParsed) onParsed()
     }
 
@@ -225,11 +209,7 @@ internal fun PiMarkdownText(
             }
             parseFailed -> {
                 Text(
-                    text = if (activeInlineMath != null) {
-                        PiInlineMath.resolveToUnicode(content, activeInlineMath)
-                    } else {
-                        content
-                    },
+                    text = markdown,
                     style = typography.text,
                     color = colors.text,
                     modifier = modifier,
@@ -245,11 +225,44 @@ internal fun PiMarkdownText(
     }
 }
 
-private fun parseDocumentSafely(parser: MarkdownParser, content: String): ParsedMarkdownDoc? =
+private fun prepareAndParseDocument(markdown: String, streaming: Boolean): ParsedMarkdownDoc? =
     runCatching {
-        val root = parser.buildMarkdownTreeFromString(content as CharSequence)
+        val hasMathSyntax = markdown.contains('$') ||
+            markdown.contains("\\(") ||
+            markdown.contains("\\[") ||
+            markdown.contains("\\begin{")
+        val inlineExtracted = if (streaming || !hasMathSyntax) {
+            null
+        } else {
+            runCatching { PiInlineMath.extract(markdown) }.getOrNull()
+        }
+        val activeInlineMath = inlineExtracted?.takeIf { it.hasInlineMath }
+        val prepared = when {
+            !hasMathSyntax -> PiLatex.PreparedMath(markdown, false)
+            inlineExtracted != null && (inlineExtracted.hasInlineMath || inlineExtracted.hasBlockMath) ->
+                PiLatex.PreparedMath(inlineExtracted.markdown, false)
+            else -> {
+                val keepBlockMath = !streaming && piDisplayMathIsStandalone(markdown)
+                runCatching { PiLatex.prepare(markdown, keepBlockMath = keepBlockMath) }
+                    .getOrElse { PiLatex.PreparedMath(markdown, false) }
+            }
+        }
+        val content = if (!streaming && prepared.text.contains("[^")) {
+            runCatching { PiFootnoteMarkdown.rewrite(prepared.text) }.getOrNull() ?: prepared.text
+        } else {
+            prepared.text
+        }
+        val root = PiSharedMarkdownParser.buildMarkdownTreeFromString(content as CharSequence)
         val refs = extractPiReferenceLinks(content, root)
-        ParsedMarkdownDoc(content = content, root = root, referenceLinks = refs)
+        ParsedMarkdownDoc(
+            rawMarkdown = markdown,
+            streaming = streaming,
+            content = content,
+            root = root,
+            referenceLinks = refs,
+            inlineMath = activeInlineMath,
+            hasDisplayGrid = prepared.hasDisplayGrid,
+        )
     }.getOrNull()
 
 internal fun piMarkdownSource(markdown: String): String = PiLatex.preprocess(markdown)

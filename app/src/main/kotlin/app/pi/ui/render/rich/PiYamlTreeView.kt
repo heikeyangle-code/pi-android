@@ -123,6 +123,7 @@ fun PiYamlTreeView(
                 } else {
                     null
                 },
+                language = "yaml",
             )
         }
     }

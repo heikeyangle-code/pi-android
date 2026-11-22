@@ -8,9 +8,12 @@ import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.ui.blocks.ParseCaches
 import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.render.RowHeightCache
+import app.pi.ui.render.rich.PiTreeParseCache
 import app.pi.ui.render.rich.svg.PiMathDrawCache
+import app.pi.ui.render.rich.svg.PiMathRenderEngine
 import app.pi.ui.render.rich.svg.PiMermaidRenderEngine
 import app.pi.ui.render.rich.svg.clearPiMermaidDrawCache
+import app.pi.ui.render.rich.svg.clearPiSvgDrawCache
 
 /**
  * 进程级统一内存裁剪器：接入 `MainActivity.onTrimMemory` / `onLowMemory` 与会话切换。
@@ -23,6 +26,7 @@ internal object PiMemoryTrimmer {
     /** 切换或新建会话时释放旧会话的文本解析、行高与代码高亮缓存（位图缓存靠自身 32 MiB LRU 保留）。 */
     fun onSessionReplaced() {
         ParseCaches.clear()
+        PiTreeParseCache.clear()
         RowHeightCache.shared.clear()
         PiNodeCodeHighlighter.clear()
     }
@@ -37,6 +41,7 @@ internal object PiMemoryTrimmer {
         if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
             PiAnimatedImages.clear()
             ParseCaches.clear()
+            PiTreeParseCache.clear()
             PiNodeMermaidRenderer.clear()
             PiNodeCodeHighlighter.clear()
         }
@@ -48,7 +53,9 @@ internal object PiMemoryTrimmer {
             PiImageCache.clear()
             PiGuestImageTransformer.clearBitmapCache()
             clearPiMermaidDrawCache()
+            clearPiSvgDrawCache()
             PiMermaidRenderEngine.clearCaches()
+            PiMathRenderEngine.clearCaches()
             PiMathDrawCache.clear()
             RowHeightCache.shared.clear()
         }
@@ -57,12 +64,15 @@ internal object PiMemoryTrimmer {
     fun onLowMemory() {
         PiAnimatedImages.clear()
         ParseCaches.clear()
+        PiTreeParseCache.clear()
         PiNodeMermaidRenderer.clear()
         PiNodeCodeHighlighter.clear()
         PiImageCache.clear()
         PiGuestImageTransformer.clearBitmapCache()
         clearPiMermaidDrawCache()
+        clearPiSvgDrawCache()
         PiMermaidRenderEngine.clearCaches()
+        PiMathRenderEngine.clearCaches()
         PiMathDrawCache.clear()
         RowHeightCache.shared.clear()
     }

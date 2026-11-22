@@ -23,6 +23,7 @@ import app.pi.protocol.PiImage
 import app.pi.ui.render.LocalPiImageClick
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.render.rich.FenceInfo
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
@@ -739,6 +740,7 @@ private fun PiMermaidSourceBlock(source: String, notice: String?) {
             lines.take(PI_MERMAID_MAX_VISIBLE_SOURCE_LINES).joinToString("\n")
         }
     }
+    val highlighted = rememberPiHighlightedCode(shown, "mermaid")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -753,8 +755,10 @@ private fun PiMermaidSourceBlock(source: String, notice: String?) {
             )
         }
         Text(
-            text = shown,
-            style = PiTheme.typography.styles.code.copy(color = palette.text),
+            text = highlighted.text,
+            style = PiTheme.typography.styles.code.copy(
+                color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),

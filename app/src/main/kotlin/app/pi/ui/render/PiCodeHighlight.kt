@@ -198,23 +198,52 @@ internal object PiCodeLanguage {
      * here alike. `cmake` (`:1149`) is a real highlight.js grammar and is included.
      */
     private val extensionToLanguage: Map<String, String> = mapOf(
-        "ts" to "typescript", "tsx" to "typescript",
+        "ts" to "typescript", "tsx" to "typescript", "mts" to "typescript", "cts" to "typescript",
         "js" to "javascript", "jsx" to "javascript", "mjs" to "javascript", "cjs" to "javascript",
-        "py" to "python", "rb" to "ruby", "rs" to "rust", "go" to "go", "java" to "java",
-        "kt" to "kotlin", "swift" to "swift",
-        "c" to "c", "h" to "c",
-        "cpp" to "cpp", "cc" to "cpp", "cxx" to "cpp", "hpp" to "cpp",
+        "py" to "python", "pyi" to "python", "rb" to "ruby", "rs" to "rust", "go" to "go", "java" to "java",
+        "kt" to "kotlin", "kts" to "kotlin", "swift" to "swift",
+        "dart" to "dart", "zig" to "zig", "gradle" to "groovy", "groovy" to "groovy",
+        "c" to "c", "h" to "c", "m" to "c",
+        "cpp" to "cpp", "cc" to "cpp", "cxx" to "cpp", "hpp" to "cpp", "hh" to "cpp", "hxx" to "cpp", "mm" to "cpp",
         "cs" to "csharp", "php" to "php",
-        "sh" to "bash", "bash" to "bash", "zsh" to "bash", "fish" to "fish", "ps1" to "powershell",
-        "sql" to "sql", "html" to "html", "htm" to "html",
+        "sh" to "bash", "bash" to "bash", "zsh" to "bash", "fish" to "fish",
+        "ps1" to "powershell", "psm1" to "powershell", "psd1" to "powershell",
+        "bat" to "batch", "cmd" to "batch",
+        "sql" to "sql", "html" to "html", "htm" to "html", "vue" to "html", "svelte" to "html", "astro" to "html",
         "css" to "css", "scss" to "scss", "sass" to "sass", "less" to "less",
-        "json" to "json", "yaml" to "yaml", "yml" to "yaml", "toml" to "toml", "xml" to "xml",
-        "md" to "markdown", "markdown" to "markdown",
-        "dockerfile" to "dockerfile", "makefile" to "makefile", "cmake" to "cmake",
-        "lua" to "lua", "perl" to "perl", "r" to "r", "scala" to "scala",
+        "json" to "json", "jsonc" to "json", "json5" to "json", "jsonl" to "json",
+        "yaml" to "yaml", "yml" to "yaml", "toml" to "toml",
+        "ini" to "ini", "cfg" to "ini", "conf" to "ini", "properties" to "ini", "env" to "ini", "editorconfig" to "ini",
+        "xml" to "xml", "svg" to "xml", "xhtml" to "xml", "plist" to "xml", "xsl" to "xml", "xsd" to "xml", "csproj" to "xml",
+        "diff" to "diff", "patch" to "diff",
+        "csv" to "csv", "tsv" to "tsv",
+        "mmd" to "mermaid", "mermaid" to "mermaid",
+        "md" to "markdown", "markdown" to "markdown", "mdx" to "markdown",
+        "dockerfile" to "dockerfile", "makefile" to "makefile", "mk" to "makefile", "cmake" to "cmake",
+        "lua" to "lua", "perl" to "perl", "pl" to "perl", "pm" to "perl", "r" to "r", "scala" to "scala",
         "clj" to "clojure", "ex" to "elixir", "exs" to "elixir", "erl" to "erlang",
         "hs" to "haskell", "ml" to "ocaml", "vim" to "vim",
-        "graphql" to "graphql", "proto" to "protobuf", "tf" to "hcl", "hcl" to "hcl",
+        "graphql" to "graphql", "gql" to "graphql", "proto" to "protobuf",
+        "tf" to "hcl", "tfvars" to "hcl", "hcl" to "hcl",
+        "glsl" to "glsl", "vert" to "glsl", "frag" to "glsl",
+    )
+
+    private val basenameToLanguage: Map<String, String> = mapOf(
+        "dockerfile" to "dockerfile",
+        "containerfile" to "dockerfile",
+        "makefile" to "makefile",
+        "gnumakefile" to "makefile",
+        "cmakelists.txt" to "cmake",
+        "gemfile" to "ruby",
+        "rakefile" to "ruby",
+        "podfile" to "ruby",
+        "vagrantfile" to "ruby",
+        "justfile" to "makefile",
+        ".env" to "ini",
+        ".editorconfig" to "ini",
+        ".bashrc" to "bash",
+        ".zshrc" to "bash",
+        ".profile" to "bash",
     )
 
     /**
@@ -260,7 +289,16 @@ internal object PiCodeLanguage {
      */
     fun forPath(path: String?): String? {
         if (path.isNullOrEmpty()) return null
-        return extensionToLanguage[path.substringAfterLast('.').lowercase()]
+        val fileName = path.substringAfterLast('/').substringAfterLast('\\').lowercase()
+        if (fileName.isEmpty()) return null
+        basenameToLanguage[fileName]?.let { return it }
+        if (fileName.startsWith("dockerfile.")) return "dockerfile"
+        if (fileName.startsWith(".env.")) return "ini"
+        val dot = fileName.lastIndexOf('.')
+        if (dot >= 0 && dot + 1 < fileName.length) {
+            extensionToLanguage[fileName.substring(dot + 1)]?.let { return it }
+        }
+        return extensionToLanguage[fileName]
     }
 
     /**

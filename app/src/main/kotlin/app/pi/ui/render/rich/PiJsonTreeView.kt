@@ -119,6 +119,7 @@ fun PiJsonTreeView(
                 } else {
                     null
                 },
+                language = "json",
             )
         }
     }

@@ -141,6 +141,7 @@ fun PiCsvTableView(
             PiTreeRawSource(
                 source = source,
                 notice = if (mode == PiTreeMode.Tree) failureNotice else null,
+                language = if (format == CsvFormat.Tsv) "tsv" else "csv",
             )
         }
     }

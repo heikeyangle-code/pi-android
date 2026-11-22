@@ -116,6 +116,7 @@ fun PiXmlTreeView(
                 } else {
                     null
                 },
+                language = "xml",
             )
         }
     }

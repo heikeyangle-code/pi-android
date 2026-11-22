@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -53,7 +54,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.i18n.tr
 import app.pi.ui.render.LocalPiImageTransformer
+import app.pi.ui.render.PiCodeLanguage
 import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.render.rich.FenceInfo
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiPalette
@@ -145,7 +148,7 @@ private fun RenderBlock(node: PiHtmlNode.Block, style: TextStyle) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(quoteShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.72f))
+                    .background(palette.cardBg.copy(alpha = 0.72f))
                     .drawBehind {
                         val railW = 2.5.dp.toPx()
                         drawRoundRect(
@@ -570,14 +573,14 @@ private fun HtmlTable(node: PiHtmlNode.Table, style: TextStyle) {
             val tableWidth = node.rows.maxOf { row ->
                 row.cells.sumOf { (PI_HTML_TABLE_CELL_WIDTH.value * it.colspan.coerceIn(1, 4)).toDouble() }
             }.toFloat().dp
-            val headerBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
-            val zebraBg = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.28f)
+            val headerBg = lerp(palette.cardBg, palette.text, 0.055f)
+            val zebraBg = lerp(palette.cardBg, palette.text, 0.025f)
             val borderColor = palette.borderMuted.copy(alpha = 0.56f)
             val dividerColor = palette.borderMuted.copy(alpha = 0.30f)
             Box(
                 modifier = Modifier
                     .clip(shape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .background(palette.cardBg)
                     .border(0.5.dp, borderColor, shape),
             ) {
                 Column(Modifier.horizontalScroll(scroll).width(tableWidth)) {
@@ -640,10 +643,14 @@ private fun HtmlCode(node: PiHtmlNode.Code) {
     val palette = PiTheme.palette
     // 与 Markdown 围栏代码块同一张卡：语言胶囊 + 复制 + 发丝线（`PiRichCardFrame`）。
     val info = remember(node.language) { FenceInfo.parse(node.language) }
+    val normalizedLang = remember(info.language) { PiCodeLanguage.normalize(info.language) }
+    val highlighted = rememberPiHighlightedCode(node.text, normalizedLang)
     PiRichCardFrame(node.text, info, palette) {
         Text(
-            text = node.text,
-            style = PiTheme.text.code.copy(color = palette.mdCodeBlock),
+            text = highlighted.text,
+            style = PiTheme.text.code.copy(
+                color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())

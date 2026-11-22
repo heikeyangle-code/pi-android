@@ -1564,9 +1564,15 @@ internal data class ExtractedCodeFence(
  * nested inside blockquotes (`> ```kotlin`) or lists never leak leading `> ` prefixes into code.
  */
 internal fun extractCodeFence(content: String, node: ASTNode): ExtractedCodeFence {
+    val startNode = node.findChildOfType(MarkdownTokenTypes.CODE_FENCE_START)
     val langNode = node.findChildOfType(MarkdownTokenTypes.FENCE_LANG)
     val language = langNode?.let { safeSlice(content, it).trim().ifEmpty { null } }
     val closeNode = node.children.lastOrNull { it.type == MarkdownTokenTypes.CODE_FENCE_END }
+
+    // CommonMark §4.5: compute the opening fence's column (after any leading blockquote markers)
+    // so both top-level indented fences and list-nested fences strip up to the exact baseline indent
+    // without touching deliberate deeper indentation inside the code body.
+    val fenceOpenCol = startNode?.let { openingFenceDelimiterColumn(content, it) } ?: 0
 
     var seenFirstEol = false
     val sb = StringBuilder()
@@ -1586,7 +1592,14 @@ internal fun extractCodeFence(content: String, node: ASTNode): ExtractedCodeFenc
             }
             MarkdownTokenTypes.CODE_FENCE_CONTENT -> {
                 seenFirstEol = true
-                sb.append(safeSlice(content, child))
+                val line = safeSlice(content, child)
+                if (fenceOpenCol > 0) {
+                    val alreadyEatenCols = columnsAfterQuotePrefix(content, child.startOffset)
+                    val remainingToStrip = (fenceOpenCol - alreadyEatenCols).coerceAtLeast(0)
+                    sb.append(if (remainingToStrip > 0) stripLeadingIndentColumns(line, remainingToStrip) else line)
+                } else {
+                    sb.append(line)
+                }
             }
             else -> if (seenFirstEol) sb.append(safeSlice(content, child))
         }
@@ -1595,6 +1608,77 @@ internal fun extractCodeFence(content: String, node: ASTNode): ExtractedCodeFenc
     val raw = sb.toString()
     val code = if (closeNode != null && raw.endsWith('\n')) raw.dropLast(1) else raw
     return ExtractedCodeFence(language = language, code = code, closed = closeNode != null)
+}
+
+/** Column of the opening fence delimiter (` ``` ` / `~~~`) measured after any blockquote `>` prefix. */
+private fun openingFenceDelimiterColumn(content: String, startNode: ASTNode): Int {
+    val start = startNode.startOffset.coerceIn(0, content.length)
+    val end = startNode.endOffset.coerceIn(start, content.length)
+    var delimPos = start
+    while (delimPos < end && (content[delimPos] == ' ' || content[delimPos] == '\t')) {
+        delimPos++
+    }
+    return columnsAfterQuotePrefix(content, delimPos)
+}
+
+/** Visual column of [offset] relative to the end of any blockquote `> ` prefix on its line. */
+private fun columnsAfterQuotePrefix(content: String, offset: Int): Int {
+    val safeOffset = offset.coerceIn(0, content.length)
+    var lineStart = safeOffset
+    while (lineStart > 0 && content[lineStart - 1] != '\n') lineStart--
+    var i = lineStart
+    var cols = 0
+    // Skip any leading blockquote markers (`> `) on this line; reset column counter after the last `>`.
+    while (i < safeOffset) {
+        when (content[i]) {
+            ' ' -> {
+                cols++
+                i++
+            }
+            '\t' -> {
+                cols += 4 - (cols % 4)
+                i++
+            }
+            '>' -> {
+                i++
+                // CommonMark §5.1: at most one optional space after `>` belongs to the quote marker.
+                if (i < safeOffset && content[i] == ' ') i++
+                cols = 0
+            }
+            else -> {
+                // Non-quote characters before fence (e.g. list marker `- ` on same line): count their width.
+                cols++
+                i++
+            }
+        }
+    }
+    return cols
+}
+
+private fun stripLeadingIndentColumns(line: String, maxCols: Int): String {
+    if (maxCols <= 0 || line.isEmpty()) return line
+    var i = 0
+    var cols = 0
+    while (i < line.length && cols < maxCols) {
+        when (line[i]) {
+            ' ' -> {
+                cols++
+                i++
+            }
+            '\t' -> {
+                val tabWidth = 4 - (cols % 4)
+                if (cols + tabWidth <= maxCols) {
+                    cols += tabWidth
+                    i++
+                } else {
+                    val remain = (cols + tabWidth) - maxCols
+                    return " ".repeat(remain) + line.substring(i + 1)
+                }
+            }
+            else -> break
+        }
+    }
+    return if (i == 0) line else line.substring(i)
 }
 
 internal fun extractIndentedCodeBlock(content: String, node: ASTNode): String {

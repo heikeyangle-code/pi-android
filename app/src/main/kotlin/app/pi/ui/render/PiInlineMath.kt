@@ -153,7 +153,13 @@ internal object PiInlineMath {
                             }
                         }
                     } else {
-                        // 引用块内的独立公式：保留 `> ` 前缀防止打断引用块，同时规范化成 `> $$\n> body\n> $$`
+                        // 引用块内的独立公式：保留 `> ` 前缀防止打断引用块，同时在前后紧邻非空引用行时
+                        // 补一行纯引用空行（`>`），避免 GFM 把公式与前后正文合并进同一 PARAGRAPH。
+                        val bareQuote = qPrefix.trimEnd()
+                        if (out.isNotEmpty() && !prevLineWasBlank && !endsWithBlankQuoteLine(out)) {
+                            if (!out.endsWith('\n')) out.append('\n')
+                            out.append(bareQuote).append('\n')
+                        }
                         out.append(qPrefix).append("$$\n")
                         val bodyLines = blockMatch.body.split('\n')
                         for (idx in bodyLines.indices) {
@@ -161,6 +167,15 @@ internal object PiInlineMath {
                         }
                         out.append(qPrefix).append("$$")
                         i = blockMatch.end
+                        if (i < n && markdown[i] == '\n') {
+                            val nextStart = i + 1
+                            if (nextStart < n) {
+                                val nextEnd = findLineEnd(markdown, nextStart)
+                                if (!isBlankOrQuoteOnlyLine(markdown, nextStart, nextEnd)) {
+                                    out.append('\n').append(bareQuote)
+                                }
+                            }
+                        }
                     }
                     prevLineWasBlank = false
                     continue
@@ -320,6 +335,23 @@ internal object PiInlineMath {
             nonce++
         }
         return candidate
+    }
+
+    private fun endsWithBlankQuoteLine(sb: StringBuilder): Boolean {
+        var end = sb.length
+        if (end == 0) return true
+        if (sb[end - 1] == '\n') end--
+        var start = end
+        while (start > 0 && sb[start - 1] != '\n') start--
+        return isBlankOrQuoteOnlyLine(sb, start, end)
+    }
+
+    private fun isBlankOrQuoteOnlyLine(text: CharSequence, start: Int, end: Int): Boolean {
+        for (idx in start until end) {
+            val ch = text[idx]
+            if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '>') return false
+        }
+        return true
     }
 
     private fun countTrailingNewlines(sb: StringBuilder): Int {

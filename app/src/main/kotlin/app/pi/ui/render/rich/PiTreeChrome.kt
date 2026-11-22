@@ -3,6 +3,7 @@ package app.pi.ui.render.rich
 import app.pi.i18n.tr
 import app.pi.ui.render.LocalPiCardMenuSlot
 import app.pi.ui.render.PiCardMenuItem
+import app.pi.ui.render.rememberPiHighlightedCode
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -254,9 +255,11 @@ internal fun PiTreeMoreRow(depth: Int, remaining: Int, onMore: () -> Unit) {
 internal fun PiTreeRawSource(
     source: String,
     notice: String?,
+    language: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    val highlighted = rememberPiHighlightedCode(source, language)
     Column(modifier.fillMaxWidth()) {
         if (!notice.isNullOrEmpty()) {
             Text(
@@ -267,8 +270,10 @@ internal fun PiTreeRawSource(
             )
         }
         Text(
-            text = source,
-            style = PiTheme.typography.styles.code.copy(color = palette.text),
+            text = highlighted.text,
+            style = PiTheme.typography.styles.code.copy(
+                color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())

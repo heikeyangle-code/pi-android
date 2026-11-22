@@ -583,6 +583,30 @@ private fun AnnotatedString.Builder.appendInlineNode(
             }
         }
 
+        GFMElementTypes.INLINE_MATH,
+        GFMElementTypes.BLOCK_MATH -> {
+            val raw = safeSlice(ctx.content, child)
+            val isBlock = child.type == GFMElementTypes.BLOCK_MATH
+            val inner = if (isBlock) {
+                raw.removePrefix("$$").removeSuffix("$$").trim()
+            } else {
+                raw.removePrefix("$").removeSuffix("$").trim()
+            }
+            val rendered = if (inner.isNotEmpty()) {
+                PiLatex.toUnicode(inner, display = isBlock) ?: inner
+            } else {
+                raw
+            }
+            val text = consumePrefixSkip(rendered, ctx)
+            if (text.isNotEmpty()) {
+                withHtmlDecorations(ctx) {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = ctx.colors.text)) {
+                        append(text)
+                    }
+                }
+            }
+        }
+
         MarkdownElementTypes.CODE_SPAN -> {
             val raw = safeSlice(ctx.content, child)
             val normalized = normalizeCodeSpanContent(raw)

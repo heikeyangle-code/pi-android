@@ -37,6 +37,8 @@ internal object PiFastCodeHighlighter {
         Makefile,
         Markdown,
         Diff,
+        Mermaid,
+        Csv,
     }
 
     private fun familyOf(language: String?): Family? {
@@ -59,8 +61,10 @@ internal object PiFastCodeHighlighter {
             "css", "scss", "sass", "less" -> Family.Css
             "dockerfile", "docker" -> Family.Dockerfile
             "makefile", "make", "mk", "cmake" -> Family.Makefile
-            "md", "markdown" -> Family.Markdown
+            "md", "markdown", "mdx" -> Family.Markdown
             "diff", "patch" -> Family.Diff
+            "mermaid", "mmd" -> Family.Mermaid
+            "csv", "tsv" -> Family.Csv
             else -> null
         }
     }
@@ -123,6 +127,8 @@ internal object PiFastCodeHighlighter {
             Family.Dockerfile -> scanDockerfile(code, spans)
             Family.Makefile -> scanMakefile(code, spans)
             Family.Markdown -> scanMarkdown(code, spans)
+            Family.Mermaid -> scanMermaid(code, spans)
+            Family.Csv -> scanCsv(code, delimiter = if (lang == "tsv") '\t' else ',', out = spans)
             Family.Sql -> scanCode(
                 code = code,
                 out = spans,
@@ -1537,6 +1543,196 @@ internal object PiFastCodeHighlighter {
         "boolean", "bool", "real", "double", "numeric", "decimal", "date", "time", "timestamp",
         "timestamptz", "json", "jsonb", "uuid", "blob", "bytea",
     )
+
+    private fun scanMermaid(code: String, out: MutableList<PiCodeSpan>) {
+        val n = code.length
+        var i = 0
+        while (i < n) {
+            val c = code[i]
+            // Mermaid comments: `%% ...`
+            if (c == '%' && i + 1 < n && code[i + 1] == '%') {
+                val start = i
+                while (i < n && code[i] != '\n') i++
+                out.add(PiCodeSpan(start, i, PiSyntaxToken.Comment))
+                continue
+            }
+            // Quoted labels `"..."`
+            if (c == '"') {
+                val start = i
+                i++
+                while (i < n && code[i] != '\n') {
+                    if (code[i] == '\\' && i + 1 < n) {
+                        i += 2
+                    } else if (code[i] == '"') {
+                        i++
+                        break
+                    } else {
+                        i++
+                    }
+                }
+                out.add(PiCodeSpan(start, i, PiSyntaxToken.StringLiteral))
+                continue
+            }
+            // Arrows & edge connectors (`-->`, `-.->`, `==>`, `-->>`, `->>`, `<-->`, `---`, `===`)
+            if ((c == '-' || c == '=' || c == '<') && i + 1 < n) {
+                val arrowEnd = matchMermaidArrowEnd(code, i)
+                if (arrowEnd > i) {
+                    out.add(PiCodeSpan(i, arrowEnd, PiSyntaxToken.Operator))
+                    i = arrowEnd
+                    continue
+                }
+            }
+            // Hex colors (`#rrggbb`)
+            if (c == '#' && i + 3 < n && isFastHexDigit(code[i + 1])) {
+                val start = i
+                i++
+                while (i < n && isFastHexDigit(code[i])) i++
+                out.add(PiCodeSpan(start, i, PiSyntaxToken.Number))
+                continue
+            }
+            // Identifiers & Mermaid keywords / directions
+            if (isFastIdentStart(c)) {
+                val start = i
+                i++
+                while (i < n && (isFastIdentPart(code[i]) || code[i] == '-')) i++
+                val word = code.substring(start, i)
+                when {
+                    word in MERMAID_KW -> out.add(PiCodeSpan(start, i, PiSyntaxToken.Keyword))
+                    word in MERMAID_DIRS -> out.add(PiCodeSpan(start, i, PiSyntaxToken.Type))
+                }
+                continue
+            }
+            // Numbers
+            if (c.isDigit()) {
+                val start = i
+                while (i < n && (code[i].isDigit() || code[i] == '.')) i++
+                out.add(PiCodeSpan(start, i, PiSyntaxToken.Number))
+                continue
+            }
+            if (c in "[](){}|:;,.~") {
+                out.add(PiCodeSpan(i, i + 1, PiSyntaxToken.Punctuation))
+            }
+            i++
+        }
+    }
+
+    private fun isFastHexDigit(c: Char): Boolean =
+        c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+
+    private fun isFastIdentStart(c: Char): Boolean =
+        c in 'a'..'z' || c in 'A'..'Z' || c == '_'
+
+    private fun isFastIdentPart(c: Char): Boolean =
+        c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_'
+
+    private fun matchMermaidArrowEnd(code: String, start: Int): Int {
+        val n = code.length
+        var i = start
+        if (code[i] == '<') i++
+        var dashes = 0
+        while (i < n && (code[i] == '-' || code[i] == '=' || code[i] == '.')) {
+            dashes++
+            i++
+        }
+        if (dashes < 1) return start
+        if (i < n && (code[i] == '>' || code[i] == 'o' || code[i] == 'x')) {
+            i++
+            if (i < n && code[i] == '>') i++
+            return i
+        }
+        return if (dashes >= 3) i else start
+    }
+
+    private fun scanCsv(code: String, delimiter: Char, out: MutableList<PiCodeSpan>) {
+        val n = code.length
+        var i = 0
+        var rowIndex = 0
+        while (i < n) {
+            val lineStart = i
+            var lineEnd = i
+            while (lineEnd < n && code[lineEnd] != '\n') lineEnd++
+            var p = lineStart
+            while (p < lineEnd) {
+                val c = code[p]
+                if (c == delimiter) {
+                    out.add(PiCodeSpan(p, p + 1, PiSyntaxToken.Punctuation))
+                    p++
+                    continue
+                }
+                if (c == '"') {
+                    val start = p
+                    p++
+                    while (p < lineEnd) {
+                        if (code[p] == '"') {
+                            if (p + 1 < lineEnd && code[p + 1] == '"') {
+                                p += 2
+                            } else {
+                                p++
+                                break
+                            }
+                        } else {
+                            p++
+                        }
+                    }
+                    out.add(
+                        PiCodeSpan(
+                            start,
+                            p,
+                            if (rowIndex == 0) PiSyntaxToken.Keyword else PiSyntaxToken.StringLiteral,
+                        ),
+                    )
+                    continue
+                }
+                val start = p
+                while (p < lineEnd && code[p] != delimiter) p++
+                val token = code.substring(start, p).trim()
+                if (token.isNotEmpty()) {
+                    val role = when {
+                        rowIndex == 0 -> PiSyntaxToken.Keyword
+                        isCsvNumberOrBool(token) -> PiSyntaxToken.Number
+                        else -> PiSyntaxToken.Variable
+                    }
+                    out.add(PiCodeSpan(start, p, role))
+                }
+            }
+            if (lineEnd > lineStart) rowIndex++
+            i = if (lineEnd < n) lineEnd + 1 else n
+        }
+    }
+
+    private fun isCsvNumberOrBool(token: String): Boolean {
+        val lower = token.lowercase()
+        if (lower == "true" || lower == "false" || lower == "null") return true
+        var i = 0
+        if (token[i] == '-' || token[i] == '+') i++
+        if (i >= token.length) return false
+        var digits = 0
+        var dots = 0
+        while (i < token.length) {
+            val ch = token[i]
+            when {
+                ch.isDigit() -> digits++
+                ch == '.' && dots == 0 -> dots++
+                ch == '%' && i == token.length - 1 -> Unit
+                else -> return false
+            }
+            i++
+        }
+        return digits > 0
+    }
+
+    private val MERMAID_KW = setOf(
+        "graph", "flowchart", "sequenceDiagram", "classDiagram", "stateDiagram", "stateDiagram-v2",
+        "erDiagram", "gantt", "pie", "journey", "gitGraph", "mindmap", "timeline", "quadrantChart",
+        "requirementDiagram", "C4Context", "C4Container", "C4Component", "sankey-beta", "xychart-beta",
+        "subgraph", "end", "participant", "actor", "activate", "deactivate", "Note", "note", "over",
+        "left", "right", "of", "loop", "alt", "else", "opt", "par", "and", "critical", "option",
+        "break", "rect", "autonumber", "class", "classDef", "style", "linkStyle", "click", "direction",
+        "state", "title", "section", "dateFormat", "axisFormat", "excludes", "includes", "accTitle",
+        "accDescr", "as",
+    )
+
+    private val MERMAID_DIRS = setOf("TD", "TB", "BT", "RL", "LR")
 
     private val COMMON_KW = setOf(
         "import", "export", "include", "define", "using", "namespace", "class", "struct", "enum",

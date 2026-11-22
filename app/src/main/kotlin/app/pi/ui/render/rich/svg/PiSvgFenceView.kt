@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import app.pi.i18n.tr
 import app.pi.ui.render.PiCardMenuItem
 import app.pi.ui.render.PiRichCardFrame
+import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.render.rich.FenceInfo
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
@@ -30,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.LaunchedEffect
@@ -165,6 +167,8 @@ fun PiSvgFenceView(
     }
     var scale by remember(source) { mutableStateOf(PI_SVG_MIN_ZOOM) }
     var offset by remember(source) { mutableStateOf(Offset.Zero) }
+    // 深色主题下的画布底色覆盖：0 = 自动检测，1 = 柔光浅纸底，2 = 透明卡片底。
+    var canvasToneOverride by rememberSaveable(source) { mutableStateOf(0) }
 
     Box(modifier.fillMaxWidth()) {
         LaunchedEffect(source, settled, widthPx) {
@@ -211,6 +215,17 @@ fun PiSvgFenceView(
         val showSource = ready == null || !settled || pinned == true
         val image = ready?.takeIf { !showSource }
 
+        val darkPage = palette.pageBg.luminance() < 0.5f
+        val useLightBackdrop = image != null && when (canvasToneOverride) {
+            1 -> true
+            2 -> false
+            else -> darkPage && image.needsLightBackdrop
+        }
+        val lightBackdropBg = remember(palette.cardBg) {
+            lerp(palette.cardBg, Color(0xFFDCE0E6), 0.82f)
+        }
+        val lightBackdropBorder = palette.borderMuted.copy(alpha = 0.45f)
+
         val status: String? = when (draw) {
             PiSvgDraw.Streaming -> tr("生成中…", "Streaming…")
             else -> null
@@ -229,6 +244,15 @@ fun PiSvgFenceView(
                             offset = Offset.Zero
                         },
                     )
+                    if (darkPage) {
+                        add(
+                            PiCardMenuItem(
+                                if (useLightBackdrop) tr("切换深色画布", "Dark canvas") else tr("切换浅色画布", "Light canvas"),
+                            ) {
+                                canvasToneOverride = if (useLightBackdrop) 2 else 1
+                            },
+                        )
+                    }
                 }
                 if (ready != null) {
                     add(
@@ -242,11 +266,15 @@ fun PiSvgFenceView(
             if (image != null) {
                 val aspect = image.aspect.takeIf { it.isFinite() && it > 0f }
                     ?: PI_SVG_FALLBACK_ASPECT
-                // 围栏作者的 SVG 不被改色（见类注释），深色主题下「黑线、无底」的图会隐形。
-                // 解法不是替他改色，而是给图垫一块浅色「纸」：深色主题下铺一层浅灰圆角底，
-                // 浅色主题下页面本来就是浅的，什么都不垫。
-                val darkPage = palette.pageBg.luminance() < 0.5f
                 val shape = RoundedCornerShape(8.dp)
+                val backdropModifier = if (useLightBackdrop) {
+                    Modifier
+                        .clip(shape)
+                        .background(lightBackdropBg)
+                        .border(0.5.dp, lightBackdropBorder, shape)
+                } else {
+                    Modifier.clip(shape)
+                }
                 // 高度 = 宽 / 宽高比，再夹进 [最小, 最大]：用 `aspectRatio` 代替先量宽再算高，
                 // 这样不需要 `BoxWithConstraints`。
                 val animKey = remember { Any() }
@@ -273,9 +301,7 @@ fun PiSvgFenceView(
                             .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
                             .fillMaxWidth()
                             .aspectRatio(aspect.coerceIn(0.05f, 60f))
-                            .then(
-                                if (darkPage) Modifier.clip(shape).background(Color(0xFFF4F4F2)) else Modifier,
-                            )
+                            .then(backdropModifier)
                             .clipToBounds()
                             .semantics { contentDescription = animSvgDesc },
                     )
@@ -286,13 +312,7 @@ fun PiSvgFenceView(
                         .heightIn(min = PI_SVG_MIN_IMAGE_HEIGHT, max = PI_SVG_MAX_IMAGE_HEIGHT)
                         .fillMaxWidth()
                         .aspectRatio(aspect.coerceIn(0.05f, 60f))
-                        .then(
-                            if (darkPage) {
-                                Modifier.clip(shape).background(Color(0xFFF4F4F2))
-                            } else {
-                                Modifier
-                            },
-                        )
+                        .then(backdropModifier)
                         .clipToBounds()
                         .pointerInput(image) {
                             piSvgTransformGestures(
@@ -391,7 +411,15 @@ private object PiSvgDrawCache {
     fun put(key: PiSvgDrawKey, value: PiSvgDraw.Ready) {
         entries[key] = value
     }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+    }
 }
+
+/** 供 [app.pi.ui.PiMemoryTrimmer] 在内存紧张时释放缓存的 SVG Picture。 */
+internal fun clearPiSvgDrawCache() = PiSvgDrawCache.clear()
 
 /** 一次渲染请求走到哪一步。绝不持有「解析了一半」的文档。 */
 private sealed interface PiSvgDraw {
@@ -409,6 +437,8 @@ private sealed interface PiSvgDraw {
         val aspect: Float,
         /** 非空 = 这份 SVG 带动画，用 WebView 播放（清理后的文本）。 */
         val animatedSvg: String? = null,
+        /** 深色页面下是否需要柔光浅纸底（自带背景或使用浅色线条的 SVG 保持透明直铺卡片底）。 */
+        val needsLightBackdrop: Boolean = false,
     ) : PiSvgDraw
 
     /** 这份源码不会出图；原因印在源码块上。 */
@@ -476,6 +506,7 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
     return PiSvgDraw.Ready(
         picture, baseWidth, baseHeight, aspect,
         animatedSvg = safe.takeIf { piSvgIsAnimated(it) },
+        needsLightBackdrop = piSvgNeedsLightBackdropOnDarkPage(safe),
     )
 }
 
@@ -485,6 +516,42 @@ private fun piSvgPrepare(source: String, requestedWidthPx: Int): PiSvgDraw {
  * 手写 SVG 可能只有 `viewBox`，也可能只有 `width`/`height`，所以走一条回退链；
  * 这里算错只会让图上下留白（视口与 `preserveAspectRatio` 不一致），不会拉伸变形。
  */
+/**
+ * 启发式判断一份 SVG 在深色卡片上是否需要垫柔光浅纸底：
+ *  - 若 SVG 自身已声明背景（`<svg style="...background...">` 或首层铺满画布的 `<rect width="100%" height="100%">`），
+ *    不需要外垫浅纸底；
+ *  - 若 SVG 显式绘制了深色笔触/文字（`#000`..`#444`、`black`）或未指定任何填充色（SVG 规范默认黑），
+ *    垫柔光浅灰底保证可读；
+ *  - 若 SVG 全篇采用浅色或高饱和彩色笔触且无深色笔触，直接铺在深色卡片上，消除刺眼白块。
+ */
+internal fun piSvgNeedsLightBackdropOnDarkPage(svg: String): Boolean {
+    val head = if (svg.length > 4096) svg.substring(0, 4096) else svg
+    if (SVG_BG_STYLE.containsMatchIn(head) || SVG_FULL_BG_RECT.containsMatchIn(head)) {
+        return false
+    }
+    val hasDarkInk = SVG_DARK_INK.containsMatchIn(svg)
+    if (hasDarkInk) return true
+    val hasExplicitPaint = SVG_ANY_PAINT.containsMatchIn(svg)
+    return !hasExplicitPaint
+}
+
+private val SVG_BG_STYLE = Regex(
+    """<svg\b[^>]*style\s*=\s*["'][^"']*background(?:-color)?\s*:\s*(?!transparent\b|none\b)""",
+    RegexOption.IGNORE_CASE,
+)
+private val SVG_FULL_BG_RECT = Regex(
+    """<rect\b[^>]*(?:width\s*=\s*["']100%["'][^>]*height\s*=\s*["']100%["']|height\s*=\s*["']100%["'][^>]*width\s*=\s*["']100%["'])""",
+    RegexOption.IGNORE_CASE,
+)
+private val SVG_DARK_INK = Regex(
+    """(?:fill|stroke)\s*(?:=\s*["']|:\s*)(?:black\b|#[0-4][0-9a-f]{2}\b|#[0-4][0-9a-f][0-4][0-9a-f][0-4][0-9a-f]\b|rgb\(\s*[0-6]?\d\s*,\s*[0-6]?\d\s*,\s*[0-6]?\d\s*\))""",
+    RegexOption.IGNORE_CASE,
+)
+private val SVG_ANY_PAINT = Regex(
+    """(?:fill|stroke)\s*(?:=\s*["']|:\s*)(?!none\b|transparent\b)[#a-z0-9]""",
+    RegexOption.IGNORE_CASE,
+)
+
 private fun piSvgAspect(svg: SVG): Float {
     val viewBox = try {
         svg.getDocumentViewBox()
@@ -666,6 +733,7 @@ private fun PiSvgSourceBlock(source: String, notice: String?) {
             lines.take(PI_SVG_MAX_VISIBLE_SOURCE_LINES).joinToString("\n")
         }
     }
+    val highlighted = rememberPiHighlightedCode(shown, "xml")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -680,8 +748,10 @@ private fun PiSvgSourceBlock(source: String, notice: String?) {
             )
         }
         Text(
-            text = shown,
-            style = PiTheme.typography.styles.code.copy(color = palette.text),
+            text = highlighted.text,
+            style = PiTheme.typography.styles.code.copy(
+                color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),

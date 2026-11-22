@@ -252,6 +252,11 @@ internal object PiMathRenderEngine : PiSvgEngine {
 
     private val cache = MathSvgCache(MAX_CACHE_ENTRIES, MAX_CACHE_BYTES)
 
+    /** 供 [app.pi.ui.PiMemoryTrimmer] 在内存紧张或低内存时清空已缓存的公式 SVG。 */
+    internal fun clearCaches() {
+        cache.clear()
+    }
+
     private var running: MathTask? = null
 
     private var host: MathRenderHost? = null
@@ -563,12 +568,16 @@ internal object PiMathRenderEngine : PiSvgEngine {
                     // 在那里拆宿主会让用户切回来时看到一次"源码"闪一下，而当时并不缺内存。
                     val pressured = level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW &&
                         level != android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
-                    if (pressured) disposeHost("系统内存紧张（onTrimMemory=$level）")
+                    if (pressured) {
+                        cache.clear()
+                        disposeHost("系统内存紧张（onTrimMemory=$level）")
+                    }
                 }
 
                 override fun onConfigurationChanged(newConfig: android.content.res.Configuration) = Unit
 
                 override fun onLowMemory() {
+                    cache.clear()
                     disposeHost("系统内存不足（onLowMemory）")
                 }
             },
@@ -727,8 +736,10 @@ private class MathSvgCache(private val maxEntries: Int, private val maxBytes: In
 
     private var bytes = 0
 
+    @Synchronized
     fun get(key: String): PiSvgResult.Ok? = entries[key]?.result
 
+    @Synchronized
     fun put(key: String, result: PiSvgResult.Ok) {
         if (maxEntries <= 0 || maxBytes <= 0) return
         // 按字符数近似字节数：MathJax 输出以 ASCII 的 path/`use` 为主，近似足够定界，
@@ -743,6 +754,12 @@ private class MathSvgCache(private val maxEntries: Int, private val maxBytes: In
             val evicted = entries.remove(eldest) ?: break
             bytes -= evicted.bytes
         }
+    }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        bytes = 0
     }
 }
 

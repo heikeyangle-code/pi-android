@@ -36,6 +36,11 @@ internal object PiTreeParseCache {
         (entries[key] as? T)?.let { return it }
         return parse().also { entries[key] = it }
     }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+    }
 }
 
 /**

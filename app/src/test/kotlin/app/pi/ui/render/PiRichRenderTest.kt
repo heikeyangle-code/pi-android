@@ -5,6 +5,7 @@ import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -465,11 +466,11 @@ class PiRichRenderTest {
     @Test
     fun `streaming cursor does not corrupt GFM alerts or quoted code fences`() {
         val alert = "> [!NOTE]"
-        assertEquals(alert, appendStreamingCursor(alert, "\u258D"))
+        assertEquals(alert, withStreamingCursor(alert))
         val quotedFence = "> ```kotlin"
-        assertEquals(quotedFence, appendStreamingCursor(quotedFence, "\u258D"))
+        assertEquals(quotedFence, withStreamingCursor(quotedFence))
         val prose = "Hello world"
-        assertEquals("Hello world\u258D", appendStreamingCursor(prose, "\u258D"))
+        assertEquals("Hello world$STREAMING_CURSOR", withStreamingCursor(prose))
     }
 
     @Test
@@ -477,6 +478,74 @@ class PiRichRenderTest {
         assertEquals("foo bar", normalizeCodeSpanContent("`foo\nbar`"))
         assertEquals("foo bar", normalizeCodeSpanContent("`foo\n> bar`"))
         assertEquals("`a`", normalizeCodeSpanContent("`` `a` ``"))
+    }
+
+    @Test
+    fun `quoted display math adjacent to quote text separates into its own paragraph`() {
+        val md = "> Intro line\n> $$\n> E = mc^2\n> $$\n> Outro line"
+        val extracted = PiInlineMath.extract(md)
+        assertTrue(extracted.hasBlockMath)
+        val root = parseGfm(extracted.markdown)
+        val quote = root.children.first { it.type == MarkdownElementTypes.BLOCK_QUOTE }
+        val paragraphs = quote.children.filter { it.type == MarkdownElementTypes.PARAGRAPH }
+        assertEquals(
+            "Expected 3 separate paragraphs (intro, block math, outro) inside blockquote, got ${paragraphs.size}: ${extracted.markdown}",
+            3,
+            paragraphs.size,
+        )
+        val middleText = extracted.markdown.substring(paragraphs[1].startOffset, paragraphs[1].endOffset)
+        assertTrue("Middle paragraph must start with $$: $middleText", middleText.trim().startsWith("$$"))
+        assertTrue("Middle paragraph must end with $$: $middleText", middleText.trim().endsWith("$$"))
+    }
+
+    @Test
+    fun `extractCodeFence strips opening fence indent inside lists and indented fences`() {
+        val listFence = "- Step 1\n    ```kotlin\n    val a = 1\n      val b = 2\n    ```"
+        val root = parseGfm(listFence)
+        fun findFence(node: ASTNode): ASTNode? {
+            if (node.type == MarkdownElementTypes.CODE_FENCE) return node
+            for (c in node.children) findFence(c)?.let { return it }
+            return null
+        }
+        val fenceNode = findFence(root)
+        assertNotNull("Expected CODE_FENCE inside list", fenceNode)
+        val extracted = extractCodeFence(listFence, fenceNode!!)
+        assertEquals("kotlin", extracted.language)
+        assertEquals("val a = 1\n  val b = 2", extracted.code)
+        assertTrue(extracted.closed)
+    }
+
+    @Test
+    fun `PiCodeLanguage forPath covers modern extensions and extensionless basenames`() {
+        assertEquals("kotlin", PiCodeLanguage.forPath("build.gradle.kts"))
+        assertEquals("dart", PiCodeLanguage.forPath("lib/main.dart"))
+        assertEquals("zig", PiCodeLanguage.forPath("src/main.zig"))
+        assertEquals("groovy", PiCodeLanguage.forPath("settings.gradle"))
+        assertEquals("html", PiCodeLanguage.forPath("App.vue"))
+        assertEquals("html", PiCodeLanguage.forPath("Page.svelte"))
+        assertEquals("ini", PiCodeLanguage.forPath(".env.local"))
+        assertEquals("ini", PiCodeLanguage.forPath("config.ini"))
+        assertEquals("diff", PiCodeLanguage.forPath("changes.diff"))
+        assertEquals("xml", PiCodeLanguage.forPath("diagram.svg"))
+        assertEquals("dockerfile", PiCodeLanguage.forPath("/srv/app/Dockerfile"))
+        assertEquals("makefile", PiCodeLanguage.forPath("project/Makefile"))
+    }
+
+    @Test
+    fun `fast highlighter supports mermaid and csv source views`() {
+        val mmd = "flowchart TD\n  %% comment\n  A[\"Start\"] --> B"
+        val mmdRes = PiFastCodeHighlighter.highlight(mmd, "mermaid")
+        assertTrue(mmdRes.languageKnown)
+        assertTrue(mmdRes.spans.any { it.token == PiSyntaxToken.Keyword })
+        assertTrue(mmdRes.spans.any { it.token == PiSyntaxToken.Comment })
+        assertTrue(mmdRes.spans.any { it.token == PiSyntaxToken.Operator })
+
+        val csv = "name,score,active\n\"Alice\",98.5,true"
+        val csvRes = PiFastCodeHighlighter.highlight(csv, "csv")
+        assertTrue(csvRes.languageKnown)
+        assertTrue(csvRes.spans.any { it.token == PiSyntaxToken.Keyword })
+        assertTrue(csvRes.spans.any { it.token == PiSyntaxToken.Number })
+        assertTrue(csvRes.spans.any { it.token == PiSyntaxToken.StringLiteral })
     }
 
     private fun parseGfm(markdown: String): ASTNode =
