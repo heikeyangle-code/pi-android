@@ -280,7 +280,7 @@ fun TerminalPane(
             }
 
             // 悬浮轻提示胶囊（OSC 52 复制、缩放字号等反馈）
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = toastMessage != null,
                 enter = fadeIn(),
                 exit = fadeOut(),
