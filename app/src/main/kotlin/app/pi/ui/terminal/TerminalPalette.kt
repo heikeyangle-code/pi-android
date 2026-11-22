@@ -10,7 +10,7 @@ import com.termux.terminal.TextStyle
 import kotlin.math.pow
 
 /**
- * 终端色彩方案：直接跟随 Pi 当前主题（含自定义 `.pi/agent/themes/*.json` 与 Material You），
+ * 终端色彩方案：直接跟随 Pi 当前主题（含自定义 `.pi/agent/themes/` 主题文件与 Material You），
  * 并提供高对比、符合语义的 16 色 ANSI 调色板（红/绿/黄/蓝/品红/青始终保持可读性与语义准确）。
  */
 data class TerminalPalette(

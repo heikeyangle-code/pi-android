@@ -205,11 +205,19 @@ object PtyLauncher {
 
         workspace.mkdirs()
         paths.agentDir.mkdirs()
-        val extraBinds = if (GuestWorkspacePath.needsBind(paths.rootfs, workspace, projectGuestPath)) {
-            File(paths.rootfs, projectGuestPath.removePrefix("/")).mkdirs()
-            listOf(workspace.absolutePath to projectGuestPath)
-        } else {
-            emptyList()
+        val externalEntries = runCatching { WorkspaceStore.list(context.applicationContext ?: context) }
+            .getOrDefault(emptyList())
+            .filter { it.external && it.available && it.host.isDirectory }
+        val extraBinds = buildList {
+            if (GuestWorkspacePath.needsBind(paths.rootfs, workspace, projectGuestPath)) {
+                add(workspace.absolutePath to projectGuestPath)
+            }
+            for (entry in externalEntries) {
+                if (!GuestWorkspacePath.needsBind(paths.rootfs, entry.host, entry.guestPath)) continue
+                val pair = entry.host.absolutePath to entry.guestPath
+                if (pair !in this) add(pair)
+            }
+            forEach { pair -> File(paths.rootfs, pair.second.removePrefix("/")).mkdirs() }
         }
 
         val inner = command.ifBlank { DEFAULT_COMMAND }
@@ -221,6 +229,8 @@ object PtyLauncher {
             put("LC_ALL", "C.UTF-8")
             put("PI_CODING_AGENT_DIR", guestAgentDir)
             put("PI_CODING_AGENT_SESSION_DIR", "$guestAgentDir/sessions")
+            put("PI_ANDROID_BRIDGE_FILE", "/root/.pi/device-bridge.json")
+            put("NODE_COMPILE_CACHE", "/tmp/pi-node-compile-cache")
             put("PI_TUI_ESC_TIMEOUT", "150")
             put("PI_HYPERLINKS", "0")
             put("PI_IMAGE_PROTOCOL", "none")
