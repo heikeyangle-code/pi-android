@@ -903,7 +903,7 @@ internal fun PiSessionViewModel.renameSessionImpl(name: String) {
         ) }
         applyActiveRow()
         if (sessionListLoadedOnce) refreshSessions()
-        pushNotice(tr("已重命名为「$trimmed」", "Renamed to "$trimmed""), Notice.Tone.Info)
+        pushNotice(tr("已重命名为「$trimmed」", "Renamed to \"$trimmed\""), Notice.Tone.Info)
     }
 }
 
@@ -932,7 +932,7 @@ internal fun PiSessionViewModel.renameSessionFromListImpl(summary: SessionSummar
                     if (row.file.absolutePath == summary.file.absolutePath) row.copy(name = trimmed) else row
                 },
             )
-            pushNotice(tr("已重命名为「$trimmed」", "Renamed to "$trimmed""), Notice.Tone.Info)
+            pushNotice(tr("已重命名为「$trimmed」", "Renamed to \"$trimmed\""), Notice.Tone.Info)
             refreshSessions()
         } else {
             pushNotice(tr("重命名失败：${summary.file.name}", "Rename failed: ${summary.file.name}"), Notice.Tone.Warning)

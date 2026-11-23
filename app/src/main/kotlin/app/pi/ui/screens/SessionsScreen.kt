@@ -439,6 +439,7 @@ fun SessionsScreen(
             } else {
                 Column(Modifier.fillMaxSize()) {
                     // 单行筛选条 + 右端固定计数/进度（彻底去除冗余的双行顶部 Chrome 与 ASCII 符号）
+                    val searching = list.query.query.isNotBlank()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -457,7 +458,6 @@ fun SessionsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            val searching = list.query.query.isNotBlank()
                             if (!searching && (allGroups.size > 1 || currentProjectOnly)) {
                                 SessionFilterPill(
                                     text = if (currentProjectOnly) tr("当前项目", "Current") else tr("全部项目", "All projects"),

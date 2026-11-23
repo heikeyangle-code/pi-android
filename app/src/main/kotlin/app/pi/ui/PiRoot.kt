@@ -851,14 +851,8 @@ private fun CwdMissingHost(session: PiSessionViewModel) {
             PiDialogBody(
                 buildString {
                     append(prompt.reason)
-                    prompt.issue?.takeIf { it.isNotBlank() }?.let { append("
-
-").append(it) }
-                    append(tr("
-
-可在当前项目继续打开，或分支一份新会话到当前项目。", "
-
-You can resume it in the current project, or fork a new session here."))
+                    prompt.issue?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(it) }
+                    append(tr("\n\n可在当前项目继续打开，或分支一份新会话到当前项目。", "\n\nYou can resume it in the current project, or fork a new session here."))
                 },
             )
             PiDialogActions {
